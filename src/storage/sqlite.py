@@ -56,6 +56,7 @@ def open_database(db_path: Path) -> sqlite3.Connection:
         conn.executescript(schema)
         conn.commit()
 
+    ensure_fts_table(conn)
     return conn
 
 
@@ -316,9 +317,11 @@ def store_conversation(conn: sqlite3.Connection, conversation: Conversation, *, 
 
         # Insert prompt content blocks
         for idx, block in enumerate(prompt.content):
-            insert_prompt_content(
+            content_id = insert_prompt_content(
                 conn, prompt_id, idx, block.block_type, json.dumps(block.content)
             )
+            if block.block_type == "text" and block.content.get("text"):
+                insert_fts_content(conn, content_id, "prompt", conversation_id, block.content["text"])
 
         # Process responses for this prompt
         for response in prompt.responses:
@@ -348,9 +351,11 @@ def store_conversation(conn: sqlite3.Connection, conversation: Conversation, *, 
 
             # Insert response content blocks
             for idx, block in enumerate(response.content):
-                insert_response_content(
+                content_id = insert_response_content(
                     conn, response_id, idx, block.block_type, json.dumps(block.content)
                 )
+                if block.block_type == "text" and block.content.get("text"):
+                    insert_fts_content(conn, content_id, "response", conversation_id, block.content["text"])
 
             # Insert tool calls
             for tool_call in response.tool_calls:
@@ -503,3 +508,107 @@ def record_ingested_file(
     if commit:
         conn.commit()
     return ulid
+
+
+# =============================================================================
+# FTS5 Full-Text Search
+# =============================================================================
+
+
+def ensure_fts_table(conn: sqlite3.Connection) -> None:
+    """Create the FTS5 virtual table if it doesn't exist. Idempotent."""
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
+            text_content,
+            content_id UNINDEXED,
+            side UNINDEXED,
+            conversation_id UNINDEXED
+        )
+    """)
+
+
+def rebuild_fts_index(conn: sqlite3.Connection) -> None:
+    """Drop and rebuild the FTS index from all text content blocks.
+
+    Reads prompt_content and response_content where block_type='text',
+    extracts the text from JSON content, and populates content_fts.
+    """
+    conn.execute("DELETE FROM content_fts")
+
+    # Index prompt text blocks
+    conn.execute("""
+        INSERT INTO content_fts (text_content, content_id, side, conversation_id)
+        SELECT
+            json_extract(pc.content, '$.text'),
+            pc.id,
+            'prompt',
+            p.conversation_id
+        FROM prompt_content pc
+        JOIN prompts p ON p.id = pc.prompt_id
+        WHERE pc.block_type = 'text'
+          AND json_extract(pc.content, '$.text') IS NOT NULL
+    """)
+
+    # Index response text blocks
+    conn.execute("""
+        INSERT INTO content_fts (text_content, content_id, side, conversation_id)
+        SELECT
+            json_extract(rc.content, '$.text'),
+            rc.id,
+            'response',
+            r.conversation_id
+        FROM response_content rc
+        JOIN responses r ON r.id = rc.response_id
+        WHERE rc.block_type = 'text'
+          AND json_extract(rc.content, '$.text') IS NOT NULL
+    """)
+
+    conn.commit()
+
+
+def insert_fts_content(
+    conn: sqlite3.Connection,
+    content_id: str,
+    side: str,
+    conversation_id: str,
+    text: str,
+) -> None:
+    """Insert a single text entry into the FTS index."""
+    conn.execute(
+        "INSERT INTO content_fts (text_content, content_id, side, conversation_id) VALUES (?, ?, ?, ?)",
+        (text, content_id, side, conversation_id),
+    )
+
+
+def search_content(
+    conn: sqlite3.Connection,
+    query: str,
+    limit: int = 20,
+) -> list[dict]:
+    """Search text content using FTS5 MATCH.
+
+    Returns list of dicts with: conversation_id, side, snippet, rank.
+    """
+    cur = conn.execute(
+        """
+        SELECT
+            conversation_id,
+            side,
+            snippet(content_fts, 0, '>>>', '<<<', '...', 64) as snippet,
+            rank
+        FROM content_fts
+        WHERE content_fts MATCH ?
+        ORDER BY rank
+        LIMIT ?
+        """,
+        (query, limit),
+    )
+    return [
+        {
+            "conversation_id": row["conversation_id"],
+            "side": row["side"],
+            "snippet": row["snippet"],
+            "rank": row["rank"],
+        }
+        for row in cur.fetchall()
+    ]

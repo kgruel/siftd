@@ -254,3 +254,15 @@ CREATE INDEX idx_tool_calls_status ON tool_calls(status);
 
 CREATE INDEX idx_prompt_content_prompt ON prompt_content(prompt_id);
 CREATE INDEX idx_response_content_response ON response_content(response_id);
+
+--------------------------------------------------------------------------------
+-- FTS5 FULL-TEXT SEARCH INDEX
+-- Indexes text content from prompt_content and response_content
+--------------------------------------------------------------------------------
+
+CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
+    text_content,
+    content_id UNINDEXED,
+    side UNINDEXED,
+    conversation_id UNINDEXED
+);

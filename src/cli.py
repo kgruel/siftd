@@ -7,7 +7,7 @@ from pathlib import Path
 from adapters import claude_code, gemini_cli
 from ingestion import ingest_all, IngestStats
 from paths import db_path, ensure_dirs, data_dir
-from storage.sqlite import create_database
+from storage.sqlite import create_database, open_database, rebuild_fts_index, search_content
 
 # Available adapters
 ADAPTERS = [claude_code, gemini_cli]
@@ -160,6 +160,45 @@ def cmd_path(args) -> int:
     return 0
 
 
+def cmd_search(args) -> int:
+    """Search conversation content using FTS5."""
+    db = db_path()
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print(f"Run 'tbd ingest' to create it.")
+        return 1
+
+    conn = open_database(db)
+
+    if args.rebuild:
+        print("Rebuilding FTS index...")
+        rebuild_fts_index(conn)
+        print("Done.")
+
+    query = " ".join(args.query)
+    if not query:
+        conn.close()
+        return 0
+
+    results = search_content(conn, query, limit=args.limit)
+
+    if not results:
+        print(f"No results for: {query}")
+        conn.close()
+        return 0
+
+    print(f"Found {len(results)} result(s) for: {query}\n")
+    for r in results:
+        side_label = "PROMPT" if r["side"] == "prompt" else "RESPONSE"
+        print(f"  [{side_label}] conversation={r['conversation_id']}")
+        print(f"    {r['snippet']}")
+        print()
+
+    conn.close()
+    return 0
+
+
 def _print_stats(stats: IngestStats) -> None:
     """Print ingestion statistics."""
     print(f"\n{'='*50}")
@@ -204,6 +243,13 @@ def main(argv=None) -> int:
     # status
     p_status = subparsers.add_parser("status", help="Show database statistics")
     p_status.set_defaults(func=cmd_status)
+
+    # search
+    p_search = subparsers.add_parser("search", help="Full-text search conversation content")
+    p_search.add_argument("query", nargs="*", help="Search query (FTS5 syntax)")
+    p_search.add_argument("-n", "--limit", type=int, default=20, help="Max results (default: 20)")
+    p_search.add_argument("--rebuild", action="store_true", help="Rebuild FTS index before searching")
+    p_search.set_defaults(func=cmd_search)
 
     # path
     p_path = subparsers.add_parser("path", help="Show XDG paths")
