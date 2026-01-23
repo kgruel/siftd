@@ -241,11 +241,9 @@ def cmd_ask(args) -> int:
         return 1
 
     if not embed_db.exists():
-        print("Embeddings index not found. Building it now...")
-        rc = _ask_build_index(db, embed_db, rebuild=False, backend_name=args.backend, verbose=True)
-        if rc != 0:
-            return rc
-        print()
+        print("No embeddings index found.")
+        print("Run 'tbd ask --index' to build it.")
+        return 1
 
     # Resolve backend for query embedding
     from embeddings import get_backend
