@@ -42,6 +42,7 @@ class Response:
     model: str | None = None
     provider: str | None = None
     external_id: str | None = None
+    attributes: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

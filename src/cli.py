@@ -7,7 +7,16 @@ from pathlib import Path
 from adapters import claude_code, gemini_cli
 from ingestion import ingest_all, IngestStats
 from paths import db_path, ensure_dirs, data_dir, queries_dir
-from storage.sqlite import create_database, open_database, rebuild_fts_index, search_content
+from storage.sqlite import (
+    create_database,
+    open_database,
+    rebuild_fts_index,
+    search_content,
+    get_or_create_label,
+    apply_label,
+    list_labels,
+    backfill_response_attributes,
+)
 
 # Available adapters
 ADAPTERS = [claude_code, gemini_cli]
@@ -300,6 +309,97 @@ def cmd_queries(args) -> int:
     return 0
 
 
+def cmd_label(args) -> int:
+    """Apply a label to a conversation or workspace."""
+    db = Path(args.db) if args.db else db_path()
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'tbd ingest' to create it.")
+        return 1
+
+    conn = open_database(db)
+
+    entity_type = args.entity_type
+    entity_id = args.entity_id
+    label_name = args.label
+
+    # Validate entity exists
+    if entity_type == "conversation":
+        row = conn.execute("SELECT id FROM conversations WHERE id = ?", (entity_id,)).fetchone()
+    elif entity_type == "workspace":
+        row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
+    else:
+        print(f"Unsupported entity type: {entity_type}")
+        print("Supported: conversation, workspace")
+        conn.close()
+        return 1
+
+    if not row:
+        print(f"{entity_type} not found: {entity_id}")
+        conn.close()
+        return 1
+
+    label_id = get_or_create_label(conn, label_name)
+    result = apply_label(conn, entity_type, entity_id, label_id, commit=True)
+
+    if result:
+        print(f"Applied label '{label_name}' to {entity_type} {entity_id}")
+    else:
+        print(f"Label '{label_name}' already applied to {entity_type} {entity_id}")
+
+    conn.close()
+    return 0
+
+
+def cmd_labels(args) -> int:
+    """List all labels."""
+    db = Path(args.db) if args.db else db_path()
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'tbd ingest' to create it.")
+        return 1
+
+    conn = open_database(db)
+    labels = list_labels(conn)
+
+    if not labels:
+        print("No labels defined.")
+        conn.close()
+        return 0
+
+    for label in labels:
+        counts = []
+        if label["conversation_count"]:
+            counts.append(f"{label['conversation_count']} conversations")
+        if label["workspace_count"]:
+            counts.append(f"{label['workspace_count']} workspaces")
+        count_str = f" ({', '.join(counts)})" if counts else ""
+        desc = f" - {label['description']}" if label["description"] else ""
+        print(f"  {label['name']}{desc}{count_str}")
+
+    conn.close()
+    return 0
+
+
+def cmd_backfill(args) -> int:
+    """Backfill response attributes from raw files."""
+    db = Path(args.db) if args.db else db_path()
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'tbd ingest' to create it.")
+        return 1
+
+    conn = open_database(db)
+    print("Backfilling response attributes (cache tokens)...")
+    count = backfill_response_attributes(conn)
+    print(f"Done. Inserted {count} attributes.")
+    conn.close()
+    return 0
+
+
 def _print_stats(stats: IngestStats) -> None:
     """Print ingestion statistics."""
     print(f"\n{'='*50}")
@@ -357,6 +457,21 @@ def main(argv=None) -> int:
     p_queries.add_argument("name", nargs="?", help="Query name to run (without .sql extension)")
     p_queries.add_argument("--var", action="append", metavar="KEY=VALUE", help="Substitute $KEY with VALUE in SQL (repeatable)")
     p_queries.set_defaults(func=cmd_queries)
+
+    # label
+    p_label = subparsers.add_parser("label", help="Apply a label to an entity")
+    p_label.add_argument("entity_type", choices=["conversation", "workspace"], help="Entity type")
+    p_label.add_argument("entity_id", help="Entity ID (ULID)")
+    p_label.add_argument("label", help="Label name")
+    p_label.set_defaults(func=cmd_label)
+
+    # labels
+    p_labels = subparsers.add_parser("labels", help="List all labels")
+    p_labels.set_defaults(func=cmd_labels)
+
+    # backfill
+    p_backfill = subparsers.add_parser("backfill", help="Backfill response attributes from raw files")
+    p_backfill.set_defaults(func=cmd_backfill)
 
     # path
     p_path = subparsers.add_parser("path", help="Show XDG paths")

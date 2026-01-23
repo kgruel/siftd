@@ -324,6 +324,24 @@ def insert_response_content(
     return ulid
 
 
+def insert_response_attribute(
+    conn: sqlite3.Connection,
+    response_id: str,
+    key: str,
+    value: str,
+    scope: str | None = None,
+) -> str:
+    """Insert a response attribute, return id (ULID). Upserts on conflict."""
+    ulid = _ulid()
+    conn.execute(
+        """INSERT INTO response_attributes (id, response_id, key, value, scope)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT (response_id, key, scope) DO UPDATE SET value = excluded.value""",
+        (ulid, response_id, key, value, scope)
+    )
+    return ulid
+
+
 def insert_tool_call(
     conn: sqlite3.Connection,
     response_id: str,
@@ -440,6 +458,12 @@ def store_conversation(conn: sqlite3.Connection, conversation: Conversation, *, 
                 )
                 if block.block_type == "text" and block.content.get("text"):
                     insert_fts_content(conn, content_id, "response", conversation_id, block.content["text"])
+
+            # Insert response attributes
+            for attr_key, attr_value in response.attributes.items():
+                insert_response_attribute(
+                    conn, response_id, attr_key, attr_value, scope="provider"
+                )
 
             # Insert tool calls
             for tool_call in response.tool_calls:
@@ -736,6 +760,169 @@ def backfill_providers(conn: sqlite3.Connection) -> int:
 
     conn.commit()
     return updated
+
+
+# =============================================================================
+# Label functions
+# =============================================================================
+
+
+def get_or_create_label(conn: sqlite3.Connection, name: str, description: str | None = None) -> str:
+    """Get or create a label by name, return id (ULID)."""
+    cur = conn.execute("SELECT id FROM labels WHERE name = ?", (name,))
+    row = cur.fetchone()
+    if row:
+        return row["id"]
+
+    from datetime import datetime
+    ulid = _ulid()
+    conn.execute(
+        "INSERT INTO labels (id, name, description, created_at) VALUES (?, ?, ?, ?)",
+        (ulid, name, description, datetime.now().isoformat())
+    )
+    return ulid
+
+
+def apply_label(
+    conn: sqlite3.Connection,
+    entity_type: str,
+    entity_id: str,
+    label_id: str,
+    *,
+    commit: bool = False,
+) -> str | None:
+    """Apply a label to an entity. Returns assignment id or None if already applied.
+
+    entity_type: 'conversation' or 'workspace'
+    """
+    from datetime import datetime
+
+    if entity_type == "conversation":
+        table = "conversation_labels"
+        fk_col = "conversation_id"
+    elif entity_type == "workspace":
+        table = "workspace_labels"
+        fk_col = "workspace_id"
+    else:
+        raise ValueError(f"Unsupported entity_type: {entity_type}")
+
+    # Check if already applied
+    cur = conn.execute(
+        f"SELECT id FROM {table} WHERE {fk_col} = ? AND label_id = ?",
+        (entity_id, label_id)
+    )
+    if cur.fetchone():
+        return None
+
+    ulid = _ulid()
+    conn.execute(
+        f"INSERT INTO {table} (id, {fk_col}, label_id, applied_at) VALUES (?, ?, ?, ?)",
+        (ulid, entity_id, label_id, datetime.now().isoformat())
+    )
+    if commit:
+        conn.commit()
+    return ulid
+
+
+def list_labels(conn: sqlite3.Connection) -> list[dict]:
+    """List all labels with usage counts."""
+    cur = conn.execute("""
+        SELECT
+            l.name,
+            l.description,
+            l.created_at,
+            (SELECT COUNT(*) FROM conversation_labels cl WHERE cl.label_id = l.id) as conversation_count,
+            (SELECT COUNT(*) FROM workspace_labels wl WHERE wl.label_id = l.id) as workspace_count
+        FROM labels l
+        ORDER BY l.name
+    """)
+    return [
+        {
+            "name": row["name"],
+            "description": row["description"],
+            "created_at": row["created_at"],
+            "conversation_count": row["conversation_count"],
+            "workspace_count": row["workspace_count"],
+        }
+        for row in cur.fetchall()
+    ]
+
+
+def backfill_response_attributes(conn: sqlite3.Connection) -> int:
+    """Backfill cache token attributes by re-reading raw JSONL files.
+
+    For each ingested claude_code file, re-parses the JSONL and extracts
+    cache_creation_input_tokens / cache_read_input_tokens from message.usage,
+    then stores them as response_attributes.
+
+    Returns count of attributes inserted.
+    """
+    from pathlib import Path
+    from adapters import claude_code
+
+    # Find all ingested claude_code files
+    harness_row = conn.execute(
+        "SELECT id FROM harnesses WHERE name = ?", (claude_code.NAME,)
+    ).fetchone()
+    if not harness_row:
+        return 0
+    harness_id = harness_row["id"]
+
+    files = conn.execute(
+        "SELECT path, conversation_id FROM ingested_files WHERE harness_id = ?",
+        (harness_id,)
+    ).fetchall()
+
+    inserted = 0
+    for file_row in files:
+        file_path = Path(file_row["path"])
+        conversation_id = file_row["conversation_id"]
+        if not file_path.exists():
+            continue
+
+        # Re-read the raw JSONL to extract cache tokens
+        records = claude_code._load_jsonl(file_path)
+
+        # Match responses by external_id
+        for record in records:
+            if record.get("type") != "assistant":
+                continue
+            message_data = record.get("message") or {}
+            usage_data = message_data.get("usage") or {}
+            external_msg_id = record.get("uuid")
+            if not external_msg_id:
+                continue
+
+            cache_creation = usage_data.get("cache_creation_input_tokens")
+            cache_read = usage_data.get("cache_read_input_tokens")
+            if not cache_creation and not cache_read:
+                continue
+
+            # Find the response in DB
+            response_external_id = f"{claude_code.NAME}::{external_msg_id}"
+            row = conn.execute(
+                "SELECT id FROM responses WHERE conversation_id = ? AND external_id = ?",
+                (conversation_id, response_external_id)
+            ).fetchone()
+            if not row:
+                continue
+            response_id = row["id"]
+
+            if cache_creation:
+                insert_response_attribute(
+                    conn, response_id, "cache_creation_input_tokens",
+                    str(cache_creation), scope="provider"
+                )
+                inserted += 1
+            if cache_read:
+                insert_response_attribute(
+                    conn, response_id, "cache_read_input_tokens",
+                    str(cache_read), scope="provider"
+                )
+                inserted += 1
+
+    conn.commit()
+    return inserted
 
 
 def search_content(

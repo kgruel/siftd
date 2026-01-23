@@ -192,11 +192,19 @@ def parse(source: Source) -> Iterable[Conversation]:
                     output_tokens=usage_data.get("output_tokens"),
                 )
 
+            # Extract cache token attributes
+            attributes: dict[str, str] = {}
+            if usage_data.get("cache_creation_input_tokens"):
+                attributes["cache_creation_input_tokens"] = str(usage_data["cache_creation_input_tokens"])
+            if usage_data.get("cache_read_input_tokens"):
+                attributes["cache_read_input_tokens"] = str(usage_data["cache_read_input_tokens"])
+
             response = Response(
                 timestamp=timestamp,
                 usage=usage,
                 model=message_data.get("model"),
                 external_id=f"{NAME}::{external_msg_id}" if external_msg_id else None,
+                attributes=attributes,
             )
 
             # Parse content blocks and track tool uses
