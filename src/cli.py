@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from adapters import claude_code, gemini_cli
+from adapters import claude_code, codex_cli, gemini_cli
 from ingestion import ingest_all, IngestStats
 from paths import db_path, ensure_dirs, data_dir, queries_dir
 from storage.sqlite import (
@@ -19,7 +19,7 @@ from storage.sqlite import (
 )
 
 # Available adapters
-ADAPTERS = [claude_code, gemini_cli]
+ADAPTERS = [claude_code, codex_cli, gemini_cli]
 
 
 class _AdapterWithPaths:
@@ -43,6 +43,9 @@ class _AdapterWithPaths:
                 continue
             # Use the adapter's glob pattern logic
             if self._adapter.NAME == "claude_code":
+                for f in base.glob("**/*.jsonl"):
+                    yield Source(kind="file", location=f)
+            elif self._adapter.NAME == "codex_cli":
                 for f in base.glob("**/*.jsonl"):
                     yield Source(kind="file", location=f)
             elif self._adapter.NAME == "gemini_cli":
