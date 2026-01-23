@@ -6,7 +6,7 @@ from pathlib import Path
 
 from adapters import claude_code, codex_cli, gemini_cli
 from ingestion import ingest_all, IngestStats
-from paths import db_path, ensure_dirs, data_dir, queries_dir
+from paths import db_path, embeddings_db_path, ensure_dirs, data_dir, queries_dir
 from storage.sqlite import (
     create_database,
     open_database,
@@ -209,6 +209,311 @@ def cmd_search(args) -> int:
 
     conn.close()
     return 0
+
+
+def cmd_ask(args) -> int:
+    """Semantic search over conversation content using embeddings."""
+    import sqlite3 as _sqlite3
+
+    from storage.embeddings import (
+        open_embeddings_db,
+        store_chunk,
+        get_indexed_conversation_ids,
+        clear_all,
+        search_similar,
+        set_meta,
+        get_meta,
+        chunk_count,
+    )
+
+    db = Path(args.db) if args.db else db_path()
+    embed_db = embeddings_db_path()
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'tbd ingest' to create it.")
+        return 1
+
+    # Index or rebuild mode
+    if args.index or args.rebuild:
+        return _ask_build_index(db, embed_db, rebuild=args.rebuild, backend_name=args.backend, verbose=True)
+
+    # Search mode — need a query
+    query = " ".join(args.query) if args.query else ""
+    if not query:
+        print("Usage: tbd ask <query>")
+        print("       tbd ask --index     (build/update index)")
+        print("       tbd ask --rebuild   (rebuild index from scratch)")
+        return 1
+
+    if not embed_db.exists():
+        print("Embeddings index not found. Building it now...")
+        rc = _ask_build_index(db, embed_db, rebuild=False, backend_name=args.backend, verbose=True)
+        if rc != 0:
+            return rc
+        print()
+
+    # Resolve backend for query embedding
+    from embeddings import get_backend
+    try:
+        backend = get_backend(preferred=args.backend, verbose=True)
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    # Compose filters: get candidate conversation IDs from main DB
+    candidate_ids = _ask_filter_conversations(db, args)
+
+    # Embed query and search
+    query_embedding = backend.embed_one(query)
+    embed_conn = open_embeddings_db(embed_db)
+    results = search_similar(
+        embed_conn,
+        query_embedding,
+        limit=args.limit,
+        conversation_ids=candidate_ids,
+    )
+    embed_conn.close()
+
+    if not results:
+        print(f"No results for: {query}")
+        return 0
+
+    # Enrich results with metadata from main DB
+    main_conn = _sqlite3.connect(db)
+    main_conn.row_factory = _sqlite3.Row
+    _print_ask_results(main_conn, results, query)
+    main_conn.close()
+    return 0
+
+
+def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: str | None, verbose: bool) -> int:
+    """Build or incrementally update the embeddings index."""
+    import sqlite3 as _sqlite3
+
+    from storage.embeddings import (
+        open_embeddings_db,
+        store_chunk,
+        get_indexed_conversation_ids,
+        clear_all,
+        set_meta,
+        chunk_count,
+    )
+    from embeddings import get_backend
+
+    try:
+        backend = get_backend(preferred=backend_name, verbose=verbose)
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    embed_conn = open_embeddings_db(embed_db)
+
+    if rebuild:
+        if verbose:
+            print("Clearing existing index...")
+        clear_all(embed_conn)
+
+    # Determine which conversations need indexing
+    already_indexed = get_indexed_conversation_ids(embed_conn)
+
+    # Get text content from main DB
+    main_conn = _sqlite3.connect(db)
+    main_conn.row_factory = _sqlite3.Row
+
+    chunks = _extract_chunks(main_conn, exclude_ids=already_indexed)
+    main_conn.close()
+
+    if not chunks:
+        total = chunk_count(embed_conn)
+        if verbose:
+            print(f"Index is up to date. ({total} chunks)")
+        embed_conn.close()
+        return 0
+
+    if verbose:
+        print(f"Embedding {len(chunks)} new chunks...")
+
+    # Batch embed
+    texts = [c["text"] for c in chunks]
+    batch_size = 64
+    all_embeddings = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        all_embeddings.extend(backend.embed(batch))
+        if verbose and len(texts) > batch_size:
+            done = min(i + batch_size, len(texts))
+            print(f"  {done}/{len(texts)}", file=sys.stderr)
+
+    # Store
+    for chunk, embedding in zip(chunks, all_embeddings):
+        store_chunk(
+            embed_conn,
+            conversation_id=chunk["conversation_id"],
+            chunk_type=chunk["chunk_type"],
+            text=chunk["text"],
+            embedding=embedding,
+        )
+    embed_conn.commit()
+
+    set_meta(embed_conn, "backend", backend.name)
+    set_meta(embed_conn, "dimension", str(backend.dimension))
+
+    total = chunk_count(embed_conn)
+    if verbose:
+        print(f"Done. Index has {total} chunks ({backend.name}, dim={backend.dimension}).")
+
+    embed_conn.close()
+    return 0
+
+
+def _extract_chunks(main_conn, *, exclude_ids: set[str]) -> list[dict]:
+    """Extract text chunks from main DB for embedding.
+
+    Chunks prompt and response text content. Skips tool_result messages
+    and thinking/tool_use blocks (per design).
+    """
+    chunks = []
+
+    # Prompt text blocks
+    rows = main_conn.execute("""
+        SELECT
+            p.conversation_id,
+            pc.id AS content_id,
+            json_extract(pc.content, '$.text') AS text
+        FROM prompt_content pc
+        JOIN prompts p ON p.id = pc.prompt_id
+        WHERE pc.block_type = 'text'
+          AND json_extract(pc.content, '$.text') IS NOT NULL
+    """).fetchall()
+
+    for row in rows:
+        if row["conversation_id"] in exclude_ids:
+            continue
+        text = row["text"].strip()
+        if len(text) < 20:  # skip trivially short chunks
+            continue
+        chunks.append({
+            "conversation_id": row["conversation_id"],
+            "chunk_type": "prompt",
+            "text": text,
+        })
+
+    # Response text blocks (skip thinking blocks — block_type='text' only)
+    rows = main_conn.execute("""
+        SELECT
+            r.conversation_id,
+            rc.id AS content_id,
+            json_extract(rc.content, '$.text') AS text
+        FROM response_content rc
+        JOIN responses r ON r.id = rc.response_id
+        WHERE rc.block_type = 'text'
+          AND json_extract(rc.content, '$.text') IS NOT NULL
+    """).fetchall()
+
+    for row in rows:
+        if row["conversation_id"] in exclude_ids:
+            continue
+        text = row["text"].strip()
+        if len(text) < 20:
+            continue
+        chunks.append({
+            "conversation_id": row["conversation_id"],
+            "chunk_type": "response",
+            "text": text,
+        })
+
+    return chunks
+
+
+def _ask_filter_conversations(db: Path, args) -> set[str] | None:
+    """Apply workspace/model/date filters and return candidate conversation IDs.
+
+    Returns None if no filters applied (search all).
+    """
+    import sqlite3 as _sqlite3
+
+    has_filter = any([
+        getattr(args, "workspace", None),
+        getattr(args, "model", None),
+        getattr(args, "since", None),
+        getattr(args, "before", None),
+    ])
+    if not has_filter:
+        return None
+
+    conn = _sqlite3.connect(db)
+    conn.row_factory = _sqlite3.Row
+
+    conditions = []
+    params = []
+
+    if args.workspace:
+        conditions.append("w.path LIKE ?")
+        params.append(f"%{args.workspace}%")
+
+    if args.model:
+        conditions.append("(m.raw_name LIKE ? OR m.name LIKE ?)")
+        params.append(f"%{args.model}%")
+        params.append(f"%{args.model}%")
+
+    if args.since:
+        conditions.append("c.started_at >= ?")
+        params.append(args.since)
+
+    if args.before:
+        conditions.append("c.started_at < ?")
+        params.append(args.before)
+
+    where = "WHERE " + " AND ".join(conditions)
+
+    sql = f"""
+        SELECT DISTINCT c.id
+        FROM conversations c
+        LEFT JOIN workspaces w ON w.id = c.workspace_id
+        LEFT JOIN responses r ON r.conversation_id = c.id
+        LEFT JOIN models m ON m.id = r.model_id
+        {where}
+    """
+
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return {row["id"] for row in rows}
+
+
+def _print_ask_results(conn, results: list[dict], query: str) -> None:
+    """Format and print semantic search results."""
+    # Gather metadata for conversations
+    conv_ids = list({r["conversation_id"] for r in results})
+    placeholders = ",".join("?" * len(conv_ids))
+    meta_rows = conn.execute(f"""
+        SELECT c.id, c.started_at, w.path AS workspace
+        FROM conversations c
+        LEFT JOIN workspaces w ON w.id = c.workspace_id
+        WHERE c.id IN ({placeholders})
+    """, conv_ids).fetchall()
+    meta = {row["id"]: dict(row) for row in meta_rows}
+
+    print(f"Results for: {query}\n")
+    for r in results:
+        conv_id = r["conversation_id"]
+        m = meta.get(conv_id, {})
+        short_id = conv_id[:12]
+        workspace = m.get("workspace") or ""
+        if workspace:
+            workspace = Path(workspace).name
+        started = (m.get("started_at") or "")[:10]
+        side = r["chunk_type"].upper()
+        score = r["score"]
+
+        # Truncate text snippet
+        snippet = r["text"][:200].replace("\n", " ")
+        if len(r["text"]) > 200:
+            snippet += "..."
+
+        print(f"  {short_id}  {score:.3f}  [{side:8s}]  {started}  {workspace}")
+        print(f"    {snippet}")
+        print()
 
 
 def cmd_queries(args) -> int:
@@ -804,6 +1109,19 @@ def main(argv=None) -> int:
     p_search.add_argument("-n", "--limit", type=int, default=20, help="Max results (default: 20)")
     p_search.add_argument("--rebuild", action="store_true", help="Rebuild FTS index before searching")
     p_search.set_defaults(func=cmd_search)
+
+    # ask (semantic search)
+    p_ask = subparsers.add_parser("ask", help="Semantic search over conversations")
+    p_ask.add_argument("query", nargs="*", help="Natural language search query")
+    p_ask.add_argument("-n", "--limit", type=int, default=10, help="Max results (default: 10)")
+    p_ask.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
+    p_ask.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
+    p_ask.add_argument("--since", metavar="DATE", help="Conversations started after this date")
+    p_ask.add_argument("--before", metavar="DATE", help="Conversations started before this date")
+    p_ask.add_argument("--index", action="store_true", help="Build/update embeddings index")
+    p_ask.add_argument("--rebuild", action="store_true", help="Rebuild embeddings index from scratch")
+    p_ask.add_argument("--backend", metavar="NAME", help="Embedding backend (ollama, fastembed)")
+    p_ask.set_defaults(func=cmd_ask)
 
     # queries
     p_queries = subparsers.add_parser("queries", help="List or run .sql query files")

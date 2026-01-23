@@ -45,6 +45,11 @@ def db_path() -> Path:
     return data_dir() / "tbd.db"
 
 
+def embeddings_db_path() -> Path:
+    """Return the embeddings database path (derived data, separate from main DB)."""
+    return data_dir() / "embeddings.db"
+
+
 def ensure_dirs() -> None:
     """Create all XDG directories if they don't exist."""
     data_dir().mkdir(parents=True, exist_ok=True)
