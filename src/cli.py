@@ -221,7 +221,7 @@ def cmd_ask(args) -> int:
     )
 
     db = Path(args.db) if args.db else db_path()
-    embed_db = embeddings_db_path()
+    embed_db = Path(args.embed_db) if args.embed_db else embeddings_db_path()
 
     if not db.exists():
         print(f"Database not found: {db}")
@@ -1113,6 +1113,7 @@ def main(argv=None) -> int:
     p_ask.add_argument("--index", action="store_true", help="Build/update embeddings index")
     p_ask.add_argument("--rebuild", action="store_true", help="Rebuild embeddings index from scratch")
     p_ask.add_argument("--backend", metavar="NAME", help="Embedding backend (ollama, fastembed)")
+    p_ask.add_argument("--embed-db", metavar="PATH", help="Alternate embeddings database path")
     p_ask.set_defaults(func=cmd_ask)
 
     # queries
