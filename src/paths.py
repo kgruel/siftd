@@ -40,6 +40,11 @@ def queries_dir() -> Path:
     return config_dir() / "queries"
 
 
+def adapters_dir() -> Path:
+    """Return the adapters directory (~/.config/tbd/adapters)."""
+    return config_dir() / "adapters"
+
+
 def db_path() -> Path:
     """Return the default database path."""
     return data_dir() / "tbd.db"
@@ -55,4 +60,5 @@ def ensure_dirs() -> None:
     data_dir().mkdir(parents=True, exist_ok=True)
     config_dir().mkdir(parents=True, exist_ok=True)
     queries_dir().mkdir(parents=True, exist_ok=True)
+    adapters_dir().mkdir(parents=True, exist_ok=True)
     cache_dir().mkdir(parents=True, exist_ok=True)

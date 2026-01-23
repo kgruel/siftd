@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from adapters import claude_code, codex_cli, gemini_cli
+from adapters.registry import load_all_adapters
 from ingestion import ingest_all, IngestStats
 from paths import db_path, embeddings_db_path, ensure_dirs, data_dir, queries_dir
 from storage.sqlite import (
@@ -18,8 +18,6 @@ from storage.sqlite import (
     backfill_response_attributes,
 )
 
-# Available adapters
-ADAPTERS = [claude_code, codex_cli, gemini_cli]
 
 
 class _AdapterWithPaths:
@@ -78,13 +76,9 @@ def cmd_ingest(args) -> int:
             print(f"  [{status}] {name}")
 
     # Override adapter locations if --path specified
-    adapters = ADAPTERS
+    adapters = load_all_adapters()
     if args.path:
-        from copy import copy
-        adapters = []
-        for adapter in ADAPTERS:
-            # Create a wrapper that overrides DEFAULT_LOCATIONS
-            adapters.append(_adapter_with_paths(adapter, args.path))
+        adapters = [_adapter_with_paths(a, args.path) for a in adapters]
         print(f"Scanning: {', '.join(args.path)}")
 
     print("\nIngesting...")
