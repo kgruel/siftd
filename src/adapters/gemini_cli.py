@@ -31,6 +31,16 @@ HARNESS_SOURCE = "google"
 HARNESS_LOG_FORMAT = "json"
 HARNESS_DISPLAY_NAME = "Gemini CLI"
 
+# Raw tool name → canonical tool name
+TOOL_ALIASES: dict[str, str] = {
+    "read_file": "file.read",
+    "write_file": "file.write",
+    "edit_file": "file.edit",
+    "run_shell_command": "shell.execute",
+    "search_files": "search.grep",
+    "list_files": "file.glob",
+}
+
 
 def discover() -> Iterable[Source]:
     """Yield Source objects for all Gemini CLI session files."""

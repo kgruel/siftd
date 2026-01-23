@@ -31,6 +31,25 @@ HARNESS_SOURCE = "anthropic"
 HARNESS_LOG_FORMAT = "jsonl"
 HARNESS_DISPLAY_NAME = "Claude Code"
 
+# Raw tool name → canonical tool name
+TOOL_ALIASES: dict[str, str] = {
+    "Read": "file.read",
+    "Write": "file.write",
+    "Edit": "file.edit",
+    "Glob": "file.glob",
+    "Bash": "shell.execute",
+    "Grep": "search.grep",
+    "WebSearch": "search.web",
+    "WebFetch": "web.fetch",
+    "Task": "task.spawn",
+    "TaskOutput": "task.output",
+    "KillShell": "task.kill",
+    "AskUserQuestion": "ui.ask",
+    "TodoWrite": "ui.todo",
+    "NotebookEdit": "notebook.edit",
+    "Skill": "skill.invoke",
+}
+
 
 def discover() -> Iterable[Source]:
     """Yield Source objects for all Claude Code session files."""

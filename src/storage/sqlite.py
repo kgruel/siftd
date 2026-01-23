@@ -58,6 +58,7 @@ def open_database(db_path: Path) -> sqlite3.Connection:
         conn.commit()
 
     ensure_fts_table(conn)
+    ensure_canonical_tools(conn)
     return conn
 
 
@@ -166,6 +167,57 @@ def get_or_create_tool_by_alias(conn: sqlite3.Connection, raw_name: str, harness
         (alias_id, raw_name, harness_id, tool_id)
     )
     return tool_id
+
+
+# =============================================================================
+# Canonical tools taxonomy
+# =============================================================================
+
+CANONICAL_TOOLS: list[dict[str, str]] = [
+    {"name": "file.read", "category": "file", "description": "Read file contents"},
+    {"name": "file.write", "category": "file", "description": "Write/create a file"},
+    {"name": "file.edit", "category": "file", "description": "Edit/modify existing file"},
+    {"name": "file.glob", "category": "file", "description": "Find files by pattern"},
+    {"name": "shell.execute", "category": "shell", "description": "Execute shell commands"},
+    {"name": "search.grep", "category": "search", "description": "Search file contents"},
+    {"name": "search.web", "category": "search", "description": "Web search"},
+    {"name": "web.fetch", "category": "web", "description": "Fetch URL content"},
+    {"name": "task.spawn", "category": "task", "description": "Launch subtask/agent"},
+    {"name": "task.output", "category": "task", "description": "Get task output"},
+    {"name": "task.kill", "category": "task", "description": "Kill running task"},
+    {"name": "ui.ask", "category": "ui", "description": "Ask user a question"},
+    {"name": "ui.todo", "category": "ui", "description": "Write todo items"},
+    {"name": "notebook.edit", "category": "notebook", "description": "Edit notebook cell"},
+    {"name": "skill.invoke", "category": "skill", "description": "Invoke a skill"},
+]
+
+
+def ensure_canonical_tools(conn: sqlite3.Connection) -> None:
+    """Insert all canonical tools if not already present. Idempotent."""
+    for tool in CANONICAL_TOOLS:
+        conn.execute(
+            "INSERT OR IGNORE INTO tools (id, name, category, description) VALUES (?, ?, ?, ?)",
+            (_ulid(), tool["name"], tool["category"], tool["description"]),
+        )
+    conn.commit()
+
+
+def ensure_tool_aliases(conn: sqlite3.Connection, harness_id: str, aliases: dict[str, str]) -> None:
+    """Register tool alias mappings for a harness. Idempotent.
+
+    aliases: dict of raw_name → canonical_name
+    """
+    for raw_name, canonical_name in aliases.items():
+        # Look up the canonical tool id
+        cur = conn.execute("SELECT id FROM tools WHERE name = ?", (canonical_name,))
+        row = cur.fetchone()
+        if not row:
+            continue  # canonical tool not found, skip
+        tool_id = row["id"]
+        conn.execute(
+            "INSERT OR IGNORE INTO tool_aliases (id, raw_name, harness_id, tool_id) VALUES (?, ?, ?, ?)",
+            (_ulid(), raw_name, harness_id, tool_id),
+        )
 
 
 def insert_conversation(

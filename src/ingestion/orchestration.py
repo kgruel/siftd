@@ -15,6 +15,7 @@ from storage.sqlite import (
     get_harness_id_by_name,
     delete_conversation,
     get_or_create_harness,
+    ensure_tool_aliases,
 )
 from .discovery import discover_all
 
@@ -66,6 +67,26 @@ def ingest_all(
         IngestStats with counts
     """
     stats = IngestStats()
+
+    # Register tool aliases for each adapter (once per harness)
+    registered_harnesses: set[str] = set()
+    for adapter in adapters:
+        harness_name = adapter.NAME
+        if harness_name in registered_harnesses:
+            continue
+        aliases = getattr(adapter, "TOOL_ALIASES", None)
+        if aliases:
+            harness_kwargs = {}
+            if hasattr(adapter, "HARNESS_SOURCE"):
+                harness_kwargs["source"] = adapter.HARNESS_SOURCE
+            if hasattr(adapter, "HARNESS_LOG_FORMAT"):
+                harness_kwargs["log_format"] = adapter.HARNESS_LOG_FORMAT
+            if hasattr(adapter, "HARNESS_DISPLAY_NAME"):
+                harness_kwargs["display_name"] = adapter.HARNESS_DISPLAY_NAME
+            harness_id = get_or_create_harness(conn, harness_name, **harness_kwargs)
+            ensure_tool_aliases(conn, harness_id, aliases)
+            conn.commit()
+        registered_harnesses.add(harness_name)
 
     for source, adapter in discover_all(adapters):
         stats.files_found += 1
