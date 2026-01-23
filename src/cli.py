@@ -383,8 +383,180 @@ def cmd_labels(args) -> int:
     return 0
 
 
+def _fmt_tokens(n: int) -> str:
+    """Format token count: 1234 -> '1.2k', 12345 -> '12.3k'."""
+    if n >= 1000:
+        return f"{n / 1000:.1f}k"
+    return str(n)
+
+
+def _extract_text(raw: str) -> str:
+    """Extract plain text from a content block (may be JSON-wrapped)."""
+    import json
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict) and "text" in obj:
+            return obj["text"]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return raw
+
+
+def _logs_detail(args) -> int:
+    """Show conversation detail timeline."""
+    import sqlite3
+
+    db = Path(args.db) if args.db else db_path()
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'tbd ingest' to create it.")
+        return 1
+
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    cid = args.conversation_id
+
+    # Find conversation (support prefix match)
+    conv = conn.execute(
+        "SELECT c.id, c.started_at, w.path AS workspace "
+        "FROM conversations c LEFT JOIN workspaces w ON w.id = c.workspace_id "
+        "WHERE c.id = ? OR c.id LIKE ?",
+        (cid, f"{cid}%"),
+    ).fetchone()
+    if not conv:
+        print(f"Conversation not found: {cid}")
+        conn.close()
+        return 1
+
+    conv_id = conv["id"]
+
+    # Header: model and total tokens
+    model_row = conn.execute(
+        "SELECT m.name FROM responses r "
+        "LEFT JOIN models m ON m.id = r.model_id "
+        "WHERE r.conversation_id = ? "
+        "GROUP BY m.name ORDER BY COUNT(*) DESC LIMIT 1",
+        (conv_id,),
+    ).fetchone()
+    model_name = model_row["name"] if model_row else "unknown"
+
+    totals = conn.execute(
+        "SELECT COALESCE(SUM(input_tokens), 0) AS input_tok, "
+        "COALESCE(SUM(output_tokens), 0) AS output_tok "
+        "FROM responses WHERE conversation_id = ?",
+        (conv_id,),
+    ).fetchone()
+    total_input = totals["input_tok"]
+    total_output = totals["output_tok"]
+    total_tokens = total_input + total_output
+
+    ws_name = Path(conv["workspace"]).name if conv["workspace"] else ""
+    started = conv["started_at"][:16].replace("T", " ") if conv["started_at"] else ""
+
+    print(f"Conversation: {conv_id}")
+    if ws_name:
+        print(f"Workspace: {ws_name}")
+    print(f"Started: {started}")
+    print(f"Model: {model_name}")
+    print(f"Tokens: {_fmt_tokens(total_tokens)} (input: {_fmt_tokens(total_input)} / output: {_fmt_tokens(total_output)})")
+    print()
+
+    # Fetch prompts
+    prompts = conn.execute(
+        "SELECT id, timestamp FROM prompts WHERE conversation_id = ? ORDER BY timestamp",
+        (conv_id,),
+    ).fetchall()
+
+    # Fetch prompt text content
+    prompt_texts: dict = {}
+    for p in prompts:
+        blocks = conn.execute(
+            "SELECT content FROM prompt_content "
+            "WHERE prompt_id = ? AND block_type = 'text' ORDER BY block_index",
+            (p["id"],),
+        ).fetchall()
+        parts = [_extract_text(b["content"]) for b in blocks]
+        prompt_texts[p["id"]] = " ".join(parts).strip()
+
+    # Fetch responses
+    responses = conn.execute(
+        "SELECT id, prompt_id, timestamp, input_tokens, output_tokens "
+        "FROM responses WHERE conversation_id = ? ORDER BY timestamp",
+        (conv_id,),
+    ).fetchall()
+
+    # Fetch response text content
+    response_texts: dict = {}
+    for r in responses:
+        blocks = conn.execute(
+            "SELECT content FROM response_content "
+            "WHERE response_id = ? AND block_type = 'text' ORDER BY block_index",
+            (r["id"],),
+        ).fetchall()
+        parts = [_extract_text(b["content"]) for b in blocks]
+        response_texts[r["id"]] = " ".join(parts).strip()
+
+    # Fetch tool calls grouped by response
+    tool_calls = conn.execute(
+        "SELECT tc.response_id, t.name AS tool_name, tc.status "
+        "FROM tool_calls tc "
+        "LEFT JOIN tools t ON t.id = tc.tool_id "
+        "WHERE tc.conversation_id = ? "
+        "ORDER BY tc.timestamp",
+        (conv_id,),
+    ).fetchall()
+
+    # Group tool calls by response_id
+    tc_by_response: dict = {}
+    for tc in tool_calls:
+        tc_by_response.setdefault(tc["response_id"], []).append(tc)
+
+    # Build timeline: interleave prompts and responses chronologically
+    events = []
+    for p in prompts:
+        events.append(("prompt", p))
+    for r in responses:
+        events.append(("response", r))
+    events.sort(key=lambda e: e[1]["timestamp"] or "")
+
+    for kind, row in events:
+        ts = row["timestamp"][11:16] if row["timestamp"] and len(row["timestamp"]) >= 16 else ""
+
+        if kind == "prompt":
+            text = prompt_texts.get(row["id"], "")
+            if len(text) > 200:
+                text = text[:200] + "..."
+            print(f"[prompt] {ts}")
+            if text:
+                print(f"  {text}")
+            print()
+        else:
+            input_tok = row["input_tokens"] or 0
+            output_tok = row["output_tokens"] or 0
+            text = response_texts.get(row["id"], "")
+            if len(text) > 200:
+                text = text[:200] + "..."
+            print(f"[response] {ts} ({_fmt_tokens(input_tok)} in / {_fmt_tokens(output_tok)} out)")
+            if text:
+                print(f"  {text}")
+            # Tool calls for this response
+            tcs = tc_by_response.get(row["id"], [])
+            for tc in tcs:
+                name = tc["tool_name"] or "unknown"
+                status = tc["status"] or "unknown"
+                print(f"  \u2192 {name} ({status})")
+            print()
+
+    conn.close()
+    return 0
+
+
 def cmd_logs(args) -> int:
     """List conversations with composable filters."""
+    # Dispatch to detail view if conversation ID provided
+    if args.conversation_id:
+        return _logs_detail(args)
+
     db = Path(args.db) if args.db else db_path()
 
     if not db.exists():
@@ -515,6 +687,19 @@ def cmd_logs(args) -> int:
         conn.close()
         return 0
 
+    # Short mode: one dense line per conversation
+    if args.short:
+        for row in rows:
+            ws = Path(row["workspace"]).name if row["workspace"] else ""
+            model = row["model"] or ""
+            started = row["started_at"][:16].replace("T", " ") if row["started_at"] else ""
+            prompts = row["prompts"]
+            responses = row["responses"]
+            tokens = _fmt_tokens(row["tokens"])
+            print(f"{started}  {ws}  {model}  {prompts}p/{responses}r  {tokens} tok")
+        conn.close()
+        return 0
+
     # Format rows for display
     columns = ["workspace", "model", "started_at", "prompts", "responses", "tokens", "cost"]
     str_rows = []
@@ -633,6 +818,8 @@ def main(argv=None) -> int:
 
     # logs
     p_logs = subparsers.add_parser("logs", help="List conversations with filters")
+    p_logs.add_argument("conversation_id", nargs="?", help="Show detail for a specific conversation ID")
+    p_logs.add_argument("-s", "--short", action="store_true", help="One dense line per conversation")
     p_logs.add_argument("-n", "--count", type=int, default=10, help="Number of conversations to show (0=all, default: 10)")
     p_logs.add_argument("--latest", action="store_true", default=True, help="Sort by newest first (default)")
     p_logs.add_argument("--oldest", action="store_true", help="Sort by oldest first")
