@@ -422,6 +422,26 @@ def cmd_logs(args) -> int:
         conditions.append("c.started_at < ?")
         params.append(args.before)
 
+    if args.search:
+        conditions.append(
+            "c.id IN (SELECT conversation_id FROM content_fts WHERE content_fts MATCH ?)"
+        )
+        params.append(args.search)
+
+    if args.tool:
+        conditions.append(
+            "c.id IN (SELECT tc.conversation_id FROM tool_calls tc"
+            " JOIN tools t ON t.id = tc.tool_id WHERE t.name = ?)"
+        )
+        params.append(args.tool)
+
+    if args.label:
+        conditions.append(
+            "c.id IN (SELECT cl.conversation_id FROM conversation_labels cl"
+            " JOIN labels lb ON lb.id = cl.label_id WHERE lb.name = ?)"
+        )
+        params.append(args.label)
+
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     # Sort direction (--oldest overrides --latest default)
@@ -470,7 +490,28 @@ def cmd_logs(args) -> int:
         return 1
 
     if not rows:
-        print("No conversations found.")
+        if not args.json:
+            print("No conversations found.")
+        else:
+            print("[]")
+        conn.close()
+        return 0
+
+    # JSON output
+    if args.json:
+        import json
+        out = []
+        for row in rows:
+            out.append({
+                "workspace": row["workspace"],
+                "model": row["model"],
+                "started_at": row["started_at"],
+                "prompts": row["prompts"],
+                "responses": row["responses"],
+                "tokens": row["tokens"],
+                "cost": row["cost"],
+            })
+        print(json.dumps(out, indent=2))
         conn.close()
         return 0
 
@@ -599,6 +640,10 @@ def main(argv=None) -> int:
     p_logs.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
     p_logs.add_argument("--since", metavar="DATE", help="Conversations started after this date (ISO or YYYY-MM-DD)")
     p_logs.add_argument("--before", metavar="DATE", help="Conversations started before this date")
+    p_logs.add_argument("-q", "--search", metavar="QUERY", help="Full-text search (FTS5 syntax)")
+    p_logs.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
+    p_logs.add_argument("-l", "--label", metavar="NAME", help="Filter by label name")
+    p_logs.add_argument("--json", action="store_true", help="Output as JSON array")
     p_logs.set_defaults(func=cmd_logs)
 
     # backfill
