@@ -1,0 +1,59 @@
+{
+  "groups": [
+    {
+      "name": "conceptual",
+      "description": "Queries about ideas, patterns, and design philosophy",
+      "queries": [
+        "separation of concerns between parsing and storage layers",
+        "when to use composition vs inheritance for plugin systems",
+        "normalized schema design for variable metadata",
+        "query-time computation vs materialized/precomputed values",
+        "adapter pattern for isolating format-specific logic"
+      ]
+    },
+    {
+      "name": "philosophical",
+      "description": "Queries about decision-making, trade-offs, and reasoning about why",
+      "queries": [
+        "why store approximate cost instead of exact billing amounts",
+        "why prefer user-defined SQL over a built-in query API",
+        "trade-offs of adding nullable columns vs key-value attribute tables",
+        "why defer automation until usage patterns emerge",
+        "why use ULIDs instead of auto-increment or UUIDs"
+      ]
+    },
+    {
+      "name": "technical",
+      "description": "Queries about specific technologies, implementations, and APIs",
+      "queries": [
+        "FTS5 full-text search indexing for conversation content",
+        "SQLite WAL mode and concurrent read performance",
+        "JSONL streaming parser for large log files",
+        "argparse subcommand pattern for CLI tools",
+        "cosine similarity for embedding-based semantic search"
+      ]
+    },
+    {
+      "name": "specific",
+      "description": "Queries targeting known features in this corpus",
+      "queries": [
+        "how tbd discovers and loads adapter plugins from the drop-in directory",
+        "FTS5 tokenizer configuration for searching conversation turns",
+        "model name parsing and token cost lookup logic",
+        "tool call canonicalization across different LLM providers",
+        "XDG base directory paths for config and data storage"
+      ]
+    },
+    {
+      "name": "exploratory",
+      "description": "Open-ended discovery queries, informal and recall-oriented",
+      "queries": [
+        "that conversation where we figured out the dedup strategy",
+        "something about entry points for plugin loading",
+        "how did we handle conversations that span multiple sessions",
+        "the part where cost tracking got complicated",
+        "when we talked about what fields to put in the schema vs attributes"
+      ]
+    }
+  ]
+}
