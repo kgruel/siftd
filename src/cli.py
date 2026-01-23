@@ -630,6 +630,7 @@ def cmd_logs(args) -> int:
 
     sql = f"""
         SELECT
+            c.id AS conversation_id,
             w.path AS workspace,
             (SELECT m2.name FROM responses r2
              LEFT JOIN models m2 ON m2.id = r2.model_id
@@ -675,6 +676,7 @@ def cmd_logs(args) -> int:
         out = []
         for row in rows:
             out.append({
+                "id": row["conversation_id"],
                 "workspace": row["workspace"],
                 "model": row["model"],
                 "started_at": row["started_at"],
@@ -687,44 +689,45 @@ def cmd_logs(args) -> int:
         conn.close()
         return 0
 
-    # Short mode: one dense line per conversation
-    if args.short:
+    # Verbose mode: full table with all columns
+    if args.verbose:
+        columns = ["id", "workspace", "model", "started_at", "prompts", "responses", "tokens", "cost"]
+        str_rows = []
         for row in rows:
+            cid = row["conversation_id"][:12] if row["conversation_id"] else ""
             ws = Path(row["workspace"]).name if row["workspace"] else ""
             model = row["model"] or ""
             started = row["started_at"][:16].replace("T", " ") if row["started_at"] else ""
-            prompts = row["prompts"]
-            responses = row["responses"]
-            tokens = _fmt_tokens(row["tokens"])
-            print(f"{started}  {ws}  {model}  {prompts}p/{responses}r  {tokens} tok")
+            prompts = str(row["prompts"])
+            responses = str(row["responses"])
+            tokens = str(row["tokens"])
+            cost = f"${row['cost']:.4f}" if row["cost"] else "$0.0000"
+            str_rows.append([cid, ws, model, started, prompts, responses, tokens, cost])
+
+        # Compute column widths and print table
+        widths = [len(c) for c in columns]
+        for str_row in str_rows:
+            for i, val in enumerate(str_row):
+                widths[i] = max(widths[i], len(val))
+
+        header = "  ".join(c.ljust(widths[i]) for i, c in enumerate(columns))
+        print(header)
+        print("  ".join("-" * w for w in widths))
+        for str_row in str_rows:
+            print("  ".join(val.ljust(widths[i]) for i, val in enumerate(str_row)))
         conn.close()
         return 0
 
-    # Format rows for display
-    columns = ["workspace", "model", "started_at", "prompts", "responses", "tokens", "cost"]
-    str_rows = []
+    # Default: short mode — one dense line per conversation with truncated ID
     for row in rows:
+        cid = row["conversation_id"][:12] if row["conversation_id"] else ""
         ws = Path(row["workspace"]).name if row["workspace"] else ""
         model = row["model"] or ""
-        # Format started_at: date + time, no seconds
         started = row["started_at"][:16].replace("T", " ") if row["started_at"] else ""
-        prompts = str(row["prompts"])
-        responses = str(row["responses"])
-        tokens = str(row["tokens"])
-        cost = f"${row['cost']:.4f}" if row["cost"] else "$0.0000"
-        str_rows.append([ws, model, started, prompts, responses, tokens, cost])
-
-    # Compute column widths and print table
-    widths = [len(c) for c in columns]
-    for str_row in str_rows:
-        for i, val in enumerate(str_row):
-            widths[i] = max(widths[i], len(val))
-
-    header = "  ".join(c.ljust(widths[i]) for i, c in enumerate(columns))
-    print(header)
-    print("  ".join("-" * w for w in widths))
-    for str_row in str_rows:
-        print("  ".join(val.ljust(widths[i]) for i, val in enumerate(str_row)))
+        prompts = row["prompts"]
+        responses = row["responses"]
+        tokens = _fmt_tokens(row["tokens"])
+        print(f"{cid}  {started}  {ws}  {model}  {prompts}p/{responses}r  {tokens} tok")
 
     conn.close()
     return 0
@@ -819,7 +822,7 @@ def main(argv=None) -> int:
     # logs
     p_logs = subparsers.add_parser("logs", help="List conversations with filters")
     p_logs.add_argument("conversation_id", nargs="?", help="Show detail for a specific conversation ID")
-    p_logs.add_argument("-s", "--short", action="store_true", help="One dense line per conversation")
+    p_logs.add_argument("-v", "--verbose", action="store_true", help="Full table with all columns")
     p_logs.add_argument("-n", "--count", type=int, default=10, help="Number of conversations to show (0=all, default: 10)")
     p_logs.add_argument("--latest", action="store_true", default=True, help="Sort by newest first (default)")
     p_logs.add_argument("--oldest", action="store_true", help="Sort by oldest first")
