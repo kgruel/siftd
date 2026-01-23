@@ -6,26 +6,40 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ### What exists
 - **Domain model**: `Conversation → Prompt → Response → ToolCall` dataclass tree (`src/domain/`)
-- **Two adapters**: `claude_code` (file dedup), `gemini_cli` (session dedup), both with model extraction
+- **Three adapters**: `claude_code` (file dedup), `gemini_cli` (session dedup), `codex_cli` (file dedup)
+- **Adapter plugin system**: built-in + drop-in (`~/.config/tbd/adapters/*.py`) + entry points (`tbd.adapters`)
 - **Ingestion**: orchestration layer with adapter-controlled dedup, `--path` for custom dirs
-- **Storage**: SQLite with 19-table schema, ULIDs, schemaless attributes
-- **Tool canonicalization**: 15 canonical tools (`file.read`, `shell.execute`, etc.), cross-harness aliases
+- **Storage**: SQLite with schema, ULIDs, schemaless attributes
+- **Tool canonicalization**: 15+ canonical tools (`file.read`, `shell.execute`, etc.), cross-harness aliases
 - **Model parsing**: raw names decomposed into family/version/variant/creator/released
-- **FTS5**: full-text search on prompt+response text content (~45k rows indexed)
-- **Query runner**: `.sql` files in `~/.config/tbd/queries/`, `$var` substitution
-- **CLI**: `ingest`, `status`, `search`, `queries`, `path`
-- **XDG paths**: data `~/.local/share/tbd`, config `~/.config/tbd`, queries `~/.config/tbd/queries`
+- **Provider tracking**: derived from adapter's `HARNESS_SOURCE`, populated on responses during ingestion
+- **Cache tokens**: `cache_creation_input_tokens`, `cache_read_input_tokens` extracted into `response_attributes`
+- **Cost tracking**: flat `pricing` table (model+provider → rates), approximate cost via query-time JOIN
+- **Labels**: manual labeling via CLI (`tbd label`), conversation and workspace scopes
+- **FTS5**: full-text search on prompt+response text content
+- **Semantic search**: `tbd ask` — embeddings in separate SQLite DB, Ollama/fastembed backends, incremental indexing
+- **Logs command**: composable conversation browser with filters, drill-down, and multiple output formats
+  - Filters: `-w` workspace, `-m` model, `-t` tool, `-l` label, `-q` FTS5 search, `--since`/`--before`
+  - Output: default (short, one-line with truncated ID), `-v` (full table), `--json`
+  - Drill-down: `tbd logs <id>` shows conversation timeline (prompts, responses, tool calls)
+  - IDs: 12-char prefix, copy-pasteable for drill-down
+- **Query runner**: `.sql` files in `~/.config/tbd/queries/`, `$var` substitution, missing var detection
+- **CLI**: `ingest`, `status`, `search`, `logs`, `queries`, `label`, `labels`, `backfill`, `path`, `ask`
+- **XDG paths**: data `~/.local/share/tbd`, config `~/.config/tbd`, queries `~/.config/tbd/queries`, adapters `~/.config/tbd/adapters`
 
 ### Data (current ingestion)
-- 5,258 conversations, 135k responses, 68k tool calls
-- ~656MB database at `~/.local/share/tbd/tbd.db`
-- Models: 80% Opus 4.5, 14% Haiku 4.5, 4.5% Sonnet 4.5, plus Gemini 3 pro/flash
-- Top workspace: `gruel.network` at 61M tokens
+- ~5,289 conversations, 135k+ responses, 68k+ tool calls across 270+ workspaces
+- ~710MB database at `~/.local/share/tbd/tbd.db`
+- Harnesses: Claude Code (Anthropic), Codex CLI (OpenAI), Gemini CLI (Google)
+- Models: Opus 4.5, Haiku 4.5, Sonnet 4.5, Gemini 3 pro/flash, GPT-5.2
+- Top workspace: `gruel.network` (~700 conversations, 68M tokens)
 
 ### Files
 ```
 tbd-v2/
 ├── tbd                         # CLI entry point
+├── queries/
+│   └── cost.sql                # Approximate cost by workspace
 ├── src/
 │   ├── cli.py                  # argparse commands
 │   ├── paths.py                # XDG directory handling
@@ -35,77 +49,26 @@ tbd-v2/
 │   │   ├── protocols.py        # Adapter/Storage protocols
 │   │   └── source.py           # Source(kind, location, metadata)
 │   ├── adapters/
-│   │   ├── claude_code.py      # JSONL parser, TOOL_ALIASES, discover()
+│   │   ├── __init__.py         # Adapter exports
+│   │   ├── registry.py         # Plugin discovery (built-in + drop-in + entry points)
+│   │   ├── claude_code.py      # JSONL parser, TOOL_ALIASES, cache token extraction
+│   │   ├── codex_cli.py        # JSONL parser, OpenAI Codex sessions
 │   │   └── gemini_cli.py       # JSON parser, session dedup, discover()
+│   ├── embeddings/
+│   │   ├── __init__.py         # Re-exports get_backend
+│   │   ├── base.py             # EmbeddingBackend protocol + fallback chain resolver
+│   │   ├── ollama_backend.py   # Local Ollama embedding models
+│   │   └── fastembed_backend.py # Local ONNX inference via fastembed
 │   ├── ingestion/
 │   │   ├── discovery.py        # discover_all()
 │   │   └── orchestration.py    # ingest_all(), IngestStats, dedup strategies
 │   └── storage/
-│       ├── schema.sql          # Full schema + FTS5 virtual table
-│       └── sqlite.py           # All DB operations, commit=False default
+│       ├── schema.sql          # Full schema + FTS5 + pricing table
+│       ├── sqlite.py           # All DB operations, backfills, label functions
+│       └── embeddings.py       # Embeddings DB schema + cosine similarity search
 └── tests/
     └── test_models.py          # Model name parsing tests
 ```
-
----
-
-## Open: Cost/Pricing Design
-
-### Context
-We have model + token counts per response. We want "how much did workspace X cost?"
-
-### What's settled
-- Cost is query-time computation (not stored enrichment)
-- Provider per response is derivable from adapter's `HARNESS_SOURCE`
-- `responses.provider_id` exists in schema but isn't populated yet
-- Pricing data is user-provided (you know your billing arrangement)
-
-### Proposed pricing table
-```sql
-CREATE TABLE pricing (
-    id TEXT PRIMARY KEY,
-    model_id TEXT NOT NULL REFERENCES models(id),
-    provider_id TEXT NOT NULL REFERENCES providers(id),
-    effective_date TEXT NOT NULL,
-    input_per_mtok REAL,
-    output_per_mtok REAL,
-    cache_read_per_mtok REAL,
-    cache_creation_per_mtok REAL,
-    UNIQUE (model_id, provider_id, effective_date)
-);
-```
-
-### Unresolved
-User expressed "not sure this fits for me." Tension points:
-
-1. **Is per-token pricing the right model?** The user's billing may be subscription/credits, not pure per-token. Token-level costing may be meaningless in that context.
-
-2. **Provider axis complexity**: For direct API usage (Claude Code → Anthropic, Gemini CLI → Google), provider is trivially known. The `(model_id, provider_id)` key adds generality for OpenRouter/proxy cases that may not apply.
-
-3. **Temporal dimension**: `effective_date` handles price changes over time. But has Anthropic pricing changed enough to justify this? Maybe a single rate per model is sufficient.
-
-4. **Cache tokens**: Separate pricing for cache_read vs cache_creation adds precision but also complexity. The adapter doesn't extract these yet (would go in response_attributes).
-
-### Questions to resolve next session
-- Is per-response cost actually useful, or is "monthly spend by model" sufficient?
-- Does the user pay per-token at all? (Subscription vs API billing)
-- Should pricing just be a flat lookup (model → input_rate, output_rate) without provider/temporal dims?
-- Should we start with attributes-based approach (store cost as computed attribute) for flexibility?
-
----
-
-## Other Open Threads
-
-| Thread | Status | Notes |
-|--------|--------|-------|
-| `providers` table | Schema exists, not populated | Needs adapter to set provider_id on responses |
-| `*_attributes` tables | Purpose clarified | For cache tokens, provider-specific metadata |
-| `labels` / `*_labels` | Schema exists, no write path | Future: manual or auto-classification |
-| `workspaces.git_remote` | Column exists, empty | Could resolve via `git remote -v` |
-| Queries UX | TODO in code | Unsubstituted `$vars` produce confusing errors |
-| More adapters | Future | Codex CLI, Copilot, Cursor, Aider |
-| Cache token extraction | Designed, not built | `response_attributes` with scope="provider" |
-| `tbd enrich` | Only justified for expensive ops | Auto-labeling (LLM), not arithmetic |
 
 ---
 
@@ -114,16 +77,42 @@ User expressed "not sure this fits for me." Tension points:
 | Decision | Rationale |
 |----------|-----------|
 | `commit=False` default | Caller controls transaction boundaries |
-| Adapter-controlled dedup | Claude=file (one convo per file), Gemini=session (latest wins) |
+| Adapter-controlled dedup | Claude/Codex=file (one convo per file), Gemini=session (latest wins) |
+| Adapters pluggable, storage not | Adapters are plural and stateless; storage is the gravity well (SQL files, FTS5, attributes) |
+| Module-level adapter conventions | Adapters are stateless parsers — constants + functions, no class instantiation needed |
+| Hybrid plugin discovery | Drop-in dir for iteration, entry points for packaging — same pattern as queries |
 | Domain objects as dataclasses | Simple, no ORM, protocol-based interfaces |
 | FTS5 for text search | Native SQLite, no deps, prompt+response text only (skip thinking/tool_use) |
+| Embeddings in separate DB | Expensive to compute, treat as persistent derived data, keep main DB clean |
+| Brute-force cosine similarity | Correct first; ANN (faiss/hnswlib) only if corpus grows past ~100k chunks |
+| Ollama → fastembed fallback | Prefer what's already running; fastembed as zero-config local fallback |
 | Queries as .sql files | User-extensible, `string.Template` for var substitution |
 | Tool canonicalization | Aliases enable cross-harness queries, unknown tools still tracked |
 | Model parsing at ingest | Regex decomposition, structured fields enable family/variant queries |
 | Cost at query time | No stored redundancy, immediate price updates, pricing table JOIN |
 | Attributes for variable metadata | Avoids schema sprawl for provider-specific fields |
+| Approximate cost, labeled explicitly | Flat pricing is useful now; precision deferred until billing context matters |
+| Manual labels first | Auto-classification deferred until usage patterns justify LLM cost |
+| `logs` as primary interface | Composable flags for 80% case, `queries` stays for power users (raw SQL) |
+| Short mode as default | Dense one-liners with IDs; verbose table via `-v` |
+| `search` folded into `logs -q` | FTS5 composes with other filters instead of being a separate command |
 
 ---
 
-*Updated: 2026-01-22*
+## Remaining Open Threads
+
+| Thread | Status | Notes |
+|--------|--------|-------|
+| `tbd ask` tuning | Next session | Needs manual testing — verify chunking, ranking, backend selection work in practice |
+| Pricing table migration | Open | Schema defines `pricing` table but it doesn't exist in live DB. Needs migration or re-create. |
+| `workspaces.git_remote` | Deferred | Could resolve via `git remote -v`. Not blocking queries yet. |
+| More adapters (Copilot, Cursor, Aider) | Ready | Plugin system means these can be drop-in `.py` files in `~/.config/tbd/adapters/` |
+| `tbd enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
+| Billing context | Deferred | API vs subscription per workspace. Needed for precise cost, not approximate. |
+
+See `ROADMAP.md` for phased priorities.
+
+---
+
+*Updated: 2026-01-23*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
