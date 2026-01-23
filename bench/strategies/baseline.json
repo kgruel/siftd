@@ -1,0 +1,10 @@
+{
+  "name": "baseline",
+  "description": "Current defaults: 20-char minimum, all chunk types, per-block granularity",
+  "goal": "Establish baseline metrics for comparison",
+  "params": {
+    "min_chars": 20,
+    "chunk_types": ["prompt", "response"],
+    "concat": false
+  }
+}

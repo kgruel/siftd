@@ -1,0 +1,10 @@
+{
+  "name": "concat-response",
+  "description": "Concatenate all text blocks within a response into one chunk, then apply 100-char minimum",
+  "goal": "Test if denser per-response embeddings improve discrimination vs per-block",
+  "params": {
+    "min_chars": 100,
+    "chunk_types": ["prompt", "response"],
+    "concat": true
+  }
+}

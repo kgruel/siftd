@@ -1,0 +1,10 @@
+{
+  "name": "min-100",
+  "description": "Raise minimum chunk length from 20 to 100 characters",
+  "goal": "Test whether filtering short filler chunks improves score discrimination",
+  "params": {
+    "min_chars": 100,
+    "chunk_types": ["prompt", "response"],
+    "concat": false
+  }
+}

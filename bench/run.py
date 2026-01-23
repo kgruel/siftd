@@ -289,9 +289,15 @@ def main():
         help="Path to main tbd.db (default: ~/.local/share/tbd/tbd.db)",
     )
     parser.add_argument(
+        "--strategy",
+        type=Path,
+        default=None,
+        help="Path to a strategy JSON file (provides label, goal, params)",
+    )
+    parser.add_argument(
         "--label",
-        required=True,
-        help="Label for this run (used in output filename)",
+        default=None,
+        help="Label for this run (used in output filename). Required if --strategy not given.",
     )
     parser.add_argument(
         "--goal",
@@ -307,6 +313,23 @@ def main():
     )
     args = parser.parse_args()
 
+    # Load strategy if provided
+    strategy = None
+    if args.strategy:
+        if not args.strategy.exists():
+            print(f"Error: strategy file not found: {args.strategy}", file=sys.stderr)
+            sys.exit(1)
+        with open(args.strategy) as f:
+            strategy = json.load(f)
+
+    # Resolve label (explicit --label overrides strategy)
+    label = args.label or (strategy["name"] if strategy else None)
+    if not label:
+        parser.error("--label is required when --strategy is not provided")
+
+    # Resolve goal (explicit --goal overrides strategy)
+    goal = args.goal or (strategy.get("goal") if strategy else None)
+
     # Validate paths
     for p in args.embed_dbs:
         if not p.exists():
@@ -316,8 +339,8 @@ def main():
         print(f"Error: main DB not found: {args.db}", file=sys.stderr)
         sys.exit(1)
 
-    # Parse --param key=value pairs
-    params = {}
+    # Resolve params: start from strategy, override with explicit --param
+    params = dict(strategy["params"]) if strategy and "params" in strategy else {}
     for p in args.param:
         if "=" not in p:
             print(f"Error: --param must be key=value, got: {p}", file=sys.stderr)
@@ -336,7 +359,7 @@ def main():
     # Build output path
     now = datetime.now(timezone.utc)
     timestamp_str = now.strftime("%Y%m%d_%H%M%S")
-    run_id = f"{timestamp_str}_{args.label}"
+    run_id = f"{timestamp_str}_{label}"
 
     runs_dir = Path(__file__).parent / "runs"
     runs_dir.mkdir(exist_ok=True)
@@ -354,8 +377,8 @@ def main():
     meta = {
         "id": run_id,
         "timestamp": now.isoformat(),
-        "label": args.label,
-        "goal": args.goal,
+        "label": label,
+        "goal": goal,
         "params": params,
         "embed_dbs": [str(p) for p in args.embed_dbs],
         "main_db": str(args.db),
