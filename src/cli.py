@@ -6,7 +6,7 @@ from pathlib import Path
 
 from adapters import claude_code, gemini_cli
 from ingestion import ingest_all, IngestStats
-from paths import db_path, ensure_dirs, data_dir
+from paths import db_path, ensure_dirs, data_dir, queries_dir
 from storage.sqlite import create_database, open_database, rebuild_fts_index, search_content
 
 # Available adapters
@@ -199,6 +199,93 @@ def cmd_search(args) -> int:
     return 0
 
 
+def cmd_queries(args) -> int:
+    """List or run .sql query files."""
+    from string import Template
+
+    qdir = queries_dir()
+
+    # List mode
+    if not args.name:
+        files = sorted(qdir.glob("*.sql"))
+        if not files:
+            print(f"No queries found in {qdir}")
+            return 0
+        for f in files:
+            print(f.stem)
+        return 0
+
+    # Run mode
+    sql_file = qdir / f"{args.name}.sql"
+    if not sql_file.exists():
+        print(f"Query not found: {sql_file}")
+        print(f"Available queries:")
+        for f in sorted(qdir.glob("*.sql")):
+            print(f"  {f.stem}")
+        return 1
+
+    sql = sql_file.read_text()
+
+    # Variable substitution
+    if args.var:
+        variables = {}
+        for v in args.var:
+            if "=" not in v:
+                print(f"Invalid --var format (expected key=value): {v}")
+                return 1
+            key, value = v.split("=", 1)
+            variables[key] = value
+        sql = Template(sql).safe_substitute(variables)
+    else:
+        sql = Template(sql).safe_substitute()
+
+    # Execute
+    db = db_path()
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'tbd ingest' to create it.")
+        return 1
+
+    import sqlite3
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+
+    try:
+        statements = [s.strip() for s in sql.split(";") if s.strip()]
+        last_rows = None
+        for stmt in statements:
+            cursor = conn.execute(stmt)
+            if cursor.description:
+                last_rows = (cursor.description, cursor.fetchall())
+
+        if last_rows:
+            desc, rows = last_rows
+            columns = [d[0] for d in desc]
+            # Compute column widths
+            widths = [len(c) for c in columns]
+            str_rows = []
+            for row in rows:
+                str_row = [str(v) if v is not None else "" for v in row]
+                str_rows.append(str_row)
+                for i, val in enumerate(str_row):
+                    widths[i] = max(widths[i], len(val))
+            # Print header
+            header = "  ".join(c.ljust(widths[i]) for i, c in enumerate(columns))
+            print(header)
+            print("  ".join("-" * w for w in widths))
+            for str_row in str_rows:
+                print("  ".join(val.ljust(widths[i]) for i, val in enumerate(str_row)))
+        else:
+            print("OK (no results)")
+    except sqlite3.Error as e:
+        print(f"SQL error: {e}")
+        return 1
+    finally:
+        conn.close()
+
+    return 0
+
+
 def _print_stats(stats: IngestStats) -> None:
     """Print ingestion statistics."""
     print(f"\n{'='*50}")
@@ -250,6 +337,12 @@ def main(argv=None) -> int:
     p_search.add_argument("-n", "--limit", type=int, default=20, help="Max results (default: 20)")
     p_search.add_argument("--rebuild", action="store_true", help="Rebuild FTS index before searching")
     p_search.set_defaults(func=cmd_search)
+
+    # queries
+    p_queries = subparsers.add_parser("queries", help="List or run .sql query files")
+    p_queries.add_argument("name", nargs="?", help="Query name to run (without .sql extension)")
+    p_queries.add_argument("--var", action="append", metavar="KEY=VALUE", help="Substitute $KEY with VALUE in SQL (repeatable)")
+    p_queries.set_defaults(func=cmd_queries)
 
     # path
     p_path = subparsers.add_parser("path", help="Show XDG paths")

@@ -35,6 +35,11 @@ def cache_dir() -> Path:
     return base / APP_NAME
 
 
+def queries_dir() -> Path:
+    """Return the queries directory (~/.config/tbd/queries)."""
+    return config_dir() / "queries"
+
+
 def db_path() -> Path:
     """Return the default database path."""
     return data_dir() / "tbd.db"
@@ -44,4 +49,5 @@ def ensure_dirs() -> None:
     """Create all XDG directories if they don't exist."""
     data_dir().mkdir(parents=True, exist_ok=True)
     config_dir().mkdir(parents=True, exist_ok=True)
+    queries_dir().mkdir(parents=True, exist_ok=True)
     cache_dir().mkdir(parents=True, exist_ok=True)
