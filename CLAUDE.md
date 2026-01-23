@@ -16,6 +16,12 @@ Core loop: **Ingest → Store → Query**
 4. **Adapters are the parsing boundary** — each adapter knows its raw format, dedup strategy, and provider source. Everything downstream is normalized.
 5. **Approximate is fine when labeled** — approximate cost is useful. Don't over-engineer precision until billing context demands it.
 
+## Branching
+
+- Work in a `wip/<topic>` branch during sessions. Handoff updates, test scaffolding, and iterative commits go here.
+- Subtask merges target `main` independently (they're isolated worktrees).
+- Merge/rebase WIP to main when the work is ready to ship.
+
 ## Conventions
 
 - `commit=False` default on storage functions; caller controls transaction boundaries

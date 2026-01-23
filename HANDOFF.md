@@ -18,6 +18,8 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Labels**: manual labeling via CLI (`tbd label`), conversation and workspace scopes
 - **FTS5**: full-text search on prompt+response text content
 - **Semantic search**: `tbd ask` — embeddings in separate SQLite DB, Ollama/fastembed backends, incremental indexing
+  - Explicit `--index`/`--rebuild` required (no auto-build)
+  - `--embed-db PATH` for alternate embeddings databases
 - **Logs command**: composable conversation browser with filters, drill-down, and multiple output formats
   - Filters: `-w` workspace, `-m` model, `-t` tool, `-l` label, `-q` FTS5 search, `--since`/`--before`
   - Output: default (short, one-line with truncated ID), `-v` (full table), `--json`
@@ -26,6 +28,12 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Query runner**: `.sql` files in `~/.config/tbd/queries/`, `$var` substitution, missing var detection
 - **CLI**: `ingest`, `status`, `search`, `logs`, `queries`, `label`, `labels`, `backfill`, `path`, `ask`
 - **XDG paths**: data `~/.local/share/tbd`, config `~/.config/tbd`, queries `~/.config/tbd/queries`, adapters `~/.config/tbd/adapters`
+
+### Benchmarking framework (`bench/`)
+- **Strategies**: `bench/strategies/*.json` — parameterized chunking/filtering configs (baseline, min-100, min-200-response-only, concat-response)
+- **Build**: `bench/build.py --strategy <file>` — builds embeddings DB per strategy, output to `~/.local/share/tbd/embeddings_<name>_<timestamp>.db`
+- **Runner**: `bench/run.py --strategy <file> <embed_db>...` — runs 25 queries, structured JSON output to `bench/runs/<timestamp>_<label>.json`
+- **Queries**: `bench/queries.json` — 25 queries across 5 groups (conceptual, philosophical, technical, specific, exploratory)
 
 ### Data (current ingestion)
 - ~5,289 conversations, 135k+ responses, 68k+ tool calls across 270+ workspaces
@@ -40,6 +48,14 @@ tbd-v2/
 ├── tbd                         # CLI entry point
 ├── queries/
 │   └── cost.sql                # Approximate cost by workspace
+├── bench/
+│   ├── queries.json            # 25 benchmark queries (5 groups)
+│   ├── run.py                  # Benchmark runner + comparison report
+│   ├── build.py                # Strategy-based embeddings DB builder
+│   ├── strategies/             # Strategy definitions (JSON)
+│   └── runs/                   # Benchmark output (gitignored)
+├── docs/
+│   └── adapter-research-reference.md  # Pointer to tbd-v1 research
 ├── src/
 │   ├── cli.py                  # argparse commands
 │   ├── paths.py                # XDG directory handling
@@ -96,6 +112,28 @@ tbd-v2/
 | `logs` as primary interface | Composable flags for 80% case, `queries` stays for power users (raw SQL) |
 | Short mode as default | Dense one-liners with IDs; verbose table via `-v` |
 | `search` folded into `logs -q` | FTS5 composes with other filters instead of being a separate command |
+| No auto-build on `ask` | Explicit `--index` required. Indexing is expensive, shouldn't surprise the user. |
+| WIP branches for sessions | Session work (handoff updates, tests, scratch) goes in `wip/*`, subtasks merge to main. |
+
+---
+
+## `tbd ask` Tuning — Status
+
+### Baseline results (43k chunks, bge-small-en-v1.5, 384-dim)
+- Avg score: 0.7486, variance: 0.001, spread: 0.029
+- Flat score distribution — system doesn't meaningfully discriminate between relevant and irrelevant
+- Specific vocabulary queries work well (XDG: 0.89, ULIDs: 0.85)
+- Broad/conceptual queries return LLM filler ("Let me check", "Perfect!")
+
+### Strategies under test
+| Strategy | Hypothesis | Status |
+|----------|-----------|--------|
+| `min-100` | Filtering short filler improves discrimination | Building |
+| `min-200-response-only` | Aggressive pruning produces best metrics | Building |
+| `concat-response` | Denser per-response embeddings improve matching | Building |
+
+### Open question
+If no strategy significantly improves variance/spread, the bottleneck is the embedding model (bge-small, 384-dim), not chunking. Next lever would be a larger model.
 
 ---
 
@@ -103,10 +141,11 @@ tbd-v2/
 
 | Thread | Status | Notes |
 |--------|--------|-------|
-| `tbd ask` tuning | Next session | Needs manual testing — verify chunking, ranking, backend selection work in practice |
+| `tbd ask` benchmark comparison | In progress | 3 strategy builds running, compare when done |
+| New adapters: Cline, Goose | In progress | Subtasks building adapters from tbd-v1 research specs |
+| New adapters: Cursor, Aider | In progress | Subtasks investigating format + building adapters |
 | Pricing table migration | Open | Schema defines `pricing` table but it doesn't exist in live DB. Needs migration or re-create. |
 | `workspaces.git_remote` | Deferred | Could resolve via `git remote -v`. Not blocking queries yet. |
-| More adapters (Copilot, Cursor, Aider) | Ready | Plugin system means these can be drop-in `.py` files in `~/.config/tbd/adapters/` |
 | `tbd enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
 | Billing context | Deferred | API vs subscription per workspace. Needed for precise cost, not approximate. |
 
