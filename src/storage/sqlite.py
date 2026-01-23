@@ -58,6 +58,7 @@ def open_database(db_path: Path) -> sqlite3.Connection:
         conn.commit()
 
     ensure_fts_table(conn)
+    ensure_pricing_table(conn)
     ensure_canonical_tools(conn)
     return conn
 
@@ -120,6 +121,22 @@ def get_or_create_model(conn: sqlite3.Connection, raw_name: str, **kwargs) -> st
     placeholders = ", ".join("?" * len(vals))
     col_names = ", ".join(cols)
     conn.execute(f"INSERT INTO models ({col_names}) VALUES ({placeholders})", vals)
+    return ulid
+
+
+def get_or_create_provider(conn: sqlite3.Connection, name: str, **kwargs) -> str:
+    """Get or create provider, return id (ULID)."""
+    cur = conn.execute("SELECT id FROM providers WHERE name = ?", (name,))
+    row = cur.fetchone()
+    if row:
+        return row["id"]
+
+    ulid = _ulid()
+    cols = ["id", "name"] + list(kwargs.keys())
+    vals = [ulid, name] + list(kwargs.values())
+    placeholders = ", ".join("?" * len(vals))
+    col_names = ", ".join(cols)
+    conn.execute(f"INSERT INTO providers ({col_names}) VALUES ({placeholders})", vals)
     return ulid
 
 
@@ -351,6 +368,11 @@ def store_conversation(conn: sqlite3.Connection, conversation: Conversation, *, 
 
     harness_id = get_or_create_harness(conn, conversation.harness.name, **harness_kwargs)
 
+    # Get or create provider (derived from harness source)
+    provider_id = None
+    if conversation.harness.source:
+        provider_id = get_or_create_provider(conn, conversation.harness.source)
+
     # Get or create workspace
     workspace_id = None
     if conversation.workspace_path:
@@ -404,7 +426,7 @@ def store_conversation(conn: sqlite3.Connection, conversation: Conversation, *, 
                 conversation_id=conversation_id,
                 prompt_id=prompt_id,
                 model_id=model_id,
-                provider_id=None,  # TODO: handle provider
+                provider_id=provider_id,
                 external_id=response.external_id,
                 timestamp=response.timestamp,
                 input_tokens=input_tokens,
@@ -577,6 +599,20 @@ def record_ingested_file(
 # =============================================================================
 
 
+def ensure_pricing_table(conn: sqlite3.Connection) -> None:
+    """Create the pricing table if it doesn't exist. Idempotent."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pricing (
+            id              TEXT PRIMARY KEY,
+            model_id        TEXT NOT NULL REFERENCES models(id),
+            provider_id     TEXT NOT NULL REFERENCES providers(id),
+            input_per_mtok  REAL,
+            output_per_mtok REAL,
+            UNIQUE (model_id, provider_id)
+        )
+    """)
+
+
 def ensure_fts_table(conn: sqlite3.Connection) -> None:
     """Create the FTS5 virtual table if it doesn't exist. Idempotent."""
     conn.execute("""
@@ -666,6 +702,38 @@ def backfill_models(conn: sqlite3.Connection) -> int:
              parsed["version"], parsed["variant"], parsed["released"], row["id"]),
         )
         updated += 1
+    conn.commit()
+    return updated
+
+
+def backfill_providers(conn: sqlite3.Connection) -> int:
+    """Backfill provider_id on responses where it's NULL.
+
+    Derives provider from the conversation's harness source field.
+    Returns count of rows updated.
+    """
+    # Get harness name → source mapping
+    cur = conn.execute("SELECT id, name, source FROM harnesses WHERE source IS NOT NULL")
+    harness_rows = cur.fetchall()
+    if not harness_rows:
+        return 0
+
+    updated = 0
+    for harness_row in harness_rows:
+        harness_id = harness_row["id"]
+        source = harness_row["source"]
+        provider_id = get_or_create_provider(conn, source)
+
+        # Update responses that belong to conversations from this harness
+        cur = conn.execute("""
+            UPDATE responses SET provider_id = ?
+            WHERE provider_id IS NULL
+              AND conversation_id IN (
+                  SELECT id FROM conversations WHERE harness_id = ?
+              )
+        """, (provider_id, harness_id))
+        updated += cur.rowcount
+
     conn.commit()
     return updated
 

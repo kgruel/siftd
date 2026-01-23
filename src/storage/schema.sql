@@ -61,6 +61,16 @@ CREATE TABLE tool_aliases (
 CREATE INDEX idx_tool_aliases_tool ON tool_aliases(tool_id);
 CREATE INDEX idx_tool_aliases_harness ON tool_aliases(harness_id);
 
+-- Flat pricing lookup for approximate cost computation
+CREATE TABLE pricing (
+    id              TEXT PRIMARY KEY,           -- ULID
+    model_id        TEXT NOT NULL REFERENCES models(id),
+    provider_id     TEXT NOT NULL REFERENCES providers(id),
+    input_per_mtok  REAL,                       -- $ per million input tokens
+    output_per_mtok REAL,                       -- $ per million output tokens
+    UNIQUE (model_id, provider_id)
+);
+
 -- Physical paths where work happens
 CREATE TABLE workspaces (
     id              TEXT PRIMARY KEY,           -- ULID
