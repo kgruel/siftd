@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 from domain import Conversation, ContentBlock
+from models import parse_model_name
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
@@ -96,16 +97,25 @@ def get_or_create_workspace(conn: sqlite3.Connection, path: str, discovered_at: 
 
 
 def get_or_create_model(conn: sqlite3.Connection, raw_name: str, **kwargs) -> str:
-    """Get or create model, return id (ULID)."""
+    """Get or create model, return id (ULID).
+
+    On creation, parses raw_name into structured fields (name, creator,
+    family, version, variant, released) using parse_model_name().
+    Explicit kwargs override parsed values.
+    """
     cur = conn.execute("SELECT id FROM models WHERE raw_name = ?", (raw_name,))
     row = cur.fetchone()
     if row:
         return row["id"]
 
+    parsed = parse_model_name(raw_name)
+    # Explicit kwargs override parsed values
+    parsed.update(kwargs)
+
     ulid = _ulid()
-    name = kwargs.pop("name", raw_name)
-    cols = ["id", "raw_name", "name"] + list(kwargs.keys())
-    vals = [ulid, raw_name, name] + list(kwargs.values())
+    cols = ["id", "raw_name", "name", "creator", "family", "version", "variant", "released"]
+    vals = [ulid, raw_name, parsed["name"], parsed["creator"], parsed["family"],
+            parsed["version"], parsed["variant"], parsed["released"]]
     placeholders = ", ".join("?" * len(vals))
     col_names = ", ".join(cols)
     conn.execute(f"INSERT INTO models ({col_names}) VALUES ({placeholders})", vals)
@@ -578,6 +588,34 @@ def insert_fts_content(
         "INSERT INTO content_fts (text_content, content_id, side, conversation_id) VALUES (?, ?, ?, ?)",
         (text, content_id, side, conversation_id),
     )
+
+
+def backfill_models(conn: sqlite3.Connection) -> int:
+    """Backfill parsed fields for existing model rows with NULL fields.
+
+    Updates rows where creator/family/version/variant are NULL.
+    Returns count of rows updated.
+    """
+    cur = conn.execute(
+        "SELECT id, raw_name FROM models WHERE creator IS NULL OR family IS NULL"
+    )
+    rows = cur.fetchall()
+    updated = 0
+    for row in rows:
+        parsed = parse_model_name(row["raw_name"])
+        # Skip if parsing produced no useful info (fallback case)
+        if parsed["creator"] is None:
+            continue
+        conn.execute(
+            """UPDATE models
+               SET name = ?, creator = ?, family = ?, version = ?, variant = ?, released = ?
+               WHERE id = ?""",
+            (parsed["name"], parsed["creator"], parsed["family"],
+             parsed["version"], parsed["variant"], parsed["released"], row["id"]),
+        )
+        updated += 1
+    conn.commit()
+    return updated
 
 
 def search_content(
