@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from adapters import cline, claude_code, codex_cli, gemini_cli
+from adapters import cline, claude_code, codex_cli, gemini_cli, goose
 
 # Required module-level attributes for a valid adapter
 _REQUIRED_ATTRS = {
@@ -46,7 +46,7 @@ def _validate_adapter(module: ModuleType, origin: str) -> str | None:
 
 def load_builtin_adapters() -> list:
     """Return the built-in adapter modules."""
-    return [claude_code, cline, codex_cli, gemini_cli]
+    return [claude_code, cline, codex_cli, gemini_cli, goose]
 
 
 def load_dropin_adapters(path: Path) -> list:
