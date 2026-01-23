@@ -6,6 +6,7 @@ import json
 import sqlite3
 import struct
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -67,13 +68,15 @@ def load_queries(bench_dir: Path) -> dict:
         return json.load(f)
 
 
-def run_benchmark(embed_db_paths: list[Path], main_db_path: Path) -> dict:
+def get_chunk_count(db_path: Path) -> int:
+    conn = sqlite3.connect(db_path)
+    count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    conn.close()
+    return count
+
+
+def run_benchmark(embed_db_paths: list[Path], main_db_path: Path, backend) -> dict:
     """Run all queries against all embed DBs, return full results."""
-    from embeddings.fastembed_backend import FastEmbedBackend
-
-    print("Initializing embedding model...", file=sys.stderr)
-    backend = FastEmbedBackend()
-
     bench_dir = Path(__file__).parent
     query_data = load_queries(bench_dir)
 
@@ -94,7 +97,6 @@ def run_benchmark(embed_db_paths: list[Path], main_db_path: Path) -> dict:
                 query_embedding = backend.embed_one(query_text)
                 results = search_similar(conn, query_embedding, limit=10)
                 results = enrich_results(results, main_db)
-                # Store with snippet
                 for r in results:
                     r["text_snippet"] = r["text"][:150]
                 db_results[query_text] = results
@@ -106,6 +108,98 @@ def run_benchmark(embed_db_paths: list[Path], main_db_path: Path) -> dict:
     return {"groups": query_data["groups"], "results": all_results}
 
 
+def build_structured_output(data: dict, meta: dict) -> dict:
+    """Build the structured JSON output from raw benchmark data."""
+    groups = data["groups"]
+    results = data["results"]
+    db_labels = list(results.keys())
+
+    # Build summary.by_db
+    by_db = {}
+    for label in db_labels:
+        all_scores = []
+        top1_scores = []
+        top5_scores = []
+        for query_text, query_results in results[label].items():
+            for r in query_results:
+                all_scores.append(r["score"])
+            if query_results:
+                top1_scores.append(query_results[0]["score"])
+                top5_avg = sum(r["score"] for r in query_results[:5]) / min(5, len(query_results))
+                top5_scores.append(top5_avg)
+
+        avg = sum(all_scores) / len(all_scores) if all_scores else 0
+        variance = (sum((s - avg) ** 2 for s in all_scores) / len(all_scores)) if all_scores else 0
+        avg_top1 = sum(top1_scores) / len(top1_scores) if top1_scores else 0
+        avg_top5 = sum(top5_scores) / len(top5_scores) if top5_scores else 0
+        avg_top10 = sum(
+            sum(r["score"] for r in qr) / len(qr)
+            for qr in results[label].values() if qr
+        ) / max(1, sum(1 for qr in results[label].values() if qr))
+        spread = avg_top1 - avg_top10
+
+        by_db[label] = {
+            "avg_score": round(avg, 6),
+            "variance": round(variance, 8),
+            "spread": round(spread, 6),
+            "avg_top1": round(avg_top1, 6),
+            "avg_top5": round(avg_top5, 6),
+        }
+
+    # Build groups with per-query results
+    output_groups = []
+    for group in groups:
+        group_summary = {}
+        for label in db_labels:
+            t1_scores = []
+            t5_scores = []
+            for query_text in group["queries"]:
+                qr = results[label].get(query_text, [])
+                if qr:
+                    t1_scores.append(qr[0]["score"])
+                    t5_avg = sum(r["score"] for r in qr[:5]) / min(5, len(qr))
+                    t5_scores.append(t5_avg)
+            group_summary[label] = {
+                "avg_top1": round(sum(t1_scores) / len(t1_scores), 6) if t1_scores else 0,
+                "avg_top5": round(sum(t5_scores) / len(t5_scores), 6) if t5_scores else 0,
+            }
+
+        output_queries = []
+        for query_text in group["queries"]:
+            query_results_by_db = {}
+            for label in db_labels:
+                qr = results[label].get(query_text, [])
+                query_results_by_db[label] = [
+                    {
+                        "rank": i + 1,
+                        "score": round(r["score"], 6),
+                        "conversation_id": r["conversation_id"],
+                        "chunk_type": r["chunk_type"],
+                        "text_snippet": r["text_snippet"],
+                        "started_at": r.get("started_at"),
+                        "workspace": Path(r["workspace_path"]).name if r.get("workspace_path") else None,
+                    }
+                    for i, r in enumerate(qr)
+                ]
+            output_queries.append({
+                "text": query_text,
+                "results": query_results_by_db,
+            })
+
+        output_groups.append({
+            "name": group["name"],
+            "description": group["description"],
+            "summary": group_summary,
+            "queries": output_queries,
+        })
+
+    return {
+        "meta": meta,
+        "summary": {"by_db": by_db},
+        "groups": output_groups,
+    }
+
+
 def print_comparison(data: dict) -> None:
     """Print comparison report to stdout."""
     groups = data["groups"]
@@ -114,7 +208,6 @@ def print_comparison(data: dict) -> None:
 
     col_width = max(40, max(len(l) for l in db_labels) + 4)
 
-    # Per-query sections
     for group in groups:
         print(f"\n{'=' * 80}")
         print(f"  {group['name']}: {group['description']}")
@@ -126,11 +219,9 @@ def print_comparison(data: dict) -> None:
             print(f"\n  Q: {query_text}")
             print(f"  {'-' * 76}")
 
-            # Header
             header = "  " + "".join(label.ljust(col_width) for label in db_labels)
             print(header)
 
-            # Show top-5 side by side
             for rank in range(5):
                 parts = []
                 for label in db_labels:
@@ -144,7 +235,6 @@ def print_comparison(data: dict) -> None:
                         parts.append(" " * col_width)
                 print("  " + "".join(parts))
 
-            # Collect group scores
             for label in db_labels:
                 query_results = results[label].get(query_text, [])
                 if query_results:
@@ -152,7 +242,6 @@ def print_comparison(data: dict) -> None:
                     top5_avg = sum(r["score"] for r in query_results[:5]) / min(5, len(query_results))
                     group_scores[label]["top5"].append(top5_avg)
 
-        # Per-group summary
         print(f"\n  Group Summary: {group['name']}")
         print(f"  {'DB':<{col_width - 2}} {'Avg Top-1':<12} {'Avg Top-5':<12}")
         for label in db_labels:
@@ -162,7 +251,6 @@ def print_comparison(data: dict) -> None:
             avg_t5 = sum(t5) / len(t5) if t5 else 0
             print(f"  {label:<{col_width - 2}} {avg_t1:<12.4f} {avg_t5:<12.4f}")
 
-    # Overall summary
     print(f"\n{'=' * 80}")
     print("  OVERALL SUMMARY")
     print(f"{'=' * 80}")
@@ -200,6 +288,23 @@ def main():
         default=Path.home() / ".local/share/tbd/tbd.db",
         help="Path to main tbd.db (default: ~/.local/share/tbd/tbd.db)",
     )
+    parser.add_argument(
+        "--label",
+        required=True,
+        help="Label for this run (used in output filename)",
+    )
+    parser.add_argument(
+        "--goal",
+        default=None,
+        help="Free text describing what this run tests",
+    )
+    parser.add_argument(
+        "--param",
+        action="append",
+        default=[],
+        metavar="key=value",
+        help="Strategy parameter (repeatable), e.g. --param min_chars=100",
+    )
     args = parser.parse_args()
 
     # Validate paths
@@ -211,33 +316,64 @@ def main():
         print(f"Error: main DB not found: {args.db}", file=sys.stderr)
         sys.exit(1)
 
-    data = run_benchmark(args.embed_dbs, args.db)
+    # Parse --param key=value pairs
+    params = {}
+    for p in args.param:
+        if "=" not in p:
+            print(f"Error: --param must be key=value, got: {p}", file=sys.stderr)
+            sys.exit(1)
+        key, value = p.split("=", 1)
+        params[key] = value
 
-    # Dump full results
+    # Initialize backend
+    from embeddings.fastembed_backend import FastEmbedBackend
+    print("Initializing embedding model...", file=sys.stderr)
+    backend = FastEmbedBackend()
+
+    # Run benchmark
+    data = run_benchmark(args.embed_dbs, args.db, backend)
+
+    # Build output path
+    now = datetime.now(timezone.utc)
+    timestamp_str = now.strftime("%Y%m%d_%H%M%S")
+    run_id = f"{timestamp_str}_{args.label}"
+
+    runs_dir = Path(__file__).parent / "runs"
+    runs_dir.mkdir(exist_ok=True)
+    output_path = runs_dir / f"{run_id}.json"
+
+    # Build meta
     bench_dir = Path(__file__).parent
-    results_path = bench_dir / "results.json"
-    # Serialize without full text (just snippets)
-    dump_data = {}
-    for label, queries in data["results"].items():
-        dump_data[label] = {}
-        for query_text, query_results in queries.items():
-            dump_data[label][query_text] = [
-                {
-                    "score": r["score"],
-                    "conversation_id": r["conversation_id"],
-                    "chunk_type": r["chunk_type"],
-                    "text_snippet": r["text_snippet"],
-                    "started_at": r.get("started_at"),
-                    "workspace_path": r.get("workspace_path"),
-                }
-                for r in query_results
-            ]
-    with open(results_path, "w") as f:
-        json.dump(dump_data, f, indent=2)
-    print(f"Full results written to: {results_path}", file=sys.stderr)
+    query_data = load_queries(bench_dir)
+    query_count = sum(len(g["queries"]) for g in query_data["groups"])
 
-    # Print comparison report
+    total_chunks = {}
+    for db_path in args.embed_dbs:
+        total_chunks[str(db_path)] = get_chunk_count(db_path)
+
+    meta = {
+        "id": run_id,
+        "timestamp": now.isoformat(),
+        "label": args.label,
+        "goal": args.goal,
+        "params": params,
+        "embed_dbs": [str(p) for p in args.embed_dbs],
+        "main_db": str(args.db),
+        "backend": f"FastEmbed ({backend.model_name})" if hasattr(backend, "model_name") else "FastEmbed",
+        "query_count": query_count,
+        "total_chunks": total_chunks,
+    }
+
+    # Build and write structured output
+    structured = build_structured_output(data, meta)
+    with open(output_path, "w") as f:
+        json.dump(structured, f, indent=2)
+
+    # Print comparison report to stdout
     print_comparison(data)
+
+    # Print output path
+    print(f"\nResults written to: {output_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

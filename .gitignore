@@ -1,4 +1,4 @@
 __pycache__/
 *.pyc
 .subtask/
-bench/results.json
+bench/runs/
