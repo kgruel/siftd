@@ -383,6 +383,127 @@ def cmd_labels(args) -> int:
     return 0
 
 
+def cmd_logs(args) -> int:
+    """List conversations with composable filters."""
+    db = Path(args.db) if args.db else db_path()
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'tbd ingest' to create it.")
+        return 1
+
+    import sqlite3
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+
+    # Check if pricing table exists
+    has_pricing = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pricing'"
+    ).fetchone()[0] > 0
+
+    # Build WHERE clauses
+    conditions = []
+    params = []
+
+    if args.workspace:
+        conditions.append("w.path LIKE ?")
+        params.append(f"%{args.workspace}%")
+
+    if args.model:
+        conditions.append("(m.raw_name LIKE ? OR m.name LIKE ?)")
+        params.append(f"%{args.model}%")
+        params.append(f"%{args.model}%")
+
+    if args.since:
+        conditions.append("c.started_at >= ?")
+        params.append(args.since)
+
+    if args.before:
+        conditions.append("c.started_at < ?")
+        params.append(args.before)
+
+    where = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+    # Sort direction (--oldest overrides --latest default)
+    order = "ASC" if args.oldest else "DESC"
+
+    # Limit
+    limit_clause = f"LIMIT {args.count}" if args.count > 0 else ""
+
+    cost_expr = """ROUND(SUM(
+                COALESCE(r.input_tokens, 0) * COALESCE(pr.input_per_mtok, 0)
+                + COALESCE(r.output_tokens, 0) * COALESCE(pr.output_per_mtok, 0)
+            ) / 1000000.0, 4)""" if has_pricing else "NULL"
+    pricing_join = "LEFT JOIN pricing pr ON pr.model_id = r.model_id AND pr.provider_id = r.provider_id" if has_pricing else ""
+
+    sql = f"""
+        SELECT
+            w.path AS workspace,
+            (SELECT m2.name FROM responses r2
+             LEFT JOIN models m2 ON m2.id = r2.model_id
+             WHERE r2.conversation_id = c.id
+             GROUP BY m2.name
+             ORDER BY COUNT(*) DESC
+             LIMIT 1) AS model,
+            c.started_at,
+            (SELECT COUNT(*) FROM prompts WHERE conversation_id = c.id) AS prompts,
+            COUNT(DISTINCT r.id) AS responses,
+            COALESCE(SUM(r.input_tokens), 0) + COALESCE(SUM(r.output_tokens), 0) AS tokens,
+            {cost_expr} AS cost
+        FROM conversations c
+        LEFT JOIN workspaces w ON w.id = c.workspace_id
+        LEFT JOIN responses r ON r.conversation_id = c.id
+        LEFT JOIN models m ON m.id = r.model_id
+        LEFT JOIN providers pv ON pv.id = r.provider_id
+        {pricing_join}
+        {where}
+        GROUP BY c.id
+        ORDER BY c.started_at {order}
+        {limit_clause}
+    """
+
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except sqlite3.Error as e:
+        print(f"SQL error: {e}")
+        conn.close()
+        return 1
+
+    if not rows:
+        print("No conversations found.")
+        conn.close()
+        return 0
+
+    # Format rows for display
+    columns = ["workspace", "model", "started_at", "prompts", "responses", "tokens", "cost"]
+    str_rows = []
+    for row in rows:
+        ws = Path(row["workspace"]).name if row["workspace"] else ""
+        model = row["model"] or ""
+        # Format started_at: date + time, no seconds
+        started = row["started_at"][:16].replace("T", " ") if row["started_at"] else ""
+        prompts = str(row["prompts"])
+        responses = str(row["responses"])
+        tokens = str(row["tokens"])
+        cost = f"${row['cost']:.4f}" if row["cost"] else "$0.0000"
+        str_rows.append([ws, model, started, prompts, responses, tokens, cost])
+
+    # Compute column widths and print table
+    widths = [len(c) for c in columns]
+    for str_row in str_rows:
+        for i, val in enumerate(str_row):
+            widths[i] = max(widths[i], len(val))
+
+    header = "  ".join(c.ljust(widths[i]) for i, c in enumerate(columns))
+    print(header)
+    print("  ".join("-" * w for w in widths))
+    for str_row in str_rows:
+        print("  ".join(val.ljust(widths[i]) for i, val in enumerate(str_row)))
+
+    conn.close()
+    return 0
+
+
 def cmd_backfill(args) -> int:
     """Backfill response attributes from raw files."""
     db = Path(args.db) if args.db else db_path()
@@ -468,6 +589,17 @@ def main(argv=None) -> int:
     # labels
     p_labels = subparsers.add_parser("labels", help="List all labels")
     p_labels.set_defaults(func=cmd_labels)
+
+    # logs
+    p_logs = subparsers.add_parser("logs", help="List conversations with filters")
+    p_logs.add_argument("-n", "--count", type=int, default=10, help="Number of conversations to show (0=all, default: 10)")
+    p_logs.add_argument("--latest", action="store_true", default=True, help="Sort by newest first (default)")
+    p_logs.add_argument("--oldest", action="store_true", help="Sort by oldest first")
+    p_logs.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
+    p_logs.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
+    p_logs.add_argument("--since", metavar="DATE", help="Conversations started after this date (ISO or YYYY-MM-DD)")
+    p_logs.add_argument("--before", metavar="DATE", help="Conversations started before this date")
+    p_logs.set_defaults(func=cmd_logs)
 
     # backfill
     p_backfill = subparsers.add_parser("backfill", help="Backfill response attributes from raw files")
