@@ -1,195 +1,129 @@
 # tbd-v2 — Handoff
 
-Data model redesign from first principles. Ready for ingestion work.
+Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, stores in SQLite, queries via FTS5 and user-defined SQL files.
 
-## Where We Are
+## Current State
 
-**Schema complete, tested with real data.**
+### What exists
+- **Domain model**: `Conversation → Prompt → Response → ToolCall` dataclass tree (`src/domain/`)
+- **Two adapters**: `claude_code` (file dedup), `gemini_cli` (session dedup), both with model extraction
+- **Ingestion**: orchestration layer with adapter-controlled dedup, `--path` for custom dirs
+- **Storage**: SQLite with 19-table schema, ULIDs, schemaless attributes
+- **Tool canonicalization**: 15 canonical tools (`file.read`, `shell.execute`, etc.), cross-harness aliases
+- **Model parsing**: raw names decomposed into family/version/variant/creator/released
+- **FTS5**: full-text search on prompt+response text content (~45k rows indexed)
+- **Query runner**: `.sql` files in `~/.config/tbd/queries/`, `$var` substitution
+- **CLI**: `ingest`, `status`, `search`, `queries`, `path`
+- **XDG paths**: data `~/.local/share/tbd`, config `~/.config/tbd`, queries `~/.config/tbd/queries`
 
-### What We Built
+### Data (current ingestion)
+- 5,258 conversations, 135k responses, 68k tool calls
+- ~656MB database at `~/.local/share/tbd/tbd.db`
+- Models: 80% Opus 4.5, 14% Haiku 4.5, 4.5% Sonnet 4.5, plus Gemini 3 pro/flash
+- Top workspace: `gruel.network` at 61M tokens
 
-1. **Data model from "a simple datastore" principles**
-   - Vocabulary entities referenced by many, merged by natural key
-   - Core entities with ULID primary keys for merge safety
-   - Attributes for schemaless extension
-   - Labels for user categorization
-
-2. **Vocabulary entities**
-   - `harnesses` — CLI/tool wrapping the interaction (Claude Code, Gemini CLI, opencode)
-   - `models` — actual weights, decomposed (family/version/variant)
-   - `providers` — who serves the model, billing model
-   - `tools` — canonical tool names, with per-harness aliases
-   - `workspaces` — physical paths where work happens
-
-3. **Core entities (semantic naming)**
-   - `conversations` — single interaction through one harness (was "session")
-   - `prompts` — user input (was "message role=user")
-   - `responses` — model output, has model_id/provider_id (was "message role=assistant")
-   - `tool_calls` — invocations during response generation
-
-4. **Content & attributes**
-   - `prompt_content` / `response_content` — ordered blocks
-   - `*_attributes` — schemaless key-value per entity
-
-5. **ULIDs everywhere**
-   - All primary keys are ULIDs (26 chars, sortable by creation time)
-   - Merge-safe across machines and teammates
-   - Inline generation, no dependencies
-
-6. **Claude Code adapter**
-   - Parses JSONL logs
-   - Creates vocabulary on discovery (harness, tools, workspaces)
-   - Maps Prompt → Response → ToolCall flow
-   - Handles content normalization (string vs array)
-
-### Test Results
-
-```
-5 conversations ingested
-2 workspaces discovered
-2 tools created (Read, Edit)
-7 tool calls (6 success, 1 error)
-19 responses, 5 prompts
-```
-
-## Key Concepts
-
-| Term | Meaning |
-|------|---------|
-| **Conversation** | Single interaction through one harness (what logs capture) |
-| **Session** | User work period spanning multiple conversations (future) |
-| **Harness** | The CLI/tool (Claude Code, Gemini CLI, opencode, Cline) |
-| **Model** | The weights being invoked (claude-3-opus, gpt-4o) |
-| **Provider** | Who serves the model (Anthropic API, OpenRouter, local) |
-| **Workspace** | Physical path where work happens |
-| **Project** | Conceptual grouping (via labels on workspaces) |
-
-## Files
-
+### Files
 ```
 tbd-v2/
+├── tbd                         # CLI entry point
 ├── src/
-│   ├── storage/
-│   │   ├── schema.sql      # Full schema, 19 tables, all ULID PKs
-│   │   └── sqlite.py       # Storage adapter with ULID generation
-│   └── adapters/
-│       └── claude_code.py  # Claude Code JSONL parser
-├── batch_ingest.py         # Test script for multiple files
-├── ingest_test.py          # Single file test
-└── test.db                 # Sample database with real data
+│   ├── cli.py                  # argparse commands
+│   ├── paths.py                # XDG directory handling
+│   ├── models.py               # Model name parser
+│   ├── domain/
+│   │   ├── models.py           # Dataclasses (Conversation, Prompt, Response, etc.)
+│   │   ├── protocols.py        # Adapter/Storage protocols
+│   │   └── source.py           # Source(kind, location, metadata)
+│   ├── adapters/
+│   │   ├── claude_code.py      # JSONL parser, TOOL_ALIASES, discover()
+│   │   └── gemini_cli.py       # JSON parser, session dedup, discover()
+│   ├── ingestion/
+│   │   ├── discovery.py        # discover_all()
+│   │   └── orchestration.py    # ingest_all(), IngestStats, dedup strategies
+│   └── storage/
+│       ├── schema.sql          # Full schema + FTS5 virtual table
+│       └── sqlite.py           # All DB operations, commit=False default
+└── tests/
+    └── test_models.py          # Model name parsing tests
 ```
-
-## Schema Summary
-
-```
-Vocabulary (6 tables)
-├── harnesses, models, providers
-├── tools, tool_aliases (harness-scoped)
-└── workspaces
-
-Core (4 tables)
-├── conversations
-├── prompts, responses
-└── tool_calls
-
-Content (2 tables)
-├── prompt_content
-└── response_content
-
-Attributes (4 tables)
-├── conversation_attributes
-├── prompt_attributes
-├── response_attributes
-└── tool_call_attributes
-
-Labels (3 tables)
-├── labels
-├── workspace_labels
-└── conversation_labels
-
-Operational (1 table)
-└── ingested_files
-```
-
-## What's Next
-
-**Focus: Ingestion strategies and interfaces**
-
-### Questions to Address
-
-1. **Discovery patterns**
-   - How do we find logs across harnesses?
-   - Provider registry like tbd-v1?
-   - Watch mode for continuous ingestion?
-
-2. **Adapter interface**
-   - What's the contract for a harness adapter?
-   - Domain objects vs direct DB writes?
-   - Streaming vs batch?
-
-3. **Idempotency**
-   - ingested_files table exists but not wired up
-   - Hash-based deduplication?
-   - Re-ingestion strategy (skip vs update)?
-
-4. **Multi-provider**
-   - Gemini CLI adapter
-   - Codex CLI adapter
-   - Common patterns to extract
-
-5. **Model/Provider extraction**
-   - Claude Code logs don't include model per message
-   - Infer from harness config?
-   - Default provider per harness?
-
-6. **CLI interface**
-   - `tbd ingest --all` like v1?
-   - Progress reporting?
-   - Dry-run mode?
-
-### Decisions Made
-
-- ULIDs everywhere (merge safety > query convenience)
-- Tool aliases are harness-scoped
-- Prompts and Responses are separate tables (model lives on Response)
-- Vocabulary merges by natural key, keeps one ULID
-- JSON columns for structured blobs (tool input/result), attributes for queryable metadata
-
-### Deferred
-
-- sqlite-ulid extension (not worth the dependency)
-- Model extraction from logs (need to investigate what's available)
-- Token type normalization (have the pattern, not implemented)
-- OTLP ingestion (future layer)
-
-## Commands
-
-```bash
-cd ~/Code/tbd-v2
-
-# Test single file
-python3 ingest_test.py
-
-# Test batch
-python3 batch_ingest.py
-
-# Query the database
-sqlite3 test.db "SELECT * FROM conversations"
-sqlite3 test.db "SELECT name FROM tools"
-```
-
-## Origin
-
-Redesigned from tbd-v1 after discussion about:
-- "A simple datastore" principles (core + relationships + attributes)
-- Vocabulary entities (Model, Tool, Harness, Provider)
-- Semantic naming (Conversation vs Session, Prompt/Response vs Message)
-- Developer context as the anchor (not production observability)
-
-See `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md` for the pattern origin.
 
 ---
 
-*Started: 2026-01-21*
-*Schema complete: 2026-01-21*
-*Ready for: Ingestion strategies and interfaces*
+## Open: Cost/Pricing Design
+
+### Context
+We have model + token counts per response. We want "how much did workspace X cost?"
+
+### What's settled
+- Cost is query-time computation (not stored enrichment)
+- Provider per response is derivable from adapter's `HARNESS_SOURCE`
+- `responses.provider_id` exists in schema but isn't populated yet
+- Pricing data is user-provided (you know your billing arrangement)
+
+### Proposed pricing table
+```sql
+CREATE TABLE pricing (
+    id TEXT PRIMARY KEY,
+    model_id TEXT NOT NULL REFERENCES models(id),
+    provider_id TEXT NOT NULL REFERENCES providers(id),
+    effective_date TEXT NOT NULL,
+    input_per_mtok REAL,
+    output_per_mtok REAL,
+    cache_read_per_mtok REAL,
+    cache_creation_per_mtok REAL,
+    UNIQUE (model_id, provider_id, effective_date)
+);
+```
+
+### Unresolved
+User expressed "not sure this fits for me." Tension points:
+
+1. **Is per-token pricing the right model?** The user's billing may be subscription/credits, not pure per-token. Token-level costing may be meaningless in that context.
+
+2. **Provider axis complexity**: For direct API usage (Claude Code → Anthropic, Gemini CLI → Google), provider is trivially known. The `(model_id, provider_id)` key adds generality for OpenRouter/proxy cases that may not apply.
+
+3. **Temporal dimension**: `effective_date` handles price changes over time. But has Anthropic pricing changed enough to justify this? Maybe a single rate per model is sufficient.
+
+4. **Cache tokens**: Separate pricing for cache_read vs cache_creation adds precision but also complexity. The adapter doesn't extract these yet (would go in response_attributes).
+
+### Questions to resolve next session
+- Is per-response cost actually useful, or is "monthly spend by model" sufficient?
+- Does the user pay per-token at all? (Subscription vs API billing)
+- Should pricing just be a flat lookup (model → input_rate, output_rate) without provider/temporal dims?
+- Should we start with attributes-based approach (store cost as computed attribute) for flexibility?
+
+---
+
+## Other Open Threads
+
+| Thread | Status | Notes |
+|--------|--------|-------|
+| `providers` table | Schema exists, not populated | Needs adapter to set provider_id on responses |
+| `*_attributes` tables | Purpose clarified | For cache tokens, provider-specific metadata |
+| `labels` / `*_labels` | Schema exists, no write path | Future: manual or auto-classification |
+| `workspaces.git_remote` | Column exists, empty | Could resolve via `git remote -v` |
+| Queries UX | TODO in code | Unsubstituted `$vars` produce confusing errors |
+| More adapters | Future | Codex CLI, Copilot, Cursor, Aider |
+| Cache token extraction | Designed, not built | `response_attributes` with scope="provider" |
+| `tbd enrich` | Only justified for expensive ops | Auto-labeling (LLM), not arithmetic |
+
+---
+
+## Key Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| `commit=False` default | Caller controls transaction boundaries |
+| Adapter-controlled dedup | Claude=file (one convo per file), Gemini=session (latest wins) |
+| Domain objects as dataclasses | Simple, no ORM, protocol-based interfaces |
+| FTS5 for text search | Native SQLite, no deps, prompt+response text only (skip thinking/tool_use) |
+| Queries as .sql files | User-extensible, `string.Template` for var substitution |
+| Tool canonicalization | Aliases enable cross-harness queries, unknown tools still tracked |
+| Model parsing at ingest | Regex decomposition, structured fields enable family/variant queries |
+| Cost at query time | No stored redundancy, immediate price updates, pricing table JOIN |
+| Attributes for variable metadata | Avoids schema sprawl for provider-specific fields |
+
+---
+
+*Updated: 2026-01-22*
+*Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
