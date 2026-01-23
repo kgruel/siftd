@@ -200,7 +200,12 @@ def cmd_search(args) -> int:
 
 
 def cmd_queries(args) -> int:
-    """List or run .sql query files."""
+    """List or run .sql query files.
+
+    TODO: Revisit help UX — unsubstituted $vars produce confusing SQLite errors
+    ("Incorrect number of bindings"). Consider: showing required vars in listing,
+    defaulting $limit to a sensible value, or better error messages on missing vars.
+    """
     from string import Template
 
     qdir = queries_dir()
