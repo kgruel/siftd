@@ -200,12 +200,7 @@ def cmd_search(args) -> int:
 
 
 def cmd_queries(args) -> int:
-    """List or run .sql query files.
-
-    TODO: Revisit help UX — unsubstituted $vars produce confusing SQLite errors
-    ("Incorrect number of bindings"). Consider: showing required vars in listing,
-    defaulting $limit to a sensible value, or better error messages on missing vars.
-    """
+    """List or run .sql query files."""
     from string import Template
 
     qdir = queries_dir()
@@ -216,8 +211,13 @@ def cmd_queries(args) -> int:
         if not files:
             print(f"No queries found in {qdir}")
             return 0
+        import re
+        var_pattern = re.compile(r"\$\{(\w+)\}|\$(\w+)")
         for f in files:
-            print(f.stem)
+            matches = var_pattern.findall(f.read_text())
+            var_names = sorted(set(m[0] or m[1] for m in matches))
+            suffix = f"  (vars: {', '.join(var_names)})" if var_names else "  (no vars)"
+            print(f"{f.stem}{suffix}")
         return 0
 
     # Run mode
@@ -243,6 +243,15 @@ def cmd_queries(args) -> int:
         sql = Template(sql).safe_substitute(variables)
     else:
         sql = Template(sql).safe_substitute()
+
+    # Check for unsubstituted variables
+    import re
+    remaining = re.findall(r"\$\{(\w+)\}|\$(\w+)", sql)
+    if remaining:
+        missing = sorted(set(m[0] or m[1] for m in remaining))
+        print(f"Query '{args.name}' requires variables not provided: {', '.join(missing)}")
+        print(f"Usage: tbd queries {args.name} " + " ".join(f"--var {v}=<value>" for v in missing))
+        return 1
 
     # Execute
     db = db_path()
