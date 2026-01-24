@@ -175,6 +175,66 @@ def run_benchmark(
     return {"groups": query_data["groups"], "results": all_results, "recall_meta": recall_meta}
 
 
+def compute_presentation_metrics(query_results: list[dict]) -> dict:
+    """Compute metrics relevant to presentation/narrative features.
+
+    From a single query's top-k results, measures:
+    - unique_conversations: how many distinct conversations in top-k
+    - temporal_span_days: time range from earliest to latest result
+    - chrono_top1_score: score of the chronologically earliest result
+    - chrono_degradation: top1 score minus chrono_top1 score
+    - clusters_above_mean: conversations with max score > mean score
+    """
+    if not query_results:
+        return {}
+
+    # Conversation diversity
+    conv_ids = [r["conversation_id"] for r in query_results]
+    unique_convs = len(set(conv_ids))
+
+    # Temporal spread
+    timestamps = [r["started_at"] for r in query_results if r.get("started_at")]
+    temporal_span_days = 0.0
+    if len(timestamps) >= 2:
+        sorted_ts = sorted(timestamps)
+        try:
+            earliest = datetime.fromisoformat(sorted_ts[0].replace("Z", "+00:00"))
+            latest = datetime.fromisoformat(sorted_ts[-1].replace("Z", "+00:00"))
+            temporal_span_days = (latest - earliest).total_seconds() / 86400
+        except (ValueError, TypeError):
+            temporal_span_days = 0.0
+
+    # Chrono degradation: what score do you get if you pick the earliest result?
+    top1_score = query_results[0]["score"]
+    chrono_top1_score = top1_score
+    if timestamps:
+        chrono_sorted = sorted(
+            [r for r in query_results if r.get("started_at")],
+            key=lambda r: r["started_at"],
+        )
+        if chrono_sorted:
+            chrono_top1_score = chrono_sorted[0]["score"]
+    chrono_degradation = top1_score - chrono_top1_score
+
+    # Cluster density: conversations with max score above mean
+    all_scores = [r["score"] for r in query_results]
+    mean_score = sum(all_scores) / len(all_scores)
+    conv_max_scores = {}
+    for r in query_results:
+        cid = r["conversation_id"]
+        if cid not in conv_max_scores or r["score"] > conv_max_scores[cid]:
+            conv_max_scores[cid] = r["score"]
+    clusters_above_mean = sum(1 for s in conv_max_scores.values() if s > mean_score)
+
+    return {
+        "unique_conversations": unique_convs,
+        "temporal_span_days": round(temporal_span_days, 1),
+        "chrono_top1_score": round(chrono_top1_score, 6),
+        "chrono_degradation": round(chrono_degradation, 6),
+        "clusters_above_mean": clusters_above_mean,
+    }
+
+
 def build_structured_output(data: dict, meta: dict) -> dict:
     """Build the structured JSON output from raw benchmark data."""
     groups = data["groups"]
@@ -205,12 +265,26 @@ def build_structured_output(data: dict, meta: dict) -> dict:
         ) / max(1, sum(1 for qr in results[label].values() if qr))
         spread = avg_top1 - avg_top10
 
+        # Presentation metrics aggregated across all queries
+        pres_metrics = []
+        for query_text, query_results in results[label].items():
+            if query_results:
+                pres_metrics.append(compute_presentation_metrics(query_results))
+        avg_unique_convs = mean([m["unique_conversations"] for m in pres_metrics]) if pres_metrics else 0
+        avg_temporal_span = mean([m["temporal_span_days"] for m in pres_metrics]) if pres_metrics else 0
+        avg_chrono_deg = mean([m["chrono_degradation"] for m in pres_metrics]) if pres_metrics else 0
+        avg_clusters = mean([m["clusters_above_mean"] for m in pres_metrics]) if pres_metrics else 0
+
         by_db[label] = {
             "avg_score": round(avg, 6),
             "variance": round(variance, 8),
             "spread": round(spread, 6),
             "avg_top1": round(avg_top1, 6),
             "avg_top5": round(avg_top5, 6),
+            "avg_unique_conversations": round(avg_unique_convs, 1),
+            "avg_temporal_span_days": round(avg_temporal_span, 1),
+            "avg_chrono_degradation": round(avg_chrono_deg, 6),
+            "avg_clusters_above_mean": round(avg_clusters, 1),
         }
 
     recall_meta = data.get("recall_meta", {})
@@ -245,12 +319,20 @@ def build_structured_output(data: dict, meta: dict) -> dict:
                         "chunk_type": r["chunk_type"],
                         "conversation_id": r["conversation_id"],
                         "token_count": r["token_count"],
+                        "started_at": r.get("started_at"),
                     }
                     for i, r in enumerate(qr)
                 ]
+            # Compute presentation metrics per DB
+            presentation_by_db = {}
+            for label in db_labels:
+                qr = results[label].get(query_text, [])
+                if qr:
+                    presentation_by_db[label] = compute_presentation_metrics(qr)
             query_entry = {
                 "text": query_text,
                 "results": query_results_by_db,
+                "presentation": presentation_by_db,
             }
             # Add recall metadata if present (hybrid mode)
             for label in db_labels:
@@ -347,6 +429,23 @@ def print_comparison(data: dict) -> None:
         spread = avg_top1 - avg_top10
 
         print(f"  {label:<{col_width - 2}} {avg:<12.4f} {variance:<12.6f} {spread:<12.4f}")
+
+    # Presentation metrics
+    print(f"\n  {'PRESENTATION METRICS'}")
+    print(f"  {'-' * 76}")
+    print(f"  {'DB':<{col_width - 2}} {'Uniq Convs':<12} {'Span (days)':<13} {'Chrono Deg':<12} {'Clusters':<10}")
+
+    for label in db_labels:
+        pres_metrics = []
+        for query_text, query_results in results[label].items():
+            if query_results:
+                pres_metrics.append(compute_presentation_metrics(query_results))
+        if pres_metrics:
+            avg_uc = mean([m["unique_conversations"] for m in pres_metrics])
+            avg_ts = mean([m["temporal_span_days"] for m in pres_metrics])
+            avg_cd = mean([m["chrono_degradation"] for m in pres_metrics])
+            avg_cl = mean([m["clusters_above_mean"] for m in pres_metrics])
+            print(f"  {label:<{col_width - 2}} {avg_uc:<12.1f} {avg_ts:<13.1f} {avg_cd:<12.4f} {avg_cl:<10.1f}")
 
     print()
 

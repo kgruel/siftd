@@ -19,10 +19,16 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **FTS5**: full-text search on prompt+response text content
 - **Semantic search**: `tbd ask` — embeddings in separate SQLite DB, fastembed backend, incremental indexing
   - Uses exchange-window chunking (token-aware, prompt+response pairs as atomic units)
+  - Hybrid retrieval: FTS5 recall → embeddings rerank (default mode)
   - Real token counts from fastembed tokenizer stored per chunk
   - Strategy metadata recorded in embeddings DB
   - Explicit `--index`/`--rebuild` required (no auto-build)
   - `--embed-db PATH` for alternate embeddings databases
+  - Progressive disclosure: default snippets, `-v` full chunk, `--full` complete exchange, `--context N` surrounding exchanges, `--chrono` temporal sort
+  - `--thread` two-tier narrative output: top conversations expanded with role-labeled exchanges, rest as compact shortlist
+  - `--role user|assistant` filters by source role
+  - `--first` returns chronologically earliest match above relevance threshold
+  - `--conversations` aggregates per conversation (max/mean scores, ranked)
 - **Logs command**: composable conversation browser with filters, drill-down, and multiple output formats
   - Filters: `-w` workspace, `-m` model, `-t` tool, `-l` label, `-q` FTS5 search, `--since`/`--before`
   - Output: default (short, one-line with truncated ID), `-v` (full table), `--json`
@@ -38,6 +44,9 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Strategies**: `bench/strategies/*.json` — `"strategy": "exchange-window"` (token-aware windowing) or legacy per-block
 - **Build**: `bench/build.py --strategy <file>` — builds embeddings DB per strategy. Supports `--sample N` (conversation subset) and `--dry-run` (stats without embedding).
 - **Runner**: `bench/run.py --strategy <file> <embed_db>...` — runs 25 queries, stores full chunk text + token counts in results
+  - Presentation metrics: conversation diversity, temporal span, chrono degradation, cluster density
+  - Retrieval dimensions: `--hybrid`, `--role user|assistant`, first-mention timestamps, conversation-level aggregation
+  - All metrics emitted in structured JSON alongside score-based measures
 - **Viewer**: `bench/view.py <run.json> [--html]` — stdout summary or self-contained HTML report with score-coded cards, opens in browser
 - **Queries**: `bench/queries.json` — 25 queries across 5 groups (conceptual, philosophical, technical, specific, exploratory)
 
@@ -125,47 +134,52 @@ tbd-v2/
 | No auto-build on `ask` | Explicit `--index` required. Indexing is expensive, shouldn't surprise the user. |
 | Remove untested adapters | Cline/Goose/Cursor/Aider had zero ingested data. Plugin system allows re-adding later. Recovery: commit `f5e3409`. |
 | WIP branches for sessions | Session work (handoff updates, tests, scratch) goes in `wip/*`, subtasks merge to main. |
+| Hybrid as default, not quality win | At ~5k conversations, FTS5 OR-mode hits recall limit on every query. Hybrid is a speed optimization for future scale, quality-neutral today. |
+| Two-tier output (`--thread`) | Top 3-4 conversations (above-mean clusters) as narrative, rest as shortlist. Partition matches bench finding of 3.5 strong clusters per query. |
+| Retrieval vs synthesis boundary | tbd owns deterministic structured retrieval (no LLM cost). Narrative synthesis is a consumer, not a feature. Manual-first principle applies. |
+| Presentation metrics in bench | Diversity, temporal span, chrono degradation, cluster density alongside retrieval scores. Measures output shape, not just retrieval quality. |
 
 ---
 
-## `tbd ask` — Resolved
+## `tbd ask` — Current State
 
-### Embedding model evaluation (complete)
-Tested bge-small-en-v1.5 (384d) and bge-base-en-v1.5 (768d) with exchange-window chunking on 500-conversation sample:
+### Retrieval pipeline (resolved)
+- **Model**: bge-small-en-v1.5 (384d), fastembed backend. bge-base (768d) was worse on this corpus.
+- **Chunking**: exchange-window (prompt+response pairs, 256-token windows). 0% truncation, 86% in model sweet spot.
+- **Hybrid retrieval**: FTS5 recall → embeddings rerank (default). FTS5 narrows candidates by vocabulary, embeddings score within candidates.
+- **Bench finding**: Hybrid is quality-neutral at current corpus size (~5k conversations). FTS5 always hits the 80-conversation recall limit in OR-mode. Hybrid becomes a speed optimization as corpus grows past brute-force threshold.
 
-| Metric | Baseline (per-block) | EW bge-small | EW bge-base |
-|--------|---------------------|-------------|-------------|
-| Avg Score | 0.6702 | 0.6754 | 0.6319 |
-| Variance | 0.001050 | 0.001142 | 0.001163 |
-| Spread | 0.0326 | 0.0364 | 0.0401 |
+### Presentation metrics (bench)
+Measured on full corpus with exchange-window-256:
 
-**Conclusion**: Variance ~0.001 regardless of model or chunking. Brute-force cosine similarity on general-purpose embeddings cannot meaningfully discriminate relevance for conversation fragments. bge-small outperforms bge-base on this corpus. Exchange-window is the correct chunking strategy.
+| Metric | Value | Interpretation |
+|--------|-------|----------------|
+| Unique Conversations | 7.7/10 | Results scatter across many conversations (not clustering) |
+| Temporal Span | 18.0 days | Meaningful chronological spread — real arc across results |
+| Chrono Degradation | 0.031 | Small cost to prefer timeline over best-score-first |
+| Clusters Above Mean | 3.5 | ~half the conversations are "strong" hits (narrative backbone) |
 
-### Current production state
-- `tbd ask --index`: uses exchange-window chunking via shared `src/embeddings/chunker.py`
-- Model: bge-small-en-v1.5 (384d), fastembed backend
-- Token counts: real (from fastembed tokenizer, not word splits)
-- Strategy metadata stored in embeddings DB
+### User feedback (archaeological research task)
+From using `tbd ask` to reconstruct intellectual history across ~12 workspaces, ~2 months, hundreds of conversations (`experiments/docs/tbd-feedback.md`):
 
-### Next direction: hybrid retrieval + narrative output
+**What worked**: `-w` workspace filter (essential), `-v` verbose mode (workhorse), semantic queries finding conceptual matches (0.7+ = on-topic), chronological mode showing evolution.
 
-The ceiling is architectural, not model/chunking. Next approach: FTS5 recall + embeddings reranking.
-- Use FTS5 keyword search to pull candidate conversations (good at vocabulary recall)
-- Rerank chunks within candidates using cosine similarity
-- Bench pipeline (`build → run → view`) can prototype this with a new strategy mode
+**What didn't**: `--full` too noisy for research, query reformulation trial-and-error (~5-10 variations), result fragmentation across conversations, no "first mention" capability, no thread reconstruction.
 
-**User feedback from real usage** (searching project history):
-- FTS5 literal matching required ~10 query variations to find 3-4 relevant conversations
-- Once found, results were immediately useful (architecture visions, problem diagnoses)
-- Missing: workspace scoping on search, chronological ordering, full exchange context
-- Meta-gap: "grep over conversations" vs "knowledge retrieval" — the tool finds fragments when the user wants narrative
-- Key insight: presentation matters as much as retrieval. A good result is 3-4 exchanges across 2-3 conversations, chronologically ordered, with enough context to see the arc.
-- Note: `logs -q` already composes FTS5 with `-w` workspace filter — discoverability issue?
+**Key insight**: The gap between "search tool" and "cognitive context capture" is about *synthesis*. FTS5 + embeddings answer *content* questions ("find where we discussed X"). Missing: *shape* questions ("how did thinking about X evolve?"). The data supports shape queries, but the interface doesn't expose them yet.
 
-**Quick wins before hybrid**:
-1. Chronological sort flag on search/ask results
-2. Exchange-level context in output (not just matching snippet)
-3. Verify `logs -q -w` is discoverable for workspace-scoped search
+### Design boundary: retrieval vs synthesis
+- **tbd owns structured retrieval**: thread reconstruction, two-tier output, conversation-level ranking, role filtering. Deterministic, reproducible, no LLM cost.
+- **Synthesis is a consumer of tbd's output**: LLM-generated narratives, topic evolution summaries, provenance trails. Opt-in, expensive, external.
+- Keeps tbd as a data platform that exposes the right projections.
+
+### Next direction: doc cross-reference
+
+Project documentation (README, HANDOFF, RETROSPECTIVE) captures crystallized knowledge that originated in conversations. tbd has the raw conversations, but the crystallized form isn't cross-referenced back. Indexing workspace markdown alongside conversation chunks closes this gap:
+- Concept found in docs but not conversations → doc chunk surfaces it
+- Concept found in conversations → existing behavior
+- Cross-workspace doc search becomes possible
+- Implementation: discover markdown files during indexing, chunk and embed alongside conversation exchanges
 
 ---
 
@@ -173,9 +187,10 @@ The ceiling is architectural, not model/chunking. Next approach: FTS5 recall + e
 
 | Thread | Status | Notes |
 |--------|--------|-------|
-| Hybrid retrieval (`tbd ask` v2) | Next feature | FTS5 recall + embeddings reranking. Different architecture. Bench pipeline ready for prototyping. |
-| cli.py structure | Acknowledged | 1166 lines, 10 commands, inconsistent DB access. Not blocking. |
-| Provider semantics | Resolved by adapter removal | 3 remaining adapters all map correctly (anthropic, openai, google). |
+| Doc cross-reference | Next feature | Index workspace markdown (README, HANDOFF, RETROSPECTIVE) alongside conversation chunks. Closes "concept in docs" gap. |
+| Synthesis layer | Design phase | LLM-generated narratives over structured retrieval output. Consumer of tbd, not part of it. |
+| Relevance threshold | Trivial | `--threshold 0.65` to cut noise below a score. Score bands are meaningful (0.7+ on-topic, <0.6 noise). |
+| cli.py structure | Acknowledged | Growing with new features. Not blocking. |
 | Pricing table migration | Open | Schema defines `pricing` table but it doesn't exist in live DB. Needs migration or re-create. |
 | `workspaces.git_remote` | Deferred | Could resolve via `git remote -v`. Not blocking queries yet. |
 | `tbd enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
