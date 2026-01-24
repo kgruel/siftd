@@ -327,10 +327,33 @@ def cmd_ask(args) -> int:
     main_conn = _sqlite3.connect(db)
     main_conn.row_factory = _sqlite3.Row
 
+    # Enrich results with file refs (skip for --conversations mode)
+    if not args.conversations:
+        all_source_ids = []
+        for r in results:
+            all_source_ids.extend(r.get("source_ids") or [])
+        if all_source_ids:
+            refs_by_prompt = _fetch_file_refs(main_conn, all_source_ids)
+            for r in results:
+                r_refs = []
+                for sid in (r.get("source_ids") or []):
+                    r_refs.extend(refs_by_prompt.get(sid, []))
+                r["file_refs"] = r_refs
+
     if args.thread:
         _print_thread_results(main_conn, results, query)
     else:
         _print_ask_results(main_conn, results, query, args=args)
+
+    # --refs content dump
+    if args.refs and not args.conversations:
+        all_refs = []
+        for r in results:
+            all_refs.extend(r.get("file_refs") or [])
+        filter_basenames = None
+        if isinstance(args.refs, str):
+            filter_basenames = [b.strip() for b in args.refs.split(",") if b.strip()]
+        _print_refs_content(all_refs, filter_basenames)
 
     main_conn.close()
     return 0
@@ -565,6 +588,155 @@ def _ask_first_mention(db: Path, results: list[dict], *, threshold: float = 0.65
     return [above[0]]
 
 
+def _strip_line_numbers(text: str) -> str:
+    """Remove line number prefixes from Read tool output (e.g. '     1→' or '   123→')."""
+    import re
+    return re.sub(r"^\s*\d+\u2192", "", text, flags=re.MULTILINE)
+
+
+def _extract_file_content(result_json: str | None) -> str | None:
+    """Parse tool_call.result JSON and return clean file text."""
+    import json
+
+    if not result_json:
+        return None
+
+    try:
+        result = json.loads(result_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    if not isinstance(result, dict):
+        return None
+
+    content = result.get("content") or result.get("output")
+    if content is None:
+        return None
+
+    # Content might be a string or a list of content blocks
+    if isinstance(content, str):
+        return _strip_line_numbers(content)
+    elif isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+            elif isinstance(block, str):
+                parts.append(block)
+        return _strip_line_numbers("\n".join(parts)) if parts else None
+
+    return None
+
+
+def _fetch_file_refs(conn, source_ids: list[str]) -> dict[str, list[dict]]:
+    """Batch query: prompt_ids → {prompt_id: [{path, op, content}, ...]}."""
+    if not source_ids:
+        return {}
+
+    import json
+
+    placeholders = ",".join("?" * len(source_ids))
+    rows = conn.execute(f"""
+        SELECT r.prompt_id, t.name AS tool_name,
+               tc.input AS input_json,
+               tc.result AS result_json
+        FROM tool_calls tc
+        JOIN responses r ON r.id = tc.response_id
+        JOIN tools t ON t.id = tc.tool_id
+        WHERE r.prompt_id IN ({placeholders})
+          AND t.name IN ('file.read', 'file.write', 'file.edit')
+        ORDER BY tc.timestamp
+    """, source_ids).fetchall()
+
+    refs_by_prompt: dict[str, list[dict]] = {}
+    for row in rows:
+        try:
+            input_data = json.loads(row["input_json"]) if row["input_json"] else {}
+        except (json.JSONDecodeError, TypeError):
+            input_data = {}
+
+        path = input_data.get("file_path")
+        if not path:
+            continue
+
+        op_map = {"file.read": "r", "file.write": "w", "file.edit": "e"}
+        op = op_map.get(row["tool_name"], "?")
+
+        refs_by_prompt.setdefault(row["prompt_id"], []).append({
+            "path": path,
+            "basename": Path(path).name,
+            "op": op,
+            "content": _extract_file_content(row["result_json"]),
+        })
+
+    return refs_by_prompt
+
+
+def _format_refs_annotation(refs: list[dict], *, max_shown: int = 5) -> str:
+    """Compact one-liner: 'refs: file(r) file(w) +N more'."""
+    if not refs:
+        return ""
+
+    # Deduplicate: same basename+op shown once
+    seen = set()
+    unique = []
+    for ref in refs:
+        key = (ref["basename"], ref["op"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(ref)
+
+    shown = unique[:max_shown]
+    parts = [f"{r['basename']}({r['op']})" for r in shown]
+    overflow = len(unique) - max_shown
+    if overflow > 0:
+        parts.append(f"+{overflow} more")
+
+    return "refs: " + " ".join(parts)
+
+
+def _print_refs_content(all_refs: list[dict], filter_basenames: list[str] | None = None) -> None:
+    """Print file reference content dump section."""
+    if not all_refs:
+        return
+
+    # Deduplicate by path+op (keep first occurrence for point-in-time snapshot)
+    seen = set()
+    unique = []
+    for ref in all_refs:
+        key = (ref["path"], ref["op"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(ref)
+
+    # Apply basename filter if provided
+    if filter_basenames:
+        filter_set = {b.lower() for b in filter_basenames}
+        unique = [r for r in unique if r["basename"].lower() in filter_set]
+        if not unique:
+            names = ", ".join(filter_basenames)
+            print(f"No file references matching: {names}")
+            return
+
+    op_labels = {"r": "read", "w": "write", "e": "edit"}
+
+    print(f"\n{'─── File References ─' * 1}{'─' * 30}")
+    print()
+
+    for i, ref in enumerate(unique, 1):
+        op_label = op_labels.get(ref["op"], ref["op"])
+        print(f"[{i}] {ref['basename']} ({op_label})")
+        print(f"    {ref['path']}")
+        print("────")
+        content = ref.get("content")
+        if content:
+            print(content)
+        else:
+            print("(no content available)")
+        print("────")
+        print()
+
+
 def _print_conversation_results(conn, results: list[dict], query: str, *, limit: int = 10) -> None:
     """Aggregate chunk scores per conversation, print ranked conversations."""
     from statistics import mean as _mean
@@ -678,6 +850,12 @@ def _print_ask_results(conn, results: list[dict], query: str, *, args=None) -> N
             if len(r["text"]) > 200:
                 snippet += "..."
             print(f"    {snippet}")
+
+        # File refs annotation
+        file_refs = r.get("file_refs")
+        if file_refs:
+            annotation = _format_refs_annotation(file_refs)
+            print(f"    {annotation}")
 
         print()
 
@@ -865,6 +1043,12 @@ def _print_thread_results(conn, results: list[dict], query: str) -> None:
                 text = text[:600] + "..."
             print(f"  {side} {text}")
 
+        # File refs annotation
+        file_refs = best.get("file_refs")
+        if file_refs:
+            annotation = _format_refs_annotation(file_refs)
+            print(f"  {annotation}")
+
         print()
 
     # --- Tier 2: Compact shortlist ---
@@ -886,7 +1070,11 @@ def _print_thread_results(conn, results: list[dict], query: str) -> None:
             if len(best["text"]) > 120:
                 snippet += "..."
 
-            print(f"  {short_id}  {score:.3f}  {workspace:20s}  {started}  {snippet}")
+            # File count tag
+            file_refs = best.get("file_refs", [])
+            files_tag = f"  [{len(file_refs)} files]" if file_refs else ""
+
+            print(f"  {short_id}  {score:.3f}  {workspace:20s}  {started}{files_tag}  {snippet}")
         print()
 
 
@@ -1548,7 +1736,9 @@ def main(argv=None) -> int:
   tbd ask -w myproject "architecture"   # FTS5 + workspace filter
   tbd ask --role user "chunking"     # only search user prompts
   tbd ask --first "error handling"   # earliest mention above threshold
-  tbd ask --conversations "testing"  # rank conversations, not chunks""",
+  tbd ask --conversations "testing"  # rank conversations, not chunks
+  tbd ask --refs "authelia"          # show file ref annotations + content dump
+  tbd ask --refs HANDOFF.md "setup"  # content dump filtered to specific file""",
     )
     p_ask.add_argument("query", nargs="*", help="Natural language search query")
     p_ask.add_argument("-n", "--limit", type=int, default=10, help="Max results (default: 10)")
@@ -1570,6 +1760,7 @@ def main(argv=None) -> int:
     p_ask.add_argument("--role", choices=["user", "assistant"], help="Filter by source role (user prompts or assistant responses)")
     p_ask.add_argument("--first", action="store_true", help="Return chronologically earliest match above threshold")
     p_ask.add_argument("--conversations", action="store_true", help="Aggregate scores per conversation, return ranked conversations")
+    p_ask.add_argument("--refs", nargs="?", const=True, metavar="FILES", help="Show file references; optionally filter by comma-separated basenames")
     p_ask.set_defaults(func=cmd_ask)
 
     # queries
