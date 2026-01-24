@@ -177,14 +177,17 @@ Fast iteration via:
 ### In-flight subtasks
 | Subtask | What | Status |
 |---------|------|--------|
-| `exchange-window-build` | Implement v2 build with exchange-window strategy | Building (embedding full corpus) |
-| `bench-fast-iteration` | Add --sample and --dry-run flags | Building |
+| `exchange-window-build` | Implement v2 build with exchange-window strategy | Running (~40min, embedding). Will conflict with build.py — resolve manually on merge. |
+
+### Subtask coordination lesson
+`exchange-window-build` and `bench-fast-iteration` both modified `bench/build.py` in parallel → merge conflict. Going forward: either split build.py into orchestrator + extraction modules (different subtasks touch different files), or sequence subtasks that touch the same file.
 
 ### What's next
-1. Merge in-flight subtasks
-2. Run exchange-window-256 benchmark, inspect HTML
-3. Compare against baseline — does the token distribution shift improve discrimination?
-4. If not: the model (bge-small, 384-dim) is the ceiling, not chunking. Next lever is a larger model.
+1. Resolve exchange-window-build merge (its v2 extraction logic + bench-fast-iteration's --sample/--dry-run are orthogonal, just same file)
+2. `--dry-run --sample 500` with exchange-window strategy — verify token distribution shifted toward 128-256 range
+3. Build sample DB, run benchmark, inspect HTML
+4. Compare against baseline — does the distribution shift improve discrimination?
+5. If not: the model (bge-small, 384-dim) is the ceiling. Next lever: bge-base (768-dim) or larger.
 
 ### Key dependencies
 - `fastembed` 0.7.4 — embedding + tokenizer (bundled, model-agnostic)
@@ -197,8 +200,9 @@ Fast iteration via:
 
 | Thread | Status | Notes |
 |--------|--------|-------|
-| `tbd ask` exchange-window experiment | In flight | Two subtasks building. First real experiment with token-aware chunking. |
+| `tbd ask` exchange-window experiment | In flight | One subtask still building (exchange-window-build). --sample/--dry-run merged. |
 | `tbd ask` model ceiling question | Blocked on above | If exchange-window doesn't improve discrimination, try bge-base (768-dim) or larger |
+| `bench/build.py` refactor | Next | Split into orchestrator + extraction modules. Prevents subtask merge conflicts on parallel work. |
 | New adapters: test & ingest | Next | 4 new adapters merged (cline, goose, cursor, aider) — need real ingestion test |
 | Pricing table migration | Open | Schema defines `pricing` table but it doesn't exist in live DB. Needs migration or re-create. |
 | `workspaces.git_remote` | Deferred | Could resolve via `git remote -v`. Not blocking queries yet. |
