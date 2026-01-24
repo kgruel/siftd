@@ -27,8 +27,18 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
-def search_similar(conn: sqlite3.Connection, query_embedding: list[float], limit: int = 10) -> list[dict]:
-    cur = conn.execute("SELECT id, conversation_id, chunk_type, text, embedding FROM chunks")
+def search_similar(
+    conn: sqlite3.Connection,
+    query_embedding: list[float],
+    limit: int = 10,
+    conversation_ids: set[str] | None = None,
+) -> list[dict]:
+    if conversation_ids is not None:
+        placeholders = ",".join("?" for _ in conversation_ids)
+        sql = f"SELECT id, conversation_id, chunk_type, text, embedding FROM chunks WHERE conversation_id IN ({placeholders})"
+        cur = conn.execute(sql, list(conversation_ids))
+    else:
+        cur = conn.execute("SELECT id, conversation_id, chunk_type, text, embedding FROM chunks")
     results = []
     for row in cur:
         stored = decode_embedding(row["embedding"])
@@ -110,7 +120,15 @@ def get_chunk_token_stats(db_path: Path, tokenizer) -> dict:
     }
 
 
-def run_benchmark(embed_db_paths: list[Path], main_db_path: Path, backend, tokenizer) -> dict:
+def run_benchmark(
+    embed_db_paths: list[Path],
+    main_db_path: Path,
+    backend,
+    tokenizer,
+    *,
+    hybrid: bool = False,
+    recall_limit: int = 80,
+) -> dict:
     """Run all queries against all embed DBs, return full results."""
     bench_dir = Path(__file__).parent
     query_data = load_queries(bench_dir)
@@ -119,6 +137,7 @@ def run_benchmark(embed_db_paths: list[Path], main_db_path: Path, backend, token
     main_db.row_factory = sqlite3.Row
 
     all_results = {}
+    recall_meta = {}  # per-query FTS5 recall metadata
 
     for db_path in embed_db_paths:
         db_label = str(db_path)
@@ -127,10 +146,22 @@ def run_benchmark(embed_db_paths: list[Path], main_db_path: Path, backend, token
         conn.row_factory = sqlite3.Row
 
         db_results = {}
+        db_recall_meta = {}
         for group in query_data["groups"]:
             for query_text in group["queries"]:
+                conversation_ids = None
+                if hybrid:
+                    from storage.sqlite import fts5_recall_conversations
+                    fts5_ids, fts5_mode = fts5_recall_conversations(main_db, query_text, limit=recall_limit)
+                    db_recall_meta[query_text] = {
+                        "fts5_conversations": len(fts5_ids),
+                        "fts5_mode": fts5_mode,
+                    }
+                    if fts5_ids:
+                        conversation_ids = fts5_ids
+
                 query_embedding = backend.embed_one(query_text)
-                results = search_similar(conn, query_embedding, limit=10)
+                results = search_similar(conn, query_embedding, limit=10, conversation_ids=conversation_ids)
                 results = enrich_results(results, main_db)
                 for r in results:
                     r["token_count"] = count_tokens(tokenizer, r["text"])
@@ -138,9 +169,10 @@ def run_benchmark(embed_db_paths: list[Path], main_db_path: Path, backend, token
 
         conn.close()
         all_results[db_label] = db_results
+        recall_meta[db_label] = db_recall_meta
 
     main_db.close()
-    return {"groups": query_data["groups"], "results": all_results}
+    return {"groups": query_data["groups"], "results": all_results, "recall_meta": recall_meta}
 
 
 def build_structured_output(data: dict, meta: dict) -> dict:
@@ -181,6 +213,8 @@ def build_structured_output(data: dict, meta: dict) -> dict:
             "avg_top5": round(avg_top5, 6),
         }
 
+    recall_meta = data.get("recall_meta", {})
+
     # Build groups with per-query results
     output_groups = []
     for group in groups:
@@ -214,10 +248,15 @@ def build_structured_output(data: dict, meta: dict) -> dict:
                     }
                     for i, r in enumerate(qr)
                 ]
-            output_queries.append({
+            query_entry = {
                 "text": query_text,
                 "results": query_results_by_db,
-            })
+            }
+            # Add recall metadata if present (hybrid mode)
+            for label in db_labels:
+                if label in recall_meta and query_text in recall_meta[label]:
+                    query_entry.setdefault("recall", {})[label] = recall_meta[label][query_text]
+            output_queries.append(query_entry)
 
         output_groups.append({
             "name": group["name"],
@@ -344,6 +383,18 @@ def main():
         metavar="key=value",
         help="Strategy parameter (repeatable), e.g. --param min_chars=100",
     )
+    parser.add_argument(
+        "--hybrid",
+        action="store_true",
+        help="Use FTS5 recall before embeddings rerank",
+    )
+    parser.add_argument(
+        "--recall",
+        type=int,
+        default=80,
+        metavar="N",
+        help="FTS5 conversation recall limit (default: 80)",
+    )
     args = parser.parse_args()
 
     # Load strategy if provided
@@ -388,7 +439,7 @@ def main():
     tokenizer = get_tokenizer(backend)
 
     # Run benchmark
-    data = run_benchmark(args.embed_dbs, args.db, backend, tokenizer)
+    data = run_benchmark(args.embed_dbs, args.db, backend, tokenizer, hybrid=args.hybrid, recall_limit=args.recall)
 
     # Build output path
     now = datetime.now(timezone.utc)
@@ -427,6 +478,8 @@ def main():
         "query_count": query_count,
         "total_chunks": total_chunks,
         "chunk_token_stats": chunk_token_stats,
+        "hybrid": args.hybrid,
+        "recall_limit": args.recall if args.hybrid else None,
     }
 
     # Build and write structured output

@@ -256,6 +256,25 @@ def cmd_ask(args) -> int:
     # Compose filters: get candidate conversation IDs from main DB
     candidate_ids = _ask_filter_conversations(db, args)
 
+    # Hybrid recall: FTS5 narrows candidates, embeddings rerank
+    if not args.embeddings_only:
+        import sqlite3 as _sqlite3_main
+        from storage.sqlite import fts5_recall_conversations
+
+        main_conn = _sqlite3_main.connect(db)
+        main_conn.row_factory = _sqlite3_main.Row
+        fts5_ids, fts5_mode = fts5_recall_conversations(main_conn, query, limit=args.recall)
+        main_conn.close()
+
+        if fts5_ids:
+            if candidate_ids is not None:
+                intersected = fts5_ids & candidate_ids
+                candidate_ids = intersected if intersected else candidate_ids
+            else:
+                candidate_ids = fts5_ids
+        elif fts5_mode == "none":
+            print(f"FTS5 found no matches, falling back to pure embeddings.", file=sys.stderr)
+
     # Embed query and search
     query_embedding = backend.embed_one(query)
     embed_conn = open_embeddings_db(embed_db)
@@ -1220,11 +1239,14 @@ def main(argv=None) -> int:
         help="Semantic search over conversations",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  tbd ask "chunking"                 # scan: snippets with scores
+  tbd ask "chunking"                 # hybrid: FTS5 recall → embeddings rerank
   tbd ask -v "chunking"              # full chunk text
   tbd ask --full "chunking"          # complete exchange from DB
   tbd ask --context 3 "chunking"     # ±3 exchanges around match
-  tbd ask --chrono "chunking"        # sort by time instead of score""",
+  tbd ask --chrono "chunking"        # sort by time instead of score
+  tbd ask --embeddings-only "chunking"  # skip FTS5, pure embeddings
+  tbd ask --recall 200 "error"       # widen FTS5 candidate pool
+  tbd ask -w myproject "architecture"   # FTS5 + workspace filter""",
     )
     p_ask.add_argument("query", nargs="*", help="Natural language search query")
     p_ask.add_argument("-n", "--limit", type=int, default=10, help="Max results (default: 10)")
@@ -1240,6 +1262,8 @@ def main(argv=None) -> int:
     p_ask.add_argument("--rebuild", action="store_true", help="Rebuild embeddings index from scratch")
     p_ask.add_argument("--backend", metavar="NAME", help="Embedding backend (ollama, fastembed)")
     p_ask.add_argument("--embed-db", metavar="PATH", help="Alternate embeddings database path")
+    p_ask.add_argument("--embeddings-only", action="store_true", help="Skip FTS5 recall, use pure embeddings")
+    p_ask.add_argument("--recall", type=int, default=80, metavar="N", help="FTS5 conversation recall limit (default: 80)")
     p_ask.set_defaults(func=cmd_ask)
 
     # queries

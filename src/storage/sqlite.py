@@ -958,3 +958,58 @@ def search_content(
         }
         for row in cur.fetchall()
     ]
+
+
+def _fts5_or_rewrite(query: str) -> str | None:
+    """Split query into tokens, filter short ones, join with OR for broad recall."""
+    import re
+    tokens = re.findall(r"\w+", query)
+    tokens = [t for t in tokens if len(t) >= 3]
+    if not tokens:
+        return None
+    return " OR ".join(f'"{t}"' for t in tokens)
+
+
+def _fts5_conversation_ids(
+    conn: sqlite3.Connection, fts_query: str, limit: int
+) -> set[str]:
+    """Run FTS5 MATCH and return distinct conversation IDs."""
+    cur = conn.execute(
+        """
+        SELECT conversation_id FROM content_fts
+        WHERE content_fts MATCH ?
+        GROUP BY conversation_id
+        ORDER BY MIN(rank)
+        LIMIT ?
+        """,
+        (fts_query, limit),
+    )
+    return {row["conversation_id"] for row in cur.fetchall()}
+
+
+def fts5_recall_conversations(
+    conn: sqlite3.Connection, query: str, limit: int = 80
+) -> tuple[set[str], str]:
+    """FTS5 recall: try AND semantics first, fall back to OR for broader recall.
+
+    Returns (conversation_ids, mode) where mode is "and", "or", or "none".
+    """
+    # Phase 1: implicit AND (raw query)
+    try:
+        ids = _fts5_conversation_ids(conn, query, limit)
+        if len(ids) >= 10:
+            return ids, "and"
+    except Exception:
+        pass  # malformed FTS query, fall through to OR rewrite
+
+    # Phase 2: OR rewrite for broader recall
+    or_query = _fts5_or_rewrite(query)
+    if or_query:
+        try:
+            ids = _fts5_conversation_ids(conn, or_query, limit)
+            if ids:
+                return ids, "or"
+        except Exception:
+            pass
+
+    return set(), "none"
