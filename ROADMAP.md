@@ -26,7 +26,7 @@ More data sources, more search, extensibility.
 - [x] Adapter plugin system (drop-in `~/.config/tbd/adapters/*.py` + entry points)
 - [x] `tbd ask` — semantic search via embeddings (Ollama/fastembed backends)
 - [ ] `tbd ask` tuning — manual testing, chunking/ranking iteration
-- [ ] More adapters: Copilot, Cursor, Aider (now just drop-in `.py` files)
+- [x] More adapters: Cline, Goose, Cursor, Aider (built-in, needs ingestion testing)
 - [ ] `workspaces.git_remote` — resolve via `git remote -v` at ingest time
 - [ ] More query files — common patterns as shipped defaults
 

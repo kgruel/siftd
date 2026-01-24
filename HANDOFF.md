@@ -6,7 +6,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ### What exists
 - **Domain model**: `Conversation → Prompt → Response → ToolCall` dataclass tree (`src/domain/`)
-- **Three adapters**: `claude_code` (file dedup), `gemini_cli` (session dedup), `codex_cli` (file dedup)
+- **Seven adapters**: `claude_code` (file dedup), `gemini_cli` (session dedup), `codex_cli` (file dedup), `cline` (file dedup), `goose` (session dedup), `cursor` (session dedup), `aider` (file dedup)
 - **Adapter plugin system**: built-in + drop-in (`~/.config/tbd/adapters/*.py`) + entry points (`tbd.adapters`)
 - **Ingestion**: orchestration layer with adapter-controlled dedup, `--path` for custom dirs
 - **Storage**: SQLite with schema, ULIDs, schemaless attributes
@@ -69,7 +69,11 @@ tbd-v2/
 │   │   ├── registry.py         # Plugin discovery (built-in + drop-in + entry points)
 │   │   ├── claude_code.py      # JSONL parser, TOOL_ALIASES, cache token extraction
 │   │   ├── codex_cli.py        # JSONL parser, OpenAI Codex sessions
-│   │   └── gemini_cli.py       # JSON parser, session dedup, discover()
+│   │   ├── gemini_cli.py       # JSON parser, session dedup, discover()
+│   │   ├── cline.py            # JSON parser, VS Code extension tasks, Anthropic API format
+│   │   ├── goose.py            # SQLite parser, session-based, tool request/response pairing
+│   │   ├── cursor.py           # SQLite KV parser, two-phase lookup, schema version detection
+│   │   └── aider.py            # JSONL/markdown parser, chat history files
 │   ├── embeddings/
 │   │   ├── __init__.py         # Re-exports get_backend
 │   │   ├── base.py             # EmbeddingBackend protocol + fallback chain resolver
@@ -128,9 +132,25 @@ tbd-v2/
 ### Strategies under test
 | Strategy | Hypothesis | Status |
 |----------|-----------|--------|
-| `min-100` | Filtering short filler improves discrimination | Building |
-| `min-200-response-only` | Aggressive pruning produces best metrics | Building |
-| `concat-response` | Denser per-response embeddings improve matching | Building |
+| `min-100` | Filtering short filler improves discrimination | Needs build |
+| `min-200-response-only` | Aggressive pruning produces best metrics | Needs build |
+| `concat-response` | Denser per-response embeddings improve matching | Needs build |
+
+### Next steps
+Build the three strategy DBs, then run the comparison benchmark:
+```bash
+source .venv/bin/activate
+python bench/build.py --strategy bench/strategies/min-100.json &
+python bench/build.py --strategy bench/strategies/min-200-response-only.json &
+python bench/build.py --strategy bench/strategies/concat-response.json &
+wait
+
+python bench/run.py --strategy bench/strategies/baseline.json \
+  ~/.local/share/tbd/embeddings.db \
+  ~/.local/share/tbd/embeddings_min-100_*.db \
+  ~/.local/share/tbd/embeddings_min-200-response-only_*.db \
+  ~/.local/share/tbd/embeddings_concat-response_*.db
+```
 
 ### Open question
 If no strategy significantly improves variance/spread, the bottleneck is the embedding model (bge-small, 384-dim), not chunking. Next lever would be a larger model.
@@ -141,9 +161,8 @@ If no strategy significantly improves variance/spread, the bottleneck is the emb
 
 | Thread | Status | Notes |
 |--------|--------|-------|
-| `tbd ask` benchmark comparison | In progress | 3 strategy builds running, compare when done |
-| New adapters: Cline, Goose | In progress | Subtasks building adapters from tbd-v1 research specs |
-| New adapters: Cursor, Aider | In progress | Subtasks investigating format + building adapters |
+| `tbd ask` benchmark comparison | Next session | Build 3 strategy DBs, run comparison, decide if chunking or model is the bottleneck |
+| New adapters: test & ingest | Next | 4 new adapters merged (cline, goose, cursor, aider) — need real ingestion test |
 | Pricing table migration | Open | Schema defines `pricing` table but it doesn't exist in live DB. Needs migration or re-create. |
 | `workspaces.git_remote` | Deferred | Could resolve via `git remote -v`. Not blocking queries yet. |
 | `tbd enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
