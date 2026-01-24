@@ -148,10 +148,13 @@ def search_similar(
     query_embedding: list[float],
     limit: int = 10,
     conversation_ids: set[str] | None = None,
+    role_source_ids: set[str] | None = None,
 ) -> list[dict]:
     """Find chunks most similar to the query embedding (cosine similarity).
 
     If conversation_ids is provided, only search within those conversations.
+    If role_source_ids is provided, only include chunks whose source_ids
+    overlap with the given set (used for role filtering).
     Returns list of dicts: conversation_id, chunk_type, text, score, source_ids.
     """
     if conversation_ids is not None:
@@ -165,9 +168,15 @@ def search_similar(
 
     results = []
     for row in cur:
+        source_ids_val = json.loads(row["source_ids"]) if row["source_ids"] else []
+
+        # Role filter: skip chunks that don't overlap with allowed source IDs
+        if role_source_ids is not None:
+            if not source_ids_val or not set(source_ids_val) & role_source_ids:
+                continue
+
         stored_embedding = _decode_embedding(row["embedding"])
         score = _cosine_similarity(query_embedding, stored_embedding)
-        source_ids_val = json.loads(row["source_ids"]) if row["source_ids"] else []
         results.append({
             "chunk_id": row["id"],
             "conversation_id": row["conversation_id"],

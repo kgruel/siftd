@@ -32,15 +32,23 @@ def search_similar(
     query_embedding: list[float],
     limit: int = 10,
     conversation_ids: set[str] | None = None,
+    role_source_ids: set[str] | None = None,
 ) -> list[dict]:
     if conversation_ids is not None:
         placeholders = ",".join("?" for _ in conversation_ids)
-        sql = f"SELECT id, conversation_id, chunk_type, text, embedding FROM chunks WHERE conversation_id IN ({placeholders})"
+        sql = f"SELECT id, conversation_id, chunk_type, text, embedding, source_ids FROM chunks WHERE conversation_id IN ({placeholders})"
         cur = conn.execute(sql, list(conversation_ids))
     else:
-        cur = conn.execute("SELECT id, conversation_id, chunk_type, text, embedding FROM chunks")
+        cur = conn.execute("SELECT id, conversation_id, chunk_type, text, embedding, source_ids FROM chunks")
     results = []
     for row in cur:
+        source_ids_val = json.loads(row["source_ids"]) if row["source_ids"] else []
+
+        # Role filter: skip chunks that don't overlap with allowed source IDs
+        if role_source_ids is not None:
+            if not source_ids_val or not set(source_ids_val) & role_source_ids:
+                continue
+
         stored = decode_embedding(row["embedding"])
         score = cosine_similarity(query_embedding, stored)
         results.append({
@@ -49,9 +57,69 @@ def search_similar(
             "chunk_type": row["chunk_type"],
             "text": row["text"],
             "score": score,
+            "source_ids": source_ids_val,
         })
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:limit]
+
+
+def resolve_role_source_ids(main_db: sqlite3.Connection, role: str) -> set[str]:
+    """Resolve source IDs for a given role from main DB.
+
+    'user': prompt IDs (prompts are user messages).
+    'assistant': prompt IDs that have responses.
+    """
+    if role == "user":
+        rows = main_db.execute("SELECT id FROM prompts").fetchall()
+    else:
+        rows = main_db.execute("SELECT DISTINCT prompt_id AS id FROM responses").fetchall()
+    return {row["id"] for row in rows}
+
+
+def compute_first_mention(results: list[dict], main_db: sqlite3.Connection, threshold: float = 0.65) -> dict | None:
+    """Find the chronologically earliest result above the relevance threshold."""
+    above = [r for r in results if r["score"] >= threshold]
+    if not above:
+        return None
+
+    conv_ids = list({r["conversation_id"] for r in above})
+    placeholders = ",".join("?" * len(conv_ids))
+    rows = main_db.execute(
+        f"SELECT id, started_at FROM conversations WHERE id IN ({placeholders})",
+        conv_ids,
+    ).fetchall()
+    conv_times = {row["id"]: row["started_at"] or "" for row in rows}
+
+    above.sort(key=lambda r: (conv_times.get(r["conversation_id"], ""), r["chunk_id"]))
+    first = above[0]
+    return {
+        "conversation_id": first["conversation_id"],
+        "score": first["score"],
+        "started_at": conv_times.get(first["conversation_id"]),
+        "snippet": first["text"][:200],
+    }
+
+
+def compute_conversation_scores(results: list[dict]) -> list[dict]:
+    """Aggregate chunk scores per conversation."""
+    by_conv: dict[str, list[dict]] = {}
+    for r in results:
+        by_conv.setdefault(r["conversation_id"], []).append(r)
+
+    conv_scores = []
+    for conv_id, chunks in by_conv.items():
+        scores = [c["score"] for c in chunks]
+        max_score = max(scores)
+        mean_score = sum(scores) / len(scores)
+        conv_scores.append({
+            "conversation_id": conv_id,
+            "max_score": max_score,
+            "mean_score": mean_score,
+            "chunk_count": len(chunks),
+        })
+
+    conv_scores.sort(key=lambda x: x["max_score"], reverse=True)
+    return conv_scores
 
 
 def enrich_results(results: list[dict], main_db: sqlite3.Connection) -> list[dict]:
@@ -128,6 +196,7 @@ def run_benchmark(
     *,
     hybrid: bool = False,
     recall_limit: int = 80,
+    role: str | None = None,
 ) -> dict:
     """Run all queries against all embed DBs, return full results."""
     bench_dir = Path(__file__).parent
@@ -136,8 +205,17 @@ def run_benchmark(
     main_db = sqlite3.connect(main_db_path)
     main_db.row_factory = sqlite3.Row
 
+    # Resolve role filter once
+    role_source_ids = None
+    if role:
+        role_source_ids = resolve_role_source_ids(main_db, role)
+        if not role_source_ids:
+            print(f"Warning: no {role} source IDs found", file=sys.stderr)
+
     all_results = {}
     recall_meta = {}  # per-query FTS5 recall metadata
+    first_mentions = {}  # per-query first-mention data
+    conversation_agg = {}  # per-query conversation-level aggregation
 
     for db_path in embed_db_paths:
         db_label = str(db_path)
@@ -147,6 +225,8 @@ def run_benchmark(
 
         db_results = {}
         db_recall_meta = {}
+        db_first_mentions = {}
+        db_conversation_agg = {}
         for group in query_data["groups"]:
             for query_text in group["queries"]:
                 conversation_ids = None
@@ -161,18 +241,42 @@ def run_benchmark(
                         conversation_ids = fts5_ids
 
                 query_embedding = backend.embed_one(query_text)
-                results = search_similar(conn, query_embedding, limit=10, conversation_ids=conversation_ids)
+                # Wider search for first-mention and conversation aggregation
+                results = search_similar(
+                    conn, query_embedding, limit=100,
+                    conversation_ids=conversation_ids,
+                    role_source_ids=role_source_ids,
+                )
                 results = enrich_results(results, main_db)
                 for r in results:
                     r["token_count"] = count_tokens(tokenizer, r["text"])
-                db_results[query_text] = results
+
+                # Compute first-mention
+                fm = compute_first_mention(results, main_db)
+                if fm:
+                    db_first_mentions[query_text] = fm
+
+                # Compute conversation-level aggregation
+                conv_agg = compute_conversation_scores(results)
+                db_conversation_agg[query_text] = conv_agg[:10]  # top 10 conversations
+
+                # Trim to top 10 for standard results
+                db_results[query_text] = results[:10]
 
         conn.close()
         all_results[db_label] = db_results
         recall_meta[db_label] = db_recall_meta
+        first_mentions[db_label] = db_first_mentions
+        conversation_agg[db_label] = db_conversation_agg
 
     main_db.close()
-    return {"groups": query_data["groups"], "results": all_results, "recall_meta": recall_meta}
+    return {
+        "groups": query_data["groups"],
+        "results": all_results,
+        "recall_meta": recall_meta,
+        "first_mentions": first_mentions,
+        "conversation_agg": conversation_agg,
+    }
 
 
 def compute_presentation_metrics(query_results: list[dict]) -> dict:
@@ -288,6 +392,8 @@ def build_structured_output(data: dict, meta: dict) -> dict:
         }
 
     recall_meta = data.get("recall_meta", {})
+    first_mentions = data.get("first_mentions", {})
+    conversation_agg = data.get("conversation_agg", {})
 
     # Build groups with per-query results
     output_groups = []
@@ -338,6 +444,29 @@ def build_structured_output(data: dict, meta: dict) -> dict:
             for label in db_labels:
                 if label in recall_meta and query_text in recall_meta[label]:
                     query_entry.setdefault("recall", {})[label] = recall_meta[label][query_text]
+            # Add first-mention data
+            for label in db_labels:
+                if label in first_mentions and query_text in first_mentions[label]:
+                    fm = first_mentions[label][query_text]
+                    query_entry.setdefault("first_mention", {})[label] = {
+                        "conversation_id": fm["conversation_id"],
+                        "score": round(fm["score"], 6),
+                        "started_at": fm["started_at"],
+                        "snippet": fm["snippet"],
+                    }
+            # Add conversation-level aggregation
+            for label in db_labels:
+                if label in conversation_agg and query_text in conversation_agg[label]:
+                    convs = conversation_agg[label][query_text]
+                    query_entry.setdefault("conversations", {})[label] = [
+                        {
+                            "conversation_id": c["conversation_id"],
+                            "max_score": round(c["max_score"], 6),
+                            "mean_score": round(c["mean_score"], 6),
+                            "chunk_count": c["chunk_count"],
+                        }
+                        for c in convs
+                    ]
             output_queries.append(query_entry)
 
         output_groups.append({
@@ -494,6 +623,12 @@ def main():
         metavar="N",
         help="FTS5 conversation recall limit (default: 80)",
     )
+    parser.add_argument(
+        "--role",
+        choices=["user", "assistant"],
+        default=None,
+        help="Filter chunks by source role (user prompts or assistant responses)",
+    )
     args = parser.parse_args()
 
     # Load strategy if provided
@@ -538,7 +673,7 @@ def main():
     tokenizer = get_tokenizer(backend)
 
     # Run benchmark
-    data = run_benchmark(args.embed_dbs, args.db, backend, tokenizer, hybrid=args.hybrid, recall_limit=args.recall)
+    data = run_benchmark(args.embed_dbs, args.db, backend, tokenizer, hybrid=args.hybrid, recall_limit=args.recall, role=args.role)
 
     # Build output path
     now = datetime.now(timezone.utc)
@@ -579,6 +714,7 @@ def main():
         "chunk_token_stats": chunk_token_stats,
         "hybrid": args.hybrid,
         "recall_limit": args.recall if args.hybrid else None,
+        "role_filter": args.role,
     }
 
     # Build and write structured output

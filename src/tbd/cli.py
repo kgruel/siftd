@@ -275,20 +275,51 @@ def cmd_ask(args) -> int:
         elif fts5_mode == "none":
             print(f"FTS5 found no matches, falling back to pure embeddings.", file=sys.stderr)
 
+    # Role filter: resolve allowed source IDs from main DB
+    role_source_ids = None
+    if args.role:
+        role_source_ids = _ask_resolve_role_ids(db, args.role, candidate_ids)
+        if not role_source_ids:
+            print(f"No {args.role} content found matching filters.")
+            return 0
+
     # Embed query and search
     query_embedding = backend.embed_one(query)
     embed_conn = open_embeddings_db(embed_db)
+    # For --first and --conversations we need a wider initial search
+    search_limit = args.limit
+    if args.first or args.conversations:
+        search_limit = max(args.limit * 10, 100)
     results = search_similar(
         embed_conn,
         query_embedding,
-        limit=args.limit,
+        limit=search_limit,
         conversation_ids=candidate_ids,
+        role_source_ids=role_source_ids,
     )
     embed_conn.close()
 
     if not results:
         print(f"No results for: {query}")
         return 0
+
+    # Post-processing: --first (earliest match above threshold)
+    if args.first:
+        results = _ask_first_mention(db, results, threshold=0.65)
+        if not results:
+            print(f"No results above relevance threshold for: {query}")
+            return 0
+
+    # Post-processing: --conversations (aggregate per conversation)
+    if args.conversations:
+        main_conn = _sqlite3.connect(db)
+        main_conn.row_factory = _sqlite3.Row
+        _print_conversation_results(main_conn, results, query, limit=args.limit)
+        main_conn.close()
+        return 0
+
+    # Trim to requested limit after post-processing
+    results = results[:args.limit]
 
     # Enrich results with metadata from main DB
     main_conn = _sqlite3.connect(db)
@@ -457,6 +488,133 @@ def _ask_filter_conversations(db: Path, args) -> set[str] | None:
     rows = conn.execute(sql, params).fetchall()
     conn.close()
     return {row["id"] for row in rows}
+
+
+def _ask_resolve_role_ids(db: Path, role: str, candidate_ids: set[str] | None) -> set[str] | None:
+    """Resolve source IDs for a given role.
+
+    For 'user': returns prompt IDs (prompts are user messages).
+    For 'assistant': returns prompt IDs whose responses contain assistant content
+    (chunks reference the prompt_id that triggered the response).
+    """
+    import sqlite3 as _sqlite3
+
+    conn = _sqlite3.connect(db)
+    conn.row_factory = _sqlite3.Row
+
+    if candidate_ids is not None:
+        placeholders = ",".join("?" * len(candidate_ids))
+        conv_filter = f"AND p.conversation_id IN ({placeholders})"
+        params = list(candidate_ids)
+    else:
+        conv_filter = ""
+        params = []
+
+    if role == "user":
+        # Prompts are user messages — return their IDs directly
+        rows = conn.execute(
+            f"SELECT p.id FROM prompts p WHERE 1=1 {conv_filter}", params
+        ).fetchall()
+    else:
+        # 'assistant': return prompt IDs that have responses (assistant replied)
+        rows = conn.execute(
+            f"""SELECT DISTINCT r.prompt_id AS id
+                FROM responses r
+                JOIN prompts p ON p.id = r.prompt_id
+                WHERE 1=1 {conv_filter}""",
+            params,
+        ).fetchall()
+
+    conn.close()
+    return {row["id"] for row in rows} if rows else None
+
+
+def _ask_first_mention(db: Path, results: list[dict], *, threshold: float = 0.65) -> list[dict]:
+    """Return the chronologically earliest result above the relevance threshold."""
+    import sqlite3 as _sqlite3
+
+    # Filter to results above threshold
+    above = [r for r in results if r["score"] >= threshold]
+    if not above:
+        return []
+
+    # Get timestamps for conversations
+    conv_ids = list({r["conversation_id"] for r in above})
+    conn = _sqlite3.connect(db)
+    conn.row_factory = _sqlite3.Row
+    placeholders = ",".join("?" * len(conv_ids))
+    rows = conn.execute(
+        f"SELECT id, started_at FROM conversations WHERE id IN ({placeholders})",
+        conv_ids,
+    ).fetchall()
+    conn.close()
+
+    conv_times = {row["id"]: row["started_at"] or "" for row in rows}
+
+    # Sort by conversation start time, then by chunk_id (ULID = time-ordered)
+    above.sort(key=lambda r: (conv_times.get(r["conversation_id"], ""), r["chunk_id"]))
+
+    # Return just the earliest match
+    return [above[0]]
+
+
+def _print_conversation_results(conn, results: list[dict], query: str, *, limit: int = 10) -> None:
+    """Aggregate chunk scores per conversation, print ranked conversations."""
+    from statistics import mean as _mean
+
+    # Group by conversation
+    by_conv: dict[str, list[dict]] = {}
+    for r in results:
+        by_conv.setdefault(r["conversation_id"], []).append(r)
+
+    # Score each conversation: max score, with best excerpt
+    conv_scores = []
+    for conv_id, chunks in by_conv.items():
+        max_score = max(c["score"] for c in chunks)
+        mean_score = _mean(c["score"] for c in chunks)
+        best_chunk = max(chunks, key=lambda c: c["score"])
+        conv_scores.append({
+            "conversation_id": conv_id,
+            "max_score": max_score,
+            "mean_score": mean_score,
+            "chunk_count": len(chunks),
+            "best_excerpt": best_chunk["text"],
+            "best_chunk": best_chunk,
+        })
+
+    conv_scores.sort(key=lambda x: x["max_score"], reverse=True)
+    conv_scores = conv_scores[:limit]
+
+    # Enrich with metadata
+    conv_ids = [c["conversation_id"] for c in conv_scores]
+    placeholders = ",".join("?" * len(conv_ids))
+    meta_rows = conn.execute(f"""
+        SELECT c.id, c.started_at, w.path AS workspace
+        FROM conversations c
+        LEFT JOIN workspaces w ON w.id = c.workspace_id
+        WHERE c.id IN ({placeholders})
+    """, conv_ids).fetchall()
+    meta = {row["id"]: dict(row) for row in meta_rows}
+
+    print(f"Conversations for: {query}\n")
+    for c in conv_scores:
+        conv_id = c["conversation_id"]
+        m = meta.get(conv_id, {})
+        short_id = conv_id[:12]
+        workspace = m.get("workspace") or ""
+        if workspace:
+            workspace = Path(workspace).name
+        started = (m.get("started_at") or "")[:10]
+        max_s = c["max_score"]
+        mean_s = c["mean_score"]
+        n_chunks = c["chunk_count"]
+
+        print(f"  {short_id}  max={max_s:.3f}  mean={mean_s:.3f}  [{n_chunks} chunks]  {started}  {workspace}")
+        snippet = c["best_excerpt"][:200].replace("\n", " ")
+        if len(c["best_excerpt"]) > 200:
+            snippet += "..."
+        print(f"    {snippet}")
+        print()
 
 
 def _print_ask_results(conn, results: list[dict], query: str, *, args=None) -> None:
@@ -1246,7 +1404,10 @@ def main(argv=None) -> int:
   tbd ask --chrono "chunking"        # sort by time instead of score
   tbd ask --embeddings-only "chunking"  # skip FTS5, pure embeddings
   tbd ask --recall 200 "error"       # widen FTS5 candidate pool
-  tbd ask -w myproject "architecture"   # FTS5 + workspace filter""",
+  tbd ask -w myproject "architecture"   # FTS5 + workspace filter
+  tbd ask --role user "chunking"     # only search user prompts
+  tbd ask --first "error handling"   # earliest mention above threshold
+  tbd ask --conversations "testing"  # rank conversations, not chunks""",
     )
     p_ask.add_argument("query", nargs="*", help="Natural language search query")
     p_ask.add_argument("-n", "--limit", type=int, default=10, help="Max results (default: 10)")
@@ -1264,6 +1425,9 @@ def main(argv=None) -> int:
     p_ask.add_argument("--embed-db", metavar="PATH", help="Alternate embeddings database path")
     p_ask.add_argument("--embeddings-only", action="store_true", help="Skip FTS5 recall, use pure embeddings")
     p_ask.add_argument("--recall", type=int, default=80, metavar="N", help="FTS5 conversation recall limit (default: 80)")
+    p_ask.add_argument("--role", choices=["user", "assistant"], help="Filter by source role (user prompts or assistant responses)")
+    p_ask.add_argument("--first", action="store_true", help="Return chronologically earliest match above threshold")
+    p_ask.add_argument("--conversations", action="store_true", help="Aggregate scores per conversation, return ranked conversations")
     p_ask.set_defaults(func=cmd_ask)
 
     # queries
