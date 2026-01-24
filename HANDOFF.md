@@ -6,18 +6,21 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ### What exists
 - **Domain model**: `Conversation → Prompt → Response → ToolCall` dataclass tree (`src/domain/`)
-- **Seven adapters**: `claude_code` (file dedup), `gemini_cli` (session dedup), `codex_cli` (file dedup), `cline` (file dedup), `goose` (session dedup), `cursor` (session dedup), `aider` (file dedup)
+- **Three adapters**: `claude_code` (file dedup), `gemini_cli` (session dedup), `codex_cli` (file dedup)
 - **Adapter plugin system**: built-in + drop-in (`~/.config/tbd/adapters/*.py`) + entry points (`tbd.adapters`)
 - **Ingestion**: orchestration layer with adapter-controlled dedup, `--path` for custom dirs
 - **Storage**: SQLite with schema, ULIDs, schemaless attributes
-- **Tool canonicalization**: 15+ canonical tools (`file.read`, `shell.execute`, etc.), cross-harness aliases
+- **Tool canonicalization**: 16 canonical tools (`file.read`, `shell.execute`, `shell.stdin`, etc.), cross-harness aliases
 - **Model parsing**: raw names decomposed into family/version/variant/creator/released
 - **Provider tracking**: derived from adapter's `HARNESS_SOURCE`, populated on responses during ingestion
 - **Cache tokens**: `cache_creation_input_tokens`, `cache_read_input_tokens` extracted into `response_attributes`
 - **Cost tracking**: flat `pricing` table (model+provider → rates), approximate cost via query-time JOIN
 - **Labels**: manual labeling via CLI (`tbd label`), conversation and workspace scopes
 - **FTS5**: full-text search on prompt+response text content
-- **Semantic search**: `tbd ask` — embeddings in separate SQLite DB, Ollama/fastembed backends, incremental indexing
+- **Semantic search**: `tbd ask` — embeddings in separate SQLite DB, fastembed backend, incremental indexing
+  - Uses exchange-window chunking (token-aware, prompt+response pairs as atomic units)
+  - Real token counts from fastembed tokenizer stored per chunk
+  - Strategy metadata recorded in embeddings DB
   - Explicit `--index`/`--rebuild` required (no auto-build)
   - `--embed-db PATH` for alternate embeddings databases
 - **Logs command**: composable conversation browser with filters, drill-down, and multiple output formats
@@ -30,14 +33,13 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **XDG paths**: data `~/.local/share/tbd`, config `~/.config/tbd`, queries `~/.config/tbd/queries`, adapters `~/.config/tbd/adapters`
 
 ### Benchmarking framework (`bench/`)
-- **Corpus analysis**: `bench/corpus_analysis.py` — profiles token distribution using fastembed's tokenizer (with `no_truncation()` for true counts)
-- **Chunker**: `src/embeddings/chunker.py` — token-aware splitting via `semantic-text-splitter` (Rust). Uses fastembed's tokenizer directly.
-- **Strategies**: `bench/strategies/*.json` — v1 (char filters) and v2 (token-aware chunking with model constraints)
+- **Corpus analysis**: `bench/corpus_analysis.py` — profiles token distribution using fastembed's tokenizer
+- **Chunker**: `src/embeddings/chunker.py` — shared module with `chunk_text()` and `extract_exchange_window_chunks()`, used by both production `tbd ask` and bench
+- **Strategies**: `bench/strategies/*.json` — `"strategy": "exchange-window"` (token-aware windowing) or legacy per-block
 - **Build**: `bench/build.py --strategy <file>` — builds embeddings DB per strategy. Supports `--sample N` (conversation subset) and `--dry-run` (stats without embedding).
 - **Runner**: `bench/run.py --strategy <file> <embed_db>...` — runs 25 queries, stores full chunk text + token counts in results
-- **Inspector**: `bench/inspect.py <run.json> [--html]` — stdout summary or self-contained HTML report with score-coded cards, opens in browser
+- **Viewer**: `bench/view.py <run.json> [--html]` — stdout summary or self-contained HTML report with score-coded cards, opens in browser
 - **Queries**: `bench/queries.json` — 25 queries across 5 groups (conceptual, philosophical, technical, specific, exploratory)
-- **Design doc**: `docs/dev/embed-bench-feature.md` — full pipeline design (corpus analysis → hypothesis → strategy → build → run → review)
 
 ### Data (current ingestion)
 - ~5,289 conversations, 135k+ responses, 68k+ tool calls across 270+ workspaces
@@ -54,16 +56,12 @@ tbd-v2/
 │   └── cost.sql                # Approximate cost by workspace
 ├── bench/
 │   ├── queries.json            # 25 benchmark queries (5 groups)
-│   ├── corpus_analysis.py      # Token distribution profiling (fastembed tokenizer)
-│   ├── run.py                  # Benchmark runner (stores chunk text + token counts)
-│   ├── build.py                # Strategy-based embeddings DB builder (--sample, --dry-run)
-│   ├── inspect.py              # Run viewer: stdout summary or HTML report
-│   ├── strategies/             # Strategy definitions (v1: char filters, v2: token-aware)
+│   ├── corpus_analysis.py      # Token distribution profiling
+│   ├── run.py                  # Benchmark runner
+│   ├── build.py                # Strategy-based embeddings DB builder
+│   ├── view.py                 # Run viewer: stdout summary or HTML report
+│   ├── strategies/             # Strategy definitions (exchange-window, per-block)
 │   └── runs/                   # Benchmark output (gitignored)
-├── docs/
-│   ├── adapter-research-reference.md  # Pointer to tbd-v1 research
-│   └── dev/
-│       └── embed-bench-feature.md     # Embedding bench pipeline design
 ├── src/
 │   ├── cli.py                  # argparse commands
 │   ├── paths.py                # XDG directory handling
@@ -77,15 +75,11 @@ tbd-v2/
 │   │   ├── registry.py         # Plugin discovery (built-in + drop-in + entry points)
 │   │   ├── claude_code.py      # JSONL parser, TOOL_ALIASES, cache token extraction
 │   │   ├── codex_cli.py        # JSONL parser, OpenAI Codex sessions
-│   │   ├── gemini_cli.py       # JSON parser, session dedup, discover()
-│   │   ├── cline.py            # JSON parser, VS Code extension tasks, Anthropic API format
-│   │   ├── goose.py            # SQLite parser, session-based, tool request/response pairing
-│   │   ├── cursor.py           # SQLite KV parser, two-phase lookup, schema version detection
-│   │   └── aider.py            # JSONL/markdown parser, chat history files
+│   │   └── gemini_cli.py       # JSON parser, session dedup, discover()
 │   ├── embeddings/
 │   │   ├── __init__.py         # Re-exports get_backend
 │   │   ├── base.py             # EmbeddingBackend protocol + fallback chain resolver
-│   │   ├── chunker.py          # Token-aware splitting (semantic-text-splitter + fastembed tokenizer)
+│   │   ├── chunker.py          # Exchange-window chunking + token-aware splitting (shared by cli + bench)
 │   │   ├── ollama_backend.py   # Local Ollama embedding models
 │   │   └── fastembed_backend.py # Local ONNX inference via fastembed
 │   ├── ingestion/
@@ -97,7 +91,7 @@ tbd-v2/
 │       └── embeddings.py       # Embeddings DB schema + cosine similarity search
 └── tests/
     ├── test_models.py          # Model name parsing tests
-    └── test_chunker.py         # Token-aware chunking smoke tests
+    └── test_chunker.py         # Token-aware chunking smoke tests (skipped without fastembed)
 ```
 
 ---
@@ -115,7 +109,9 @@ tbd-v2/
 | FTS5 for text search | Native SQLite, no deps, prompt+response text only (skip thinking/tool_use) |
 | Embeddings in separate DB | Expensive to compute, treat as persistent derived data, keep main DB clean |
 | Brute-force cosine similarity | Correct first; ANN (faiss/hnswlib) only if corpus grows past ~100k chunks |
-| Ollama → fastembed fallback | Prefer what's already running; fastembed as zero-config local fallback |
+| Fastembed (bge-small-en-v1.5) | Best-performing model tested. bge-base (768d) was worse on this corpus. |
+| Exchange-window chunking | Prompt+response pairs as atomic units, accumulated to 256-token windows. Solved token distribution (0% truncation, 86% in model sweet spot). |
+| Built-in sentence/word splitting | Dropped `semantic-text-splitter` dependency. Oversized exchanges are rare with exchange-window; naive splitting suffices. |
 | Queries as .sql files | User-extensible, `string.Template` for var substitution |
 | Tool canonicalization | Aliases enable cross-harness queries, unknown tools still tracked |
 | Model parsing at ingest | Regex decomposition, structured fields enable family/variant queries |
@@ -127,72 +123,35 @@ tbd-v2/
 | Short mode as default | Dense one-liners with IDs; verbose table via `-v` |
 | `search` folded into `logs -q` | FTS5 composes with other filters instead of being a separate command |
 | No auto-build on `ask` | Explicit `--index` required. Indexing is expensive, shouldn't surprise the user. |
-| Tokenizer from embedding model | Chunker uses the same tokenizer the model uses for embedding. No mismatch possible. Swap model → tokenizer follows. |
-| Exchange as minimum unit | Prompt + response pair is the atomic chunk. Short exchanges accumulate into windows. Respects conversation structure. |
-| External chunker library | `semantic-text-splitter` (Rust) — solved problem, not hand-rolled. Its `capacity=(target, max)` maps to strategy params. |
+| Remove untested adapters | Cline/Goose/Cursor/Aider had zero ingested data. Plugin system allows re-adding later. Recovery: commit `f5e3409`. |
 | WIP branches for sessions | Session work (handoff updates, tests, scratch) goes in `wip/*`, subtasks merge to main. |
 
 ---
 
-## `tbd ask` Tuning — Status
+## `tbd ask` — Resolved
 
-### Problem
-Baseline (43k chunks, bge-small-en-v1.5, 384-dim) produces flat score distribution:
-- Avg 0.7486, variance 0.001, spread 0.029
-- System doesn't meaningfully discriminate relevant from irrelevant
-- Specific vocabulary queries work (XDG: 0.89, ULIDs: 0.85), broad queries return filler
+### Embedding model evaluation (complete)
+Tested bge-small-en-v1.5 (384d) and bge-base-en-v1.5 (768d) with exchange-window chunking on 500-conversation sample:
 
-### Root cause analysis (this session)
-The v1 "strategies" (min-100, min-200-response-only, concat-response) were invalidated:
-- **min-100**: made things slightly worse (avg 0.7377, spread 0.027)
-- **concat-response**: no-op — data already has 1 text block per response, nothing to concatenate
-- All were char-based filters, not actual chunking strategies
+| Metric | Baseline (per-block) | EW bge-small | EW bge-base |
+|--------|---------------------|-------------|-------------|
+| Avg Score | 0.6702 | 0.6754 | 0.6319 |
+| Variance | 0.001050 | 0.001142 | 0.001163 |
+| Spread | 0.0326 | 0.0364 | 0.0401 |
 
-**Corpus analysis** (using fastembed's actual tokenizer with `no_truncation()`) revealed:
-- 69% of chunks are <64 tokens — too small for meaningful embeddings
-- 7.2% exceed 512 tokens — silently truncated by model (content lost)
-- Median: 31 tokens. Mean: 193 tokens. Max: 29,577 tokens. Bimodal distribution.
-- Benchmark queries average 12.8 tokens — massive query-chunk size asymmetry
-- bge-small sweet spot is 128-256 tokens; only 18% of corpus falls in that range
+**Conclusion**: Variance ~0.001 regardless of model or chunking. Brute-force cosine similarity on general-purpose embeddings cannot meaningfully discriminate relevance for conversation fragments. bge-small outperforms bge-base on this corpus. Exchange-window is the correct chunking strategy.
 
-### Current approach: exchange-window strategy
-Pair prompt + response into "exchanges" (minimum meaningful unit), accumulate into token-bounded windows:
+### Current production state
+- `tbd ask --index`: uses exchange-window chunking via shared `src/embeddings/chunker.py`
+- Model: bge-small-en-v1.5 (384d), fastembed backend
+- Token counts: real (from fastembed tokenizer, not word splits)
+- Strategy metadata stored in embeddings DB
 
-1. **Minimum unit**: prompt + its response = one exchange
-2. **Accumulate**: fill a window with exchanges until hitting `target_tokens` (256)
-3. **Oversized**: if a single exchange > `max_tokens` (512), split with `semantic-text-splitter`
-4. **Conversation-bound**: never merge across conversations
-5. **Tokenizer**: fastembed's paired tokenizer (exact same one used during embedding)
-
-### Pipeline (the iteration loop)
-```
-Corpus analysis → Hypothesis → Strategy → Build → Run → Inspect → Repeat
-```
-
-Fast iteration via:
-- `--dry-run`: chunk stats without embedding (seconds)
-- `--sample N`: subset of N conversations (minutes vs 30+ for full)
-- `--html` on inspect: visual review of top-K results
-
-### In-flight subtasks
-| Subtask | What | Status |
-|---------|------|--------|
-| `exchange-window-build` | Implement v2 build with exchange-window strategy | Running (~40min, embedding). Will conflict with build.py — resolve manually on merge. |
-
-### Subtask coordination lesson
-`exchange-window-build` and `bench-fast-iteration` both modified `bench/build.py` in parallel → merge conflict. Going forward: either split build.py into orchestrator + extraction modules (different subtasks touch different files), or sequence subtasks that touch the same file.
-
-### What's next
-1. Resolve exchange-window-build merge (its v2 extraction logic + bench-fast-iteration's --sample/--dry-run are orthogonal, just same file)
-2. `--dry-run --sample 500` with exchange-window strategy — verify token distribution shifted toward 128-256 range
-3. Build sample DB, run benchmark, inspect HTML
-4. Compare against baseline — does the distribution shift improve discrimination?
-5. If not: the model (bge-small, 384-dim) is the ceiling. Next lever: bge-base (768-dim) or larger.
-
-### Key dependencies
-- `fastembed` 0.7.4 — embedding + tokenizer (bundled, model-agnostic)
-- `semantic-text-splitter` 0.29.0 — Rust-based chunker, accepts `tokenizers.Tokenizer` directly
-- `tokenizers` 0.22.2 — HuggingFace Rust tokenizer (fastembed dependency)
+### Next direction: hybrid retrieval
+The ceiling is architectural, not model/chunking. Next approach: FTS5 recall + embeddings reranking.
+- Use FTS5 keyword search to pull candidate conversations (good at vocabulary recall)
+- Rerank chunks within candidates using cosine similarity
+- Bench pipeline (`build → run → view`) can prototype this with a new strategy mode
 
 ---
 
@@ -200,18 +159,22 @@ Fast iteration via:
 
 | Thread | Status | Notes |
 |--------|--------|-------|
-| `tbd ask` exchange-window experiment | In flight | One subtask still building (exchange-window-build). --sample/--dry-run merged. |
-| `tbd ask` model ceiling question | Blocked on above | If exchange-window doesn't improve discrimination, try bge-base (768-dim) or larger |
-| `bench/build.py` refactor | Next | Split into orchestrator + extraction modules. Prevents subtask merge conflicts on parallel work. |
-| New adapters: test & ingest | Next | 4 new adapters merged (cline, goose, cursor, aider) — need real ingestion test |
+| Hybrid retrieval (`tbd ask` v2) | Next feature | FTS5 recall + embeddings reranking. Different architecture. Bench pipeline ready for prototyping. |
+| cli.py structure | Acknowledged | 1166 lines, 10 commands, inconsistent DB access. Not blocking. |
+| Provider semantics | Resolved by adapter removal | 3 remaining adapters all map correctly (anthropic, openai, google). |
 | Pricing table migration | Open | Schema defines `pricing` table but it doesn't exist in live DB. Needs migration or re-create. |
 | `workspaces.git_remote` | Deferred | Could resolve via `git remote -v`. Not blocking queries yet. |
 | `tbd enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
 | Billing context | Deferred | API vs subscription per workspace. Needed for precise cost, not approximate. |
-
-See `ROADMAP.md` for phased priorities.
+| Re-add adapters | When needed | Cline/Goose/Cursor/Aider at commit `f5e3409`. Plugin system supports drop-in. |
 
 ---
 
-*Updated: 2026-01-23*
+## Key Dependencies
+- `fastembed` 0.7.4 — embedding + tokenizer (bundled, model-agnostic)
+- `tokenizers` 0.22.2 — HuggingFace Rust tokenizer (fastembed dependency)
+
+---
+
+*Updated: 2026-01-24*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*

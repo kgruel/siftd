@@ -19,16 +19,21 @@ Make the stored data more queryable without changing the core loop.
 - [x] Manual labels via `tbd label`
 - [x] Queries UX (missing var detection, var listing)
 
-### Expansion (current)
-More data sources, more search, extensibility.
+### Expansion (done)
+More data sources, better search, extensibility.
 
 - [x] Codex CLI adapter
 - [x] Adapter plugin system (drop-in `~/.config/tbd/adapters/*.py` + entry points)
-- [x] `tbd ask` — semantic search via embeddings (Ollama/fastembed backends)
-- [ ] `tbd ask` tuning — manual testing, chunking/ranking iteration
-- [x] More adapters: Cline, Goose, Cursor, Aider (built-in, needs ingestion testing)
-- [ ] `workspaces.git_remote` — resolve via `git remote -v` at ingest time
-- [ ] More query files — common patterns as shipped defaults
+- [x] `tbd ask` — semantic search via embeddings (fastembed backend)
+- [x] `tbd ask` tuning — exchange-window chunking, model evaluation (bge-small wins)
+- [x] Unified chunking: production `tbd ask` and bench share `src/embeddings/chunker.py`
+- [x] Bench pipeline: corpus analysis → strategy → build → run → view
+
+### Next: Retrieval quality (when justified)
+Improve `tbd ask` discrimination if pure cosine similarity proves insufficient in daily use.
+
+- [ ] Hybrid retrieval: FTS5 recall + embeddings reranking
+- [ ] Bench pipeline prototyping with new strategy mode
 
 ### Precision (future, only when justified)
 Add complexity only when real usage demands it.
@@ -45,10 +50,12 @@ Add complexity only when real usage demands it.
 | Item | Rationale |
 |------|-----------|
 | Pluggable storage | Storage is the gravity well — SQL files, FTS5, attributes are all SQLite-specific. No real use case for alternatives. |
+| Additional adapters | Cline/Goose/Cursor/Aider removed (no data). Plugin system supports re-adding as drop-in files. Recovery: commit `f5e3409`. |
 | `workspaces.git_remote` | Not blocking any current queries. Add when workspace identity matters across machines. |
 | `tbd enrich` | Only justified for expensive operations (LLM classification). Manual labels cover current needs. |
 | Temporal pricing | Anthropic hasn't changed prices frequently enough to warrant the complexity. |
 | Billing context | Requires solving "which workspace uses which billing" — deferred until API spend tracking is a real need. |
+| cli.py decomposition | 1166 lines, maintenance hotspot. Not blocking functionality. Refactor when it becomes painful. |
 
 ---
 
