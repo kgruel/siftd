@@ -6,7 +6,10 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from adapters import aider, claude_code, cline, codex_cli, cursor, gemini_cli, goose
+from adapters import claude_code, codex_cli, gemini_cli
+
+# Additional adapters (cline, goose, cursor, aider) available at commit f5e3409
+# Re-add as drop-in plugins in ~/.config/tbd/adapters/ when data is available
 
 # Required module-level attributes for a valid adapter
 _REQUIRED_ATTRS = {
@@ -46,7 +49,7 @@ def _validate_adapter(module: ModuleType, origin: str) -> str | None:
 
 def load_builtin_adapters() -> list:
     """Return the built-in adapter modules."""
-    return [aider, claude_code, cline, codex_cli, cursor, gemini_cli, goose]
+    return [claude_code, codex_cli, gemini_cli]
 
 
 def load_dropin_adapters(path: Path) -> list:

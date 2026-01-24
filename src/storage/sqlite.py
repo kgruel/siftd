@@ -196,6 +196,7 @@ CANONICAL_TOOLS: list[dict[str, str]] = [
     {"name": "file.edit", "category": "file", "description": "Edit/modify existing file"},
     {"name": "file.glob", "category": "file", "description": "Find files by pattern"},
     {"name": "shell.execute", "category": "shell", "description": "Execute shell commands"},
+    {"name": "shell.stdin", "category": "shell", "description": "Send input to running shell"},
     {"name": "search.grep", "category": "search", "description": "Search file contents"},
     {"name": "search.web", "category": "search", "description": "Web search"},
     {"name": "web.fetch", "category": "web", "description": "Fetch URL content"},
