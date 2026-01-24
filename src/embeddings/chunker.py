@@ -172,7 +172,8 @@ def extract_exchange_window_chunks(
     Groups prompt+response into exchanges per conversation, accumulates
     into token-bounded windows, and splits oversized exchanges.
 
-    Returns list of dicts with keys: conversation_id, chunk_type, text, token_count.
+    Returns list of dicts with keys: conversation_id, chunk_type, text,
+    token_count, source_ids.
     """
     exchanges = _load_exchanges(main_conn, exclude_conversation_ids, conversation_id)
 
@@ -181,12 +182,13 @@ def extract_exchange_window_chunks(
         conv_chunks = _window_exchanges(
             conv_exchanges, tokenizer, target_tokens, max_tokens, overlap_tokens
         )
-        for text, token_count in conv_chunks:
+        for text, token_count, prompt_ids in conv_chunks:
             chunks.append({
                 "conversation_id": conv_id,
                 "chunk_type": "exchange",
                 "text": text,
                 "token_count": token_count,
+                "source_ids": prompt_ids,
             })
 
     return chunks
@@ -199,7 +201,7 @@ def _load_exchanges(
 ) -> dict[str, list[dict]]:
     """Load prompt/response pairs grouped by conversation, ordered by timestamp.
 
-    Each exchange is: {"prompt_text": str, "response_text": str}
+    Each exchange is: {"text": str, "prompt_id": str}
     """
     # Build WHERE clause
     conditions = []
@@ -268,7 +270,7 @@ def _load_exchanges(
                 exchange_text += "\n\n"
             exchange_text += response_text
 
-        exchanges[conv_id].append({"text": exchange_text})
+        exchanges[conv_id].append({"text": exchange_text, "prompt_id": row[0]})
 
     return exchanges
 
@@ -279,17 +281,19 @@ def _window_exchanges(
     target_tokens: int,
     max_tokens: int,
     overlap_tokens: int,
-) -> list[tuple[str, int]]:
+) -> list[tuple[str, int, list[str]]]:
     """Accumulate exchanges into token-bounded windows.
 
-    Returns list of (text, token_count) tuples.
+    Returns list of (text, token_count, prompt_ids) tuples.
     """
-    windows: list[tuple[str, int]] = []
+    windows: list[tuple[str, int, list[str]]] = []
     current_parts: list[str] = []
+    current_ids: list[str] = []
     current_tokens = 0
 
     for exchange in exchanges:
         text = exchange["text"]
+        prompt_id = exchange["prompt_id"]
         token_count = _count_tokens(tokenizer, text)
 
         # If single exchange exceeds max, split it
@@ -297,29 +301,32 @@ def _window_exchanges(
             # Flush current window
             if current_parts:
                 window_text = "\n\n".join(current_parts)
-                windows.append((window_text, _count_tokens(tokenizer, window_text)))
+                windows.append((window_text, _count_tokens(tokenizer, window_text), current_ids))
                 current_parts = []
+                current_ids = []
                 current_tokens = 0
 
-            # Split the oversized exchange
+            # Split the oversized exchange — all sub-chunks reference the same prompt
             sub_chunks = chunk_text(text, tokenizer, target_tokens, max_tokens, overlap_tokens)
             for sc in sub_chunks:
-                windows.append((sc, _count_tokens(tokenizer, sc)))
+                windows.append((sc, _count_tokens(tokenizer, sc), [prompt_id]))
             continue
 
         # Would adding this exchange exceed target?
         if current_tokens + token_count > target_tokens and current_parts:
             window_text = "\n\n".join(current_parts)
-            windows.append((window_text, _count_tokens(tokenizer, window_text)))
+            windows.append((window_text, _count_tokens(tokenizer, window_text), current_ids))
             current_parts = []
+            current_ids = []
             current_tokens = 0
 
         current_parts.append(text)
+        current_ids.append(prompt_id)
         current_tokens += token_count
 
     # Flush remaining
     if current_parts:
         window_text = "\n\n".join(current_parts)
-        windows.append((window_text, _count_tokens(tokenizer, window_text)))
+        windows.append((window_text, _count_tokens(tokenizer, window_text), current_ids))
 
     return windows

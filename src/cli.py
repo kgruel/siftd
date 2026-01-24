@@ -274,7 +274,7 @@ def cmd_ask(args) -> int:
     # Enrich results with metadata from main DB
     main_conn = _sqlite3.connect(db)
     main_conn.row_factory = _sqlite3.Row
-    _print_ask_results(main_conn, results, query)
+    _print_ask_results(main_conn, results, query, args=args)
     main_conn.close()
     return 0
 
@@ -359,6 +359,7 @@ def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: s
             text=chunk["text"],
             embedding=embedding,
             token_count=chunk["token_count"],
+            source_ids=chunk.get("source_ids"),
         )
     embed_conn.commit()
 
@@ -439,8 +440,13 @@ def _ask_filter_conversations(db: Path, args) -> set[str] | None:
     return {row["id"] for row in rows}
 
 
-def _print_ask_results(conn, results: list[dict], query: str) -> None:
-    """Format and print semantic search results."""
+def _print_ask_results(conn, results: list[dict], query: str, *, args=None) -> None:
+    """Format and print semantic search results with progressive disclosure."""
+    verbose = getattr(args, "verbose", False) if args else False
+    full = getattr(args, "full", False) if args else False
+    context_n = getattr(args, "context", None) if args else None
+    chrono = getattr(args, "chrono", False) if args else False
+
     # Gather metadata for conversations
     conv_ids = list({r["conversation_id"] for r in results})
     placeholders = ",".join("?" * len(conv_ids))
@@ -451,6 +457,12 @@ def _print_ask_results(conn, results: list[dict], query: str) -> None:
         WHERE c.id IN ({placeholders})
     """, conv_ids).fetchall()
     meta = {row["id"]: dict(row) for row in meta_rows}
+
+    if chrono:
+        results = sorted(
+            results,
+            key=lambda r: (meta.get(r["conversation_id"], {}).get("started_at") or "", r["chunk_id"]),
+        )
 
     print(f"Results for: {query}\n")
     for r in results:
@@ -464,14 +476,148 @@ def _print_ask_results(conn, results: list[dict], query: str) -> None:
         side = r["chunk_type"].upper()
         score = r["score"]
 
-        # Truncate text snippet
-        snippet = r["text"][:200].replace("\n", " ")
-        if len(r["text"]) > 200:
-            snippet += "..."
-
         print(f"  {short_id}  {score:.3f}  [{side:8s}]  {started}  {workspace}")
-        print(f"    {snippet}")
+
+        if context_n is not None:
+            # --context N: show ±N exchanges around the match
+            _print_context(conn, r, context_n)
+        elif full:
+            # --full: show complete prompt+response from main DB
+            _print_full_exchange(conn, r)
+        elif verbose:
+            # -v: show full chunk text, no truncation
+            for line in r["text"].splitlines():
+                print(f"    {line}")
+        else:
+            # Default: truncated snippet
+            snippet = r["text"][:200].replace("\n", " ")
+            if len(r["text"]) > 200:
+                snippet += "..."
+            print(f"    {snippet}")
+
         print()
+
+
+def _print_full_exchange(conn, result: dict) -> None:
+    """Print complete prompt+response text for the source exchanges."""
+    source_ids = result.get("source_ids", [])
+    if not source_ids:
+        # Fallback: show chunk text
+        for line in result["text"].splitlines():
+            print(f"    {line}")
+        return
+
+    placeholders = ",".join("?" * len(source_ids))
+
+    # Get prompt text
+    prompt_rows = conn.execute(f"""
+        SELECT p.id, GROUP_CONCAT(json_extract(pc.content, '$.text'), '\n') AS text
+        FROM prompts p
+        JOIN prompt_content pc ON pc.prompt_id = p.id
+        WHERE p.id IN ({placeholders})
+          AND pc.block_type = 'text'
+          AND json_extract(pc.content, '$.text') IS NOT NULL
+        GROUP BY p.id
+        ORDER BY p.timestamp
+    """, source_ids).fetchall()
+
+    # Get response text
+    response_rows = conn.execute(f"""
+        SELECT r.prompt_id, GROUP_CONCAT(json_extract(rc.content, '$.text'), '\n') AS text
+        FROM responses r
+        JOIN response_content rc ON rc.response_id = r.id
+        WHERE r.prompt_id IN ({placeholders})
+          AND rc.block_type = 'text'
+          AND json_extract(rc.content, '$.text') IS NOT NULL
+        GROUP BY r.id
+    """, source_ids).fetchall()
+    resp_by_prompt = {row[0]: row[1] for row in response_rows}
+
+    for row in prompt_rows:
+        prompt_text = (row[1] or "").strip()
+        response_text = (resp_by_prompt.get(row[0]) or "").strip()
+        if prompt_text:
+            print(f"    > {prompt_text.splitlines()[0]}")
+            for line in prompt_text.splitlines()[1:]:
+                print(f"    > {line}")
+        if response_text:
+            for line in response_text.splitlines():
+                print(f"    {line}")
+        if prompt_text or response_text:
+            print(f"    ---")
+
+
+def _print_context(conn, result: dict, n: int) -> None:
+    """Print ±N exchanges around the matched source exchanges."""
+    source_ids = result.get("source_ids", [])
+    conv_id = result["conversation_id"]
+
+    if not source_ids:
+        for line in result["text"].splitlines():
+            print(f"    {line}")
+        return
+
+    # Get all prompts in this conversation, ordered by timestamp
+    all_prompts = conn.execute("""
+        SELECT p.id, p.timestamp
+        FROM prompts p
+        WHERE p.conversation_id = ?
+        ORDER BY p.timestamp
+    """, (conv_id,)).fetchall()
+
+    prompt_order = [row[0] for row in all_prompts]
+
+    # Find the index range of source prompts
+    source_set = set(source_ids)
+    source_indices = [i for i, pid in enumerate(prompt_order) if pid in source_set]
+    if not source_indices:
+        for line in result["text"].splitlines():
+            print(f"    {line}")
+        return
+
+    start = max(0, min(source_indices) - n)
+    end = min(len(prompt_order), max(source_indices) + n + 1)
+    context_ids = prompt_order[start:end]
+
+    placeholders = ",".join("?" * len(context_ids))
+
+    # Get prompt text
+    prompt_rows = conn.execute(f"""
+        SELECT p.id, GROUP_CONCAT(json_extract(pc.content, '$.text'), '\n') AS text
+        FROM prompts p
+        JOIN prompt_content pc ON pc.prompt_id = p.id
+        WHERE p.id IN ({placeholders})
+          AND pc.block_type = 'text'
+          AND json_extract(pc.content, '$.text') IS NOT NULL
+        GROUP BY p.id
+        ORDER BY p.timestamp
+    """, context_ids).fetchall()
+
+    # Get response text
+    response_rows = conn.execute(f"""
+        SELECT r.prompt_id, GROUP_CONCAT(json_extract(rc.content, '$.text'), '\n') AS text
+        FROM responses r
+        JOIN response_content rc ON rc.response_id = r.id
+        WHERE r.prompt_id IN ({placeholders})
+          AND rc.block_type = 'text'
+          AND json_extract(rc.content, '$.text') IS NOT NULL
+        GROUP BY r.id
+    """, context_ids).fetchall()
+    resp_by_prompt = {row[0]: row[1] for row in response_rows}
+
+    for row in prompt_rows:
+        pid = row[0]
+        marker = ">>>" if pid in source_set else "   "
+        prompt_text = (row[1] or "").strip()
+        response_text = (resp_by_prompt.get(pid) or "").strip()
+        if prompt_text:
+            print(f"    {marker} > {prompt_text.splitlines()[0]}")
+            for line in prompt_text.splitlines()[1:]:
+                print(f"    {marker} > {line}")
+        if response_text:
+            for line in response_text.splitlines():
+                print(f"    {marker} {line}")
+        print(f"    {marker} ---")
 
 
 def cmd_queries(args) -> int:
@@ -1069,9 +1215,23 @@ def main(argv=None) -> int:
     p_search.set_defaults(func=cmd_search)
 
     # ask (semantic search)
-    p_ask = subparsers.add_parser("ask", help="Semantic search over conversations")
+    p_ask = subparsers.add_parser(
+        "ask",
+        help="Semantic search over conversations",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  tbd ask "chunking"                 # scan: snippets with scores
+  tbd ask -v "chunking"              # full chunk text
+  tbd ask --full "chunking"          # complete exchange from DB
+  tbd ask --context 3 "chunking"     # ±3 exchanges around match
+  tbd ask --chrono "chunking"        # sort by time instead of score""",
+    )
     p_ask.add_argument("query", nargs="*", help="Natural language search query")
     p_ask.add_argument("-n", "--limit", type=int, default=10, help="Max results (default: 10)")
+    p_ask.add_argument("-v", "--verbose", action="store_true", help="Show full chunk text")
+    p_ask.add_argument("--full", action="store_true", help="Show complete prompt+response exchange")
+    p_ask.add_argument("--context", type=int, metavar="N", help="Show ±N exchanges around match")
+    p_ask.add_argument("--chrono", action="store_true", help="Sort results by time instead of score")
     p_ask.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
     p_ask.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
     p_ask.add_argument("--since", metavar="DATE", help="Conversations started after this date")

@@ -56,10 +56,11 @@ def _create_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS chunks (
             id TEXT PRIMARY KEY,
             conversation_id TEXT NOT NULL,
-            chunk_type TEXT NOT NULL,  -- 'prompt' or 'response'
+            chunk_type TEXT NOT NULL,  -- 'exchange'
             text TEXT NOT NULL,
             embedding BLOB,
             token_count INTEGER,
+            source_ids TEXT,  -- JSON array of prompt IDs in this chunk
             created_at TEXT NOT NULL
         );
 
@@ -85,6 +86,7 @@ def store_chunk(
     embedding: list[float],
     *,
     token_count: int | None = None,
+    source_ids: list[str] | None = None,
     commit: bool = False,
 ) -> str:
     """Store a text chunk with its embedding vector."""
@@ -93,11 +95,12 @@ def store_chunk(
     created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     actual_token_count = token_count if token_count is not None else len(text.split())
+    source_ids_json = json.dumps(source_ids) if source_ids else None
 
     conn.execute(
-        """INSERT INTO chunks (id, conversation_id, chunk_type, text, embedding, token_count, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (chunk_id, conversation_id, chunk_type, text, embedding_blob, actual_token_count, created_at),
+        """INSERT INTO chunks (id, conversation_id, chunk_type, text, embedding, token_count, source_ids, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (chunk_id, conversation_id, chunk_type, text, embedding_blob, actual_token_count, source_ids_json, created_at),
     )
     if commit:
         conn.commit()
@@ -141,27 +144,29 @@ def search_similar(
     """Find chunks most similar to the query embedding (cosine similarity).
 
     If conversation_ids is provided, only search within those conversations.
-    Returns list of dicts: conversation_id, chunk_type, text, score.
+    Returns list of dicts: conversation_id, chunk_type, text, score, source_ids.
     """
     if conversation_ids is not None:
         placeholders = ",".join("?" * len(conversation_ids))
         cur = conn.execute(
-            f"SELECT id, conversation_id, chunk_type, text, embedding FROM chunks WHERE conversation_id IN ({placeholders})",
+            f"SELECT id, conversation_id, chunk_type, text, embedding, source_ids FROM chunks WHERE conversation_id IN ({placeholders})",
             list(conversation_ids),
         )
     else:
-        cur = conn.execute("SELECT id, conversation_id, chunk_type, text, embedding FROM chunks")
+        cur = conn.execute("SELECT id, conversation_id, chunk_type, text, embedding, source_ids FROM chunks")
 
     results = []
     for row in cur:
         stored_embedding = _decode_embedding(row["embedding"])
         score = _cosine_similarity(query_embedding, stored_embedding)
+        source_ids_val = json.loads(row["source_ids"]) if row["source_ids"] else []
         results.append({
             "chunk_id": row["id"],
             "conversation_id": row["conversation_id"],
             "chunk_type": row["chunk_type"],
             "text": row["text"],
             "score": score,
+            "source_ids": source_ids_val,
         })
 
     results.sort(key=lambda x: x["score"], reverse=True)
