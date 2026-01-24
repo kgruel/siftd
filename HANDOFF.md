@@ -147,11 +147,25 @@ Tested bge-small-en-v1.5 (384d) and bge-base-en-v1.5 (768d) with exchange-window
 - Token counts: real (from fastembed tokenizer, not word splits)
 - Strategy metadata stored in embeddings DB
 
-### Next direction: hybrid retrieval
+### Next direction: hybrid retrieval + narrative output
+
 The ceiling is architectural, not model/chunking. Next approach: FTS5 recall + embeddings reranking.
 - Use FTS5 keyword search to pull candidate conversations (good at vocabulary recall)
 - Rerank chunks within candidates using cosine similarity
 - Bench pipeline (`build → run → view`) can prototype this with a new strategy mode
+
+**User feedback from real usage** (searching project history):
+- FTS5 literal matching required ~10 query variations to find 3-4 relevant conversations
+- Once found, results were immediately useful (architecture visions, problem diagnoses)
+- Missing: workspace scoping on search, chronological ordering, full exchange context
+- Meta-gap: "grep over conversations" vs "knowledge retrieval" — the tool finds fragments when the user wants narrative
+- Key insight: presentation matters as much as retrieval. A good result is 3-4 exchanges across 2-3 conversations, chronologically ordered, with enough context to see the arc.
+- Note: `logs -q` already composes FTS5 with `-w` workspace filter — discoverability issue?
+
+**Quick wins before hybrid**:
+1. Chronological sort flag on search/ask results
+2. Exchange-level context in output (not just matching snippet)
+3. Verify `logs -q -w` is discoverable for workspace-scoped search
 
 ---
 
