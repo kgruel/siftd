@@ -8,6 +8,7 @@ import struct
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import mean, median
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -75,7 +76,41 @@ def get_chunk_count(db_path: Path) -> int:
     return count
 
 
-def run_benchmark(embed_db_paths: list[Path], main_db_path: Path, backend) -> dict:
+def get_tokenizer(backend):
+    """Get the tokenizer from the fastembed backend for token counting."""
+    tokenizer = backend._embedder.model.tokenizer
+    tokenizer.no_truncation()
+    return tokenizer
+
+
+def count_tokens(tokenizer, text: str) -> int:
+    """Count tokens in text using the model's tokenizer."""
+    return len(tokenizer.encode(text).ids)
+
+
+def get_chunk_token_stats(db_path: Path, tokenizer) -> dict:
+    """Compute token count statistics for all chunks in a DB."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.execute("SELECT text FROM chunks")
+    token_counts = [count_tokens(tokenizer, row["text"]) for row in cur]
+    conn.close()
+
+    if not token_counts:
+        return {"min": 0, "max": 0, "mean": 0, "median": 0, "p95": 0}
+
+    sorted_counts = sorted(token_counts)
+    p95_idx = int(len(sorted_counts) * 0.95)
+    return {
+        "min": sorted_counts[0],
+        "max": sorted_counts[-1],
+        "mean": round(mean(sorted_counts), 1),
+        "median": round(median(sorted_counts), 1),
+        "p95": sorted_counts[min(p95_idx, len(sorted_counts) - 1)],
+    }
+
+
+def run_benchmark(embed_db_paths: list[Path], main_db_path: Path, backend, tokenizer) -> dict:
     """Run all queries against all embed DBs, return full results."""
     bench_dir = Path(__file__).parent
     query_data = load_queries(bench_dir)
@@ -98,7 +133,7 @@ def run_benchmark(embed_db_paths: list[Path], main_db_path: Path, backend) -> di
                 results = search_similar(conn, query_embedding, limit=10)
                 results = enrich_results(results, main_db)
                 for r in results:
-                    r["text_snippet"] = r["text"][:150]
+                    r["token_count"] = count_tokens(tokenizer, r["text"])
                 db_results[query_text] = results
 
         conn.close()
@@ -171,13 +206,11 @@ def build_structured_output(data: dict, meta: dict) -> dict:
                 qr = results[label].get(query_text, [])
                 query_results_by_db[label] = [
                     {
-                        "rank": i + 1,
                         "score": round(r["score"], 6),
-                        "conversation_id": r["conversation_id"],
+                        "chunk_text": r["text"],
                         "chunk_type": r["chunk_type"],
-                        "text_snippet": r["text_snippet"],
-                        "started_at": r.get("started_at"),
-                        "workspace": Path(r["workspace_path"]).name if r.get("workspace_path") else None,
+                        "conversation_id": r["conversation_id"],
+                        "token_count": r["token_count"],
                     }
                     for i, r in enumerate(qr)
                 ]
@@ -229,7 +262,7 @@ def print_comparison(data: dict) -> None:
                     if rank < len(query_results):
                         r = query_results[rank]
                         score_str = f"{r['score']:.4f}"
-                        snippet = r["text_snippet"][:35].replace("\n", " ")
+                        snippet = r["text"][:35].replace("\n", " ")
                         parts.append(f"  {score_str} {snippet}".ljust(col_width))
                     else:
                         parts.append(" " * col_width)
@@ -352,9 +385,10 @@ def main():
     from embeddings.fastembed_backend import FastEmbedBackend
     print("Initializing embedding model...", file=sys.stderr)
     backend = FastEmbedBackend()
+    tokenizer = get_tokenizer(backend)
 
     # Run benchmark
-    data = run_benchmark(args.embed_dbs, args.db, backend)
+    data = run_benchmark(args.embed_dbs, args.db, backend, tokenizer)
 
     # Build output path
     now = datetime.now(timezone.utc)
@@ -371,8 +405,11 @@ def main():
     query_count = sum(len(g["queries"]) for g in query_data["groups"])
 
     total_chunks = {}
+    chunk_token_stats = {}
+    print("Computing chunk token stats...", file=sys.stderr)
     for db_path in args.embed_dbs:
         total_chunks[str(db_path)] = get_chunk_count(db_path)
+        chunk_token_stats[str(db_path)] = get_chunk_token_stats(db_path, tokenizer)
 
     meta = {
         "id": run_id,
@@ -382,9 +419,14 @@ def main():
         "params": params,
         "embed_dbs": [str(p) for p in args.embed_dbs],
         "main_db": str(args.db),
-        "backend": f"FastEmbed ({backend.model_name})" if hasattr(backend, "model_name") else "FastEmbed",
+        "model": {
+            "name": backend.model,
+            "max_seq_length": 512,
+            "dimension": backend.dimension,
+        },
         "query_count": query_count,
         "total_chunks": total_chunks,
+        "chunk_token_stats": chunk_token_stats,
     }
 
     # Build and write structured output
