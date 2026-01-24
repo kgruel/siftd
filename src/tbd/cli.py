@@ -286,9 +286,11 @@ def cmd_ask(args) -> int:
     # Embed query and search
     query_embedding = backend.embed_one(query)
     embed_conn = open_embeddings_db(embed_db)
-    # For --first and --conversations we need a wider initial search
+    # Widen initial search for modes that aggregate or filter post-hoc
     search_limit = args.limit
-    if args.first or args.conversations:
+    if args.thread:
+        search_limit = max(args.limit, 40)
+    elif args.first or args.conversations:
         search_limit = max(args.limit * 10, 100)
     results = search_similar(
         embed_conn,
@@ -324,7 +326,12 @@ def cmd_ask(args) -> int:
     # Enrich results with metadata from main DB
     main_conn = _sqlite3.connect(db)
     main_conn.row_factory = _sqlite3.Row
-    _print_ask_results(main_conn, results, query, args=args)
+
+    if args.thread:
+        _print_thread_results(main_conn, results, query)
+    else:
+        _print_ask_results(main_conn, results, query, args=args)
+
     main_conn.close()
     return 0
 
@@ -795,6 +802,139 @@ def _print_context(conn, result: dict, n: int) -> None:
             for line in response_text.splitlines():
                 print(f"    {marker} {line}")
         print(f"    {marker} ---")
+
+
+def _print_thread_results(conn, results: list[dict], query: str) -> None:
+    """Two-tier thread output: narrative tier (expanded) + shortlist tier (compact)."""
+    from collections import defaultdict
+
+    # Aggregate chunk scores per conversation (max score per conversation)
+    conv_scores: dict[str, float] = {}
+    conv_chunks: dict[str, list[dict]] = defaultdict(list)
+    for r in results:
+        cid = r["conversation_id"]
+        conv_chunks[cid].append(r)
+        if cid not in conv_scores or r["score"] > conv_scores[cid]:
+            conv_scores[cid] = r["score"]
+
+    # Gather metadata for conversations
+    conv_ids = list(conv_scores.keys())
+    placeholders = ",".join("?" * len(conv_ids))
+    meta_rows = conn.execute(f"""
+        SELECT c.id, c.started_at, w.path AS workspace
+        FROM conversations c
+        LEFT JOIN workspaces w ON w.id = c.workspace_id
+        WHERE c.id IN ({placeholders})
+    """, conv_ids).fetchall()
+    meta = {row["id"]: dict(row) for row in meta_rows}
+
+    # Partition: tier 1 = conversations with max_score > mean of all max_scores
+    scores = list(conv_scores.values())
+    mean_score = sum(scores) / len(scores) if scores else 0.0
+    tier1_ids = [cid for cid, s in conv_scores.items() if s > mean_score]
+    tier2_ids = [cid for cid in conv_scores if cid not in set(tier1_ids)]
+
+    # Sort tier 1 chronologically
+    tier1_ids.sort(key=lambda cid: meta.get(cid, {}).get("started_at") or "")
+    # Sort tier 2 by score descending
+    tier2_ids.sort(key=lambda cid: conv_scores[cid], reverse=True)
+
+    print(f"Results for: {query}\n")
+
+    # --- Tier 1: Narrative thread ---
+    for cid in tier1_ids:
+        m = meta.get(cid, {})
+        workspace = m.get("workspace") or ""
+        if workspace:
+            workspace = Path(workspace).name
+        started = (m.get("started_at") or "")[:10]
+
+        print(f"\u2500\u2500\u2500 {workspace}  {started} \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
+
+        # Best-matching chunk for this conversation
+        best = max(conv_chunks[cid], key=lambda c: c["score"])
+        source_ids = best.get("source_ids", [])
+
+        if source_ids:
+            _print_thread_exchange(conn, source_ids)
+        else:
+            # Fallback: show chunk text with type label
+            side = "[user]" if best["chunk_type"] == "prompt" else "[asst]"
+            text = best["text"].strip()
+            if len(text) > 600:
+                text = text[:600] + "..."
+            print(f"  {side} {text}")
+
+        print()
+
+    # --- Tier 2: Compact shortlist ---
+    if tier2_ids:
+        print(f"  {'─' * 50}")
+        print(f"  More results:\n")
+        for cid in tier2_ids:
+            m = meta.get(cid, {})
+            short_id = cid[:12]
+            workspace = m.get("workspace") or ""
+            if workspace:
+                workspace = Path(workspace).name
+            started = (m.get("started_at") or "")[:10]
+            score = conv_scores[cid]
+
+            # Snippet from best chunk
+            best = max(conv_chunks[cid], key=lambda c: c["score"])
+            snippet = best["text"][:120].replace("\n", " ")
+            if len(best["text"]) > 120:
+                snippet += "..."
+
+            print(f"  {short_id}  {score:.3f}  {workspace:20s}  {started}  {snippet}")
+        print()
+
+
+def _print_thread_exchange(conn, source_ids: list[str]) -> None:
+    """Print role-labeled exchange text for tier 1 thread output."""
+    placeholders = ",".join("?" * len(source_ids))
+
+    # Get prompt text
+    prompt_rows = conn.execute(f"""
+        SELECT p.id, GROUP_CONCAT(json_extract(pc.content, '$.text'), '\n') AS text
+        FROM prompts p
+        JOIN prompt_content pc ON pc.prompt_id = p.id
+        WHERE p.id IN ({placeholders})
+          AND pc.block_type = 'text'
+          AND json_extract(pc.content, '$.text') IS NOT NULL
+        GROUP BY p.id
+        ORDER BY p.timestamp
+    """, source_ids).fetchall()
+
+    # Get response text
+    response_rows = conn.execute(f"""
+        SELECT r.prompt_id, GROUP_CONCAT(json_extract(rc.content, '$.text'), '\n') AS text
+        FROM responses r
+        JOIN response_content rc ON rc.response_id = r.id
+        WHERE r.prompt_id IN ({placeholders})
+          AND rc.block_type = 'text'
+          AND json_extract(rc.content, '$.text') IS NOT NULL
+        GROUP BY r.id
+    """, source_ids).fetchall()
+    resp_by_prompt = {row[0]: row[1] for row in response_rows}
+
+    for row in prompt_rows:
+        prompt_text = (row[1] or "").strip()
+        response_text = (resp_by_prompt.get(row[0]) or "").strip()
+
+        if prompt_text:
+            # Truncate very long prompts sensibly
+            if len(prompt_text) > 500:
+                prompt_text = prompt_text[:500] + "..."
+            print(f"  [user] {prompt_text}")
+        if response_text:
+            # Truncate very long responses
+            if len(response_text) > 800:
+                response_text = response_text[:800] + "..."
+            print(f"  [asst] {response_text}")
+
+    if not prompt_rows:
+        print("  (no exchange text available)")
 
 
 def cmd_queries(args) -> int:
@@ -1403,6 +1543,7 @@ def main(argv=None) -> int:
   tbd ask --context 3 "chunking"     # ±3 exchanges around match
   tbd ask --chrono "chunking"        # sort by time instead of score
   tbd ask --embeddings-only "chunking"  # skip FTS5, pure embeddings
+  tbd ask --thread "chunking"         # narrative thread: top convos + shortlist
   tbd ask --recall 200 "error"       # widen FTS5 candidate pool
   tbd ask -w myproject "architecture"   # FTS5 + workspace filter
   tbd ask --role user "chunking"     # only search user prompts
@@ -1423,6 +1564,7 @@ def main(argv=None) -> int:
     p_ask.add_argument("--rebuild", action="store_true", help="Rebuild embeddings index from scratch")
     p_ask.add_argument("--backend", metavar="NAME", help="Embedding backend (ollama, fastembed)")
     p_ask.add_argument("--embed-db", metavar="PATH", help="Alternate embeddings database path")
+    p_ask.add_argument("--thread", action="store_true", help="Two-tier narrative thread output: top conversations expanded, rest as shortlist")
     p_ask.add_argument("--embeddings-only", action="store_true", help="Skip FTS5 recall, use pure embeddings")
     p_ask.add_argument("--recall", type=int, default=80, metavar="N", help="FTS5 conversation recall limit (default: 80)")
     p_ask.add_argument("--role", choices=["user", "assistant"], help="Filter by source role (user prompts or assistant responses)")
