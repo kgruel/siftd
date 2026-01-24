@@ -29,11 +29,16 @@ More data sources, better search, extensibility.
 - [x] Unified chunking: production `tbd ask` and bench share `src/embeddings/chunker.py`
 - [x] Bench pipeline: corpus analysis → strategy → build → run → view
 
-### Next: Retrieval quality (when justified)
-Improve `tbd ask` discrimination if pure cosine similarity proves insufficient in daily use.
+### Retrieval Quality (done)
+Hybrid retrieval improves relevance; package is installable for programmatic access.
 
-- [ ] Hybrid retrieval: FTS5 recall + embeddings reranking
-- [ ] Bench pipeline prototyping with new strategy mode
+- [x] Hybrid retrieval: FTS5 recall → embeddings reranking (default mode, `--embeddings-only` preserves old behavior)
+- [x] Bench pipeline hybrid mode (`--hybrid`, `--recall N`, per-query recall metadata in output)
+- [x] Installable package (`pyproject.toml`, `uv.lock`, `tbd.search.hybrid_search` public API)
+
+### Next: Reliability
+- [ ] Test infrastructure (pytest, CI basics)
+- [ ] Bench runs comparing hybrid vs pure-embeddings retrieval quality
 
 ### Precision (future, only when justified)
 Add complexity only when real usage demands it.
