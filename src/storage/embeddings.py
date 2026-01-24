@@ -39,13 +39,12 @@ def _ulid() -> str:
 def open_embeddings_db(db_path: Path) -> sqlite3.Connection:
     """Open embeddings database, creating schema if needed."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    is_new = not db_path.exists()
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
 
-    if is_new:
-        _create_schema(conn)
+    _create_schema(conn)
+    _migrate(conn)
 
     return conn
 
@@ -76,6 +75,14 @@ def _create_schema(conn: sqlite3.Connection) -> None:
         );
     """)
     conn.commit()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns introduced after initial schema."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()}
+    if "source_ids" not in cols:
+        conn.execute("ALTER TABLE chunks ADD COLUMN source_ids TEXT")
+        conn.commit()
 
 
 def store_chunk(
@@ -114,8 +121,9 @@ def get_indexed_conversation_ids(conn: sqlite3.Connection) -> set[str]:
 
 
 def clear_all(conn: sqlite3.Connection) -> None:
-    """Delete all chunks (for full rebuild)."""
-    conn.execute("DELETE FROM chunks")
+    """Drop and recreate chunks table (for full rebuild)."""
+    conn.execute("DROP TABLE IF EXISTS chunks")
+    _create_schema(conn)
     conn.commit()
 
 
