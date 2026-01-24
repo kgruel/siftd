@@ -30,10 +30,14 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **XDG paths**: data `~/.local/share/tbd`, config `~/.config/tbd`, queries `~/.config/tbd/queries`, adapters `~/.config/tbd/adapters`
 
 ### Benchmarking framework (`bench/`)
-- **Strategies**: `bench/strategies/*.json` — parameterized chunking/filtering configs (baseline, min-100, min-200-response-only, concat-response)
-- **Build**: `bench/build.py --strategy <file>` — builds embeddings DB per strategy, output to `~/.local/share/tbd/embeddings_<name>_<timestamp>.db`
-- **Runner**: `bench/run.py --strategy <file> <embed_db>...` — runs 25 queries, structured JSON output to `bench/runs/<timestamp>_<label>.json`
+- **Corpus analysis**: `bench/corpus_analysis.py` — profiles token distribution using fastembed's tokenizer (with `no_truncation()` for true counts)
+- **Chunker**: `src/embeddings/chunker.py` — token-aware splitting via `semantic-text-splitter` (Rust). Uses fastembed's tokenizer directly.
+- **Strategies**: `bench/strategies/*.json` — v1 (char filters) and v2 (token-aware chunking with model constraints)
+- **Build**: `bench/build.py --strategy <file>` — builds embeddings DB per strategy. Supports `--sample N` (conversation subset) and `--dry-run` (stats without embedding).
+- **Runner**: `bench/run.py --strategy <file> <embed_db>...` — runs 25 queries, stores full chunk text + token counts in results
+- **Inspector**: `bench/inspect.py <run.json> [--html]` — stdout summary or self-contained HTML report with score-coded cards, opens in browser
 - **Queries**: `bench/queries.json` — 25 queries across 5 groups (conceptual, philosophical, technical, specific, exploratory)
+- **Design doc**: `docs/dev/embed-bench-feature.md` — full pipeline design (corpus analysis → hypothesis → strategy → build → run → review)
 
 ### Data (current ingestion)
 - ~5,289 conversations, 135k+ responses, 68k+ tool calls across 270+ workspaces
@@ -50,12 +54,16 @@ tbd-v2/
 │   └── cost.sql                # Approximate cost by workspace
 ├── bench/
 │   ├── queries.json            # 25 benchmark queries (5 groups)
-│   ├── run.py                  # Benchmark runner + comparison report
-│   ├── build.py                # Strategy-based embeddings DB builder
-│   ├── strategies/             # Strategy definitions (JSON)
+│   ├── corpus_analysis.py      # Token distribution profiling (fastembed tokenizer)
+│   ├── run.py                  # Benchmark runner (stores chunk text + token counts)
+│   ├── build.py                # Strategy-based embeddings DB builder (--sample, --dry-run)
+│   ├── inspect.py              # Run viewer: stdout summary or HTML report
+│   ├── strategies/             # Strategy definitions (v1: char filters, v2: token-aware)
 │   └── runs/                   # Benchmark output (gitignored)
 ├── docs/
-│   └── adapter-research-reference.md  # Pointer to tbd-v1 research
+│   ├── adapter-research-reference.md  # Pointer to tbd-v1 research
+│   └── dev/
+│       └── embed-bench-feature.md     # Embedding bench pipeline design
 ├── src/
 │   ├── cli.py                  # argparse commands
 │   ├── paths.py                # XDG directory handling
@@ -77,6 +85,7 @@ tbd-v2/
 │   ├── embeddings/
 │   │   ├── __init__.py         # Re-exports get_backend
 │   │   ├── base.py             # EmbeddingBackend protocol + fallback chain resolver
+│   │   ├── chunker.py          # Token-aware splitting (semantic-text-splitter + fastembed tokenizer)
 │   │   ├── ollama_backend.py   # Local Ollama embedding models
 │   │   └── fastembed_backend.py # Local ONNX inference via fastembed
 │   ├── ingestion/
@@ -87,7 +96,8 @@ tbd-v2/
 │       ├── sqlite.py           # All DB operations, backfills, label functions
 │       └── embeddings.py       # Embeddings DB schema + cosine similarity search
 └── tests/
-    └── test_models.py          # Model name parsing tests
+    ├── test_models.py          # Model name parsing tests
+    └── test_chunker.py         # Token-aware chunking smoke tests
 ```
 
 ---
@@ -117,43 +127,69 @@ tbd-v2/
 | Short mode as default | Dense one-liners with IDs; verbose table via `-v` |
 | `search` folded into `logs -q` | FTS5 composes with other filters instead of being a separate command |
 | No auto-build on `ask` | Explicit `--index` required. Indexing is expensive, shouldn't surprise the user. |
+| Tokenizer from embedding model | Chunker uses the same tokenizer the model uses for embedding. No mismatch possible. Swap model → tokenizer follows. |
+| Exchange as minimum unit | Prompt + response pair is the atomic chunk. Short exchanges accumulate into windows. Respects conversation structure. |
+| External chunker library | `semantic-text-splitter` (Rust) — solved problem, not hand-rolled. Its `capacity=(target, max)` maps to strategy params. |
 | WIP branches for sessions | Session work (handoff updates, tests, scratch) goes in `wip/*`, subtasks merge to main. |
 
 ---
 
 ## `tbd ask` Tuning — Status
 
-### Baseline results (43k chunks, bge-small-en-v1.5, 384-dim)
-- Avg score: 0.7486, variance: 0.001, spread: 0.029
-- Flat score distribution — system doesn't meaningfully discriminate between relevant and irrelevant
-- Specific vocabulary queries work well (XDG: 0.89, ULIDs: 0.85)
-- Broad/conceptual queries return LLM filler ("Let me check", "Perfect!")
+### Problem
+Baseline (43k chunks, bge-small-en-v1.5, 384-dim) produces flat score distribution:
+- Avg 0.7486, variance 0.001, spread 0.029
+- System doesn't meaningfully discriminate relevant from irrelevant
+- Specific vocabulary queries work (XDG: 0.89, ULIDs: 0.85), broad queries return filler
 
-### Strategies under test
-| Strategy | Hypothesis | Status |
-|----------|-----------|--------|
-| `min-100` | Filtering short filler improves discrimination | Needs build |
-| `min-200-response-only` | Aggressive pruning produces best metrics | Needs build |
-| `concat-response` | Denser per-response embeddings improve matching | Needs build |
+### Root cause analysis (this session)
+The v1 "strategies" (min-100, min-200-response-only, concat-response) were invalidated:
+- **min-100**: made things slightly worse (avg 0.7377, spread 0.027)
+- **concat-response**: no-op — data already has 1 text block per response, nothing to concatenate
+- All were char-based filters, not actual chunking strategies
 
-### Next steps
-Build the three strategy DBs, then run the comparison benchmark:
-```bash
-source .venv/bin/activate
-python bench/build.py --strategy bench/strategies/min-100.json &
-python bench/build.py --strategy bench/strategies/min-200-response-only.json &
-python bench/build.py --strategy bench/strategies/concat-response.json &
-wait
+**Corpus analysis** (using fastembed's actual tokenizer with `no_truncation()`) revealed:
+- 69% of chunks are <64 tokens — too small for meaningful embeddings
+- 7.2% exceed 512 tokens — silently truncated by model (content lost)
+- Median: 31 tokens. Mean: 193 tokens. Max: 29,577 tokens. Bimodal distribution.
+- Benchmark queries average 12.8 tokens — massive query-chunk size asymmetry
+- bge-small sweet spot is 128-256 tokens; only 18% of corpus falls in that range
 
-python bench/run.py --strategy bench/strategies/baseline.json \
-  ~/.local/share/tbd/embeddings.db \
-  ~/.local/share/tbd/embeddings_min-100_*.db \
-  ~/.local/share/tbd/embeddings_min-200-response-only_*.db \
-  ~/.local/share/tbd/embeddings_concat-response_*.db
+### Current approach: exchange-window strategy
+Pair prompt + response into "exchanges" (minimum meaningful unit), accumulate into token-bounded windows:
+
+1. **Minimum unit**: prompt + its response = one exchange
+2. **Accumulate**: fill a window with exchanges until hitting `target_tokens` (256)
+3. **Oversized**: if a single exchange > `max_tokens` (512), split with `semantic-text-splitter`
+4. **Conversation-bound**: never merge across conversations
+5. **Tokenizer**: fastembed's paired tokenizer (exact same one used during embedding)
+
+### Pipeline (the iteration loop)
+```
+Corpus analysis → Hypothesis → Strategy → Build → Run → Inspect → Repeat
 ```
 
-### Open question
-If no strategy significantly improves variance/spread, the bottleneck is the embedding model (bge-small, 384-dim), not chunking. Next lever would be a larger model.
+Fast iteration via:
+- `--dry-run`: chunk stats without embedding (seconds)
+- `--sample N`: subset of N conversations (minutes vs 30+ for full)
+- `--html` on inspect: visual review of top-K results
+
+### In-flight subtasks
+| Subtask | What | Status |
+|---------|------|--------|
+| `exchange-window-build` | Implement v2 build with exchange-window strategy | Building (embedding full corpus) |
+| `bench-fast-iteration` | Add --sample and --dry-run flags | Building |
+
+### What's next
+1. Merge in-flight subtasks
+2. Run exchange-window-256 benchmark, inspect HTML
+3. Compare against baseline — does the token distribution shift improve discrimination?
+4. If not: the model (bge-small, 384-dim) is the ceiling, not chunking. Next lever is a larger model.
+
+### Key dependencies
+- `fastembed` 0.7.4 — embedding + tokenizer (bundled, model-agnostic)
+- `semantic-text-splitter` 0.29.0 — Rust-based chunker, accepts `tokenizers.Tokenizer` directly
+- `tokenizers` 0.22.2 — HuggingFace Rust tokenizer (fastembed dependency)
 
 ---
 
@@ -161,7 +197,8 @@ If no strategy significantly improves variance/spread, the bottleneck is the emb
 
 | Thread | Status | Notes |
 |--------|--------|-------|
-| `tbd ask` benchmark comparison | Next session | Build 3 strategy DBs, run comparison, decide if chunking or model is the bottleneck |
+| `tbd ask` exchange-window experiment | In flight | Two subtasks building. First real experiment with token-aware chunking. |
+| `tbd ask` model ceiling question | Blocked on above | If exchange-window doesn't improve discrimination, try bge-base (768-dim) or larger |
 | New adapters: test & ingest | Next | 4 new adapters merged (cline, goose, cursor, aider) — need real ingestion test |
 | Pricing table migration | Open | Schema defines `pricing` table but it doesn't exist in live DB. Needs migration or re-create. |
 | `workspaces.git_remote` | Deferred | Could resolve via `git remote -v`. Not blocking queries yet. |
