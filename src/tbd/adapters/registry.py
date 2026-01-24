@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from adapters import claude_code, codex_cli, gemini_cli
+from tbd.adapters import claude_code, codex_cli, gemini_cli
 
 # Additional adapters (cline, goose, cursor, aider) available at commit f5e3409
 # Re-add as drop-in plugins in ~/.config/tbd/adapters/ when data is available
@@ -115,7 +115,7 @@ def load_all_adapters(dropin_path: Path | None = None) -> list:
 
     Priority: built-in > drop-in > entry point.
     """
-    from paths import adapters_dir
+    from tbd.paths import adapters_dir
 
     if dropin_path is None:
         dropin_path = adapters_dir()

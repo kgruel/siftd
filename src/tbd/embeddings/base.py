@@ -51,13 +51,13 @@ def _try_backend(name: str, verbose: bool) -> EmbeddingBackend | None:
     """Try to initialize a backend by name. Returns None if unavailable."""
     try:
         if name == "ollama":
-            from embeddings.ollama_backend import OllamaBackend
+            from tbd.embeddings.ollama_backend import OllamaBackend
             backend = OllamaBackend()
             if verbose:
                 print(f"Using embedding backend: ollama ({backend.model})", file=sys.stderr)
             return backend
         elif name == "fastembed":
-            from embeddings.fastembed_backend import FastEmbedBackend
+            from tbd.embeddings.fastembed_backend import FastEmbedBackend
             backend = FastEmbedBackend()
             if verbose:
                 print(f"Using embedding backend: fastembed ({backend.model})", file=sys.stderr)

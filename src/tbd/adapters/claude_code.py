@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
-from domain import (
+from tbd.domain import (
     ContentBlock,
     Conversation,
     Harness,
@@ -18,7 +18,7 @@ from domain import (
     ToolCall,
     Usage,
 )
-from domain.source import Source
+from tbd.domain.source import Source
 
 # Adapter self-description
 NAME = "claude_code"

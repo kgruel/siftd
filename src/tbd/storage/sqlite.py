@@ -7,8 +7,8 @@ import time
 import os
 from pathlib import Path
 
-from domain import Conversation, ContentBlock
-from models import parse_model_name
+from tbd.domain import Conversation, ContentBlock
+from tbd.models import parse_model_name
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
@@ -859,7 +859,7 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
     Returns count of attributes inserted.
     """
     from pathlib import Path
-    from adapters import claude_code
+    from tbd.adapters import claude_code
 
     # Find all ingested claude_code files
     harness_row = conn.execute(

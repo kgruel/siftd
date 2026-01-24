@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from domain import Source
-from storage.sqlite import (
+from tbd.domain import Source
+from tbd.storage.sqlite import (
     store_conversation,
     check_file_ingested,
     record_ingested_file,

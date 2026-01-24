@@ -15,9 +15,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from embeddings.fastembed_backend import FastEmbedBackend
-from paths import data_dir
-from storage.embeddings import open_embeddings_db, store_chunk, set_meta
+from tbd.embeddings.fastembed_backend import FastEmbedBackend
+from tbd.paths import data_dir
+from tbd.storage.embeddings import open_embeddings_db, store_chunk, set_meta
 
 
 def extract_chunks(main_conn: sqlite3.Connection, params: dict) -> list[dict]:
@@ -49,7 +49,7 @@ def extract_chunks(main_conn: sqlite3.Connection, params: dict) -> list[dict]:
 def _extract_exchange_window(conn: sqlite3.Connection, params: dict) -> list[dict]:
     """Use the shared exchange-window chunker."""
     from fastembed import TextEmbedding
-    from embeddings.chunker import extract_exchange_window_chunks
+    from tbd.embeddings.chunker import extract_exchange_window_chunks
 
     target_tokens = params.get("target_tokens", 256)
     max_tokens = params.get("max_tokens", 512)

@@ -11,6 +11,6 @@ Usage:
     vectors = backend.embed(["hello", "world"])
 """
 
-from embeddings.base import EmbeddingBackend, get_backend
+from .base import EmbeddingBackend, get_backend
 
 __all__ = ["EmbeddingBackend", "get_backend"]

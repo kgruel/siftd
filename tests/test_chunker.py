@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 pytest.importorskip("fastembed")
 
 from fastembed import TextEmbedding
-from embeddings.chunker import chunk_text
+from tbd.embeddings.chunker import chunk_text
 
 
 def get_tokenizer():

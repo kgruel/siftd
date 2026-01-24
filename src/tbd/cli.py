@@ -4,10 +4,10 @@ import argparse
 import sys
 from pathlib import Path
 
-from adapters.registry import load_all_adapters
-from ingestion import ingest_all, IngestStats
-from paths import db_path, embeddings_db_path, ensure_dirs, data_dir, queries_dir
-from storage.sqlite import (
+from tbd.adapters.registry import load_all_adapters
+from tbd.ingestion import ingest_all, IngestStats
+from tbd.paths import db_path, embeddings_db_path, ensure_dirs, data_dir, queries_dir
+from tbd.storage.sqlite import (
     create_database,
     open_database,
     rebuild_fts_index,
@@ -34,7 +34,7 @@ class _AdapterWithPaths:
 
     def discover(self):
         """Discover using overridden paths."""
-        from domain import Source
+        from tbd.domain import Source
         for location in self._paths:
             base = Path(location).expanduser()
             if not base.exists():
@@ -157,7 +157,7 @@ def cmd_status(args) -> int:
 
 def cmd_path(args) -> int:
     """Show XDG paths."""
-    from paths import data_dir, config_dir, cache_dir, db_path
+    from tbd.paths import data_dir, config_dir, cache_dir, db_path
 
     print(f"Data directory:   {data_dir()}")
     print(f"Config directory: {config_dir()}")
@@ -209,7 +209,7 @@ def cmd_ask(args) -> int:
     """Semantic search over conversation content using embeddings."""
     import sqlite3 as _sqlite3
 
-    from storage.embeddings import (
+    from tbd.storage.embeddings import (
         open_embeddings_db,
         store_chunk,
         get_indexed_conversation_ids,
@@ -246,7 +246,7 @@ def cmd_ask(args) -> int:
         return 1
 
     # Resolve backend for query embedding
-    from embeddings import get_backend
+    from tbd.embeddings import get_backend
     try:
         backend = get_backend(preferred=args.backend, verbose=True)
     except RuntimeError as e:
@@ -259,7 +259,7 @@ def cmd_ask(args) -> int:
     # Hybrid recall: FTS5 narrows candidates, embeddings rerank
     if not args.embeddings_only:
         import sqlite3 as _sqlite3_main
-        from storage.sqlite import fts5_recall_conversations
+        from tbd.storage.sqlite import fts5_recall_conversations
 
         main_conn = _sqlite3_main.connect(db)
         main_conn.row_factory = _sqlite3_main.Row
@@ -302,7 +302,7 @@ def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: s
     """Build or incrementally update the embeddings index."""
     import sqlite3 as _sqlite3
 
-    from storage.embeddings import (
+    from tbd.storage.embeddings import (
         open_embeddings_db,
         store_chunk,
         get_indexed_conversation_ids,
@@ -310,8 +310,8 @@ def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: s
         set_meta,
         chunk_count,
     )
-    from embeddings import get_backend
-    from embeddings.chunker import extract_exchange_window_chunks
+    from tbd.embeddings import get_backend
+    from tbd.embeddings.chunker import extract_exchange_window_chunks
 
     try:
         backend = get_backend(preferred=backend_name, verbose=verbose)

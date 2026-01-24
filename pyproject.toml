@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tbd"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastembed",
+    "numpy",
+    "onnxruntime",
+    "tokenizers",
+    "huggingface-hub",
+    "semantic-text-splitter",
+    "httpx",
+    "tqdm",
+    "pyyaml",
+    "loguru",
+]
+
+[project.scripts]
+tbd = "tbd.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tbd"]

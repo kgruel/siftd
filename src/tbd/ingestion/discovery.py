@@ -2,7 +2,7 @@
 
 from typing import Iterable
 
-from domain import Source
+from tbd.domain import Source
 
 
 def discover_all(adapters: list) -> Iterable[tuple[Source, object]]:

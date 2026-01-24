@@ -151,7 +151,7 @@ def run_benchmark(
             for query_text in group["queries"]:
                 conversation_ids = None
                 if hybrid:
-                    from storage.sqlite import fts5_recall_conversations
+                    from tbd.storage.sqlite import fts5_recall_conversations
                     fts5_ids, fts5_mode = fts5_recall_conversations(main_db, query_text, limit=recall_limit)
                     db_recall_meta[query_text] = {
                         "fts5_conversations": len(fts5_ids),
@@ -433,7 +433,7 @@ def main():
         params[key] = value
 
     # Initialize backend
-    from embeddings.fastembed_backend import FastEmbedBackend
+    from tbd.embeddings.fastembed_backend import FastEmbedBackend
     print("Initializing embedding model...", file=sys.stderr)
     backend = FastEmbedBackend()
     tokenizer = get_tokenizer(backend)

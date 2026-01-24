@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from paths import data_dir
+from tbd.paths import data_dir
 
 
 MODEL_MAX_TOKENS = 512
