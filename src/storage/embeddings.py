@@ -84,6 +84,7 @@ def store_chunk(
     text: str,
     embedding: list[float],
     *,
+    token_count: int | None = None,
     commit: bool = False,
 ) -> str:
     """Store a text chunk with its embedding vector."""
@@ -91,10 +92,12 @@ def store_chunk(
     embedding_blob = _encode_embedding(embedding)
     created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
+    actual_token_count = token_count if token_count is not None else len(text.split())
+
     conn.execute(
         """INSERT INTO chunks (id, conversation_id, chunk_type, text, embedding, token_count, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (chunk_id, conversation_id, chunk_type, text, embedding_blob, len(text.split()), created_at),
+        (chunk_id, conversation_id, chunk_type, text, embedding_blob, actual_token_count, created_at),
     )
     if commit:
         conn.commit()

@@ -1,0 +1,11 @@
+{
+  "name": "exchange-window",
+  "description": "Groups prompt+response into exchanges, accumulates into token-bounded windows",
+  "goal": "Better semantic coherence by chunking at exchange boundaries with token awareness",
+  "params": {
+    "strategy": "exchange-window",
+    "target_tokens": 256,
+    "max_tokens": 512,
+    "overlap_tokens": 25
+  }
+}

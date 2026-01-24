@@ -3,6 +3,7 @@
 Usage:
     python bench/build.py --strategy bench/strategies/min-100.json
     python bench/build.py --strategy bench/strategies/min-100.json --output /tmp/test.db
+    python bench/build.py --strategy bench/strategies/exchange-window.json
 """
 
 import argparse
@@ -20,7 +21,16 @@ from storage.embeddings import open_embeddings_db, store_chunk, set_meta
 
 
 def extract_chunks(main_conn: sqlite3.Connection, params: dict) -> list[dict]:
-    """Extract chunks from main DB according to strategy params."""
+    """Extract chunks from main DB according to strategy params.
+
+    Dispatches to exchange-window or per-block strategy based on params.
+    """
+    strategy = params.get("strategy", "per-block")
+
+    if strategy == "exchange-window":
+        return _extract_exchange_window(main_conn, params)
+
+    # Legacy per-block strategies
     min_chars = params.get("min_chars", 20)
     chunk_types = params.get("chunk_types", ["prompt", "response"])
     concat = params.get("concat", False)
@@ -34,6 +44,27 @@ def extract_chunks(main_conn: sqlite3.Connection, params: dict) -> list[dict]:
         chunks.extend(_extract_response_chunks(main_conn, min_chars, concat))
 
     return chunks
+
+
+def _extract_exchange_window(conn: sqlite3.Connection, params: dict) -> list[dict]:
+    """Use the shared exchange-window chunker."""
+    from fastembed import TextEmbedding
+    from embeddings.chunker import extract_exchange_window_chunks
+
+    target_tokens = params.get("target_tokens", 256)
+    max_tokens = params.get("max_tokens", 512)
+    overlap_tokens = params.get("overlap_tokens", 25)
+
+    emb = TextEmbedding("BAAI/bge-small-en-v1.5")
+    tokenizer = emb.model.tokenizer
+
+    return extract_exchange_window_chunks(
+        conn,
+        tokenizer,
+        target_tokens=target_tokens,
+        max_tokens=max_tokens,
+        overlap_tokens=overlap_tokens,
+    )
 
 
 def _extract_prompt_chunks(
@@ -181,6 +212,7 @@ def build(strategy_path: Path, output_path: Path, db_path: Path) -> None:
             chunk["chunk_type"],
             chunk["text"],
             embedding,
+            token_count=chunk.get("token_count"),
         )
 
     embed_conn.commit()

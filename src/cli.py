@@ -292,6 +292,7 @@ def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: s
         chunk_count,
     )
     from embeddings import get_backend
+    from embeddings.chunker import extract_exchange_window_chunks
 
     try:
         backend = get_backend(preferred=backend_name, verbose=verbose)
@@ -309,11 +310,23 @@ def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: s
     # Determine which conversations need indexing
     already_indexed = get_indexed_conversation_ids(embed_conn)
 
-    # Get text content from main DB
+    # Get exchange-window chunks from main DB
     main_conn = _sqlite3.connect(db)
     main_conn.row_factory = _sqlite3.Row
 
-    chunks = _extract_chunks(main_conn, exclude_ids=already_indexed)
+    tokenizer = _get_tokenizer()
+    target_tokens = 256
+    max_tokens = 512
+    overlap_tokens = 25
+
+    chunks = extract_exchange_window_chunks(
+        main_conn,
+        tokenizer,
+        target_tokens=target_tokens,
+        max_tokens=max_tokens,
+        overlap_tokens=overlap_tokens,
+        exclude_conversation_ids=already_indexed,
+    )
     main_conn.close()
 
     if not chunks:
@@ -337,7 +350,7 @@ def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: s
             done = min(i + batch_size, len(texts))
             print(f"  {done}/{len(texts)}", file=sys.stderr)
 
-    # Store
+    # Store with real token counts
     for chunk, embedding in zip(chunks, all_embeddings):
         store_chunk(
             embed_conn,
@@ -345,11 +358,16 @@ def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: s
             chunk_type=chunk["chunk_type"],
             text=chunk["text"],
             embedding=embedding,
+            token_count=chunk["token_count"],
         )
     embed_conn.commit()
 
+    # Record strategy metadata
     set_meta(embed_conn, "backend", backend.name)
     set_meta(embed_conn, "dimension", str(backend.dimension))
+    set_meta(embed_conn, "strategy", "exchange-window")
+    set_meta(embed_conn, "target_tokens", str(target_tokens))
+    set_meta(embed_conn, "max_tokens", str(max_tokens))
 
     total = chunk_count(embed_conn)
     if verbose:
@@ -359,63 +377,11 @@ def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: s
     return 0
 
 
-def _extract_chunks(main_conn, *, exclude_ids: set[str]) -> list[dict]:
-    """Extract text chunks from main DB for embedding.
-
-    Chunks prompt and response text content. Skips tool_result messages
-    and thinking/tool_use blocks (per design).
-    """
-    chunks = []
-
-    # Prompt text blocks
-    rows = main_conn.execute("""
-        SELECT
-            p.conversation_id,
-            pc.id AS content_id,
-            json_extract(pc.content, '$.text') AS text
-        FROM prompt_content pc
-        JOIN prompts p ON p.id = pc.prompt_id
-        WHERE pc.block_type = 'text'
-          AND json_extract(pc.content, '$.text') IS NOT NULL
-    """).fetchall()
-
-    for row in rows:
-        if row["conversation_id"] in exclude_ids:
-            continue
-        text = row["text"].strip()
-        if len(text) < 20:  # skip trivially short chunks
-            continue
-        chunks.append({
-            "conversation_id": row["conversation_id"],
-            "chunk_type": "prompt",
-            "text": text,
-        })
-
-    # Response text blocks (skip thinking blocks — block_type='text' only)
-    rows = main_conn.execute("""
-        SELECT
-            r.conversation_id,
-            rc.id AS content_id,
-            json_extract(rc.content, '$.text') AS text
-        FROM response_content rc
-        JOIN responses r ON r.id = rc.response_id
-        WHERE rc.block_type = 'text'
-          AND json_extract(rc.content, '$.text') IS NOT NULL
-    """).fetchall()
-
-    for row in rows:
-        if row["conversation_id"] in exclude_ids:
-            continue
-        text = row["text"].strip()
-        if len(text) < 20:
-            continue
-        chunks.append({
-            "conversation_id": row["conversation_id"],
-            "chunk_type": "response",
-            "text": text,
-        })
-
-    return chunks
+def _get_tokenizer():
+    """Get the fastembed tokenizer for token counting."""
+    from fastembed import TextEmbedding
+    emb = TextEmbedding("BAAI/bge-small-en-v1.5")
+    return emb.model.tokenizer
 
 
 def _ask_filter_conversations(db: Path, args) -> set[str] | None:
