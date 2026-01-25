@@ -16,7 +16,11 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Cache tokens**: `cache_creation_input_tokens`, `cache_read_input_tokens` extracted into `response_attributes`
 - **Cost tracking**: flat `pricing` table (model+provider → rates), approximate cost via query-time JOIN
 - **Tags**: manual tagging via CLI (`tbd tag`), conversation/workspace/tool_call scopes
-- **Shell command categorization**: 13 auto-tags (`shell:vcs`, `shell:test`, `shell:file`, etc.) via `tbd backfill --shell-tags`, 91% coverage of 25k+ commands
+- **Shell command categorization**: 13 auto-tags (`shell:vcs`, `shell:test`, `shell:file`, etc.), 91% coverage of 25k+ commands
+  - Auto-tagged at ingest time (no separate backfill needed for new data)
+  - `tbd backfill --shell-tags` still works for existing data
+  - `tbd query --tool-tag shell:test` filters conversations by tool_call tags
+  - `tbd tools` summary command with `--by-workspace` rollups
 - **FTS5**: full-text search on prompt+response text content
 - **Semantic search**: `tbd ask` — embeddings in separate SQLite DB, fastembed backend, incremental indexing
   - Uses exchange-window chunking (token-aware, prompt+response pairs as atomic units)
@@ -38,20 +42,24 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - IDs: 12-char prefix, copy-pasteable for drill-down
   - SQL subcommand: `tbd query sql` lists `.sql` files, `tbd query sql <name>` runs them
   - Root workspaces display as `(root)` instead of blank
-- **CLI**: `ingest`, `status`, `query`, `tag`, `tags`, `backfill`, `path`, `ask`, `adapters`, `copy`
+- **CLI**: `ingest`, `status`, `query`, `tag`, `tags`, `backfill`, `path`, `ask`, `adapters`, `copy`, `tools`
   - `tbd adapters` — list discovered adapters (built-in, drop-in, entry point)
   - `tbd copy adapter <name>` — copy built-in adapter to config for customization
   - `tbd copy query <name>` — copy built-in query to config
 - **Library API** (`tbd.api`): Programmatic access to all CLI functionality
-  - `list_conversations()`, `get_conversation()` — conversation queries
+  - `list_conversations()`, `get_conversation()` — conversation queries (supports `tool_tag` filter)
   - `hybrid_search()`, `aggregate_by_conversation()`, `first_mention()` — semantic search
   - `get_stats()` → `DatabaseStats` — database statistics
+  - `get_tool_tag_summary()`, `get_tool_tags_by_workspace()` — tool tag analytics
   - `list_query_files()`, `run_query_file()` — SQL query execution
   - `list_adapters()`, `copy_adapter()`, `copy_query()` — adapter/resource management
 - **OutputFormatter pattern** (`tbd.output`): Pluggable presentation for `tbd ask`
-  - `ChunkListFormatter`, `VerboseFormatter`, `FullExchangeFormatter`, `ContextFormatter`, `ThreadFormatter`, `ConversationFormatter`
+  - `ChunkListFormatter`, `VerboseFormatter`, `FullExchangeFormatter`, `ContextFormatter`, `ThreadFormatter`, `ConversationFormatter`, `JsonFormatter`
+  - `--json` flag for structured output (bench/agent consumption)
+  - `--format NAME` for explicit formatter selection
+  - Drop-in plugins: `~/.config/tbd/formatters/*.py` + `tbd.formatters` entry points
   - `select_formatter(args)` dispatch based on CLI flags
-- **XDG paths**: data `~/.local/share/tbd`, config `~/.config/tbd`, queries `~/.config/tbd/queries`, adapters `~/.config/tbd/adapters`
+- **XDG paths**: data `~/.local/share/tbd`, config `~/.config/tbd`, queries `~/.config/tbd/queries`, adapters `~/.config/tbd/adapters`, formatters `~/.config/tbd/formatters`
 
 ### Benchmarking framework (`bench/`)
 - **Corpus analysis**: `bench/corpus_analysis.py` — profiles token distribution using fastembed's tokenizer
@@ -104,12 +112,14 @@ tbd-v2/
 │   │   ├── conversations.py    # list_conversations(), get_conversation(), query files
 │   │   ├── stats.py            # get_stats() → DatabaseStats
 │   │   ├── search.py           # hybrid_search(), aggregate_by_conversation(), first_mention()
+│   │   ├── tools.py            # get_tool_tag_summary(), get_tool_tags_by_workspace()
 │   │   ├── adapters.py         # list_adapters() → AdapterInfo
 │   │   ├── resources.py        # copy_adapter(), copy_query()
 │   │   └── file_refs.py        # fetch_file_refs() for tool results
 │   ├── output/                 # Presentation layer (OutputFormatter pattern)
 │   │   ├── __init__.py         # Re-exports formatters
-│   │   └── formatters.py       # ChunkList, Verbose, Full, Context, Thread, Conversation formatters
+│   │   ├── formatters.py       # ChunkList, Verbose, Full, Context, Thread, Conversation, Json formatters
+│   │   └── registry.py         # Formatter plugin discovery (drop-in + entry points)
 │   ├── adapters/
 │   │   ├── __init__.py         # Adapter exports
 │   │   ├── registry.py         # Plugin discovery + wrap_adapter_paths()
@@ -141,9 +151,10 @@ tbd-v2/
 
 ### Release Status (0.1.0)
 - **Version**: 0.1.0 — first stable release for personal use
-- **Tests**: 34 passing (adapter fixtures, embeddings, models, chunker)
+- **Tests**: 101 passing (adapters, API, formatters, embeddings, models, chunker)
 - **Install**: `uv pip install .` or `pip install .` from repo root
 - **CLI**: `tbd` available after install, or `./tbd` from repo root
+- **Pre-commit hook**: Auto-regenerates `docs/cli.md` (local-only, not versioned)
 
 ---
 
@@ -187,6 +198,9 @@ tbd-v2/
 | Library API re-exports | Top-level `from tbd import ...` exposes public functions. CLI is just one consumer. |
 | `tbd copy` for customization | Copy built-in adapters/queries to config dir for modification. Same-name overrides built-in. |
 | Flat kwargs over filter objects | `list_conversations(workspace=..., model=...)` not `list_conversations(filter=Filter(...))`. Dataclasses for return types only. |
+| Formatter plugins like adapters | Same three-tier discovery: built-in < entry point < drop-in. Drop-ins can override built-ins. |
+| Ingest-time tagging (inline) | Shell tags applied during `store_conversation()`, not hooks. General hook pattern deferred until second auto-tag use case emerges. |
+| Pre-commit hook local-only | `.git/hooks/pre-commit` regenerates CLI docs. Not versioned — too little benefit for portability overhead. |
 
 ---
 
@@ -226,22 +240,17 @@ From using `tbd ask` to reconstruct intellectual history across ~12 workspaces, 
 
 ## Next Session
 
-**Query helpers for tool_call tags**: Shell categorization is done, but querying requires raw SQL. Potential improvements:
+**Potential directions**:
 
-- `tbd query --tool-tag shell:test` — filter conversations by tool_call tags
-- `tbd tools` — summary of tool usage by category (leverage new tags)
-- Workspace-level rollups: "which workspaces are test-heavy vs search-heavy?"
-
-**OutputFormatter extensions**:
-- `JsonFormatter` for bench/agent consumption (`--json` on `tbd ask`)
-- User-configurable formatters via config file
-- Formatter as plugin (drop-in like adapters)
-
-**Alternative directions**:
-- **Ingest-time tagging**: Auto-tag shell commands during ingest (currently backfill-only)
 - **Tag hierarchy**: `shell:*` is flat; could support `shell:python:test` for finer granularity
-- **CLI docs regeneration**: `scripts/gen-cli-docs.sh` needs update after new commands
-- **Built-in example queries**: Ship more `.sql` files, copyable via `tbd copy query`
+- **User-configurable formatters**: Config file to set default formatter preferences
+- **More built-in queries**: Ship example `.sql` files, copyable via `tbd copy query`
+- **`tbd copy formatter`**: Copy built-in formatter to config for customization (mirrors adapter pattern)
+
+**Lower priority**:
+
+- **Synthesis layer**: LLM-generated narratives over structured retrieval output. Consumer of tbd, not part of it.
+- **Doc cross-reference**: Embedding docs alongside conversations. Unclear if concepts-only-in-docs is a real use case.
 
 ---
 
@@ -264,5 +273,5 @@ From using `tbd ask` to reconstruct intellectual history across ~12 workspaces, 
 
 ---
 
-*Updated: 2026-01-25 (API layer extraction, OutputFormatter pattern, tbd adapters/copy commands, README.md)*
+*Updated: 2026-01-25 (query --tool-tag, tbd tools, JsonFormatter, formatter plugins, ingest-time shell tagging, pre-commit hook)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
