@@ -8,11 +8,11 @@ from tbd.adapters.registry import load_all_adapters
 from tbd.ingestion import IngestStats, ingest_all
 from tbd.paths import data_dir, db_path, embeddings_db_path, ensure_dirs, queries_dir
 from tbd.storage.sqlite import (
-    apply_label,
+    apply_tag,
     backfill_response_attributes,
     create_database,
-    get_or_create_label,
-    list_labels,
+    get_or_create_tag,
+    list_tags,
     open_database,
 )
 
@@ -1092,8 +1092,8 @@ def _print_thread_exchange(conn, source_ids: list[str]) -> None:
         print("  (no exchange text available)")
 
 
-def cmd_label(args) -> int:
-    """Apply a label to a conversation or workspace."""
+def cmd_tag(args) -> int:
+    """Apply a tag to a conversation or workspace."""
     db = Path(args.db) if args.db else db_path()
 
     if not db.exists():
@@ -1105,7 +1105,7 @@ def cmd_label(args) -> int:
 
     entity_type = args.entity_type
     entity_id = args.entity_id
-    label_name = args.label
+    tag_name = args.tag
 
     # Validate entity exists
     if entity_type == "conversation":
@@ -1123,20 +1123,20 @@ def cmd_label(args) -> int:
         conn.close()
         return 1
 
-    label_id = get_or_create_label(conn, label_name)
-    result = apply_label(conn, entity_type, entity_id, label_id, commit=True)
+    tag_id = get_or_create_tag(conn, tag_name)
+    result = apply_tag(conn, entity_type, entity_id, tag_id, commit=True)
 
     if result:
-        print(f"Applied label '{label_name}' to {entity_type} {entity_id}")
+        print(f"Applied tag '{tag_name}' to {entity_type} {entity_id}")
     else:
-        print(f"Label '{label_name}' already applied to {entity_type} {entity_id}")
+        print(f"Tag '{tag_name}' already applied to {entity_type} {entity_id}")
 
     conn.close()
     return 0
 
 
-def cmd_labels(args) -> int:
-    """List all labels."""
+def cmd_tags(args) -> int:
+    """List all tags."""
     db = Path(args.db) if args.db else db_path()
 
     if not db.exists():
@@ -1145,22 +1145,22 @@ def cmd_labels(args) -> int:
         return 1
 
     conn = open_database(db)
-    labels = list_labels(conn)
+    tags = list_tags(conn)
 
-    if not labels:
-        print("No labels defined.")
+    if not tags:
+        print("No tags defined.")
         conn.close()
         return 0
 
-    for label in labels:
+    for tag in tags:
         counts = []
-        if label["conversation_count"]:
-            counts.append(f"{label['conversation_count']} conversations")
-        if label["workspace_count"]:
-            counts.append(f"{label['workspace_count']} workspaces")
+        if tag["conversation_count"]:
+            counts.append(f"{tag['conversation_count']} conversations")
+        if tag["workspace_count"]:
+            counts.append(f"{tag['workspace_count']} workspaces")
         count_str = f" ({', '.join(counts)})" if counts else ""
-        desc = f" - {label['description']}" if label["description"] else ""
-        print(f"  {label['name']}{desc}{count_str}")
+        desc = f" - {tag['description']}" if tag["description"] else ""
+        print(f"  {tag['name']}{desc}{count_str}")
 
     conn.close()
     return 0
@@ -1522,12 +1522,12 @@ def cmd_query(args) -> int:
         )
         params.append(args.tool)
 
-    if args.label:
+    if args.tag:
         conditions.append(
-            "c.id IN (SELECT cl.conversation_id FROM conversation_labels cl"
-            " JOIN labels lb ON lb.id = cl.label_id WHERE lb.name = ?)"
+            "c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
+            " JOIN tags tg ON tg.id = ct.tag_id WHERE tg.name = ?)"
         )
-        params.append(args.label)
+        params.append(args.tag)
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
@@ -1769,16 +1769,16 @@ def main(argv=None) -> int:
     p_ask.add_argument("--threshold", type=float, metavar="SCORE", help="Filter results below this relevance score (e.g., 0.7)")
     p_ask.set_defaults(func=cmd_ask)
 
-    # label
-    p_label = subparsers.add_parser("label", help="Apply a label to an entity")
-    p_label.add_argument("entity_type", choices=["conversation", "workspace"], help="Entity type")
-    p_label.add_argument("entity_id", help="Entity ID (ULID)")
-    p_label.add_argument("label", help="Label name")
-    p_label.set_defaults(func=cmd_label)
+    # tag
+    p_tag = subparsers.add_parser("tag", help="Apply a tag to an entity")
+    p_tag.add_argument("entity_type", choices=["conversation", "workspace"], help="Entity type")
+    p_tag.add_argument("entity_id", help="Entity ID (ULID)")
+    p_tag.add_argument("tag", help="Tag name")
+    p_tag.set_defaults(func=cmd_tag)
 
-    # labels
-    p_labels = subparsers.add_parser("labels", help="List all labels")
-    p_labels.set_defaults(func=cmd_labels)
+    # tags
+    p_tags = subparsers.add_parser("tags", help="List all tags")
+    p_tags.set_defaults(func=cmd_tags)
 
     # query
     p_query = subparsers.add_parser(
@@ -1806,7 +1806,7 @@ def main(argv=None) -> int:
     p_query.add_argument("--before", metavar="DATE", help="Conversations started before this date")
     p_query.add_argument("-s", "--search", metavar="QUERY", help="Full-text search (FTS5 syntax)")
     p_query.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
-    p_query.add_argument("-l", "--label", metavar="NAME", help="Filter by label name")
+    p_query.add_argument("-l", "--tag", metavar="NAME", help="Filter by tag name")
     p_query.add_argument("--json", action="store_true", help="Output as JSON array")
     p_query.add_argument("--stats", action="store_true", help="Show summary totals after list")
     p_query.add_argument("--var", action="append", metavar="KEY=VALUE", help="Substitute $KEY with VALUE in SQL (for 'sql' subcommand)")

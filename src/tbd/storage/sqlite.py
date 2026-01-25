@@ -57,10 +57,45 @@ def open_database(db_path: Path) -> sqlite3.Connection:
         conn.executescript(schema)
         conn.commit()
 
+    _migrate_labels_to_tags(conn)
     ensure_fts_table(conn)
     ensure_pricing_table(conn)
     ensure_canonical_tools(conn)
     return conn
+
+
+def _migrate_labels_to_tags(conn: sqlite3.Connection) -> None:
+    """Migrate old label tables to tag tables if they exist.
+
+    Renames: labels → tags, conversation_labels → conversation_tags,
+    workspace_labels → workspace_tags, and updates column names.
+    """
+    # Check if old 'labels' table exists
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='labels'"
+    )
+    if not cur.fetchone():
+        return  # No migration needed
+
+    # Check if new 'tags' table already exists (migration already done)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='tags'"
+    )
+    if cur.fetchone():
+        return  # Already migrated
+
+    # Perform migration
+    conn.execute("ALTER TABLE labels RENAME TO tags")
+    conn.execute("ALTER TABLE conversation_labels RENAME TO conversation_tags")
+    conn.execute("ALTER TABLE workspace_labels RENAME TO workspace_tags")
+
+    # Rename label_id columns to tag_id
+    # SQLite requires recreating tables to rename columns in older versions,
+    # but ALTER TABLE ... RENAME COLUMN works in SQLite 3.25.0+ (2018-09-15)
+    conn.execute("ALTER TABLE conversation_tags RENAME COLUMN label_id TO tag_id")
+    conn.execute("ALTER TABLE workspace_tags RENAME COLUMN label_id TO tag_id")
+
+    conn.commit()
 
 
 # Alias for backwards compatibility
@@ -523,7 +558,7 @@ def delete_conversation(conn: sqlite3.Connection, conversation_id: str) -> None:
     """Delete a conversation and all related data.
 
     Cascades to: prompts, responses, tool_calls, content blocks,
-    attributes, labels, ingested_files.
+    attributes, tags, ingested_files.
     """
     # Delete in order to respect foreign keys (or rely on CASCADE if defined)
     # Content and attributes first
@@ -553,9 +588,9 @@ def delete_conversation(conn: sqlite3.Connection, conversation_id: str) -> None:
     conn.execute("DELETE FROM responses WHERE conversation_id = ?", (conversation_id,))
     conn.execute("DELETE FROM prompts WHERE conversation_id = ?", (conversation_id,))
 
-    # Conversation attributes and labels
+    # Conversation attributes and tags
     conn.execute("DELETE FROM conversation_attributes WHERE conversation_id = ?", (conversation_id,))
-    conn.execute("DELETE FROM conversation_labels WHERE conversation_id = ?", (conversation_id,))
+    conn.execute("DELETE FROM conversation_tags WHERE conversation_id = ?", (conversation_id,))
 
     # Ingested files pointing to this conversation
     conn.execute("DELETE FROM ingested_files WHERE conversation_id = ?", (conversation_id,))
@@ -764,13 +799,13 @@ def backfill_providers(conn: sqlite3.Connection) -> int:
 
 
 # =============================================================================
-# Label functions
+# Tag functions
 # =============================================================================
 
 
-def get_or_create_label(conn: sqlite3.Connection, name: str, description: str | None = None) -> str:
-    """Get or create a label by name, return id (ULID)."""
-    cur = conn.execute("SELECT id FROM labels WHERE name = ?", (name,))
+def get_or_create_tag(conn: sqlite3.Connection, name: str, description: str | None = None) -> str:
+    """Get or create a tag by name, return id (ULID)."""
+    cur = conn.execute("SELECT id FROM tags WHERE name = ?", (name,))
     row = cur.fetchone()
     if row:
         return row["id"]
@@ -778,64 +813,64 @@ def get_or_create_label(conn: sqlite3.Connection, name: str, description: str | 
     from datetime import datetime
     ulid = _ulid()
     conn.execute(
-        "INSERT INTO labels (id, name, description, created_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO tags (id, name, description, created_at) VALUES (?, ?, ?, ?)",
         (ulid, name, description, datetime.now().isoformat())
     )
     return ulid
 
 
-def apply_label(
+def apply_tag(
     conn: sqlite3.Connection,
     entity_type: str,
     entity_id: str,
-    label_id: str,
+    tag_id: str,
     *,
     commit: bool = False,
 ) -> str | None:
-    """Apply a label to an entity. Returns assignment id or None if already applied.
+    """Apply a tag to an entity. Returns assignment id or None if already applied.
 
     entity_type: 'conversation' or 'workspace'
     """
     from datetime import datetime
 
     if entity_type == "conversation":
-        table = "conversation_labels"
+        table = "conversation_tags"
         fk_col = "conversation_id"
     elif entity_type == "workspace":
-        table = "workspace_labels"
+        table = "workspace_tags"
         fk_col = "workspace_id"
     else:
         raise ValueError(f"Unsupported entity_type: {entity_type}")
 
     # Check if already applied
     cur = conn.execute(
-        f"SELECT id FROM {table} WHERE {fk_col} = ? AND label_id = ?",
-        (entity_id, label_id)
+        f"SELECT id FROM {table} WHERE {fk_col} = ? AND tag_id = ?",
+        (entity_id, tag_id)
     )
     if cur.fetchone():
         return None
 
     ulid = _ulid()
     conn.execute(
-        f"INSERT INTO {table} (id, {fk_col}, label_id, applied_at) VALUES (?, ?, ?, ?)",
-        (ulid, entity_id, label_id, datetime.now().isoformat())
+        f"INSERT INTO {table} (id, {fk_col}, tag_id, applied_at) VALUES (?, ?, ?, ?)",
+        (ulid, entity_id, tag_id, datetime.now().isoformat())
     )
     if commit:
         conn.commit()
     return ulid
 
 
-def list_labels(conn: sqlite3.Connection) -> list[dict]:
-    """List all labels with usage counts."""
+def list_tags(conn: sqlite3.Connection) -> list[dict]:
+    """List all tags with usage counts."""
     cur = conn.execute("""
         SELECT
-            l.name,
-            l.description,
-            l.created_at,
-            (SELECT COUNT(*) FROM conversation_labels cl WHERE cl.label_id = l.id) as conversation_count,
-            (SELECT COUNT(*) FROM workspace_labels wl WHERE wl.label_id = l.id) as workspace_count
-        FROM labels l
-        ORDER BY l.name
+            t.name,
+            t.description,
+            t.created_at,
+            (SELECT COUNT(*) FROM conversation_tags ct WHERE ct.tag_id = t.id) as conversation_count,
+            (SELECT COUNT(*) FROM workspace_tags wt WHERE wt.tag_id = t.id) as workspace_count
+        FROM tags t
+        ORDER BY t.name
     """)
     return [
         {

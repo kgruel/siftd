@@ -198,31 +198,31 @@ CREATE TABLE tool_call_attributes (
 );
 
 --------------------------------------------------------------------------------
--- LABEL TABLES
+-- TAG TABLES
 -- User-defined categorization
 --------------------------------------------------------------------------------
 
-CREATE TABLE labels (
+CREATE TABLE tags (
     id              TEXT PRIMARY KEY,           -- ULID
     name            TEXT NOT NULL UNIQUE,
     description     TEXT,
     created_at      TEXT NOT NULL
 );
 
-CREATE TABLE workspace_labels (
+CREATE TABLE workspace_tags (
     id              TEXT PRIMARY KEY,           -- ULID
     workspace_id    TEXT NOT NULL REFERENCES workspaces(id),
-    label_id        TEXT NOT NULL REFERENCES labels(id),
+    tag_id          TEXT NOT NULL REFERENCES tags(id),
     applied_at      TEXT NOT NULL,
-    UNIQUE (workspace_id, label_id)
+    UNIQUE (workspace_id, tag_id)
 );
 
-CREATE TABLE conversation_labels (
+CREATE TABLE conversation_tags (
     id              TEXT PRIMARY KEY,           -- ULID
     conversation_id TEXT NOT NULL REFERENCES conversations(id),
-    label_id        TEXT NOT NULL REFERENCES labels(id),
+    tag_id          TEXT NOT NULL REFERENCES tags(id),
     applied_at      TEXT NOT NULL,
-    UNIQUE (conversation_id, label_id)
+    UNIQUE (conversation_id, tag_id)
 );
 
 --------------------------------------------------------------------------------
