@@ -4,6 +4,11 @@ This module provides programmatic access to tbd functionality.
 CLI commands are thin wrappers over these functions.
 """
 
+from tbd.api.adapters import (
+    AdapterInfo,
+    list_adapters,
+    list_builtin_adapters,
+)
 from tbd.api.conversations import (
     ConversationDetail,
     ConversationSummary,
@@ -20,6 +25,12 @@ from tbd.api.conversations import (
 from tbd.api.file_refs import (
     FileRef,
     fetch_file_refs,
+)
+from tbd.api.resources import (
+    CopyError,
+    copy_adapter,
+    copy_query,
+    list_builtin_queries,
 )
 from tbd.api.search import (
     ConversationScore,
@@ -39,6 +50,10 @@ from tbd.api.stats import (
 )
 
 __all__ = [
+    # adapters
+    "AdapterInfo",
+    "list_adapters",
+    "list_builtin_adapters",
     # conversations
     "ConversationSummary",
     "ConversationDetail",
@@ -55,6 +70,11 @@ __all__ = [
     # file refs
     "FileRef",
     "fetch_file_refs",
+    # resources
+    "CopyError",
+    "copy_adapter",
+    "copy_query",
+    "list_builtin_queries",
     # search
     "SearchResult",
     "ConversationScore",

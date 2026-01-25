@@ -667,6 +667,126 @@ def cmd_backfill(args) -> int:
     return 0
 
 
+def cmd_adapters(args) -> int:
+    """List discovered adapters."""
+    from tbd.api import list_adapters
+
+    adapters = list_adapters()
+
+    if not adapters:
+        print("No adapters found.")
+        return 0
+
+    # Compute column widths
+    name_width = max(len(a.name) for a in adapters)
+    source_width = max(len(a.source) for a in adapters)
+
+    # Header
+    print(f"{'NAME':<{name_width}}  {'SOURCE':<{source_width}}  LOCATIONS")
+
+    for a in adapters:
+        locations = ", ".join(a.locations) if a.locations else "-"
+        print(f"{a.name:<{name_width}}  {a.source:<{source_width}}  {locations}")
+
+    return 0
+
+
+def cmd_copy(args) -> int:
+    """Copy built-in resources to config directory for customization."""
+    from tbd.api import (
+        CopyError,
+        copy_adapter,
+        copy_query,
+        list_builtin_adapters,
+        list_builtin_queries,
+    )
+
+    resource_type = args.resource_type
+    name = args.name
+    force = args.force
+    copy_all = args.all
+
+    if resource_type == "adapter":
+        if copy_all:
+            # Copy all built-in adapters
+            names = list_builtin_adapters()
+            if not names:
+                print("No built-in adapters available.")
+                return 1
+            copied = []
+            for n in names:
+                try:
+                    dest = copy_adapter(n, force=force)
+                    copied.append((n, dest))
+                except CopyError as e:
+                    print(f"Error copying {n}: {e}")
+            if copied:
+                print("Copied adapters:")
+                for n, dest in copied:
+                    print(f"  {n} → {dest}")
+            return 0
+
+        if not name:
+            print("Usage: tbd copy adapter <name> [--force]")
+            print("       tbd copy adapter --all [--force]")
+            print("\nAvailable adapters:")
+            for n in list_builtin_adapters():
+                print(f"  {n}")
+            return 1
+
+        try:
+            dest = copy_adapter(name, force=force)
+            print(f"Copied {name} → {dest}")
+            return 0
+        except CopyError as e:
+            print(f"Error: {e}")
+            return 1
+
+    elif resource_type == "query":
+        if copy_all:
+            names = list_builtin_queries()
+            if not names:
+                print("No built-in queries available.")
+                return 1
+            copied = []
+            for n in names:
+                try:
+                    dest = copy_query(n, force=force)
+                    copied.append((n, dest))
+                except CopyError as e:
+                    print(f"Error copying {n}: {e}")
+            if copied:
+                print("Copied queries:")
+                for n, dest in copied:
+                    print(f"  {n} → {dest}")
+            return 0
+
+        if not name:
+            available = list_builtin_queries()
+            print("Usage: tbd copy query <name> [--force]")
+            print("       tbd copy query --all [--force]")
+            if available:
+                print("\nAvailable queries:")
+                for n in available:
+                    print(f"  {n}")
+            else:
+                print("\nNo built-in queries available.")
+            return 1
+
+        try:
+            dest = copy_query(name, force=force)
+            print(f"Copied {name} → {dest}")
+            return 0
+        except CopyError as e:
+            print(f"Error: {e}")
+            return 1
+
+    else:
+        print(f"Unknown resource type: {resource_type}")
+        print("Supported: adapter, query")
+        return 1
+
+
 def _print_stats(stats: IngestStats) -> None:
     """Print ingestion statistics."""
     print(f"\n{'='*50}")
@@ -809,6 +929,26 @@ def main(argv=None) -> int:
     # path
     p_path = subparsers.add_parser("path", help="Show XDG paths")
     p_path.set_defaults(func=cmd_path)
+
+    # adapters
+    p_adapters = subparsers.add_parser("adapters", help="List discovered adapters")
+    p_adapters.set_defaults(func=cmd_adapters)
+
+    # copy
+    p_copy = subparsers.add_parser(
+        "copy",
+        help="Copy built-in resources for customization",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  tbd copy adapter claude_code    # copy adapter to ~/.config/tbd/adapters/
+  tbd copy adapter --all          # copy all built-in adapters
+  tbd copy query cost             # copy query to ~/.config/tbd/queries/""",
+    )
+    p_copy.add_argument("resource_type", choices=["adapter", "query"], help="Resource type to copy")
+    p_copy.add_argument("name", nargs="?", help="Resource name")
+    p_copy.add_argument("--all", action="store_true", help="Copy all resources of this type")
+    p_copy.add_argument("--force", action="store_true", help="Overwrite existing files")
+    p_copy.set_defaults(func=cmd_copy)
 
     args = parser.parse_args(argv)
     return args.func(args)
