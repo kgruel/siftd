@@ -50,6 +50,11 @@ def formatters_dir() -> Path:
     return config_dir() / "formatters"
 
 
+def config_file() -> Path:
+    """Return the config file path (~/.config/tbd/config.toml)."""
+    return config_dir() / "config.toml"
+
+
 def db_path() -> Path:
     """Return the default database path."""
     return data_dir() / "tbd.db"

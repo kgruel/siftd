@@ -17,6 +17,7 @@ dependencies = [
     "tqdm",
     "pyyaml",
     "loguru",
+    "tomlkit",
 ]
 
 [project.scripts]

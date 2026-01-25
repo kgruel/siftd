@@ -108,6 +108,27 @@ def cmd_path(args) -> int:
     return 0
 
 
+def _apply_ask_config(args) -> None:
+    """Apply config defaults to args if no formatter flag is explicitly set."""
+    from tbd.config import get_ask_defaults
+
+    # Check if any formatter-related flag was explicitly set
+    formatter_flags = ["format", "json", "verbose", "full", "thread", "context", "conversations"]
+    has_explicit_formatter = any(
+        getattr(args, flag, None) not in (None, False)
+        for flag in formatter_flags
+    )
+
+    if has_explicit_formatter:
+        return
+
+    # Apply config defaults
+    defaults = get_ask_defaults()
+    for key, value in defaults.items():
+        if getattr(args, key, None) is None:
+            setattr(args, key, value)
+
+
 def cmd_ask(args) -> int:
     """Semantic search over conversation content using embeddings."""
     import sqlite3 as _sqlite3
@@ -116,6 +137,9 @@ def cmd_ask(args) -> int:
         open_embeddings_db,
         search_similar,
     )
+
+    # Apply config defaults before processing
+    _apply_ask_config(args)
 
     db = Path(args.db) if args.db else db_path()
     embed_db = Path(args.embed_db) if args.embed_db else embeddings_db_path()
@@ -731,6 +755,51 @@ def cmd_backfill(args) -> int:
     return 0
 
 
+def cmd_config(args) -> int:
+    """View or modify config settings."""
+    from tbd.config import get_config, load_config, set_config
+    from tbd.paths import config_file
+
+    # tbd config path
+    if args.action == "path":
+        print(config_file())
+        return 0
+
+    # tbd config get <key>
+    if args.action == "get":
+        if not args.key:
+            print("Usage: tbd config get <key>")
+            print("Example: tbd config get ask.formatter")
+            return 1
+        value = get_config(args.key)
+        if value is None:
+            print(f"Key not set: {args.key}")
+            return 1
+        print(value)
+        return 0
+
+    # tbd config set <key> <value>
+    if args.action == "set":
+        if not args.key or not args.value:
+            print("Usage: tbd config set <key> <value>")
+            print("Example: tbd config set ask.formatter verbose")
+            return 1
+        set_config(args.key, args.value)
+        print(f"Set {args.key} = {args.value}")
+        return 0
+
+    # tbd config (show all)
+    doc = load_config()
+    if not doc:
+        print("No config file found.")
+        print(f"Create one at: {config_file()}")
+        return 0
+
+    import tomlkit
+    print(tomlkit.dumps(doc).strip())
+    return 0
+
+
 def cmd_adapters(args) -> int:
     """List discovered adapters."""
     from tbd.api import list_adapters
@@ -1013,6 +1082,22 @@ def main(argv=None) -> int:
     # path
     p_path = subparsers.add_parser("path", help="Show XDG paths")
     p_path.set_defaults(func=cmd_path)
+
+    # config
+    p_config = subparsers.add_parser(
+        "config",
+        help="View or modify config settings",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  tbd config                        # show all config
+  tbd config path                   # show config file path
+  tbd config get ask.formatter      # get specific value
+  tbd config set ask.formatter verbose  # set value""",
+    )
+    p_config.add_argument("action", nargs="?", choices=["get", "set", "path"], help="Action to perform")
+    p_config.add_argument("key", nargs="?", help="Config key (dotted path, e.g., ask.formatter)")
+    p_config.add_argument("value", nargs="?", help="Value to set (for 'set' action)")
+    p_config.set_defaults(func=cmd_config)
 
     # adapters
     p_adapters = subparsers.add_parser("adapters", help="List discovered adapters")
