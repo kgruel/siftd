@@ -60,7 +60,10 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 ### Files
 ```
 tbd-v2/
-├── tbd                         # CLI entry point
+├── docs/
+│   └── cli.md                  # Auto-generated CLI reference
+├── scripts/
+│   └── gen-cli-docs.sh         # Regenerates docs/cli.md from --help
 ├── queries/
 │   └── cost.sql                # Approximate cost by workspace
 ├── bench/
@@ -182,19 +185,11 @@ From using `tbd ask` to reconstruct intellectual history across ~12 workspaces, 
 - **Synthesis is a consumer of tbd's output**: LLM-generated narratives, topic evolution summaries, provenance trails. Opt-in, expensive, external.
 - Keeps tbd as a data platform that exposes the right projections.
 
-### Next direction: doc cross-reference
-
-Project documentation (README, HANDOFF, RETROSPECTIVE) captures crystallized knowledge that originated in conversations. tbd has the raw conversations, but the crystallized form isn't cross-referenced back. Indexing workspace markdown alongside conversation chunks closes this gap:
-- Concept found in docs but not conversations → doc chunk surfaces it
-- Concept found in conversations → existing behavior
-- Cross-workspace doc search becomes possible
-- Implementation: discover markdown files during indexing, chunk and embed alongside conversation exchanges
-
 ---
 
 ## Next Session
 
-**Cleaning**: cli.py structure, lint/type fixes, general tidying before next feature work.
+Open for new feature work. Recent cleanup complete (lint/type fixes, query command unification).
 
 ---
 
@@ -202,11 +197,8 @@ Project documentation (README, HANDOFF, RETROSPECTIVE) captures crystallized kno
 
 | Thread | Status | Notes |
 |--------|--------|-------|
-| Doc cross-reference | Next feature | Index workspace markdown (README, HANDOFF, RETROSPECTIVE) alongside conversation chunks. Closes "concept in docs" gap. |
+| Doc cross-reference | Deferred | Embedding docs alongside conversations. Deferred — unclear if concepts-only-in-docs is a real use case. `--refs` covers files referenced in conversations. |
 | Synthesis layer | Design phase | LLM-generated narratives over structured retrieval output. Consumer of tbd, not part of it. |
-| Relevance threshold | Trivial | `--threshold 0.65` to cut noise below a score. Score bands are meaningful (0.7+ on-topic, <0.6 noise). |
-| cli.py structure | Acknowledged | Growing with new features. Not blocking. |
-| Pricing table migration | Resolved | `ensure_pricing_table()` creates table idempotently on connection. Table exists in live DB. |
 | `workspaces.git_remote` | Deferred | Could resolve via `git remote -v`. Not blocking queries yet. |
 | `tbd enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
 | Billing context | Deferred | API vs subscription per workspace. Needed for precise cost, not approximate. |
