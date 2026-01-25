@@ -15,6 +15,8 @@ class SearchResult:
     chunk_type: str
     workspace_path: str | None
     started_at: str | None
+    chunk_id: str | None = None
+    source_ids: list[str] | None = None
 
 
 def hybrid_search(
@@ -125,6 +127,8 @@ def hybrid_search(
             chunk_type=r["chunk_type"],
             workspace_path=m.get("workspace"),
             started_at=m.get("started_at"),
+            chunk_id=r.get("chunk_id"),
+            source_ids=r.get("source_ids"),
         ))
 
     return results
