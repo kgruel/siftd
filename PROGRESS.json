@@ -1,0 +1,5 @@
+[
+    {"step": "Collapse consecutive tool calls in detail view", "done": true},
+    {"step": "Display (root) for empty/root workspace in list view", "done": true},
+    {"step": "Add --stats flag to query command", "done": true}
+]

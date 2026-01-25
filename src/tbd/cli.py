@@ -1173,6 +1173,15 @@ def _fmt_tokens(n: int) -> str:
     return str(n)
 
 
+def _fmt_workspace(path: str | None) -> str:
+    """Format workspace path for display. Shows (root) for root/empty paths."""
+    if not path:
+        return ""
+    if path == "/" or path == "":
+        return "(root)"
+    return Path(path).name
+
+
 def _extract_text(raw: str) -> str:
     """Extract plain text from a content block (may be JSON-wrapped)."""
     import json
@@ -1322,12 +1331,30 @@ def _query_detail(args) -> int:
             print(f"[response] {ts} ({_fmt_tokens(input_tok)} in / {_fmt_tokens(output_tok)} out)")
             if text:
                 print(f"  {text}")
-            # Tool calls for this response
+            # Tool calls for this response (collapse consecutive same tool+status)
             tcs = tc_by_response.get(row["id"], [])
-            for tc in tcs:
-                name = tc["tool_name"] or "unknown"
-                status = tc["status"] or "unknown"
-                print(f"  \u2192 {name} ({status})")
+            if tcs:
+                collapsed = []
+                prev_key = None
+                count = 0
+                for tc in tcs:
+                    name = tc["tool_name"] or "unknown"
+                    status = tc["status"] or "unknown"
+                    key = (name, status)
+                    if key == prev_key:
+                        count += 1
+                    else:
+                        if prev_key is not None:
+                            collapsed.append((prev_key[0], prev_key[1], count))
+                        prev_key = key
+                        count = 1
+                if prev_key is not None:
+                    collapsed.append((prev_key[0], prev_key[1], count))
+                for name, status, n in collapsed:
+                    if n > 1:
+                        print(f"  \u2192 {name} \u00d7{n} ({status})")
+                    else:
+                        print(f"  \u2192 {name} ({status})")
             print()
 
     conn.close()
@@ -1583,7 +1610,7 @@ def cmd_query(args) -> int:
         str_rows = []
         for row in rows:
             cid = row["conversation_id"][:12] if row["conversation_id"] else ""
-            ws = Path(row["workspace"]).name if row["workspace"] else ""
+            ws = _fmt_workspace(row["workspace"])
             model = row["model"] or ""
             started = row["started_at"][:16].replace("T", " ") if row["started_at"] else ""
             prompts = str(row["prompts"])
@@ -1609,13 +1636,26 @@ def cmd_query(args) -> int:
     # Default: short mode — one dense line per conversation with truncated ID
     for row in rows:
         cid = row["conversation_id"][:12] if row["conversation_id"] else ""
-        ws = Path(row["workspace"]).name if row["workspace"] else ""
+        ws = _fmt_workspace(row["workspace"])
         model = row["model"] or ""
         started = row["started_at"][:16].replace("T", " ") if row["started_at"] else ""
         prompts = row["prompts"]
         responses = row["responses"]
         tokens = _fmt_tokens(row["tokens"])
         print(f"{cid}  {started}  {ws}  {model}  {prompts}p/{responses}r  {tokens} tok")
+
+    # Stats summary (shown after list when --stats flag is set)
+    if args.stats:
+        total_convs = len(rows)
+        total_prompts = sum(row["prompts"] for row in rows)
+        total_responses = sum(row["responses"] for row in rows)
+        total_tokens = sum(row["tokens"] for row in rows)
+        print()
+        print("--- Stats ---")
+        print(f"Conversations: {total_convs}")
+        print(f"Total prompts: {total_prompts}")
+        print(f"Total responses: {total_responses}")
+        print(f"Total tokens: {_fmt_tokens(total_tokens)}")
 
     conn.close()
     return 0
@@ -1768,6 +1808,7 @@ def main(argv=None) -> int:
     p_query.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
     p_query.add_argument("-l", "--label", metavar="NAME", help="Filter by label name")
     p_query.add_argument("--json", action="store_true", help="Output as JSON array")
+    p_query.add_argument("--stats", action="store_true", help="Show summary totals after list")
     p_query.add_argument("--var", action="append", metavar="KEY=VALUE", help="Substitute $KEY with VALUE in SQL (for 'sql' subcommand)")
     p_query.set_defaults(func=cmd_query)
 
