@@ -66,6 +66,7 @@ def list_conversations(
     search: str | None = None,
     tool: str | None = None,
     tag: str | None = None,
+    tool_tag: str | None = None,
     limit: int = 10,
     oldest_first: bool = False,
 ) -> list[ConversationSummary]:
@@ -80,6 +81,7 @@ def list_conversations(
         search: FTS5 full-text search query.
         tool: Filter by canonical tool name (e.g., 'shell.execute').
         tag: Filter by tag name.
+        tool_tag: Filter by tool call tag (e.g., 'shell:test').
         limit: Maximum results to return (0 = unlimited).
         oldest_first: Sort by oldest first instead of newest.
 
@@ -144,6 +146,14 @@ def list_conversations(
             " JOIN tags tg ON tg.id = ct.tag_id WHERE tg.name = ?)"
         )
         params.append(tag)
+
+    if tool_tag:
+        conditions.append(
+            "c.id IN (SELECT tc.conversation_id FROM tool_calls tc"
+            " JOIN tool_call_tags tct ON tct.tool_call_id = tc.id"
+            " JOIN tags tg ON tg.id = tct.tag_id WHERE tg.name = ?)"
+        )
+        params.append(tool_tag)
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
     order = "ASC" if oldest_first else "DESC"

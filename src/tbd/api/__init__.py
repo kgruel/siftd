@@ -48,6 +48,12 @@ from tbd.api.stats import (
     WorkspaceStats,
     get_stats,
 )
+from tbd.api.tools import (
+    TagUsage,
+    WorkspaceTagUsage,
+    get_tool_tag_summary,
+    get_tool_tags_by_workspace,
+)
 
 __all__ = [
     # adapters
@@ -89,4 +95,9 @@ __all__ = [
     "WorkspaceStats",
     "ToolStats",
     "get_stats",
+    # tools
+    "TagUsage",
+    "WorkspaceTagUsage",
+    "get_tool_tag_summary",
+    "get_tool_tags_by_workspace",
 ]

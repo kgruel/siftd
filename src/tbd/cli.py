@@ -376,6 +376,69 @@ def cmd_tags(args) -> int:
     return 0
 
 
+def cmd_tools(args) -> int:
+    """Show tool usage summary by category."""
+    from tbd.api import get_tool_tag_summary, get_tool_tags_by_workspace
+
+    db = Path(args.db) if args.db else db_path()
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'tbd ingest' to create it.")
+        return 1
+
+    prefix = args.prefix or "shell:"
+
+    # By-workspace mode
+    if args.by_workspace:
+        try:
+            results = get_tool_tags_by_workspace(
+                db_path=db,
+                prefix=prefix,
+                limit=args.limit,
+            )
+        except FileNotFoundError as e:
+            print(str(e))
+            return 1
+
+        if not results:
+            print(f"No tool calls with '{prefix}*' tags found.")
+            return 0
+
+        for ws_usage in results:
+            ws_display = Path(ws_usage.workspace).name if ws_usage.workspace != "(no workspace)" else ws_usage.workspace
+            print(f"\n{ws_display} ({ws_usage.total} total)")
+            for tag in ws_usage.tags:
+                # Strip prefix for display
+                category = tag.name[len(prefix):] if tag.name.startswith(prefix) else tag.name
+                print(f"  {category}: {tag.count}")
+
+        return 0
+
+    # Default: summary mode
+    try:
+        tags = get_tool_tag_summary(db_path=db, prefix=prefix)
+    except FileNotFoundError as e:
+        print(str(e))
+        return 1
+
+    if not tags:
+        print(f"No tool calls with '{prefix}*' tags found.")
+        print("Run 'tbd backfill --shell-tags' to categorize shell commands.")
+        return 0
+
+    total = sum(t.count for t in tags)
+    print(f"Tool call tags ({prefix}*): {total} total\n")
+
+    for tag in tags:
+        # Strip prefix for display
+        category = tag.name[len(prefix):] if tag.name.startswith(prefix) else tag.name
+        pct = (tag.count / total) * 100 if total > 0 else 0
+        print(f"  {category}: {tag.count} ({pct:.1f}%)")
+
+    return 0
+
+
 def _fmt_tokens(n: int) -> str:
     """Format token count: 1234 -> '1.2k', 12345 -> '12.3k'."""
     if n >= 1000:
@@ -549,6 +612,7 @@ def cmd_query(args) -> int:
             search=args.search,
             tool=args.tool,
             tag=args.tag,
+            tool_tag=getattr(args, "tool_tag", None),
             limit=args.count,
             oldest_first=args.oldest,
         )
@@ -891,6 +955,21 @@ def main(argv=None) -> int:
     p_tags = subparsers.add_parser("tags", help="List all tags")
     p_tags.set_defaults(func=cmd_tags)
 
+    # tools
+    p_tools = subparsers.add_parser(
+        "tools",
+        help="Summarize tool usage by category",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  tbd tools                    # shell command categories summary
+  tbd tools --by-workspace     # breakdown by workspace
+  tbd tools --prefix shell:    # filter by tag prefix""",
+    )
+    p_tools.add_argument("--by-workspace", action="store_true", help="Show breakdown by workspace")
+    p_tools.add_argument("--prefix", metavar="PREFIX", help="Tag prefix to filter (default: shell:)")
+    p_tools.add_argument("-n", "--limit", type=int, default=20, help="Max workspaces for --by-workspace (default: 20)")
+    p_tools.set_defaults(func=cmd_tools)
+
     # query
     p_query = subparsers.add_parser(
         "query",
@@ -900,6 +979,8 @@ def main(argv=None) -> int:
   tbd query                         # list recent conversations
   tbd query -w myproject            # filter by workspace
   tbd query -s "error handling"     # FTS5 search
+  tbd query --tool-tag shell:test   # conversations with test commands
+  tbd query -w proj --tool-tag shell:vcs  # combine filters
   tbd query <id>                    # show conversation detail
   tbd query sql                     # list available .sql files
   tbd query sql cost                # run the 'cost' query
@@ -917,7 +998,8 @@ def main(argv=None) -> int:
     p_query.add_argument("--before", metavar="DATE", help="Conversations started before this date")
     p_query.add_argument("-s", "--search", metavar="QUERY", help="Full-text search (FTS5 syntax)")
     p_query.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
-    p_query.add_argument("-l", "--tag", metavar="NAME", help="Filter by tag name")
+    p_query.add_argument("-l", "--tag", metavar="NAME", help="Filter by conversation tag")
+    p_query.add_argument("--tool-tag", metavar="NAME", help="Filter by tool call tag (e.g. shell:test)")
     p_query.add_argument("--json", action="store_true", help="Output as JSON array")
     p_query.add_argument("--stats", action="store_true", help="Show summary totals after list")
     p_query.add_argument("--var", action="append", metavar="KEY=VALUE", help="Substitute $KEY with VALUE in SQL (for 'sql' subcommand)")

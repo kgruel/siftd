@@ -10,22 +10,30 @@ from tbd.api import (
     ConversationDetail,
     ConversationSummary,
     DatabaseStats,
+    TagUsage,
+    WorkspaceTagUsage,
     get_conversation,
     get_stats,
+    get_tool_tag_summary,
+    get_tool_tags_by_workspace,
     list_conversations,
 )
 from tbd.api.search import ConversationScore, aggregate_by_conversation, first_mention
 from tbd.search import SearchResult
 from tbd.storage.sqlite import (
+    apply_tag,
     create_database,
     get_or_create_harness,
     get_or_create_model,
+    get_or_create_tag,
+    get_or_create_tool,
     get_or_create_workspace,
     insert_conversation,
     insert_prompt,
     insert_prompt_content,
     insert_response,
     insert_response_content,
+    insert_tool_call,
 )
 
 
@@ -76,6 +84,80 @@ def test_db(tmp_path):
         input_tokens=200, output_tokens=150
     )
     insert_response_content(conn, response2_id, 0, "text", '{"text": "Python is a programming language."}')
+
+    conn.commit()
+    conn.close()
+
+    return db_path
+
+
+@pytest.fixture
+def test_db_with_tool_tags(tmp_path):
+    """Create a test database with tool calls and tags."""
+    db_path = tmp_path / "test_tools.db"
+    conn = create_database(db_path)
+
+    # Create harness, workspace, model, tool
+    harness_id = get_or_create_harness(conn, "test_harness", source="test", log_format="jsonl")
+    workspace_id = get_or_create_workspace(conn, "/test/project", "2024-01-01T10:00:00Z")
+    workspace2_id = get_or_create_workspace(conn, "/other/project", "2024-01-01T10:00:00Z")
+    model_id = get_or_create_model(conn, "claude-3-opus-20240229")
+    tool_id = get_or_create_tool(conn, "shell.execute")
+
+    # Create tags
+    test_tag_id = get_or_create_tag(conn, "shell:test")
+    vcs_tag_id = get_or_create_tag(conn, "shell:vcs")
+
+    # Conversation 1 (in /test/project) with test commands
+    conv1_id = insert_conversation(
+        conn, external_id="conv1", harness_id=harness_id,
+        workspace_id=workspace_id, started_at="2024-01-15T10:00:00Z",
+    )
+    prompt1_id = insert_prompt(conn, conv1_id, "p1", "2024-01-15T10:00:00Z")
+    insert_prompt_content(conn, prompt1_id, 0, "text", '{"text": "Run tests"}')
+    response1_id = insert_response(
+        conn, conv1_id, prompt1_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
+        input_tokens=100, output_tokens=50
+    )
+    tc1_id = insert_tool_call(
+        conn, response1_id, conv1_id, tool_id, "tc1",
+        '{"command": "pytest"}', '{"output": "OK"}', "success", "2024-01-15T10:00:01Z"
+    )
+    apply_tag(conn, "tool_call", tc1_id, test_tag_id)
+
+    # Conversation 2 (in /test/project) with vcs commands
+    conv2_id = insert_conversation(
+        conn, external_id="conv2", harness_id=harness_id,
+        workspace_id=workspace_id, started_at="2024-01-16T10:00:00Z",
+    )
+    prompt2_id = insert_prompt(conn, conv2_id, "p2", "2024-01-16T10:00:00Z")
+    insert_prompt_content(conn, prompt2_id, 0, "text", '{"text": "Commit changes"}')
+    response2_id = insert_response(
+        conn, conv2_id, prompt2_id, model_id, None, "r2", "2024-01-16T10:00:01Z",
+        input_tokens=200, output_tokens=150
+    )
+    tc2_id = insert_tool_call(
+        conn, response2_id, conv2_id, tool_id, "tc2",
+        '{"command": "git commit"}', '{"output": "OK"}', "success", "2024-01-16T10:00:01Z"
+    )
+    apply_tag(conn, "tool_call", tc2_id, vcs_tag_id)
+
+    # Conversation 3 (in /other/project) with test commands
+    conv3_id = insert_conversation(
+        conn, external_id="conv3", harness_id=harness_id,
+        workspace_id=workspace2_id, started_at="2024-01-17T10:00:00Z",
+    )
+    prompt3_id = insert_prompt(conn, conv3_id, "p3", "2024-01-17T10:00:00Z")
+    insert_prompt_content(conn, prompt3_id, 0, "text", '{"text": "Run more tests"}')
+    response3_id = insert_response(
+        conn, conv3_id, prompt3_id, model_id, None, "r3", "2024-01-17T10:00:01Z",
+        input_tokens=150, output_tokens=100
+    )
+    tc3_id = insert_tool_call(
+        conn, response3_id, conv3_id, tool_id, "tc3",
+        '{"command": "pytest -v"}', '{"output": "OK"}', "success", "2024-01-17T10:00:01Z"
+    )
+    apply_tag(conn, "tool_call", tc3_id, test_tag_id)
 
     conn.commit()
     conn.close()
@@ -339,3 +421,92 @@ class TestFirstMention:
     def test_empty_results(self, test_db):
         earliest = first_mention([], threshold=0.65, db_path=test_db)
         assert earliest is None
+
+
+class TestListConversationsToolTag:
+    def test_filter_by_tool_tag(self, test_db_with_tool_tags):
+        # Filter by shell:test tag
+        conversations = list_conversations(db_path=test_db_with_tool_tags, tool_tag="shell:test")
+
+        assert len(conversations) == 2  # conv1 and conv3 have shell:test
+
+    def test_filter_by_different_tool_tag(self, test_db_with_tool_tags):
+        # Filter by shell:vcs tag
+        conversations = list_conversations(db_path=test_db_with_tool_tags, tool_tag="shell:vcs")
+
+        assert len(conversations) == 1  # only conv2 has shell:vcs
+
+    def test_no_matches_for_unknown_tag(self, test_db_with_tool_tags):
+        conversations = list_conversations(db_path=test_db_with_tool_tags, tool_tag="shell:unknown")
+
+        assert len(conversations) == 0
+
+    def test_tool_tag_combines_with_workspace_filter(self, test_db_with_tool_tags):
+        # Filter by shell:test AND workspace containing "other"
+        conversations = list_conversations(
+            db_path=test_db_with_tool_tags,
+            tool_tag="shell:test",
+            workspace="other",
+        )
+
+        assert len(conversations) == 1  # only conv3 matches both
+
+
+class TestGetToolTagSummary:
+    def test_returns_tag_counts(self, test_db_with_tool_tags):
+        tags = get_tool_tag_summary(db_path=test_db_with_tool_tags)
+
+        assert len(tags) == 2
+        assert all(isinstance(t, TagUsage) for t in tags)
+
+    def test_sorted_by_count_descending(self, test_db_with_tool_tags):
+        tags = get_tool_tag_summary(db_path=test_db_with_tool_tags)
+
+        # shell:test has 2, shell:vcs has 1
+        assert tags[0].name == "shell:test"
+        assert tags[0].count == 2
+        assert tags[1].name == "shell:vcs"
+        assert tags[1].count == 1
+
+    def test_respects_prefix_filter(self, test_db_with_tool_tags):
+        # No tags with "other:" prefix
+        tags = get_tool_tag_summary(db_path=test_db_with_tool_tags, prefix="other:")
+
+        assert len(tags) == 0
+
+    def test_raises_for_missing_db(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            get_tool_tag_summary(db_path=tmp_path / "nonexistent.db")
+
+
+class TestGetToolTagsByWorkspace:
+    def test_returns_workspace_breakdown(self, test_db_with_tool_tags):
+        results = get_tool_tags_by_workspace(db_path=test_db_with_tool_tags)
+
+        assert len(results) == 2
+        assert all(isinstance(r, WorkspaceTagUsage) for r in results)
+
+    def test_sorted_by_total_descending(self, test_db_with_tool_tags):
+        results = get_tool_tags_by_workspace(db_path=test_db_with_tool_tags)
+
+        # /test/project has 2 total (1 test + 1 vcs), /other/project has 1
+        assert "test" in results[0].workspace or "project" in results[0].workspace
+        assert results[0].total >= results[1].total
+
+    def test_includes_tag_breakdown(self, test_db_with_tool_tags):
+        results = get_tool_tags_by_workspace(db_path=test_db_with_tool_tags)
+
+        # Find the workspace with both tags
+        ws_with_both = [r for r in results if r.total == 2][0]
+        tag_names = [t.name for t in ws_with_both.tags]
+        assert "shell:test" in tag_names
+        assert "shell:vcs" in tag_names
+
+    def test_respects_limit(self, test_db_with_tool_tags):
+        results = get_tool_tags_by_workspace(db_path=test_db_with_tool_tags, limit=1)
+
+        assert len(results) == 1
+
+    def test_raises_for_missing_db(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            get_tool_tags_by_workspace(db_path=tmp_path / "nonexistent.db")
