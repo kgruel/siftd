@@ -192,6 +192,12 @@ Project documentation (README, HANDOFF, RETROSPECTIVE) captures crystallized kno
 
 ---
 
+## Next Session
+
+**Cleaning**: cli.py structure, lint/type fixes, general tidying before next feature work.
+
+---
+
 ## Remaining Open Threads
 
 | Thread | Status | Notes |

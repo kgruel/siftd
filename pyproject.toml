@@ -26,6 +26,7 @@ tbd = "tbd.cli:main"
 dev = [
     "pytest>=8.0",
     "ruff>=0.4",
+    "ty",
 ]
 
 [tool.hatch.build.targets.wheel]
