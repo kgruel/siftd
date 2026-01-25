@@ -38,7 +38,19 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - IDs: 12-char prefix, copy-pasteable for drill-down
   - SQL subcommand: `tbd query sql` lists `.sql` files, `tbd query sql <name>` runs them
   - Root workspaces display as `(root)` instead of blank
-- **CLI**: `ingest`, `status`, `query`, `tag`, `tags`, `backfill`, `path`, `ask`
+- **CLI**: `ingest`, `status`, `query`, `tag`, `tags`, `backfill`, `path`, `ask`, `adapters`, `copy`
+  - `tbd adapters` — list discovered adapters (built-in, drop-in, entry point)
+  - `tbd copy adapter <name>` — copy built-in adapter to config for customization
+  - `tbd copy query <name>` — copy built-in query to config
+- **Library API** (`tbd.api`): Programmatic access to all CLI functionality
+  - `list_conversations()`, `get_conversation()` — conversation queries
+  - `hybrid_search()`, `aggregate_by_conversation()`, `first_mention()` — semantic search
+  - `get_stats()` → `DatabaseStats` — database statistics
+  - `list_query_files()`, `run_query_file()` — SQL query execution
+  - `list_adapters()`, `copy_adapter()`, `copy_query()` — adapter/resource management
+- **OutputFormatter pattern** (`tbd.output`): Pluggable presentation for `tbd ask`
+  - `ChunkListFormatter`, `VerboseFormatter`, `FullExchangeFormatter`, `ContextFormatter`, `ThreadFormatter`, `ConversationFormatter`
+  - `select_formatter(args)` dispatch based on CLI flags
 - **XDG paths**: data `~/.local/share/tbd`, config `~/.config/tbd`, queries `~/.config/tbd/queries`, adapters `~/.config/tbd/adapters`
 
 ### Benchmarking framework (`bench/`)
@@ -63,6 +75,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 ### Files
 ```
 tbd-v2/
+├── README.md                   # Comprehensive documentation (600+ lines)
 ├── docs/
 │   └── cli.md                  # Auto-generated CLI reference
 ├── scripts/
@@ -78,23 +91,36 @@ tbd-v2/
 │   ├── strategies/             # Strategy definitions (exchange-window, per-block)
 │   └── runs/                   # Benchmark output (gitignored)
 ├── src/
-│   ├── cli.py                  # argparse commands
+│   ├── cli.py                  # Argparse + thin command handlers (dispatcher only)
 │   ├── paths.py                # XDG directory handling
 │   ├── models.py               # Model name parser
+│   ├── search.py               # Hybrid search orchestration
 │   ├── domain/
 │   │   ├── models.py           # Dataclasses (Conversation, Prompt, Response, etc.)
 │   │   ├── protocols.py        # Adapter/Storage protocols
 │   │   └── source.py           # Source(kind, location, metadata)
+│   ├── api/                    # Public library API
+│   │   ├── __init__.py         # Re-exports all public functions
+│   │   ├── conversations.py    # list_conversations(), get_conversation(), query files
+│   │   ├── stats.py            # get_stats() → DatabaseStats
+│   │   ├── search.py           # hybrid_search(), aggregate_by_conversation(), first_mention()
+│   │   ├── adapters.py         # list_adapters() → AdapterInfo
+│   │   ├── resources.py        # copy_adapter(), copy_query()
+│   │   └── file_refs.py        # fetch_file_refs() for tool results
+│   ├── output/                 # Presentation layer (OutputFormatter pattern)
+│   │   ├── __init__.py         # Re-exports formatters
+│   │   └── formatters.py       # ChunkList, Verbose, Full, Context, Thread, Conversation formatters
 │   ├── adapters/
 │   │   ├── __init__.py         # Adapter exports
-│   │   ├── registry.py         # Plugin discovery (built-in + drop-in + entry points)
+│   │   ├── registry.py         # Plugin discovery + wrap_adapter_paths()
 │   │   ├── claude_code.py      # JSONL parser, TOOL_ALIASES, cache token extraction
 │   │   ├── codex_cli.py        # JSONL parser, OpenAI Codex sessions
 │   │   └── gemini_cli.py       # JSON parser, session dedup, discover()
 │   ├── embeddings/
-│   │   ├── __init__.py         # Re-exports get_backend
+│   │   ├── __init__.py         # Re-exports get_backend, build_embeddings_index
 │   │   ├── base.py             # EmbeddingBackend protocol + fallback chain resolver
-│   │   ├── chunker.py          # Exchange-window chunking + token-aware splitting (shared by cli + bench)
+│   │   ├── chunker.py          # Exchange-window chunking + token-aware splitting
+│   │   ├── indexer.py          # build_embeddings_index() → IndexStats
 │   │   ├── ollama_backend.py   # Local Ollama embedding models
 │   │   └── fastembed_backend.py # Local ONNX inference via fastembed
 │   ├── ingestion/
@@ -102,11 +128,12 @@ tbd-v2/
 │   │   └── orchestration.py    # ingest_all(), IngestStats, dedup strategies
 │   └── storage/
 │       ├── schema.sql          # Full schema + FTS5 + pricing table
-│       ├── sqlite.py           # All DB operations, backfills, tag functions, shell categorization
+│       ├── sqlite.py           # All DB operations, backfills, tag functions
 │       └── embeddings.py       # Embeddings DB schema + cosine similarity search
 └── tests/
     ├── fixtures/               # Minimal adapter test fixtures
-    ├── test_adapters.py        # Adapter parsing tests (19 tests)
+    ├── test_adapters.py        # Adapter parsing tests
+    ├── test_api.py             # API layer tests (conversations, stats, search)
     ├── test_embeddings_storage.py  # Embeddings DB edge cases
     ├── test_models.py          # Model name parsing tests
     └── test_chunker.py         # Token-aware chunking smoke tests
@@ -155,6 +182,11 @@ tbd-v2/
 | Presentation metrics in bench | Diversity, temporal span, chrono degradation, cluster density alongside retrieval scores. Measures output shape, not just retrieval quality. |
 | "Tag" over "label" | Shorter, fits tool vibe. Renamed before extending to tool_calls. |
 | Shell tags via tool_call_tags | Same join-table pattern as conversation/workspace tags. Namespaced `shell:*` to separate auto from manual. |
+| CLI as thin dispatcher | Business logic in `tbd.api`, presentation in `tbd.output`. CLI is ~500 lines of argparse + routing. |
+| OutputFormatter protocol | Pluggable presentation for `tbd ask`. Each output mode (`--thread`, `--context`, etc.) is a formatter class. |
+| Library API re-exports | Top-level `from tbd import ...` exposes public functions. CLI is just one consumer. |
+| `tbd copy` for customization | Copy built-in adapters/queries to config dir for modification. Same-name overrides built-in. |
+| Flat kwargs over filter objects | `list_conversations(workspace=..., model=...)` not `list_conversations(filter=Filter(...))`. Dataclasses for return types only. |
 
 ---
 
@@ -200,10 +232,16 @@ From using `tbd ask` to reconstruct intellectual history across ~12 workspaces, 
 - `tbd tools` — summary of tool usage by category (leverage new tags)
 - Workspace-level rollups: "which workspaces are test-heavy vs search-heavy?"
 
+**OutputFormatter extensions**:
+- `JsonFormatter` for bench/agent consumption (`--json` on `tbd ask`)
+- User-configurable formatters via config file
+- Formatter as plugin (drop-in like adapters)
+
 **Alternative directions**:
 - **Ingest-time tagging**: Auto-tag shell commands during ingest (currently backfill-only)
 - **Tag hierarchy**: `shell:*` is flat; could support `shell:python:test` for finer granularity
-- **CLI docs regeneration**: `scripts/gen-cli-docs.sh` needs update after tag/backfill changes
+- **CLI docs regeneration**: `scripts/gen-cli-docs.sh` needs update after new commands
+- **Built-in example queries**: Ship more `.sql` files, copyable via `tbd copy query`
 
 ---
 
@@ -226,5 +264,5 @@ From using `tbd ask` to reconstruct intellectual history across ~12 workspaces, 
 
 ---
 
-*Updated: 2026-01-25 (label→tag rename, shell command categorization)*
+*Updated: 2026-01-25 (API layer extraction, OutputFormatter pattern, tbd adapters/copy commands, README.md)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
