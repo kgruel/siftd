@@ -68,7 +68,7 @@ def hybrid_search(
         raise FileNotFoundError(f"Embeddings database not found: {embed_db}")
 
     # Build candidate filter set
-    candidate_ids = _filter_conversations(db, workspace=workspace, model=model, since=since, before=before)
+    candidate_ids = filter_conversations(db, workspace=workspace, model=model, since=since, before=before)
 
     # Hybrid recall: FTS5 narrows candidates, embeddings rerank
     if not embeddings_only:
@@ -130,15 +130,28 @@ def hybrid_search(
     return results
 
 
-def _filter_conversations(
+def filter_conversations(
     db: Path,
     *,
-    workspace: str | None,
-    model: str | None,
-    since: str | None,
-    before: str | None,
+    workspace: str | None = None,
+    model: str | None = None,
+    since: str | None = None,
+    before: str | None = None,
 ) -> set[str] | None:
-    """Apply filters and return candidate conversation IDs, or None if no filters."""
+    """Apply filters and return candidate conversation IDs.
+
+    Returns None if no filters are applied (search all conversations).
+
+    Args:
+        db: Path to the database.
+        workspace: Filter by workspace path substring.
+        model: Filter by model name substring.
+        since: Filter conversations started at or after this date.
+        before: Filter conversations started before this date.
+
+    Returns:
+        Set of conversation IDs matching filters, or None if no filters.
+    """
     if not any([workspace, model, since, before]):
         return None
 
@@ -178,3 +191,55 @@ def _filter_conversations(
     rows = conn.execute(sql, params).fetchall()
     conn.close()
     return {row["id"] for row in rows}
+
+
+def resolve_role_ids(
+    db: Path,
+    role: str,
+    candidate_ids: set[str] | None = None,
+) -> set[str] | None:
+    """Resolve source IDs for a given role within optional conversation set.
+
+    For 'user': returns prompt IDs (prompts are user messages).
+    For 'assistant': returns prompt IDs whose responses contain assistant content
+    (chunks reference the prompt_id that triggered the response).
+
+    Args:
+        db: Path to the database.
+        role: Either 'user' or 'assistant'.
+        candidate_ids: Optional set of conversation IDs to filter within.
+
+    Returns:
+        Set of prompt IDs for the role, or None if no matches.
+    """
+    if candidate_ids is not None and not candidate_ids:
+        return None
+
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+
+    if candidate_ids is not None:
+        placeholders = ",".join("?" * len(candidate_ids))
+        conv_filter = f"AND p.conversation_id IN ({placeholders})"
+        params: list = list(candidate_ids)
+    else:
+        conv_filter = ""
+        params = []
+
+    if role == "user":
+        # Prompts are user messages — return their IDs directly
+        rows = conn.execute(
+            f"SELECT p.id FROM prompts p WHERE 1=1 {conv_filter}", params
+        ).fetchall()
+    else:
+        # 'assistant': return prompt IDs that have responses (assistant replied)
+        rows = conn.execute(
+            f"""SELECT DISTINCT r.prompt_id AS id
+                FROM responses r
+                JOIN prompts p ON p.id = r.prompt_id
+                WHERE 1=1 {conv_filter}""",
+            params,
+        ).fetchall()
+
+    conn.close()
+    return {row["id"] for row in rows} if rows else None

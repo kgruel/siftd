@@ -12,5 +12,6 @@ Usage:
 """
 
 from .base import EmbeddingBackend, get_backend
+from .indexer import IndexStats, build_embeddings_index
 
-__all__ = ["EmbeddingBackend", "get_backend"]
+__all__ = ["EmbeddingBackend", "get_backend", "IndexStats", "build_embeddings_index"]
