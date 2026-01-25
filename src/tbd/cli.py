@@ -309,6 +309,13 @@ def cmd_ask(args) -> int:
         print(f"No results for: {query}")
         return 0
 
+    # Apply threshold filter if specified
+    if args.threshold is not None:
+        results = [r for r in results if r["score"] >= args.threshold]
+        if not results:
+            print(f"No results above threshold {args.threshold} for: {query}")
+            return 0
+
     # Post-processing: --first (earliest match above threshold)
     if args.first:
         results = _ask_first_mention(db, results, threshold=0.65)
@@ -1745,7 +1752,8 @@ def main(argv=None) -> int:
   tbd ask --first "error handling"   # earliest mention above threshold
   tbd ask --conversations "testing"  # rank conversations, not chunks
   tbd ask --refs "authelia"          # show file ref annotations + content dump
-  tbd ask --refs HANDOFF.md "setup"  # content dump filtered to specific file""",
+  tbd ask --refs HANDOFF.md "setup"  # content dump filtered to specific file
+  tbd ask --threshold 0.7 "error"    # only results with score >= 0.7""",
     )
     p_ask.add_argument("query", nargs="*", help="Natural language search query")
     p_ask.add_argument("-n", "--limit", type=int, default=10, help="Max results (default: 10)")
@@ -1768,6 +1776,7 @@ def main(argv=None) -> int:
     p_ask.add_argument("--first", action="store_true", help="Return chronologically earliest match above threshold")
     p_ask.add_argument("--conversations", action="store_true", help="Aggregate scores per conversation, return ranked conversations")
     p_ask.add_argument("--refs", nargs="?", const=True, metavar="FILES", help="Show file references; optionally filter by comma-separated basenames")
+    p_ask.add_argument("--threshold", type=float, metavar="SCORE", help="Filter results below this relevance score (e.g., 0.7)")
     p_ask.set_defaults(func=cmd_ask)
 
     # queries
