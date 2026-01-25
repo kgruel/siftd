@@ -153,24 +153,24 @@ def wrap_adapter_paths(adapter, paths: list[str]):
 def load_all_adapters(dropin_path: Path | None = None) -> list:
     """Load adapters from all sources, deduplicated by NAME.
 
-    Priority: built-in > drop-in > entry point.
+    Priority: drop-in > entry point > built-in (drop-ins can override built-ins).
     """
     from tbd.paths import adapters_dir
 
     if dropin_path is None:
         dropin_path = adapters_dir()
 
-    builtins = load_builtin_adapters()
     dropins = load_dropin_adapters(dropin_path)
     entrypoints = load_entrypoint_adapters()
+    builtins = load_builtin_adapters()
 
     seen_names: set[str] = set()
     result: list = []
 
     for source_label, adapter_list in [
-        ("built-in", builtins),
         ("drop-in", dropins),
         ("entry point", entrypoints),
+        ("built-in", builtins),
     ]:
         for adapter in adapter_list:
             name = getattr(adapter, "NAME", None)
@@ -181,10 +181,7 @@ def load_all_adapters(dropin_path: Path | None = None) -> list:
                 )
                 continue
             if name in seen_names:
-                print(
-                    f"Warning: duplicate adapter NAME '{name}' from {source_label}, skipping",
-                    file=sys.stderr,
-                )
+                # Silently skip - expected when drop-in overrides built-in
                 continue
             seen_names.add(name)
             result.append(adapter)
