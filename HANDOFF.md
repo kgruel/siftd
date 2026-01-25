@@ -74,11 +74,11 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Queries**: `bench/queries.json` — 25 queries across 5 groups (conceptual, philosophical, technical, specific, exploratory)
 
 ### Data (current ingestion)
-- ~5,700 conversations, 154k+ responses, 83k+ tool calls across 280+ workspaces
-- ~810MB database at `~/.local/share/tbd/tbd.db`
+- 5,697 conversations, 154k responses, 83k tool calls across 287 workspaces
+- ~900MB database at `~/.local/share/tbd/tbd.db`
 - Harnesses: Claude Code (Anthropic), Codex CLI (OpenAI), Gemini CLI (Google)
 - Models: Opus 4.5, Haiku 4.5, Sonnet 4.5, Gemini 3 pro/flash, GPT-5.2
-- Top workspace: `gruel.network` (~700 conversations, 68M tokens)
+- Top workspace: `~/.config` (1,167 conversations)
 
 ### Files
 ```
