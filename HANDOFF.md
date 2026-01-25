@@ -206,7 +206,7 @@ Project documentation (README, HANDOFF, RETROSPECTIVE) captures crystallized kno
 | Synthesis layer | Design phase | LLM-generated narratives over structured retrieval output. Consumer of tbd, not part of it. |
 | Relevance threshold | Trivial | `--threshold 0.65` to cut noise below a score. Score bands are meaningful (0.7+ on-topic, <0.6 noise). |
 | cli.py structure | Acknowledged | Growing with new features. Not blocking. |
-| Pricing table migration | Open | Schema defines `pricing` table but it doesn't exist in live DB. Needs migration or re-create. |
+| Pricing table migration | Resolved | `ensure_pricing_table()` creates table idempotently on connection. Table exists in live DB. |
 | `workspaces.git_remote` | Deferred | Could resolve via `git remote -v`. Not blocking queries yet. |
 | `tbd enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
 | Billing context | Deferred | API vs subscription per workspace. Needed for precise cost, not approximate. |
