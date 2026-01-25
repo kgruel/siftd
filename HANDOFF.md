@@ -267,10 +267,18 @@ Analyzed real tbd usage by agents in non-tbd workspaces:
 
 ## Next Session
 
-**In progress (subtasks)**:
+**Ready for implementation (subtasks with approved plans)**:
 
-- **Tag-after-search documentation**: Design workflow for agents to tag useful search results. Agents use `tbd ask` heavily but never tag results for later retrieval.
-- **Tagging ergonomics**: Plan improvements to make `tbd tag` more discoverable and ergonomic.
+- **tagging-ergonomics**: Code changes to improve discoverability (~60 LOC total)
+  - Footer hint in `tbd ask` output: "Tip: Tag useful results → tbd tag <id> <tag>"
+  - Default entity_type to `conversation` (simplify syntax)
+  - `--last` flag to tag recent conversations
+
+- **tag-after-search-docs**: Documentation for agent tag workflow
+  - Update `tbd tag --help` with examples, workflow, conventions
+  - CLAUDE.md template section for other projects
+  - Tag namespace conventions: `research:*`, `useful:*`, `review:*`
+  - Workflow documentation: search → drill-down → tag → retrieve
 
 **Recently completed**:
 
