@@ -5,19 +5,18 @@ import sys
 from pathlib import Path
 
 from tbd.adapters.registry import load_all_adapters
-from tbd.ingestion import ingest_all, IngestStats
-from tbd.paths import db_path, embeddings_db_path, ensure_dirs, data_dir, queries_dir
+from tbd.ingestion import IngestStats, ingest_all
+from tbd.paths import data_dir, db_path, embeddings_db_path, ensure_dirs, queries_dir
 from tbd.storage.sqlite import (
+    apply_label,
+    backfill_response_attributes,
     create_database,
+    get_or_create_label,
+    list_labels,
     open_database,
     rebuild_fts_index,
     search_content,
-    get_or_create_label,
-    apply_label,
-    list_labels,
-    backfill_response_attributes,
 )
-
 
 
 class _AdapterWithPaths:
@@ -95,7 +94,7 @@ def cmd_status(args) -> int:
 
     if not db.exists():
         print(f"Database not found: {db}")
-        print(f"Run 'tbd ingest' to create it.")
+        print("Run 'tbd ingest' to create it.")
         return 1
 
     import sqlite3
@@ -157,7 +156,7 @@ def cmd_status(args) -> int:
 
 def cmd_path(args) -> int:
     """Show XDG paths."""
-    from tbd.paths import data_dir, config_dir, cache_dir, db_path
+    from tbd.paths import cache_dir, config_dir, db_path
 
     print(f"Data directory:   {data_dir()}")
     print(f"Config directory: {config_dir()}")
@@ -172,7 +171,7 @@ def cmd_search(args) -> int:
 
     if not db.exists():
         print(f"Database not found: {db}")
-        print(f"Run 'tbd ingest' to create it.")
+        print("Run 'tbd ingest' to create it.")
         return 1
 
     conn = open_database(db)
@@ -211,13 +210,7 @@ def cmd_ask(args) -> int:
 
     from tbd.storage.embeddings import (
         open_embeddings_db,
-        store_chunk,
-        get_indexed_conversation_ids,
-        clear_all,
         search_similar,
-        set_meta,
-        get_meta,
-        chunk_count,
     )
 
     db = Path(args.db) if args.db else db_path()
@@ -259,6 +252,7 @@ def cmd_ask(args) -> int:
     # Hybrid recall: FTS5 narrows candidates, embeddings rerank
     if not args.embeddings_only:
         import sqlite3 as _sqlite3_main
+
         from tbd.storage.sqlite import fts5_recall_conversations
 
         main_conn = _sqlite3_main.connect(db)
@@ -273,7 +267,7 @@ def cmd_ask(args) -> int:
             else:
                 candidate_ids = fts5_ids
         elif fts5_mode == "none":
-            print(f"FTS5 found no matches, falling back to pure embeddings.", file=sys.stderr)
+            print("FTS5 found no matches, falling back to pure embeddings.", file=sys.stderr)
 
     if candidate_ids is not None and not candidate_ids:
         print("No conversations match the given filters.")
@@ -374,16 +368,16 @@ def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: s
     """Build or incrementally update the embeddings index."""
     import sqlite3 as _sqlite3
 
-    from tbd.storage.embeddings import (
-        open_embeddings_db,
-        store_chunk,
-        get_indexed_conversation_ids,
-        clear_all,
-        set_meta,
-        chunk_count,
-    )
     from tbd.embeddings import get_backend
     from tbd.embeddings.chunker import extract_exchange_window_chunks
+    from tbd.storage.embeddings import (
+        chunk_count,
+        clear_all,
+        get_indexed_conversation_ids,
+        open_embeddings_db,
+        set_meta,
+        store_chunk,
+    )
 
     try:
         backend = get_backend(preferred=backend_name, verbose=verbose)
@@ -920,7 +914,7 @@ def _print_full_exchange(conn, result: dict) -> None:
             for line in response_text.splitlines():
                 print(f"    {line}")
         if prompt_text or response_text:
-            print(f"    ---")
+            print("    ---")
 
 
 def _print_context(conn, result: dict, n: int) -> None:
@@ -1068,7 +1062,7 @@ def _print_thread_results(conn, results: list[dict], query: str) -> None:
     # --- Tier 2: Compact shortlist ---
     if tier2_ids:
         print(f"  {'─' * 50}")
-        print(f"  More results:\n")
+        print("  More results:\n")
         for cid in tier2_ids:
             m = meta.get(cid, {})
             short_id = cid[:12]
@@ -1164,7 +1158,7 @@ def cmd_queries(args) -> int:
     sql_file = qdir / f"{args.name}.sql"
     if not sql_file.exists():
         print(f"Query not found: {sql_file}")
-        print(f"Available queries:")
+        print("Available queries:")
         for f in sorted(qdir.glob("*.sql")):
             print(f"  {f.stem}")
         return 1

@@ -1,6 +1,7 @@
 """Protocol definitions for adapters and storage."""
 
-from typing import Iterable, Protocol
+from collections.abc import Iterable
+from typing import Protocol
 
 from .models import Conversation
 from .source import Source

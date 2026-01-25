@@ -54,7 +54,8 @@ def hybrid_search(
         RuntimeError: If no embedding backend is available.
     """
     from tbd.embeddings import get_backend
-    from tbd.paths import db_path as default_db_path, embeddings_db_path as default_embed_path
+    from tbd.paths import db_path as default_db_path
+    from tbd.paths import embeddings_db_path as default_embed_path
     from tbd.storage.embeddings import open_embeddings_db, search_similar
     from tbd.storage.sqlite import fts5_recall_conversations
 

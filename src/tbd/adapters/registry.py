@@ -86,12 +86,7 @@ def load_dropin_adapters(path: Path) -> list:
 def load_entrypoint_adapters() -> list:
     """Discover adapters registered via the 'tbd.adapters' entry point group."""
     adapters = []
-
-    try:
-        eps = importlib.metadata.entry_points(group="tbd.adapters")
-    except TypeError:
-        # Python 3.9-3.11 compatibility: entry_points() may not support group kwarg
-        eps = importlib.metadata.entry_points().get("tbd.adapters", [])
+    eps = importlib.metadata.entry_points(group="tbd.adapters")
 
     for ep in eps:
         try:
@@ -134,6 +129,12 @@ def load_all_adapters(dropin_path: Path | None = None) -> list:
     ]:
         for adapter in adapter_list:
             name = getattr(adapter, "NAME", None)
+            if name is None:
+                print(
+                    f"Warning: adapter from {source_label} has no NAME, skipping",
+                    file=sys.stderr,
+                )
+                continue
             if name in seen_names:
                 print(
                     f"Warning: duplicate adapter NAME '{name}' from {source_label}, skipping",

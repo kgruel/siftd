@@ -1,11 +1,17 @@
 """Discovery: find sources across all adapters."""
 
-from typing import Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from tbd.domain import Source
 
+# Adapter modules have NAME, DEDUP_STRATEGY, parse(), discover(), can_handle()
+# as module-level attributes. Using Any since Python doesn't have a clean type
+# for "module with specific attributes".
+AdapterModule = Any
 
-def discover_all(adapters: list) -> Iterable[tuple[Source, object]]:
+
+def discover_all(adapters: list[AdapterModule]) -> Iterable[tuple[Source, AdapterModule]]:
     """Yield (source, adapter) pairs for all discoverable files.
 
     Iterates through adapters, calls discover() on each, validates

@@ -5,7 +5,6 @@ Requires: pip install fastembed
 
 from __future__ import annotations
 
-
 _DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
 
 

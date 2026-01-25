@@ -5,9 +5,9 @@ No storage coupling.
 """
 
 import json
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
 
 from tbd.domain import (
     ContentBlock,
@@ -16,7 +16,6 @@ from tbd.domain import (
     Prompt,
     Response,
     ToolCall,
-    Usage,
 )
 from tbd.domain.source import Source
 
@@ -193,7 +192,7 @@ def parse(source: Source) -> Iterable[Conversation]:
             tool_name = payload.get("name", "unknown")
             input_data = payload.get("input", "")
             call_id = payload.get("call_id")
-            status = payload.get("status", "pending")
+            payload.get("status", "pending")
 
             response = _get_or_create_response(current_prompt, timestamp, model)
 

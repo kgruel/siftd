@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 def chunk_text(
     text: str,
-    tokenizer: "Tokenizer",
+    tokenizer: Tokenizer,
     target_tokens: int = 256,
     max_tokens: int = 512,
     overlap_tokens: int = 25,
@@ -42,7 +42,7 @@ def chunk_text(
     return _split_with_overlap(tokenizer, text, target_tokens, max_tokens, overlap_tokens)
 
 
-def _count_tokens(tokenizer: "Tokenizer", text: str) -> int:
+def _count_tokens(tokenizer: Tokenizer, text: str) -> int:
     """Count tokens excluding special tokens."""
     ids = tokenizer.encode(text).ids
     # Subtract 2 for [CLS] and [SEP] special tokens
@@ -50,7 +50,7 @@ def _count_tokens(tokenizer: "Tokenizer", text: str) -> int:
 
 
 def _split_with_overlap(
-    tokenizer: "Tokenizer",
+    tokenizer: Tokenizer,
     text: str,
     target_tokens: int,
     max_tokens: int,
@@ -107,7 +107,7 @@ def _split_with_overlap(
 
 
 def _split_words(
-    tokenizer: "Tokenizer",
+    tokenizer: Tokenizer,
     text: str,
     target_tokens: int,
     max_tokens: int,
@@ -159,7 +159,7 @@ def _split_sentences(text: str) -> list[str]:
 
 def extract_exchange_window_chunks(
     main_conn: sqlite3.Connection,
-    tokenizer: "Tokenizer",
+    tokenizer: Tokenizer,
     *,
     target_tokens: int = 256,
     max_tokens: int = 512,
@@ -277,7 +277,7 @@ def _load_exchanges(
 
 def _window_exchanges(
     exchanges: list[dict],
-    tokenizer: "Tokenizer",
+    tokenizer: Tokenizer,
     target_tokens: int,
     max_tokens: int,
     overlap_tokens: int,

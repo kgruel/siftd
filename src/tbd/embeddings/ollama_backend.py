@@ -7,9 +7,8 @@ embedding model is available.
 from __future__ import annotations
 
 import json
-import urllib.request
 import urllib.error
-
+import urllib.request
 
 # Models to try in order of preference (smaller/faster first)
 _PREFERRED_MODELS = [

@@ -1,23 +1,28 @@
 """Orchestration: coordinate ingestion pipeline."""
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any
 
 from tbd.domain import Source
 from tbd.storage.sqlite import (
-    store_conversation,
     check_file_ingested,
-    record_ingested_file,
     compute_file_hash,
-    find_conversation_by_external_id,
-    get_harness_id_by_name,
     delete_conversation,
-    get_or_create_harness,
     ensure_tool_aliases,
+    find_conversation_by_external_id,
+    get_or_create_harness,
+    record_ingested_file,
+    store_conversation,
 )
+
 from .discovery import discover_all
+
+# Adapter modules have NAME, DEDUP_STRATEGY, parse(), etc. as module-level attributes.
+# Using Any since Python doesn't have a clean type for "module with specific attributes".
+AdapterModule = Any
 
 
 @dataclass
@@ -48,7 +53,7 @@ def _compare_timestamps(new_ts: str | None, existing_ts: str | None) -> bool:
 
 def ingest_all(
     conn: sqlite3.Connection,
-    adapters: list,
+    adapters: list[AdapterModule],
     *,
     on_file: Callable[[Source, str], None] | None = None,
 ) -> IngestStats:
@@ -195,7 +200,7 @@ def ingest_all(
 def _ingest_file(
     conn: sqlite3.Connection,
     source: Source,
-    adapter,
+    adapter: AdapterModule,
     file_path: str,
     stats: IngestStats,
 ) -> None:

@@ -5,12 +5,11 @@ that can be rebuilt from the main DB at any time.
 """
 
 import json
+import os
 import sqlite3
 import struct
 import time
-import os
 from pathlib import Path
-
 
 # ULID generation (same as sqlite.py, inline to avoid circular imports)
 _ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
