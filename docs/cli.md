@@ -6,20 +6,18 @@ _Auto-generated from `--help` output._
 
 ```
 usage: tbd [-h] [--db PATH]
-           {ingest,status,search,ask,queries,label,labels,logs,backfill,path} ...
+           {ingest,status,ask,label,labels,query,backfill,path} ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {ingest,status,search,ask,queries,label,labels,logs,backfill,path}
+  {ingest,status,ask,label,labels,query,backfill,path}
     ingest              Ingest logs from all sources
     status              Show database statistics
-    search              Full-text search conversation content
     ask                 Semantic search over conversations
-    queries             List or run .sql query files
     label               Apply a label to an entity
     labels              List all labels
-    logs                List conversations with filters
+    query               List conversations with filters, or run SQL queries
     backfill            Backfill response attributes from raw files
     path                Show XDG paths
 
@@ -47,20 +45,6 @@ usage: tbd status [-h]
 
 options:
   -h, --help  show this help message and exit
-```
-
-## search
-
-```
-usage: tbd search [-h] [-n LIMIT] [--rebuild] [query ...]
-
-positional arguments:
-  query              Search query (FTS5 syntax)
-
-options:
-  -h, --help         show this help message and exit
-  -n, --limit LIMIT  Max results (default: 20)
-  --rebuild          Rebuild FTS index before searching
 ```
 
 ## ask
@@ -125,19 +109,6 @@ examples:
   tbd ask --threshold 0.7 "error"    # only results with score >= 0.7
 ```
 
-## queries
-
-```
-usage: tbd queries [-h] [--var KEY=VALUE] [name]
-
-positional arguments:
-  name             Query name to run (without .sql extension)
-
-options:
-  -h, --help       show this help message and exit
-  --var KEY=VALUE  Substitute $KEY with VALUE in SQL (repeatable)
-```
-
 ## label
 
 ```
@@ -162,16 +133,18 @@ options:
   -h, --help  show this help message and exit
 ```
 
-## logs
+## query
 
 ```
-usage: tbd logs [-h] [-v] [-n COUNT] [--latest] [--oldest] [-w SUBSTR]
-                [-m NAME] [--since DATE] [--before DATE] [-q QUERY] [-t NAME]
-                [-l NAME] [--json]
-                [conversation_id]
+usage: tbd query [-h] [-v] [-n COUNT] [--latest] [--oldest] [-w SUBSTR]
+                 [-m NAME] [--since DATE] [--before DATE] [-s QUERY] [-t NAME]
+                 [-l NAME] [--json] [--var KEY=VALUE]
+                 [conversation_id] [sql_name]
 
 positional arguments:
-  conversation_id       Show detail for a specific conversation ID
+  conversation_id       Conversation ID for detail view, or 'sql' for SQL
+                        query mode
+  sql_name              SQL query name (when using 'sql' subcommand)
 
 options:
   -h, --help            show this help message and exit
@@ -185,10 +158,21 @@ options:
   --since DATE          Conversations started after this date (ISO or YYYY-MM-
                         DD)
   --before DATE         Conversations started before this date
-  -q, --search QUERY    Full-text search (FTS5 syntax)
+  -s, --search QUERY    Full-text search (FTS5 syntax)
   -t, --tool NAME       Filter by canonical tool name (e.g. shell.execute)
   -l, --label NAME      Filter by label name
   --json                Output as JSON array
+  --var KEY=VALUE       Substitute $KEY with VALUE in SQL (for 'sql'
+                        subcommand)
+
+examples:
+  tbd query                         # list recent conversations
+  tbd query -w myproject            # filter by workspace
+  tbd query -s "error handling"     # FTS5 search
+  tbd query <id>                    # show conversation detail
+  tbd query sql                     # list available .sql files
+  tbd query sql cost                # run the 'cost' query
+  tbd query sql cost --var ws=proj  # run with variable substitution
 ```
 
 ## backfill
