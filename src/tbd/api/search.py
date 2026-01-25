@@ -81,32 +81,37 @@ def aggregate_by_conversation(
 
 
 def first_mention(
-    results: list[SearchResult],
+    results: list[SearchResult] | list[dict],
     *,
     threshold: float = 0.65,
     db_path: Path | None = None,
-) -> SearchResult | None:
+) -> SearchResult | dict | None:
     """Find chronologically earliest result above relevance threshold.
 
     Args:
-        results: List of SearchResult from hybrid_search.
+        results: List of SearchResult or raw dicts from search.
+            Dicts must have 'score', 'conversation_id', and optionally 'chunk_id'.
         threshold: Minimum score to consider relevant.
         db_path: Path to database (for timestamp lookup). Uses default if not specified.
 
     Returns:
-        Earliest SearchResult above threshold, or None if none qualify.
+        Earliest result above threshold (same type as input), or None if none qualify.
     """
     from tbd.paths import db_path as default_db_path
 
+    def _get(r, key):
+        """Access attribute or dict key."""
+        return getattr(r, key, None) or r.get(key) if isinstance(r, dict) else getattr(r, key)
+
     # Filter to results above threshold
-    above = [r for r in results if r.score >= threshold]
+    above = [r for r in results if _get(r, "score") >= threshold]
     if not above:
         return None
 
     db = db_path or default_db_path()
 
     # Get timestamps for conversations
-    conv_ids = list({r.conversation_id for r in above})
+    conv_ids = list({_get(r, "conversation_id") for r in above})
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
     placeholders = ",".join("?" * len(conv_ids))
@@ -118,8 +123,8 @@ def first_mention(
 
     conv_times = {row["id"]: row["started_at"] or "" for row in rows}
 
-    # Sort by conversation start time
-    above.sort(key=lambda r: conv_times.get(r.conversation_id, ""))
+    # Sort by conversation start time, then by chunk_id (ULID = time-ordered)
+    above.sort(key=lambda r: (conv_times.get(_get(r, "conversation_id"), ""), _get(r, "chunk_id") or ""))
 
     return above[0]
 

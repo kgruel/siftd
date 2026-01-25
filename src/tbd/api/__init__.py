@@ -17,6 +17,10 @@ from tbd.api.conversations import (
     list_query_files,
     run_query_file,
 )
+from tbd.api.file_refs import (
+    FileRef,
+    fetch_file_refs,
+)
 from tbd.api.search import (
     ConversationScore,
     SearchResult,
@@ -48,6 +52,9 @@ __all__ = [
     "QueryError",
     "list_query_files",
     "run_query_file",
+    # file refs
+    "FileRef",
+    "fetch_file_refs",
     # search
     "SearchResult",
     "ConversationScore",

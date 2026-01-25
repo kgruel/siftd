@@ -105,6 +105,51 @@ def load_entrypoint_adapters() -> list:
     return adapters
 
 
+class _AdapterPathOverride:
+    """Wrapper that overrides an adapter's DEFAULT_LOCATIONS."""
+
+    def __init__(self, adapter, paths: list[str]):
+        self._adapter = adapter
+        self._paths = paths
+
+    def __getattr__(self, name):
+        if name == "DEFAULT_LOCATIONS":
+            return self._paths
+        return getattr(self._adapter, name)
+
+    def discover(self):
+        """Discover using overridden paths."""
+        from tbd.domain import Source
+
+        for location in self._paths:
+            base = Path(location).expanduser()
+            if not base.exists():
+                continue
+            # Use the adapter's glob pattern logic
+            if self._adapter.NAME == "claude_code":
+                for f in base.glob("**/*.jsonl"):
+                    yield Source(kind="file", location=f)
+            elif self._adapter.NAME == "codex_cli":
+                for f in base.glob("**/*.jsonl"):
+                    yield Source(kind="file", location=f)
+            elif self._adapter.NAME == "gemini_cli":
+                for f in base.glob("*/chats/*.json"):
+                    yield Source(kind="file", location=f)
+
+
+def wrap_adapter_paths(adapter, paths: list[str]):
+    """Create an adapter wrapper with custom discovery paths.
+
+    Args:
+        adapter: An adapter module.
+        paths: List of directory paths to use instead of DEFAULT_LOCATIONS.
+
+    Returns:
+        Wrapped adapter that discovers from the given paths.
+    """
+    return _AdapterPathOverride(adapter, paths)
+
+
 def load_all_adapters(dropin_path: Path | None = None) -> list:
     """Load adapters from all sources, deduplicated by NAME.
 
