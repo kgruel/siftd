@@ -10,6 +10,7 @@ from tbd.paths import data_dir, db_path, embeddings_db_path, ensure_dirs, querie
 from tbd.storage.sqlite import (
     apply_tag,
     backfill_response_attributes,
+    backfill_shell_tags,
     create_database,
     get_or_create_tag,
     list_tags,
@@ -1093,7 +1094,7 @@ def _print_thread_exchange(conn, source_ids: list[str]) -> None:
 
 
 def cmd_tag(args) -> int:
-    """Apply a tag to a conversation or workspace."""
+    """Apply a tag to a conversation, workspace, or tool_call."""
     db = Path(args.db) if args.db else db_path()
 
     if not db.exists():
@@ -1112,9 +1113,11 @@ def cmd_tag(args) -> int:
         row = conn.execute("SELECT id FROM conversations WHERE id = ?", (entity_id,)).fetchone()
     elif entity_type == "workspace":
         row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
+    elif entity_type == "tool_call":
+        row = conn.execute("SELECT id FROM tool_calls WHERE id = ?", (entity_id,)).fetchone()
     else:
         print(f"Unsupported entity type: {entity_type}")
-        print("Supported: conversation, workspace")
+        print("Supported: conversation, workspace, tool_call")
         conn.close()
         return 1
 
@@ -1158,6 +1161,8 @@ def cmd_tags(args) -> int:
             counts.append(f"{tag['conversation_count']} conversations")
         if tag["workspace_count"]:
             counts.append(f"{tag['workspace_count']} workspaces")
+        if tag["tool_call_count"]:
+            counts.append(f"{tag['tool_call_count']} tool_calls")
         count_str = f" ({', '.join(counts)})" if counts else ""
         desc = f" - {tag['description']}" if tag["description"] else ""
         print(f"  {tag['name']}{desc}{count_str}")
@@ -1662,7 +1667,7 @@ def cmd_query(args) -> int:
 
 
 def cmd_backfill(args) -> int:
-    """Backfill response attributes from raw files."""
+    """Backfill derived data from existing records."""
     db = Path(args.db) if args.db else db_path()
 
     if not db.exists():
@@ -1671,9 +1676,23 @@ def cmd_backfill(args) -> int:
         return 1
 
     conn = open_database(db)
-    print("Backfilling response attributes (cache tokens)...")
-    count = backfill_response_attributes(conn)
-    print(f"Done. Inserted {count} attributes.")
+
+    if args.shell_tags:
+        print("Backfilling shell command tags...")
+        counts = backfill_shell_tags(conn)
+        total = sum(counts.values())
+        if counts:
+            print(f"Tagged {total} tool calls:")
+            for category, count in sorted(counts.items(), key=lambda x: -x[1]):
+                print(f"  shell:{category}: {count}")
+        else:
+            print("No untagged shell commands found.")
+    else:
+        # Default: backfill response attributes (original behavior)
+        print("Backfilling response attributes (cache tokens)...")
+        count = backfill_response_attributes(conn)
+        print(f"Done. Inserted {count} attributes.")
+
     conn.close()
     return 0
 
@@ -1771,7 +1790,7 @@ def main(argv=None) -> int:
 
     # tag
     p_tag = subparsers.add_parser("tag", help="Apply a tag to an entity")
-    p_tag.add_argument("entity_type", choices=["conversation", "workspace"], help="Entity type")
+    p_tag.add_argument("entity_type", choices=["conversation", "workspace", "tool_call"], help="Entity type")
     p_tag.add_argument("entity_id", help="Entity ID (ULID)")
     p_tag.add_argument("tag", help="Tag name")
     p_tag.set_defaults(func=cmd_tag)
@@ -1813,7 +1832,8 @@ def main(argv=None) -> int:
     p_query.set_defaults(func=cmd_query)
 
     # backfill
-    p_backfill = subparsers.add_parser("backfill", help="Backfill response attributes from raw files")
+    p_backfill = subparsers.add_parser("backfill", help="Backfill derived data from existing records")
+    p_backfill.add_argument("--shell-tags", action="store_true", help="Tag shell.execute calls with shell:* categories")
     p_backfill.set_defaults(func=cmd_backfill)
 
     # path

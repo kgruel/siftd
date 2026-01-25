@@ -225,6 +225,14 @@ CREATE TABLE conversation_tags (
     UNIQUE (conversation_id, tag_id)
 );
 
+CREATE TABLE tool_call_tags (
+    id              TEXT PRIMARY KEY,           -- ULID
+    tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id),
+    tag_id          TEXT NOT NULL REFERENCES tags(id),
+    applied_at      TEXT NOT NULL,
+    UNIQUE (tool_call_id, tag_id)
+);
+
 --------------------------------------------------------------------------------
 -- OPERATIONAL TABLES
 -- Ingestion tracking

@@ -61,6 +61,7 @@ def open_database(db_path: Path) -> sqlite3.Connection:
     ensure_fts_table(conn)
     ensure_pricing_table(conn)
     ensure_canonical_tools(conn)
+    ensure_tool_call_tags_table(conn)
     return conn
 
 
@@ -673,6 +674,19 @@ def ensure_pricing_table(conn: sqlite3.Connection) -> None:
     """)
 
 
+def ensure_tool_call_tags_table(conn: sqlite3.Connection) -> None:
+    """Create the tool_call_tags table if it doesn't exist. Idempotent."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tool_call_tags (
+            id              TEXT PRIMARY KEY,
+            tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id),
+            tag_id          TEXT NOT NULL REFERENCES tags(id),
+            applied_at      TEXT NOT NULL,
+            UNIQUE (tool_call_id, tag_id)
+        )
+    """)
+
+
 def ensure_fts_table(conn: sqlite3.Connection) -> None:
     """Create the FTS5 virtual table if it doesn't exist. Idempotent."""
     conn.execute("""
@@ -829,7 +843,7 @@ def apply_tag(
 ) -> str | None:
     """Apply a tag to an entity. Returns assignment id or None if already applied.
 
-    entity_type: 'conversation' or 'workspace'
+    entity_type: 'conversation', 'workspace', or 'tool_call'
     """
     from datetime import datetime
 
@@ -839,6 +853,9 @@ def apply_tag(
     elif entity_type == "workspace":
         table = "workspace_tags"
         fk_col = "workspace_id"
+    elif entity_type == "tool_call":
+        table = "tool_call_tags"
+        fk_col = "tool_call_id"
     else:
         raise ValueError(f"Unsupported entity_type: {entity_type}")
 
@@ -868,7 +885,8 @@ def list_tags(conn: sqlite3.Connection) -> list[dict]:
             t.description,
             t.created_at,
             (SELECT COUNT(*) FROM conversation_tags ct WHERE ct.tag_id = t.id) as conversation_count,
-            (SELECT COUNT(*) FROM workspace_tags wt WHERE wt.tag_id = t.id) as workspace_count
+            (SELECT COUNT(*) FROM workspace_tags wt WHERE wt.tag_id = t.id) as workspace_count,
+            (SELECT COUNT(*) FROM tool_call_tags tt WHERE tt.tag_id = t.id) as tool_call_count
         FROM tags t
         ORDER BY t.name
     """)
@@ -879,9 +897,194 @@ def list_tags(conn: sqlite3.Connection) -> list[dict]:
             "created_at": row["created_at"],
             "conversation_count": row["conversation_count"],
             "workspace_count": row["workspace_count"],
+            "tool_call_count": row["tool_call_count"],
         }
         for row in cur.fetchall()
     ]
+
+
+# =============================================================================
+# Shell command categorization
+# =============================================================================
+
+# Namespace prefix for auto-generated shell tags
+SHELL_TAG_PREFIX = "shell:"
+
+# Categories and their identifying commands/patterns
+SHELL_CATEGORIES = {
+    "test": {
+        "keywords": ["pytest", "jest", "vitest", "mocha"],
+        "patterns": [r"\bcargo\s+test\b", r"\bgo\s+test\b", r"\bnpm\s+test\b"],
+    },
+    "lint": {
+        "commands": ["ruff", "eslint", "mypy", "pylint", "flake8", "black", "isort"],
+        "patterns": [r"\buv\s+run\s+ty\b"],
+    },
+    "vcs": {
+        "commands": ["git", "yadm", "gh"],
+    },
+    "search": {
+        "commands": ["grep", "rg", "find", "sed", "awk", "ag"],
+        "pipe_commands": ["grep", "rg", "sed", "awk"],
+    },
+    "file": {
+        "commands": ["ls", "cat", "head", "tail", "mv", "cp", "rm", "mkdir", "tree", "wc", "nl", "touch", "chmod", "chown", "ln"],
+        "pipe_commands": ["head", "tail", "wc", "nl"],
+    },
+    "remote": {
+        "commands": ["ssh", "scp", "rsync", "curl", "wget", "ping", "dig", "nc", "netstat"],
+    },
+    "db": {
+        "commands": ["sqlite3", "sqlite-utils", "psql", "mysql"],
+        "pipe_commands": ["sqlite3"],
+    },
+    "infra": {
+        "commands": ["docker", "terraform", "ansible", "kubectl", "k9s", "helm"],
+    },
+    "ai": {
+        "commands": ["claude", "gemini", "aider", "codex"],
+    },
+    "python": {
+        "commands": ["python", "python3"],
+        "patterns": [r"\buv\s+run\s+python"],
+    },
+    "node": {
+        "commands": ["npm", "node", "yarn", "pnpm", "npx", "bun"],
+    },
+    "package": {
+        "commands": ["pip", "brew", "apt", "cargo"],
+        "patterns": [r"^uv\s+(?!run)"],  # uv but not uv run
+    },
+    "shell": {
+        "commands": ["echo", "sleep", "source", ".", "date", "which", "pwd", "env", "export",
+                     "bash", "zsh", "sh", "tmux", "screen", "open", "pbcopy", "pbpaste",
+                     "for", "while", "if", "case", "test", "["],
+    },
+}
+
+
+def categorize_shell_command(cmd: str) -> str | None:
+    """Categorize a shell command string into a category.
+
+    Returns the category name (without prefix) or None if uncategorized.
+    """
+    import re
+
+    if not cmd:
+        return None
+
+    # Normalize: strip leading "cd <path> && " pattern
+    cmd_norm = re.sub(r"^cd\s+[^&]+&&\s*", "", cmd).strip()
+    parts = cmd_norm.split()
+    first_word = parts[0] if parts else ""
+
+    # Check each category in order of specificity
+    # Test/lint first (they often use other tools like uv run)
+    for category in ["test", "lint"]:
+        spec = SHELL_CATEGORIES[category]
+
+        # Check keywords anywhere in command
+        if "keywords" in spec:
+            for kw in spec["keywords"]:
+                if kw in cmd:
+                    return category
+
+        # Check regex patterns
+        if "patterns" in spec:
+            for pattern in spec["patterns"]:
+                if re.search(pattern, cmd):
+                    return category
+
+        # Check first-word commands
+        if "commands" in spec and first_word in spec["commands"]:
+            return category
+
+    # Check remaining categories
+    for category, spec in SHELL_CATEGORIES.items():
+        if category in ("test", "lint"):
+            continue  # Already checked
+
+        # Check first-word commands
+        if "commands" in spec and first_word in spec["commands"]:
+            return category
+
+        # Check pipe commands (| cmd)
+        if "pipe_commands" in spec:
+            for pipe_cmd in spec["pipe_commands"]:
+                if re.search(rf"\|\s*{pipe_cmd}\b", cmd):
+                    return category
+
+        # Check regex patterns
+        if "patterns" in spec:
+            for pattern in spec["patterns"]:
+                if re.search(pattern, cmd):
+                    return category
+
+    return None
+
+
+def backfill_shell_tags(conn: sqlite3.Connection) -> dict[str, int]:
+    """Backfill shell command tags for all shell.execute tool calls.
+
+    Categorizes each shell.execute call and applies the appropriate shell:* tag.
+    Skips tool calls that already have a shell:* tag.
+
+    Returns dict of category -> count of newly tagged calls.
+    """
+    import json
+
+    # Get shell.execute tool id
+    cur = conn.execute("SELECT id FROM tools WHERE name = 'shell.execute'")
+    row = cur.fetchone()
+    if not row:
+        return {}
+    shell_tool_id = row["id"]
+
+    # Find all shell.execute calls that don't already have a shell:* tag
+    cur = conn.execute("""
+        SELECT tc.id, tc.input
+        FROM tool_calls tc
+        WHERE tc.tool_id = ?
+        AND tc.id NOT IN (
+            SELECT tct.tool_call_id
+            FROM tool_call_tags tct
+            JOIN tags t ON t.id = tct.tag_id
+            WHERE t.name LIKE 'shell:%'
+        )
+    """, (shell_tool_id,))
+
+    # Cache for tag IDs
+    tag_cache: dict[str, str] = {}
+    counts: dict[str, int] = {}
+
+    for row in cur.fetchall():
+        tool_call_id = row["id"]
+        raw_input = row["input"]
+
+        # Extract command from JSON input
+        try:
+            data = json.loads(raw_input)
+            cmd = data.get("command") or data.get("cmd") or ""
+        except (json.JSONDecodeError, TypeError):
+            cmd = raw_input or ""
+
+        # Categorize
+        category = categorize_shell_command(cmd)
+        if not category:
+            continue
+
+        # Get or create tag
+        tag_name = f"{SHELL_TAG_PREFIX}{category}"
+        if tag_name not in tag_cache:
+            tag_cache[tag_name] = get_or_create_tag(conn, tag_name)
+
+        # Apply tag
+        result = apply_tag(conn, "tool_call", tool_call_id, tag_cache[tag_name])
+        if result:
+            counts[category] = counts.get(category, 0) + 1
+
+    conn.commit()
+    return counts
 
 
 def backfill_response_attributes(conn: sqlite3.Connection) -> int:
