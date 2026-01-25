@@ -29,12 +29,14 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - `--role user|assistant` filters by source role
   - `--first` returns chronologically earliest match above relevance threshold
   - `--conversations` aggregates per conversation (max/mean scores, ranked)
+  - `--threshold SCORE` filters results below relevance score (0.7+ = on-topic, <0.6 = noise)
 - **Query command**: composable conversation browser with filters, drill-down, and multiple output formats
   - Filters: `-w` workspace, `-m` model, `-t` tool, `-l` label, `-s` FTS5 search, `--since`/`--before`
-  - Output: default (short, one-line with truncated ID), `-v` (full table), `--json`
-  - Drill-down: `tbd query <id>` shows conversation timeline (prompts, responses, tool calls)
+  - Output: default (short, one-line with truncated ID), `-v` (full table), `--json`, `--stats` (summary totals)
+  - Drill-down: `tbd query <id>` shows conversation timeline with collapsed tool calls (e.g., `→ shell.execute ×47`)
   - IDs: 12-char prefix, copy-pasteable for drill-down
   - SQL subcommand: `tbd query sql` lists `.sql` files, `tbd query sql <name>` runs them
+  - Root workspaces display as `(root)` instead of blank
 - **CLI**: `ingest`, `status`, `query`, `label`, `labels`, `backfill`, `path`, `ask`
 - **XDG paths**: data `~/.local/share/tbd`, config `~/.config/tbd`, queries `~/.config/tbd/queries`, adapters `~/.config/tbd/adapters`
 
@@ -189,7 +191,20 @@ From using `tbd ask` to reconstruct intellectual history across ~12 workspaces, 
 
 ## Next Session
 
-Open for new feature work. Recent cleanup complete (lint/type fixes, query command unification).
+**Bash command categorization**: The `shell.execute` tool is currently a black box — 25k+ calls with no visibility into what commands are being run. Categorizing shell commands would surface patterns:
+
+- `git` — version control ops
+- `test` — pytest, jest, cargo test
+- `docker` / `ssh` — infra operations
+- `file_ops` — ls, cat, find, head/tail
+- `build` — make, cargo, uv run
+
+Options:
+- **Parse-time**: classify during ingest, store in schema (new column or attribute)
+- **Query-time**: classify on the fly with SQL CASE statements
+- **Hybrid**: store raw, add materialized view or query helper
+
+This emerged from dogfooding — pattern mining friction showed Bash categorization as highest-value improvement for tool analysis use case.
 
 ---
 
@@ -212,5 +227,5 @@ Open for new feature work. Recent cleanup complete (lint/type fixes, query comma
 
 ---
 
-*Updated: 2026-01-24*
+*Updated: 2026-01-25*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
