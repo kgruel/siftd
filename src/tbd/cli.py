@@ -293,6 +293,11 @@ def cmd_ask(args) -> int:
             filter_basenames = [b.strip() for b in args.refs.split(",") if b.strip()]
         print_refs_content(all_refs, filter_basenames)
 
+    # Tagging hint (skip for JSON output)
+    if not args.json and results:
+        first_id = results[0]["conversation_id"][:12]
+        print(f"Tip: tbd tag {first_id} <tag>  |  tbd tag --last <tag>  |  tbd tags", file=sys.stderr)
+
     main_conn.close()
     return 0
 
@@ -322,6 +327,25 @@ def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: s
 
     return 0
 
+def _parse_tag_args(positional: list[str]) -> tuple[str, str, str] | None:
+    """Parse positional args for tag command.
+
+    Returns (entity_type, entity_id, tag_name) or None if invalid.
+    Supports:
+      - <id> <tag>                    -> conversation, id, tag
+      - <entity_type> <id> <tag>      -> entity_type, id, tag
+    """
+    if len(positional) == 2:
+        # Default: conversation
+        return ("conversation", positional[0], positional[1])
+    elif len(positional) == 3:
+        entity_type = positional[0]
+        if entity_type not in ("conversation", "workspace", "tool_call"):
+            return None
+        return (entity_type, positional[1], positional[2])
+    return None
+
+
 def cmd_tag(args) -> int:
     """Apply a tag to a conversation, workspace, or tool_call."""
     db = Path(args.db) if args.db else db_path()
@@ -333,13 +357,64 @@ def cmd_tag(args) -> int:
 
     conn = open_database(db)
 
-    entity_type = args.entity_type
-    entity_id = args.entity_id
-    tag_name = args.tag
+    # Handle --last mode
+    if args.last is not None:
+        if not args.positional or len(args.positional) != 1:
+            print("Usage: tbd tag --last N <tag>")
+            conn.close()
+            return 1
 
-    # Validate entity exists
+        tag_name = args.positional[0]
+        n = args.last
+        if n < 1:
+            print("--last requires a positive number")
+            conn.close()
+            return 1
+
+        # Get N most recent conversations
+        rows = conn.execute(
+            "SELECT id FROM conversations ORDER BY started_at DESC LIMIT ?",
+            (n,),
+        ).fetchall()
+
+        if not rows:
+            print("No conversations found.")
+            conn.close()
+            return 1
+
+        tag_id = get_or_create_tag(conn, tag_name)
+        tagged = 0
+        for row in rows:
+            if apply_tag(conn, "conversation", row["id"], tag_id, commit=False):
+                tagged += 1
+        conn.commit()
+
+        if tagged:
+            print(f"Applied tag '{tag_name}' to {tagged} conversation(s)")
+        else:
+            print(f"Tag '{tag_name}' already applied to all {len(rows)} conversation(s)")
+
+        conn.close()
+        return 0
+
+    # Parse positional args
+    parsed = _parse_tag_args(args.positional or [])
+    if not parsed:
+        print("Usage: tbd tag <id> <tag>")
+        print("       tbd tag <entity_type> <id> <tag>")
+        print("       tbd tag --last <tag>")
+        print("\nEntity types: conversation (default), workspace, tool_call")
+        conn.close()
+        return 1
+
+    entity_type, entity_id, tag_name = parsed
+
+    # Validate entity exists (support prefix match for conversations)
     if entity_type == "conversation":
-        row = conn.execute("SELECT id FROM conversations WHERE id = ?", (entity_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM conversations WHERE id = ? OR id LIKE ?",
+            (entity_id, f"{entity_id}%"),
+        ).fetchone()
     elif entity_type == "workspace":
         row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
     elif entity_type == "tool_call":
@@ -355,13 +430,16 @@ def cmd_tag(args) -> int:
         conn.close()
         return 1
 
+    # Use resolved ID (for prefix match)
+    resolved_id = row["id"]
+
     tag_id = get_or_create_tag(conn, tag_name)
-    result = apply_tag(conn, entity_type, entity_id, tag_id, commit=True)
+    result = apply_tag(conn, entity_type, resolved_id, tag_id, commit=True)
 
     if result:
-        print(f"Applied tag '{tag_name}' to {entity_type} {entity_id}")
+        print(f"Applied tag '{tag_name}' to {entity_type} {resolved_id[:12]}")
     else:
-        print(f"Tag '{tag_name}' already applied to {entity_type} {entity_id}")
+        print(f"Tag '{tag_name}' already applied to {entity_type} {resolved_id[:12]}")
 
     conn.close()
     return 0
@@ -1014,10 +1092,19 @@ def main(argv=None) -> int:
     p_ask.set_defaults(func=cmd_ask)
 
     # tag
-    p_tag = subparsers.add_parser("tag", help="Apply a tag to an entity")
-    p_tag.add_argument("entity_type", choices=["conversation", "workspace", "tool_call"], help="Entity type")
-    p_tag.add_argument("entity_id", help="Entity ID (ULID)")
-    p_tag.add_argument("tag", help="Tag name")
+    p_tag = subparsers.add_parser(
+        "tag",
+        help="Apply a tag to a conversation (or other entity)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  tbd tag 01HX... important       # tag conversation (default)
+  tbd tag --last important        # tag most recent conversation
+  tbd tag --last 3 review         # tag 3 most recent conversations
+  tbd tag workspace 01HY... proj  # explicit entity type
+  tbd tag tool_call 01HZ... slow  # tag a tool call""",
+    )
+    p_tag.add_argument("positional", nargs="*", help="[entity_type] entity_id tag")
+    p_tag.add_argument("-n", "--last", type=int, metavar="N", help="Tag N most recent conversations")
     p_tag.set_defaults(func=cmd_tag)
 
     # tags
