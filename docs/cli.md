@@ -138,7 +138,7 @@ options:
 ```
 usage: tbd query [-h] [-v] [-n COUNT] [--latest] [--oldest] [-w SUBSTR]
                  [-m NAME] [--since DATE] [--before DATE] [-s QUERY] [-t NAME]
-                 [-l NAME] [--json] [--stats] [--var KEY=VALUE]
+                 [-l NAME] [--json] [--var KEY=VALUE]
                  [conversation_id] [sql_name]
 
 positional arguments:
@@ -162,7 +162,6 @@ options:
   -t, --tool NAME       Filter by canonical tool name (e.g. shell.execute)
   -l, --label NAME      Filter by label name
   --json                Output as JSON array
-  --stats               Show summary totals after list
   --var KEY=VALUE       Substitute $KEY with VALUE in SQL (for 'sql'
                         subcommand)
 
