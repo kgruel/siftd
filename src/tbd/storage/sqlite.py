@@ -507,7 +507,7 @@ def store_conversation(conn: sqlite3.Connection, conversation: Conversation, *, 
                 tool_id = get_or_create_tool_by_alias(
                     conn, tool_call.tool_name, harness_id
                 )
-                insert_tool_call(
+                tool_call_id = insert_tool_call(
                     conn,
                     response_id=response_id,
                     conversation_id=conversation_id,
@@ -518,6 +518,12 @@ def store_conversation(conn: sqlite3.Connection, conversation: Conversation, *, 
                     status=tool_call.status,
                     timestamp=tool_call.timestamp,
                 )
+
+                # Auto-tag shell commands at ingest time
+                canonical_name = conn.execute(
+                    "SELECT name FROM tools WHERE id = ?", (tool_id,)
+                ).fetchone()["name"]
+                tag_shell_command(conn, tool_call_id, canonical_name, tool_call.input)
 
     if commit:
         conn.commit()
@@ -1021,6 +1027,47 @@ def categorize_shell_command(cmd: str) -> str | None:
                     return category
 
     return None
+
+
+def tag_shell_command(
+    conn: sqlite3.Connection,
+    tool_call_id: str,
+    tool_name: str,
+    input_data: dict | None,
+) -> str | None:
+    """Tag a shell.execute tool call with its category at ingest time.
+
+    Args:
+        conn: Database connection
+        tool_call_id: The tool_call's ULID
+        tool_name: Canonical tool name (e.g., "shell.execute")
+        input_data: The tool call input dict
+
+    Returns:
+        The category name if tagged, None otherwise.
+    """
+    if tool_name != "shell.execute":
+        return None
+
+    if not input_data:
+        return None
+
+    # Extract command
+    cmd = input_data.get("command") or input_data.get("cmd") or ""
+    if not cmd:
+        return None
+
+    # Categorize
+    category = categorize_shell_command(cmd)
+    if not category:
+        return None
+
+    # Get or create tag and apply
+    tag_name = f"{SHELL_TAG_PREFIX}{category}"
+    tag_id = get_or_create_tag(conn, tag_name)
+    apply_tag(conn, "tool_call", tool_call_id, tag_id)
+
+    return category
 
 
 def backfill_shell_tags(conn: sqlite3.Connection) -> dict[str, int]:

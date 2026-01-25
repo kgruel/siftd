@@ -510,3 +510,127 @@ class TestGetToolTagsByWorkspace:
     def test_raises_for_missing_db(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             get_tool_tags_by_workspace(db_path=tmp_path / "nonexistent.db")
+
+
+class TestIngestTimeShellTagging:
+    """Test that shell commands are automatically tagged at ingest time."""
+
+    def test_shell_execute_tagged_at_ingest(self, tmp_path):
+        """store_conversation() auto-tags shell.execute calls with categorizable commands."""
+        from tbd.domain.models import (
+            ContentBlock,
+            Conversation,
+            Harness,
+            Prompt,
+            Response,
+            ToolCall,
+            Usage,
+        )
+        from tbd.storage.sqlite import create_database, store_conversation
+
+        db_path = tmp_path / "test_ingest_tags.db"
+        conn = create_database(db_path)
+
+        # Create a conversation with a pytest command (should get shell:test tag)
+        conversation = Conversation(
+            external_id="test-conv-1",
+            workspace_path="/test/project",
+            started_at="2024-01-01T10:00:00Z",
+            harness=Harness(name="test_harness", source="test", log_format="jsonl"),
+            prompts=[
+                Prompt(
+                    external_id="p1",
+                    timestamp="2024-01-01T10:00:00Z",
+                    content=[ContentBlock(block_type="text", content={"text": "Run tests"})],
+                    responses=[
+                        Response(
+                            external_id="r1",
+                            timestamp="2024-01-01T10:00:01Z",
+                            model="test-model",
+                            usage=Usage(input_tokens=100, output_tokens=50),
+                            content=[ContentBlock(block_type="text", content={"text": "Running tests..."})],
+                            tool_calls=[
+                                ToolCall(
+                                    tool_name="shell.execute",  # Canonical name
+                                    external_id="tc1",
+                                    input={"command": "pytest tests/"},
+                                    result={"output": "OK"},
+                                    status="success",
+                                    timestamp="2024-01-01T10:00:01Z",
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        store_conversation(conn, conversation, commit=True)
+
+        # Verify the tag was applied
+        cur = conn.execute("""
+            SELECT t.name
+            FROM tool_call_tags tct
+            JOIN tags t ON t.id = tct.tag_id
+            JOIN tool_calls tc ON tc.id = tct.tool_call_id
+        """)
+        tags = [row["name"] for row in cur.fetchall()]
+
+        assert "shell:test" in tags
+
+    def test_uncategorized_command_not_tagged(self, tmp_path):
+        """Commands that don't match any category are not tagged."""
+        from tbd.domain.models import (
+            ContentBlock,
+            Conversation,
+            Harness,
+            Prompt,
+            Response,
+            ToolCall,
+            Usage,
+        )
+        from tbd.storage.sqlite import create_database, store_conversation
+
+        db_path = tmp_path / "test_no_tags.db"
+        conn = create_database(db_path)
+
+        conversation = Conversation(
+            external_id="test-conv-2",
+            workspace_path="/test/project",
+            started_at="2024-01-01T10:00:00Z",
+            harness=Harness(name="test_harness", source="test", log_format="jsonl"),
+            prompts=[
+                Prompt(
+                    external_id="p1",
+                    timestamp="2024-01-01T10:00:00Z",
+                    content=[ContentBlock(block_type="text", content={"text": "Do something"})],
+                    responses=[
+                        Response(
+                            external_id="r1",
+                            timestamp="2024-01-01T10:00:01Z",
+                            model="test-model",
+                            usage=Usage(input_tokens=100, output_tokens=50),
+                            content=[ContentBlock(block_type="text", content={"text": "Done"})],
+                            tool_calls=[
+                                ToolCall(
+                                    tool_name="shell.execute",  # Canonical name
+                                    external_id="tc1",
+                                    input={"command": "myunknowncommand --flag"},  # No category
+                                    result={"output": "hello"},
+                                    status="success",
+                                    timestamp="2024-01-01T10:00:01Z",
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        store_conversation(conn, conversation, commit=True)
+
+        # Verify no tags were applied
+        cur = conn.execute("SELECT COUNT(*) as cnt FROM tool_call_tags")
+        count = cur.fetchone()["cnt"]
+
+        assert count == 0
