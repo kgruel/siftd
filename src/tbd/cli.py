@@ -876,6 +876,8 @@ def main(argv=None) -> int:
     p_ask.add_argument("--conversations", action="store_true", help="Aggregate scores per conversation, return ranked conversations")
     p_ask.add_argument("--refs", nargs="?", const=True, metavar="FILES", help="Show file references; optionally filter by comma-separated basenames")
     p_ask.add_argument("--threshold", type=float, metavar="SCORE", help="Filter results below this relevance score (e.g., 0.7)")
+    p_ask.add_argument("--json", action="store_true", help="Output as structured JSON")
+    p_ask.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
     p_ask.set_defaults(func=cmd_ask)
 
     # tag

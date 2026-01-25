@@ -4,9 +4,11 @@ Each formatter implements a specific output mode for cmd_ask results.
 """
 
 import argparse
+import json
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean as _mean
 from typing import Protocol
@@ -630,8 +632,136 @@ class ConversationFormatter:
             print()
 
 
+class JsonFormatter:
+    """Structured JSON output for machine consumption.
+
+    Includes all data: chunks, scores, conversation metadata, timestamps, file refs.
+    Works with all retrieval modes (default, --conversations, --thread, etc.).
+    """
+
+    def format(self, ctx: FormatterContext) -> None:
+        # Fetch conversation metadata for all results
+        conv_ids = list({r["conversation_id"] for r in ctx.results})
+        meta = _get_conversation_metadata(ctx.conn, conv_ids)
+
+        # Build structured output
+        output = {
+            "query": ctx.query,
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "result_count": len(ctx.results),
+            "results": [],
+        }
+
+        # Check if --conversations mode (aggregate by conversation)
+        if getattr(ctx.args, "conversations", False):
+            output["mode"] = "conversations"
+            output["results"] = self._format_conversation_results(ctx, meta)
+        else:
+            output["mode"] = "chunks"
+            output["results"] = self._format_chunk_results(ctx, meta)
+
+        print(json.dumps(output, indent=2, default=str))
+
+    def _format_chunk_results(
+        self, ctx: FormatterContext, meta: dict[str, dict]
+    ) -> list[dict]:
+        """Format results as individual chunks."""
+        results = []
+        for r in ctx.results:
+            conv_id = r["conversation_id"]
+            m = meta.get(conv_id, {})
+
+            chunk = {
+                "chunk_id": r.get("chunk_id"),
+                "conversation_id": conv_id,
+                "score": round(r["score"], 4),
+                "chunk_type": r["chunk_type"],
+                "text": r["text"],
+                "source_ids": r.get("source_ids", []),
+                "conversation": {
+                    "started_at": m.get("started_at"),
+                    "workspace": m.get("workspace"),
+                },
+            }
+
+            # Include file refs if present
+            file_refs = r.get("file_refs")
+            if file_refs:
+                chunk["file_refs"] = [
+                    {
+                        "basename": ref.basename,
+                        "path": ref.path,
+                        "op": ref.op,
+                        "content_length": len(ref.content) if ref.content else 0,
+                    }
+                    for ref in file_refs
+                ]
+
+            results.append(chunk)
+
+        return results
+
+    def _format_conversation_results(
+        self, ctx: FormatterContext, meta: dict[str, dict]
+    ) -> list[dict]:
+        """Format results aggregated by conversation."""
+        limit = getattr(ctx.args, "limit", 10)
+
+        # Group by conversation
+        by_conv: dict[str, list[dict]] = {}
+        for r in ctx.results:
+            by_conv.setdefault(r["conversation_id"], []).append(r)
+
+        # Score each conversation
+        conv_scores = []
+        for conv_id, chunks in by_conv.items():
+            max_score = max(c["score"] for c in chunks)
+            mean_score = _mean(c["score"] for c in chunks)
+            best_chunk = max(chunks, key=lambda c: c["score"])
+            m = meta.get(conv_id, {})
+
+            conv_scores.append(
+                {
+                    "conversation_id": conv_id,
+                    "max_score": round(max_score, 4),
+                    "mean_score": round(mean_score, 4),
+                    "chunk_count": len(chunks),
+                    "started_at": m.get("started_at"),
+                    "workspace": m.get("workspace"),
+                    "best_chunk": {
+                        "chunk_id": best_chunk.get("chunk_id"),
+                        "score": round(best_chunk["score"], 4),
+                        "chunk_type": best_chunk["chunk_type"],
+                        "text": best_chunk["text"],
+                    },
+                }
+            )
+
+        conv_scores.sort(key=lambda x: x["max_score"], reverse=True)
+        return conv_scores[:limit]
+
+
 def select_formatter(args: argparse.Namespace) -> OutputFormatter:
-    """Select appropriate formatter based on command-line arguments."""
+    """Select appropriate formatter based on command-line arguments.
+
+    Checks for explicit --format NAME first (supports drop-in formatters),
+    then falls back to flag-based selection for built-in formatters.
+    """
+    # Check for explicit formatter name (supports plugins)
+    format_name = getattr(args, "format", None)
+    if format_name:
+        from tbd.output.registry import get_formatter
+
+        formatter = get_formatter(format_name)
+        if formatter:
+            return formatter
+        # Fall through to built-in selection if not found
+
+    # --json is shorthand for --format json
+    if getattr(args, "json", False):
+        return JsonFormatter()
+
+    # Built-in formatters based on flags
     if getattr(args, "conversations", False):
         return ConversationFormatter()
     if getattr(args, "thread", False):

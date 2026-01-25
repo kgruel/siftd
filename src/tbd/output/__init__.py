@@ -6,6 +6,7 @@ from tbd.output.formatters import (
     ConversationFormatter,
     FormatterContext,
     FullExchangeFormatter,
+    JsonFormatter,
     OutputFormatter,
     ThreadFormatter,
     VerboseFormatter,
@@ -13,17 +14,32 @@ from tbd.output.formatters import (
     print_refs_content,
     select_formatter,
 )
+from tbd.output.registry import (
+    FormatterRegistry,
+    get_formatter,
+    get_registry,
+)
 
 __all__ = [
+    # Protocol
     "OutputFormatter",
+    # Context
     "FormatterContext",
+    # Built-in formatters
     "ChunkListFormatter",
     "VerboseFormatter",
     "FullExchangeFormatter",
     "ContextFormatter",
     "ThreadFormatter",
     "ConversationFormatter",
+    "JsonFormatter",
+    # Selection
     "select_formatter",
+    # Registry
+    "FormatterRegistry",
+    "get_formatter",
+    "get_registry",
+    # Utilities
     "format_refs_annotation",
     "print_refs_content",
 ]
