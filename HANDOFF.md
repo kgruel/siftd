@@ -99,9 +99,18 @@ tbd-v2/
 │       ├── sqlite.py           # All DB operations, backfills, label functions
 │       └── embeddings.py       # Embeddings DB schema + cosine similarity search
 └── tests/
+    ├── fixtures/               # Minimal adapter test fixtures
+    ├── test_adapters.py        # Adapter parsing tests (19 tests)
+    ├── test_embeddings_storage.py  # Embeddings DB edge cases
     ├── test_models.py          # Model name parsing tests
-    └── test_chunker.py         # Token-aware chunking smoke tests (skipped without fastembed)
+    └── test_chunker.py         # Token-aware chunking smoke tests
 ```
+
+### Release Status (0.1.0)
+- **Version**: 0.1.0 — first stable release for personal use
+- **Tests**: 30 passing (adapter fixtures, embeddings, models, chunker)
+- **Install**: `uv pip install .` or `pip install .` from repo root
+- **CLI**: `tbd` available after install, or `./tbd` from repo root
 
 ---
 

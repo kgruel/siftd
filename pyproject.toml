@@ -22,5 +22,23 @@ dependencies = [
 [project.scripts]
 tbd = "tbd.cli:main"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/tbd"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
