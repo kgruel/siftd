@@ -9,6 +9,14 @@ from tbd.api.adapters import (
     list_adapters,
     list_builtin_adapters,
 )
+from tbd.api.doctor import (
+    CheckInfo,
+    Finding,
+    FixResult,
+    apply_fix,
+    list_checks,
+    run_checks,
+)
 from tbd.api.conversations import (
     ConversationDetail,
     ConversationSummary,
@@ -60,6 +68,13 @@ __all__ = [
     "AdapterInfo",
     "list_adapters",
     "list_builtin_adapters",
+    # doctor
+    "CheckInfo",
+    "Finding",
+    "FixResult",
+    "apply_fix",
+    "list_checks",
+    "run_checks",
     # conversations
     "ConversationSummary",
     "ConversationDetail",

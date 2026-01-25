@@ -998,6 +998,69 @@ def cmd_copy(args) -> int:
         return 1
 
 
+def cmd_doctor(args) -> int:
+    """Run health checks and report findings."""
+    from tbd.api import list_checks, run_checks
+
+    db = Path(args.db) if args.db else None
+
+    if args.list:
+        checks = list_checks()
+        print("Available checks:")
+        for check in checks:
+            fix_marker = " [fix]" if check.has_fix else ""
+            print(f"  {check.name}{fix_marker}")
+            print(f"    {check.description}")
+        return 0
+
+    # Run checks
+    checks_to_run = [args.check] if args.check else None
+    try:
+        findings = run_checks(checks=checks_to_run, db_path=db)
+    except FileNotFoundError as e:
+        print(str(e))
+        return 1
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
+
+    if not findings:
+        print("No issues found.")
+        return 0
+
+    # Display findings grouped by severity
+    severity_order = {"error": 0, "warning": 1, "info": 2}
+    findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
+
+    icons = {"info": "i", "warning": "!", "error": "x"}
+
+    for finding in findings:
+        icon = icons.get(finding.severity, "?")
+        print(f"[{icon}] {finding.check}: {finding.message}")
+        if finding.fix_command and not args.fix:
+            print(f"    Fix: {finding.fix_command}")
+
+    # Summary
+    error_count = sum(1 for f in findings if f.severity == "error")
+    warning_count = sum(1 for f in findings if f.severity == "warning")
+    info_count = sum(1 for f in findings if f.severity == "info")
+
+    print()
+    print(f"Found {len(findings)} issue(s): {error_count} error, {warning_count} warning, {info_count} info")
+
+    if args.fix:
+        fixable = [f for f in findings if f.fix_available and f.fix_command]
+        if fixable:
+            print("\nTo fix these issues, run:")
+            seen_commands = set()
+            for f in fixable:
+                if f.fix_command not in seen_commands:
+                    print(f"  {f.fix_command}")
+                    seen_commands.add(f.fix_command)
+
+    return 1 if error_count > 0 else 0
+
+
 def _print_stats(stats: IngestStats) -> None:
     """Print ingestion statistics."""
     print(f"\n{'='*50}")
@@ -1205,6 +1268,22 @@ def main(argv=None) -> int:
     p_copy.add_argument("--all", action="store_true", help="Copy all resources of this type")
     p_copy.add_argument("--force", action="store_true", help="Overwrite existing files")
     p_copy.set_defaults(func=cmd_copy)
+
+    # doctor
+    p_doctor = subparsers.add_parser(
+        "doctor",
+        help="Run health checks and maintenance",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  tbd doctor              # run all checks
+  tbd doctor --list       # show available checks
+  tbd doctor --check ingest-pending   # run specific check
+  tbd doctor --fix        # show fix commands for issues""",
+    )
+    p_doctor.add_argument("--list", action="store_true", help="Show available checks")
+    p_doctor.add_argument("--check", metavar="NAME", help="Run specific check only")
+    p_doctor.add_argument("--fix", action="store_true", help="Show fix commands for issues")
+    p_doctor.set_defaults(func=cmd_doctor)
 
     args = parser.parse_args(argv)
     return args.func(args)
