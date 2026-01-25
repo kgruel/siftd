@@ -74,8 +74,8 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Queries**: `bench/queries.json` — 25 queries across 5 groups (conceptual, philosophical, technical, specific, exploratory)
 
 ### Data (current ingestion)
-- ~5,289 conversations, 135k+ responses, 68k+ tool calls across 270+ workspaces
-- ~710MB database at `~/.local/share/tbd/tbd.db`
+- ~5,700 conversations, 154k+ responses, 83k+ tool calls across 280+ workspaces
+- ~810MB database at `~/.local/share/tbd/tbd.db`
 - Harnesses: Claude Code (Anthropic), Codex CLI (OpenAI), Gemini CLI (Google)
 - Models: Opus 4.5, Haiku 4.5, Sonnet 4.5, Gemini 3 pro/flash, GPT-5.2
 - Top workspace: `gruel.network` (~700 conversations, 68M tokens)
@@ -85,11 +85,13 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 tbd-v2/
 ├── README.md                   # Comprehensive documentation (600+ lines)
 ├── docs/
-│   └── cli.md                  # Auto-generated CLI reference
+│   ├── cli.md                  # Auto-generated CLI reference
+│   └── config.md               # Configuration file documentation
 ├── scripts/
 │   └── gen-cli-docs.sh         # Regenerates docs/cli.md from --help
 ├── queries/
-│   └── cost.sql                # Approximate cost by workspace
+│   ├── cost.sql                # Approximate cost by workspace
+│   └── shell-analysis.sql      # Shell command granularity analysis (tag breakdown, git actions, read/write)
 ├── bench/
 │   ├── queries.json            # 25 benchmark queries (5 groups)
 │   ├── corpus_analysis.py      # Token distribution profiling
@@ -201,6 +203,9 @@ tbd-v2/
 | Formatter plugins like adapters | Same three-tier discovery: built-in < entry point < drop-in. Drop-ins can override built-ins. |
 | Ingest-time tagging (inline) | Shell tags applied during `store_conversation()`, not hooks. General hook pattern deferred until second auto-tag use case emerges. |
 | Pre-commit hook local-only | `.git/hooks/pre-commit` regenerates CLI docs. Not versioned — too little benefit for portability overhead. |
+| Tag hierarchy rejected | Empirical analysis of 25k+ commands showed single-tool dominance (git 85% of vcs, pytest 98% of test). Flat tags sufficient; query-time parsing handles finer granularity. |
+| TOML for config | Human-editable, dotfile-friendly, tomlkit preserves comments on write. SQLite rejected — mixes concerns, not inspectable. |
+| Config get/set over edit | `tbd config get/set` more ergonomic than `$EDITOR`. Programmatic access enables scripting. |
 
 ---
 
@@ -236,16 +241,46 @@ From using `tbd ask` to reconstruct intellectual history across ~12 workspaces, 
 - **Synthesis is a consumer of tbd's output**: LLM-generated narratives, topic evolution summaries, provenance trails. Opt-in, expensive, external.
 - Keeps tbd as a data platform that exposes the right projections.
 
+### Agent usage analysis (2026-01-25)
+
+Analyzed real tbd usage by agents in non-tbd workspaces:
+
+**Usage found**:
+- `/Code/experiments`: 16+ `tbd ask` queries researching architecture concepts
+- `/Code/rill`: 17 queries researching testing philosophy
+- `/Code/cells`: 14 queries
+
+**Observed pattern**:
+1. `tbd --help` or `tbd ask --help` — discover capabilities
+2. `tbd ask "semantic query" --since --workspace --full -n` — iterative search
+3. `tbd query <id>` — drill into specific conversations
+4. **No tagging** — agents never use `tbd tag` to mark useful results
+
+**Sample queries from experiments**:
+- "framework projection stream events fold spec"
+- "JSONL file broker offset byte tailer persistence"
+- "prefer integration tests fakes over mocks"
+
+**Gap identified**: Agents find useful content but have no workflow to mark it for later retrieval. `tbd tag` exists but agents don't know about it.
+
 ---
 
 ## Next Session
 
+**In progress (subtasks)**:
+
+- **Tag-after-search documentation**: Design workflow for agents to tag useful search results. Agents use `tbd ask` heavily but never tag results for later retrieval.
+- **Tagging ergonomics**: Plan improvements to make `tbd tag` more discoverable and ergonomic.
+
+**Recently completed**:
+
+- **User-configurable formatters**: TOML config at `~/.config/tbd/config.toml`, `tbd config get/set` syntax. Using tomlkit for comment-preserving read/write.
+- **Ingest fix**: Added `~/.config/claude/projects` to claude_code adapter DEFAULT_LOCATIONS. Was only discovering `~/.claude/projects` (123 files), missing 5,268 files in the config location.
+- **Tagging leakage fix**: Moved sed/awk from `shell:search` to `shell:file`, added `uv run ruff` pattern to `shell:lint`.
+
 **Potential directions**:
 
-- **Tag hierarchy**: `shell:*` is flat; could support `shell:python:test` for finer granularity
-- **User-configurable formatters**: Config file to set default formatter preferences
-- **More built-in queries**: Ship example `.sql` files, copyable via `tbd copy query`
-- **`tbd copy formatter`**: Copy built-in formatter to config for customization (mirrors adapter pattern)
+- **`tbd copy formatter`**: Copy built-in formatter to config for customization. Lower priority — config solves the common case of "different defaults."
 
 **Lower priority**:
 
@@ -270,8 +305,9 @@ From using `tbd ask` to reconstruct intellectual history across ~12 workspaces, 
 ## Key Dependencies
 - `fastembed` 0.7.4 — embedding + tokenizer (bundled, model-agnostic)
 - `tokenizers` 0.22.2 — HuggingFace Rust tokenizer (fastembed dependency)
+- `tomlkit` 0.14.0 — TOML parsing with comment preservation (for config)
 
 ---
 
-*Updated: 2026-01-25 (query --tool-tag, tbd tools, JsonFormatter, formatter plugins, ingest-time shell tagging, pre-commit hook)*
+*Updated: 2026-01-25 (config system merged, ingest fix for ~/.config/claude/projects, tagging leakage fix, usage analysis completed, tag-after-search docs in progress)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*

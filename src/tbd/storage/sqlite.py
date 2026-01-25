@@ -924,18 +924,18 @@ SHELL_CATEGORIES = {
     },
     "lint": {
         "commands": ["ruff", "eslint", "mypy", "pylint", "flake8", "black", "isort"],
-        "patterns": [r"\buv\s+run\s+ty\b"],
+        "patterns": [r"\buv\s+run\s+ty\b", r"\buv\s+run\s+ruff\b"],
     },
     "vcs": {
         "commands": ["git", "yadm", "gh"],
     },
     "search": {
-        "commands": ["grep", "rg", "find", "sed", "awk", "ag"],
-        "pipe_commands": ["grep", "rg", "sed", "awk"],
+        "commands": ["grep", "rg", "find", "ag"],
+        "pipe_commands": ["grep", "rg"],
     },
     "file": {
-        "commands": ["ls", "cat", "head", "tail", "mv", "cp", "rm", "mkdir", "tree", "wc", "nl", "touch", "chmod", "chown", "ln"],
-        "pipe_commands": ["head", "tail", "wc", "nl"],
+        "commands": ["ls", "cat", "head", "tail", "mv", "cp", "rm", "mkdir", "tree", "wc", "nl", "touch", "chmod", "chown", "ln", "sed", "awk"],
+        "pipe_commands": ["head", "tail", "wc", "nl", "sed", "awk"],
     },
     "remote": {
         "commands": ["ssh", "scp", "rsync", "curl", "wget", "ping", "dig", "nc", "netstat"],

@@ -22,7 +22,7 @@ from tbd.domain.source import Source
 
 # Adapter self-description
 NAME = "claude_code"
-DEFAULT_LOCATIONS = ["~/.claude/projects"]
+DEFAULT_LOCATIONS = ["~/.claude/projects", "~/.config/claude/projects"]
 SOURCE_KINDS = ["file"]
 DEDUP_STRATEGY = "file"  # one conversation per file
 
