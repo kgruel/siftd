@@ -30,3 +30,24 @@ Core loop: **Ingest → Store → Query**
 - New CLI commands follow existing argparse patterns in `src/cli.py`
 - New adapters implement `can_handle(source)`, `parse(source)`, `discover()`, set `HARNESS_SOURCE`
 - Queries go in `~/.config/tbd/queries/*.sql`, use `$var` for parameters
+
+## Agent Memory (tbd)
+
+Search past conversations:
+```
+tbd ask "your query"              # semantic search
+tbd ask -w projectname "query"    # filter by workspace
+tbd query <id>                    # drill down into conversation
+```
+
+Tag useful findings:
+```
+tbd tag <id> research:<topic>   # bookmark for later
+tbd query -l research:<topic>   # retrieve tagged
+```
+
+Tag conventions:
+- `research:*` — Investigation findings worth preserving
+- `useful:*` — General bookmarks (useful:pattern, useful:example)
+
+When you find something useful via `tbd ask`, tag it before moving on.
