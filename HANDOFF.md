@@ -29,13 +29,13 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - `--role user|assistant` filters by source role
   - `--first` returns chronologically earliest match above relevance threshold
   - `--conversations` aggregates per conversation (max/mean scores, ranked)
-- **Logs command**: composable conversation browser with filters, drill-down, and multiple output formats
-  - Filters: `-w` workspace, `-m` model, `-t` tool, `-l` label, `-q` FTS5 search, `--since`/`--before`
+- **Query command**: composable conversation browser with filters, drill-down, and multiple output formats
+  - Filters: `-w` workspace, `-m` model, `-t` tool, `-l` label, `-s` FTS5 search, `--since`/`--before`
   - Output: default (short, one-line with truncated ID), `-v` (full table), `--json`
-  - Drill-down: `tbd logs <id>` shows conversation timeline (prompts, responses, tool calls)
+  - Drill-down: `tbd query <id>` shows conversation timeline (prompts, responses, tool calls)
   - IDs: 12-char prefix, copy-pasteable for drill-down
-- **Query runner**: `.sql` files in `~/.config/tbd/queries/`, `$var` substitution, missing var detection
-- **CLI**: `ingest`, `status`, `search`, `logs`, `queries`, `label`, `labels`, `backfill`, `path`, `ask`
+  - SQL subcommand: `tbd query sql` lists `.sql` files, `tbd query sql <name>` runs them
+- **CLI**: `ingest`, `status`, `query`, `label`, `labels`, `backfill`, `path`, `ask`
 - **XDG paths**: data `~/.local/share/tbd`, config `~/.config/tbd`, queries `~/.config/tbd/queries`, adapters `~/.config/tbd/adapters`
 
 ### Benchmarking framework (`bench/`)
@@ -137,9 +137,9 @@ tbd-v2/
 | Attributes for variable metadata | Avoids schema sprawl for provider-specific fields |
 | Approximate cost, labeled explicitly | Flat pricing is useful now; precision deferred until billing context matters |
 | Manual labels first | Auto-classification deferred until usage patterns justify LLM cost |
-| `logs` as primary interface | Composable flags for 80% case, `queries` stays for power users (raw SQL) |
+| `query` as primary interface | Composable flags for 80% case, `query sql` for power users (raw SQL) |
 | Short mode as default | Dense one-liners with IDs; verbose table via `-v` |
-| `search` folded into `logs -q` | FTS5 composes with other filters instead of being a separate command |
+| FTS5 via `query -s` | FTS5 composes with other filters instead of being a separate command |
 | No auto-build on `ask` | Explicit `--index` required. Indexing is expensive, shouldn't surprise the user. |
 | Remove untested adapters | Cline/Goose/Cursor/Aider had zero ingested data. Plugin system allows re-adding later. Recovery: commit `f5e3409`. |
 | WIP branches for sessions | Session work (handoff updates, tests, scratch) goes in `wip/*`, subtasks merge to main. |

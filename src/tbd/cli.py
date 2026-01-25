@@ -14,8 +14,6 @@ from tbd.storage.sqlite import (
     get_or_create_label,
     list_labels,
     open_database,
-    rebuild_fts_index,
-    search_content,
 )
 
 
@@ -162,45 +160,6 @@ def cmd_path(args) -> int:
     print(f"Config directory: {config_dir()}")
     print(f"Cache directory:  {cache_dir()}")
     print(f"Database:         {db_path()}")
-    return 0
-
-
-def cmd_search(args) -> int:
-    """Search conversation content using FTS5."""
-    db = db_path()
-
-    if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'tbd ingest' to create it.")
-        return 1
-
-    conn = open_database(db)
-
-    if args.rebuild:
-        print("Rebuilding FTS index...")
-        rebuild_fts_index(conn)
-        print("Done.")
-
-    query = " ".join(args.query)
-    if not query:
-        conn.close()
-        return 0
-
-    results = search_content(conn, query, limit=args.limit)
-
-    if not results:
-        print(f"No results for: {query}")
-        conn.close()
-        return 0
-
-    print(f"Found {len(results)} result(s) for: {query}\n")
-    for r in results:
-        side_label = "PROMPT" if r["side"] == "prompt" else "RESPONSE"
-        print(f"  [{side_label}] conversation={r['conversation_id']}")
-        print(f"    {r['snippet']}")
-        print()
-
-    conn.close()
     return 0
 
 
@@ -1133,107 +1092,6 @@ def _print_thread_exchange(conn, source_ids: list[str]) -> None:
         print("  (no exchange text available)")
 
 
-def cmd_queries(args) -> int:
-    """List or run .sql query files."""
-    from string import Template
-
-    qdir = queries_dir()
-
-    # List mode
-    if not args.name:
-        files = sorted(qdir.glob("*.sql"))
-        if not files:
-            print(f"No queries found in {qdir}")
-            return 0
-        import re
-        var_pattern = re.compile(r"\$\{(\w+)\}|\$(\w+)")
-        for f in files:
-            matches = var_pattern.findall(f.read_text())
-            var_names = sorted(set(m[0] or m[1] for m in matches))
-            suffix = f"  (vars: {', '.join(var_names)})" if var_names else "  (no vars)"
-            print(f"{f.stem}{suffix}")
-        return 0
-
-    # Run mode
-    sql_file = qdir / f"{args.name}.sql"
-    if not sql_file.exists():
-        print(f"Query not found: {sql_file}")
-        print("Available queries:")
-        for f in sorted(qdir.glob("*.sql")):
-            print(f"  {f.stem}")
-        return 1
-
-    sql = sql_file.read_text()
-
-    # Variable substitution
-    if args.var:
-        variables = {}
-        for v in args.var:
-            if "=" not in v:
-                print(f"Invalid --var format (expected key=value): {v}")
-                return 1
-            key, value = v.split("=", 1)
-            variables[key] = value
-        sql = Template(sql).safe_substitute(variables)
-    else:
-        sql = Template(sql).safe_substitute()
-
-    # Check for unsubstituted variables
-    import re
-    remaining = re.findall(r"\$\{(\w+)\}|\$(\w+)", sql)
-    if remaining:
-        missing = sorted(set(m[0] or m[1] for m in remaining))
-        print(f"Query '{args.name}' requires variables not provided: {', '.join(missing)}")
-        print(f"Usage: tbd queries {args.name} " + " ".join(f"--var {v}=<value>" for v in missing))
-        return 1
-
-    # Execute
-    db = db_path()
-    if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'tbd ingest' to create it.")
-        return 1
-
-    import sqlite3
-    conn = sqlite3.connect(db)
-    conn.row_factory = sqlite3.Row
-
-    try:
-        statements = [s.strip() for s in sql.split(";") if s.strip()]
-        last_rows = None
-        for stmt in statements:
-            cursor = conn.execute(stmt)
-            if cursor.description:
-                last_rows = (cursor.description, cursor.fetchall())
-
-        if last_rows:
-            desc, rows = last_rows
-            columns = [d[0] for d in desc]
-            # Compute column widths
-            widths = [len(c) for c in columns]
-            str_rows = []
-            for row in rows:
-                str_row = [str(v) if v is not None else "" for v in row]
-                str_rows.append(str_row)
-                for i, val in enumerate(str_row):
-                    widths[i] = max(widths[i], len(val))
-            # Print header
-            header = "  ".join(c.ljust(widths[i]) for i, c in enumerate(columns))
-            print(header)
-            print("  ".join("-" * w for w in widths))
-            for str_row in str_rows:
-                print("  ".join(val.ljust(widths[i]) for i, val in enumerate(str_row)))
-        else:
-            print("OK (no results)")
-    except sqlite3.Error as e:
-        print(f"SQL error: {e}")
-        return 1
-    finally:
-        conn.close()
-
-    return 0
-
-
 def cmd_label(args) -> int:
     """Apply a label to a conversation or workspace."""
     db = Path(args.db) if args.db else db_path()
@@ -1327,7 +1185,7 @@ def _extract_text(raw: str) -> str:
     return raw
 
 
-def _logs_detail(args) -> int:
+def _query_detail(args) -> int:
     """Show conversation detail timeline."""
     import sqlite3
 
@@ -1476,11 +1334,116 @@ def _logs_detail(args) -> int:
     return 0
 
 
-def cmd_logs(args) -> int:
+def _query_sql(args) -> int:
+    """List or run .sql query files (formerly 'queries' command)."""
+    from string import Template
+
+    qdir = queries_dir()
+
+    # List mode: no name provided
+    if not args.sql_name:
+        files = sorted(qdir.glob("*.sql"))
+        if not files:
+            print(f"No queries found in {qdir}")
+            return 0
+        import re
+        var_pattern = re.compile(r"\$\{(\w+)\}|\$(\w+)")
+        for f in files:
+            matches = var_pattern.findall(f.read_text())
+            var_names = sorted(set(m[0] or m[1] for m in matches))
+            suffix = f"  (vars: {', '.join(var_names)})" if var_names else "  (no vars)"
+            print(f"{f.stem}{suffix}")
+        return 0
+
+    # Run mode
+    sql_file = qdir / f"{args.sql_name}.sql"
+    if not sql_file.exists():
+        print(f"Query not found: {sql_file}")
+        print("Available queries:")
+        for f in sorted(qdir.glob("*.sql")):
+            print(f"  {f.stem}")
+        return 1
+
+    sql = sql_file.read_text()
+
+    # Variable substitution
+    if args.var:
+        variables = {}
+        for v in args.var:
+            if "=" not in v:
+                print(f"Invalid --var format (expected key=value): {v}")
+                return 1
+            key, value = v.split("=", 1)
+            variables[key] = value
+        sql = Template(sql).safe_substitute(variables)
+    else:
+        sql = Template(sql).safe_substitute()
+
+    # Check for unsubstituted variables
+    import re
+    remaining = re.findall(r"\$\{(\w+)\}|\$(\w+)", sql)
+    if remaining:
+        missing = sorted(set(m[0] or m[1] for m in remaining))
+        print(f"Query '{args.sql_name}' requires variables not provided: {', '.join(missing)}")
+        print(f"Usage: tbd query sql {args.sql_name} " + " ".join(f"--var {v}=<value>" for v in missing))
+        return 1
+
+    # Execute
+    db = Path(args.db) if args.db else db_path()
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'tbd ingest' to create it.")
+        return 1
+
+    import sqlite3
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+
+    try:
+        statements = [s.strip() for s in sql.split(";") if s.strip()]
+        last_rows = None
+        for stmt in statements:
+            cursor = conn.execute(stmt)
+            if cursor.description:
+                last_rows = (cursor.description, cursor.fetchall())
+
+        if last_rows:
+            desc, rows = last_rows
+            columns = [d[0] for d in desc]
+            # Compute column widths
+            widths = [len(c) for c in columns]
+            str_rows = []
+            for row in rows:
+                str_row = [str(v) if v is not None else "" for v in row]
+                str_rows.append(str_row)
+                for i, val in enumerate(str_row):
+                    widths[i] = max(widths[i], len(val))
+            # Print header
+            header = "  ".join(c.ljust(widths[i]) for i, c in enumerate(columns))
+            print(header)
+            print("  ".join("-" * w for w in widths))
+            for str_row in str_rows:
+                print("  ".join(val.ljust(widths[i]) for i, val in enumerate(str_row)))
+        else:
+            print("OK (no results)")
+    except sqlite3.Error as e:
+        print(f"SQL error: {e}")
+        return 1
+    finally:
+        conn.close()
+
+    return 0
+
+
+def cmd_query(args) -> int:
     """List conversations with composable filters."""
+    # Dispatch to sql subcommand if conversation_id is "sql"
+    if args.conversation_id == "sql":
+        return _query_sql(args)
+
     # Dispatch to detail view if conversation ID provided
     if args.conversation_id:
-        return _logs_detail(args)
+        return _query_detail(args)
 
     db = Path(args.db) if args.db else db_path()
 
@@ -1720,13 +1683,6 @@ def main(argv=None) -> int:
     p_status = subparsers.add_parser("status", help="Show database statistics")
     p_status.set_defaults(func=cmd_status)
 
-    # search
-    p_search = subparsers.add_parser("search", help="Full-text search conversation content")
-    p_search.add_argument("query", nargs="*", help="Search query (FTS5 syntax)")
-    p_search.add_argument("-n", "--limit", type=int, default=20, help="Max results (default: 20)")
-    p_search.add_argument("--rebuild", action="store_true", help="Rebuild FTS index before searching")
-    p_search.set_defaults(func=cmd_search)
-
     # ask (semantic search)
     p_ask = subparsers.add_parser(
         "ask",
@@ -1773,12 +1729,6 @@ def main(argv=None) -> int:
     p_ask.add_argument("--threshold", type=float, metavar="SCORE", help="Filter results below this relevance score (e.g., 0.7)")
     p_ask.set_defaults(func=cmd_ask)
 
-    # queries
-    p_queries = subparsers.add_parser("queries", help="List or run .sql query files")
-    p_queries.add_argument("name", nargs="?", help="Query name to run (without .sql extension)")
-    p_queries.add_argument("--var", action="append", metavar="KEY=VALUE", help="Substitute $KEY with VALUE in SQL (repeatable)")
-    p_queries.set_defaults(func=cmd_queries)
-
     # label
     p_label = subparsers.add_parser("label", help="Apply a label to an entity")
     p_label.add_argument("entity_type", choices=["conversation", "workspace"], help="Entity type")
@@ -1790,22 +1740,36 @@ def main(argv=None) -> int:
     p_labels = subparsers.add_parser("labels", help="List all labels")
     p_labels.set_defaults(func=cmd_labels)
 
-    # logs
-    p_logs = subparsers.add_parser("logs", help="List conversations with filters")
-    p_logs.add_argument("conversation_id", nargs="?", help="Show detail for a specific conversation ID")
-    p_logs.add_argument("-v", "--verbose", action="store_true", help="Full table with all columns")
-    p_logs.add_argument("-n", "--count", type=int, default=10, help="Number of conversations to show (0=all, default: 10)")
-    p_logs.add_argument("--latest", action="store_true", default=True, help="Sort by newest first (default)")
-    p_logs.add_argument("--oldest", action="store_true", help="Sort by oldest first")
-    p_logs.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
-    p_logs.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
-    p_logs.add_argument("--since", metavar="DATE", help="Conversations started after this date (ISO or YYYY-MM-DD)")
-    p_logs.add_argument("--before", metavar="DATE", help="Conversations started before this date")
-    p_logs.add_argument("-q", "--search", metavar="QUERY", help="Full-text search (FTS5 syntax)")
-    p_logs.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
-    p_logs.add_argument("-l", "--label", metavar="NAME", help="Filter by label name")
-    p_logs.add_argument("--json", action="store_true", help="Output as JSON array")
-    p_logs.set_defaults(func=cmd_logs)
+    # query
+    p_query = subparsers.add_parser(
+        "query",
+        help="List conversations with filters, or run SQL queries",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  tbd query                         # list recent conversations
+  tbd query -w myproject            # filter by workspace
+  tbd query -s "error handling"     # FTS5 search
+  tbd query <id>                    # show conversation detail
+  tbd query sql                     # list available .sql files
+  tbd query sql cost                # run the 'cost' query
+  tbd query sql cost --var ws=proj  # run with variable substitution""",
+    )
+    p_query.add_argument("conversation_id", nargs="?", help="Conversation ID for detail view, or 'sql' for SQL query mode")
+    p_query.add_argument("sql_name", nargs="?", help="SQL query name (when using 'sql' subcommand)")
+    p_query.add_argument("-v", "--verbose", action="store_true", help="Full table with all columns")
+    p_query.add_argument("-n", "--count", type=int, default=10, help="Number of conversations to show (0=all, default: 10)")
+    p_query.add_argument("--latest", action="store_true", default=True, help="Sort by newest first (default)")
+    p_query.add_argument("--oldest", action="store_true", help="Sort by oldest first")
+    p_query.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
+    p_query.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
+    p_query.add_argument("--since", metavar="DATE", help="Conversations started after this date (ISO or YYYY-MM-DD)")
+    p_query.add_argument("--before", metavar="DATE", help="Conversations started before this date")
+    p_query.add_argument("-s", "--search", metavar="QUERY", help="Full-text search (FTS5 syntax)")
+    p_query.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
+    p_query.add_argument("-l", "--label", metavar="NAME", help="Filter by label name")
+    p_query.add_argument("--json", action="store_true", help="Output as JSON array")
+    p_query.add_argument("--var", action="append", metavar="KEY=VALUE", help="Substitute $KEY with VALUE in SQL (for 'sql' subcommand)")
+    p_query.set_defaults(func=cmd_query)
 
     # backfill
     p_backfill = subparsers.add_parser("backfill", help="Backfill response attributes from raw files")
