@@ -1,0 +1,6 @@
+{"type": "session_meta", "timestamp": "2024-01-15T10:00:00Z", "payload": {"id": "codex-session-1", "cwd": "/test/workspace"}}
+{"type": "turn_context", "timestamp": "2024-01-15T10:00:00Z", "payload": {"model": "gpt-4o"}}
+{"type": "response_item", "timestamp": "2024-01-15T10:00:01Z", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Run ls command"}]}}
+{"type": "response_item", "timestamp": "2024-01-15T10:00:02Z", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I'll run the ls command for you."}]}}
+{"type": "response_item", "timestamp": "2024-01-15T10:00:03Z", "payload": {"type": "function_call", "name": "shell_command", "arguments": "{\"command\": \"ls -la\"}", "call_id": "call-001"}}
+{"type": "response_item", "timestamp": "2024-01-15T10:00:04Z", "payload": {"type": "function_call_output", "call_id": "call-001", "output": "total 8\ndrwxr-xr-x  3 user  staff  96 Jan 15 10:00 .\n-rw-r--r--  1 user  staff  42 Jan 15 10:00 README.md"}}
