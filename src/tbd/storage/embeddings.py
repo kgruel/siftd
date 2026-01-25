@@ -157,6 +157,9 @@ def search_similar(
     overlap with the given set (used for role filtering).
     Returns list of dicts: conversation_id, chunk_type, text, score, source_ids.
     """
+    if conversation_ids is not None and not conversation_ids:
+        return []
+
     if conversation_ids is not None:
         placeholders = ",".join("?" * len(conversation_ids))
         cur = conn.execute(

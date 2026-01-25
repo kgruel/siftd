@@ -275,6 +275,10 @@ def cmd_ask(args) -> int:
         elif fts5_mode == "none":
             print(f"FTS5 found no matches, falling back to pure embeddings.", file=sys.stderr)
 
+    if candidate_ids is not None and not candidate_ids:
+        print("No conversations match the given filters.")
+        return 0
+
     # Role filter: resolve allowed source IDs from main DB
     role_source_ids = None
     if args.role:
@@ -528,6 +532,9 @@ def _ask_resolve_role_ids(db: Path, role: str, candidate_ids: set[str] | None) -
     (chunks reference the prompt_id that triggered the response).
     """
     import sqlite3 as _sqlite3
+
+    if candidate_ids is not None and not candidate_ids:
+        return None
 
     conn = _sqlite3.connect(db)
     conn.row_factory = _sqlite3.Row
