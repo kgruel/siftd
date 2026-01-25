@@ -15,7 +15,8 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Provider tracking**: derived from adapter's `HARNESS_SOURCE`, populated on responses during ingestion
 - **Cache tokens**: `cache_creation_input_tokens`, `cache_read_input_tokens` extracted into `response_attributes`
 - **Cost tracking**: flat `pricing` table (model+provider → rates), approximate cost via query-time JOIN
-- **Labels**: manual labeling via CLI (`tbd label`), conversation and workspace scopes
+- **Tags**: manual tagging via CLI (`tbd tag`), conversation/workspace/tool_call scopes
+- **Shell command categorization**: 13 auto-tags (`shell:vcs`, `shell:test`, `shell:file`, etc.) via `tbd backfill --shell-tags`, 91% coverage of 25k+ commands
 - **FTS5**: full-text search on prompt+response text content
 - **Semantic search**: `tbd ask` — embeddings in separate SQLite DB, fastembed backend, incremental indexing
   - Uses exchange-window chunking (token-aware, prompt+response pairs as atomic units)
@@ -31,13 +32,13 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - `--conversations` aggregates per conversation (max/mean scores, ranked)
   - `--threshold SCORE` filters results below relevance score (0.7+ = on-topic, <0.6 = noise)
 - **Query command**: composable conversation browser with filters, drill-down, and multiple output formats
-  - Filters: `-w` workspace, `-m` model, `-t` tool, `-l` label, `-s` FTS5 search, `--since`/`--before`
+  - Filters: `-w` workspace, `-m` model, `-t` tool, `-l` tag, `-s` FTS5 search, `--since`/`--before`
   - Output: default (short, one-line with truncated ID), `-v` (full table), `--json`, `--stats` (summary totals)
   - Drill-down: `tbd query <id>` shows conversation timeline with collapsed tool calls (e.g., `→ shell.execute ×47`)
   - IDs: 12-char prefix, copy-pasteable for drill-down
   - SQL subcommand: `tbd query sql` lists `.sql` files, `tbd query sql <name>` runs them
   - Root workspaces display as `(root)` instead of blank
-- **CLI**: `ingest`, `status`, `query`, `label`, `labels`, `backfill`, `path`, `ask`
+- **CLI**: `ingest`, `status`, `query`, `tag`, `tags`, `backfill`, `path`, `ask`
 - **XDG paths**: data `~/.local/share/tbd`, config `~/.config/tbd`, queries `~/.config/tbd/queries`, adapters `~/.config/tbd/adapters`
 
 ### Benchmarking framework (`bench/`)
@@ -101,7 +102,7 @@ tbd-v2/
 │   │   └── orchestration.py    # ingest_all(), IngestStats, dedup strategies
 │   └── storage/
 │       ├── schema.sql          # Full schema + FTS5 + pricing table
-│       ├── sqlite.py           # All DB operations, backfills, label functions
+│       ├── sqlite.py           # All DB operations, backfills, tag functions, shell categorization
 │       └── embeddings.py       # Embeddings DB schema + cosine similarity search
 └── tests/
     ├── fixtures/               # Minimal adapter test fixtures
@@ -113,7 +114,7 @@ tbd-v2/
 
 ### Release Status (0.1.0)
 - **Version**: 0.1.0 — first stable release for personal use
-- **Tests**: 30 passing (adapter fixtures, embeddings, models, chunker)
+- **Tests**: 34 passing (adapter fixtures, embeddings, models, chunker)
 - **Install**: `uv pip install .` or `pip install .` from repo root
 - **CLI**: `tbd` available after install, or `./tbd` from repo root
 
@@ -141,7 +142,7 @@ tbd-v2/
 | Cost at query time | No stored redundancy, immediate price updates, pricing table JOIN |
 | Attributes for variable metadata | Avoids schema sprawl for provider-specific fields |
 | Approximate cost, labeled explicitly | Flat pricing is useful now; precision deferred until billing context matters |
-| Manual labels first | Auto-classification deferred until usage patterns justify LLM cost |
+| Manual tags first, auto when patterns emerge | Shell categorization justified by 25k+ calls. LLM-based classification still deferred. |
 | `query` as primary interface | Composable flags for 80% case, `query sql` for power users (raw SQL) |
 | Short mode as default | Dense one-liners with IDs; verbose table via `-v` |
 | FTS5 via `query -s` | FTS5 composes with other filters instead of being a separate command |
@@ -152,6 +153,8 @@ tbd-v2/
 | Two-tier output (`--thread`) | Top 3-4 conversations (above-mean clusters) as narrative, rest as shortlist. Partition matches bench finding of 3.5 strong clusters per query. |
 | Retrieval vs synthesis boundary | tbd owns deterministic structured retrieval (no LLM cost). Narrative synthesis is a consumer, not a feature. Manual-first principle applies. |
 | Presentation metrics in bench | Diversity, temporal span, chrono degradation, cluster density alongside retrieval scores. Measures output shape, not just retrieval quality. |
+| "Tag" over "label" | Shorter, fits tool vibe. Renamed before extending to tool_calls. |
+| Shell tags via tool_call_tags | Same join-table pattern as conversation/workspace tags. Namespaced `shell:*` to separate auto from manual. |
 
 ---
 
@@ -191,20 +194,16 @@ From using `tbd ask` to reconstruct intellectual history across ~12 workspaces, 
 
 ## Next Session
 
-**Bash command categorization**: The `shell.execute` tool is currently a black box — 25k+ calls with no visibility into what commands are being run. Categorizing shell commands would surface patterns:
+**Query helpers for tool_call tags**: Shell categorization is done, but querying requires raw SQL. Potential improvements:
 
-- `git` — version control ops
-- `test` — pytest, jest, cargo test
-- `docker` / `ssh` — infra operations
-- `file_ops` — ls, cat, find, head/tail
-- `build` — make, cargo, uv run
+- `tbd query --tool-tag shell:test` — filter conversations by tool_call tags
+- `tbd tools` — summary of tool usage by category (leverage new tags)
+- Workspace-level rollups: "which workspaces are test-heavy vs search-heavy?"
 
-Options:
-- **Parse-time**: classify during ingest, store in schema (new column or attribute)
-- **Query-time**: classify on the fly with SQL CASE statements
-- **Hybrid**: store raw, add materialized view or query helper
-
-This emerged from dogfooding — pattern mining friction showed Bash categorization as highest-value improvement for tool analysis use case.
+**Alternative directions**:
+- **Ingest-time tagging**: Auto-tag shell commands during ingest (currently backfill-only)
+- **Tag hierarchy**: `shell:*` is flat; could support `shell:python:test` for finer granularity
+- **CLI docs regeneration**: `scripts/gen-cli-docs.sh` needs update after tag/backfill changes
 
 ---
 
@@ -227,5 +226,5 @@ This emerged from dogfooding — pattern mining friction showed Bash categorizat
 
 ---
 
-*Updated: 2026-01-25*
+*Updated: 2026-01-25 (label→tag rename, shell command categorization)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
