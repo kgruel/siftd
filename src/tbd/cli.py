@@ -1003,8 +1003,10 @@ def cmd_doctor(args) -> int:
     from tbd.api import list_checks, run_checks
 
     db = Path(args.db) if args.db else None
+    subcommand = args.subcommand
 
-    if args.list:
+    # tbd doctor checks — list available checks
+    if subcommand == "checks":
         checks = list_checks()
         print("Available checks:")
         for check in checks:
@@ -1013,8 +1015,8 @@ def cmd_doctor(args) -> int:
             print(f"    {check.description}")
         return 0
 
-    # Run checks
-    checks_to_run = [args.check] if args.check else None
+    # Run checks (default or specific)
+    checks_to_run = [subcommand] if subcommand and subcommand != "fixes" else None
     try:
         findings = run_checks(checks=checks_to_run, db_path=db)
     except FileNotFoundError as e:
@@ -1033,11 +1035,12 @@ def cmd_doctor(args) -> int:
     findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
 
     icons = {"info": "i", "warning": "!", "error": "x"}
+    show_fixes = subcommand == "fixes"
 
     for finding in findings:
         icon = icons.get(finding.severity, "?")
         print(f"[{icon}] {finding.check}: {finding.message}")
-        if finding.fix_command and not args.fix:
+        if finding.fix_command and not show_fixes:
             print(f"    Fix: {finding.fix_command}")
 
     # Summary
@@ -1048,7 +1051,8 @@ def cmd_doctor(args) -> int:
     print()
     print(f"Found {len(findings)} issue(s): {error_count} error, {warning_count} warning, {info_count} info")
 
-    if args.fix:
+    # tbd doctor fixes — show consolidated fix commands
+    if show_fixes:
         fixable = [f for f in findings if f.fix_available and f.fix_command]
         if fixable:
             print("\nTo fix these issues, run:")
@@ -1275,14 +1279,12 @@ def main(argv=None) -> int:
         help="Run health checks and maintenance",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  tbd doctor              # run all checks
-  tbd doctor --list       # show available checks
-  tbd doctor --check ingest-pending   # run specific check
-  tbd doctor --fix        # show fix commands for issues""",
+  tbd doctor                    # run all checks
+  tbd doctor checks             # list available checks
+  tbd doctor fixes              # show fix commands for issues
+  tbd doctor ingest-pending     # run specific check""",
     )
-    p_doctor.add_argument("--list", action="store_true", help="Show available checks")
-    p_doctor.add_argument("--check", metavar="NAME", help="Run specific check only")
-    p_doctor.add_argument("--fix", action="store_true", help="Show fix commands for issues")
+    p_doctor.add_argument("subcommand", nargs="?", help="'checks' to list, 'fixes' to show fixes, or check name")
     p_doctor.set_defaults(func=cmd_doctor)
 
     args = parser.parse_args(argv)

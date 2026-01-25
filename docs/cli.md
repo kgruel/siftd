@@ -6,20 +6,25 @@ _Auto-generated from `--help` output._
 
 ```
 usage: tbd [-h] [--db PATH]
-           {ingest,status,ask,label,labels,query,backfill,path} ...
+           {ingest,status,ask,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor} ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {ingest,status,ask,label,labels,query,backfill,path}
+  {ingest,status,ask,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor}
     ingest              Ingest logs from all sources
     status              Show database statistics
     ask                 Semantic search over conversations
-    label               Apply a label to an entity
-    labels              List all labels
+    tag                 Apply a tag to a conversation (or other entity)
+    tags                List all tags
+    tools               Summarize tool usage by category
     query               List conversations with filters, or run SQL queries
-    backfill            Backfill response attributes from raw files
+    backfill            Backfill derived data from existing records
     path                Show XDG paths
+    config              View or modify config settings
+    adapters            List discovered adapters
+    copy                Copy built-in resources for customization
+    doctor              Run health checks and maintenance
 
 options:
   -h, --help            show this help message and exit
@@ -55,7 +60,7 @@ usage: tbd ask [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
                [--rebuild] [--backend NAME] [--embed-db PATH] [--thread]
                [--embeddings-only] [--recall N] [--role {user,assistant}]
                [--first] [--conversations] [--refs [FILES]]
-               [--threshold SCORE]
+               [--threshold SCORE] [--json] [--format NAME]
                [query ...]
 
 positional arguments:
@@ -90,6 +95,8 @@ options:
   --refs [FILES]        Show file references; optionally filter by comma-
                         separated basenames
   --threshold SCORE     Filter results below this relevance score (e.g., 0.7)
+  --json                Output as structured JSON
+  --format NAME         Use named formatter (built-in or drop-in plugin)
 
 examples:
   tbd ask "chunking"                 # hybrid: FTS5 recall → embeddings rerank
@@ -109,28 +116,50 @@ examples:
   tbd ask --threshold 0.7 "error"    # only results with score >= 0.7
 ```
 
-## label
+## tag
 
 ```
-usage: tbd label [-h] {conversation,workspace} entity_id label
+usage: tbd tag [-h] [-n N] [positional ...]
 
 positional arguments:
-  {conversation,workspace}
-                        Entity type
-  entity_id             Entity ID (ULID)
-  label                 Label name
+  positional    [entity_type] entity_id tag
 
 options:
-  -h, --help            show this help message and exit
+  -h, --help    show this help message and exit
+  -n, --last N  Tag N most recent conversations
+
+examples:
+  tbd tag 01HX... important       # tag conversation (default)
+  tbd tag --last important        # tag most recent conversation
+  tbd tag --last 3 review         # tag 3 most recent conversations
+  tbd tag workspace 01HY... proj  # explicit entity type
+  tbd tag tool_call 01HZ... slow  # tag a tool call
 ```
 
-## labels
+## tags
 
 ```
-usage: tbd labels [-h]
+usage: tbd tags [-h]
 
 options:
   -h, --help  show this help message and exit
+```
+
+## tools
+
+```
+usage: tbd tools [-h] [--by-workspace] [--prefix PREFIX] [-n LIMIT]
+
+options:
+  -h, --help         show this help message and exit
+  --by-workspace     Show breakdown by workspace
+  --prefix PREFIX    Tag prefix to filter (default: shell:)
+  -n, --limit LIMIT  Max workspaces for --by-workspace (default: 20)
+
+examples:
+  tbd tools                    # shell command categories summary
+  tbd tools --by-workspace     # breakdown by workspace
+  tbd tools --prefix shell:    # filter by tag prefix
 ```
 
 ## query
@@ -138,7 +167,8 @@ options:
 ```
 usage: tbd query [-h] [-v] [-n COUNT] [--latest] [--oldest] [-w SUBSTR]
                  [-m NAME] [--since DATE] [--before DATE] [-s QUERY] [-t NAME]
-                 [-l NAME] [--json] [--var KEY=VALUE]
+                 [-l NAME] [--tool-tag NAME] [--json] [--stats]
+                 [--var KEY=VALUE]
                  [conversation_id] [sql_name]
 
 positional arguments:
@@ -160,8 +190,10 @@ options:
   --before DATE         Conversations started before this date
   -s, --search QUERY    Full-text search (FTS5 syntax)
   -t, --tool NAME       Filter by canonical tool name (e.g. shell.execute)
-  -l, --label NAME      Filter by label name
+  -l, --tag NAME        Filter by conversation tag
+  --tool-tag NAME       Filter by tool call tag (e.g. shell:test)
   --json                Output as JSON array
+  --stats               Show summary totals after list
   --var KEY=VALUE       Substitute $KEY with VALUE in SQL (for 'sql'
                         subcommand)
 
@@ -169,6 +201,8 @@ examples:
   tbd query                         # list recent conversations
   tbd query -w myproject            # filter by workspace
   tbd query -s "error handling"     # FTS5 search
+  tbd query --tool-tag shell:test   # conversations with test commands
+  tbd query -w proj --tool-tag shell:vcs  # combine filters
   tbd query <id>                    # show conversation detail
   tbd query sql                     # list available .sql files
   tbd query sql cost                # run the 'cost' query
@@ -178,10 +212,11 @@ examples:
 ## backfill
 
 ```
-usage: tbd backfill [-h]
+usage: tbd backfill [-h] [--shell-tags]
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help    show this help message and exit
+  --shell-tags  Tag shell.execute calls with shell:* categories
 ```
 
 ## path
@@ -191,4 +226,71 @@ usage: tbd path [-h]
 
 options:
   -h, --help  show this help message and exit
+```
+
+## config
+
+```
+usage: tbd config [-h] [{get,set,path}] [key] [value]
+
+positional arguments:
+  {get,set,path}  Action to perform
+  key             Config key (dotted path, e.g., ask.formatter)
+  value           Value to set (for 'set' action)
+
+options:
+  -h, --help      show this help message and exit
+
+examples:
+  tbd config                        # show all config
+  tbd config path                   # show config file path
+  tbd config get ask.formatter      # get specific value
+  tbd config set ask.formatter verbose  # set value
+```
+
+## adapters
+
+```
+usage: tbd adapters [-h]
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## copy
+
+```
+usage: tbd copy [-h] [--all] [--force] {adapter,query} [name]
+
+positional arguments:
+  {adapter,query}  Resource type to copy
+  name             Resource name
+
+options:
+  -h, --help       show this help message and exit
+  --all            Copy all resources of this type
+  --force          Overwrite existing files
+
+examples:
+  tbd copy adapter claude_code    # copy adapter to ~/.config/tbd/adapters/
+  tbd copy adapter --all          # copy all built-in adapters
+  tbd copy query cost             # copy query to ~/.config/tbd/queries/
+```
+
+## doctor
+
+```
+usage: tbd doctor [-h] [--list] [--check NAME] [--fix]
+
+options:
+  -h, --help    show this help message and exit
+  --list        Show available checks
+  --check NAME  Run specific check only
+  --fix         Show fix commands for issues
+
+examples:
+  tbd doctor              # run all checks
+  tbd doctor --list       # show available checks
+  tbd doctor --check ingest-pending   # run specific check
+  tbd doctor --fix        # show fix commands for issues
 ```
