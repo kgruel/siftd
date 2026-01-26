@@ -1065,6 +1065,181 @@ def cmd_doctor(args) -> int:
     return 1 if error_count > 0 else 0
 
 
+def _fmt_ago(seconds: float) -> str:
+    """Format seconds as a human-readable 'ago' string."""
+    minutes = int(seconds / 60)
+    if minutes < 1:
+        return "just now"
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    remaining = minutes % 60
+    if remaining:
+        return f"{hours}h {remaining}m ago"
+    return f"{hours}h ago"
+
+
+def cmd_peek(args) -> int:
+    """Inspect live sessions directly from disk."""
+    import json as _json
+    import time
+
+    from tbd.api import (
+        find_session_file,
+        list_active_sessions,
+        read_session_detail,
+        tail_session,
+    )
+
+    # Detail mode: session ID provided
+    if args.session_id:
+        path = find_session_file(args.session_id)
+        if path is None:
+            print(f"Session not found: {args.session_id}")
+            return 1
+
+        # Tail mode
+        if args.tail:
+            if args.json:
+                lines = tail_session(path, lines=20)
+                for line in lines:
+                    print(line)
+            else:
+                lines = tail_session(path, lines=20)
+                for line in lines:
+                    print(line)
+            return 0
+
+        # Detail mode
+        detail = read_session_detail(path, last_n=args.last)
+        if detail is None:
+            print(f"Could not read session: {path}")
+            return 1
+
+        if args.json:
+            out = {
+                "session_id": detail.info.session_id,
+                "file_path": str(detail.info.file_path),
+                "workspace_path": detail.info.workspace_path,
+                "workspace_name": detail.info.workspace_name,
+                "model": detail.info.model,
+                "started_at": detail.started_at,
+                "exchange_count": detail.info.exchange_count,
+                "exchanges": [
+                    {
+                        "timestamp": ex.timestamp,
+                        "prompt_text": ex.prompt_text,
+                        "response_text": ex.response_text,
+                        "tool_calls": [{"name": n, "count": c} for n, c in ex.tool_calls],
+                        "input_tokens": ex.input_tokens,
+                        "output_tokens": ex.output_tokens,
+                    }
+                    for ex in detail.exchanges
+                ],
+            }
+            print(_json.dumps(out, indent=2))
+            return 0
+
+        # Header
+        ws = detail.info.workspace_name or ""
+        model = detail.info.model or "unknown"
+        started = ""
+        if detail.started_at:
+            started = detail.started_at[11:16] if len(detail.started_at) >= 16 else detail.started_at
+
+        print(detail.info.session_id)
+        parts = []
+        if ws:
+            parts.append(ws)
+        parts.append(model)
+        if started:
+            parts.append(f"started {started}")
+        parts.append(f"{detail.info.exchange_count} exchanges")
+        print(" \u00b7 ".join(parts))
+        print()
+
+        # Exchanges
+        for ex in detail.exchanges:
+            ts = ""
+            if ex.timestamp and len(ex.timestamp) >= 16:
+                ts = ex.timestamp[11:16]
+
+            # Prompt
+            if ex.prompt_text is not None:
+                print(f"[{ts}] user")
+                text = ex.prompt_text
+                if len(text) > 200:
+                    text = text[:200] + "..."
+                for line in text.splitlines():
+                    print(f"  {line}")
+                print()
+
+            # Response
+            if ex.response_text is not None or ex.tool_calls:
+                token_info = f"{_fmt_tokens(ex.input_tokens)} in / {_fmt_tokens(ex.output_tokens)} out"
+                print(f"[{ts}] assistant ({token_info})")
+                if ex.response_text:
+                    text = ex.response_text
+                    if len(text) > 200:
+                        text = text[:200] + "..."
+                    for line in text.splitlines():
+                        print(f"  {line}")
+                if ex.tool_calls:
+                    tool_parts = []
+                    for name, count in ex.tool_calls:
+                        if count > 1:
+                            tool_parts.append(f"{name} \u00d7{count}")
+                        else:
+                            tool_parts.append(name)
+                    print(f"  \u2192 {', '.join(tool_parts)}")
+                print()
+
+        return 0
+
+    # List mode
+    sessions = list_active_sessions(
+        workspace=args.workspace,
+        include_inactive=args.all,
+    )
+
+    if not sessions:
+        print("No active sessions found.")
+        return 0
+
+    if args.json:
+        out = [
+            {
+                "session_id": s.session_id,
+                "file_path": str(s.file_path),
+                "workspace_path": s.workspace_path,
+                "workspace_name": s.workspace_name,
+                "model": s.model,
+                "last_activity": s.last_activity,
+                "exchange_count": s.exchange_count,
+            }
+            for s in sessions
+        ]
+        print(_json.dumps(out, indent=2))
+        return 0
+
+    now = time.time()
+    for s in sessions:
+        sid = s.session_id[:8]
+        ws = s.workspace_name or ""
+        ago = _fmt_ago(now - s.last_activity)
+        exchanges = f"{s.exchange_count} exchanges"
+        model = s.model or ""
+        # Shorten model name: strip date suffix if present
+        if model and "-" in model:
+            # e.g. "claude-opus-4-5-20251101" -> "claude-opus-4-5"
+            parts = model.rsplit("-", 1)
+            if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 8:
+                model = parts[0]
+        print(f"  {sid}  {ws:<16s} {ago:<12s} {exchanges:<16s} {model}")
+
+    return 0
+
+
 def _print_stats(stats: IngestStats) -> None:
     """Print ingestion statistics."""
     print(f"\n{'='*50}")
@@ -1286,6 +1461,27 @@ def main(argv=None) -> int:
     )
     p_doctor.add_argument("subcommand", nargs="?", help="'checks' to list, 'fixes' to show fixes, or check name")
     p_doctor.set_defaults(func=cmd_doctor)
+
+    # peek
+    p_peek = subparsers.add_parser(
+        "peek",
+        help="Inspect live sessions from disk (bypasses SQLite)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  tbd peek                    # list active sessions (last 2 hours)
+  tbd peek --all              # list all sessions
+  tbd peek -w tbd             # filter by workspace name
+  tbd peek c520f862           # detail view for session
+  tbd peek c520 --last 10     # show last 10 exchanges
+  tbd peek c520 --tail        # raw JSONL tail""",
+    )
+    p_peek.add_argument("session_id", nargs="?", help="Session ID prefix for detail view")
+    p_peek.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace name substring")
+    p_peek.add_argument("--all", action="store_true", help="Include inactive sessions (not just last 2 hours)")
+    p_peek.add_argument("--last", type=int, default=5, metavar="N", help="Number of exchanges to show (default: 5)")
+    p_peek.add_argument("--tail", action="store_true", help="Raw JSONL tail (last 20 lines)")
+    p_peek.add_argument("--json", action="store_true", help="Output as structured JSON")
+    p_peek.set_defaults(func=cmd_peek)
 
     args = parser.parse_args(argv)
     return args.func(args)

@@ -17,6 +17,15 @@ from tbd.api.doctor import (
     list_checks,
     run_checks,
 )
+from tbd.api.peek import (
+    PeekExchange,
+    SessionDetail,
+    SessionInfo,
+    find_session_file,
+    list_active_sessions,
+    read_session_detail,
+    tail_session,
+)
 from tbd.api.conversations import (
     ConversationDetail,
     ConversationSummary,
@@ -75,6 +84,14 @@ __all__ = [
     "apply_fix",
     "list_checks",
     "run_checks",
+    # peek
+    "PeekExchange",
+    "SessionDetail",
+    "SessionInfo",
+    "find_session_file",
+    "list_active_sessions",
+    "read_session_detail",
+    "tail_session",
     # conversations
     "ConversationSummary",
     "ConversationDetail",

@@ -280,17 +280,17 @@ examples:
 ## doctor
 
 ```
-usage: tbd doctor [-h] [--list] [--check NAME] [--fix]
+usage: tbd doctor [-h] [subcommand]
+
+positional arguments:
+  subcommand  'checks' to list, 'fixes' to show fixes, or check name
 
 options:
-  -h, --help    show this help message and exit
-  --list        Show available checks
-  --check NAME  Run specific check only
-  --fix         Show fix commands for issues
+  -h, --help  show this help message and exit
 
 examples:
-  tbd doctor              # run all checks
-  tbd doctor --list       # show available checks
-  tbd doctor --check ingest-pending   # run specific check
-  tbd doctor --fix        # show fix commands for issues
+  tbd doctor                    # run all checks
+  tbd doctor checks             # list available checks
+  tbd doctor fixes              # show fix commands for issues
+  tbd doctor ingest-pending     # run specific check
 ```
