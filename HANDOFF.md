@@ -8,7 +8,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Domain model**: `Conversation → Prompt → Response → ToolCall` dataclass tree (`src/domain/`)
 - **Three adapters**: `claude_code` (file dedup), `gemini_cli` (session dedup), `codex_cli` (file dedup)
 - **Adapter plugin system**: built-in + drop-in (`~/.config/strata/adapters/*.py`) + entry points (`strata.adapters`)
-- **Ingestion**: orchestration layer with adapter-controlled dedup, `--path` for custom dirs
+- **Ingestion**: orchestration layer with adapter-controlled dedup, `--path` for custom dirs, error recording (failed files tracked to prevent retry loops)
 - **Storage**: SQLite with schema, ULIDs, schemaless attributes
 - **Tool canonicalization**: 16 canonical tools (`file.read`, `shell.execute`, `shell.stdin`, etc.), cross-harness aliases
 - **Model parsing**: raw names decomposed into family/version/variant/creator/released
@@ -62,7 +62,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - `strata doctor` — run all checks
   - `strata doctor checks` — list available checks
   - `strata doctor fixes` — show fix commands for issues
-  - Built-in checks: `ingest-pending`, `embeddings-stale`, `pricing-gaps`, `drop-ins-valid`
+  - Built-in checks: `ingest-pending`, `ingest-errors`, `embeddings-stale`, `pricing-gaps`, `drop-ins-valid`
   - API: `list_checks()`, `run_checks()`, `apply_fix()` in `strata.api`
 - **Library API** (`strata.api`): Programmatic access to all CLI functionality
   - `list_conversations()`, `get_conversation()` — conversation queries (supports `tool_tag` filter)
@@ -161,7 +161,7 @@ tbd-v2/
 │   │   └── orchestration.py    # ingest_all(), IngestStats, dedup strategies
 │   ├── doctor/
 │   │   ├── __init__.py         # Re-exports
-│   │   ├── checks.py           # Check protocol + 4 built-in checks
+│   │   ├── checks.py           # Check protocol + 5 built-in checks
 │   │   └── runner.py           # list_checks(), run_checks(), apply_fix()
 │   ├── peek/
 │   │   ├── __init__.py         # Re-exports
@@ -184,7 +184,7 @@ tbd-v2/
 
 ### Release Status (0.1.0)
 - **Version**: 0.1.0 — first stable release for personal use
-- **Tests**: 124 passing (adapters, API, doctor, formatters, embeddings, models, chunker)
+- **Tests**: 163 passing (adapters, API, doctor, formatters, embeddings, ingestion, models, peek, chunker)
 - **Install**: `uv pip install .` or `pip install .` from repo root
 - **CLI**: `strata` available after install
 - **Pre-commit hook**: Auto-regenerates `docs/cli.md` (local-only, not versioned)
@@ -238,6 +238,7 @@ tbd-v2/
 | TOML for config | Human-editable, dotfile-friendly, tomlkit preserves comments on write. SQLite rejected — mixes concerns, not inspectable. |
 | Config get/set over edit | `strata config get/set` more ergonomic than `$EDITOR`. Programmatic access enables scripting. |
 | `peek` bypasses SQLite | Live reads from raw JSONL, no ingestion latency. mtime for "active" detection (simple, cross-platform). |
+| Error column on `ingested_files` | NULL = success, non-NULL = error message. Same-hash files skip (same content → same error). Hash change clears record and retries. Simpler than a separate failures table. |
 
 ---
 
@@ -303,10 +304,13 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 **Recently completed**:
 
-- **Active session exclusion**: `strata ask` auto-excludes conversations from currently-active session files (detected via `list_active_sessions()`). Maps active file paths through `ingested_files` table to conversation IDs, filters at candidate level. `--no-exclude-active` to opt out. 6 tests in `tests/test_exclude_active.py`.
-- **Agent ergonomics**: Progressive help examples in `strata ask --help` organized by workflow stage (search → refine → inspect → save → tuning). Includes `strata tag` workflow in ask help to teach the complete loop. Tip after results now explains WHY to tag ("for future retrieval") with convention example (`research:<topic>`).
-- **`strata peek`**: Live session inspection bypassing SQLite. Reads raw JSONL from disk. List mode with mtime filtering, detail mode with exchange timeline, tail mode, workspace filtering, JSON output. `peek/` package (scanner + reader), API shim, CLI command. 27 tests.
-- **Hash-based change detection**: Files re-ingested when content hash changes (same path, different hash). Enables incremental updates for append-only formats like Claude Code JSONL. Empty files tracked with `conversation_id=NULL`. New functions: `get_ingested_file_info()`, `record_empty_file()`. 10 tests in `tests/test_ingestion.py`.
+- **Ingest error handling**: Files that fail ingestion are now recorded in `ingested_files` with an `error` column, stopping retry loops. Three failure modes fixed:
+  - Session "skipped (older)": now recorded with existing conversation_id (fixes 35 gemini files showing as pending)
+  - UNIQUE constraint (duplicate file paths for same session): caught via `IntegrityError`, file linked to existing conversation
+  - FK/parse errors: recorded as failed with error message, won't retry unless file hash changes
+  - New: `record_failed_file()`, `clear_ingested_file_error()` storage functions, `_migrate_add_error_column()` migration
+  - New: `ingest-errors` doctor check reports files with recorded errors
+  - Also fixes pre-existing bug: empty files that gain content now re-ingest correctly (old NULL-conversation record cleared before re-insert)
 
 **Potential directions**:
 
@@ -342,5 +346,5 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 ---
 
-*Updated: 2026-01-25 (active session exclusion, agent ergonomics, strata peek)*
+*Updated: 2026-01-26 (ingest error handling, retry prevention, ingest-errors doctor check)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*

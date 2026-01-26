@@ -244,7 +244,8 @@ CREATE TABLE ingested_files (
     file_hash       TEXT NOT NULL,
     harness_id      TEXT NOT NULL REFERENCES harnesses(id),
     conversation_id TEXT REFERENCES conversations(id),
-    ingested_at     TEXT NOT NULL
+    ingested_at     TEXT NOT NULL,
+    error           TEXT                        -- NULL = success, non-NULL = failure message
 );
 
 --------------------------------------------------------------------------------

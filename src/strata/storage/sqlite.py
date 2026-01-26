@@ -58,6 +58,7 @@ def open_database(db_path: Path) -> sqlite3.Connection:
         conn.commit()
 
     _migrate_labels_to_tags(conn)
+    _migrate_add_error_column(conn)
     ensure_fts_table(conn)
     ensure_pricing_table(conn)
     ensure_canonical_tools(conn)
@@ -97,6 +98,15 @@ def _migrate_labels_to_tags(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE workspace_tags RENAME COLUMN label_id TO tag_id")
 
     conn.commit()
+
+
+def _migrate_add_error_column(conn: sqlite3.Connection) -> None:
+    """Add error column to ingested_files if it doesn't exist."""
+    cur = conn.execute("PRAGMA table_info(ingested_files)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "error" not in columns:
+        conn.execute("ALTER TABLE ingested_files ADD COLUMN error TEXT")
+        conn.commit()
 
 
 # Alias for backwards compatibility
@@ -629,15 +639,19 @@ def check_file_ingested(conn: sqlite3.Connection, path: str) -> bool:
 def get_ingested_file_info(conn: sqlite3.Connection, path: str) -> dict | None:
     """Get stored info for an ingested file.
 
-    Returns dict with {file_hash, conversation_id} or None if not found.
+    Returns dict with {file_hash, conversation_id, error} or None if not found.
     """
     cur = conn.execute(
-        "SELECT file_hash, conversation_id FROM ingested_files WHERE path = ?",
+        "SELECT file_hash, conversation_id, error FROM ingested_files WHERE path = ?",
         (path,)
     )
     row = cur.fetchone()
     if row:
-        return {"file_hash": row["file_hash"], "conversation_id": row["conversation_id"]}
+        return {
+            "file_hash": row["file_hash"],
+            "conversation_id": row["conversation_id"],
+            "error": row["error"],
+        }
     return None
 
 
@@ -702,6 +716,42 @@ def record_empty_file(
     if commit:
         conn.commit()
     return ulid
+
+
+def record_failed_file(
+    conn: sqlite3.Connection,
+    path: str,
+    file_hash: str,
+    harness_id: str,
+    error: str,
+    *,
+    commit: bool = False,
+) -> str:
+    """Record a file that failed ingestion. Returns the record id.
+
+    Stores with conversation_id=NULL and error message so the file is tracked
+    and won't retry unless its hash changes.
+    """
+    from datetime import datetime
+
+    ulid = _ulid()
+    ingested_at = datetime.now().isoformat()
+    conn.execute(
+        """INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at, error)
+           VALUES (?, ?, ?, ?, NULL, ?, ?)""",
+        (ulid, path, file_hash, harness_id, ingested_at, error)
+    )
+    if commit:
+        conn.commit()
+    return ulid
+
+
+def clear_ingested_file_error(
+    conn: sqlite3.Connection,
+    path: str,
+) -> None:
+    """Clear error and delete the ingested_files record so the file can be re-ingested."""
+    conn.execute("DELETE FROM ingested_files WHERE path = ?", (path,))
 
 
 # =============================================================================

@@ -147,6 +147,59 @@ class IngestPendingCheck:
         return None
 
 
+class IngestErrorsCheck:
+    """Reports files that failed ingestion."""
+
+    name = "ingest-errors"
+    description = "Files that failed ingestion (recorded with error)"
+
+    def run(self, ctx: CheckContext) -> list[Finding]:
+        findings = []
+        conn = ctx.get_db_conn()
+
+        # Check if error column exists (migration may not have run yet)
+        cur = conn.execute("PRAGMA table_info(ingested_files)")
+        columns = {row[1] for row in cur.fetchall()}
+        if "error" not in columns:
+            return findings
+
+        cur = conn.execute(
+            "SELECT path, error, harness_id FROM ingested_files WHERE error IS NOT NULL"
+        )
+        rows = cur.fetchall()
+
+        if rows:
+            # Group by harness for cleaner reporting
+            by_harness: dict[str, list[str]] = {}
+            for row in rows:
+                h_id = row["harness_id"]
+                h_row = conn.execute(
+                    "SELECT name FROM harnesses WHERE id = ?", (h_id,)
+                ).fetchone()
+                h_name = h_row["name"] if h_row else h_id
+                by_harness.setdefault(h_name, []).append(row["error"])
+
+            for harness_name, errors in by_harness.items():
+                findings.append(
+                    Finding(
+                        check=self.name,
+                        severity="warning",
+                        message=f"Adapter '{harness_name}': {len(errors)} file(s) failed ingestion",
+                        fix_available=False,
+                        context={
+                            "adapter": harness_name,
+                            "count": len(errors),
+                            "errors": errors[:5],
+                        },
+                    )
+                )
+
+        return findings
+
+    def fix(self, finding: Finding) -> FixResult | None:
+        return None
+
+
 class EmbeddingsStaleCheck:
     """Detects conversations not indexed in embeddings database."""
 
@@ -478,6 +531,7 @@ class DropInsValidCheck:
 # Registry of built-in checks
 BUILTIN_CHECKS: list[Check] = [
     IngestPendingCheck(),
+    IngestErrorsCheck(),
     EmbeddingsStaleCheck(),
     PricingGapsCheck(),
     DropInsValidCheck(),

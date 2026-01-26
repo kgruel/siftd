@@ -8,6 +8,7 @@ from typing import Any
 
 from strata.domain import Source
 from strata.storage.sqlite import (
+    clear_ingested_file_error,
     compute_file_hash,
     delete_conversation,
     ensure_tool_aliases,
@@ -15,6 +16,7 @@ from strata.storage.sqlite import (
     get_ingested_file_info,
     get_or_create_harness,
     record_empty_file,
+    record_failed_file,
     record_ingested_file,
     store_conversation,
 )
@@ -33,6 +35,7 @@ class IngestStats:
     files_ingested: int = 0
     files_skipped: int = 0
     files_replaced: int = 0
+    files_errored: int = 0
     conversations: int = 0
     prompts: int = 0
     responses: int = 0
@@ -126,9 +129,12 @@ def ingest_all(
                         continue
 
                     # Hash changed - re-ingest
-                    # Delete old conversation if it exists
+                    # Delete old conversation/record
                     if existing_info["conversation_id"]:
                         delete_conversation(conn, existing_info["conversation_id"])
+                    else:
+                        # No conversation (empty or errored file) — remove old record
+                        clear_ingested_file_error(conn, file_path)
 
                     # Re-ingest and update the record
                     _reingest_file(conn, source, adapter, file_path, current_hash, stats)
@@ -190,6 +196,12 @@ def ingest_all(
                                 on_file(source, "replaced")
                         else:
                             # Existing is newer or same, skip
+                            # Record file so it's tracked (not shown as pending)
+                            if not get_ingested_file_info(conn, file_path):
+                                location = Path(source.location) if not isinstance(source.location, Path) else source.location
+                                file_hash = compute_file_hash(location)
+                                record_ingested_file(conn, file_path, file_hash, existing["id"])
+                                conn.commit()
                             stats.files_skipped += 1
                             if on_file:
                                 on_file(source, "skipped (older)")
@@ -209,12 +221,71 @@ def ingest_all(
                         if on_file:
                             on_file(source, "ingested")
 
+        except sqlite3.IntegrityError as e:
+            conn.rollback()
+            # UNIQUE constraint on conversations — file is duplicate of already-ingested session
+            if "UNIQUE constraint" in str(e):
+                try:
+                    conversations_retry = list(adapter.parse(source))
+                    for conv in conversations_retry:
+                        harness_kwargs = {}
+                        if conv.harness.source:
+                            harness_kwargs["source"] = conv.harness.source
+                        if conv.harness.log_format:
+                            harness_kwargs["log_format"] = conv.harness.log_format
+                        if conv.harness.display_name:
+                            harness_kwargs["display_name"] = conv.harness.display_name
+                        h_id = get_or_create_harness(conn, conv.harness.name, **harness_kwargs)
+                        existing = find_conversation_by_external_id(conn, h_id, conv.external_id)
+                        if existing and not get_ingested_file_info(conn, file_path):
+                            location = Path(source.location) if not isinstance(source.location, Path) else source.location
+                            fh = compute_file_hash(location)
+                            record_ingested_file(conn, file_path, fh, existing["id"])
+                            conn.commit()
+                            stats.files_skipped += 1
+                            if on_file:
+                                on_file(source, "skipped (duplicate)")
+                            break
+                    else:
+                        _record_file_error(conn, source, adapter, file_path, str(e), stats, on_file)
+                    continue
+                except Exception:
+                    pass
+            _record_file_error(conn, source, adapter, file_path, str(e), stats, on_file)
+
         except Exception as e:
             conn.rollback()
-            if on_file:
-                on_file(source, f"error: {e}")
+            _record_file_error(conn, source, adapter, file_path, str(e), stats, on_file)
 
     return stats
+
+
+def _record_file_error(
+    conn: sqlite3.Connection,
+    source: Source,
+    adapter: AdapterModule,
+    file_path: str,
+    error: str,
+    stats: IngestStats,
+    on_file: Callable[[Source, str], None] | None,
+) -> None:
+    """Record a file that failed ingestion so it won't retry."""
+    try:
+        if get_ingested_file_info(conn, file_path):
+            return  # Already recorded from a previous run
+        location = Path(source.location) if not isinstance(source.location, Path) else source.location
+        file_hash = compute_file_hash(location)
+        harness_kwargs = {}
+        if hasattr(adapter, "HARNESS_SOURCE"):
+            harness_kwargs["source"] = adapter.HARNESS_SOURCE
+        harness_id = get_or_create_harness(conn, adapter.NAME, **harness_kwargs)
+        record_failed_file(conn, file_path, file_hash, harness_id, error)
+        conn.commit()
+    except Exception:
+        pass  # Don't fail the whole ingest because we couldn't record the error
+    stats.files_errored += 1
+    if on_file:
+        on_file(source, f"error: {error}")
 
 
 def _ingest_file(
