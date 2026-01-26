@@ -236,6 +236,10 @@ def parse(source: Source) -> Iterable[Conversation]:
         )
         response.tool_calls.append(tool_call)
 
+    # Skip sessions with no messages (opened and immediately canceled)
+    if not conversation.prompts:
+        return
+
     yield conversation
 
 

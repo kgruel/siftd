@@ -224,8 +224,10 @@ class EmbeddingsStaleCheck:
         conn = ctx.get_db_conn()
         embed_conn = ctx.get_embed_conn()
 
-        # Get conversation IDs from main DB
-        cur = conn.execute("SELECT id FROM conversations")
+        # Get conversation IDs that have embeddable content (at least one prompt)
+        cur = conn.execute(
+            "SELECT DISTINCT conversation_id FROM prompts"
+        )
         main_ids = {row[0] for row in cur.fetchall()}
 
         # Get indexed conversation IDs from embeddings DB
