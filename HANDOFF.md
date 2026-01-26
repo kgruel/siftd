@@ -16,6 +16,10 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Cache tokens**: `cache_creation_input_tokens`, `cache_read_input_tokens` extracted into `response_attributes`
 - **Cost tracking**: flat `pricing` table (model+provider → rates), approximate cost via query-time JOIN
 - **Tags**: manual tagging via CLI (`tbd tag`), conversation/workspace/tool_call scopes
+  - Simplified syntax: `tbd tag <id> <tag>` (defaults to conversation)
+  - `--last` flag: `tbd tag --last <tag>` tags most recent conversation(s)
+  - Prefix matching for conversation IDs
+  - Tip shown after `tbd ask` results to encourage tagging workflow
 - **Shell command categorization**: 13 auto-tags (`shell:vcs`, `shell:test`, `shell:file`, etc.), 91% coverage of 25k+ commands
   - Auto-tagged at ingest time (no separate backfill needed for new data)
   - `tbd backfill --shell-tags` still works for existing data
@@ -42,10 +46,17 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - IDs: 12-char prefix, copy-pasteable for drill-down
   - SQL subcommand: `tbd query sql` lists `.sql` files, `tbd query sql <name>` runs them
   - Root workspaces display as `(root)` instead of blank
-- **CLI**: `ingest`, `status`, `query`, `tag`, `tags`, `backfill`, `path`, `ask`, `adapters`, `copy`, `tools`
+- **CLI**: `ingest`, `status`, `query`, `tag`, `tags`, `backfill`, `path`, `ask`, `adapters`, `copy`, `tools`, `doctor`
   - `tbd adapters` — list discovered adapters (built-in, drop-in, entry point)
   - `tbd copy adapter <name>` — copy built-in adapter to config for customization
   - `tbd copy query <name>` — copy built-in query to config
+  - `tbd doctor` — health checks and maintenance
+- **Health checks** (`tbd doctor`): Pluggable diagnostics with fix suggestions
+  - `tbd doctor` — run all checks
+  - `tbd doctor checks` — list available checks
+  - `tbd doctor fixes` — show fix commands for issues
+  - Built-in checks: `ingest-pending`, `embeddings-stale`, `pricing-gaps`, `drop-ins-valid`
+  - API: `list_checks()`, `run_checks()`, `apply_fix()` in `tbd.api`
 - **Library API** (`tbd.api`): Programmatic access to all CLI functionality
   - `list_conversations()`, `get_conversation()` — conversation queries (supports `tool_tag` filter)
   - `hybrid_search()`, `aggregate_by_conversation()`, `first_mention()` — semantic search
@@ -53,6 +64,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - `get_tool_tag_summary()`, `get_tool_tags_by_workspace()` — tool tag analytics
   - `list_query_files()`, `run_query_file()` — SQL query execution
   - `list_adapters()`, `copy_adapter()`, `copy_query()` — adapter/resource management
+  - `list_checks()`, `run_checks()`, `apply_fix()` — health checks (doctor)
 - **OutputFormatter pattern** (`tbd.output`): Pluggable presentation for `tbd ask`
   - `ChunkListFormatter`, `VerboseFormatter`, `FullExchangeFormatter`, `ContextFormatter`, `ThreadFormatter`, `ConversationFormatter`, `JsonFormatter`
   - `--json` flag for structured output (bench/agent consumption)
@@ -138,6 +150,10 @@ tbd-v2/
 │   ├── ingestion/
 │   │   ├── discovery.py        # discover_all()
 │   │   └── orchestration.py    # ingest_all(), IngestStats, dedup strategies
+│   ├── doctor/
+│   │   ├── __init__.py         # Re-exports
+│   │   ├── checks.py           # Check protocol + 4 built-in checks
+│   │   └── runner.py           # list_checks(), run_checks(), apply_fix()
 │   └── storage/
 │       ├── schema.sql          # Full schema + FTS5 + pricing table
 │       ├── sqlite.py           # All DB operations, backfills, tag functions
@@ -146,6 +162,7 @@ tbd-v2/
     ├── fixtures/               # Minimal adapter test fixtures
     ├── test_adapters.py        # Adapter parsing tests
     ├── test_api.py             # API layer tests (conversations, stats, search)
+    ├── test_doctor.py          # Health check tests (23 tests)
     ├── test_embeddings_storage.py  # Embeddings DB edge cases
     ├── test_models.py          # Model name parsing tests
     └── test_chunker.py         # Token-aware chunking smoke tests
@@ -153,7 +170,7 @@ tbd-v2/
 
 ### Release Status (0.1.0)
 - **Version**: 0.1.0 — first stable release for personal use
-- **Tests**: 101 passing (adapters, API, formatters, embeddings, models, chunker)
+- **Tests**: 124 passing (adapters, API, doctor, formatters, embeddings, models, chunker)
 - **Install**: `uv pip install .` or `pip install .` from repo root
 - **CLI**: `tbd` available after install, or `./tbd` from repo root
 - **Pre-commit hook**: Auto-regenerates `docs/cli.md` (local-only, not versioned)
@@ -267,28 +284,20 @@ Analyzed real tbd usage by agents in non-tbd workspaces:
 
 ## Next Session
 
-**Ready for implementation (subtasks with approved plans)**:
-
-- **tagging-ergonomics**: Code changes to improve discoverability (~60 LOC total)
-  - Footer hint in `tbd ask` output: "Tip: Tag useful results → tbd tag <id> <tag>"
-  - Default entity_type to `conversation` (simplify syntax)
-  - `--last` flag to tag recent conversations
-
-- **tag-after-search-docs**: Documentation for agent tag workflow
-  - Update `tbd tag --help` with examples, workflow, conventions
-  - CLAUDE.md template section for other projects
-  - Tag namespace conventions: `research:*`, `useful:*`, `review:*`
-  - Workflow documentation: search → drill-down → tag → retrieve
-
 **Recently completed**:
 
-- **User-configurable formatters**: TOML config at `~/.config/tbd/config.toml`, `tbd config get/set` syntax. Using tomlkit for comment-preserving read/write.
-- **Ingest fix**: Added `~/.config/claude/projects` to claude_code adapter DEFAULT_LOCATIONS. Was only discovering `~/.claude/projects` (123 files), missing 5,268 files in the config location.
+- **`tbd doctor`**: Health check command with 4 built-in checks (`ingest-pending`, `embeddings-stale`, `pricing-gaps`, `drop-ins-valid`). Subcommand vocabulary: `tbd doctor`, `tbd doctor checks`, `tbd doctor fixes`.
+- **Tagging ergonomics**: Simplified `tbd tag <id> <tag>` syntax, `--last` flag, prefix matching, stderr tip after `tbd ask` results.
+- **Agent Memory docs**: CLAUDE.md section documenting search → tag workflow for agents.
+- **Adapter priority fix**: Drop-in > built-in (was backwards), silenced expected override warning.
+- **User-configurable formatters**: TOML config at `~/.config/tbd/config.toml`, `tbd config get/set` syntax.
+- **Ingest fix**: Added `~/.config/claude/projects` to claude_code adapter DEFAULT_LOCATIONS.
 - **Tagging leakage fix**: Moved sed/awk from `shell:search` to `shell:file`, added `uv run ruff` pattern to `shell:lint`.
 
 **Potential directions**:
 
-- **`tbd copy formatter`**: Copy built-in formatter to config for customization. Lower priority — config solves the common case of "different defaults."
+- **Drop-in checks**: `~/.config/tbd/checks/*.py` for user-defined health checks. Pattern exists, add when needed.
+- **`tbd copy formatter`**: Copy built-in formatter to config for customization. Lower priority — config solves the common case.
 
 **Lower priority**:
 
@@ -317,5 +326,5 @@ Analyzed real tbd usage by agents in non-tbd workspaces:
 
 ---
 
-*Updated: 2026-01-25 (config system merged, ingest fix for ~/.config/claude/projects, tagging leakage fix, usage analysis completed, tag-after-search docs in progress)*
+*Updated: 2026-01-25 (tbd doctor, tagging ergonomics, agent memory docs, adapter priority fix)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
