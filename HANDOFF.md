@@ -46,7 +46,14 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - IDs: 12-char prefix, copy-pasteable for drill-down
   - SQL subcommand: `tbd query sql` lists `.sql` files, `tbd query sql <name>` runs them
   - Root workspaces display as `(root)` instead of blank
-- **CLI**: `ingest`, `status`, `query`, `tag`, `tags`, `backfill`, `path`, `ask`, `adapters`, `copy`, `tools`, `doctor`
+- **Live session inspection** (`tbd peek`): Reads raw JSONL session files directly from disk, bypassing SQLite
+  - `tbd peek` — list active sessions (last 2 hours by default, `--all` for everything)
+  - `tbd peek <id>` — detail view with exchange timeline (prompt text, response text, tool calls, tokens)
+  - `-w SUBSTR` workspace filter, `--last N` exchange count, `--tail` raw JSONL tail, `--json` structured output
+  - Prefix matching on session ID (like `tbd query <id>`)
+  - Uses adapter `DEFAULT_LOCATIONS` to find files; mtime for "active" detection
+  - Self-contained `peek/` package: `scanner.py` (discovery + metadata), `reader.py` (detail parsing)
+- **CLI**: `ingest`, `status`, `query`, `tag`, `tags`, `backfill`, `path`, `ask`, `adapters`, `copy`, `tools`, `doctor`, `peek`
   - `tbd adapters` — list discovered adapters (built-in, drop-in, entry point)
   - `tbd copy adapter <name>` — copy built-in adapter to config for customization
   - `tbd copy query <name>` — copy built-in query to config
@@ -65,6 +72,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - `list_query_files()`, `run_query_file()` — SQL query execution
   - `list_adapters()`, `copy_adapter()`, `copy_query()` — adapter/resource management
   - `list_checks()`, `run_checks()`, `apply_fix()` — health checks (doctor)
+  - `list_active_sessions()`, `read_session_detail()`, `tail_session()`, `find_session_file()` — live session inspection (peek)
 - **OutputFormatter pattern** (`tbd.output`): Pluggable presentation for `tbd ask`
   - `ChunkListFormatter`, `VerboseFormatter`, `FullExchangeFormatter`, `ContextFormatter`, `ThreadFormatter`, `ConversationFormatter`, `JsonFormatter`
   - `--json` flag for structured output (bench/agent consumption)
@@ -129,7 +137,8 @@ tbd-v2/
 │   │   ├── tools.py            # get_tool_tag_summary(), get_tool_tags_by_workspace()
 │   │   ├── adapters.py         # list_adapters() → AdapterInfo
 │   │   ├── resources.py        # copy_adapter(), copy_query()
-│   │   └── file_refs.py        # fetch_file_refs() for tool results
+│   │   ├── file_refs.py        # fetch_file_refs() for tool results
+│   │   └── peek.py             # list_active_sessions(), read_session_detail(), etc.
 │   ├── output/                 # Presentation layer (OutputFormatter pattern)
 │   │   ├── __init__.py         # Re-exports formatters
 │   │   ├── formatters.py       # ChunkList, Verbose, Full, Context, Thread, Conversation, Json formatters
@@ -154,6 +163,10 @@ tbd-v2/
 │   │   ├── __init__.py         # Re-exports
 │   │   ├── checks.py           # Check protocol + 4 built-in checks
 │   │   └── runner.py           # list_checks(), run_checks(), apply_fix()
+│   ├── peek/
+│   │   ├── __init__.py         # Re-exports
+│   │   ├── scanner.py          # SessionInfo, list_active_sessions()
+│   │   └── reader.py           # PeekExchange, SessionDetail, read_session_detail(), tail_session()
 │   └── storage/
 │       ├── schema.sql          # Full schema + FTS5 + pricing table
 │       ├── sqlite.py           # All DB operations, backfills, tag functions
@@ -165,6 +178,7 @@ tbd-v2/
     ├── test_doctor.py          # Health check tests (23 tests)
     ├── test_embeddings_storage.py  # Embeddings DB edge cases
     ├── test_models.py          # Model name parsing tests
+    ├── test_peek.py            # Live session inspection tests (27 tests)
     └── test_chunker.py         # Token-aware chunking smoke tests
 ```
 
@@ -223,6 +237,7 @@ tbd-v2/
 | Tag hierarchy rejected | Empirical analysis of 25k+ commands showed single-tool dominance (git 85% of vcs, pytest 98% of test). Flat tags sufficient; query-time parsing handles finer granularity. |
 | TOML for config | Human-editable, dotfile-friendly, tomlkit preserves comments on write. SQLite rejected — mixes concerns, not inspectable. |
 | Config get/set over edit | `tbd config get/set` more ergonomic than `$EDITOR`. Programmatic access enables scripting. |
+| `peek` bypasses SQLite | Live reads from raw JSONL, no ingestion latency. mtime for "active" detection (simple, cross-platform). |
 
 ---
 
@@ -286,13 +301,8 @@ Analyzed real tbd usage by agents in non-tbd workspaces:
 
 **Recently completed**:
 
-- **`tbd doctor`**: Health check command with 4 built-in checks (`ingest-pending`, `embeddings-stale`, `pricing-gaps`, `drop-ins-valid`). Subcommand vocabulary: `tbd doctor`, `tbd doctor checks`, `tbd doctor fixes`.
-- **Tagging ergonomics**: Simplified `tbd tag <id> <tag>` syntax, `--last` flag, prefix matching, stderr tip after `tbd ask` results.
-- **Agent Memory docs**: CLAUDE.md section documenting search → tag workflow for agents.
-- **Adapter priority fix**: Drop-in > built-in (was backwards), silenced expected override warning.
-- **User-configurable formatters**: TOML config at `~/.config/tbd/config.toml`, `tbd config get/set` syntax.
-- **Ingest fix**: Added `~/.config/claude/projects` to claude_code adapter DEFAULT_LOCATIONS.
-- **Tagging leakage fix**: Moved sed/awk from `shell:search` to `shell:file`, added `uv run ruff` pattern to `shell:lint`.
+- **`tbd peek`**: Live session inspection bypassing SQLite. Reads raw JSONL from disk. List mode with mtime filtering, detail mode with exchange timeline, tail mode, workspace filtering, JSON output. `peek/` package (scanner + reader), API shim, CLI command. 27 tests.
+- **Hash-based change detection**: Files re-ingested when content hash changes (same path, different hash). Enables incremental updates for append-only formats like Claude Code JSONL. Empty files tracked with `conversation_id=NULL`. New functions: `get_ingested_file_info()`, `record_empty_file()`. 10 tests in `tests/test_ingestion.py`.
 
 **Potential directions**:
 
@@ -326,5 +336,5 @@ Analyzed real tbd usage by agents in non-tbd workspaces:
 
 ---
 
-*Updated: 2026-01-25 (tbd doctor, tagging ergonomics, agent memory docs, adapter priority fix)*
+*Updated: 2026-01-25 (tbd peek live session inspection)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
