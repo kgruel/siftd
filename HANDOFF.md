@@ -295,17 +295,22 @@ Analyzed real tbd usage by agents in non-tbd workspaces:
 
 **Gap identified**: Agents find useful content but have no workflow to mark it for later retrieval. `tbd tag` exists but agents don't know about it.
 
+**Addressed (2026-01-25)**: Progressive help epilog now teaches the search → refine → save workflow. Tip after results explains WHY to tag. Active session exclusion prevents circular results (derivative content outranking originals). Remaining gap: provenance marking for ingested derivative content (conversations containing `tbd ask` tool calls) — deferred until active exclusion proves insufficient.
+
 ---
 
 ## Next Session
 
 **Recently completed**:
 
+- **Active session exclusion**: `tbd ask` auto-excludes conversations from currently-active session files (detected via `list_active_sessions()`). Maps active file paths through `ingested_files` table to conversation IDs, filters at candidate level. `--no-exclude-active` to opt out. 6 tests in `tests/test_exclude_active.py`.
+- **Agent ergonomics**: Progressive help examples in `tbd ask --help` organized by workflow stage (search → refine → inspect → save → tuning). Includes `tbd tag` workflow in ask help to teach the complete loop. Tip after results now explains WHY to tag ("for future retrieval") with convention example (`research:<topic>`).
 - **`tbd peek`**: Live session inspection bypassing SQLite. Reads raw JSONL from disk. List mode with mtime filtering, detail mode with exchange timeline, tail mode, workspace filtering, JSON output. `peek/` package (scanner + reader), API shim, CLI command. 27 tests.
 - **Hash-based change detection**: Files re-ingested when content hash changes (same path, different hash). Enables incremental updates for append-only formats like Claude Code JSONL. Empty files tracked with `conversation_id=NULL`. New functions: `get_ingested_file_info()`, `record_empty_file()`. 10 tests in `tests/test_ingestion.py`.
 
 **Potential directions**:
 
+- **`tbd` skill for agents**: Teach agents tbd usage via a Claude Code skill (slash command or auto-invoked). Progressive disclosure of search → refine → save workflow. Complements help epilog with in-context guidance.
 - **Drop-in checks**: `~/.config/tbd/checks/*.py` for user-defined health checks. Pattern exists, add when needed.
 - **`tbd copy formatter`**: Copy built-in formatter to config for customization. Lower priority — config solves the common case.
 
@@ -325,6 +330,7 @@ Analyzed real tbd usage by agents in non-tbd workspaces:
 | `workspaces.git_remote` | Deferred | Could resolve via `git remote -v`. Not blocking queries yet. |
 | `tbd enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
 | Billing context | Deferred | API vs subscription per workspace. Needed for precise cost, not approximate. |
+| Provenance marking | Deferred | Tag ingested conversations containing `tbd ask` tool calls as `tbd:derivative`, down-weight in search. Detectable from shell.execute tool call data. Deferred — active session exclusion may be sufficient. |
 | Re-add adapters | When needed | Cline/Goose/Cursor/Aider at commit `f5e3409`. Plugin system supports drop-in. |
 
 ---
@@ -336,5 +342,5 @@ Analyzed real tbd usage by agents in non-tbd workspaces:
 
 ---
 
-*Updated: 2026-01-25 (tbd peek live session inspection)*
+*Updated: 2026-01-25 (active session exclusion, agent ergonomics, tbd peek)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*

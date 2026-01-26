@@ -313,7 +313,7 @@ def cmd_ask(args) -> int:
     # Tagging hint (skip for JSON output)
     if not args.json and results:
         first_id = results[0]["conversation_id"][:12]
-        print(f"Tip: tbd tag {first_id} <tag>  |  tbd tag --last <tag>  |  tbd tags", file=sys.stderr)
+        print(f"Tip: Tag useful results for future retrieval: tbd tag {first_id} research:<topic>", file=sys.stderr)
 
     main_conn.close()
     return 0
@@ -1308,21 +1308,34 @@ def main(argv=None) -> int:
         help="Semantic search over conversations",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  tbd ask "chunking"                 # hybrid: FTS5 recall → embeddings rerank
-  tbd ask -v "chunking"              # full chunk text
-  tbd ask --full "chunking"          # complete exchange from DB
-  tbd ask --context 3 "chunking"     # ±3 exchanges around match
-  tbd ask --chrono "chunking"        # sort by time instead of score
-  tbd ask --embeddings-only "chunking"  # skip FTS5, pure embeddings
-  tbd ask --thread "chunking"         # narrative thread: top convos + shortlist
-  tbd ask --recall 200 "error"       # widen FTS5 candidate pool
-  tbd ask -w myproject "architecture"   # FTS5 + workspace filter
-  tbd ask --role user "chunking"     # only search user prompts
-  tbd ask --first "error handling"   # earliest mention above threshold
-  tbd ask --conversations "testing"  # rank conversations, not chunks
-  tbd ask --refs "authelia"          # show file ref annotations + content dump
-  tbd ask --refs HANDOFF.md "setup"  # content dump filtered to specific file
-  tbd ask --threshold 0.7 "error"    # only results with score >= 0.7""",
+  # search
+  tbd ask "error handling"                        # basic semantic search
+  tbd ask -w myproject "auth flow"                # filter by workspace
+  tbd ask --since 2024-06 "testing"               # filter by date
+
+  # refine
+  tbd ask "design decision" --thread              # narrative: top conversations expanded
+  tbd ask "why we chose X" --context 2            # ±2 surrounding exchanges
+  tbd ask "testing approach" --role user           # just your prompts, not responses
+  tbd ask "event sourcing" --conversations        # rank whole conversations, not chunks
+  tbd ask "when first discussed Y" --first        # earliest match above threshold
+  tbd ask --threshold 0.7 "architecture"          # only high-relevance results
+
+  # inspect
+  tbd ask -v "chunking"                           # full chunk text
+  tbd ask --full "chunking"                       # complete prompt+response exchange
+  tbd ask --refs "authelia"                       # file references + content
+  tbd ask --refs HANDOFF.md "setup"               # filter refs to specific file
+
+  # save useful results for future retrieval
+  tbd tag 01HX... research:auth                   # bookmark a conversation
+  tbd tag --last research:architecture            # tag most recent conversation
+  tbd query -l research:auth                      # retrieve tagged conversations
+
+  # tuning
+  tbd ask --embeddings-only "chunking"            # skip FTS5, pure embeddings
+  tbd ask --recall 200 "error"                    # widen FTS5 candidate pool
+  tbd ask --chrono "chunking"                     # sort by time instead of score""",
     )
     p_ask.add_argument("query", nargs="*", help="Natural language search query")
     p_ask.add_argument("-n", "--limit", type=int, default=10, help="Max results (default: 10)")
