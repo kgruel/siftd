@@ -32,6 +32,7 @@ def hybrid_search(
     since: str | None = None,
     before: str | None = None,
     backend: str | None = None,
+    exclude_active: bool = True,
 ) -> list[SearchResult]:
     """Run hybrid FTS5+embeddings search, return structured results.
 
@@ -47,6 +48,7 @@ def hybrid_search(
         since: Filter to conversations started at or after this ISO date.
         before: Filter to conversations started before this ISO date.
         backend: Preferred embedding backend name (ollama, fastembed).
+        exclude_active: Auto-exclude conversations from active sessions (default True).
 
     Returns:
         List of SearchResult ordered by descending similarity score.
@@ -71,6 +73,23 @@ def hybrid_search(
 
     # Build candidate filter set
     candidate_ids = filter_conversations(db, workspace=workspace, model=model, since=since, before=before)
+
+    # Exclude conversations from active sessions
+    if exclude_active:
+        excluded = get_active_conversation_ids(db)
+        if excluded:
+            if candidate_ids is not None:
+                candidate_ids = candidate_ids - excluded
+            else:
+                # Need to get all conversation IDs minus excluded
+                conn_tmp = sqlite3.connect(db)
+                conn_tmp.row_factory = sqlite3.Row
+                all_ids = {
+                    row["id"]
+                    for row in conn_tmp.execute("SELECT id FROM conversations").fetchall()
+                }
+                conn_tmp.close()
+                candidate_ids = all_ids - excluded
 
     # Hybrid recall: FTS5 narrows candidates, embeddings rerank
     if not embeddings_only:
@@ -247,3 +266,43 @@ def resolve_role_ids(
 
     conn.close()
     return {row["id"] for row in rows} if rows else None
+
+
+def get_active_conversation_ids(db: Path) -> set[str]:
+    """Get conversation IDs that originated from currently-active session files.
+
+    Uses list_active_sessions() from the peek module to find active JSONL files,
+    then looks up which ingested conversations came from those file paths.
+
+    Args:
+        db: Path to the main database.
+
+    Returns:
+        Set of conversation IDs to exclude (may be empty).
+    """
+    try:
+        from tbd.peek.scanner import list_active_sessions
+    except ImportError:
+        return set()
+
+    try:
+        sessions = list_active_sessions(include_inactive=False)
+    except Exception:
+        # Filesystem scan failed — don't block search
+        return set()
+
+    if not sessions:
+        return set()
+
+    file_paths = [str(s.file_path) for s in sessions]
+
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    placeholders = ",".join("?" * len(file_paths))
+    rows = conn.execute(
+        f"SELECT conversation_id FROM ingested_files WHERE path IN ({placeholders}) AND conversation_id IS NOT NULL",
+        file_paths,
+    ).fetchall()
+    conn.close()
+
+    return {row["conversation_id"] for row in rows}

@@ -175,7 +175,7 @@ def cmd_ask(args) -> int:
         return 1
 
     # Compose filters: get candidate conversation IDs from main DB
-    from tbd.search import filter_conversations
+    from tbd.search import filter_conversations, get_active_conversation_ids
     candidate_ids = filter_conversations(
         db,
         workspace=args.workspace,
@@ -183,6 +183,23 @@ def cmd_ask(args) -> int:
         since=args.since,
         before=args.before,
     )
+
+    # Exclude conversations from active sessions (unless opted out)
+    exclude_active_ids = set()
+    if not args.no_exclude_active:
+        exclude_active_ids = get_active_conversation_ids(db)
+        if exclude_active_ids:
+            if candidate_ids is not None:
+                candidate_ids = candidate_ids - exclude_active_ids
+            else:
+                conn_tmp = _sqlite3.connect(db)
+                conn_tmp.row_factory = _sqlite3.Row
+                all_ids = {
+                    row["id"]
+                    for row in conn_tmp.execute("SELECT id FROM conversations").fetchall()
+                }
+                conn_tmp.close()
+                candidate_ids = all_ids - exclude_active_ids
 
     # Hybrid recall: FTS5 narrows candidates, embeddings rerank
     if not args.embeddings_only:
@@ -1331,6 +1348,7 @@ def main(argv=None) -> int:
     p_ask.add_argument("--threshold", type=float, metavar="SCORE", help="Filter results below this relevance score (e.g., 0.7)")
     p_ask.add_argument("--json", action="store_true", help="Output as structured JSON")
     p_ask.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
+    p_ask.add_argument("--no-exclude-active", action="store_true", help="Include results from active sessions (excluded by default)")
     p_ask.set_defaults(func=cmd_ask)
 
     # tag
