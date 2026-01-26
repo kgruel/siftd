@@ -94,7 +94,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Queries**: `bench/queries.json` — 25 queries across 5 groups (conceptual, philosophical, technical, specific, exploratory)
 
 ### Data (current ingestion)
-- 5,697 conversations, 154k responses, 83k tool calls across 287 workspaces
+- 5,540 conversations, 160k responses, 86k tool calls across 292 workspaces
 - ~900MB database at `~/.local/share/strata/strata.db`
 - Harnesses: Claude Code (Anthropic), Codex CLI (OpenAI), Gemini CLI (Google)
 - Models: Opus 4.5, Haiku 4.5, Sonnet 4.5, Gemini 3 pro/flash, GPT-5.2
@@ -184,7 +184,7 @@ tbd-v2/
 
 ### Release Status (0.1.0)
 - **Version**: 0.1.0 — first stable release for personal use
-- **Tests**: 163 passing (adapters, API, doctor, formatters, embeddings, ingestion, models, peek, chunker)
+- **Tests**: 181 passing (adapters, API, config, doctor, formatters, embeddings, ingestion, models, peek, chunker)
 - **Install**: `uv pip install .` or `pip install .` from repo root
 - **CLI**: `strata` available after install
 - **Pre-commit hook**: Auto-regenerates `docs/cli.md` (local-only, not versioned)
@@ -239,6 +239,7 @@ tbd-v2/
 | Config get/set over edit | `strata config get/set` more ergonomic than `$EDITOR`. Programmatic access enables scripting. |
 | `peek` bypasses SQLite | Live reads from raw JSONL, no ingestion latency. mtime for "active" detection (simple, cross-platform). |
 | Error column on `ingested_files` | NULL = success, non-NULL = error message. Same-hash files skip (same content → same error). Hash change clears record and retries. Simpler than a separate failures table. |
+| Skip empty conversations at adapter | JSONL files with only `file-history-snapshot` records (no user/assistant messages) yield no conversation. Filter at parse boundary, not downstream. |
 
 ---
 
@@ -304,13 +305,12 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 **Recently completed**:
 
-- **Ingest error handling**: Files that fail ingestion are now recorded in `ingested_files` with an `error` column, stopping retry loops. Three failure modes fixed:
-  - Session "skipped (older)": now recorded with existing conversation_id (fixes 35 gemini files showing as pending)
-  - UNIQUE constraint (duplicate file paths for same session): caught via `IntegrityError`, file linked to existing conversation
-  - FK/parse errors: recorded as failed with error message, won't retry unless file hash changes
-  - New: `record_failed_file()`, `clear_ingested_file_error()` storage functions, `_migrate_add_error_column()` migration
-  - New: `ingest-errors` doctor check reports files with recorded errors
-  - Also fixes pre-existing bug: empty files that gain content now re-ingest correctly (old NULL-conversation record cleared before re-insert)
+- **Doctor cleanup**: Ran `strata doctor`, resolved all actionable issues:
+  - Deleted stale drop-in adapter (`~/.config/strata/adapters/claude_code.py`) — exact copy of built-in with pre-rename `tbd` imports
+  - Populated pricing table: 10 entries across 3 providers (anthropic, google, openai). Only `<synthetic>` remains unpriced.
+  - Fixed `embeddings-stale` false positive: 266 conversations had 0 prompts/0 responses (opened-and-canceled sessions). Adapter now skips these at parse time; doctor check scoped to conversations with prompts.
+  - Cleaned up 266 empty conversation rows from DB (ingested_files kept tracked with NULL conversation_id)
+- **Lockfile fix**: `uv.lock` still referenced old `tbd` package from `tbd-v2/`. Regenerated via `uv lock`. Dev deps (`pytest`, `ruff`, `ty`) require `uv sync --extra dev`.
 
 **Potential directions**:
 
@@ -346,5 +346,5 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 ---
 
-*Updated: 2026-01-26 (ingest error handling, retry prevention, ingest-errors doctor check)*
+*Updated: 2026-01-26 (doctor cleanup, pricing, empty conversation fix, lockfile fix)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
