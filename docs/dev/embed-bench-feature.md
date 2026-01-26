@@ -1,6 +1,6 @@
 # Embedding Benchmark Feature
 
-Systematic evaluation of chunking strategies for `tbd ask` retrieval quality.
+Systematic evaluation of chunking strategies for `strata ask` retrieval quality.
 
 ## Goal
 

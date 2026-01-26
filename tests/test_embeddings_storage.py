@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from tbd.storage.embeddings import open_embeddings_db, search_similar, store_chunk
+from strata.storage.embeddings import open_embeddings_db, search_similar, store_chunk
 
 
 def test_search_similar_empty_conversation_ids(tmp_path):

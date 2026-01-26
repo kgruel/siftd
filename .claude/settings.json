@@ -1,5 +1,6 @@
 {
   "enabledPlugins": {
-    "subtask": true
+    "subtask": true,
+    "strata": true
   }
 }

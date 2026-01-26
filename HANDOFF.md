@@ -1,4 +1,4 @@
-# tbd-v2 — Handoff
+# strata — Handoff
 
 Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, stores in SQLite, queries via FTS5 and user-defined SQL files.
 
@@ -7,7 +7,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 ### What exists
 - **Domain model**: `Conversation → Prompt → Response → ToolCall` dataclass tree (`src/domain/`)
 - **Three adapters**: `claude_code` (file dedup), `gemini_cli` (session dedup), `codex_cli` (file dedup)
-- **Adapter plugin system**: built-in + drop-in (`~/.config/tbd/adapters/*.py`) + entry points (`tbd.adapters`)
+- **Adapter plugin system**: built-in + drop-in (`~/.config/strata/adapters/*.py`) + entry points (`strata.adapters`)
 - **Ingestion**: orchestration layer with adapter-controlled dedup, `--path` for custom dirs
 - **Storage**: SQLite with schema, ULIDs, schemaless attributes
 - **Tool canonicalization**: 16 canonical tools (`file.read`, `shell.execute`, `shell.stdin`, etc.), cross-harness aliases
@@ -15,18 +15,18 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Provider tracking**: derived from adapter's `HARNESS_SOURCE`, populated on responses during ingestion
 - **Cache tokens**: `cache_creation_input_tokens`, `cache_read_input_tokens` extracted into `response_attributes`
 - **Cost tracking**: flat `pricing` table (model+provider → rates), approximate cost via query-time JOIN
-- **Tags**: manual tagging via CLI (`tbd tag`), conversation/workspace/tool_call scopes
-  - Simplified syntax: `tbd tag <id> <tag>` (defaults to conversation)
-  - `--last` flag: `tbd tag --last <tag>` tags most recent conversation(s)
+- **Tags**: manual tagging via CLI (`strata tag`), conversation/workspace/tool_call scopes
+  - Simplified syntax: `strata tag <id> <tag>` (defaults to conversation)
+  - `--last` flag: `strata tag --last <tag>` tags most recent conversation(s)
   - Prefix matching for conversation IDs
-  - Tip shown after `tbd ask` results to encourage tagging workflow
+  - Tip shown after `strata ask` results to encourage tagging workflow
 - **Shell command categorization**: 13 auto-tags (`shell:vcs`, `shell:test`, `shell:file`, etc.), 91% coverage of 25k+ commands
   - Auto-tagged at ingest time (no separate backfill needed for new data)
-  - `tbd backfill --shell-tags` still works for existing data
-  - `tbd query --tool-tag shell:test` filters conversations by tool_call tags
-  - `tbd tools` summary command with `--by-workspace` rollups
+  - `strata backfill --shell-tags` still works for existing data
+  - `strata query --tool-tag shell:test` filters conversations by tool_call tags
+  - `strata tools` summary command with `--by-workspace` rollups
 - **FTS5**: full-text search on prompt+response text content
-- **Semantic search**: `tbd ask` — embeddings in separate SQLite DB, fastembed backend, incremental indexing
+- **Semantic search**: `strata ask` — embeddings in separate SQLite DB, fastembed backend, incremental indexing
   - Uses exchange-window chunking (token-aware, prompt+response pairs as atomic units)
   - Hybrid retrieval: FTS5 recall → embeddings rerank (default mode)
   - Real token counts from fastembed tokenizer stored per chunk
@@ -42,29 +42,29 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Query command**: composable conversation browser with filters, drill-down, and multiple output formats
   - Filters: `-w` workspace, `-m` model, `-t` tool, `-l` tag, `-s` FTS5 search, `--since`/`--before`
   - Output: default (short, one-line with truncated ID), `-v` (full table), `--json`, `--stats` (summary totals)
-  - Drill-down: `tbd query <id>` shows conversation timeline with collapsed tool calls (e.g., `→ shell.execute ×47`)
+  - Drill-down: `strata query <id>` shows conversation timeline with collapsed tool calls (e.g., `→ shell.execute ×47`)
   - IDs: 12-char prefix, copy-pasteable for drill-down
-  - SQL subcommand: `tbd query sql` lists `.sql` files, `tbd query sql <name>` runs them
+  - SQL subcommand: `strata query sql` lists `.sql` files, `strata query sql <name>` runs them
   - Root workspaces display as `(root)` instead of blank
-- **Live session inspection** (`tbd peek`): Reads raw JSONL session files directly from disk, bypassing SQLite
-  - `tbd peek` — list active sessions (last 2 hours by default, `--all` for everything)
-  - `tbd peek <id>` — detail view with exchange timeline (prompt text, response text, tool calls, tokens)
+- **Live session inspection** (`strata peek`): Reads raw JSONL session files directly from disk, bypassing SQLite
+  - `strata peek` — list active sessions (last 2 hours by default, `--all` for everything)
+  - `strata peek <id>` — detail view with exchange timeline (prompt text, response text, tool calls, tokens)
   - `-w SUBSTR` workspace filter, `--last N` exchange count, `--tail` raw JSONL tail, `--json` structured output
-  - Prefix matching on session ID (like `tbd query <id>`)
+  - Prefix matching on session ID (like `strata query <id>`)
   - Uses adapter `DEFAULT_LOCATIONS` to find files; mtime for "active" detection
   - Self-contained `peek/` package: `scanner.py` (discovery + metadata), `reader.py` (detail parsing)
 - **CLI**: `ingest`, `status`, `query`, `tag`, `tags`, `backfill`, `path`, `ask`, `adapters`, `copy`, `tools`, `doctor`, `peek`
-  - `tbd adapters` — list discovered adapters (built-in, drop-in, entry point)
-  - `tbd copy adapter <name>` — copy built-in adapter to config for customization
-  - `tbd copy query <name>` — copy built-in query to config
-  - `tbd doctor` — health checks and maintenance
-- **Health checks** (`tbd doctor`): Pluggable diagnostics with fix suggestions
-  - `tbd doctor` — run all checks
-  - `tbd doctor checks` — list available checks
-  - `tbd doctor fixes` — show fix commands for issues
+  - `strata adapters` — list discovered adapters (built-in, drop-in, entry point)
+  - `strata copy adapter <name>` — copy built-in adapter to config for customization
+  - `strata copy query <name>` — copy built-in query to config
+  - `strata doctor` — health checks and maintenance
+- **Health checks** (`strata doctor`): Pluggable diagnostics with fix suggestions
+  - `strata doctor` — run all checks
+  - `strata doctor checks` — list available checks
+  - `strata doctor fixes` — show fix commands for issues
   - Built-in checks: `ingest-pending`, `embeddings-stale`, `pricing-gaps`, `drop-ins-valid`
-  - API: `list_checks()`, `run_checks()`, `apply_fix()` in `tbd.api`
-- **Library API** (`tbd.api`): Programmatic access to all CLI functionality
+  - API: `list_checks()`, `run_checks()`, `apply_fix()` in `strata.api`
+- **Library API** (`strata.api`): Programmatic access to all CLI functionality
   - `list_conversations()`, `get_conversation()` — conversation queries (supports `tool_tag` filter)
   - `hybrid_search()`, `aggregate_by_conversation()`, `first_mention()` — semantic search
   - `get_stats()` → `DatabaseStats` — database statistics
@@ -73,17 +73,17 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - `list_adapters()`, `copy_adapter()`, `copy_query()` — adapter/resource management
   - `list_checks()`, `run_checks()`, `apply_fix()` — health checks (doctor)
   - `list_active_sessions()`, `read_session_detail()`, `tail_session()`, `find_session_file()` — live session inspection (peek)
-- **OutputFormatter pattern** (`tbd.output`): Pluggable presentation for `tbd ask`
+- **OutputFormatter pattern** (`strata.output`): Pluggable presentation for `strata ask`
   - `ChunkListFormatter`, `VerboseFormatter`, `FullExchangeFormatter`, `ContextFormatter`, `ThreadFormatter`, `ConversationFormatter`, `JsonFormatter`
   - `--json` flag for structured output (bench/agent consumption)
   - `--format NAME` for explicit formatter selection
-  - Drop-in plugins: `~/.config/tbd/formatters/*.py` + `tbd.formatters` entry points
+  - Drop-in plugins: `~/.config/strata/formatters/*.py` + `strata.formatters` entry points
   - `select_formatter(args)` dispatch based on CLI flags
-- **XDG paths**: data `~/.local/share/tbd`, config `~/.config/tbd`, queries `~/.config/tbd/queries`, adapters `~/.config/tbd/adapters`, formatters `~/.config/tbd/formatters`
+- **XDG paths**: data `~/.local/share/strata`, config `~/.config/strata`, queries `~/.config/strata/queries`, adapters `~/.config/strata/adapters`, formatters `~/.config/strata/formatters`
 
 ### Benchmarking framework (`bench/`)
 - **Corpus analysis**: `bench/corpus_analysis.py` — profiles token distribution using fastembed's tokenizer
-- **Chunker**: `src/embeddings/chunker.py` — shared module with `chunk_text()` and `extract_exchange_window_chunks()`, used by both production `tbd ask` and bench
+- **Chunker**: `src/embeddings/chunker.py` — shared module with `chunk_text()` and `extract_exchange_window_chunks()`, used by both production `strata ask` and bench
 - **Strategies**: `bench/strategies/*.json` — `"strategy": "exchange-window"` (token-aware windowing) or legacy per-block
 - **Build**: `bench/build.py --strategy <file>` — builds embeddings DB per strategy. Supports `--sample N` (conversation subset) and `--dry-run` (stats without embedding).
 - **Runner**: `bench/run.py --strategy <file> <embed_db>...` — runs 25 queries, stores full chunk text + token counts in results
@@ -95,7 +95,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ### Data (current ingestion)
 - 5,697 conversations, 154k responses, 83k tool calls across 287 workspaces
-- ~900MB database at `~/.local/share/tbd/tbd.db`
+- ~900MB database at `~/.local/share/strata/strata.db`
 - Harnesses: Claude Code (Anthropic), Codex CLI (OpenAI), Gemini CLI (Google)
 - Models: Opus 4.5, Haiku 4.5, Sonnet 4.5, Gemini 3 pro/flash, GPT-5.2
 - Top workspace: `~/.config` (1,167 conversations)
@@ -186,7 +186,7 @@ tbd-v2/
 - **Version**: 0.1.0 — first stable release for personal use
 - **Tests**: 124 passing (adapters, API, doctor, formatters, embeddings, models, chunker)
 - **Install**: `uv pip install .` or `pip install .` from repo root
-- **CLI**: `tbd` available after install, or `./tbd` from repo root
+- **CLI**: `strata` available after install
 - **Pre-commit hook**: Auto-regenerates `docs/cli.md` (local-only, not versioned)
 
 ---
@@ -222,26 +222,26 @@ tbd-v2/
 | WIP branches for sessions | Session work (handoff updates, tests, scratch) goes in `wip/*`, subtasks merge to main. |
 | Hybrid as default, not quality win | At ~5k conversations, FTS5 OR-mode hits recall limit on every query. Hybrid is a speed optimization for future scale, quality-neutral today. |
 | Two-tier output (`--thread`) | Top 3-4 conversations (above-mean clusters) as narrative, rest as shortlist. Partition matches bench finding of 3.5 strong clusters per query. |
-| Retrieval vs synthesis boundary | tbd owns deterministic structured retrieval (no LLM cost). Narrative synthesis is a consumer, not a feature. Manual-first principle applies. |
+| Retrieval vs synthesis boundary | strata owns deterministic structured retrieval (no LLM cost). Narrative synthesis is a consumer, not a feature. Manual-first principle applies. |
 | Presentation metrics in bench | Diversity, temporal span, chrono degradation, cluster density alongside retrieval scores. Measures output shape, not just retrieval quality. |
 | "Tag" over "label" | Shorter, fits tool vibe. Renamed before extending to tool_calls. |
 | Shell tags via tool_call_tags | Same join-table pattern as conversation/workspace tags. Namespaced `shell:*` to separate auto from manual. |
-| CLI as thin dispatcher | Business logic in `tbd.api`, presentation in `tbd.output`. CLI is ~500 lines of argparse + routing. |
-| OutputFormatter protocol | Pluggable presentation for `tbd ask`. Each output mode (`--thread`, `--context`, etc.) is a formatter class. |
-| Library API re-exports | Top-level `from tbd import ...` exposes public functions. CLI is just one consumer. |
-| `tbd copy` for customization | Copy built-in adapters/queries to config dir for modification. Same-name overrides built-in. |
+| CLI as thin dispatcher | Business logic in `strata.api`, presentation in `strata.output`. CLI is ~500 lines of argparse + routing. |
+| OutputFormatter protocol | Pluggable presentation for `strata ask`. Each output mode (`--thread`, `--context`, etc.) is a formatter class. |
+| Library API re-exports | Top-level `from strata import ...` exposes public functions. CLI is just one consumer. |
+| `strata copy` for customization | Copy built-in adapters/queries to config dir for modification. Same-name overrides built-in. |
 | Flat kwargs over filter objects | `list_conversations(workspace=..., model=...)` not `list_conversations(filter=Filter(...))`. Dataclasses for return types only. |
 | Formatter plugins like adapters | Same three-tier discovery: built-in < entry point < drop-in. Drop-ins can override built-ins. |
 | Ingest-time tagging (inline) | Shell tags applied during `store_conversation()`, not hooks. General hook pattern deferred until second auto-tag use case emerges. |
 | Pre-commit hook local-only | `.git/hooks/pre-commit` regenerates CLI docs. Not versioned — too little benefit for portability overhead. |
 | Tag hierarchy rejected | Empirical analysis of 25k+ commands showed single-tool dominance (git 85% of vcs, pytest 98% of test). Flat tags sufficient; query-time parsing handles finer granularity. |
 | TOML for config | Human-editable, dotfile-friendly, tomlkit preserves comments on write. SQLite rejected — mixes concerns, not inspectable. |
-| Config get/set over edit | `tbd config get/set` more ergonomic than `$EDITOR`. Programmatic access enables scripting. |
+| Config get/set over edit | `strata config get/set` more ergonomic than `$EDITOR`. Programmatic access enables scripting. |
 | `peek` bypasses SQLite | Live reads from raw JSONL, no ingestion latency. mtime for "active" detection (simple, cross-platform). |
 
 ---
 
-## `tbd ask` — Current State
+## `strata ask` — Current State
 
 ### Retrieval pipeline (resolved)
 - **Model**: bge-small-en-v1.5 (384d), fastembed backend. bge-base (768d) was worse on this corpus.
@@ -260,7 +260,7 @@ Measured on full corpus with exchange-window-256:
 | Clusters Above Mean | 3.5 | ~half the conversations are "strong" hits (narrative backbone) |
 
 ### User feedback (archaeological research task)
-From using `tbd ask` to reconstruct intellectual history across ~12 workspaces, ~2 months, hundreds of conversations (`experiments/docs/tbd-feedback.md`):
+From using `strata ask` to reconstruct intellectual history across ~12 workspaces, ~2 months, hundreds of conversations (`experiments/docs/tbd-feedback.md`):
 
 **What worked**: `-w` workspace filter (essential), `-v` verbose mode (workhorse), semantic queries finding conceptual matches (0.7+ = on-topic), chronological mode showing evolution.
 
@@ -269,33 +269,33 @@ From using `tbd ask` to reconstruct intellectual history across ~12 workspaces, 
 **Key insight**: The gap between "search tool" and "cognitive context capture" is about *synthesis*. FTS5 + embeddings answer *content* questions ("find where we discussed X"). Missing: *shape* questions ("how did thinking about X evolve?"). The data supports shape queries, but the interface doesn't expose them yet.
 
 ### Design boundary: retrieval vs synthesis
-- **tbd owns structured retrieval**: thread reconstruction, two-tier output, conversation-level ranking, role filtering. Deterministic, reproducible, no LLM cost.
-- **Synthesis is a consumer of tbd's output**: LLM-generated narratives, topic evolution summaries, provenance trails. Opt-in, expensive, external.
-- Keeps tbd as a data platform that exposes the right projections.
+- **strata owns structured retrieval**: thread reconstruction, two-tier output, conversation-level ranking, role filtering. Deterministic, reproducible, no LLM cost.
+- **Synthesis is a consumer of strata's output**: LLM-generated narratives, topic evolution summaries, provenance trails. Opt-in, expensive, external.
+- Keeps strata as a data platform that exposes the right projections.
 
 ### Agent usage analysis (2026-01-25)
 
-Analyzed real tbd usage by agents in non-tbd workspaces:
+Analyzed real strata usage by agents in non-strata workspaces:
 
 **Usage found**:
-- `/Code/experiments`: 16+ `tbd ask` queries researching architecture concepts
+- `/Code/experiments`: 16+ `strata ask` queries researching architecture concepts
 - `/Code/rill`: 17 queries researching testing philosophy
 - `/Code/cells`: 14 queries
 
 **Observed pattern**:
-1. `tbd --help` or `tbd ask --help` — discover capabilities
-2. `tbd ask "semantic query" --since --workspace --full -n` — iterative search
-3. `tbd query <id>` — drill into specific conversations
-4. **No tagging** — agents never use `tbd tag` to mark useful results
+1. `strata --help` or `strata ask --help` — discover capabilities
+2. `strata ask "semantic query" --since --workspace --full -n` — iterative search
+3. `strata query <id>` — drill into specific conversations
+4. **No tagging** — agents never use `strata tag` to mark useful results
 
 **Sample queries from experiments**:
 - "framework projection stream events fold spec"
 - "JSONL file broker offset byte tailer persistence"
 - "prefer integration tests fakes over mocks"
 
-**Gap identified**: Agents find useful content but have no workflow to mark it for later retrieval. `tbd tag` exists but agents don't know about it.
+**Gap identified**: Agents find useful content but have no workflow to mark it for later retrieval. `strata tag` exists but agents don't know about it.
 
-**Addressed (2026-01-25)**: Progressive help epilog now teaches the search → refine → save workflow. Tip after results explains WHY to tag. Active session exclusion prevents circular results (derivative content outranking originals). Remaining gap: provenance marking for ingested derivative content (conversations containing `tbd ask` tool calls) — deferred until active exclusion proves insufficient.
+**Addressed (2026-01-25)**: Progressive help epilog now teaches the search → refine → save workflow. Tip after results explains WHY to tag. Active session exclusion prevents circular results (derivative content outranking originals). Remaining gap: provenance marking for ingested derivative content (conversations containing `strata ask` tool calls) — deferred until active exclusion proves insufficient.
 
 ---
 
@@ -303,20 +303,20 @@ Analyzed real tbd usage by agents in non-tbd workspaces:
 
 **Recently completed**:
 
-- **Active session exclusion**: `tbd ask` auto-excludes conversations from currently-active session files (detected via `list_active_sessions()`). Maps active file paths through `ingested_files` table to conversation IDs, filters at candidate level. `--no-exclude-active` to opt out. 6 tests in `tests/test_exclude_active.py`.
-- **Agent ergonomics**: Progressive help examples in `tbd ask --help` organized by workflow stage (search → refine → inspect → save → tuning). Includes `tbd tag` workflow in ask help to teach the complete loop. Tip after results now explains WHY to tag ("for future retrieval") with convention example (`research:<topic>`).
-- **`tbd peek`**: Live session inspection bypassing SQLite. Reads raw JSONL from disk. List mode with mtime filtering, detail mode with exchange timeline, tail mode, workspace filtering, JSON output. `peek/` package (scanner + reader), API shim, CLI command. 27 tests.
+- **Active session exclusion**: `strata ask` auto-excludes conversations from currently-active session files (detected via `list_active_sessions()`). Maps active file paths through `ingested_files` table to conversation IDs, filters at candidate level. `--no-exclude-active` to opt out. 6 tests in `tests/test_exclude_active.py`.
+- **Agent ergonomics**: Progressive help examples in `strata ask --help` organized by workflow stage (search → refine → inspect → save → tuning). Includes `strata tag` workflow in ask help to teach the complete loop. Tip after results now explains WHY to tag ("for future retrieval") with convention example (`research:<topic>`).
+- **`strata peek`**: Live session inspection bypassing SQLite. Reads raw JSONL from disk. List mode with mtime filtering, detail mode with exchange timeline, tail mode, workspace filtering, JSON output. `peek/` package (scanner + reader), API shim, CLI command. 27 tests.
 - **Hash-based change detection**: Files re-ingested when content hash changes (same path, different hash). Enables incremental updates for append-only formats like Claude Code JSONL. Empty files tracked with `conversation_id=NULL`. New functions: `get_ingested_file_info()`, `record_empty_file()`. 10 tests in `tests/test_ingestion.py`.
 
 **Potential directions**:
 
-- **`tbd` skill for agents**: Teach agents tbd usage via a Claude Code skill (slash command or auto-invoked). Progressive disclosure of search → refine → save workflow. Complements help epilog with in-context guidance.
-- **Drop-in checks**: `~/.config/tbd/checks/*.py` for user-defined health checks. Pattern exists, add when needed.
-- **`tbd copy formatter`**: Copy built-in formatter to config for customization. Lower priority — config solves the common case.
+- **`strata` skill for agents**: Teach agents strata usage via a Claude Code skill (slash command or auto-invoked). Progressive disclosure of search → refine → save workflow. Complements help epilog with in-context guidance.
+- **Drop-in checks**: `~/.config/strata/checks/*.py` for user-defined health checks. Pattern exists, add when needed.
+- **`strata copy formatter`**: Copy built-in formatter to config for customization. Lower priority — config solves the common case.
 
 **Lower priority**:
 
-- **Synthesis layer**: LLM-generated narratives over structured retrieval output. Consumer of tbd, not part of it.
+- **Synthesis layer**: LLM-generated narratives over structured retrieval output. Consumer of strata, not part of it.
 - **Doc cross-reference**: Embedding docs alongside conversations. Unclear if concepts-only-in-docs is a real use case.
 
 ---
@@ -326,11 +326,11 @@ Analyzed real tbd usage by agents in non-tbd workspaces:
 | Thread | Status | Notes |
 |--------|--------|-------|
 | Doc cross-reference | Deferred | Embedding docs alongside conversations. Deferred — unclear if concepts-only-in-docs is a real use case. `--refs` covers files referenced in conversations. |
-| Synthesis layer | Design phase | LLM-generated narratives over structured retrieval output. Consumer of tbd, not part of it. |
+| Synthesis layer | Design phase | LLM-generated narratives over structured retrieval output. Consumer of strata, not part of it. |
 | `workspaces.git_remote` | Deferred | Could resolve via `git remote -v`. Not blocking queries yet. |
-| `tbd enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
+| `strata enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
 | Billing context | Deferred | API vs subscription per workspace. Needed for precise cost, not approximate. |
-| Provenance marking | Deferred | Tag ingested conversations containing `tbd ask` tool calls as `tbd:derivative`, down-weight in search. Detectable from shell.execute tool call data. Deferred — active session exclusion may be sufficient. |
+| Provenance marking | Deferred | Tag ingested conversations containing `strata ask` tool calls as `strata:derivative`, down-weight in search. Detectable from shell.execute tool call data. Deferred — active session exclusion may be sufficient. |
 | Re-add adapters | When needed | Cline/Goose/Cursor/Aider at commit `f5e3409`. Plugin system supports drop-in. |
 
 ---
@@ -342,5 +342,5 @@ Analyzed real tbd usage by agents in non-tbd workspaces:
 
 ---
 
-*Updated: 2026-01-25 (active session exclusion, agent ergonomics, tbd peek)*
+*Updated: 2026-01-25 (active session exclusion, agent ergonomics, strata peek)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*

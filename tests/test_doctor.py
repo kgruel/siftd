@@ -5,21 +5,21 @@ from pathlib import Path
 
 import pytest
 
-from tbd.api import (
+from strata.api import (
     CheckInfo,
     Finding,
     FixResult,
     list_checks,
     run_checks,
 )
-from tbd.doctor.checks import (
+from strata.doctor.checks import (
     CheckContext,
     DropInsValidCheck,
     EmbeddingsStaleCheck,
     IngestPendingCheck,
     PricingGapsCheck,
 )
-from tbd.storage.sqlite import (
+from strata.storage.sqlite import (
     create_database,
     get_or_create_harness,
     get_or_create_model,
@@ -177,11 +177,11 @@ class TestEmbeddingsStaleCheck:
         assert findings[0].severity == "info"
         assert "not found" in findings[0].message
         assert findings[0].fix_available is True
-        assert findings[0].fix_command == "tbd ask --index"
+        assert findings[0].fix_command == "strata ask --index"
 
     def test_stale_conversations(self, check_context):
         """Reports stale conversations when embeddings DB exists but is empty."""
-        from tbd.storage.embeddings import open_embeddings_db
+        from strata.storage.embeddings import open_embeddings_db
 
         # Create empty embeddings DB
         embed_conn = open_embeddings_db(check_context.embed_db_path)
@@ -325,10 +325,10 @@ class TestFindingDataclass:
             severity="warning",
             message="Test",
             fix_available=True,
-            fix_command="tbd fix",
+            fix_command="strata fix",
             context={"count": 5},
         )
-        assert finding.fix_command == "tbd fix"
+        assert finding.fix_command == "strata fix"
         assert finding.context == {"count": 5}
 
 

@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from tbd.peek.reader import (
+from strata.peek.reader import (
     PeekExchange,
     SessionDetail,
     find_session_file,
     read_session_detail,
     tail_session,
 )
-from tbd.peek.scanner import (
+from strata.peek.scanner import (
     SessionInfo,
     _scan_session_file,
     list_active_sessions,
@@ -253,7 +253,7 @@ class TestFindSessionFile:
             DEFAULT_LOCATIONS = [str(sample_session.parent.parent)]
 
         monkeypatch.setattr(
-            "tbd.adapters.registry.load_all_adapters",
+            "strata.adapters.registry.load_all_adapters",
             lambda: [FakeAdapter()],
         )
         result = find_session_file("abc12345")
@@ -265,7 +265,7 @@ class TestFindSessionFile:
             DEFAULT_LOCATIONS = [str(session_dir.parent)]
 
         monkeypatch.setattr(
-            "tbd.adapters.registry.load_all_adapters",
+            "strata.adapters.registry.load_all_adapters",
             lambda: [FakeAdapter()],
         )
         result = find_session_file("zzzznotfound")
@@ -282,7 +282,7 @@ class TestListActiveSessions:
             DEFAULT_LOCATIONS = [str(sample_session.parent.parent)]
 
         monkeypatch.setattr(
-            "tbd.peek.scanner.load_all_adapters",
+            "strata.peek.scanner.load_all_adapters",
             lambda: [FakeAdapter()],
         )
         sessions = list_active_sessions()
@@ -295,7 +295,7 @@ class TestListActiveSessions:
             DEFAULT_LOCATIONS = [str(sample_session.parent.parent)]
 
         monkeypatch.setattr(
-            "tbd.peek.scanner.load_all_adapters",
+            "strata.peek.scanner.load_all_adapters",
             lambda: [FakeAdapter()],
         )
         # Should match
@@ -321,7 +321,7 @@ class TestListActiveSessions:
             DEFAULT_LOCATIONS = [str(session_dir.parent)]
 
         monkeypatch.setattr(
-            "tbd.peek.scanner.load_all_adapters",
+            "strata.peek.scanner.load_all_adapters",
             lambda: [FakeAdapter()],
         )
         sessions = list_active_sessions()
@@ -341,7 +341,7 @@ class TestListActiveSessions:
             DEFAULT_LOCATIONS = [str(session_dir.parent)]
 
         monkeypatch.setattr(
-            "tbd.peek.scanner.load_all_adapters",
+            "strata.peek.scanner.load_all_adapters",
             lambda: [FakeAdapter()],
         )
         sessions = list_active_sessions(include_inactive=True)
@@ -365,7 +365,7 @@ class TestListActiveSessions:
             DEFAULT_LOCATIONS = [str(session_dir.parent)]
 
         monkeypatch.setattr(
-            "tbd.peek.scanner.load_all_adapters",
+            "strata.peek.scanner.load_all_adapters",
             lambda: [FakeAdapter()],
         )
         sessions = list_active_sessions()

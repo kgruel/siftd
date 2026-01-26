@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tbd.output import (
+from strata.output import (
     ChunkListFormatter,
     FormatterContext,
     JsonFormatter,
@@ -19,7 +19,7 @@ from tbd.output import (
     get_formatter,
     select_formatter,
 )
-from tbd.output.registry import (
+from strata.output.registry import (
     FormatterRegistry,
     _validate_formatter,
     load_dropin_formatters,

@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from tbd.search import get_active_conversation_ids
-from tbd.storage.sqlite import (
+from strata.search import get_active_conversation_ids
+from strata.storage.sqlite import (
     create_database,
     get_or_create_harness,
     get_or_create_workspace,
@@ -88,7 +88,7 @@ def test_db(tmp_path):
 
 def _make_session_info(file_path: str, session_id: str = "test"):
     """Create a minimal SessionInfo-like object."""
-    from tbd.peek.scanner import SessionInfo
+    from strata.peek.scanner import SessionInfo
 
     return SessionInfo(
         session_id=session_id,
@@ -108,7 +108,7 @@ class TestGetActiveConversationIds:
             _make_session_info("/home/user/.claude/projects/xyz/session-active2.jsonl", "s2"),
         ]
 
-        with patch("tbd.peek.scanner.list_active_sessions", return_value=active_sessions):
+        with patch("strata.peek.scanner.list_active_sessions", return_value=active_sessions):
             result = get_active_conversation_ids(test_db["db_path"])
 
         assert result == {test_db["active_conv_id"], test_db["active2_conv_id"]}
@@ -119,7 +119,7 @@ class TestGetActiveConversationIds:
             _make_session_info("/home/user/.claude/projects/abc/session-active.jsonl", "s1"),
         ]
 
-        with patch("tbd.peek.scanner.list_active_sessions", return_value=active_sessions):
+        with patch("strata.peek.scanner.list_active_sessions", return_value=active_sessions):
             result = get_active_conversation_ids(test_db["db_path"])
 
         assert test_db["inactive_conv_id"] not in result
@@ -127,7 +127,7 @@ class TestGetActiveConversationIds:
 
     def test_returns_empty_when_no_active_sessions(self, test_db):
         """No active sessions means nothing to exclude."""
-        with patch("tbd.peek.scanner.list_active_sessions", return_value=[]):
+        with patch("strata.peek.scanner.list_active_sessions", return_value=[]):
             result = get_active_conversation_ids(test_db["db_path"])
 
         assert result == set()
@@ -138,21 +138,21 @@ class TestGetActiveConversationIds:
             _make_session_info("/home/user/.claude/projects/unknown/no-match.jsonl", "s1"),
         ]
 
-        with patch("tbd.peek.scanner.list_active_sessions", return_value=active_sessions):
+        with patch("strata.peek.scanner.list_active_sessions", return_value=active_sessions):
             result = get_active_conversation_ids(test_db["db_path"])
 
         assert result == set()
 
     def test_handles_scanner_exception_gracefully(self, test_db):
         """If list_active_sessions raises, return empty set instead of propagating."""
-        with patch("tbd.peek.scanner.list_active_sessions", side_effect=OSError("disk error")):
+        with patch("strata.peek.scanner.list_active_sessions", side_effect=OSError("disk error")):
             result = get_active_conversation_ids(test_db["db_path"])
 
         assert result == set()
 
     def test_handles_import_error_gracefully(self, test_db):
         """If peek module can't be imported, return empty set."""
-        with patch("tbd.peek.scanner.list_active_sessions", side_effect=ImportError("no module")):
+        with patch("strata.peek.scanner.list_active_sessions", side_effect=ImportError("no module")):
             # The function catches ImportError internally during import,
             # but since we patch at module level, this tests a different path.
             # The actual ImportError guard is in the function body.

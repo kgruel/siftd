@@ -37,7 +37,7 @@
       "name": "specific",
       "description": "Queries targeting known features in this corpus",
       "queries": [
-        "how tbd discovers and loads adapter plugins from the drop-in directory",
+        "how strata discovers and loads adapter plugins from the drop-in directory",
         "FTS5 tokenizer configuration for searching conversation turns",
         "model name parsing and token cost lookup logic",
         "tool call canonicalization across different LLM providers",

@@ -26,28 +26,28 @@ Core loop: **Ingest → Store → Query**
 
 - `commit=False` default on storage functions; caller controls transaction boundaries
 - ULIDs for all primary keys
-- XDG paths: data `~/.local/share/tbd`, config `~/.config/tbd`
+- XDG paths: data `~/.local/share/strata`, config `~/.config/strata`
 - New CLI commands follow existing argparse patterns in `src/cli.py`
 - New adapters implement `can_handle(source)`, `parse(source)`, `discover()`, set `HARNESS_SOURCE`
-- Queries go in `~/.config/tbd/queries/*.sql`, use `$var` for parameters
+- Queries go in `~/.config/strata/queries/*.sql`, use `$var` for parameters
 
-## Agent Memory (tbd)
+## Agent Memory (strata)
 
 Search past conversations:
 ```
-tbd ask "your query"              # semantic search
-tbd ask -w projectname "query"    # filter by workspace
-tbd query <id>                    # drill down into conversation
+strata ask "your query"              # semantic search
+strata ask -w projectname "query"    # filter by workspace
+strata query <id>                    # drill down into conversation
 ```
 
 Tag useful findings:
 ```
-tbd tag <id> research:<topic>   # bookmark for later
-tbd query -l research:<topic>   # retrieve tagged
+strata tag <id> research:<topic>   # bookmark for later
+strata query -l research:<topic>   # retrieve tagged
 ```
 
 Tag conventions:
 - `research:*` — Investigation findings worth preserving
 - `useful:*` — General bookmarks (useful:pattern, useful:example)
 
-When you find something useful via `tbd ask`, tag it before moving on.
+When you find something useful via `strata ask`, tag it before moving on.

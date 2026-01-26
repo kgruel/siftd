@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tbd.api import (
+from strata.api import (
     ConversationDetail,
     ConversationSummary,
     DatabaseStats,
@@ -18,9 +18,9 @@ from tbd.api import (
     get_tool_tags_by_workspace,
     list_conversations,
 )
-from tbd.api.search import ConversationScore, aggregate_by_conversation, first_mention
-from tbd.search import SearchResult
-from tbd.storage.sqlite import (
+from strata.api.search import ConversationScore, aggregate_by_conversation, first_mention
+from strata.search import SearchResult
+from strata.storage.sqlite import (
     apply_tag,
     create_database,
     get_or_create_harness,
@@ -517,7 +517,7 @@ class TestIngestTimeShellTagging:
 
     def test_shell_execute_tagged_at_ingest(self, tmp_path):
         """store_conversation() auto-tags shell.execute calls with categorizable commands."""
-        from tbd.domain.models import (
+        from strata.domain.models import (
             ContentBlock,
             Conversation,
             Harness,
@@ -526,7 +526,7 @@ class TestIngestTimeShellTagging:
             ToolCall,
             Usage,
         )
-        from tbd.storage.sqlite import create_database, store_conversation
+        from strata.storage.sqlite import create_database, store_conversation
 
         db_path = tmp_path / "test_ingest_tags.db"
         conn = create_database(db_path)
@@ -580,7 +580,7 @@ class TestIngestTimeShellTagging:
 
     def test_uncategorized_command_not_tagged(self, tmp_path):
         """Commands that don't match any category are not tagged."""
-        from tbd.domain.models import (
+        from strata.domain.models import (
             ContentBlock,
             Conversation,
             Harness,
@@ -589,7 +589,7 @@ class TestIngestTimeShellTagging:
             ToolCall,
             Usage,
         )
-        from tbd.storage.sqlite import create_database, store_conversation
+        from strata.storage.sqlite import create_database, store_conversation
 
         db_path = tmp_path / "test_no_tags.db"
         conn = create_database(db_path)

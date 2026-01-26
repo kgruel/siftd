@@ -15,9 +15,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from tbd.embeddings.fastembed_backend import FastEmbedBackend
-from tbd.paths import data_dir
-from tbd.storage.embeddings import open_embeddings_db, store_chunk, set_meta
+from strata.embeddings.fastembed_backend import FastEmbedBackend
+from strata.paths import data_dir
+from strata.storage.embeddings import open_embeddings_db, store_chunk, set_meta
 
 
 def extract_chunks(main_conn: sqlite3.Connection, params: dict) -> list[dict]:
@@ -49,7 +49,7 @@ def extract_chunks(main_conn: sqlite3.Connection, params: dict) -> list[dict]:
 def _extract_exchange_window(conn: sqlite3.Connection, params: dict) -> list[dict]:
     """Use the shared exchange-window chunker."""
     from fastembed import TextEmbedding
-    from tbd.embeddings.chunker import extract_exchange_window_chunks
+    from strata.embeddings.chunker import extract_exchange_window_chunks
 
     target_tokens = params.get("target_tokens", 256)
     max_tokens = params.get("max_tokens", 512)
@@ -225,7 +225,7 @@ def main():
     parser = argparse.ArgumentParser(description="Build embeddings DB from a strategy file")
     parser.add_argument("--strategy", type=Path, required=True, help="Path to strategy JSON file")
     parser.add_argument("--output", type=Path, default=None, help="Output embeddings DB path")
-    parser.add_argument("--db", type=Path, default=None, help="Path to main tbd.db")
+    parser.add_argument("--db", type=Path, default=None, help="Path to main strata.db")
     args = parser.parse_args()
 
     if not args.strategy.exists():
@@ -233,7 +233,7 @@ def main():
         sys.exit(1)
 
     # Resolve main DB path
-    db = args.db or (data_dir() / "tbd.db")
+    db = args.db or (data_dir() / "strata.db")
     if not db.exists():
         print(f"Main DB not found: {db}")
         sys.exit(1)

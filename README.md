@@ -1,4 +1,4 @@
-# tbd
+# strata
 
 Personal analytics for LLM coding sessions. Ingests conversation logs from Claude Code, Gemini CLI, and Codex CLI into SQLite. Query with full-text search, semantic search, or raw SQL.
 
@@ -9,14 +9,14 @@ Personal analytics for LLM coding sessions. Ingests conversation logs from Claud
 uv pip install .
 
 # Ingest logs from default locations
-tbd ingest
+strata ingest
 
 # See what you have
-tbd status
+strata status
 ```
 
 ```
-Database: /Users/you/.local/share/tbd/tbd.db
+Database: /Users/you/.local/share/strata/strata.db
 Size: 42.3 MB
 
 --- Counts ---
@@ -42,7 +42,7 @@ Size: 42.3 MB
 
 ```bash
 # List recent conversations
-tbd query
+strata query
 ```
 
 ```
@@ -56,9 +56,9 @@ tbd query
 ### Ingest
 
 ```bash
-tbd ingest                    # Scan default locations
-tbd ingest -p ~/custom/logs   # Add custom path
-tbd ingest -v                 # Verbose (show skipped files)
+strata ingest                    # Scan default locations
+strata ingest -p ~/custom/logs   # Add custom path
+strata ingest -v                 # Verbose (show skipped files)
 ```
 
 Default locations:
@@ -70,44 +70,44 @@ Default locations:
 
 ```bash
 # List recent conversations
-tbd query
+strata query
 
 # Filter by workspace
-tbd query -w myproject
+strata query -w myproject
 
 # Filter by model
-tbd query -m sonnet
+strata query -m sonnet
 
 # Filter by date
-tbd query --since 2025-01-01
+strata query --since 2025-01-01
 
 # Full-text search (FTS5)
-tbd query -s "error handling"
+strata query -s "error handling"
 
 # Filter by tool usage
-tbd query -t shell.execute
+strata query -t shell.execute
 
 # Filter by tag
-tbd query -l important
+strata query -l important
 
 # Combine filters
-tbd query -w myproject -m opus --since 2025-01-01
+strata query -w myproject -m opus --since 2025-01-01
 
 # Show more results
-tbd query -n 50
+strata query -n 50
 
 # Show all columns
-tbd query -v
+strata query -v
 
 # Output as JSON
-tbd query --json
+strata query --json
 ```
 
 ### Conversation detail
 
 ```bash
 # View a conversation timeline (prefix match on ID)
-tbd query 01JGK3
+strata query 01JGK3
 ```
 
 ```
@@ -146,7 +146,7 @@ This gives you keyword precision with semantic understanding.
 
 ```bash
 # Build the embeddings index (first time)
-tbd ask --index
+strata ask --index
 ```
 
 ```
@@ -159,7 +159,7 @@ Done. Index has 3,847 chunks (fastembed, dim=384).
 
 ```bash
 # Search
-tbd ask "how did I implement caching"
+strata ask "how did I implement caching"
 ```
 
 ```
@@ -174,41 +174,41 @@ Results for: how did I implement caching
 
 ```bash
 # Search with filters
-tbd ask -w myproject "authentication flow"
-tbd ask -m opus "error handling"
-tbd ask --since 2025-01-01 "database schema"
+strata ask -w myproject "authentication flow"
+strata ask -m opus "error handling"
+strata ask --since 2025-01-01 "database schema"
 
 # Output modes
-tbd ask -v "caching"              # Full chunk text
-tbd ask --full "caching"          # Complete exchange from DB
-tbd ask --context 3 "caching"     # ±3 exchanges around match
-tbd ask --thread "caching"        # Narrative view: expanded top + shortlist
-tbd ask --conversations "caching" # Rank conversations, not chunks
-tbd ask --first "when did I add"  # Earliest match above threshold
+strata ask -v "caching"              # Full chunk text
+strata ask --full "caching"          # Complete exchange from DB
+strata ask --context 3 "caching"     # ±3 exchanges around match
+strata ask --thread "caching"        # Narrative view: expanded top + shortlist
+strata ask --conversations "caching" # Rank conversations, not chunks
+strata ask --first "when did I add"  # Earliest match above threshold
 
 # Filter by role
-tbd ask --role user "caching"     # Only user prompts
-tbd ask --role assistant "caching" # Only assistant responses
+strata ask --role user "caching"     # Only user prompts
+strata ask --role assistant "caching" # Only assistant responses
 
 # Tune retrieval
-tbd ask --recall 200 "error"      # Widen FTS5 candidate pool
-tbd ask --embeddings-only "error" # Skip FTS5, pure embeddings
-tbd ask --threshold 0.7 "error"   # Only results with score >= 0.7
+strata ask --recall 200 "error"      # Widen FTS5 candidate pool
+strata ask --embeddings-only "error" # Skip FTS5, pure embeddings
+strata ask --threshold 0.7 "error"   # Only results with score >= 0.7
 
 # File references
-tbd ask --refs "authelia"         # Show file annotations + content dump
+strata ask --refs "authelia"         # Show file annotations + content dump
 ```
 
 #### Embedding backends
 
-tbd supports multiple embedding backends:
+strata supports multiple embedding backends:
 
 - **fastembed** (default): Local, no API key needed. Uses `BAAI/bge-small-en-v1.5`.
 - **ollama**: Local, requires ollama running. Uses `nomic-embed-text`.
 
 ```bash
-tbd ask --index --backend fastembed
-tbd ask --index --backend ollama
+strata ask --index --backend fastembed
+strata ask --index --backend ollama
 ```
 
 #### Benchmarking retrieval
@@ -232,16 +232,16 @@ Use this to compare chunking strategies, embedding models, and hybrid vs pure-em
 
 ```bash
 # Apply a tag to a conversation
-tbd tag conversation 01JGK3M2P4Q5... important
+strata tag conversation 01JGK3M2P4Q5... important
 
 # Apply a tag to a workspace
-tbd tag workspace 01JGH... work
+strata tag workspace 01JGH... work
 
 # Apply a tag to a tool call
-tbd tag tool_call 01JGK... slow
+strata tag tool_call 01JGK... slow
 
 # List all tags with counts
-tbd tags
+strata tags
 ```
 
 ```
@@ -252,11 +252,11 @@ tbd tags
 
 ### SQL queries
 
-User-defined queries live in `~/.config/tbd/queries/*.sql`. Variables use `$name` syntax.
+User-defined queries live in `~/.config/strata/queries/*.sql`. Variables use `$name` syntax.
 
 ```bash
 # List available queries
-tbd query sql
+strata query sql
 ```
 
 ```
@@ -265,7 +265,7 @@ cost  (vars: limit)
 
 ```bash
 # Run a query
-tbd query sql cost --var limit=20
+strata query sql cost --var limit=20
 ```
 
 ```
@@ -277,7 +277,7 @@ workspace              model            provider   input_tokens  output_tokens  
 
 #### Example queries
 
-**Daily token usage** (`~/.config/tbd/queries/daily.sql`):
+**Daily token usage** (`~/.config/strata/queries/daily.sql`):
 ```sql
 SELECT
     date(c.started_at) AS day,
@@ -291,7 +291,7 @@ GROUP BY day
 ORDER BY day DESC
 ```
 
-**Tool usage by workspace** (`~/.config/tbd/queries/tools-by-workspace.sql`):
+**Tool usage by workspace** (`~/.config/strata/queries/tools-by-workspace.sql`):
 ```sql
 SELECT
     w.path AS workspace,
@@ -307,7 +307,7 @@ GROUP BY w.path, t.name
 ORDER BY calls DESC
 ```
 
-**Model comparison** (`~/.config/tbd/queries/model-comparison.sql`):
+**Model comparison** (`~/.config/strata/queries/model-comparison.sql`):
 ```sql
 SELECT
     m.name AS model,
@@ -322,7 +322,7 @@ GROUP BY m.name
 ORDER BY conversations DESC
 ```
 
-**Long conversations** (`~/.config/tbd/queries/long-conversations.sql`):
+**Long conversations** (`~/.config/strata/queries/long-conversations.sql`):
 ```sql
 SELECT
     c.id,
@@ -344,7 +344,7 @@ LIMIT $limit
 For programmatic access:
 
 ```python
-from tbd import (
+from strata import (
     # Conversations
     list_conversations,         # List with filters
     get_conversation,           # Full detail by ID (prefix match)
@@ -540,20 +540,20 @@ conversations
 ## Paths
 
 ```bash
-tbd path
+strata path
 ```
 
 ```
-Data directory:   /Users/you/.local/share/tbd
-Config directory: /Users/you/.config/tbd
-Cache directory:  /Users/you/.cache/tbd
-Database:         /Users/you/.local/share/tbd/tbd.db
+Data directory:   /Users/you/.local/share/strata
+Config directory: /Users/you/.config/strata
+Cache directory:  /Users/you/.cache/strata
+Database:         /Users/you/.local/share/strata/strata.db
 ```
 
-- **Data**: `~/.local/share/tbd/` — database, embeddings
-- **Config**: `~/.config/tbd/` — queries, adapters
-- **Queries**: `~/.config/tbd/queries/*.sql`
-- **Adapters**: `~/.config/tbd/adapters/*.py`
+- **Data**: `~/.local/share/strata/` — database, embeddings
+- **Config**: `~/.config/strata/` — queries, adapters
+- **Queries**: `~/.config/strata/queries/*.sql`
+- **Adapters**: `~/.config/strata/adapters/*.py`
 
 ## Adapters
 
@@ -561,10 +561,10 @@ Built-in adapters: Claude Code, Gemini CLI, Codex CLI.
 
 ### Drop-in adapters
 
-Add custom adapters to `~/.config/tbd/adapters/`:
+Add custom adapters to `~/.config/strata/adapters/`:
 
 ```
-~/.config/tbd/adapters/
+~/.config/strata/adapters/
 └── my_tool.py
 ```
 
@@ -595,4 +595,4 @@ A drop-in adapter with the same `NAME` as a built-in will override it.
 
 Adapters are validated at load time — missing required attributes will raise an error.
 
-See `src/tbd/adapters/claude_code.py` for a complete example.
+See `src/strata/adapters/claude_code.py` for a complete example.

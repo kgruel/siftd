@@ -19,7 +19,7 @@ Research from tbd-v1 (`~/Code/tbd/docs/research/`) covers 10 CLI coding tools. S
 | Aider | JSONL, `~/.aider/history/`, has cost data | No dedicated spec — would need to examine source or ccusage tool | `landscape.md` |
 | GitHub Copilot | JSON, `~/.copilot/session-state/` | Minimal detail, no schema documented | `landscape.md`, `landscape-search.md` |
 
-## Already Implemented in tbd-v2
+## Already Implemented in strata
 
 | Tool | Adapter | Notes |
 |------|---------|-------|

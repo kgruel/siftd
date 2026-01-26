@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from tbd.paths import data_dir
+from strata.paths import data_dir
 
 
 MODEL_MAX_TOKENS = 512
@@ -188,7 +188,7 @@ def main():
         "--embed-db",
         type=Path,
         default=None,
-        help="Path to embeddings DB (default: ~/.local/share/tbd/embeddings.db)",
+        help="Path to embeddings DB (default: ~/.local/share/strata/embeddings.db)",
     )
     args = parser.parse_args()
 

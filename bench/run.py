@@ -231,7 +231,7 @@ def run_benchmark(
             for query_text in group["queries"]:
                 conversation_ids = None
                 if hybrid:
-                    from tbd.storage.sqlite import fts5_recall_conversations
+                    from strata.storage.sqlite import fts5_recall_conversations
                     fts5_ids, fts5_mode = fts5_recall_conversations(main_db, query_text, limit=recall_limit)
                     db_recall_meta[query_text] = {
                         "fts5_conversations": len(fts5_ids),
@@ -585,8 +585,8 @@ def main():
     parser.add_argument(
         "--db",
         type=Path,
-        default=Path.home() / ".local/share/tbd/tbd.db",
-        help="Path to main tbd.db (default: ~/.local/share/tbd/tbd.db)",
+        default=Path.home() / ".local/share/strata/strata.db",
+        help="Path to main strata.db (default: ~/.local/share/strata/strata.db)",
     )
     parser.add_argument(
         "--strategy",
@@ -667,7 +667,7 @@ def main():
         params[key] = value
 
     # Initialize backend
-    from tbd.embeddings.fastembed_backend import FastEmbedBackend
+    from strata.embeddings.fastembed_backend import FastEmbedBackend
     print("Initializing embedding model...", file=sys.stderr)
     backend = FastEmbedBackend()
     tokenizer = get_tokenizer(backend)

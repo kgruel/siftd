@@ -11,8 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from tbd.domain.source import Source
-from tbd.adapters import claude_code, codex_cli, gemini_cli
+from strata.domain.source import Source
+from strata.adapters import claude_code, codex_cli, gemini_cli
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 

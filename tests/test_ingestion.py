@@ -11,15 +11,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from tbd.ingestion.orchestration import ingest_all
-from tbd.storage.sqlite import (
+from strata.ingestion.orchestration import ingest_all
+from strata.storage.sqlite import (
     check_file_ingested,
     compute_file_hash,
     get_ingested_file_info,
     open_database,
 )
-from tbd.adapters import claude_code
-from tbd.domain import Conversation, Harness, Prompt, Response, ContentBlock, Source
+from strata.adapters import claude_code
+from strata.domain import Conversation, Harness, Prompt, Response, ContentBlock, Source
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
