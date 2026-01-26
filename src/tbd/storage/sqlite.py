@@ -626,6 +626,21 @@ def check_file_ingested(conn: sqlite3.Connection, path: str) -> bool:
     return cur.fetchone() is not None
 
 
+def get_ingested_file_info(conn: sqlite3.Connection, path: str) -> dict | None:
+    """Get stored info for an ingested file.
+
+    Returns dict with {file_hash, conversation_id} or None if not found.
+    """
+    cur = conn.execute(
+        "SELECT file_hash, conversation_id FROM ingested_files WHERE path = ?",
+        (path,)
+    )
+    row = cur.fetchone()
+    if row:
+        return {"file_hash": row["file_hash"], "conversation_id": row["conversation_id"]}
+    return None
+
+
 def record_ingested_file(
     conn: sqlite3.Connection,
     path: str,
@@ -655,6 +670,34 @@ def record_ingested_file(
         """INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at)
            VALUES (?, ?, ?, ?, ?, ?)""",
         (ulid, path, file_hash, harness_id, conversation_id, ingested_at)
+    )
+    if commit:
+        conn.commit()
+    return ulid
+
+
+def record_empty_file(
+    conn: sqlite3.Connection,
+    path: str,
+    file_hash: str,
+    harness_id: str,
+    *,
+    commit: bool = False,
+) -> str:
+    """Record an empty file (no conversation). Returns the record id.
+
+    Used for files that parse to zero conversations (e.g., empty JSONL files).
+    Stores with conversation_id=NULL so they're tracked but can be re-ingested
+    if content appears later.
+    """
+    from datetime import datetime
+
+    ulid = _ulid()
+    ingested_at = datetime.now().isoformat()
+    conn.execute(
+        """INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at)
+           VALUES (?, ?, ?, ?, NULL, ?)""",
+        (ulid, path, file_hash, harness_id, ingested_at)
     )
     if commit:
         conn.commit()

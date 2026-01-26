@@ -8,12 +8,13 @@ from typing import Any
 
 from tbd.domain import Source
 from tbd.storage.sqlite import (
-    check_file_ingested,
     compute_file_hash,
     delete_conversation,
     ensure_tool_aliases,
     find_conversation_by_external_id,
+    get_ingested_file_info,
     get_or_create_harness,
+    record_empty_file,
     record_ingested_file,
     store_conversation,
 )
@@ -110,13 +111,32 @@ def ingest_all(
         try:
             # Strategy: file-based dedup
             if dedup_strategy == "file":
-                if check_file_ingested(conn, file_path):
-                    stats.files_skipped += 1
+                # Check if already ingested
+                existing_info = get_ingested_file_info(conn, file_path)
+                if existing_info:
+                    # Compare hash to detect changes
+                    location = Path(source.location) if not isinstance(source.location, Path) else source.location
+                    current_hash = compute_file_hash(location)
+
+                    if current_hash == existing_info["file_hash"]:
+                        # Same hash, skip
+                        stats.files_skipped += 1
+                        if on_file:
+                            on_file(source, "skipped")
+                        continue
+
+                    # Hash changed - re-ingest
+                    # Delete old conversation if it exists
+                    if existing_info["conversation_id"]:
+                        delete_conversation(conn, existing_info["conversation_id"])
+
+                    # Re-ingest and update the record
+                    _reingest_file(conn, source, adapter, file_path, current_hash, stats)
                     if on_file:
-                        on_file(source, "skipped")
+                        on_file(source, "updated")
                     continue
 
-                # Ingest the file
+                # New file - ingest normally
                 _ingest_file(conn, source, adapter, file_path, stats)
                 if on_file:
                     on_file(source, "ingested")
@@ -206,19 +226,71 @@ def _ingest_file(
 ) -> None:
     """Ingest a single file (file-based dedup strategy)."""
     harness_name = adapter.NAME
+    location = Path(source.location) if not isinstance(source.location, Path) else source.location
+    file_hash = compute_file_hash(location)
 
-    for conversation in adapter.parse(source):
+    conversations = list(adapter.parse(source))
+
+    if not conversations:
+        # Empty file - record with NULL conversation_id
+        harness_kwargs = {}
+        if hasattr(adapter, "HARNESS_SOURCE"):
+            harness_kwargs["source"] = adapter.HARNESS_SOURCE
+        harness_id = get_or_create_harness(conn, harness_name, **harness_kwargs)
+        record_empty_file(conn, file_path, file_hash, harness_id)
+        conn.commit()
+        stats.files_ingested += 1
+        return
+
+    for conversation in conversations:
         conv_id = store_conversation(conn, conversation)
-
         _update_stats_for_conversation(stats, harness_name, conversation)
-
-        # Record ingestion
-        location = Path(source.location) if not isinstance(source.location, Path) else source.location
-        file_hash = compute_file_hash(location)
         record_ingested_file(conn, file_path, file_hash, conv_id)
 
     conn.commit()
     stats.files_ingested += 1
+
+
+def _reingest_file(
+    conn: sqlite3.Connection,
+    source: Source,
+    adapter: AdapterModule,
+    file_path: str,
+    file_hash: str,
+    stats: IngestStats,
+) -> None:
+    """Re-ingest a file that has changed (file-based dedup strategy).
+
+    Unlike _ingest_file, the old conversation has already been deleted
+    and the file hash is already computed.
+
+    Note: delete_conversation also deletes the ingested_files record,
+    so we create a new record rather than updating.
+    """
+    harness_name = adapter.NAME
+
+    conversations = list(adapter.parse(source))
+
+    if not conversations:
+        # File became empty - record with NULL conversation_id
+        harness_kwargs = {}
+        if hasattr(adapter, "HARNESS_SOURCE"):
+            harness_kwargs["source"] = adapter.HARNESS_SOURCE
+        harness_id = get_or_create_harness(conn, harness_name, **harness_kwargs)
+        record_empty_file(conn, file_path, file_hash, harness_id)
+        conn.commit()
+        stats.files_replaced += 1
+        stats.by_harness[harness_name]["replaced"] += 1
+        return
+
+    for conversation in conversations:
+        conv_id = store_conversation(conn, conversation)
+        _update_stats_for_conversation(stats, harness_name, conversation)
+        record_ingested_file(conn, file_path, file_hash, conv_id)
+
+    conn.commit()
+    stats.files_replaced += 1
+    stats.by_harness[harness_name]["replaced"] += 1
 
 
 def _update_stats_for_conversation(
