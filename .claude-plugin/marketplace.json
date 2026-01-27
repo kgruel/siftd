@@ -1,0 +1,28 @@
+{
+  "name": "strata",
+  "owner": {
+    "name": "kaygee",
+    "url": "https://github.com/kaygee"
+  },
+  "metadata": {
+    "description": "Strata plugin marketplace — conversation research for Claude Code agents",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "strata",
+      "source": "./plugin",
+      "description": "Search and research past conversations from CLI coding sessions",
+      "version": "1.0.0",
+      "author": {
+        "name": "kaygee",
+        "url": "https://github.com/kaygee"
+      },
+      "repository": "https://github.com/kaygee/strata",
+      "license": "MIT",
+      "keywords": ["conversations", "search", "research", "history", "analytics"],
+      "category": "productivity",
+      "tags": ["research", "history", "memory"]
+    }
+  ]
+}

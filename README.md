@@ -209,7 +209,8 @@ from strata import list_conversations, hybrid_search, get_stats
 **Claude Code plugin** — agent DX with hooks and a bundled skill:
 
 ```bash
-claude --plugin-dir plugin/
+claude plugin marketplace add kaygee/strata
+claude plugin install strata@strata
 ```
 
 ## Going deeper

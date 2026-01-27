@@ -2,10 +2,30 @@
 
 The `plugin/` directory provides agent DX for strata inside Claude Code sessions. It teaches agents how to use strata effectively through hooks and a bundled skill.
 
-## Install
+## Prerequisites
+
+strata must be installed and indexed separately — the plugin provides agent DX, not the CLI itself:
 
 ```bash
-# Dev mode (from repo root)
+uv pip install /path/to/strata
+strata ingest
+strata ask --index
+```
+
+## Install
+
+### From marketplace (recommended)
+
+```bash
+claude plugin marketplace add kaygee/strata
+claude plugin install strata@strata
+```
+
+Scope options: `--scope user` (default, all projects), `--scope project` (shared via .claude/settings.json), `--scope local` (gitignored, personal).
+
+### Dev mode
+
+```bash
 claude --plugin-dir plugin/
 ```
 
