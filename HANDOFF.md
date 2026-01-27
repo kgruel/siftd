@@ -89,7 +89,9 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - Hooks: session-start (remind after compaction), skill-reminder (detect "strata" mentions), skill-required (detect raw `strata` commands)
   - Bundled skill: `plugin/skills/strata/SKILL.md` — progressive disclosure (core → output → filtering → preserving)
   - Reference docs: `plugin/skills/strata/reference/` — full feature set for `ask`, `query`, and `tags`
-  - Install: `claude --plugin-dir plugin/` (dev) or via marketplace (global)
+  - Marketplace install: `claude plugin marketplace add kaygee/strata` + `claude plugin install strata@strata`
+  - Dev mode: `claude --plugin-dir plugin/`
+  - `.claude-plugin/marketplace.json` at repo root for marketplace distribution
 - **XDG paths**: data `~/.local/share/strata`, config `~/.config/strata`, queries `~/.config/strata/queries`, adapters `~/.config/strata/adapters`, formatters `~/.config/strata/formatters`
 
 ### Benchmarking framework (`bench/`)
@@ -116,10 +118,13 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 ### Files
 ```
 strata/
-├── README.md                   # Comprehensive documentation (600+ lines)
+├── README.md                   # Narrative introduction (160 lines: problem → search → agents → memory)
+├── .claude-plugin/
+│   └── marketplace.json        # Marketplace distribution manifest
 ├── plugin/
 │   ├── .claude-plugin/
-│   │   └── plugin.json         # Plugin metadata
+│   │   └── plugin.json         # Plugin metadata (author, hooks, skills paths)
+│   ├── README.md               # Plugin install guide (marketplace + dev mode)
 │   ├── hooks/
 │   │   └── hooks.json          # Event hook definitions
 │   ├── scripts/
@@ -130,19 +135,26 @@ strata/
 │       └── strata/
 │           ├── SKILL.md        # Progressive disclosure skill (core → output → filter → preserve)
 │           └── reference/
-│               ├── ask.md      # Full strata ask reference
+│               ├── ask.md      # Full strata ask reference (incl. --lambda, --no-diversity)
 │               ├── query.md    # Full strata query reference
 │               └── tags.md     # Full tag management reference
 ├── docs/
-│   ├── cli.md                  # Auto-generated CLI reference
-│   └── config.md               # Configuration file documentation
+│   ├── cli.md                  # Auto-generated CLI reference (regenerated, uses "strata" not "tbd")
+│   ├── config.md               # Configuration file documentation
+│   ├── search.md               # Search pipeline, MMR, backends, benchmarking
+│   ├── tags.md                 # Tag system, boolean filtering, conventions, workflow
+│   ├── api.md                  # Library API reference
+│   ├── data-model.md           # Schema, tables, cost model, IDs
+│   ├── adapters.md             # Built-in + drop-in + entry point adapter authoring
+│   ├── queries.md              # SQL queries with examples
+│   └── plugin.md               # Claude Code plugin (marketplace install, hooks, skill)
 ├── scripts/
 │   └── gen-cli-docs.sh         # Regenerates docs/cli.md from --help
 ├── queries/
 │   ├── cost.sql                # Approximate cost by workspace
 │   └── shell-analysis.sql      # Shell command granularity analysis (tag breakdown, git actions, read/write)
 ├── bench/
-│   ├── queries.json            # 25 benchmark queries (5 groups)
+│   ├── queries.json            # 50 benchmark queries (10 groups)
 │   ├── corpus_analysis.py      # Token distribution profiling
 │   ├── run.py                  # Benchmark runner
 │   ├── build.py                # Strategy-based embeddings DB builder
@@ -214,10 +226,12 @@ strata/
 
 ### Release Status (0.1.0)
 - **Version**: 0.1.0 — first stable release for personal use
-- **Tests**: 183 passing (adapters, API, config, doctor, formatters, embeddings, ingestion, models, peek, chunker)
+- **Tests**: 179 passing, 14 config tests require `tomlkit` in env (adapters, API, config, doctor, formatters, embeddings, ingestion, models, peek, chunker)
 - **Install**: `uv pip install .` or `pip install .` from repo root
 - **CLI**: `strata` available after install
+- **Plugin**: `claude plugin marketplace add kaygee/strata` for Claude Code integration
 - **Pre-commit hook**: Auto-regenerates `docs/cli.md` (local-only, not versioned)
+- **Docs**: README (narrative) + 9 reference docs in `docs/` + plugin README
 
 ---
 
@@ -274,6 +288,9 @@ strata/
 | `peek` bypasses SQLite | Live reads from raw JSONL, no ingestion latency. mtime for "active" detection (simple, cross-platform). |
 | Error column on `ingested_files` | NULL = success, non-NULL = error message. Same-hash files skip (same content → same error). Hash change clears record and retries. Simpler than a separate failures table. |
 | Skip empty conversations at adapter | JSONL files with only `file-history-snapshot` records (no user/assistant messages) yield no conversation. Filter at parse boundary, not downstream. |
+| Narrative README over reference README | README tells a story: problem → data → personal search → agent search → self-teaching → institutional memory. Reference content extracted to `docs/`. README is introductory; docs are comprehensive. |
+| Synthesis = tagging, not LLM | Tags encode human/agent judgment without LLM cost. The data exposure (MMR, `--thread`, plugin skill) is the synthesis enabler. LLM-generated narratives deferred — let agents test the workflow first. |
+| Marketplace for plugin distribution | `.claude-plugin/marketplace.json` at repo root. `claude plugin marketplace add` + `claude plugin install` for global install. Dev mode still available via `--plugin-dir`. |
 
 ---
 
@@ -344,32 +361,35 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 **Recently completed (this session)**:
 
-- **Claude Code plugin** (`plugin/`): hooks + bundled skill + reference docs
-  - Three hooks: session-start (compaction/resume), skill-reminder (detect "strata" mentions), skill-required (detect raw commands)
-  - SKILL.md redesigned for progressive disclosure: core → output → filtering → preserving. Behavioral combinations inline, reference files for full feature set.
-  - Reference docs: `ask.md`, `query.md`, `tags.md` — every flag with examples
-  - Motivated by STRATA_FEEDBACK finding: agents never discovered tagging, `--thread`, or workspace filtering from the old skill
-- **MMR diversity reranking** — new default search strategy
-  - Two-tier conversation-level penalty: 1.0 for same-conversation (hard suppress), cosine sim for cross-conversation
-  - λ=0.7 default, `--lambda` tunable, `--no-diversity` opt-out for pure relevance
-  - Bench validates: +20% unique conversations, +35% unique workspaces, -29% redundancy, +40% temporal span
-  - FTS5 pre-filtering regresses diversity; MMR fixes that and exceeds pure similarity on every diversity metric
-- **Bench update**: 50 queries across 10 groups (5 new: cross-workspace, broad-then-narrow, temporal-trace, tagged-subset, research-workflow)
-  - Diversity metrics: conversation redundancy, unique workspace count, pairwise similarity, cross-query overlap
-  - `--rerank mmr|relevance` for A/B comparison
-  - Three-way bench run: pure similarity vs hybrid FTS5 vs hybrid+MMR
-- **Prior session**: Tag ergonomics overhaul (boolean filtering, rename/delete, prefix matching), doctor cleanup, aider adapter
+- **Documentation overhaul** — narrative README + reference docs
+  - README rewritten as story arc: problem (knowledge vanishes) → data (what accumulates) → personal search → agent search (grounding practices, genesis of ideas, mining tool use) → self-teaching workflow → institutional memory. 160 lines, down from 696.
+  - Reference content extracted to 7 new docs: `search.md`, `tags.md`, `api.md`, `data-model.md`, `adapters.md`, `queries.md`, `plugin.md`
+  - `docs/cli.md` regenerated (now says "strata" not "tbd", includes `peek` and all flags)
+  - Plugin reference `ask.md` updated with `--lambda` and `--no-diversity`
+- **Plugin marketplace install** — global distribution setup
+  - `.claude-plugin/marketplace.json` at repo root
+  - `plugin.json` updated with author, homepage, hooks/skills paths
+  - `plugin/README.md` with marketplace + dev mode install instructions
+- **Cleanup fixes**
+  - Removed unused `semantic-text-splitter` dependency from `pyproject.toml`
+  - Added `aider` to adapter `__all__` exports
+  - Renamed 5 `tbd_` → `strata_` dynamic module prefixes (registries, doctor)
+  - Fixed `scripts/gen-cli-docs.sh` to use `strata` instead of `tbd`
+- **Bench pairwise similarity** — subtask merged, retains embeddings through metrics pass so pairwise similarity computes instead of N/A
+- **Session-aware dedup** — subtask plan merged (design phase, `they-plan` workflow)
+- **Synthesis layer decision**: Synthesis = better data exposure + tagging, not LLM integration. Tags are lightweight synthesis. Let agents test improved plugin/skill in the wild before adding complexity.
+- **Prior session**: Claude Code plugin, MMR diversity reranking, bench update (50 queries, diversity metrics), tag ergonomics, aider adapter
 
 **Potential directions**:
 
-- **Plugin installation**: Set up global install via marketplace (currently dev-mode `--plugin-dir` only)
-- **Pairwise similarity in bench**: Currently N/A — embeddings stripped before diversity metrics compute. Minor fix to retain embeddings through the metrics pass.
-- **Session-aware dedup**: MMR handles intra-query diversity. Cross-query dedup (across sequential queries in a research session) is partially addressed by removing skill fork mode, but no automated mechanism yet.
+- **MMR test coverage**: Default search strategy has zero tests. `mmr_rerank()`, `--lambda`, `--no-diversity` all untested.
+- **Session-aware dedup implementation**: Plan exists (subtask). Cross-query dedup for sequential research queries. Opt-in mechanism, caller-managed state.
 - **Drop-in checks**: `~/.config/strata/checks/*.py` for user-defined health checks. Pattern exists, add when needed.
+- **Observe agent behavior**: Plugin/skill deployed. Watch whether agents discover tagging, `--thread`, workspace filtering. Validate progressive disclosure works in practice.
 
 **Lower priority**:
 
-- **Synthesis layer**: LLM-generated narratives over structured retrieval output. Consumer of strata, not part of it.
+- **Synthesis layer**: LLM-generated narratives over structured retrieval output. Consumer of strata, not part of it. Current synthesis mechanism is tagging.
 - **Doc cross-reference**: Embedding docs alongside conversations. Unclear if concepts-only-in-docs is a real use case.
 
 ---
@@ -379,7 +399,7 @@ Analyzed real strata usage by agents in non-strata workspaces:
 | Thread | Status | Notes |
 |--------|--------|-------|
 | Doc cross-reference | Deferred | Embedding docs alongside conversations. Deferred — unclear if concepts-only-in-docs is a real use case. `--refs` covers files referenced in conversations. |
-| Synthesis layer | Design phase | LLM-generated narratives over structured retrieval output. Consumer of strata, not part of it. |
+| Synthesis layer | Deferred | Current synthesis = tagging. LLM-generated narratives are a consumer of strata, not part of it. Deferred — let agents test improved plugin/skill workflow first. |
 | `workspaces.git_remote` | Deferred | Could resolve via `git remote -v`. Not blocking queries yet. |
 | `strata enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
 | Billing context | Deferred | API vs subscription per workspace. Needed for precise cost, not approximate. |
@@ -395,5 +415,5 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 ---
 
-*Updated: 2026-01-27 (MMR diversity reranking, Claude Code plugin with bundled skill + reference docs, bench update with 50 queries and diversity metrics)*
+*Updated: 2026-01-27 (Documentation overhaul: narrative README + 7 reference docs, plugin marketplace install, cleanup fixes, bench pairwise fix, synthesis decision)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
