@@ -185,6 +185,9 @@ def cmd_ask(args) -> int:
         model=args.model,
         since=args.since,
         before=args.before,
+        tags=getattr(args, "tag", None),
+        all_tags=getattr(args, "all_tags", None),
+        exclude_tags=getattr(args, "no_tag", None),
     )
 
     # Exclude conversations from active sessions (unless opted out)
@@ -836,7 +839,9 @@ def cmd_query(args) -> int:
             before=args.before,
             search=args.search,
             tool=args.tool,
-            tag=args.tag,
+            tags=args.tag,
+            all_tags=getattr(args, "all_tags", None),
+            exclude_tags=getattr(args, "no_tag", None),
             tool_tag=getattr(args, "tool_tag", None),
             limit=args.count,
             oldest_first=args.oldest,
@@ -1436,6 +1441,12 @@ def main(argv=None) -> int:
   strata ask --refs "authelia"                       # file references + content
   strata ask --refs HANDOFF.md "setup"               # filter refs to specific file
 
+  # filter by tags
+  strata ask -l research:auth "auth flow"            # search within tagged conversations
+  strata ask -l research: -l useful: "pattern"       # OR — any research: or useful: tag
+  strata ask --all-tags important --all-tags reviewed "design"  # AND — must have both
+  strata ask -l research: --no-tag archived "auth"   # combine OR + NOT
+
   # save useful results for future retrieval
   strata tag 01HX... research:auth                   # bookmark a conversation
   strata tag --last research:architecture            # tag most recent conversation
@@ -1471,6 +1482,9 @@ def main(argv=None) -> int:
     p_ask.add_argument("--json", action="store_true", help="Output as structured JSON")
     p_ask.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
     p_ask.add_argument("--no-exclude-active", action="store_true", help="Include results from active sessions (excluded by default)")
+    p_ask.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by conversation tag (repeatable, OR logic)")
+    p_ask.add_argument("--all-tags", action="append", metavar="NAME", help="Require all specified tags (AND logic)")
+    p_ask.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude conversations with this tag (NOT logic)")
     p_ask.set_defaults(func=cmd_ask)
 
     # tag
@@ -1533,8 +1547,11 @@ def main(argv=None) -> int:
   strata query                         # list recent conversations
   strata query -w myproject            # filter by workspace
   strata query -s "error handling"     # FTS5 search
+  strata query -l research:auth        # conversations tagged research:auth
+  strata query -l research: -l useful: # OR — any research: or useful: tag
+  strata query --all-tags important --all-tags reviewed  # AND — must have both
+  strata query -l research: --no-tag archived            # combine OR + NOT
   strata query --tool-tag shell:test   # conversations with test commands
-  strata query -w proj --tool-tag shell:vcs  # combine filters
   strata query <id>                    # show conversation detail
   strata query sql                     # list available .sql files
   strata query sql cost                # run the 'cost' query
@@ -1552,7 +1569,9 @@ def main(argv=None) -> int:
     p_query.add_argument("--before", metavar="DATE", help="Conversations started before this date")
     p_query.add_argument("-s", "--search", metavar="QUERY", help="Full-text search (FTS5 syntax)")
     p_query.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
-    p_query.add_argument("-l", "--tag", metavar="NAME", help="Filter by conversation tag")
+    p_query.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by conversation tag (repeatable, OR logic)")
+    p_query.add_argument("--all-tags", action="append", metavar="NAME", help="Require all specified tags (AND logic)")
+    p_query.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude conversations with this tag (NOT logic)")
     p_query.add_argument("--tool-tag", metavar="NAME", help="Filter by tool call tag (e.g. shell:test)")
     p_query.add_argument("--json", action="store_true", help="Output as JSON array")
     p_query.add_argument("--stats", action="store_true", help="Show summary totals after list")

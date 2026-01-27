@@ -58,6 +58,68 @@ class ConversationDetail:
     tags: list[str] = field(default_factory=list)
 
 
+def _tag_condition(tag_value: str) -> tuple[str, str]:
+    """Return (SQL operator, param) for a tag value.
+
+    Supports prefix matching: a trailing colon (e.g., 'research:') matches
+    all tags starting with that prefix via LIKE. Otherwise uses exact match.
+    """
+    if tag_value.endswith(":"):
+        return "tg.name LIKE ?", f"{tag_value}%"
+    return "tg.name = ?", tag_value
+
+
+def _build_tag_clauses(
+    tags: list[str] | None,
+    all_tags: list[str] | None,
+    exclude_tags: list[str] | None,
+) -> tuple[list[str], list[str]]:
+    """Build SQL WHERE conditions for boolean tag filtering.
+
+    Returns (conditions, params) to be ANDed into the main query.
+    """
+    conditions: list[str] = []
+    params: list[str] = []
+
+    # OR semantics: conversation has ANY of these tags
+    if tags:
+        or_parts = []
+        for t in tags:
+            op, val = _tag_condition(t)
+            or_parts.append(op)
+            params.append(val)
+        or_clause = " OR ".join(or_parts)
+        conditions.append(
+            f"c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
+            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {or_clause})"
+        )
+
+    # AND semantics: conversation has ALL of these tags
+    if all_tags:
+        for t in all_tags:
+            op, val = _tag_condition(t)
+            conditions.append(
+                f"c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
+                f" JOIN tags tg ON tg.id = ct.tag_id WHERE {op})"
+            )
+            params.append(val)
+
+    # NOT semantics: conversation has NONE of these tags
+    if exclude_tags:
+        not_parts = []
+        for t in exclude_tags:
+            op, val = _tag_condition(t)
+            not_parts.append(op)
+            params.append(val)
+        not_clause = " OR ".join(not_parts)
+        conditions.append(
+            f"c.id NOT IN (SELECT ct.conversation_id FROM conversation_tags ct"
+            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {not_clause})"
+        )
+
+    return conditions, params
+
+
 def list_conversations(
     *,
     db_path: Path | None = None,
@@ -68,6 +130,9 @@ def list_conversations(
     search: str | None = None,
     tool: str | None = None,
     tag: str | None = None,
+    tags: list[str] | None = None,
+    all_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
     tool_tag: str | None = None,
     limit: int = 10,
     oldest_first: bool = False,
@@ -82,7 +147,10 @@ def list_conversations(
         before: Filter conversations started before this date.
         search: FTS5 full-text search query.
         tool: Filter by canonical tool name (e.g., 'shell.execute').
-        tag: Filter by tag name.
+        tag: Filter by tag name (single, backward compat — prefer tags).
+        tags: OR filter — conversations with any of these tags.
+        all_tags: AND filter — conversations with all of these tags.
+        exclude_tags: NOT filter — exclude conversations with any of these tags.
         tool_tag: Filter by tool call tag (e.g., 'shell:test').
         limit: Maximum results to return (0 = unlimited).
         oldest_first: Sort by oldest first instead of newest.
@@ -142,12 +210,16 @@ def list_conversations(
         )
         params.append(tool)
 
+    # Legacy single-tag support: fold into the OR list
+    effective_tags = list(tags or [])
     if tag:
-        conditions.append(
-            "c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
-            " JOIN tags tg ON tg.id = ct.tag_id WHERE tg.name = ?)"
-        )
-        params.append(tag)
+        effective_tags.append(tag)
+
+    tag_conditions, tag_params = _build_tag_clauses(
+        effective_tags or None, all_tags, exclude_tags
+    )
+    conditions.extend(tag_conditions)
+    params.extend(tag_params)
 
     if tool_tag:
         conditions.append(

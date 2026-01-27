@@ -153,6 +153,13 @@ def hybrid_search(
     return results
 
 
+def _tag_condition(tag_value: str) -> tuple[str, str]:
+    """Return (SQL operator, param) for a tag value with prefix support."""
+    if tag_value.endswith(":"):
+        return "tg.name LIKE ?", f"{tag_value}%"
+    return "tg.name = ?", tag_value
+
+
 def filter_conversations(
     db: Path,
     *,
@@ -160,6 +167,9 @@ def filter_conversations(
     model: str | None = None,
     since: str | None = None,
     before: str | None = None,
+    tags: list[str] | None = None,
+    all_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
 ) -> set[str] | None:
     """Apply filters and return candidate conversation IDs.
 
@@ -171,11 +181,14 @@ def filter_conversations(
         model: Filter by model name substring.
         since: Filter conversations started at or after this date.
         before: Filter conversations started before this date.
+        tags: OR filter — conversations with any of these tags.
+        all_tags: AND filter — conversations with all of these tags.
+        exclude_tags: NOT filter — exclude conversations with any of these tags.
 
     Returns:
         Set of conversation IDs matching filters, or None if no filters.
     """
-    if not any([workspace, model, since, before]):
+    if not any([workspace, model, since, before, tags, all_tags, exclude_tags]):
         return None
 
     conn = sqlite3.connect(db)
@@ -200,6 +213,42 @@ def filter_conversations(
     if before:
         conditions.append("c.started_at < ?")
         params.append(before)
+
+    # OR semantics: conversation has ANY of these tags
+    if tags:
+        or_parts = []
+        for t in tags:
+            op, val = _tag_condition(t)
+            or_parts.append(op)
+            params.append(val)
+        or_clause = " OR ".join(or_parts)
+        conditions.append(
+            f"c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
+            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {or_clause})"
+        )
+
+    # AND semantics: conversation has ALL of these tags
+    if all_tags:
+        for t in all_tags:
+            op, val = _tag_condition(t)
+            conditions.append(
+                f"c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
+                f" JOIN tags tg ON tg.id = ct.tag_id WHERE {op})"
+            )
+            params.append(val)
+
+    # NOT semantics: conversation has NONE of these tags
+    if exclude_tags:
+        not_parts = []
+        for t in exclude_tags:
+            op, val = _tag_condition(t)
+            not_parts.append(op)
+            params.append(val)
+        not_clause = " OR ".join(not_parts)
+        conditions.append(
+            f"c.id NOT IN (SELECT ct.conversation_id FROM conversation_tags ct"
+            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {not_clause})"
+        )
 
     where = "WHERE " + " AND ".join(conditions)
     sql = f"""
