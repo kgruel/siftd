@@ -1,0 +1,8 @@
+{
+  "name": "strata",
+  "version": "1.0.0",
+  "description": "Search and research past conversations from CLI coding sessions",
+  "repository": "https://github.com/kaygee/strata",
+  "license": "MIT",
+  "keywords": ["conversations", "search", "research", "history", "analytics"]
+}
