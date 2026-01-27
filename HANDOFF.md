@@ -15,10 +15,14 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Provider tracking**: derived from adapter's `HARNESS_SOURCE`, populated on responses during ingestion
 - **Cache tokens**: `cache_creation_input_tokens`, `cache_read_input_tokens` extracted into `response_attributes`
 - **Cost tracking**: flat `pricing` table (model+provider → rates), approximate cost via query-time JOIN
-- **Tags**: manual tagging via CLI (`strata tag`), conversation/workspace/tool_call scopes
-  - Simplified syntax: `strata tag <id> <tag>` (defaults to conversation)
-  - `--last` flag: `strata tag --last <tag>` tags most recent conversation(s)
-  - Prefix matching for conversation IDs
+- **Tags**: full classification system with CRUD, boolean filtering, and composition with search
+  - Apply: `strata tag <id> <tag>` (defaults to conversation), `--last N` for recent conversations
+  - Remove: `strata tag --remove <id> <tag>`, composes with `--last`
+  - Manage: `strata tags --rename OLD NEW`, `strata tags --delete NAME` (with `--force` guard)
+  - Browse: `strata tags` (list with counts), `strata tags <name>` (drill-down to conversations), `--prefix` filtering
+  - Visible in output: `strata query` list/detail/verbose/JSON all show tags
+  - Prefix matching: trailing colon convention (`research:` matches `research:auth`, `research:perf`) on both conversation tags and tool tags
+  - Boolean filtering on `query` and `ask`: multiple `-l` (OR), `--all-tags` (AND), `--no-tag` (NOT)
   - Tip shown after `strata ask` results to encourage tagging workflow
 - **Shell command categorization**: 13 auto-tags (`shell:vcs`, `shell:test`, `shell:file`, etc.), 91% coverage of 25k+ commands
   - Auto-tagged at ingest time (no separate backfill needed for new data)
@@ -35,12 +39,13 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - `--embed-db PATH` for alternate embeddings databases
   - Progressive disclosure: default snippets, `-v` full chunk, `--full` complete exchange, `--context N` surrounding exchanges, `--chrono` temporal sort
   - `--thread` two-tier narrative output: top conversations expanded with role-labeled exchanges, rest as compact shortlist
+  - `-l`/`--tag` filters by conversation tag (repeatable OR, prefix matching), `--all-tags` (AND), `--no-tag` (NOT)
   - `--role user|assistant` filters by source role
   - `--first` returns chronologically earliest match above relevance threshold
   - `--conversations` aggregates per conversation (max/mean scores, ranked)
   - `--threshold SCORE` filters results below relevance score (0.7+ = on-topic, <0.6 = noise)
 - **Query command**: composable conversation browser with filters, drill-down, and multiple output formats
-  - Filters: `-w` workspace, `-m` model, `-t` tool, `-l` tag, `-s` FTS5 search, `--since`/`--before`
+  - Filters: `-w` workspace, `-m` model, `-t` tool, `-l` tag (repeatable, OR), `--all-tags` (AND), `--no-tag` (NOT), `-s` FTS5 search, `--since`/`--before`
   - Output: default (short, one-line with truncated ID), `-v` (full table), `--json`, `--stats` (summary totals)
   - Drill-down: `strata query <id>` shows conversation timeline with collapsed tool calls (e.g., `→ shell.execute ×47`)
   - IDs: 12-char prefix, copy-pasteable for drill-down
@@ -53,7 +58,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - Prefix matching on session ID (like `strata query <id>`)
   - Uses adapter `DEFAULT_LOCATIONS` to find files; mtime for "active" detection
   - Self-contained `peek/` package: `scanner.py` (discovery + metadata), `reader.py` (detail parsing)
-- **CLI**: `ingest`, `status`, `query`, `tag`, `tags`, `backfill`, `path`, `ask`, `adapters`, `copy`, `tools`, `doctor`, `peek`
+- **CLI**: `ingest`, `status`, `query`, `tag` (apply/remove), `tags` (list/drill-down/rename/delete), `backfill`, `path`, `ask`, `adapters`, `copy`, `tools`, `doctor`, `peek`
   - `strata adapters` — list discovered adapters (built-in, drop-in, entry point)
   - `strata copy adapter <name>` — copy built-in adapter to config for customization
   - `strata copy query <name>` — copy built-in query to config
@@ -65,7 +70,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - Built-in checks: `ingest-pending`, `ingest-errors`, `embeddings-stale`, `pricing-gaps`, `drop-ins-valid`
   - API: `list_checks()`, `run_checks()`, `apply_fix()` in `strata.api`
 - **Library API** (`strata.api`): Programmatic access to all CLI functionality
-  - `list_conversations()`, `get_conversation()` — conversation queries (supports `tool_tag` filter)
+  - `list_conversations()`, `get_conversation()` — conversation queries (boolean tag filters: `tags`, `all_tags`, `exclude_tags`, plus `tool_tag`)
   - `hybrid_search()`, `aggregate_by_conversation()`, `first_mention()` — semantic search
   - `get_stats()` → `DatabaseStats` — database statistics
   - `get_tool_tag_summary()`, `get_tool_tags_by_workspace()` — tool tag analytics
@@ -102,7 +107,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ### Files
 ```
-tbd-v2/
+strata/
 ├── README.md                   # Comprehensive documentation (600+ lines)
 ├── docs/
 │   ├── cli.md                  # Auto-generated CLI reference
@@ -169,7 +174,7 @@ tbd-v2/
 │   │   └── reader.py           # PeekExchange, SessionDetail, read_session_detail(), tail_session()
 │   └── storage/
 │       ├── schema.sql          # Full schema + FTS5 + pricing table
-│       ├── sqlite.py           # All DB operations, backfills, tag functions
+│       ├── sqlite.py           # All DB operations, backfills, tag CRUD (apply/remove/rename/delete)
 │       └── embeddings.py       # Embeddings DB schema + cosine similarity search
 └── tests/
     ├── fixtures/               # Minimal adapter test fixtures
@@ -184,7 +189,7 @@ tbd-v2/
 
 ### Release Status (0.1.0)
 - **Version**: 0.1.0 — first stable release for personal use
-- **Tests**: 181 passing (adapters, API, config, doctor, formatters, embeddings, ingestion, models, peek, chunker)
+- **Tests**: 183 passing (adapters, API, config, doctor, formatters, embeddings, ingestion, models, peek, chunker)
 - **Install**: `uv pip install .` or `pip install .` from repo root
 - **CLI**: `strata` available after install
 - **Pre-commit hook**: Auto-regenerates `docs/cli.md` (local-only, not versioned)
@@ -214,6 +219,8 @@ tbd-v2/
 | Attributes for variable metadata | Avoids schema sprawl for provider-specific fields |
 | Approximate cost, labeled explicitly | Flat pricing is useful now; precision deferred until billing context matters |
 | Manual tags first, auto when patterns emerge | Shell categorization justified by 25k+ calls. LLM-based classification still deferred. |
+| Flag conventions over expression syntax for boolean tags | Multiple `-l` (OR), `--all-tags` (AND), `--no-tag` (NOT). CLI-idiomatic, no parser, shell-safe. Expression language deferred unless flag approach proves insufficient. |
+| Trailing-colon prefix convention | `research:` matches `research:auth`, `research:perf`. Follows existing namespace convention naturally. Applied to both conversation tags and tool tags. |
 | `query` as primary interface | Composable flags for 80% case, `query sql` for power users (raw SQL) |
 | Short mode as default | Dense one-liners with IDs; verbose table via `-v` |
 | FTS5 via `query -s` | FTS5 composes with other filters instead of being a separate command |
@@ -248,7 +255,7 @@ tbd-v2/
 ### Retrieval pipeline (resolved)
 - **Model**: bge-small-en-v1.5 (384d), fastembed backend. bge-base (768d) was worse on this corpus.
 - **Chunking**: exchange-window (prompt+response pairs, 256-token windows). 0% truncation, 86% in model sweet spot.
-- **Hybrid retrieval**: FTS5 recall → embeddings rerank (default). FTS5 narrows candidates by vocabulary, embeddings score within candidates.
+- **Hybrid retrieval**: FTS5 recall → embeddings rerank (default). FTS5 narrows candidates by vocabulary, embeddings score within candidates. Tag filters compose with all other filters (workspace, model, date).
 - **Bench finding**: Hybrid is quality-neutral at current corpus size (~5k conversations). FTS5 always hits the 80-conversation recall limit in OR-mode. Hybrid becomes a speed optimization as corpus grows past brute-force threshold.
 
 ### Presentation metrics (bench)
@@ -303,14 +310,22 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 ## Next Session
 
+**Focus: Ergonomic progressive documentation**
+
+Design documentation for strata that teaches through progressive disclosure — from quick-start to full reference. Consider how users (both human and agent) discover and learn capabilities. The tag overhaul is a good case study: many composable features that need clear, layered docs.
+
 **Recently completed**:
 
-- **Doctor cleanup**: Ran `strata doctor`, resolved all actionable issues:
-  - Deleted stale drop-in adapter (`~/.config/strata/adapters/claude_code.py`) — exact copy of built-in with pre-rename `tbd` imports
-  - Populated pricing table: 10 entries across 3 providers (anthropic, google, openai). Only `<synthetic>` remains unpriced.
-  - Fixed `embeddings-stale` false positive: 266 conversations had 0 prompts/0 responses (opened-and-canceled sessions). Adapter now skips these at parse time; doctor check scoped to conversations with prompts.
-  - Cleaned up 266 empty conversation rows from DB (ingested_files kept tracked with NULL conversation_id)
-- **Lockfile fix**: `uv.lock` still referenced old `tbd` package from `tbd-v2/`. Regenerated via `uv lock`. Dev deps (`pytest`, `ruff`, `ty`) require `uv sync --extra dev`.
+- **Tag ergonomics overhaul** (6 merges to main):
+  - Drill-down: `strata tags <name>` shows tagged conversations, `--prefix` filters tag listing
+  - Visibility: tags shown in `strata query` list, detail, verbose, and JSON output
+  - Removal: `strata tag --remove` with `--last` support
+  - Management: `strata tags --rename OLD NEW`, `--delete NAME` with `--force` guard
+  - Boolean filtering: multiple `-l` (OR), `--all-tags` (AND), `--no-tag` (NOT) on both `query` and `ask`
+  - Prefix matching: trailing-colon convention on both conversation and tool tags
+  - Tag-scoped semantic search: `strata ask -l research:auth "query"`
+- **Doctor cleanup**: Ran `strata doctor`, resolved all actionable issues (stale drop-in, pricing gaps, empty conversations)
+- **Lockfile fix**: Regenerated `uv.lock` after rename
 
 **Potential directions**:
 
@@ -346,5 +361,5 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 ---
 
-*Updated: 2026-01-26 (doctor cleanup, pricing, empty conversation fix, lockfile fix)*
+*Updated: 2026-01-27 (tag ergonomics overhaul: drill-down, removal, rename/delete, boolean filtering, tag-scoped search)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
