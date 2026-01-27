@@ -222,12 +222,13 @@ def list_conversations(
     params.extend(tag_params)
 
     if tool_tag:
+        op, val = _tag_condition(tool_tag)
         conditions.append(
             "c.id IN (SELECT tc.conversation_id FROM tool_calls tc"
             " JOIN tool_call_tags tct ON tct.tool_call_id = tc.id"
-            " JOIN tags tg ON tg.id = tct.tag_id WHERE tg.name = ?)"
+            f" JOIN tags tg ON tg.id = tct.tag_id WHERE {op})"
         )
-        params.append(tool_tag)
+        params.append(val)
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
     order = "ASC" if oldest_first else "DESC"

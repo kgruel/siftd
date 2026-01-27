@@ -451,6 +451,17 @@ class TestListConversationsToolTag:
 
         assert len(conversations) == 1  # only conv3 matches both
 
+    def test_filter_by_tool_tag_prefix(self, test_db_with_tool_tags):
+        # Trailing colon matches all shell:* tags
+        conversations = list_conversations(db_path=test_db_with_tool_tags, tool_tag="shell:")
+
+        assert len(conversations) == 3  # all conversations have shell:* tags
+
+    def test_tool_tag_prefix_no_matches(self, test_db_with_tool_tags):
+        conversations = list_conversations(db_path=test_db_with_tool_tags, tool_tag="other:")
+
+        assert len(conversations) == 0
+
 
 class TestGetToolTagSummary:
     def test_returns_tag_counts(self, test_db_with_tool_tags):
