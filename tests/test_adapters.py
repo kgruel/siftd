@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from strata.domain.source import Source
-from strata.adapters import claude_code, codex_cli, gemini_cli
+from strata.adapters import aider, claude_code, codex_cli, gemini_cli
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -271,3 +271,145 @@ class TestGeminiCliAdapter:
         thinking_blocks = [b for b in response.content if b.block_type == "thinking"]
         assert len(thinking_blocks) == 1
         assert thinking_blocks[0].content.get("subject") == "Planning"
+
+
+class TestAiderAdapter:
+    """Tests for the Aider adapter."""
+
+    def test_can_handle_chat_history(self):
+        """Adapter handles .aider.chat.history.md files."""
+        source = Source(kind="file", location=Path("/project/.aider.chat.history.md"))
+        assert aider.can_handle(source)
+
+    def test_can_handle_rejects_other_md(self):
+        """Adapter rejects non-aider markdown files."""
+        source = Source(kind="file", location=Path("/project/README.md"))
+        assert not aider.can_handle(source)
+
+    def test_can_handle_rejects_non_file(self):
+        """Adapter rejects non-file sources."""
+        source = Source(kind="directory", location=Path("/project"))
+        assert not aider.can_handle(source)
+
+    def test_parse_yields_multiple_sessions(self):
+        """Parse yields one conversation per session header."""
+        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
+        convos = list(aider.parse(source))
+
+        assert len(convos) == 2
+
+    def test_parse_first_session_metadata(self):
+        """First session has correct metadata."""
+        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
+        conv = list(aider.parse(source))[0]
+
+        assert conv.external_id.startswith("aider::")
+        assert "2025-07-15 14:32:01" in conv.external_id
+        assert conv.started_at == "2025-07-15T14:32:01"
+        assert conv.harness.name == "aider"
+        assert conv.harness.source == "multi"
+        # workspace_path is the fixture directory
+        assert conv.workspace_path == str(FIXTURES_DIR)
+
+    def test_parse_extracts_prompts(self):
+        """Parse extracts user prompts from #### lines."""
+        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
+        conv = list(aider.parse(source))[0]
+
+        assert len(conv.prompts) == 2
+
+        # First prompt: single line
+        p0 = conv.prompts[0]
+        assert len(p0.content) == 1
+        assert "write a hello world script" in p0.content[0].content["text"]
+
+        # Second prompt: multi-line (joined from two #### lines)
+        p1 = conv.prompts[1]
+        assert "now add a greeting function" in p1.content[0].content["text"]
+        assert "that takes a name parameter" in p1.content[0].content["text"]
+
+    def test_parse_extracts_responses(self):
+        """Parse extracts assistant responses."""
+        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
+        conv = list(aider.parse(source))[0]
+
+        # First prompt should have a response
+        p0 = conv.prompts[0]
+        assert len(p0.responses) >= 1
+        resp = p0.responses[0]
+        text_blocks = [b for b in resp.content if b.block_type == "text"]
+        assert len(text_blocks) >= 1
+        assert "hello world" in text_blocks[0].content["text"].lower()
+
+    def test_parse_extracts_tool_output(self):
+        """Parse extracts tool output from > lines."""
+        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
+        conv = list(aider.parse(source))[0]
+
+        # First prompt's response chain should have tool_output blocks
+        p0 = conv.prompts[0]
+        all_blocks = []
+        for resp in p0.responses:
+            all_blocks.extend(resp.content)
+        tool_blocks = [b for b in all_blocks if b.block_type == "tool_output"]
+        assert len(tool_blocks) >= 1
+        tool_text = tool_blocks[0].content["text"]
+        assert "Applied edit to hello.py" in tool_text
+
+    def test_parse_extracts_cost_attributes(self):
+        """Parse extracts approximate cost from token/cost lines."""
+        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
+        conv = list(aider.parse(source))[0]
+
+        # Find a response with cost attributes
+        p0 = conv.prompts[0]
+        resp_with_cost = None
+        for resp in p0.responses:
+            if resp.attributes.get("approx_cost"):
+                resp_with_cost = resp
+                break
+
+        assert resp_with_cost is not None
+        assert resp_with_cost.attributes["approx_cost"] == "0.01"
+        assert resp_with_cost.attributes["approx_input_tokens"] == "2100"
+        assert resp_with_cost.attributes["approx_output_tokens"] == "256"
+
+    def test_parse_second_session(self):
+        """Second session is parsed independently."""
+        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
+        convos = list(aider.parse(source))
+        conv2 = convos[1]
+
+        assert "2025-07-15 15:10:00" in conv2.external_id
+        assert conv2.started_at == "2025-07-15T15:10:00"
+        assert len(conv2.prompts) == 1
+        assert "fix the bug in auth.py" in conv2.prompts[0].content[0].content["text"]
+
+    def test_parse_empty_file(self, tmp_path):
+        """Parse yields nothing for an empty file."""
+        empty = tmp_path / ".aider.chat.history.md"
+        empty.write_text("")
+        source = Source(kind="file", location=empty)
+        assert list(aider.parse(source)) == []
+
+    def test_parse_session_with_no_messages(self, tmp_path):
+        """Parse skips sessions that have only a header and no messages."""
+        f = tmp_path / ".aider.chat.history.md"
+        f.write_text("\n# aider chat started at 2025-01-01 00:00:00\n\n")
+        source = Source(kind="file", location=f)
+        assert list(aider.parse(source)) == []
+
+    def test_external_id_stable_across_calls(self):
+        """External IDs are deterministic for the same file."""
+        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
+        ids1 = [c.external_id for c in aider.parse(source)]
+        ids2 = [c.external_id for c in aider.parse(source)]
+        assert ids1 == ids2
+
+    def test_parse_token_count_helper(self):
+        """Token count parser handles k/m suffixes."""
+        assert aider._parse_token_count("4.5k") == 4500
+        assert aider._parse_token_count("1.2k") == 1200
+        assert aider._parse_token_count("256") == 256
+        assert aider._parse_token_count("1.5M") == 1_500_000
+        assert aider._parse_token_count("bad") is None

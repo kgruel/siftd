@@ -6,9 +6,9 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from strata.adapters import claude_code, codex_cli, gemini_cli
+from strata.adapters import aider, claude_code, codex_cli, gemini_cli
 
-# Additional adapters (cline, goose, cursor, aider) available at commit f5e3409
+# Additional adapters (cline, goose, cursor) available at commit f5e3409
 # Re-add as drop-in plugins in ~/.config/strata/adapters/ when data is available
 
 # Required module-level attributes for a valid adapter
@@ -49,7 +49,7 @@ def _validate_adapter(module: ModuleType, origin: str) -> str | None:
 
 def load_builtin_adapters() -> list:
     """Return the built-in adapter modules."""
-    return [claude_code, codex_cli, gemini_cli]
+    return [aider, claude_code, codex_cli, gemini_cli]
 
 
 def load_dropin_adapters(path: Path) -> list:
