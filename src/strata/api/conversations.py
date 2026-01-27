@@ -41,6 +41,7 @@ class ConversationSummary:
     response_count: int
     total_tokens: int
     cost: float | None
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -54,6 +55,7 @@ class ConversationDetail:
     total_input_tokens: int
     total_output_tokens: int
     exchanges: list[Exchange]
+    tags: list[str] = field(default_factory=list)
 
 
 def list_conversations(
@@ -201,6 +203,23 @@ def list_conversations(
     """
 
     rows = conn.execute(sql, params).fetchall()
+
+    # Bulk-fetch tags for returned conversations (single query, no N+1)
+    conv_ids = [row["conversation_id"] for row in rows]
+    tags_by_conv: dict[str, list[str]] = {}
+    if conv_ids:
+        placeholders = ",".join("?" for _ in conv_ids)
+        tag_rows = conn.execute(
+            f"SELECT ct.conversation_id, t.name "
+            f"FROM conversation_tags ct "
+            f"JOIN tags t ON t.id = ct.tag_id "
+            f"WHERE ct.conversation_id IN ({placeholders}) "
+            f"ORDER BY t.name",
+            conv_ids,
+        ).fetchall()
+        for tr in tag_rows:
+            tags_by_conv.setdefault(tr["conversation_id"], []).append(tr["name"])
+
     conn.close()
 
     return [
@@ -213,6 +232,7 @@ def list_conversations(
             response_count=row["responses"],
             total_tokens=row["tokens"],
             cost=row["cost"],
+            tags=tags_by_conv.get(row["conversation_id"], []),
         )
         for row in rows
     ]
@@ -385,6 +405,15 @@ def get_conversation(
                 )
             )
 
+    # Fetch tags
+    tag_rows = conn.execute(
+        "SELECT t.name FROM conversation_tags ct "
+        "JOIN tags t ON t.id = ct.tag_id "
+        "WHERE ct.conversation_id = ? ORDER BY t.name",
+        (conv_id,),
+    ).fetchall()
+    tags = [tr["name"] for tr in tag_rows]
+
     conn.close()
 
     return ConversationDetail(
@@ -395,6 +424,7 @@ def get_conversation(
         total_input_tokens=total_input,
         total_output_tokens=total_output,
         exchanges=exchanges,
+        tags=tags,
     )
 
 

@@ -601,6 +601,8 @@ def _query_detail(args) -> int:
     print(f"Started: {started}")
     print(f"Model: {detail.model or 'unknown'}")
     print(f"Tokens: {_fmt_tokens(total_tokens)} (input: {_fmt_tokens(detail.total_input_tokens)} / output: {_fmt_tokens(detail.total_output_tokens)})")
+    if detail.tags:
+        print(f"Tags: {', '.join(detail.tags)}")
     print()
 
     # Timeline
@@ -760,6 +762,7 @@ def cmd_query(args) -> int:
                 "responses": c.response_count,
                 "tokens": c.total_tokens,
                 "cost": c.cost,
+                "tags": c.tags,
             }
             for c in conversations
         ]
@@ -768,7 +771,7 @@ def cmd_query(args) -> int:
 
     # Verbose mode: full table with all columns
     if args.verbose:
-        columns = ["id", "workspace", "model", "started_at", "prompts", "responses", "tokens", "cost"]
+        columns = ["id", "workspace", "model", "started_at", "prompts", "responses", "tokens", "cost", "tags"]
         str_rows = []
         for c in conversations:
             cid = c.id[:12] if c.id else ""
@@ -779,7 +782,8 @@ def cmd_query(args) -> int:
             responses = str(c.response_count)
             tokens = str(c.total_tokens)
             cost = f"${c.cost:.4f}" if c.cost else "$0.0000"
-            str_rows.append([cid, ws, model, started, prompts, responses, tokens, cost])
+            tags = ", ".join(c.tags) if c.tags else ""
+            str_rows.append([cid, ws, model, started, prompts, responses, tokens, cost, tags])
 
         # Compute column widths and print table
         widths = [len(col) for col in columns]
@@ -801,7 +805,8 @@ def cmd_query(args) -> int:
         model = c.model or ""
         started = c.started_at[:16].replace("T", " ") if c.started_at else ""
         tokens = _fmt_tokens(c.total_tokens)
-        print(f"{cid}  {started}  {ws}  {model}  {c.prompt_count}p/{c.response_count}r  {tokens} tok")
+        tag_str = f"  [{', '.join(c.tags)}]" if c.tags else ""
+        print(f"{cid}  {started}  {ws}  {model}  {c.prompt_count}p/{c.response_count}r  {tokens} tok{tag_str}")
 
     # Stats summary (shown after list when --stats flag is set)
     if args.stats:
