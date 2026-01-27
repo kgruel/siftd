@@ -20,8 +20,8 @@ from strata.domain import (
     Harness,
     Prompt,
     Response,
+    Source,
 )
-from strata.domain.source import Source
 
 # Adapter self-description
 NAME = "aider"

@@ -1256,14 +1256,9 @@ def cmd_peek(args) -> int:
 
         # Tail mode
         if args.tail:
-            if args.json:
-                lines = tail_session(path, lines=20)
-                for line in lines:
-                    print(line)
-            else:
-                lines = tail_session(path, lines=20)
-                for line in lines:
-                    print(line)
+            lines = tail_session(path, lines=20)
+            for line in lines:
+                print(line)
             return 0
 
         # Detail mode

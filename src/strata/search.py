@@ -4,6 +4,9 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from strata.domain.tags import tag_condition as _tag_condition
+from strata.math import cosine_similarity as _cosine_sim
+
 
 @dataclass
 class SearchResult:
@@ -17,16 +20,6 @@ class SearchResult:
     started_at: str | None
     chunk_id: str | None = None
     source_ids: list[str] | None = None
-
-
-def _cosine_sim(a: list[float], b: list[float]) -> float:
-    """Cosine similarity between two vectors."""
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = sum(x * x for x in a) ** 0.5
-    norm_b = sum(x * x for x in b) ** 0.5
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
 
 
 def mmr_rerank(
@@ -249,13 +242,6 @@ def hybrid_search(
         ))
 
     return results
-
-
-def _tag_condition(tag_value: str) -> tuple[str, str]:
-    """Return (SQL operator, param) for a tag value with prefix support."""
-    if tag_value.endswith(":"):
-        return "tg.name LIKE ?", f"{tag_value}%"
-    return "tg.name = ?", tag_value
 
 
 def filter_conversations(

@@ -1,11 +1,8 @@
 """Tests for output formatters and registry."""
 
 import argparse
-import io
 import json
 import sqlite3
-import sys
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 

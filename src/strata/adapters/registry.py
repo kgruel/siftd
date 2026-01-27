@@ -8,9 +8,6 @@ from types import ModuleType
 
 from strata.adapters import aider, claude_code, codex_cli, gemini_cli
 
-# Additional adapters (cline, goose, cursor) available at commit f5e3409
-# Re-add as drop-in plugins in ~/.config/strata/adapters/ when data is available
-
 # Required module-level attributes for a valid adapter
 _REQUIRED_ATTRS = {
     "NAME": str,

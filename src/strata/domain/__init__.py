@@ -1,4 +1,4 @@
-"""Domain objects and protocols for strata."""
+"""Domain objects for strata."""
 
 from .models import (
     ContentBlock,
@@ -9,7 +9,6 @@ from .models import (
     ToolCall,
     Usage,
 )
-from .protocols import Adapter, Storage
 from .source import Source
 
 __all__ = [
@@ -23,7 +22,4 @@ __all__ = [
     "Usage",
     # Source
     "Source",
-    # Protocols
-    "Adapter",
-    "Storage",
 ]

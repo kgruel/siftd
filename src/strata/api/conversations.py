@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from strata.domain.tags import tag_condition as _tag_condition
 from strata.paths import db_path as default_db_path
 from strata.storage.sqlite import open_database
 
@@ -56,17 +57,6 @@ class ConversationDetail:
     total_output_tokens: int
     exchanges: list[Exchange]
     tags: list[str] = field(default_factory=list)
-
-
-def _tag_condition(tag_value: str) -> tuple[str, str]:
-    """Return (SQL operator, param) for a tag value.
-
-    Supports prefix matching: a trailing colon (e.g., 'research:') matches
-    all tags starting with that prefix via LIKE. Otherwise uses exact match.
-    """
-    if tag_value.endswith(":"):
-        return "tg.name LIKE ?", f"{tag_value}%"
-    return "tg.name = ?", tag_value
 
 
 def _build_tag_clauses(

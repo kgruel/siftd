@@ -15,3 +15,8 @@ class Source:
     kind: str  # "file", "sqlite", "directory"
     location: Path | str
     metadata: dict = field(default_factory=dict)
+
+    @property
+    def as_path(self) -> Path:
+        """Return location as a Path object."""
+        return Path(self.location)

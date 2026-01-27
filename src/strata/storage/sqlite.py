@@ -2,47 +2,14 @@
 
 import hashlib
 import json
-import os
 import sqlite3
-import time
 from pathlib import Path
 
 from strata.domain import Conversation
+from strata.ids import ulid as _ulid
 from strata.models import parse_model_name
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-
-# ULID generation (inline, no dependency)
-_ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-_ENCODING_LEN = len(_ENCODING)
-
-
-def _ulid() -> str:
-    """Generate a ULID (Universally Unique Lexicographically Sortable Identifier).
-
-    Format: 10 chars timestamp (48 bits, ms precision) + 16 chars randomness (80 bits)
-    Total: 26 chars, sortable by creation time, no collisions in practice.
-    """
-    # Timestamp: milliseconds since Unix epoch
-    timestamp_ms = int(time.time() * 1000)
-
-    # Encode timestamp (10 chars)
-    ts_chars = []
-    for _ in range(10):
-        ts_chars.append(_ENCODING[timestamp_ms % _ENCODING_LEN])
-        timestamp_ms //= _ENCODING_LEN
-    ts_part = "".join(reversed(ts_chars))
-
-    # Random part (16 chars, 80 bits)
-    rand_bytes = os.urandom(10)
-    rand_int = int.from_bytes(rand_bytes, "big")
-    rand_chars = []
-    for _ in range(16):
-        rand_chars.append(_ENCODING[rand_int % _ENCODING_LEN])
-        rand_int //= _ENCODING_LEN
-    rand_part = "".join(reversed(rand_chars))
-
-    return ts_part + rand_part
 
 
 def open_database(db_path: Path) -> sqlite3.Connection:
@@ -577,6 +544,11 @@ def delete_conversation(conn: sqlite3.Connection, conversation_id: str) -> None:
     Cascades to: prompts, responses, tool_calls, content blocks,
     attributes, tags, ingested_files.
     """
+    # Clean up FTS index entries for this conversation
+    conn.execute(
+        "DELETE FROM content_fts WHERE conversation_id = ?", (conversation_id,)
+    )
+
     # Delete in order to respect foreign keys (or rely on CASCADE if defined)
     # Content and attributes first
     conn.execute("""
@@ -1076,123 +1048,14 @@ def list_tags(conn: sqlite3.Connection) -> list[dict]:
 
 
 # =============================================================================
-# Shell command categorization
+# Shell command categorization (delegated to domain/shell_categories.py)
 # =============================================================================
 
-# Namespace prefix for auto-generated shell tags
-SHELL_TAG_PREFIX = "shell:"
-
-# Categories and their identifying commands/patterns
-SHELL_CATEGORIES = {
-    "test": {
-        "keywords": ["pytest", "jest", "vitest", "mocha"],
-        "patterns": [r"\bcargo\s+test\b", r"\bgo\s+test\b", r"\bnpm\s+test\b"],
-    },
-    "lint": {
-        "commands": ["ruff", "eslint", "mypy", "pylint", "flake8", "black", "isort"],
-        "patterns": [r"\buv\s+run\s+ty\b", r"\buv\s+run\s+ruff\b"],
-    },
-    "vcs": {
-        "commands": ["git", "yadm", "gh"],
-    },
-    "search": {
-        "commands": ["grep", "rg", "find", "ag"],
-        "pipe_commands": ["grep", "rg"],
-    },
-    "file": {
-        "commands": ["ls", "cat", "head", "tail", "mv", "cp", "rm", "mkdir", "tree", "wc", "nl", "touch", "chmod", "chown", "ln", "sed", "awk"],
-        "pipe_commands": ["head", "tail", "wc", "nl", "sed", "awk"],
-    },
-    "remote": {
-        "commands": ["ssh", "scp", "rsync", "curl", "wget", "ping", "dig", "nc", "netstat"],
-    },
-    "db": {
-        "commands": ["sqlite3", "sqlite-utils", "psql", "mysql"],
-        "pipe_commands": ["sqlite3"],
-    },
-    "infra": {
-        "commands": ["docker", "terraform", "ansible", "kubectl", "k9s", "helm"],
-    },
-    "ai": {
-        "commands": ["claude", "gemini", "aider", "codex"],
-    },
-    "python": {
-        "commands": ["python", "python3"],
-        "patterns": [r"\buv\s+run\s+python"],
-    },
-    "node": {
-        "commands": ["npm", "node", "yarn", "pnpm", "npx", "bun"],
-    },
-    "package": {
-        "commands": ["pip", "brew", "apt", "cargo"],
-        "patterns": [r"^uv\s+(?!run)"],  # uv but not uv run
-    },
-    "shell": {
-        "commands": ["echo", "sleep", "source", ".", "date", "which", "pwd", "env", "export",
-                     "bash", "zsh", "sh", "tmux", "screen", "open", "pbcopy", "pbpaste",
-                     "for", "while", "if", "case", "test", "["],
-    },
-}
-
-
-def categorize_shell_command(cmd: str) -> str | None:
-    """Categorize a shell command string into a category.
-
-    Returns the category name (without prefix) or None if uncategorized.
-    """
-    import re
-
-    if not cmd:
-        return None
-
-    # Normalize: strip leading "cd <path> && " pattern
-    cmd_norm = re.sub(r"^cd\s+[^&]+&&\s*", "", cmd).strip()
-    parts = cmd_norm.split()
-    first_word = parts[0] if parts else ""
-
-    # Check each category in order of specificity
-    # Test/lint first (they often use other tools like uv run)
-    for category in ["test", "lint"]:
-        spec = SHELL_CATEGORIES[category]
-
-        # Check keywords anywhere in command
-        if "keywords" in spec:
-            for kw in spec["keywords"]:
-                if kw in cmd:
-                    return category
-
-        # Check regex patterns
-        if "patterns" in spec:
-            for pattern in spec["patterns"]:
-                if re.search(pattern, cmd):
-                    return category
-
-        # Check first-word commands
-        if "commands" in spec and first_word in spec["commands"]:
-            return category
-
-    # Check remaining categories
-    for category, spec in SHELL_CATEGORIES.items():
-        if category in ("test", "lint"):
-            continue  # Already checked
-
-        # Check first-word commands
-        if "commands" in spec and first_word in spec["commands"]:
-            return category
-
-        # Check pipe commands (| cmd)
-        if "pipe_commands" in spec:
-            for pipe_cmd in spec["pipe_commands"]:
-                if re.search(rf"\|\s*{pipe_cmd}\b", cmd):
-                    return category
-
-        # Check regex patterns
-        if "patterns" in spec:
-            for pattern in spec["patterns"]:
-                if re.search(pattern, cmd):
-                    return category
-
-    return None
+from strata.domain.shell_categories import (  # noqa: E402
+    SHELL_CATEGORIES,
+    SHELL_TAG_PREFIX,
+    categorize_shell_command,
+)
 
 
 def tag_shell_command(
@@ -1244,8 +1107,6 @@ def backfill_shell_tags(conn: sqlite3.Connection) -> dict[str, int]:
 
     Returns dict of category -> count of newly tagged calls.
     """
-    import json
-
     # Get shell.execute tool id
     cur = conn.execute("SELECT id FROM tools WHERE name = 'shell.execute'")
     row = cur.fetchone()
@@ -1309,13 +1170,11 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
 
     Returns count of attributes inserted.
     """
-    from pathlib import Path
-
-    from strata.adapters import claude_code
+    from strata.adapters._jsonl import load_jsonl
 
     # Find all ingested claude_code files
     harness_row = conn.execute(
-        "SELECT id FROM harnesses WHERE name = ?", (claude_code.NAME,)
+        "SELECT id FROM harnesses WHERE name = ?", ("claude_code",)
     ).fetchone()
     if not harness_row:
         return 0
@@ -1334,7 +1193,7 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
             continue
 
         # Re-read the raw JSONL to extract cache tokens
-        records = claude_code._load_jsonl(file_path)
+        records = load_jsonl(file_path)
 
         # Match responses by external_id
         for record in records:
@@ -1352,7 +1211,7 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
                 continue
 
             # Find the response in DB
-            response_external_id = f"{claude_code.NAME}::{external_msg_id}"
+            response_external_id = f"claude_code::{external_msg_id}"
             row = conn.execute(
                 "SELECT id FROM responses WHERE conversation_id = ? AND external_id = ?",
                 (conversation_id, response_external_id)

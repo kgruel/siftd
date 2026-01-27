@@ -6,18 +6,18 @@ No storage coupling.
 
 import json
 from collections.abc import Iterable
-from datetime import datetime
 from pathlib import Path
 
+from strata.adapters._jsonl import load_jsonl, now_iso
 from strata.domain import (
     ContentBlock,
     Conversation,
     Harness,
     Prompt,
     Response,
+    Source,
     ToolCall,
 )
-from strata.domain.source import Source
 
 # Adapter self-description
 NAME = "codex_cli"
@@ -64,7 +64,7 @@ def can_handle(source: Source) -> bool:
 def parse(source: Source) -> Iterable[Conversation]:
     """Parse a Codex CLI JSONL file and yield Conversation objects."""
     path = Path(source.location)
-    records = _load_jsonl(path)
+    records = load_jsonl(path)
     if not records:
         return
 
@@ -112,7 +112,7 @@ def parse(source: Source) -> Iterable[Conversation]:
     conversation = Conversation(
         external_id=external_id,
         harness=harness,
-        started_at=started_at or _now(),
+        started_at=started_at or now_iso(),
         ended_at=ended_at,
         workspace_path=session_cwd,
     )
@@ -130,7 +130,7 @@ def parse(source: Source) -> Iterable[Conversation]:
 
         payload = record.get("payload", {})
         item_type = payload.get("type")
-        timestamp = record.get("timestamp", _now())
+        timestamp = record.get("timestamp", now_iso())
 
         if item_type == "message":
             role = payload.get("role")
@@ -192,7 +192,6 @@ def parse(source: Source) -> Iterable[Conversation]:
             tool_name = payload.get("name", "unknown")
             input_data = payload.get("input", "")
             call_id = payload.get("call_id")
-            payload.get("status", "pending")
 
             response = _get_or_create_response(current_prompt, timestamp, model)
 
@@ -235,16 +234,6 @@ def parse(source: Source) -> Iterable[Conversation]:
     yield conversation
 
 
-def _load_jsonl(path: Path) -> list[dict]:
-    """Load JSONL file."""
-    records = []
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                records.append(json.loads(line))
-    return records
-
-
 def _parse_block(block) -> ContentBlock:
     """Parse content block into a ContentBlock domain object."""
     if isinstance(block, str):
@@ -276,8 +265,3 @@ def _get_or_create_response(
     if current_prompt is not None:
         current_prompt.responses.append(response)
     return response
-
-
-def _now() -> str:
-    """ISO timestamp for now."""
-    return datetime.now().isoformat()

@@ -2,7 +2,7 @@
 -- Joins responses → models → pricing to compute token costs.
 -- Results are APPROXIMATE: assumes flat per-token pricing, no cache discount.
 --
--- Usage: tbd queries cost --var limit=50
+-- Usage: strata query sql cost --var limit=50
 
 SELECT
     w.path AS workspace,

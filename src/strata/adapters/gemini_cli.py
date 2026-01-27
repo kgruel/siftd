@@ -9,16 +9,17 @@ import json
 from collections.abc import Iterable
 from pathlib import Path
 
+from strata.adapters._jsonl import now_iso
 from strata.domain import (
     ContentBlock,
     Conversation,
     Harness,
     Prompt,
     Response,
+    Source,
     ToolCall,
     Usage,
 )
-from strata.domain.source import Source
 
 # Adapter self-description
 NAME = "gemini_cli"
@@ -97,7 +98,7 @@ def parse(source: Source) -> Iterable[Conversation]:
     conversation = Conversation(
         external_id=external_id,
         harness=harness,
-        started_at=start_time or "",
+        started_at=start_time or now_iso(),
         ended_at=last_updated,
         workspace_path=workspace_path,
     )

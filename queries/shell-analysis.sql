@@ -2,7 +2,7 @@
 -- Breaks down tagged shell commands by tool and action.
 -- Used to evaluate whether hierarchical tags would add value.
 --
--- Usage: tbd query sql shell-analysis
+-- Usage: strata query sql shell-analysis
 
 -- 1. Tag distribution
 SELECT
@@ -90,8 +90,8 @@ ORDER BY count DESC;
 -- 5. Test tool breakdown
 SELECT
     CASE
-        WHEN tc.input LIKE '%pytest%' THEN 'pytest'
         WHEN tc.input LIKE '%uv run pytest%' THEN 'pytest'
+        WHEN tc.input LIKE '%pytest%' THEN 'pytest'
         ELSE 'other'
     END AS tool,
     COUNT(*) AS count

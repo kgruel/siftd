@@ -6,19 +6,19 @@ No storage coupling.
 
 import json
 from collections.abc import Iterable
-from datetime import datetime
 from pathlib import Path
 
+from strata.adapters._jsonl import load_jsonl, now_iso, parse_block
 from strata.domain import (
     ContentBlock,
     Conversation,
     Harness,
     Prompt,
     Response,
+    Source,
     ToolCall,
     Usage,
 )
-from strata.domain.source import Source
 
 # Adapter self-description
 NAME = "claude_code"
@@ -77,7 +77,7 @@ def parse(source: Source) -> Iterable[Conversation]:
     supports multiple for generality.
     """
     path = Path(source.location)
-    records = _load_jsonl(path)
+    records = load_jsonl(path)
     if not records:
         return
 
@@ -118,7 +118,7 @@ def parse(source: Source) -> Iterable[Conversation]:
     conversation = Conversation(
         external_id=external_id,
         harness=harness,
-        started_at=started_at or _now(),
+        started_at=started_at or now_iso(),
         ended_at=ended_at,
         workspace_path=session_cwd,
     )
@@ -136,7 +136,7 @@ def parse(source: Source) -> Iterable[Conversation]:
 
         message_data = record.get("message") or {}
         role = message_data.get("role") or record_type
-        timestamp = record.get("timestamp", _now())
+        timestamp = record.get("timestamp", now_iso())
         external_msg_id = record.get("uuid")
         content_blocks = _normalize_content(message_data.get("content"))
 
@@ -177,7 +177,7 @@ def parse(source: Source) -> Iterable[Conversation]:
 
                 # Parse content blocks
                 for block in content_blocks:
-                    content_block = _parse_block(block)
+                    content_block = parse_block(block)
                     current_prompt.content.append(content_block)
 
                 conversation.prompts.append(current_prompt)
@@ -209,7 +209,7 @@ def parse(source: Source) -> Iterable[Conversation]:
 
             # Parse content blocks and track tool uses
             for block in content_blocks:
-                content_block = _parse_block(block)
+                content_block = parse_block(block)
                 response.content.append(content_block)
 
                 # Track tool_use for later matching with tool_result
@@ -243,16 +243,6 @@ def parse(source: Source) -> Iterable[Conversation]:
     yield conversation
 
 
-def _load_jsonl(path: Path) -> list[dict]:
-    """Load JSONL file."""
-    records = []
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                records.append(json.loads(line))
-    return records
-
-
 def _normalize_content(content) -> list:
     """Normalize content to a list of blocks.
 
@@ -268,16 +258,3 @@ def _normalize_content(content) -> list:
     if isinstance(content, list):
         return content
     return []
-
-
-def _parse_block(block) -> ContentBlock:
-    """Parse content block into a ContentBlock domain object."""
-    if isinstance(block, str):
-        return ContentBlock(block_type="text", content={"text": block})
-    block_type = block.get("type", "unknown")
-    return ContentBlock(block_type=block_type, content=block)
-
-
-def _now() -> str:
-    """ISO timestamp for now."""
-    return datetime.now().isoformat()

@@ -1,14 +1,14 @@
 """Discovery: find sources across all adapters."""
 
+from __future__ import annotations
+
 from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING
 
 from strata.domain import Source
 
-# Adapter modules have NAME, DEDUP_STRATEGY, parse(), discover(), can_handle()
-# as module-level attributes. Using Any since Python doesn't have a clean type
-# for "module with specific attributes".
-AdapterModule = Any
+if TYPE_CHECKING:
+    from strata.ingestion import AdapterModule
 
 
 def discover_all(adapters: list[AdapterModule]) -> Iterable[tuple[Source, AdapterModule]]:

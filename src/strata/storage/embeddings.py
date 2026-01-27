@@ -5,34 +5,13 @@ that can be rebuilt from the main DB at any time.
 """
 
 import json
-import os
 import sqlite3
 import struct
 import time
 from pathlib import Path
 
-# ULID generation (same as sqlite.py, inline to avoid circular imports)
-_ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-_ENCODING_LEN = len(_ENCODING)
-
-
-def _ulid() -> str:
-    timestamp_ms = int(time.time() * 1000)
-    ts_chars = []
-    for _ in range(10):
-        ts_chars.append(_ENCODING[timestamp_ms % _ENCODING_LEN])
-        timestamp_ms //= _ENCODING_LEN
-    ts_part = "".join(reversed(ts_chars))
-
-    rand_bytes = os.urandom(10)
-    rand_int = int.from_bytes(rand_bytes, "big")
-    rand_chars = []
-    for _ in range(16):
-        rand_chars.append(_ENCODING[rand_int % _ENCODING_LEN])
-        rand_int //= _ENCODING_LEN
-    rand_part = "".join(reversed(rand_chars))
-
-    return ts_part + rand_part
+from strata.ids import ulid as _ulid
+from strata.math import cosine_similarity as _cosine_similarity
 
 
 def open_embeddings_db(db_path: Path) -> sqlite3.Connection:
@@ -213,13 +192,3 @@ def _decode_embedding(blob: bytes) -> list[float]:
     """Decode packed float32 blob to list of floats."""
     n = len(blob) // 4
     return list(struct.unpack(f"{n}f", blob))
-
-
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Compute cosine similarity between two vectors."""
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = sum(x * x for x in a) ** 0.5
-    norm_b = sum(x * x for x in b) ** 0.5
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)

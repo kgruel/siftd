@@ -1,10 +1,11 @@
 """Orchestration: coordinate ingestion pipeline."""
 
+from __future__ import annotations
+
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from strata.domain import Source
 from strata.storage.sqlite import (
@@ -23,9 +24,8 @@ from strata.storage.sqlite import (
 
 from .discovery import discover_all
 
-# Adapter modules have NAME, DEDUP_STRATEGY, parse(), etc. as module-level attributes.
-# Using Any since Python doesn't have a clean type for "module with specific attributes".
-AdapterModule = Any
+if TYPE_CHECKING:
+    from strata.ingestion import AdapterModule
 
 
 @dataclass
@@ -118,7 +118,7 @@ def ingest_all(
                 existing_info = get_ingested_file_info(conn, file_path)
                 if existing_info:
                     # Compare hash to detect changes
-                    location = Path(source.location) if not isinstance(source.location, Path) else source.location
+                    location = source.as_path
                     current_hash = compute_file_hash(location)
 
                     if current_hash == existing_info["file_hash"]:
@@ -181,7 +181,7 @@ def ingest_all(
                             conv_id = store_conversation(conn, conversation)
 
                             # Record file ingestion
-                            location = Path(source.location) if not isinstance(source.location, Path) else source.location
+                            location = source.as_path
                             file_hash = compute_file_hash(location)
                             record_ingested_file(conn, file_path, file_hash, conv_id)
 
@@ -198,7 +198,7 @@ def ingest_all(
                             # Existing is newer or same, skip
                             # Record file so it's tracked (not shown as pending)
                             if not get_ingested_file_info(conn, file_path):
-                                location = Path(source.location) if not isinstance(source.location, Path) else source.location
+                                location = source.as_path
                                 file_hash = compute_file_hash(location)
                                 record_ingested_file(conn, file_path, file_hash, existing["id"])
                                 conn.commit()
@@ -209,7 +209,7 @@ def ingest_all(
                         # New conversation
                         conv_id = store_conversation(conn, conversation)
 
-                        location = Path(source.location) if not isinstance(source.location, Path) else source.location
+                        location = source.as_path
                         file_hash = compute_file_hash(location)
                         record_ingested_file(conn, file_path, file_hash, conv_id)
 
@@ -238,7 +238,7 @@ def ingest_all(
                         h_id = get_or_create_harness(conn, conv.harness.name, **harness_kwargs)
                         existing = find_conversation_by_external_id(conn, h_id, conv.external_id)
                         if existing and not get_ingested_file_info(conn, file_path):
-                            location = Path(source.location) if not isinstance(source.location, Path) else source.location
+                            location = source.as_path
                             fh = compute_file_hash(location)
                             record_ingested_file(conn, file_path, fh, existing["id"])
                             conn.commit()
@@ -273,7 +273,7 @@ def _record_file_error(
     try:
         if get_ingested_file_info(conn, file_path):
             return  # Already recorded from a previous run
-        location = Path(source.location) if not isinstance(source.location, Path) else source.location
+        location = source.as_path
         file_hash = compute_file_hash(location)
         harness_kwargs = {}
         if hasattr(adapter, "HARNESS_SOURCE"):
@@ -297,7 +297,7 @@ def _ingest_file(
 ) -> None:
     """Ingest a single file (file-based dedup strategy)."""
     harness_name = adapter.NAME
-    location = Path(source.location) if not isinstance(source.location, Path) else source.location
+    location = source.as_path
     file_hash = compute_file_hash(location)
 
     conversations = list(adapter.parse(source))
