@@ -1,5 +1,5 @@
 """Log adapters for strata."""
 
-from . import claude_code, codex_cli, gemini_cli
+from . import aider, claude_code, codex_cli, gemini_cli
 
-__all__ = ["claude_code", "codex_cli", "gemini_cli"]
+__all__ = ["aider", "claude_code", "codex_cli", "gemini_cli"]

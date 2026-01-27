@@ -61,7 +61,7 @@ def load_dropin_adapters(path: Path) -> list:
     for py_file in sorted(path.glob("*.py")):
         if py_file.name.startswith("_"):
             continue
-        module_name = f"tbd_dropin_adapter_{py_file.stem}"
+        module_name = f"strata_dropin_adapter_{py_file.stem}"
         try:
             spec = importlib.util.spec_from_file_location(module_name, py_file)
             if spec is None or spec.loader is None:

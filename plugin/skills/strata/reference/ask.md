@@ -146,6 +146,23 @@ strata ask --recall 200 "error"
 ```
 Widens the candidate pool from FTS5 before embeddings rerank. Increase for broad/common terms.
 
+## Diversity tuning
+
+MMR (Maximal Marginal Relevance) reranking is on by default. It suppresses same-conversation duplicates and promotes cross-conversation diversity.
+
+**`--lambda FLOAT`** — tune relevance vs diversity balance (default 0.7):
+```bash
+strata ask --lambda 0.9 "error handling"    # more relevance, less diversity
+strata ask --lambda 0.5 "error handling"    # more diversity, less relevance
+```
+1.0 = pure relevance (no diversity penalty). 0.0 = pure diversity (ignore relevance).
+
+**`--no-diversity`** — disable MMR, use pure relevance ranking:
+```bash
+strata ask --no-diversity "error handling"
+```
+Equivalent to `--lambda 1.0`. Use when you want the highest-scoring chunks regardless of redundancy.
+
 ## Other options
 
 **`--no-exclude-active`** — include results from currently active sessions:

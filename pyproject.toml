@@ -12,7 +12,7 @@ dependencies = [
     "onnxruntime",
     "tokenizers",
     "huggingface-hub",
-    "semantic-text-splitter",
+
     "httpx",
     "tqdm",
     "pyyaml",

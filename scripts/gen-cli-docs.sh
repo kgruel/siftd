@@ -6,25 +6,25 @@ OUTPUT="${1:-docs/cli.md}"
 mkdir -p "$(dirname "$OUTPUT")"
 
 {
-    echo "# tbd CLI Reference"
+    echo "# strata CLI Reference"
     echo ""
     echo "_Auto-generated from \`--help\` output._"
     echo ""
     echo "## Main"
     echo ""
     echo '```'
-    tbd --help
+    strata --help
     echo '```'
 
     # Get subcommands from help output
-    subcommands=$(tbd --help | grep -A20 'positional arguments:' | grep '^\s\s\s\s[a-z]' | awk '{print $1}')
+    subcommands=$(strata --help | grep -A20 'positional arguments:' | grep '^\s\s\s\s[a-z]' | awk '{print $1}')
 
     for cmd in $subcommands; do
         echo ""
         echo "## $cmd"
         echo ""
         echo '```'
-        tbd "$cmd" --help
+        strata "$cmd" --help
         echo '```'
     done
 } > "$OUTPUT"

@@ -1,17 +1,17 @@
-# tbd CLI Reference
+# strata CLI Reference
 
 _Auto-generated from `--help` output._
 
 ## Main
 
 ```
-usage: tbd [-h] [--db PATH]
-           {ingest,status,ask,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor} ...
+usage: strata [-h] [--db PATH]
+              {ingest,status,ask,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek} ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {ingest,status,ask,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor}
+  {ingest,status,ask,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek}
     ingest              Ingest logs from all sources
     status              Show database statistics
     ask                 Semantic search over conversations
@@ -25,17 +25,18 @@ positional arguments:
     adapters            List discovered adapters
     copy                Copy built-in resources for customization
     doctor              Run health checks and maintenance
+    peek                Inspect live sessions from disk (bypasses SQLite)
 
 options:
   -h, --help            show this help message and exit
   --db PATH             Database path (default:
-                        /Users/kaygee/.local/share/tbd/tbd.db)
+                        /Users/kaygee/.local/share/strata/strata.db)
 ```
 
 ## ingest
 
 ```
-usage: tbd ingest [-h] [-v] [-p DIR]
+usage: strata ingest [-h] [-v] [-p DIR]
 
 options:
   -h, --help      show this help message and exit
@@ -46,7 +47,7 @@ options:
 ## status
 
 ```
-usage: tbd status [-h]
+usage: strata status [-h]
 
 options:
   -h, --help  show this help message and exit
@@ -55,13 +56,14 @@ options:
 ## ask
 
 ```
-usage: tbd ask [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
-               [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE] [--index]
-               [--rebuild] [--backend NAME] [--embed-db PATH] [--thread]
-               [--embeddings-only] [--recall N] [--role {user,assistant}]
-               [--first] [--conversations] [--refs [FILES]]
-               [--threshold SCORE] [--json] [--format NAME]
-               [query ...]
+usage: strata ask [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
+                  [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
+                  [--index] [--rebuild] [--backend NAME] [--embed-db PATH]
+                  [--thread] [--embeddings-only] [--recall N]
+                  [--role {user,assistant}] [--first] [--conversations]
+                  [--refs [FILES]] [--threshold SCORE] [--json]
+                  [--format NAME] [--no-exclude-active]
+                  [query ...]
 
 positional arguments:
   query                 Natural language search query
@@ -97,29 +99,44 @@ options:
   --threshold SCORE     Filter results below this relevance score (e.g., 0.7)
   --json                Output as structured JSON
   --format NAME         Use named formatter (built-in or drop-in plugin)
+  --no-exclude-active   Include results from active sessions (excluded by
+                        default)
 
 examples:
-  tbd ask "chunking"                 # hybrid: FTS5 recall → embeddings rerank
-  tbd ask -v "chunking"              # full chunk text
-  tbd ask --full "chunking"          # complete exchange from DB
-  tbd ask --context 3 "chunking"     # ±3 exchanges around match
-  tbd ask --chrono "chunking"        # sort by time instead of score
-  tbd ask --embeddings-only "chunking"  # skip FTS5, pure embeddings
-  tbd ask --thread "chunking"         # narrative thread: top convos + shortlist
-  tbd ask --recall 200 "error"       # widen FTS5 candidate pool
-  tbd ask -w myproject "architecture"   # FTS5 + workspace filter
-  tbd ask --role user "chunking"     # only search user prompts
-  tbd ask --first "error handling"   # earliest mention above threshold
-  tbd ask --conversations "testing"  # rank conversations, not chunks
-  tbd ask --refs "authelia"          # show file ref annotations + content dump
-  tbd ask --refs HANDOFF.md "setup"  # content dump filtered to specific file
-  tbd ask --threshold 0.7 "error"    # only results with score >= 0.7
+  # search
+  strata ask "error handling"                        # basic semantic search
+  strata ask -w myproject "auth flow"                # filter by workspace
+  strata ask --since 2024-06 "testing"               # filter by date
+
+  # refine
+  strata ask "design decision" --thread              # narrative: top conversations expanded
+  strata ask "why we chose X" --context 2            # ±2 surrounding exchanges
+  strata ask "testing approach" --role user           # just your prompts, not responses
+  strata ask "event sourcing" --conversations        # rank whole conversations, not chunks
+  strata ask "when first discussed Y" --first        # earliest match above threshold
+  strata ask --threshold 0.7 "architecture"          # only high-relevance results
+
+  # inspect
+  strata ask -v "chunking"                           # full chunk text
+  strata ask --full "chunking"                       # complete prompt+response exchange
+  strata ask --refs "authelia"                       # file references + content
+  strata ask --refs HANDOFF.md "setup"               # filter refs to specific file
+
+  # save useful results for future retrieval
+  strata tag 01HX... research:auth                   # bookmark a conversation
+  strata tag --last research:architecture            # tag most recent conversation
+  strata query -l research:auth                      # retrieve tagged conversations
+
+  # tuning
+  strata ask --embeddings-only "chunking"            # skip FTS5, pure embeddings
+  strata ask --recall 200 "error"                    # widen FTS5 candidate pool
+  strata ask --chrono "chunking"                     # sort by time instead of score
 ```
 
 ## tag
 
 ```
-usage: tbd tag [-h] [-n N] [positional ...]
+usage: strata tag [-h] [-n N] [positional ...]
 
 positional arguments:
   positional    [entity_type] entity_id tag
@@ -129,17 +146,17 @@ options:
   -n, --last N  Tag N most recent conversations
 
 examples:
-  tbd tag 01HX... important       # tag conversation (default)
-  tbd tag --last important        # tag most recent conversation
-  tbd tag --last 3 review         # tag 3 most recent conversations
-  tbd tag workspace 01HY... proj  # explicit entity type
-  tbd tag tool_call 01HZ... slow  # tag a tool call
+  strata tag 01HX... important       # tag conversation (default)
+  strata tag --last important        # tag most recent conversation
+  strata tag --last 3 review         # tag 3 most recent conversations
+  strata tag workspace 01HY... proj  # explicit entity type
+  strata tag tool_call 01HZ... slow  # tag a tool call
 ```
 
 ## tags
 
 ```
-usage: tbd tags [-h]
+usage: strata tags [-h]
 
 options:
   -h, --help  show this help message and exit
@@ -148,7 +165,7 @@ options:
 ## tools
 
 ```
-usage: tbd tools [-h] [--by-workspace] [--prefix PREFIX] [-n LIMIT]
+usage: strata tools [-h] [--by-workspace] [--prefix PREFIX] [-n LIMIT]
 
 options:
   -h, --help         show this help message and exit
@@ -157,19 +174,19 @@ options:
   -n, --limit LIMIT  Max workspaces for --by-workspace (default: 20)
 
 examples:
-  tbd tools                    # shell command categories summary
-  tbd tools --by-workspace     # breakdown by workspace
-  tbd tools --prefix shell:    # filter by tag prefix
+  strata tools                    # shell command categories summary
+  strata tools --by-workspace     # breakdown by workspace
+  strata tools --prefix shell:    # filter by tag prefix
 ```
 
 ## query
 
 ```
-usage: tbd query [-h] [-v] [-n COUNT] [--latest] [--oldest] [-w SUBSTR]
-                 [-m NAME] [--since DATE] [--before DATE] [-s QUERY] [-t NAME]
-                 [-l NAME] [--tool-tag NAME] [--json] [--stats]
-                 [--var KEY=VALUE]
-                 [conversation_id] [sql_name]
+usage: strata query [-h] [-v] [-n COUNT] [--latest] [--oldest] [-w SUBSTR]
+                    [-m NAME] [--since DATE] [--before DATE] [-s QUERY]
+                    [-t NAME] [-l NAME] [--tool-tag NAME] [--json] [--stats]
+                    [--var KEY=VALUE]
+                    [conversation_id] [sql_name]
 
 positional arguments:
   conversation_id       Conversation ID for detail view, or 'sql' for SQL
@@ -198,21 +215,21 @@ options:
                         subcommand)
 
 examples:
-  tbd query                         # list recent conversations
-  tbd query -w myproject            # filter by workspace
-  tbd query -s "error handling"     # FTS5 search
-  tbd query --tool-tag shell:test   # conversations with test commands
-  tbd query -w proj --tool-tag shell:vcs  # combine filters
-  tbd query <id>                    # show conversation detail
-  tbd query sql                     # list available .sql files
-  tbd query sql cost                # run the 'cost' query
-  tbd query sql cost --var ws=proj  # run with variable substitution
+  strata query                         # list recent conversations
+  strata query -w myproject            # filter by workspace
+  strata query -s "error handling"     # FTS5 search
+  strata query --tool-tag shell:test   # conversations with test commands
+  strata query -w proj --tool-tag shell:vcs  # combine filters
+  strata query <id>                    # show conversation detail
+  strata query sql                     # list available .sql files
+  strata query sql cost                # run the 'cost' query
+  strata query sql cost --var ws=proj  # run with variable substitution
 ```
 
 ## backfill
 
 ```
-usage: tbd backfill [-h] [--shell-tags]
+usage: strata backfill [-h] [--shell-tags]
 
 options:
   -h, --help    show this help message and exit
@@ -222,7 +239,7 @@ options:
 ## path
 
 ```
-usage: tbd path [-h]
+usage: strata path [-h]
 
 options:
   -h, --help  show this help message and exit
@@ -231,7 +248,7 @@ options:
 ## config
 
 ```
-usage: tbd config [-h] [{get,set,path}] [key] [value]
+usage: strata config [-h] [{get,set,path}] [key] [value]
 
 positional arguments:
   {get,set,path}  Action to perform
@@ -242,16 +259,16 @@ options:
   -h, --help      show this help message and exit
 
 examples:
-  tbd config                        # show all config
-  tbd config path                   # show config file path
-  tbd config get ask.formatter      # get specific value
-  tbd config set ask.formatter verbose  # set value
+  strata config                        # show all config
+  strata config path                   # show config file path
+  strata config get ask.formatter      # get specific value
+  strata config set ask.formatter verbose  # set value
 ```
 
 ## adapters
 
 ```
-usage: tbd adapters [-h]
+usage: strata adapters [-h]
 
 options:
   -h, --help  show this help message and exit
@@ -260,7 +277,7 @@ options:
 ## copy
 
 ```
-usage: tbd copy [-h] [--all] [--force] {adapter,query} [name]
+usage: strata copy [-h] [--all] [--force] {adapter,query} [name]
 
 positional arguments:
   {adapter,query}  Resource type to copy
@@ -272,15 +289,15 @@ options:
   --force          Overwrite existing files
 
 examples:
-  tbd copy adapter claude_code    # copy adapter to ~/.config/tbd/adapters/
-  tbd copy adapter --all          # copy all built-in adapters
-  tbd copy query cost             # copy query to ~/.config/tbd/queries/
+  strata copy adapter claude_code    # copy adapter to ~/.config/strata/adapters/
+  strata copy adapter --all          # copy all built-in adapters
+  strata copy query cost             # copy query to ~/.config/strata/queries/
 ```
 
 ## doctor
 
 ```
-usage: tbd doctor [-h] [subcommand]
+usage: strata doctor [-h] [subcommand]
 
 positional arguments:
   subcommand  'checks' to list, 'fixes' to show fixes, or check name
@@ -289,8 +306,35 @@ options:
   -h, --help  show this help message and exit
 
 examples:
-  tbd doctor                    # run all checks
-  tbd doctor checks             # list available checks
-  tbd doctor fixes              # show fix commands for issues
-  tbd doctor ingest-pending     # run specific check
+  strata doctor                    # run all checks
+  strata doctor checks             # list available checks
+  strata doctor fixes              # show fix commands for issues
+  strata doctor ingest-pending     # run specific check
+```
+
+## peek
+
+```
+usage: strata peek [-h] [-w SUBSTR] [--all] [--last N] [--tail] [--json]
+                   [session_id]
+
+positional arguments:
+  session_id            Session ID prefix for detail view
+
+options:
+  -h, --help            show this help message and exit
+  -w, --workspace SUBSTR
+                        Filter by workspace name substring
+  --all                 Include inactive sessions (not just last 2 hours)
+  --last N              Number of exchanges to show (default: 5)
+  --tail                Raw JSONL tail (last 20 lines)
+  --json                Output as structured JSON
+
+examples:
+  strata peek                    # list active sessions (last 2 hours)
+  strata peek --all              # list all sessions
+  strata peek -w myproject        # filter by workspace name
+  strata peek c520f862           # detail view for session
+  strata peek c520 --last 10     # show last 10 exchanges
+  strata peek c520 --tail        # raw JSONL tail
 ```

@@ -348,7 +348,7 @@ class DropInsValidCheck:
             if py_file.name.startswith("_"):
                 continue
 
-            module_name = f"tbd_doctor_check_adapter_{py_file.stem}"
+            module_name = f"strata_doctor_check_adapter_{py_file.stem}"
             try:
                 spec = importlib.util.spec_from_file_location(module_name, py_file)
                 if spec is None or spec.loader is None:
@@ -420,7 +420,7 @@ class DropInsValidCheck:
             if py_file.name.startswith("_"):
                 continue
 
-            module_name = f"tbd_doctor_check_formatter_{py_file.stem}"
+            module_name = f"strata_doctor_check_formatter_{py_file.stem}"
             try:
                 spec = importlib.util.spec_from_file_location(module_name, py_file)
                 if spec is None or spec.loader is None:

@@ -1,118 +1,73 @@
 # strata
 
-Personal analytics for LLM coding sessions. Ingests conversation logs from Claude Code, Gemini CLI, and Codex CLI into SQLite. Query with full-text search, semantic search, or raw SQL.
+Every conversation you have with an LLM coding tool — Claude Code, Gemini CLI, Codex, Aider — produces a log file. Those files contain decisions you made, approaches you tried, problems you solved. When the session ends, that knowledge disappears into a directory you'll never open.
 
-## Quick Start
+strata makes it searchable.
+
+## Install
 
 ```bash
-# Install from source
 uv pip install .
+```
 
-# Ingest logs from default locations
+## Getting started
+
+strata reads the log files your tools already write. Point it at them and it builds a local SQLite database:
+
+```bash
 strata ingest
+```
 
-# See what you have
+It automatically discovers logs from Claude Code, Gemini CLI, Codex CLI, and Aider in their default locations. Run it again anytime — it only processes new or changed files.
+
+See what you have:
+
+```bash
 strata status
 ```
 
 ```
-Database: /Users/you/.local/share/strata/strata.db
-Size: 42.3 MB
-
---- Counts ---
-  Conversations: 847
-  Prompts: 12,493
-  Responses: 14,271
-  Tool calls: 89,432
-  Harnesses: 2
-  Workspaces: 31
-  Tools: 14
-  Models: 8
-  Ingested files: 1,203
-
---- Harnesses ---
-  claude_code (anthropic, jsonl)
-  gemini_cli (google, json_array)
-
---- Models ---
-  claude-sonnet-4-20250514
-  claude-3-5-sonnet-20241022
-  gemini-2.0-flash
+Conversations: 847
+Prompts: 12,493
+Responses: 14,271
+Tool calls: 89,432
+Workspaces: 31
+Models: 8
 ```
 
+Those 847 conversations are now queryable.
+
+## Browsing conversations
+
+`strata query` is a composable conversation browser. On its own, it lists recent conversations:
+
 ```bash
-# List recent conversations
 strata query
 ```
 
 ```
-01JGK3M2P4Q5  2025-01-15 14:23  tbd-v2        claude-sonnet-4    8p/12r  45.2k tok
-01JGK2N1R3S4  2025-01-15 11:07  myproject     claude-sonnet-4    3p/5r   12.1k tok
+01JGK3M2P4Q5  2025-01-15 14:23  myproject     claude-sonnet-4    8p/12r  45.2k tok
+01JGK2N1R3S4  2025-01-15 11:07  webapp        claude-sonnet-4    3p/5r   12.1k tok
 01JGK1P0T2U3  2025-01-14 22:41  dotfiles      gemini-2.0-flash   2p/3r   4.3k tok
 ```
 
-## Commands
-
-### Ingest
+Filters narrow the view. You can combine any of them:
 
 ```bash
-strata ingest                    # Scan default locations
-strata ingest -p ~/custom/logs   # Add custom path
-strata ingest -v                 # Verbose (show skipped files)
+strata query -w myproject                              # by workspace
+strata query -m opus --since 2025-01-01                # by model and date
+strata query -s "error handling"                       # full-text search
+strata query -t shell.execute                          # by tool usage
 ```
 
-Default locations:
-- Claude Code: `~/.claude/projects/`
-- Gemini CLI: `~/.gemini/`
-- Codex CLI: `~/.codex/`
-
-### Query conversations
+Drill into a conversation by passing its ID (prefix match works):
 
 ```bash
-# List recent conversations
-strata query
-
-# Filter by workspace
-strata query -w myproject
-
-# Filter by model
-strata query -m sonnet
-
-# Filter by date
-strata query --since 2025-01-01
-
-# Full-text search (FTS5)
-strata query -s "error handling"
-
-# Filter by tool usage
-strata query -t shell.execute
-
-# Filter by tag
-strata query -l important
-
-# Combine filters
-strata query -w myproject -m opus --since 2025-01-01
-
-# Show more results
-strata query -n 50
-
-# Show all columns
-strata query -v
-
-# Output as JSON
-strata query --json
-```
-
-### Conversation detail
-
-```bash
-# View a conversation timeline (prefix match on ID)
 strata query 01JGK3
 ```
 
 ```
-Conversation: 01JGK3M2P4Q5R6S7T8U9V0W1X2Y3
-Workspace: tbd-v2
+Workspace: myproject
 Started: 2025-01-15 14:23
 Model: claude-sonnet-4
 Tokens: 45.2k (input: 38.1k / output: 7.1k)
@@ -122,477 +77,151 @@ Tokens: 45.2k (input: 38.1k / output: 7.1k)
 
 [response] 14:23 (2.1k in / 0.8k out)
   I'll help you add semantic search. Let me first understand...
-  → file.read (success)
-  → file.read (success)
-  → search.grep (success)
+  → file.read ×2, search.grep ×1
 
 [prompt] 14:25
   Use fastembed for local embeddings
 
 [response] 14:25 (8.4k in / 1.2k out)
   I'll integrate fastembed for local embedding generation...
-  → file.edit ×3 (success)
-  → shell.execute (success)
+  → file.edit ×3, shell.execute ×1
 ```
 
-### Semantic search
+This is useful when you know roughly what you're looking for. But conversations pile up fast — after a few hundred, browsing and keyword search aren't enough. You need semantic search.
 
-Semantic search uses a two-stage hybrid approach:
+## Searching across conversations
 
-1. **FTS5 recall**: Fast keyword search narrows candidates to ~80 conversations
-2. **Embeddings rerank**: Dense vectors rerank chunks by semantic similarity
-
-This gives you keyword precision with semantic understanding.
+`strata ask` finds conversations by meaning, not just keywords. First, build the embeddings index:
 
 ```bash
-# Build the embeddings index (first time)
 strata ask --index
 ```
 
-```
-Embedding 3,847 new chunks...
-  64/3847
-  128/3847
-  ...
-Done. Index has 3,847 chunks (fastembed, dim=384).
-```
+This chunks your conversations into prompt+response pairs, embeds them locally (no API calls), and stores the vectors. Run it again after ingesting new data.
+
+Now search:
 
 ```bash
-# Search
-strata ask "how did I implement caching"
+strata ask "how did I handle token refresh"
 ```
 
 ```
-Results for: how did I implement caching
+01JGK3M2P4Q5  0.847  [RESPONSE]  2025-01-15  myproject
+  The token refresh uses a sliding window — store the refresh token in...
 
-  01JGK3M2P4Q5  0.847  [RESPONSE]  2025-01-15  tbd-v2
-    I'll add a simple LRU cache using functools. The cache key will be...
-
-  01JGH2N1R3S4  0.812  [PROMPT  ]  2025-01-12  myproject
-    Can you add caching to the API calls? They're too slow right now.
+01JFXN2R1K4M  0.812  [PROMPT  ]  2024-10-03  auth-service
+  Can you add automatic token refresh? The current flow requires...
 ```
+
+That second result is from three months ago, in a different project. strata found it because the meaning matched, even though the words were different.
+
+### Focusing the search
+
+The workspace filter (`-w`) is the single most impactful way to narrow results:
 
 ```bash
-# Search with filters
 strata ask -w myproject "authentication flow"
-strata ask -m opus "error handling"
+```
+
+You can also filter by model, date range, or role:
+
+```bash
 strata ask --since 2025-01-01 "database schema"
-
-# Output modes
-strata ask -v "caching"              # Full chunk text
-strata ask --full "caching"          # Complete exchange from DB
-strata ask --context 3 "caching"     # ±3 exchanges around match
-strata ask --thread "caching"        # Narrative view: expanded top + shortlist
-strata ask --conversations "caching" # Rank conversations, not chunks
-strata ask --first "when did I add"  # Earliest match above threshold
-
-# Filter by role
-strata ask --role user "caching"     # Only user prompts
-strata ask --role assistant "caching" # Only assistant responses
-
-# Tune retrieval
-strata ask --recall 200 "error"      # Widen FTS5 candidate pool
-strata ask --embeddings-only "error" # Skip FTS5, pure embeddings
-strata ask --threshold 0.7 "error"   # Only results with score >= 0.7
-
-# File references
-strata ask --refs "authelia"         # Show file annotations + content dump
+strata ask --role user "what should we do about"     # just your prompts
+strata ask --role assistant "recommended approach"    # just LLM responses
 ```
 
-#### Embedding backends
+### Reading results in context
 
-strata supports multiple embedding backends:
-
-- **fastembed** (default): Local, no API key needed. Uses `BAAI/bge-small-en-v1.5`.
-- **ollama**: Local, requires ollama running. Uses `nomic-embed-text`.
+Default output shows snippets. When you find something relevant, you'll want more context:
 
 ```bash
-strata ask --index --backend fastembed
-strata ask --index --backend ollama
+strata ask --thread "why we chose JWT"
 ```
 
-#### Benchmarking retrieval
-
-The `bench/` directory contains tools for evaluating retrieval quality:
+`--thread` is the best mode for research — it expands the top conversations with full exchange timelines and lists the rest as a compact shortlist. Other modes:
 
 ```bash
-# Build test corpora with different chunking strategies
-python bench/build.py
-
-# Run benchmark against gold-standard queries
-python bench/run.py
-
-# View results
-python bench/view.py
+strata ask --context 3 "token refresh"     # ±3 exchanges around the match
+strata ask --full "schema migration"       # complete prompt+response exchange
+strata ask --chrono "state management"     # sorted by time, not relevance
+strata ask --first "event sourcing"        # earliest mention above threshold
 ```
 
-Use this to compare chunking strategies, embedding models, and hybrid vs pure-embeddings approaches.
+## Preserving what you find
 
-### Tags
+Search gets you to the right conversation. Tags let you keep it:
 
 ```bash
-# Apply a tag to a conversation
-strata tag conversation 01JGK3M2P4Q5... important
-
-# Apply a tag to a workspace
-strata tag workspace 01JGH... work
-
-# Apply a tag to a tool call
-strata tag tool_call 01JGK... slow
-
-# List all tags with counts
-strata tags
+strata tag 01JGK3 research:auth
 ```
 
-```
-  important - (3 conversations)
-  work - (12 workspaces)
-  slow - (7 tool_calls)
-```
-
-### SQL queries
-
-User-defined queries live in `~/.config/strata/queries/*.sql`. Variables use `$name` syntax.
+Now you can retrieve tagged conversations directly:
 
 ```bash
-# List available queries
-strata query sql
+strata query -l research:auth
+strata ask -l research:auth "token expiry"
 ```
 
-```
-cost  (vars: limit)
-```
+Tags support prefix matching — `research:` matches `research:auth`, `research:perf`, and anything else in that namespace. Boolean filtering composes naturally:
 
 ```bash
-# Run a query
+strata query -l research:auth -l research:security    # either tag (OR)
+strata query --all-tags research:auth --all-tags review # both tags (AND)
+strata query --no-tag archived                          # exclude a tag
+```
+
+The workflow is: **search → find → tag → retrieve later**. Tags are how you build a curated layer on top of raw conversation data.
+
+## What else
+
+**Live sessions** — inspect active sessions without waiting for ingestion:
+
+```bash
+strata peek                          # list active sessions
+strata peek c520 --last 10           # detail view
+```
+
+**Health checks** — diagnose issues:
+
+```bash
+strata doctor
+```
+
+**Raw SQL** — write your own queries:
+
+```bash
 strata query sql cost --var limit=20
 ```
 
-```
-workspace              model            provider   input_tokens  output_tokens  approx_cost_usd
----------------------  ---------------  ---------  ------------  -------------  ---------------
-/Users/me/Code/tbd-v2  claude-sonnet-4  anthropic  2847293       412847         $0.4821
-/Users/me/Code/other   claude-sonnet-4  anthropic  1293847       98472          $0.1923
-```
-
-#### Example queries
-
-**Daily token usage** (`~/.config/strata/queries/daily.sql`):
-```sql
-SELECT
-    date(c.started_at) AS day,
-    COUNT(DISTINCT c.id) AS conversations,
-    SUM(r.input_tokens) AS input_tok,
-    SUM(r.output_tokens) AS output_tok
-FROM conversations c
-JOIN responses r ON r.conversation_id = c.id
-WHERE c.started_at >= date('now', '-30 days')
-GROUP BY day
-ORDER BY day DESC
-```
-
-**Tool usage by workspace** (`~/.config/strata/queries/tools-by-workspace.sql`):
-```sql
-SELECT
-    w.path AS workspace,
-    t.name AS tool,
-    COUNT(*) AS calls,
-    SUM(CASE WHEN tc.status = 'error' THEN 1 ELSE 0 END) AS errors
-FROM tool_calls tc
-JOIN tools t ON t.id = tc.tool_id
-JOIN conversations c ON c.id = tc.conversation_id
-JOIN workspaces w ON w.id = c.workspace_id
-WHERE w.path LIKE '%$workspace%'
-GROUP BY w.path, t.name
-ORDER BY calls DESC
-```
-
-**Model comparison** (`~/.config/strata/queries/model-comparison.sql`):
-```sql
-SELECT
-    m.name AS model,
-    COUNT(DISTINCT c.id) AS conversations,
-    AVG(r.input_tokens) AS avg_input,
-    AVG(r.output_tokens) AS avg_output,
-    AVG(r.output_tokens * 1.0 / NULLIF(r.input_tokens, 0)) AS output_ratio
-FROM responses r
-JOIN models m ON m.id = r.model_id
-JOIN conversations c ON c.id = r.conversation_id
-GROUP BY m.name
-ORDER BY conversations DESC
-```
-
-**Long conversations** (`~/.config/strata/queries/long-conversations.sql`):
-```sql
-SELECT
-    c.id,
-    w.path AS workspace,
-    COUNT(p.id) AS prompts,
-    SUM(r.input_tokens + r.output_tokens) AS total_tokens
-FROM conversations c
-JOIN workspaces w ON w.id = c.workspace_id
-JOIN prompts p ON p.conversation_id = c.id
-JOIN responses r ON r.conversation_id = c.id
-GROUP BY c.id
-HAVING total_tokens > 100000
-ORDER BY total_tokens DESC
-LIMIT $limit
-```
-
-## Library API
-
-For programmatic access:
+**Library API** — use strata from Python:
 
 ```python
-from strata import (
-    # Conversations
-    list_conversations,         # List with filters
-    get_conversation,           # Full detail by ID (prefix match)
-    ConversationSummary,
-    ConversationDetail,
-    Exchange,
-
-    # Search
-    hybrid_search,              # FTS5 + embeddings semantic search
-    aggregate_by_conversation,  # Group chunks by conversation
-    first_mention,              # Earliest match above threshold
-    build_index,                # Build/rebuild embeddings index
-    SearchResult,
-    ConversationScore,
-
-    # Stats
-    get_stats,                  # Database statistics
-    DatabaseStats,
-
-    # Query files
-    list_query_files,           # List user-defined SQL queries
-    run_query_file,             # Execute SQL query with variables
-    QueryFile,
-    QueryResult,
-
-    # Tags
-    list_tags,
-    apply_tag,
-    get_or_create_tag,
-)
+from strata import list_conversations, hybrid_search, get_stats
 ```
 
-### List and filter conversations
-
-```python
-# Recent conversations
-convs = list_conversations(limit=10)
-
-# Filter by workspace, model, date
-convs = list_conversations(
-    workspace="myproject",
-    model="sonnet",
-    since="2025-01-01",
-    limit=50,
-)
-
-# Full-text search
-convs = list_conversations(search="error handling")
-
-# Filter by tool usage
-convs = list_conversations(tool="shell.execute")
-
-for c in convs:
-    print(f"{c.id[:12]}  {c.started_at[:10]}  {c.workspace_path}  {c.total_tokens} tok")
-```
-
-### Get conversation detail
-
-```python
-# Prefix match on ID
-conv = get_conversation("01JGK3")
-
-print(f"Workspace: {conv.workspace_path}")
-print(f"Model: {conv.model}")
-print(f"Tokens: {conv.total_input_tokens + conv.total_output_tokens}")
-
-for ex in conv.exchanges:
-    print(f"[{ex.timestamp}] {ex.prompt_text[:80]}")
-    print(f"  → {len(ex.tool_calls)} tool calls")
-    print(f"  → {ex.response_text[:80]}")
-```
-
-### Semantic search
-
-```python
-# Hybrid search (FTS5 recall → embeddings rerank)
-results = hybrid_search(
-    "authentication flow",
-    workspace="myproject",
-    limit=10,
-)
-
-for r in results:
-    print(f"{r.score:.3f}  {r.workspace_path}  {r.text[:100]}")
-
-# Aggregate by conversation (rank conversations, not chunks)
-conv_scores = aggregate_by_conversation(results)
-for cs in conv_scores:
-    print(f"{cs.conversation_id[:12]}  max={cs.max_score:.3f}  chunks={cs.chunk_count}")
-
-# Find earliest mention above threshold
-earliest = first_mention(results, threshold=0.7)
-if earliest:
-    print(f"First mentioned: {earliest.started_at}")
-```
-
-### Build embeddings index
-
-```python
-# Incremental update
-stats = build_index()
-print(f"Indexed {stats['chunks_added']} new chunks")
-
-# Full rebuild
-stats = build_index(rebuild=True)
-```
-
-### Database stats
-
-```python
-stats = get_stats()
-print(f"Conversations: {stats.counts.conversations}")
-print(f"Prompts: {stats.counts.prompts}")
-print(f"Responses: {stats.counts.responses}")
-print(f"Tool calls: {stats.counts.tool_calls}")
-print(f"Models: {stats.models}")
-```
-
-### SQL query files
-
-```python
-# List available queries
-for qf in list_query_files():
-    print(f"{qf.name}  vars: {qf.variables}")
-
-# Run a query with variables
-result = run_query_file("cost", variables={"limit": "20"})
-for row in result.rows:
-    print(row)
-```
-
-### Tags
-
-```python
-# List all tags
-for tag in list_tags():
-    print(f"{tag['name']}: {tag['conversation_count']} conversations")
-
-# Apply a tag
-tag_id = get_or_create_tag(conn, "important")
-apply_tag(conn, "conversation", "01JGK3...", tag_id)
-```
-
-## Data Model
+**Custom adapters** — add support for other tools:
 
 ```
-conversations
-  └── prompts (user messages)
-        └── responses (assistant messages)
-              └── tool_calls
+~/.config/strata/adapters/my_tool.py
 ```
 
-### Core tables
-
-| Table | Purpose |
-|-------|---------|
-| `conversations` | Session-level: workspace, timestamps |
-| `prompts` | User input with content blocks |
-| `responses` | Assistant output with token usage |
-| `tool_calls` | Tool invocations with input/result/status |
-| `prompt_content` | Ordered content blocks in prompts |
-| `response_content` | Ordered content blocks in responses |
-
-### Vocabulary tables
-
-| Table | Purpose |
-|-------|---------|
-| `harnesses` | CLI tools (claude_code, gemini_cli, codex_cli) |
-| `models` | Parsed model names with family/version/variant |
-| `providers` | API providers (anthropic, google, openrouter) |
-| `tools` | Canonical tool names (file.read, shell.execute) |
-| `tool_aliases` | Raw → canonical tool name mapping per harness |
-| `workspaces` | Project directories |
-| `pricing` | Token pricing for cost approximation |
-
-### Extension tables
-
-| Table | Purpose |
-|-------|---------|
-| `tags` | User-defined labels |
-| `conversation_tags` | Tag → conversation associations |
-| `workspace_tags` | Tag → workspace associations |
-| `tool_call_tags` | Tag → tool_call associations |
-| `*_attributes` | Key-value metadata (per entity type) |
-
-### Search tables
-
-| Table | Purpose |
-|-------|---------|
-| `content_fts` | FTS5 full-text index over content |
-| `chunks` (embeddings DB) | Dense vector index for semantic search |
-
-## Paths
+**Claude Code plugin** — agent DX with hooks and a bundled skill:
 
 ```bash
-strata path
+claude --plugin-dir plugin/
 ```
 
-```
-Data directory:   /Users/you/.local/share/strata
-Config directory: /Users/you/.config/strata
-Cache directory:  /Users/you/.cache/strata
-Database:         /Users/you/.local/share/strata/strata.db
-```
+## Going deeper
 
-- **Data**: `~/.local/share/strata/` — database, embeddings
-- **Config**: `~/.config/strata/` — queries, adapters
-- **Queries**: `~/.config/strata/queries/*.sql`
-- **Adapters**: `~/.config/strata/adapters/*.py`
-
-## Adapters
-
-Built-in adapters: Claude Code, Gemini CLI, Codex CLI.
-
-### Drop-in adapters
-
-Add custom adapters to `~/.config/strata/adapters/`:
-
-```
-~/.config/strata/adapters/
-└── my_tool.py
-```
-
-Each adapter module must define:
-
-```python
-NAME = "my_tool"
-DEFAULT_LOCATIONS = ["~/.my_tool/logs"]
-DEDUP_STRATEGY = "file"           # "file" or "session"
-HARNESS_SOURCE = "openai"         # provider name
-HARNESS_LOG_FORMAT = "jsonl"      # or "json_array"
-
-TOOL_ALIASES = {
-    "RawToolName": "canonical.name",
-}
-
-def discover() -> Iterable[Source]:
-    """Yield Source objects for all log files."""
-
-def can_handle(source: Source) -> bool:
-    """Return True if this adapter can parse the source."""
-
-def parse(source: Source) -> Iterable[Conversation]:
-    """Parse source into Conversation domain objects."""
-```
-
-A drop-in adapter with the same `NAME` as a built-in will override it.
-
-Adapters are validated at load time — missing required attributes will raise an error.
-
-See `src/strata/adapters/claude_code.py` for a complete example.
+| Topic | Doc |
+|-------|-----|
+| All CLI commands and flags | [docs/cli.md](docs/cli.md) |
+| Configuration | [docs/config.md](docs/config.md) |
+| Search pipeline, diversity tuning, benchmarking | [docs/search.md](docs/search.md) |
+| Tag system and conventions | [docs/tags.md](docs/tags.md) |
+| Library API reference | [docs/api.md](docs/api.md) |
+| Data model and schema | [docs/data-model.md](docs/data-model.md) |
+| Writing custom adapters | [docs/adapters.md](docs/adapters.md) |
+| SQL queries and examples | [docs/queries.md](docs/queries.md) |
+| Claude Code plugin | [docs/plugin.md](docs/plugin.md) |
