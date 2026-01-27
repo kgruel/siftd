@@ -32,7 +32,8 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **FTS5**: full-text search on prompt+response text content
 - **Semantic search**: `strata ask` — embeddings in separate SQLite DB, fastembed backend, incremental indexing
   - Uses exchange-window chunking (token-aware, prompt+response pairs as atomic units)
-  - Hybrid retrieval: FTS5 recall → embeddings rerank (default mode)
+  - Hybrid retrieval: FTS5 recall → embeddings rerank → **MMR diversity reranking** (default pipeline)
+  - **MMR (Maximal Marginal Relevance)**: conversation-level penalty suppresses same-conversation duplicates, standard cosine penalty for cross-conversation diversity. λ=0.7 default, tunable via `--lambda`. Disable with `--no-diversity`.
   - Real token counts from fastembed tokenizer stored per chunk
   - Strategy metadata recorded in embeddings DB
   - Explicit `--index`/`--rebuild` required (no auto-build)
@@ -84,6 +85,11 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - `--format NAME` for explicit formatter selection
   - Drop-in plugins: `~/.config/strata/formatters/*.py` + `strata.formatters` entry points
   - `select_formatter(args)` dispatch based on CLI flags
+- **Claude Code plugin** (`plugin/`): Agent DX layer for strata
+  - Hooks: session-start (remind after compaction), skill-reminder (detect "strata" mentions), skill-required (detect raw `strata` commands)
+  - Bundled skill: `plugin/skills/strata/SKILL.md` — progressive disclosure (core → output → filtering → preserving)
+  - Reference docs: `plugin/skills/strata/reference/` — full feature set for `ask`, `query`, and `tags`
+  - Install: `claude --plugin-dir plugin/` (dev) or via marketplace (global)
 - **XDG paths**: data `~/.local/share/strata`, config `~/.config/strata`, queries `~/.config/strata/queries`, adapters `~/.config/strata/adapters`, formatters `~/.config/strata/formatters`
 
 ### Benchmarking framework (`bench/`)
@@ -91,12 +97,14 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Chunker**: `src/embeddings/chunker.py` — shared module with `chunk_text()` and `extract_exchange_window_chunks()`, used by both production `strata ask` and bench
 - **Strategies**: `bench/strategies/*.json` — `"strategy": "exchange-window"` (token-aware windowing) or legacy per-block
 - **Build**: `bench/build.py --strategy <file>` — builds embeddings DB per strategy. Supports `--sample N` (conversation subset) and `--dry-run` (stats without embedding).
-- **Runner**: `bench/run.py --strategy <file> <embed_db>...` — runs 25 queries, stores full chunk text + token counts in results
+- **Runner**: `bench/run.py --strategy <file> <embed_db>...` — runs 50 queries, stores full chunk text + token counts in results
   - Presentation metrics: conversation diversity, temporal span, chrono degradation, cluster density
+  - **Diversity metrics**: conversation redundancy, unique workspace count, pairwise similarity, cross-query overlap (Jaccard for broad-then-narrow pairs)
   - Retrieval dimensions: `--hybrid`, `--role user|assistant`, first-mention timestamps, conversation-level aggregation
+  - **Reranking modes**: `--rerank mmr|relevance` for A/B comparison, `--lambda` for MMR tuning
   - All metrics emitted in structured JSON alongside score-based measures
-- **Viewer**: `bench/view.py <run.json> [--html]` — stdout summary or self-contained HTML report with score-coded cards, opens in browser
-- **Queries**: `bench/queries.json` — 25 queries across 5 groups (conceptual, philosophical, technical, specific, exploratory)
+- **Viewer**: `bench/view.py <run.json> [--html]` — stdout summary or self-contained HTML report with score-coded cards, opens in browser. Displays diversity metrics alongside retrieval scores.
+- **Queries**: `bench/queries.json` — 50 queries across 10 groups (conceptual, philosophical, technical, specific, exploratory, cross-workspace, broad-then-narrow, temporal-trace, tagged-subset, research-workflow)
 
 ### Data (current ingestion)
 - 5,656+ conversations, 165k responses, 89k tool calls across 303 workspaces
@@ -109,6 +117,22 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 ```
 strata/
 ├── README.md                   # Comprehensive documentation (600+ lines)
+├── plugin/
+│   ├── .claude-plugin/
+│   │   └── plugin.json         # Plugin metadata
+│   ├── hooks/
+│   │   └── hooks.json          # Event hook definitions
+│   ├── scripts/
+│   │   ├── session-start.sh    # Remind about strata after compaction/resume
+│   │   ├── skill-reminder.sh   # Detect "strata" mentions in prompts
+│   │   └── skill-required.sh   # Detect raw strata commands in Bash
+│   └── skills/
+│       └── strata/
+│           ├── SKILL.md        # Progressive disclosure skill (core → output → filter → preserve)
+│           └── reference/
+│               ├── ask.md      # Full strata ask reference
+│               ├── query.md    # Full strata query reference
+│               └── tags.md     # Full tag management reference
 ├── docs/
 │   ├── cli.md                  # Auto-generated CLI reference
 │   └── config.md               # Configuration file documentation
@@ -129,7 +153,7 @@ strata/
 │   ├── cli.py                  # Argparse + thin command handlers (dispatcher only)
 │   ├── paths.py                # XDG directory handling
 │   ├── models.py               # Model name parser
-│   ├── search.py               # Hybrid search orchestration
+│   ├── search.py               # Hybrid search orchestration + MMR diversity reranking
 │   ├── domain/
 │   │   ├── models.py           # Dataclasses (Conversation, Prompt, Response, etc.)
 │   │   ├── protocols.py        # Adapter/Storage protocols
@@ -232,6 +256,8 @@ strata/
 | Two-tier output (`--thread`) | Top 3-4 conversations (above-mean clusters) as narrative, rest as shortlist. Partition matches bench finding of 3.5 strong clusters per query. |
 | Retrieval vs synthesis boundary | strata owns deterministic structured retrieval (no LLM cost). Narrative synthesis is a consumer, not a feature. Manual-first principle applies. |
 | Presentation metrics in bench | Diversity, temporal span, chrono degradation, cluster density alongside retrieval scores. Measures output shape, not just retrieval quality. |
+| MMR as default reranking | Conversation-level penalty (1.0 for same-conv, cosine sim for cross-conv). λ=0.7 balances relevance and diversity. FTS5 pre-filtering regresses diversity; MMR fixes that and exceeds pure similarity on every diversity metric. |
+| Plugin over skill for agent DX | Hooks (session-start, prompt-submit, post-tool-use) provide active nudges. Skill bundled inside plugin for single-source distribution. |
 | "Tag" over "label" | Shorter, fits tool vibe. Renamed before extending to tool_calls. |
 | Shell tags via tool_call_tags | Same join-table pattern as conversation/workspace tags. Namespaced `shell:*` to separate auto from manual. |
 | CLI as thin dispatcher | Business logic in `strata.api`, presentation in `strata.output`. CLI is ~500 lines of argparse + routing. |
@@ -256,18 +282,23 @@ strata/
 ### Retrieval pipeline (resolved)
 - **Model**: bge-small-en-v1.5 (384d), fastembed backend. bge-base (768d) was worse on this corpus.
 - **Chunking**: exchange-window (prompt+response pairs, 256-token windows). 0% truncation, 86% in model sweet spot.
-- **Hybrid retrieval**: FTS5 recall → embeddings rerank (default). FTS5 narrows candidates by vocabulary, embeddings score within candidates. Tag filters compose with all other filters (workspace, model, date).
-- **Bench finding**: Hybrid is quality-neutral at current corpus size (~5k conversations). FTS5 always hits the 80-conversation recall limit in OR-mode. Hybrid becomes a speed optimization as corpus grows past brute-force threshold.
+- **Hybrid retrieval**: FTS5 recall → embeddings rerank → **MMR diversity reranking** (default pipeline). FTS5 narrows candidates by vocabulary, embeddings score within candidates, MMR selects for diversity. Tag filters compose with all other filters.
+- **MMR**: conversation-level penalty (λ=0.7). Fetches 3x candidates, greedily selects for relevance + diversity. Trades ~0.024 avg score for +20% unique conversations, +35% unique workspaces, -29% redundancy.
+- **Bench finding**: FTS5 pre-filtering without MMR regresses diversity (candidate pool narrows). MMR fixes that regression and exceeds pure similarity on every diversity metric. Hybrid+MMR is the best configuration.
 
-### Presentation metrics (bench)
-Measured on full corpus with exchange-window-256:
+### Bench comparison: search strategy evolution
+Three-way comparison on full corpus (50 queries, 10 groups):
 
-| Metric | Value | Interpretation |
-|--------|-------|----------------|
-| Unique Conversations | 7.7/10 | Results scatter across many conversations (not clustering) |
-| Temporal Span | 18.0 days | Meaningful chronological spread — real arc across results |
-| Chrono Degradation | 0.031 | Small cost to prefer timeline over best-score-first |
-| Clusters Above Mean | 3.5 | ~half the conversations are "strong" hits (narrative backbone) |
+| Metric | Pure Similarity | Hybrid FTS5+Rerank | Hybrid+MMR (default) |
+|--------|----------------|-------------------|----------------------|
+| Avg Score | 0.7319 | 0.7218 | 0.7082 |
+| Conv Redundancy | 0.1460 | 0.2040 | **0.1040** |
+| Unique Conversations | 8.3 | 6.9 | **9.9** |
+| Unique Workspaces | 4.9 | 4.3 | **6.6** |
+| Temporal Span (days) | 24.4 | 22.7 | **34.1** |
+| Topic Clusters | 3.8 | 3.4 | **4.7** |
+
+**Key findings**: MMR trades ~0.024 avg score for substantially better diversity across every metric. FTS5 pre-filtering without MMR actually regresses diversity (narrows candidate pool). MMR fixes that regression and exceeds pure similarity. All scores remain above 0.70 threshold.
 
 ### User feedback (archaeological research task)
 From using `strata ask` to reconstruct intellectual history across ~12 workspaces, ~2 months, hundreds of conversations (`experiments/docs/tbd-feedback.md`):
@@ -311,28 +342,30 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 ## Next Session
 
-**Focus: Ergonomic progressive documentation**
+**Recently completed (this session)**:
 
-Design documentation for strata that teaches through progressive disclosure — from quick-start to full reference. Consider how users (both human and agent) discover and learn capabilities. The tag overhaul is a good case study: many composable features that need clear, layered docs.
-
-**Recently completed**:
-
-- **Tag ergonomics overhaul** (6 merges to main):
-  - Drill-down: `strata tags <name>` shows tagged conversations, `--prefix` filters tag listing
-  - Visibility: tags shown in `strata query` list, detail, verbose, and JSON output
-  - Removal: `strata tag --remove` with `--last` support
-  - Management: `strata tags --rename OLD NEW`, `--delete NAME` with `--force` guard
-  - Boolean filtering: multiple `-l` (OR), `--all-tags` (AND), `--no-tag` (NOT) on both `query` and `ask`
-  - Prefix matching: trailing-colon convention on both conversation and tool tags
-  - Tag-scoped semantic search: `strata ask -l research:auth "query"`
-- **Doctor cleanup**: Ran `strata doctor`, resolved all actionable issues (stale drop-in, pricing gaps, empty conversations)
-- **Lockfile fix**: Regenerated `uv.lock` after rename
+- **Claude Code plugin** (`plugin/`): hooks + bundled skill + reference docs
+  - Three hooks: session-start (compaction/resume), skill-reminder (detect "strata" mentions), skill-required (detect raw commands)
+  - SKILL.md redesigned for progressive disclosure: core → output → filtering → preserving. Behavioral combinations inline, reference files for full feature set.
+  - Reference docs: `ask.md`, `query.md`, `tags.md` — every flag with examples
+  - Motivated by STRATA_FEEDBACK finding: agents never discovered tagging, `--thread`, or workspace filtering from the old skill
+- **MMR diversity reranking** — new default search strategy
+  - Two-tier conversation-level penalty: 1.0 for same-conversation (hard suppress), cosine sim for cross-conversation
+  - λ=0.7 default, `--lambda` tunable, `--no-diversity` opt-out for pure relevance
+  - Bench validates: +20% unique conversations, +35% unique workspaces, -29% redundancy, +40% temporal span
+  - FTS5 pre-filtering regresses diversity; MMR fixes that and exceeds pure similarity on every diversity metric
+- **Bench update**: 50 queries across 10 groups (5 new: cross-workspace, broad-then-narrow, temporal-trace, tagged-subset, research-workflow)
+  - Diversity metrics: conversation redundancy, unique workspace count, pairwise similarity, cross-query overlap
+  - `--rerank mmr|relevance` for A/B comparison
+  - Three-way bench run: pure similarity vs hybrid FTS5 vs hybrid+MMR
+- **Prior session**: Tag ergonomics overhaul (boolean filtering, rename/delete, prefix matching), doctor cleanup, aider adapter
 
 **Potential directions**:
 
-- **`strata` skill for agents**: Teach agents strata usage via a Claude Code skill (slash command or auto-invoked). Progressive disclosure of search → refine → save workflow. Complements help epilog with in-context guidance.
+- **Plugin installation**: Set up global install via marketplace (currently dev-mode `--plugin-dir` only)
+- **Pairwise similarity in bench**: Currently N/A — embeddings stripped before diversity metrics compute. Minor fix to retain embeddings through the metrics pass.
+- **Session-aware dedup**: MMR handles intra-query diversity. Cross-query dedup (across sequential queries in a research session) is partially addressed by removing skill fork mode, but no automated mechanism yet.
 - **Drop-in checks**: `~/.config/strata/checks/*.py` for user-defined health checks. Pattern exists, add when needed.
-- **`strata copy formatter`**: Copy built-in formatter to config for customization. Lower priority — config solves the common case.
 
 **Lower priority**:
 
@@ -351,7 +384,7 @@ Design documentation for strata that teaches through progressive disclosure — 
 | `strata enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
 | Billing context | Deferred | API vs subscription per workspace. Needed for precise cost, not approximate. |
 | Provenance marking | Deferred | Tag ingested conversations containing `strata ask` tool calls as `strata:derivative`, down-weight in search. Detectable from shell.execute tool call data. Deferred — active session exclusion may be sufficient. |
-| Re-add adapters | When needed | Cline/Goose/Cursor/Aider at commit `f5e3409`. Plugin system supports drop-in. |
+| Re-add adapters | Partially done | Cline and Aider re-added as built-in. Goose/Cursor still available at commit `f5e3409` if needed. |
 
 ---
 
@@ -362,5 +395,5 @@ Design documentation for strata that teaches through progressive disclosure — 
 
 ---
 
-*Updated: 2026-01-27 (tag ergonomics overhaul: drill-down, removal, rename/delete, boolean filtering, tag-scoped search)*
+*Updated: 2026-01-27 (MMR diversity reranking, Claude Code plugin with bundled skill + reference docs, bench update with 50 queries and diversity metrics)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
