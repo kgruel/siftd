@@ -12,10 +12,12 @@ from strata.storage.sqlite import (
     backfill_response_attributes,
     backfill_shell_tags,
     create_database,
+    delete_tag,
     get_or_create_tag,
     list_tags,
     open_database,
     remove_tag,
+    rename_tag,
 )
 
 
@@ -501,7 +503,7 @@ def cmd_tag(args) -> int:
 
 
 def cmd_tags(args) -> int:
-    """List all tags."""
+    """List, rename, or delete tags."""
     db = Path(args.db) if args.db else db_path()
 
     if not db.exists():
@@ -510,6 +512,70 @@ def cmd_tags(args) -> int:
         return 1
 
     conn = open_database(db)
+
+    # Handle --rename OLD NEW
+    if args.rename:
+        old_name, new_name = args.rename
+        try:
+            if rename_tag(conn, old_name, new_name, commit=True):
+                print(f"Renamed '{old_name}' \u2192 '{new_name}'")
+            else:
+                print(f"Tag not found: {old_name}")
+                conn.close()
+                return 1
+        except ValueError as e:
+            print(f"Error: {e}")
+            conn.close()
+            return 1
+        conn.close()
+        return 0
+
+    # Handle --delete NAME
+    if args.delete:
+        tag_name = args.delete
+
+        # Check associations first
+        tags = list_tags(conn)
+        tag_info = next((t for t in tags if t["name"] == tag_name), None)
+        if not tag_info:
+            print(f"Tag not found: {tag_name}")
+            conn.close()
+            return 1
+
+        total_associations = (
+            tag_info["conversation_count"]
+            + tag_info["workspace_count"]
+            + tag_info["tool_call_count"]
+        )
+
+        if total_associations > 0 and not args.force:
+            parts = []
+            if tag_info["conversation_count"]:
+                parts.append(f"{tag_info['conversation_count']} conversations")
+            if tag_info["workspace_count"]:
+                parts.append(f"{tag_info['workspace_count']} workspaces")
+            if tag_info["tool_call_count"]:
+                parts.append(f"{tag_info['tool_call_count']} tool_calls")
+            print(f"Tag '{tag_name}' is applied to {', '.join(parts)}. Use --force to delete.")
+            conn.close()
+            return 1
+
+        removed = delete_tag(conn, tag_name, commit=True)
+        parts = []
+        if tag_info["conversation_count"]:
+            parts.append(f"{tag_info['conversation_count']} conversations")
+        if tag_info["workspace_count"]:
+            parts.append(f"{tag_info['workspace_count']} workspaces")
+        if tag_info["tool_call_count"]:
+            parts.append(f"{tag_info['tool_call_count']} tool_calls")
+        if parts:
+            print(f"Deleted tag '{tag_name}' (was applied to {', '.join(parts)})")
+        else:
+            print(f"Deleted tag '{tag_name}'")
+        conn.close()
+        return 0
+
+    # Default: list tags
     tags = list_tags(conn)
 
     if not tags:
@@ -1428,7 +1494,19 @@ def main(argv=None) -> int:
     p_tag.set_defaults(func=cmd_tag)
 
     # tags
-    p_tags = subparsers.add_parser("tags", help="List all tags")
+    p_tags = subparsers.add_parser(
+        "tags",
+        help="List, rename, or delete tags",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  strata tags                                      # list all tags
+  strata tags --rename important review:important   # rename tag
+  strata tags --delete old-tag                      # delete tag (refuses if applied)
+  strata tags --delete old-tag --force              # delete tag and all associations""",
+    )
+    p_tags.add_argument("--rename", nargs=2, metavar=("OLD", "NEW"), help="Rename a tag")
+    p_tags.add_argument("--delete", metavar="NAME", help="Delete a tag and all associations")
+    p_tags.add_argument("--force", action="store_true", help="Force delete even if tag has associations")
     p_tags.set_defaults(func=cmd_tags)
 
     # tools

@@ -1009,6 +1009,46 @@ def remove_tag(
     return cur.rowcount > 0
 
 
+def rename_tag(conn: sqlite3.Connection, old_name: str, new_name: str, *, commit: bool = False) -> bool:
+    """Rename a tag. Returns True if renamed, False if old_name not found.
+
+    Raises ValueError if new_name already exists.
+    """
+    # Check new_name doesn't already exist
+    cur = conn.execute("SELECT id FROM tags WHERE name = ?", (new_name,))
+    if cur.fetchone():
+        raise ValueError(f"Tag '{new_name}' already exists")
+
+    cur = conn.execute("UPDATE tags SET name = ? WHERE name = ?", (new_name, old_name))
+    if commit:
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def delete_tag(conn: sqlite3.Connection, name: str, *, commit: bool = False) -> int:
+    """Delete a tag and all its associations. Returns count of entity associations removed."""
+    cur = conn.execute("SELECT id FROM tags WHERE name = ?", (name,))
+    row = cur.fetchone()
+    if not row:
+        return -1  # tag not found
+
+    tag_id = row["id"]
+
+    # Count and delete associations
+    removed = 0
+    for table in ("conversation_tags", "workspace_tags", "tool_call_tags"):
+        cur = conn.execute(f"DELETE FROM {table} WHERE tag_id = ?", (tag_id,))
+        removed += cur.rowcount
+
+    # Delete the tag itself
+    conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+
+    if commit:
+        conn.commit()
+    return removed
+
+
+
 def list_tags(conn: sqlite3.Connection) -> list[dict]:
     """List all tags with usage counts."""
     cur = conn.execute("""
