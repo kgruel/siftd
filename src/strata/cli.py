@@ -15,6 +15,7 @@ from strata.storage.sqlite import (
     get_or_create_tag,
     list_tags,
     open_database,
+    remove_tag,
 )
 
 
@@ -364,7 +365,7 @@ def _parse_tag_args(positional: list[str]) -> tuple[str, str, str] | None:
 
 
 def cmd_tag(args) -> int:
-    """Apply a tag to a conversation, workspace, or tool_call."""
+    """Apply or remove a tag on a conversation, workspace, or tool_call."""
     db = Path(args.db) if args.db else db_path()
 
     if not db.exists():
@@ -373,6 +374,7 @@ def cmd_tag(args) -> int:
         return 1
 
     conn = open_database(db)
+    removing = args.remove
 
     # Handle --last mode
     if args.last is not None:
@@ -399,17 +401,37 @@ def cmd_tag(args) -> int:
             conn.close()
             return 1
 
-        tag_id = get_or_create_tag(conn, tag_name)
-        tagged = 0
-        for row in rows:
-            if apply_tag(conn, "conversation", row["id"], tag_id, commit=False):
-                tagged += 1
-        conn.commit()
+        if removing:
+            # Look up existing tag (don't create on remove)
+            tag_row = conn.execute("SELECT id FROM tags WHERE name = ?", (tag_name,)).fetchone()
+            if not tag_row:
+                print(f"Tag '{tag_name}' not found")
+                conn.close()
+                return 1
+            tag_id = tag_row["id"]
 
-        if tagged:
-            print(f"Applied tag '{tag_name}' to {tagged} conversation(s)")
+            removed = 0
+            for row in rows:
+                if remove_tag(conn, "conversation", row["id"], tag_id, commit=False):
+                    removed += 1
+            conn.commit()
+
+            if removed:
+                print(f"Removed tag '{tag_name}' from {removed} conversation(s)")
+            else:
+                print(f"Tag '{tag_name}' not applied to any of {len(rows)} conversation(s)")
         else:
-            print(f"Tag '{tag_name}' already applied to all {len(rows)} conversation(s)")
+            tag_id = get_or_create_tag(conn, tag_name)
+            tagged = 0
+            for row in rows:
+                if apply_tag(conn, "conversation", row["id"], tag_id, commit=False):
+                    tagged += 1
+            conn.commit()
+
+            if tagged:
+                print(f"Applied tag '{tag_name}' to {tagged} conversation(s)")
+            else:
+                print(f"Tag '{tag_name}' already applied to all {len(rows)} conversation(s)")
 
         conn.close()
         return 0
@@ -420,6 +442,7 @@ def cmd_tag(args) -> int:
         print("Usage: strata tag <id> <tag>")
         print("       strata tag <entity_type> <id> <tag>")
         print("       strata tag --last <tag>")
+        print("       strata tag --remove <id> <tag>")
         print("\nEntity types: conversation (default), workspace, tool_call")
         conn.close()
         return 1
@@ -450,13 +473,28 @@ def cmd_tag(args) -> int:
     # Use resolved ID (for prefix match)
     resolved_id = row["id"]
 
-    tag_id = get_or_create_tag(conn, tag_name)
-    result = apply_tag(conn, entity_type, resolved_id, tag_id, commit=True)
+    if removing:
+        # Look up existing tag (don't create on remove)
+        tag_row = conn.execute("SELECT id FROM tags WHERE name = ?", (tag_name,)).fetchone()
+        if not tag_row:
+            print(f"Tag '{tag_name}' not found")
+            conn.close()
+            return 1
+        tag_id = tag_row["id"]
 
-    if result:
-        print(f"Applied tag '{tag_name}' to {entity_type} {resolved_id[:12]}")
+        result = remove_tag(conn, entity_type, resolved_id, tag_id, commit=True)
+        if result:
+            print(f"Removed tag '{tag_name}' from {entity_type} {resolved_id[:12]}")
+        else:
+            print(f"Tag '{tag_name}' not applied to {entity_type} {resolved_id[:12]}")
     else:
-        print(f"Tag '{tag_name}' already applied to {entity_type} {resolved_id[:12]}")
+        tag_id = get_or_create_tag(conn, tag_name)
+        result = apply_tag(conn, entity_type, resolved_id, tag_id, commit=True)
+
+        if result:
+            print(f"Applied tag '{tag_name}' to {entity_type} {resolved_id[:12]}")
+        else:
+            print(f"Tag '{tag_name}' already applied to {entity_type} {resolved_id[:12]}")
 
     conn.close()
     return 0
@@ -1372,17 +1410,21 @@ def main(argv=None) -> int:
     # tag
     p_tag = subparsers.add_parser(
         "tag",
-        help="Apply a tag to a conversation (or other entity)",
+        help="Apply or remove a tag on a conversation (or other entity)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  strata tag 01HX... important       # tag conversation (default)
-  strata tag --last important        # tag most recent conversation
-  strata tag --last 3 review         # tag 3 most recent conversations
-  strata tag workspace 01HY... proj  # explicit entity type
-  strata tag tool_call 01HZ... slow  # tag a tool call""",
+  strata tag 01HX... important              # tag conversation (default)
+  strata tag --last important               # tag most recent conversation
+  strata tag --last 3 review                # tag 3 most recent conversations
+  strata tag workspace 01HY... proj         # explicit entity type
+  strata tag tool_call 01HZ... slow         # tag a tool call
+  strata tag --remove 01HX... important     # remove tag from conversation
+  strata tag --remove --last important      # remove from most recent
+  strata tag -r workspace 01HY... proj      # remove from workspace""",
     )
     p_tag.add_argument("positional", nargs="*", help="[entity_type] entity_id tag")
     p_tag.add_argument("-n", "--last", type=int, metavar="N", help="Tag N most recent conversations")
+    p_tag.add_argument("-r", "--remove", action="store_true", help="Remove tag instead of applying")
     p_tag.set_defaults(func=cmd_tag)
 
     # tags

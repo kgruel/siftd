@@ -976,6 +976,39 @@ def apply_tag(
     return ulid
 
 
+def remove_tag(
+    conn: sqlite3.Connection,
+    entity_type: str,
+    entity_id: str,
+    tag_id: str,
+    *,
+    commit: bool = False,
+) -> bool:
+    """Remove a tag from an entity. Returns True if a row was deleted, False if not applied.
+
+    entity_type: 'conversation', 'workspace', or 'tool_call'
+    """
+    if entity_type == "conversation":
+        table = "conversation_tags"
+        fk_col = "conversation_id"
+    elif entity_type == "workspace":
+        table = "workspace_tags"
+        fk_col = "workspace_id"
+    elif entity_type == "tool_call":
+        table = "tool_call_tags"
+        fk_col = "tool_call_id"
+    else:
+        raise ValueError(f"Unsupported entity_type: {entity_type}")
+
+    cur = conn.execute(
+        f"DELETE FROM {table} WHERE {fk_col} = ? AND tag_id = ?",
+        (entity_id, tag_id)
+    )
+    if commit:
+        conn.commit()
+    return cur.rowcount > 0
+
+
 def list_tags(conn: sqlite3.Connection) -> list[dict]:
     """List all tags with usage counts."""
     cur = conn.execute("""
