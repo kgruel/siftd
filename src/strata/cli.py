@@ -40,8 +40,13 @@ def cmd_ingest(args) -> int:
             name = Path(source.location).name
             print(f"  [{status}] {name}")
 
-    # Override adapter locations if --path specified
     adapters = load_all_adapters()
+    if args.adapter:
+        names = set(args.adapter)
+        adapters = [a for a in adapters if a.NAME in names]
+        if not adapters:
+            print(f"No adapters matched: {', '.join(args.adapter)}")
+            return 1
     if args.path:
         adapters = [wrap_adapter_paths(a, args.path) for a in adapters]
         print(f"Scanning: {', '.join(args.path)}")
@@ -1410,6 +1415,7 @@ def main(argv=None) -> int:
     p_ingest = subparsers.add_parser("ingest", help="Ingest logs from all sources")
     p_ingest.add_argument("-v", "--verbose", action="store_true", help="Show all files including skipped")
     p_ingest.add_argument("-p", "--path", action="append", metavar="DIR", help="Additional directories to scan (can be repeated)")
+    p_ingest.add_argument("-a", "--adapter", action="append", metavar="NAME", help="Only run specific adapter(s) (can be repeated)")
     p_ingest.set_defaults(func=cmd_ingest)
 
     # status

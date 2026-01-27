@@ -117,23 +117,25 @@ class _AdapterPathOverride:
             return self._paths
         return getattr(self._adapter, name)
 
-    def discover(self):
-        """Discover using overridden paths."""
+    def discover(self, locations=None):
+        """Discover using overridden paths, delegating to the adapter."""
+        try:
+            return self._adapter.discover(locations=self._paths)
+        except TypeError:
+            # Fallback for adapters that don't accept locations kwarg
+            # (e.g. drop-in adapters that haven't been updated)
+            return self._fallback_discover()
+
+    def _fallback_discover(self):
+        """Generic fallback: yield all files, let can_handle filter."""
         from strata.domain import Source
 
         for location in self._paths:
             base = Path(location).expanduser()
             if not base.exists():
                 continue
-            # Use the adapter's glob pattern logic
-            if self._adapter.NAME == "claude_code":
-                for f in base.glob("**/*.jsonl"):
-                    yield Source(kind="file", location=f)
-            elif self._adapter.NAME == "codex_cli":
-                for f in base.glob("**/*.jsonl"):
-                    yield Source(kind="file", location=f)
-            elif self._adapter.NAME == "gemini_cli":
-                for f in base.glob("*/chats/*.json"):
+            for f in base.rglob("*"):
+                if f.is_file():
                     yield Source(kind="file", location=f)
 
 

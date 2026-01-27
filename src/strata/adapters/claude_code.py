@@ -51,9 +51,9 @@ TOOL_ALIASES: dict[str, str] = {
 }
 
 
-def discover() -> Iterable[Source]:
+def discover(locations=None) -> Iterable[Source]:
     """Yield Source objects for all Claude Code session files."""
-    for location in DEFAULT_LOCATIONS:
+    for location in (locations or DEFAULT_LOCATIONS):
         base = Path(location).expanduser()
         if not base.exists():
             continue
