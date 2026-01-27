@@ -19,6 +19,86 @@ class SearchResult:
     source_ids: list[str] | None = None
 
 
+def _cosine_sim(a: list[float], b: list[float]) -> float:
+    """Cosine similarity between two vectors."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def mmr_rerank(
+    results: list[dict],
+    query_embedding: list[float],
+    *,
+    lambda_: float = 0.7,
+    limit: int = 10,
+) -> list[dict]:
+    """Rerank results using Maximal Marginal Relevance with conversation-level penalty.
+
+    Two-tier penalty:
+    1. If a chunk's conversation is already in the selected set, penalty = 1.0
+       (hard suppress same-conversation duplicates).
+    2. Otherwise, penalty = max cosine similarity between this chunk's embedding
+       and any already-selected chunk's embedding (standard MMR diversity).
+
+    Each result dict must include 'embedding' and 'score' keys.
+
+    Args:
+        results: Candidate chunks with 'embedding', 'score', 'conversation_id'.
+        query_embedding: The query's embedding vector.
+        lambda_: Balance between relevance (1.0) and diversity (0.0). Default 0.7.
+        limit: Number of results to select.
+
+    Returns:
+        Selected results in MMR rank order (without 'embedding' key).
+    """
+    if not results:
+        return []
+
+    remaining = list(range(len(results)))
+    selected: list[int] = []
+    selected_convs: set[str] = set()
+
+    while remaining and len(selected) < limit:
+        best_idx = -1
+        best_score = float("-inf")
+
+        for idx in remaining:
+            r = results[idx]
+            relevance = r["score"]
+
+            conv_id = r["conversation_id"]
+            if conv_id in selected_convs:
+                penalty = 1.0
+            elif selected:
+                penalty = max(
+                    _cosine_sim(r["embedding"], results[s]["embedding"])
+                    for s in selected
+                )
+            else:
+                penalty = 0.0
+
+            mmr_score = lambda_ * relevance - (1 - lambda_) * penalty
+            if mmr_score > best_score:
+                best_score = mmr_score
+                best_idx = idx
+
+        remaining.remove(best_idx)
+        selected.append(best_idx)
+        selected_convs.add(results[best_idx]["conversation_id"])
+
+    # Return selected results without embedding key
+    reranked = []
+    for idx in selected:
+        r = dict(results[idx])
+        r.pop("embedding", None)
+        reranked.append(r)
+    return reranked
+
+
 def hybrid_search(
     query: str,
     *,
@@ -33,6 +113,8 @@ def hybrid_search(
     before: str | None = None,
     backend: str | None = None,
     exclude_active: bool = True,
+    rerank: str = "mmr",
+    lambda_: float = 0.7,
 ) -> list[SearchResult]:
     """Run hybrid FTS5+embeddings search, return structured results.
 
@@ -49,9 +131,11 @@ def hybrid_search(
         before: Filter to conversations started before this ISO date.
         backend: Preferred embedding backend name (ollama, fastembed).
         exclude_active: Auto-exclude conversations from active sessions (default True).
+        rerank: Reranking strategy — "mmr" for diversity or "relevance" for pure similarity.
+        lambda_: MMR balance between relevance (1.0) and diversity (0.0). Default 0.7.
 
     Returns:
-        List of SearchResult ordered by descending similarity score.
+        List of SearchResult ordered by reranking strategy.
 
     Raises:
         FileNotFoundError: If the database files don't exist.
@@ -106,20 +190,34 @@ def hybrid_search(
                 candidate_ids = fts5_ids
 
     # Embed query and search
+    use_mmr = rerank == "mmr"
     embed_backend = get_backend(preferred=backend, verbose=False)
     query_embedding = embed_backend.embed_one(query)
+
+    # Fetch wider candidate set for MMR to select from
+    search_limit = limit * 3 if use_mmr else limit
 
     embed_conn = open_embeddings_db(embed_db)
     raw_results = search_similar(
         embed_conn,
         query_embedding,
-        limit=limit,
+        limit=search_limit,
         conversation_ids=candidate_ids,
+        include_embeddings=use_mmr,
     )
     embed_conn.close()
 
     if not raw_results:
         return []
+
+    # Apply MMR reranking if requested
+    if use_mmr:
+        raw_results = mmr_rerank(
+            raw_results,
+            query_embedding,
+            lambda_=lambda_,
+            limit=limit,
+        )
 
     # Enrich with metadata from main DB
     main_conn = sqlite3.connect(db)

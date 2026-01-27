@@ -246,6 +246,7 @@ def cmd_ask(args) -> int:
             return 0
 
     # Embed query and search
+    use_mmr = not args.no_diversity
     query_embedding = backend.embed_one(query)
     embed_conn = open_embeddings_db(embed_db)
     # Widen initial search for modes that aggregate or filter post-hoc
@@ -254,18 +255,37 @@ def cmd_ask(args) -> int:
         search_limit = max(args.limit, 40)
     elif args.first or args.conversations:
         search_limit = max(args.limit * 10, 100)
+    # Widen further for MMR to have candidates to diversify from
+    if use_mmr:
+        search_limit = max(search_limit * 3, search_limit)
     results = search_similar(
         embed_conn,
         query_embedding,
         limit=search_limit,
         conversation_ids=candidate_ids,
         role_source_ids=role_source_ids,
+        include_embeddings=use_mmr,
     )
     embed_conn.close()
 
     if not results:
         print(f"No results for: {query}")
         return 0
+
+    # Apply MMR diversity reranking
+    if use_mmr and results:
+        from strata.search import mmr_rerank
+        mmr_limit = args.limit
+        if args.thread:
+            mmr_limit = max(args.limit, 40)
+        elif args.first or args.conversations:
+            mmr_limit = max(args.limit * 10, 100)
+        results = mmr_rerank(
+            results,
+            query_embedding,
+            lambda_=args.lambda_,
+            limit=mmr_limit,
+        )
 
     # Apply threshold filter if specified
     if args.threshold is not None:
@@ -1488,6 +1508,8 @@ def main(argv=None) -> int:
     p_ask.add_argument("--json", action="store_true", help="Output as structured JSON")
     p_ask.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
     p_ask.add_argument("--no-exclude-active", action="store_true", help="Include results from active sessions (excluded by default)")
+    p_ask.add_argument("--no-diversity", action="store_true", help="Disable MMR diversity reranking, use pure relevance order")
+    p_ask.add_argument("--lambda", type=float, default=0.7, dest="lambda_", metavar="FLOAT", help="MMR lambda: 1.0=pure relevance, 0.0=pure diversity (default: 0.7)")
     p_ask.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by conversation tag (repeatable, OR logic)")
     p_ask.add_argument("--all-tags", action="append", metavar="NAME", help="Require all specified tags (AND logic)")
     p_ask.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude conversations with this tag (NOT logic)")

@@ -148,12 +148,15 @@ def search_similar(
     limit: int = 10,
     conversation_ids: set[str] | None = None,
     role_source_ids: set[str] | None = None,
+    include_embeddings: bool = False,
 ) -> list[dict]:
     """Find chunks most similar to the query embedding (cosine similarity).
 
     If conversation_ids is provided, only search within those conversations.
     If role_source_ids is provided, only include chunks whose source_ids
     overlap with the given set (used for role filtering).
+    If include_embeddings is True, each result dict includes an 'embedding' key
+    with the decoded float list (used by MMR reranking).
     Returns list of dicts: conversation_id, chunk_type, text, score, source_ids.
     """
     if conversation_ids is not None and not conversation_ids:
@@ -179,14 +182,17 @@ def search_similar(
 
         stored_embedding = _decode_embedding(row["embedding"])
         score = _cosine_similarity(query_embedding, stored_embedding)
-        results.append({
+        result = {
             "chunk_id": row["id"],
             "conversation_id": row["conversation_id"],
             "chunk_type": row["chunk_type"],
             "text": row["text"],
             "score": score,
             "source_ids": source_ids_val,
-        })
+        }
+        if include_embeddings:
+            result["embedding"] = stored_embedding
+        results.append(result)
 
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:limit]

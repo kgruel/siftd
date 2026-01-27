@@ -197,10 +197,16 @@ def run_benchmark(
     hybrid: bool = False,
     recall_limit: int = 80,
     role: str | None = None,
+    rerank_mode: str = "relevance",
+    lambda_: float = 0.7,
 ) -> dict:
     """Run all queries against all embed DBs, return full results."""
     bench_dir = Path(__file__).parent
     query_data = load_queries(bench_dir)
+
+    use_mmr = rerank_mode == "mmr"
+    if use_mmr:
+        from strata.search import mmr_rerank
 
     main_db = sqlite3.connect(main_db_path)
     main_db.row_factory = sqlite3.Row
@@ -216,6 +222,7 @@ def run_benchmark(
     recall_meta = {}  # per-query FTS5 recall metadata
     first_mentions = {}  # per-query first-mention data
     conversation_agg = {}  # per-query conversation-level aggregation
+    diversity_metrics = {}  # per-query diversity metrics
 
     for db_path in embed_db_paths:
         db_label = str(db_path)
@@ -227,6 +234,7 @@ def run_benchmark(
         db_recall_meta = {}
         db_first_mentions = {}
         db_conversation_agg = {}
+        db_diversity = {}
         for group in query_data["groups"]:
             for query_text in group["queries"]:
                 conversation_ids = None
@@ -247,6 +255,17 @@ def run_benchmark(
                     conversation_ids=conversation_ids,
                     role_source_ids=role_source_ids,
                 )
+
+                # Attach decoded embeddings for MMR and diversity pairwise metrics
+                if use_mmr:
+                    for r in results:
+                        r["embedding"] = decode_embedding(
+                            conn.execute(
+                                "SELECT embedding FROM chunks WHERE id = ?",
+                                (r["chunk_id"],),
+                            ).fetchone()["embedding"]
+                        )
+
                 results = enrich_results(results, main_db)
                 for r in results:
                     r["token_count"] = count_tokens(tokenizer, r["text"])
@@ -260,14 +279,29 @@ def run_benchmark(
                 conv_agg = compute_conversation_scores(results)
                 db_conversation_agg[query_text] = conv_agg[:10]  # top 10 conversations
 
-                # Trim to top 10 for standard results
-                db_results[query_text] = results[:10]
+                # Apply MMR reranking if requested
+                if use_mmr:
+                    reranked = mmr_rerank(
+                        results,
+                        query_embedding,
+                        lambda_=lambda_,
+                        limit=10,
+                    )
+                    # Compute diversity on reranked results
+                    db_diversity[query_text] = compute_diversity_metrics(reranked)
+                    db_results[query_text] = reranked
+                else:
+                    # Trim to top 10 for standard results
+                    top10 = results[:10]
+                    db_diversity[query_text] = compute_diversity_metrics(top10)
+                    db_results[query_text] = top10
 
         conn.close()
         all_results[db_label] = db_results
         recall_meta[db_label] = db_recall_meta
         first_mentions[db_label] = db_first_mentions
         conversation_agg[db_label] = db_conversation_agg
+        diversity_metrics[db_label] = db_diversity
 
     main_db.close()
     return {
@@ -276,6 +310,7 @@ def run_benchmark(
         "recall_meta": recall_meta,
         "first_mentions": first_mentions,
         "conversation_agg": conversation_agg,
+        "diversity_metrics": diversity_metrics,
     }
 
 
@@ -339,6 +374,58 @@ def compute_presentation_metrics(query_results: list[dict]) -> dict:
     }
 
 
+def compute_diversity_metrics(query_results: list[dict]) -> dict:
+    """Compute diversity metrics for a single query's top-k results.
+
+    Measures:
+    - conversation_redundancy: fraction of top-10 from same conversation as rank-1
+    - unique_workspace_count: distinct workspaces in top-10
+    - pairwise_similarity_mean: mean cosine sim between all top-10 pairs (requires embeddings)
+    """
+    if not query_results:
+        return {}
+
+    top10 = query_results[:10]
+
+    # Conversation redundancy: fraction from same conv as rank-1
+    rank1_conv = top10[0]["conversation_id"]
+    same_conv_count = sum(1 for r in top10 if r["conversation_id"] == rank1_conv)
+    conversation_redundancy = same_conv_count / len(top10)
+
+    # Unique workspace count
+    workspaces = {r.get("workspace_path") or "(none)" for r in top10}
+    unique_workspace_count = len(workspaces)
+
+    # Pairwise similarity (only if embeddings are present)
+    pairwise_similarity_mean = None
+    if top10 and "embedding" in top10[0]:
+        sims = []
+        for i in range(len(top10)):
+            for j in range(i + 1, len(top10)):
+                sims.append(cosine_similarity(top10[i]["embedding"], top10[j]["embedding"]))
+        if sims:
+            pairwise_similarity_mean = round(sum(sims) / len(sims), 6)
+
+    result = {
+        "conversation_redundancy": round(conversation_redundancy, 4),
+        "unique_workspace_count": unique_workspace_count,
+    }
+    if pairwise_similarity_mean is not None:
+        result["pairwise_similarity_mean"] = pairwise_similarity_mean
+    return result
+
+
+def compute_cross_query_overlap(results_a: list[dict], results_b: list[dict]) -> float:
+    """Jaccard similarity of conversation IDs between two result sets (top-10)."""
+    convs_a = {r["conversation_id"] for r in results_a[:10]}
+    convs_b = {r["conversation_id"] for r in results_b[:10]}
+    if not convs_a and not convs_b:
+        return 0.0
+    intersection = convs_a & convs_b
+    union = convs_a | convs_b
+    return len(intersection) / len(union) if union else 0.0
+
+
 def build_structured_output(data: dict, meta: dict) -> dict:
     """Build the structured JSON output from raw benchmark data."""
     groups = data["groups"]
@@ -390,6 +477,38 @@ def build_structured_output(data: dict, meta: dict) -> dict:
             "avg_chrono_degradation": round(avg_chrono_deg, 6),
             "avg_clusters_above_mean": round(avg_clusters, 1),
         }
+
+    # Aggregate diversity metrics per DB
+    div_metrics = data.get("diversity_metrics", {})
+    for label in db_labels:
+        db_div = div_metrics.get(label, {})
+        if db_div:
+            redundancies = [m["conversation_redundancy"] for m in db_div.values() if m]
+            ws_counts = [m["unique_workspace_count"] for m in db_div.values() if m]
+            pairwise = [m["pairwise_similarity_mean"] for m in db_div.values() if m and "pairwise_similarity_mean" in m]
+            by_db[label]["avg_conversation_redundancy"] = round(mean(redundancies), 4) if redundancies else None
+            by_db[label]["avg_unique_workspace_count"] = round(mean(ws_counts), 1) if ws_counts else None
+            by_db[label]["avg_pairwise_similarity"] = round(mean(pairwise), 6) if pairwise else None
+
+    # Compute cross-query overlap for broad-then-narrow group
+    cross_query_overlaps = {}
+    for label in db_labels:
+        label_results = results.get(label, {})
+        for group in groups:
+            if group["name"] == "broad-then-narrow":
+                queries = group["queries"]
+                # Compare consecutive pairs (broad, narrow)
+                overlaps = []
+                for i in range(0, len(queries) - 1, 2):
+                    a = label_results.get(queries[i], [])
+                    b = label_results.get(queries[i + 1], [])
+                    if a and b:
+                        overlaps.append(compute_cross_query_overlap(a, b))
+                if overlaps:
+                    cross_query_overlaps.setdefault(label, round(mean(overlaps), 4))
+    for label in db_labels:
+        if label in cross_query_overlaps:
+            by_db[label]["avg_cross_query_overlap"] = cross_query_overlaps[label]
 
     recall_meta = data.get("recall_meta", {})
     first_mentions = data.get("first_mentions", {})
@@ -467,6 +586,10 @@ def build_structured_output(data: dict, meta: dict) -> dict:
                         }
                         for c in convs
                     ]
+            # Add diversity metrics
+            for label in db_labels:
+                if label in div_metrics and query_text in div_metrics[label]:
+                    query_entry.setdefault("diversity", {})[label] = div_metrics[label][query_text]
             output_queries.append(query_entry)
 
         output_groups.append({
@@ -576,6 +699,25 @@ def print_comparison(data: dict) -> None:
             avg_cl = mean([m["clusters_above_mean"] for m in pres_metrics])
             print(f"  {label:<{col_width - 2}} {avg_uc:<12.1f} {avg_ts:<13.1f} {avg_cd:<12.4f} {avg_cl:<10.1f}")
 
+    # Diversity metrics
+    div_data = data.get("diversity_metrics", {})
+    if div_data:
+        print(f"\n  {'DIVERSITY METRICS'}")
+        print(f"  {'-' * 76}")
+        print(f"  {'DB':<{col_width - 2}} {'Conv Redund':<13} {'Uniq WS':<10} {'Pairwise Sim':<14}")
+
+        for label in db_labels:
+            db_div = div_data.get(label, {})
+            if db_div:
+                redundancies = [m["conversation_redundancy"] for m in db_div.values() if m]
+                ws_counts = [m["unique_workspace_count"] for m in db_div.values() if m]
+                pairwise = [m["pairwise_similarity_mean"] for m in db_div.values() if m and "pairwise_similarity_mean" in m]
+                avg_red = mean(redundancies) if redundancies else 0
+                avg_ws = mean(ws_counts) if ws_counts else 0
+                avg_pw = mean(pairwise) if pairwise else 0
+                pw_str = f"{avg_pw:<14.4f}" if pairwise else "N/A"
+                print(f"  {label:<{col_width - 2}} {avg_red:<13.4f} {avg_ws:<10.1f} {pw_str}")
+
     print()
 
 
@@ -629,6 +771,20 @@ def main():
         default=None,
         help="Filter chunks by source role (user prompts or assistant responses)",
     )
+    parser.add_argument(
+        "--rerank",
+        choices=["mmr", "relevance"],
+        default="relevance",
+        help="Reranking strategy: mmr (diversity) or relevance (default: relevance)",
+    )
+    parser.add_argument(
+        "--lambda",
+        type=float,
+        default=0.7,
+        dest="lambda_",
+        metavar="FLOAT",
+        help="MMR lambda: 1.0=pure relevance, 0.0=pure diversity (default: 0.7)",
+    )
     args = parser.parse_args()
 
     # Load strategy if provided
@@ -673,7 +829,11 @@ def main():
     tokenizer = get_tokenizer(backend)
 
     # Run benchmark
-    data = run_benchmark(args.embed_dbs, args.db, backend, tokenizer, hybrid=args.hybrid, recall_limit=args.recall, role=args.role)
+    data = run_benchmark(
+        args.embed_dbs, args.db, backend, tokenizer,
+        hybrid=args.hybrid, recall_limit=args.recall, role=args.role,
+        rerank_mode=args.rerank, lambda_=args.lambda_,
+    )
 
     # Build output path
     now = datetime.now(timezone.utc)
@@ -715,6 +875,8 @@ def main():
         "hybrid": args.hybrid,
         "recall_limit": args.recall if args.hybrid else None,
         "role_filter": args.role,
+        "rerank": args.rerank,
+        "lambda": args.lambda_ if args.rerank == "mmr" else None,
     }
 
     # Build and write structured output

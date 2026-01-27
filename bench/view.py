@@ -37,6 +37,11 @@ def print_stdout(data: dict) -> None:
     if model:
         print(f"  Model: {model.get('name', '?')} (dim={model.get('dimension')}, max_seq={model.get('max_seq_length')})")
     print(f"  Queries: {meta['query_count']}")
+    if meta.get("rerank"):
+        rerank_str = meta["rerank"]
+        if meta.get("lambda") is not None:
+            rerank_str += f" (lambda={meta['lambda']})"
+        print(f"  Rerank: {rerank_str}")
     for db_label, count in meta.get("total_chunks", {}).items():
         print(f"  Chunks [{db_label}]: {count}")
         stats = meta.get("chunk_token_stats", {}).get(db_label)
@@ -49,6 +54,23 @@ def print_stdout(data: dict) -> None:
     print(f"  {'DB':<60} {'Avg':<8} {'Var':<10} {'Spread':<8} {'Top1':<8} {'Top5':<8}")
     for label, s in summary.items():
         print(f"  {label:<60} {s['avg_score']:<8.4f} {s['variance']:<10.6f} {s['spread']:<8.4f} {s['avg_top1']:<8.4f} {s['avg_top5']:<8.4f}")
+
+    # Diversity metrics in aggregate
+    has_diversity = any(s.get("avg_conversation_redundancy") is not None for s in summary.values())
+    if has_diversity:
+        print()
+        print("Diversity Metrics:")
+        print(f"  {'DB':<60} {'Conv Red':<10} {'Uniq WS':<10} {'Pairwise':<10} {'XQ Overlap':<10}")
+        for label, s in summary.items():
+            red = s.get("avg_conversation_redundancy")
+            ws = s.get("avg_unique_workspace_count")
+            pw = s.get("avg_pairwise_similarity")
+            xq = s.get("avg_cross_query_overlap")
+            red_str = f"{red:<10.4f}" if red is not None else "N/A       "
+            ws_str = f"{ws:<10.1f}" if ws is not None else "N/A       "
+            pw_str = f"{pw:<10.4f}" if pw is not None else "N/A       "
+            xq_str = f"{xq:<10.4f}" if xq is not None else "N/A       "
+            print(f"  {label:<60} {red_str} {ws_str} {pw_str} {xq_str}")
     print()
 
     # Per-group breakdown
@@ -125,6 +147,11 @@ th {{ background: #e9ecef; font-weight: 600; }}
     if model:
         parts.append(f'<dt>Model:</dt><dd>{escape(model.get("name", "?"))} (dim={model.get("dimension")}, max_seq={model.get("max_seq_length")})</dd>')
     parts.append(f'<dt>Queries:</dt><dd>{meta["query_count"]}</dd>')
+    if meta.get("rerank"):
+        rerank_str = meta["rerank"]
+        if meta.get("lambda") is not None:
+            rerank_str += f" (lambda={meta['lambda']})"
+        parts.append(f'<dt>Rerank:</dt><dd>{escape(rerank_str)}</dd>')
     if meta.get("params"):
         params_str = ", ".join(f"{k}={v}" for k, v in meta["params"].items())
         parts.append(f'<dt>Params:</dt><dd>{escape(params_str)}</dd>')
@@ -145,6 +172,23 @@ th {{ background: #e9ecef; font-weight: 600; }}
     for label, s in summary.items():
         parts.append(f'<tr><td>{escape(label)}</td><td>{s["avg_score"]:.4f}</td><td>{s["variance"]:.6f}</td><td>{s["spread"]:.4f}</td><td>{s["avg_top1"]:.4f}</td><td>{s["avg_top5"]:.4f}</td></tr>')
     parts.append('</table>')
+
+    # Diversity summary table
+    has_diversity = any(s.get("avg_conversation_redundancy") is not None for s in summary.values())
+    if has_diversity:
+        parts.append('<h2>Diversity Summary</h2>')
+        parts.append('<table><tr><th>DB</th><th>Conv Redundancy</th><th>Unique Workspaces</th><th>Pairwise Similarity</th><th>Cross-Query Overlap</th></tr>')
+        for label, s in summary.items():
+            red = s.get("avg_conversation_redundancy")
+            ws = s.get("avg_unique_workspace_count")
+            pw = s.get("avg_pairwise_similarity")
+            xq = s.get("avg_cross_query_overlap")
+            red_str = f"{red:.4f}" if red is not None else "N/A"
+            ws_str = f"{ws:.1f}" if ws is not None else "N/A"
+            pw_str = f"{pw:.4f}" if pw is not None else "N/A"
+            xq_str = f"{xq:.4f}" if xq is not None else "N/A"
+            parts.append(f'<tr><td>{escape(label)}</td><td>{red_str}</td><td>{ws_str}</td><td>{pw_str}</td><td>{xq_str}</td></tr>')
+        parts.append('</table>')
 
     # Group breakdown
     parts.append('<h2>Group Breakdown</h2>')
