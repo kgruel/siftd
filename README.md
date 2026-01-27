@@ -1,8 +1,10 @@
 # strata
 
-Every conversation you have with an LLM coding tool — Claude Code, Gemini CLI, Codex, Aider — produces a log file. Those files contain decisions you made, approaches you tried, problems you solved. When the session ends, that knowledge disappears into a directory you'll never open.
+Every conversation you have with an LLM coding tool — Claude Code, Gemini CLI, Codex, Aider — produces a log file. Decisions, rationale, dead ends, breakthroughs. When the session ends, that knowledge disappears into a directory you'll never open.
 
-strata makes it searchable.
+After a few months, you have thousands of conversations across dozens of projects. You've solved problems you'll face again. You've established patterns you'll forget you established. Your agents have researched concepts, proposed architectures, debugged issues — and none of that context carries forward to the next session.
+
+strata makes it searchable. And once it's searchable, your agents can use it too.
 
 ## Install
 
@@ -12,17 +14,10 @@ uv pip install .
 
 ## Getting started
 
-strata reads the log files your tools already write. Point it at them and it builds a local SQLite database:
+strata reads the log files your tools already write. It doesn't record anything new — it just makes what's already there useful.
 
 ```bash
 strata ingest
-```
-
-It automatically discovers logs from Claude Code, Gemini CLI, Codex CLI, and Aider in their default locations. Run it again anytime — it only processes new or changed files.
-
-See what you have:
-
-```bash
 strata status
 ```
 
@@ -32,74 +27,24 @@ Prompts: 12,493
 Responses: 14,271
 Tool calls: 89,432
 Workspaces: 31
-Models: 8
 ```
 
-Those 847 conversations are now queryable.
+Those 847 conversations span months of work across 31 projects. Every prompt you typed, every response you received, every file read and shell command run — structured and queryable.
 
-## Browsing conversations
+## What accumulates
 
-`strata query` is a composable conversation browser. On its own, it lists recent conversations:
+The data isn't just text. Each conversation captures:
 
-```bash
-strata query
-```
+- **What you asked and what you were told** — the full prompt+response exchange
+- **What tools were used** — file reads, edits, shell commands, searches — 89k tool calls with inputs and outputs
+- **Where work happened** — which project directory, which model, when
+- **How much it cost** — token counts, approximate pricing
 
-```
-01JGK3M2P4Q5  2025-01-15 14:23  myproject     claude-sonnet-4    8p/12r  45.2k tok
-01JGK2N1R3S4  2025-01-15 11:07  webapp        claude-sonnet-4    3p/5r   12.1k tok
-01JGK1P0T2U3  2025-01-14 22:41  dotfiles      gemini-2.0-flash   2p/3r   4.3k tok
-```
+This is your development history in structured form. Not commit messages after the fact — the actual working conversation as it happened.
 
-Filters narrow the view. You can combine any of them:
+## Finding things
 
-```bash
-strata query -w myproject                              # by workspace
-strata query -m opus --since 2025-01-01                # by model and date
-strata query -s "error handling"                       # full-text search
-strata query -t shell.execute                          # by tool usage
-```
-
-Drill into a conversation by passing its ID (prefix match works):
-
-```bash
-strata query 01JGK3
-```
-
-```
-Workspace: myproject
-Started: 2025-01-15 14:23
-Model: claude-sonnet-4
-Tokens: 45.2k (input: 38.1k / output: 7.1k)
-
-[prompt] 14:23
-  Add semantic search to the CLI
-
-[response] 14:23 (2.1k in / 0.8k out)
-  I'll help you add semantic search. Let me first understand...
-  → file.read ×2, search.grep ×1
-
-[prompt] 14:25
-  Use fastembed for local embeddings
-
-[response] 14:25 (8.4k in / 1.2k out)
-  I'll integrate fastembed for local embedding generation...
-  → file.edit ×3, shell.execute ×1
-```
-
-This is useful when you know roughly what you're looking for. But conversations pile up fast — after a few hundred, browsing and keyword search aren't enough. You need semantic search.
-
-## Searching across conversations
-
-`strata ask` finds conversations by meaning, not just keywords. First, build the embeddings index:
-
-```bash
-strata ask --index
-```
-
-This chunks your conversations into prompt+response pairs, embeds them locally (no API calls), and stores the vectors. Run it again after ingesting new data.
-
-Now search:
+`strata query` browses conversations. `strata ask` searches them by meaning.
 
 ```bash
 strata ask "how did I handle token refresh"
@@ -113,105 +58,91 @@ strata ask "how did I handle token refresh"
   Can you add automatic token refresh? The current flow requires...
 ```
 
-That second result is from three months ago, in a different project. strata found it because the meaning matched, even though the words were different.
+That second result is from three months ago, in a different project. strata found it because the meaning matched, even though the words were different. The workspace filter (`-w`) narrows by project; `--thread` expands the top results into full conversation timelines for research.
 
-### Focusing the search
+Build the embeddings index first with `strata ask --index`. Everything runs locally — no API calls, no cloud.
 
-The workspace filter (`-w`) is the single most impactful way to narrow results:
+## Your agents search too
 
-```bash
-strata ask -w myproject "authentication flow"
-```
+This is where it gets interesting. strata ships a Claude Code plugin that gives agents access to your conversation history. When an agent needs context, it can search for it.
 
-You can also filter by model, date range, or role:
+**Grounding in your practices.** You're starting tests in a new project. Instead of the agent guessing your preferences, it searches:
 
 ```bash
-strata ask --since 2025-01-01 "database schema"
-strata ask --role user "what should we do about"     # just your prompts
-strata ask --role assistant "recommended approach"    # just LLM responses
+strata ask -w rill "testing philosophy"
+strata ask -w experiments "prefer integration tests"
 ```
 
-### Reading results in context
+It finds 17 conversations across two projects where you discussed testing — your preference for integration tests over mocks, your fixture patterns, how you handle async. The agent writes tests grounded in how you actually work, not how it thinks you should.
 
-Default output shows snippets. When you find something relevant, you'll want more context:
+**Finding the genesis of an idea.** A concept appears in your codebase but nobody remembers where it came from:
 
 ```bash
-strata ask --thread "why we chose JWT"
+strata ask --first "event sourcing"
+strata ask --chrono -w myproject "state management"
 ```
 
-`--thread` is the best mode for research — it expands the top conversations with full exchange timelines and lists the rest as a compact shortlist. Other modes:
+`--first` finds the earliest mention above a relevance threshold. `--chrono` traces how thinking evolved across sessions. You can reconstruct the intellectual history of a decision — when it was first proposed, how it changed, why alternatives were rejected.
+
+**Mining tool use for automation.** Those 89k tool calls are structured data. Every shell command is categorized:
 
 ```bash
-strata ask --context 3 "token refresh"     # ±3 exchanges around the match
-strata ask --full "schema migration"       # complete prompt+response exchange
-strata ask --chrono "state management"     # sorted by time, not relevance
-strata ask --first "event sourcing"        # earliest mention above threshold
+strata query --tool-tag shell:test      # which conversations ran tests?
+strata query --tool-tag shell:vcs       # which ones touched git?
+strata tools --by-workspace             # what patterns emerge per project?
 ```
 
-## Preserving what you find
+When you see that `pytest tests/ -x -q` runs 200 times across your projects, that's a pattern worth encoding into a script. The tool data shows you what your development workflow actually looks like — not what you think it looks like.
 
-Search gets you to the right conversation. Tags let you keep it:
+## The workflow teaches itself
+
+strata's output is designed to guide the next step. Search results include tips:
+
+```
+Tip: tag useful results with `strata tag <id> research:auth`
+     then retrieve later: `strata ask -l research:auth "query"`
+```
+
+The plugin's skill uses progressive disclosure — agents learn core search first, then output modes, then filtering, then the tagging workflow. Each level unlocks when the previous one is useful. An agent that finds something worth keeping learns to tag it. The next agent — in a different session, maybe a different project — can retrieve those tags.
 
 ```bash
-strata tag 01JGK3 research:auth
+strata tag 01JGK3 research:auth           # mark it
+strata ask -l research:auth "token expiry" # find it later, from anywhere
 ```
 
-Now you can retrieve tagged conversations directly:
+## Building institutional memory
+
+Tags are the synthesis layer. They're lightweight — no LLM calls, no schema changes — but they encode judgment. "This conversation matters. This is how we approach authentication. This is the decision we made about state management."
+
+Over time, a curated layer builds on top of the raw data:
 
 ```bash
-strata query -l research:auth
-strata ask -l research:auth "token expiry"
+strata query -l research:          # everything tagged as research
+strata ask --all-tags research:auth --all-tags review "token rotation"
 ```
 
-Tags support prefix matching — `research:` matches `research:auth`, `research:perf`, and anything else in that namespace. Boolean filtering composes naturally:
+This isn't just search anymore. It's institutional memory that persists across sessions, across projects, across agents. An agent working on project A can draw on decisions made in project B — not because someone documented it, but because the conversations were there and strata made them findable.
 
-```bash
-strata query -l research:auth -l research:security    # either tag (OR)
-strata query --all-tags research:auth --all-tags review # both tags (AND)
-strata query --no-tag archived                          # exclude a tag
-```
+The cycle is: **conversations generate knowledge → strata makes it searchable → agents ground their work in what came before → those conversations generate more knowledge.**
 
-The workflow is: **search → find → tag → retrieve later**. Tags are how you build a curated layer on top of raw conversation data.
+Your agents carry semantic context through your entire development history.
 
 ## What else
 
 **Live sessions** — inspect active sessions without waiting for ingestion:
 
 ```bash
-strata peek                          # list active sessions
-strata peek c520 --last 10           # detail view
+strata peek
+strata peek c520 --last 10
 ```
 
-**Health checks** — diagnose issues:
+**Health checks** — `strata doctor`
 
-```bash
-strata doctor
-```
+**Raw SQL** — `strata query sql cost --var limit=20`
 
-**Raw SQL** — write your own queries:
+**Library API** — `from strata import list_conversations, hybrid_search`
 
-```bash
-strata query sql cost --var limit=20
-```
-
-**Library API** — use strata from Python:
-
-```python
-from strata import list_conversations, hybrid_search, get_stats
-```
-
-**Custom adapters** — add support for other tools:
-
-```
-~/.config/strata/adapters/my_tool.py
-```
-
-**Claude Code plugin** — agent DX with hooks and a bundled skill:
-
-```bash
-claude plugin marketplace add kaygee/strata
-claude plugin install strata@strata
-```
+**Custom adapters** — `~/.config/strata/adapters/my_tool.py`
 
 ## Going deeper
 
