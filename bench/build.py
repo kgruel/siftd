@@ -1,9 +1,8 @@
 """Build an embeddings database from a strategy file.
 
 Usage:
-    python bench/build.py --strategy bench/strategies/min-100.json
-    python bench/build.py --strategy bench/strategies/min-100.json --output /tmp/test.db
     python bench/build.py --strategy bench/strategies/exchange-window.json
+    python bench/build.py --strategy bench/strategies/exchange-window.json --output /tmp/test.db
 """
 
 import argparse
@@ -13,6 +12,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# bench/ is not a package — add src/ to path so strata imports work
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from strata.embeddings.fastembed_backend import FastEmbedBackend
@@ -21,33 +21,7 @@ from strata.storage.embeddings import open_embeddings_db, store_chunk, set_meta
 
 
 def extract_chunks(main_conn: sqlite3.Connection, params: dict) -> list[dict]:
-    """Extract chunks from main DB according to strategy params.
-
-    Dispatches to exchange-window or per-block strategy based on params.
-    """
-    strategy = params.get("strategy", "per-block")
-
-    if strategy == "exchange-window":
-        return _extract_exchange_window(main_conn, params)
-
-    # Legacy per-block strategies
-    min_chars = params.get("min_chars", 20)
-    chunk_types = params.get("chunk_types", ["prompt", "response"])
-    concat = params.get("concat", False)
-
-    chunks = []
-
-    if "prompt" in chunk_types:
-        chunks.extend(_extract_prompt_chunks(main_conn, min_chars, concat))
-
-    if "response" in chunk_types:
-        chunks.extend(_extract_response_chunks(main_conn, min_chars, concat))
-
-    return chunks
-
-
-def _extract_exchange_window(conn: sqlite3.Connection, params: dict) -> list[dict]:
-    """Use the shared exchange-window chunker."""
+    """Extract chunks from main DB using the exchange-window chunker."""
     from fastembed import TextEmbedding
     from strata.embeddings.chunker import extract_exchange_window_chunks
 
@@ -59,118 +33,12 @@ def _extract_exchange_window(conn: sqlite3.Connection, params: dict) -> list[dic
     tokenizer = emb.model.tokenizer
 
     return extract_exchange_window_chunks(
-        conn,
+        main_conn,
         tokenizer,
         target_tokens=target_tokens,
         max_tokens=max_tokens,
         overlap_tokens=overlap_tokens,
     )
-
-
-def _extract_prompt_chunks(
-    conn: sqlite3.Connection, min_chars: int, concat: bool
-) -> list[dict]:
-    """Extract prompt chunks, either per-block or concatenated per-turn."""
-    if concat:
-        rows = conn.execute("""
-            SELECT
-                p.conversation_id,
-                pc.prompt_id,
-                json_extract(pc.content, '$.text') AS text,
-                pc.block_index
-            FROM prompt_content pc
-            JOIN prompts p ON p.id = pc.prompt_id
-            WHERE pc.block_type = 'text'
-              AND json_extract(pc.content, '$.text') IS NOT NULL
-            ORDER BY pc.prompt_id, pc.block_index
-        """).fetchall()
-
-        groups: dict[str, dict] = {}
-        for row in rows:
-            pid = row[1]
-            if pid not in groups:
-                groups[pid] = {"conversation_id": row[0], "texts": []}
-            groups[pid]["texts"].append(row[2])
-
-        chunks = []
-        for group in groups.values():
-            text = "\n".join(group["texts"])
-            if len(text) >= min_chars:
-                chunks.append({
-                    "conversation_id": group["conversation_id"],
-                    "chunk_type": "prompt",
-                    "text": text,
-                })
-        return chunks
-    else:
-        rows = conn.execute("""
-            SELECT
-                p.conversation_id,
-                json_extract(pc.content, '$.text') AS text
-            FROM prompt_content pc
-            JOIN prompts p ON p.id = pc.prompt_id
-            WHERE pc.block_type = 'text'
-              AND json_extract(pc.content, '$.text') IS NOT NULL
-        """).fetchall()
-
-        return [
-            {"conversation_id": row[0], "chunk_type": "prompt", "text": row[1]}
-            for row in rows
-            if len(row[1]) >= min_chars
-        ]
-
-
-def _extract_response_chunks(
-    conn: sqlite3.Connection, min_chars: int, concat: bool
-) -> list[dict]:
-    """Extract response chunks, either per-block or concatenated per-turn."""
-    if concat:
-        rows = conn.execute("""
-            SELECT
-                r.conversation_id,
-                rc.response_id,
-                json_extract(rc.content, '$.text') AS text,
-                rc.block_index
-            FROM response_content rc
-            JOIN responses r ON r.id = rc.response_id
-            WHERE rc.block_type = 'text'
-              AND json_extract(rc.content, '$.text') IS NOT NULL
-            ORDER BY rc.response_id, rc.block_index
-        """).fetchall()
-
-        groups: dict[str, dict] = {}
-        for row in rows:
-            rid = row[1]
-            if rid not in groups:
-                groups[rid] = {"conversation_id": row[0], "texts": []}
-            groups[rid]["texts"].append(row[2])
-
-        chunks = []
-        for group in groups.values():
-            text = "\n".join(group["texts"])
-            if len(text) >= min_chars:
-                chunks.append({
-                    "conversation_id": group["conversation_id"],
-                    "chunk_type": "response",
-                    "text": text,
-                })
-        return chunks
-    else:
-        rows = conn.execute("""
-            SELECT
-                r.conversation_id,
-                json_extract(rc.content, '$.text') AS text
-            FROM response_content rc
-            JOIN responses r ON r.id = rc.response_id
-            WHERE rc.block_type = 'text'
-              AND json_extract(rc.content, '$.text') IS NOT NULL
-        """).fetchall()
-
-        return [
-            {"conversation_id": row[0], "chunk_type": "response", "text": row[1]}
-            for row in rows
-            if len(row[1]) >= min_chars
-        ]
 
 
 def build(strategy_path: Path, output_path: Path, db_path: Path) -> None:

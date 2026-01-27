@@ -15,6 +15,7 @@ import statistics
 import sys
 from pathlib import Path
 
+# bench/ is not a package — add src/ to path so strata imports work
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from strata.paths import data_dir

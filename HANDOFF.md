@@ -94,19 +94,16 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - `.claude-plugin/marketplace.json` at repo root for marketplace distribution
 - **XDG paths**: data `~/.local/share/strata`, config `~/.config/strata`, queries `~/.config/strata/queries`, adapters `~/.config/strata/adapters`, formatters `~/.config/strata/formatters`
 
-### Benchmarking framework (`bench/`)
+### Bench (`bench/`) — workbench for retrieval tinkering
 - **Corpus analysis**: `bench/corpus_analysis.py` — profiles token distribution using fastembed's tokenizer
 - **Chunker**: `src/embeddings/chunker.py` — shared module with `chunk_text()` and `extract_exchange_window_chunks()`, used by both production `strata ask` and bench
-- **Strategies**: `bench/strategies/*.json` — `"strategy": "exchange-window"` (token-aware windowing) or legacy per-block
-- **Build**: `bench/build.py --strategy <file>` — builds embeddings DB per strategy. Supports `--sample N` (conversation subset) and `--dry-run` (stats without embedding).
-- **Runner**: `bench/run.py --strategy <file> <embed_db>...` — runs 50 queries, stores full chunk text + token counts in results
-  - Presentation metrics: conversation diversity, temporal span, chrono degradation, cluster density
-  - **Diversity metrics**: conversation redundancy, unique workspace count, pairwise similarity, cross-query overlap (Jaccard for broad-then-narrow pairs)
-  - Retrieval dimensions: `--hybrid`, `--role user|assistant`, first-mention timestamps, conversation-level aggregation
-  - **Reranking modes**: `--rerank mmr|relevance` for A/B comparison, `--lambda` for MMR tuning
-  - All metrics emitted in structured JSON alongside score-based measures
-- **Viewer**: `bench/view.py <run.json> [--html]` — stdout summary or self-contained HTML report with score-coded cards, opens in browser. Displays diversity metrics alongside retrieval scores.
-- **Queries**: `bench/queries.json` — 50 queries across 10 groups (conceptual, philosophical, technical, specific, exploratory, cross-workspace, broad-then-narrow, temporal-trace, tagged-subset, research-workflow)
+- **Strategy**: `bench/strategies/exchange-window.json` — token-aware windowing (the only strategy)
+- **Build**: `bench/build.py --strategy <file>` — builds embeddings DB from strategy
+- **Runner**: `bench/run.py --strategy <file> <embed_db>...` — runs 50 queries against embeddings DBs
+  - Diversity metrics: conversation redundancy, unique workspace count
+  - `--hybrid` for FTS5 recall before reranking, `--rerank mmr|relevance`, `--lambda` for MMR tuning
+- **Viewer**: `bench/view.py <run.json> [--html]` — stdout summary or self-contained HTML report
+- **Queries**: `bench/queries.json` — 50 queries across 10 groups
 
 ### Data (current ingestion)
 - 5,656+ conversations, 165k responses, 89k tool calls across 303 workspaces
@@ -141,7 +138,7 @@ strata/
 ├── docs/
 │   ├── cli.md                  # Auto-generated CLI reference (regenerated, uses "strata" not "tbd")
 │   ├── config.md               # Configuration file documentation
-│   ├── search.md               # Search pipeline, MMR, backends, benchmarking
+│   ├── search.md               # Search pipeline, MMR, backends, bench
 │   ├── tags.md                 # Tag system, boolean filtering, conventions, workflow
 │   ├── api.md                  # Library API reference
 │   ├── data-model.md           # Schema, tables, cost model, IDs
@@ -154,13 +151,13 @@ strata/
 │   ├── cost.sql                # Approximate cost by workspace
 │   └── shell-analysis.sql      # Shell command granularity analysis (tag breakdown, git actions, read/write)
 ├── bench/
-│   ├── queries.json            # 50 benchmark queries (10 groups)
+│   ├── queries.json            # 50 queries (10 groups)
 │   ├── corpus_analysis.py      # Token distribution profiling
-│   ├── run.py                  # Benchmark runner
-│   ├── build.py                # Strategy-based embeddings DB builder
-│   ├── view.py                 # Run viewer: stdout summary or HTML report
-│   ├── strategies/             # Strategy definitions (exchange-window, per-block)
-│   └── runs/                   # Benchmark output (gitignored)
+│   ├── run.py                  # Query runner
+│   ├── build.py                # Embeddings DB builder
+│   ├── view.py                 # Results viewer (stdout or HTML)
+│   ├── strategies/             # exchange-window.json
+│   └── runs/                   # Run output (gitignored)
 ├── src/
 │   ├── cli.py                  # Argparse + thin command handlers (dispatcher only)
 │   ├── paths.py                # XDG directory handling
@@ -269,7 +266,7 @@ strata/
 | Hybrid as default, not quality win | At ~5k conversations, FTS5 OR-mode hits recall limit on every query. Hybrid is a speed optimization for future scale, quality-neutral today. |
 | Two-tier output (`--thread`) | Top 3-4 conversations (above-mean clusters) as narrative, rest as shortlist. Partition matches bench finding of 3.5 strong clusters per query. |
 | Retrieval vs synthesis boundary | strata owns deterministic structured retrieval (no LLM cost). Narrative synthesis is a consumer, not a feature. Manual-first principle applies. |
-| Presentation metrics in bench | Diversity, temporal span, chrono degradation, cluster density alongside retrieval scores. Measures output shape, not just retrieval quality. |
+| Bench as workbench, not benchmark | Directional signal tool for tinkering with retrieval strategies. Not rigorous evaluation — stripped to core metrics (scores + conversation redundancy + workspace count). |
 | MMR as default reranking | Conversation-level penalty (1.0 for same-conv, cosine sim for cross-conv). λ=0.7 balances relevance and diversity. FTS5 pre-filtering regresses diversity; MMR fixes that and exceeds pure similarity on every diversity metric. |
 | Plugin over skill for agent DX | Hooks (session-start, prompt-submit, post-tool-use) provide active nudges. Skill bundled inside plugin for single-source distribution. |
 | "Tag" over "label" | Shorter, fits tool vibe. Renamed before extending to tool_calls. |
@@ -375,7 +372,7 @@ Analyzed real strata usage by agents in non-strata workspaces:
   - Added `aider` to adapter `__all__` exports
   - Renamed 5 `tbd_` → `strata_` dynamic module prefixes (registries, doctor)
   - Fixed `scripts/gen-cli-docs.sh` to use `strata` instead of `tbd`
-- **Bench pairwise similarity** — subtask merged, retains embeddings through metrics pass so pairwise similarity computes instead of N/A
+- **Bench release prep** — stripped to core: removed legacy per-block extraction, presentation metrics, first-mention, conversation aggregation, cross-query overlap, pairwise similarity, role filtering. Kept exchange-window strategy, score metrics, conversation redundancy, workspace count.
 - **Session-aware dedup** — subtask plan merged (design phase, `they-plan` workflow)
 - **Synthesis layer decision**: Synthesis = better data exposure + tagging, not LLM integration. Tags are lightweight synthesis. Let agents test improved plugin/skill in the wild before adding complexity.
 - **Prior session**: Claude Code plugin, MMR diversity reranking, bench update (50 queries, diversity metrics), tag ergonomics, aider adapter

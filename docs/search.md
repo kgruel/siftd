@@ -121,26 +121,24 @@ All filters compose with each other and with output modes.
 | `-n N` | Max results |
 | `--no-exclude-active` | Include results from active sessions |
 
-## Benchmarking
+## Bench
 
-The `bench/` directory evaluates retrieval quality:
+The `bench/` directory is a workbench for tinkering with embedding and retrieval strategies. Build a chunked corpus, run queries, eyeball whether results improved.
 
 ```bash
-# Build embeddings DB per strategy
+# Build embeddings DB from strategy
 python bench/build.py --strategy bench/strategies/exchange-window.json
 
-# Run benchmark (50 queries, 10 groups)
+# Run queries (50 queries, 10 groups)
 python bench/run.py --strategy bench/strategies/exchange-window.json embeddings.db
 
-# A/B comparison
+# Compare reranking approaches
 python bench/run.py --rerank mmr embeddings.db
 python bench/run.py --rerank relevance embeddings.db
 
 # View results
-python bench/view.py runs/latest.json          # stdout summary
-python bench/view.py runs/latest.json --html   # HTML report with score-coded cards
+python bench/view.py bench/runs/latest.json          # stdout summary
+python bench/view.py bench/runs/latest.json --html   # HTML report
 ```
 
-Measures: retrieval scores, conversation diversity, temporal span, chrono degradation, cluster density, pairwise similarity, cross-query overlap.
-
-Query groups: conceptual, philosophical, technical, specific, exploratory, cross-workspace, broad-then-narrow, temporal-trace, tagged-subset, research-workflow.
+Measures: retrieval scores (avg, top-1, top-5, spread), conversation redundancy, unique workspace count.

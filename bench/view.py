@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect a benchmark run — stdout summary or HTML report."""
+"""View bench run results — stdout summary or HTML report."""
 
 import argparse
 import json
@@ -7,7 +7,6 @@ import sys
 import webbrowser
 from html import escape
 from pathlib import Path
-from statistics import mean, stdev
 
 
 def load_run(path: Path) -> dict:
@@ -60,17 +59,13 @@ def print_stdout(data: dict) -> None:
     if has_diversity:
         print()
         print("Diversity Metrics:")
-        print(f"  {'DB':<60} {'Conv Red':<10} {'Uniq WS':<10} {'Pairwise':<10} {'XQ Overlap':<10}")
+        print(f"  {'DB':<60} {'Conv Red':<10} {'Uniq WS':<10}")
         for label, s in summary.items():
             red = s.get("avg_conversation_redundancy")
             ws = s.get("avg_unique_workspace_count")
-            pw = s.get("avg_pairwise_similarity")
-            xq = s.get("avg_cross_query_overlap")
             red_str = f"{red:<10.4f}" if red is not None else "N/A       "
             ws_str = f"{ws:<10.1f}" if ws is not None else "N/A       "
-            pw_str = f"{pw:<10.4f}" if pw is not None else "N/A       "
-            xq_str = f"{xq:<10.4f}" if xq is not None else "N/A       "
-            print(f"  {label:<60} {red_str} {ws_str} {pw_str} {xq_str}")
+            print(f"  {label:<60} {red_str} {ws_str}")
     print()
 
     # Per-group breakdown
@@ -138,7 +133,7 @@ th {{ background: #e9ecef; font-weight: 600; }}
 """)
 
     # Header
-    parts.append(f'<h1>Benchmark Run: {escape(meta["label"])}</h1>')
+    parts.append(f'<h1>Bench Run: {escape(meta["label"])}</h1>')
     parts.append('<div class="meta"><dl>')
     parts.append(f'<dt>ID:</dt><dd>{escape(meta["id"])}</dd>')
     parts.append(f'<dt>Time:</dt><dd>{escape(meta["timestamp"])}</dd>')
@@ -177,17 +172,13 @@ th {{ background: #e9ecef; font-weight: 600; }}
     has_diversity = any(s.get("avg_conversation_redundancy") is not None for s in summary.values())
     if has_diversity:
         parts.append('<h2>Diversity Summary</h2>')
-        parts.append('<table><tr><th>DB</th><th>Conv Redundancy</th><th>Unique Workspaces</th><th>Pairwise Similarity</th><th>Cross-Query Overlap</th></tr>')
+        parts.append('<table><tr><th>DB</th><th>Conv Redundancy</th><th>Unique Workspaces</th></tr>')
         for label, s in summary.items():
             red = s.get("avg_conversation_redundancy")
             ws = s.get("avg_unique_workspace_count")
-            pw = s.get("avg_pairwise_similarity")
-            xq = s.get("avg_cross_query_overlap")
             red_str = f"{red:.4f}" if red is not None else "N/A"
             ws_str = f"{ws:.1f}" if ws is not None else "N/A"
-            pw_str = f"{pw:.4f}" if pw is not None else "N/A"
-            xq_str = f"{xq:.4f}" if xq is not None else "N/A"
-            parts.append(f'<tr><td>{escape(label)}</td><td>{red_str}</td><td>{ws_str}</td><td>{pw_str}</td><td>{xq_str}</td></tr>')
+            parts.append(f'<tr><td>{escape(label)}</td><td>{red_str}</td><td>{ws_str}</td></tr>')
         parts.append('</table>')
 
     # Group breakdown
@@ -234,7 +225,7 @@ th {{ background: #e9ecef; font-weight: 600; }}
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Inspect a benchmark run")
+    parser = argparse.ArgumentParser(description="View bench run results")
     parser.add_argument("run_file", type=Path, help="Path to run JSON file")
     parser.add_argument("--html", action="store_true", help="Generate HTML and open in browser")
     args = parser.parse_args()
