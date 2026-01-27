@@ -33,6 +33,7 @@ def search_similar(
     limit: int = 10,
     conversation_ids: set[str] | None = None,
     role_source_ids: set[str] | None = None,
+    include_embeddings: bool = False,
 ) -> list[dict]:
     if conversation_ids is not None:
         placeholders = ",".join("?" for _ in conversation_ids)
@@ -51,14 +52,17 @@ def search_similar(
 
         stored = decode_embedding(row["embedding"])
         score = cosine_similarity(query_embedding, stored)
-        results.append({
+        result = {
             "chunk_id": row["id"],
             "conversation_id": row["conversation_id"],
             "chunk_type": row["chunk_type"],
             "text": row["text"],
             "score": score,
             "source_ids": source_ids_val,
-        })
+        }
+        if include_embeddings:
+            result["embedding"] = stored
+        results.append(result)
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:limit]
 
@@ -254,17 +258,8 @@ def run_benchmark(
                     conn, query_embedding, limit=100,
                     conversation_ids=conversation_ids,
                     role_source_ids=role_source_ids,
+                    include_embeddings=use_mmr,
                 )
-
-                # Attach decoded embeddings for MMR and diversity pairwise metrics
-                if use_mmr:
-                    for r in results:
-                        r["embedding"] = decode_embedding(
-                            conn.execute(
-                                "SELECT embedding FROM chunks WHERE id = ?",
-                                (r["chunk_id"],),
-                            ).fetchone()["embedding"]
-                        )
 
                 results = enrich_results(results, main_db)
                 for r in results:

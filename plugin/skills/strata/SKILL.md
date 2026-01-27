@@ -1,9 +1,6 @@
 ---
 name: strata
 description: "Search and research past conversations from CLI coding sessions. Use when researching past decisions, design rationale, project history, or finding where an idea originated. Also use when the user mentions strata, strata ask, or searching past conversations."
-allowed-tools: Bash, Read, Grep, Glob
-context: fork
-disabled-model-invocation: true
 ---
 
 # strata — Search past coding conversations

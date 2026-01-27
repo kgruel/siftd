@@ -6,9 +6,9 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ### What exists
 - **Domain model**: `Conversation → Prompt → Response → ToolCall` dataclass tree (`src/domain/`)
-- **Three adapters**: `claude_code` (file dedup), `gemini_cli` (session dedup), `codex_cli` (file dedup)
+- **Four adapters**: `claude_code` (file dedup), `gemini_cli` (session dedup), `codex_cli` (file dedup), `aider` (file dedup, markdown chat history)
 - **Adapter plugin system**: built-in + drop-in (`~/.config/strata/adapters/*.py`) + entry points (`strata.adapters`)
-- **Ingestion**: orchestration layer with adapter-controlled dedup, `--path` for custom dirs, error recording (failed files tracked to prevent retry loops)
+- **Ingestion**: orchestration layer with adapter-controlled dedup, `--path` for custom dirs, `-a/--adapter` filter, `discover(locations=None)` delegation (adapters own their glob patterns), error recording (failed files tracked to prevent retry loops)
 - **Storage**: SQLite with schema, ULIDs, schemaless attributes
 - **Tool canonicalization**: 16 canonical tools (`file.read`, `shell.execute`, `shell.stdin`, etc.), cross-harness aliases
 - **Model parsing**: raw names decomposed into family/version/variant/creator/released
@@ -99,11 +99,11 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Queries**: `bench/queries.json` — 25 queries across 5 groups (conceptual, philosophical, technical, specific, exploratory)
 
 ### Data (current ingestion)
-- 5,540 conversations, 160k responses, 86k tool calls across 292 workspaces
-- ~900MB database at `~/.local/share/strata/strata.db`
-- Harnesses: Claude Code (Anthropic), Codex CLI (OpenAI), Gemini CLI (Google)
+- 5,656+ conversations, 165k responses, 89k tool calls across 303 workspaces
+- ~960MB database at `~/.local/share/strata/strata.db`
+- Harnesses: Claude Code (Anthropic), Codex CLI (OpenAI), Gemini CLI (Google), Cline (Anthropic)
 - Models: Opus 4.5, Haiku 4.5, Sonnet 4.5, Gemini 3 pro/flash, GPT-5.2
-- Top workspace: `~/.config` (1,167 conversations)
+- Top workspace: `~/.config` (1,114 conversations)
 
 ### Files
 ```
@@ -150,7 +150,8 @@ strata/
 │   │   └── registry.py         # Formatter plugin discovery (drop-in + entry points)
 │   ├── adapters/
 │   │   ├── __init__.py         # Adapter exports
-│   │   ├── registry.py         # Plugin discovery + wrap_adapter_paths()
+│   │   ├── registry.py         # Plugin discovery + wrap_adapter_paths() + discover(locations) delegation
+│   │   ├── aider.py            # Markdown parser, chat history sessions, cost extraction
 │   │   ├── claude_code.py      # JSONL parser, TOOL_ALIASES, cache token extraction
 │   │   ├── codex_cli.py        # JSONL parser, OpenAI Codex sessions
 │   │   └── gemini_cli.py       # JSON parser, session dedup, discover()
@@ -225,7 +226,7 @@ strata/
 | Short mode as default | Dense one-liners with IDs; verbose table via `-v` |
 | FTS5 via `query -s` | FTS5 composes with other filters instead of being a separate command |
 | No auto-build on `ask` | Explicit `--index` required. Indexing is expensive, shouldn't surprise the user. |
-| Remove untested adapters | Cline/Goose/Cursor/Aider had zero ingested data. Plugin system allows re-adding later. Recovery: commit `f5e3409`. |
+| Remove untested adapters | Goose/Cursor had zero ingested data at time of removal. Cline and Aider now re-added as built-in. Plugin system supports drop-in for others. |
 | WIP branches for sessions | Session work (handoff updates, tests, scratch) goes in `wip/*`, subtasks merge to main. |
 | Hybrid as default, not quality win | At ~5k conversations, FTS5 OR-mode hits recall limit on every query. Hybrid is a speed optimization for future scale, quality-neutral today. |
 | Two-tier output (`--thread`) | Top 3-4 conversations (above-mean clusters) as narrative, rest as shortlist. Partition matches bench finding of 3.5 strong clusters per query. |
