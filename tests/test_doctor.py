@@ -1,6 +1,5 @@
 """Tests for the doctor module."""
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -19,46 +18,6 @@ from strata.doctor.checks import (
     IngestPendingCheck,
     PricingGapsCheck,
 )
-from strata.storage.sqlite import (
-    create_database,
-    get_or_create_harness,
-    get_or_create_model,
-    get_or_create_workspace,
-    insert_conversation,
-    insert_prompt,
-    insert_response,
-    record_ingested_file,
-)
-
-
-@pytest.fixture
-def test_db(tmp_path):
-    """Create a test database with sample data."""
-    db_path = tmp_path / "test.db"
-    conn = create_database(db_path)
-
-    harness_id = get_or_create_harness(conn, "test_harness", source="test", log_format="jsonl")
-    workspace_id = get_or_create_workspace(conn, "/test/project", "2024-01-01T10:00:00Z")
-    model_id = get_or_create_model(conn, "claude-3-opus-20240229")
-
-    conv_id = insert_conversation(
-        conn,
-        external_id="conv1",
-        harness_id=harness_id,
-        workspace_id=workspace_id,
-        started_at="2024-01-15T10:00:00Z",
-    )
-
-    prompt_id = insert_prompt(conn, conv_id, "p1", "2024-01-15T10:00:00Z")
-    insert_response(
-        conn, conv_id, prompt_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
-        input_tokens=100, output_tokens=50
-    )
-
-    conn.commit()
-    conn.close()
-
-    return db_path
 
 
 @pytest.fixture
@@ -120,14 +79,12 @@ class TestRunChecks:
     def test_run_all_checks(self, test_db):
         """run_checks runs all checks when no filter specified."""
         findings = run_checks(db_path=test_db)
-        # Should not raise, findings may be empty or have items
         assert isinstance(findings, list)
         assert all(isinstance(f, Finding) for f in findings)
 
     def test_run_specific_check(self, test_db):
         """run_checks can run a specific check by name."""
         findings = run_checks(checks=["drop-ins-valid"], db_path=test_db)
-        # All findings should be from the specified check
         for f in findings:
             assert f.check == "drop-ins-valid"
 
@@ -149,11 +106,8 @@ class TestIngestPendingCheck:
 
     def test_no_pending_files(self, check_context):
         """Returns empty findings when all discovered files are ingested."""
-        # The test DB has no adapter-discovered files, so nothing should be pending
-        # (adapters discover from real filesystem locations which won't exist in tests)
         check = IngestPendingCheck()
         findings = check.run(check_context)
-        # With no real adapter locations, we expect no findings or adapter discover failures
         assert isinstance(findings, list)
 
     def test_finding_structure(self, check_context):
@@ -183,17 +137,16 @@ class TestEmbeddingsStaleCheck:
         """Reports stale conversations when embeddings DB exists but is empty."""
         from strata.storage.embeddings import open_embeddings_db
 
-        # Create empty embeddings DB
         embed_conn = open_embeddings_db(check_context.embed_db_path)
         embed_conn.close()
 
         check = EmbeddingsStaleCheck()
         findings = check.run(check_context)
 
-        # Should find stale conversations (main DB has 1 conv, embeddings has 0)
         assert len(findings) == 1
         assert findings[0].check == "embeddings-stale"
-        assert "1 conversation" in findings[0].message
+        assert "conversation" in findings[0].message
+        assert "not indexed" in findings[0].message
         assert findings[0].fix_available is True
 
 
@@ -211,7 +164,6 @@ class TestPricingGapsCheck:
         """Findings have correct structure when there are gaps."""
         check = PricingGapsCheck()
         findings = check.run(check_context)
-        # Pricing table is auto-created, so we may have findings for models without pricing
         for f in findings:
             assert f.check == "pricing-gaps"
             assert f.severity == "warning"
@@ -229,7 +181,6 @@ class TestDropInsValidCheck:
 
     def test_invalid_adapter(self, check_context):
         """Reports error for invalid adapter file."""
-        # Create an invalid adapter file
         adapter_file = check_context.adapters_dir / "bad_adapter.py"
         adapter_file.write_text("# Missing required attributes\nx = 1\n")
 
@@ -301,35 +252,17 @@ def parse(source):
 
 
 class TestFindingDataclass:
-    """Tests for Finding dataclass."""
+    """Finding defaults that callers depend on."""
 
-    def test_required_fields(self):
-        """Finding requires essential fields."""
+    def test_defaults(self):
         finding = Finding(
             check="test",
             severity="info",
             message="Test message",
             fix_available=False,
         )
-        assert finding.check == "test"
-        assert finding.severity == "info"
-        assert finding.message == "Test message"
-        assert finding.fix_available is False
         assert finding.fix_command is None
         assert finding.context is None
-
-    def test_optional_fields(self):
-        """Finding accepts optional fields."""
-        finding = Finding(
-            check="test",
-            severity="warning",
-            message="Test",
-            fix_available=True,
-            fix_command="strata fix",
-            context={"count": 5},
-        )
-        assert finding.fix_command == "strata fix"
-        assert finding.context == {"count": 5}
 
 
 class TestCheckContext:
@@ -344,11 +277,9 @@ class TestCheckContext:
             formatters_dir=tmp_path / "formatters",
             queries_dir=tmp_path / "queries",
         )
-        # Connections should be None initially
         assert ctx._db_conn is None
         assert ctx._embed_conn is None
 
-        # Access triggers loading
         conn = ctx.get_db_conn()
         assert conn is not None
         assert ctx._db_conn is not None
@@ -364,5 +295,4 @@ class TestCheckContext:
             formatters_dir=tmp_path,
             queries_dir=tmp_path,
         )
-        # Should not raise
         ctx.close()

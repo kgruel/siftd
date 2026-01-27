@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import make_conversation
+
 from strata.api import (
     ConversationDetail,
     ConversationSummary,
@@ -20,149 +22,6 @@ from strata.api import (
 )
 from strata.api.search import ConversationScore, aggregate_by_conversation, first_mention
 from strata.search import SearchResult
-from strata.storage.sqlite import (
-    apply_tag,
-    create_database,
-    get_or_create_harness,
-    get_or_create_model,
-    get_or_create_tag,
-    get_or_create_tool,
-    get_or_create_workspace,
-    insert_conversation,
-    insert_prompt,
-    insert_prompt_content,
-    insert_response,
-    insert_response_content,
-    insert_tool_call,
-)
-
-
-@pytest.fixture
-def test_db(tmp_path):
-    """Create a test database with sample data."""
-    db_path = tmp_path / "test.db"
-    conn = create_database(db_path)
-
-    # Create harness and workspace
-    harness_id = get_or_create_harness(conn, "test_harness", source="test", log_format="jsonl")
-    workspace_id = get_or_create_workspace(conn, "/test/project", "2024-01-01T10:00:00Z")
-    model_id = get_or_create_model(conn, "claude-3-opus-20240229")
-
-    # Create conversations
-    conv1_id = insert_conversation(
-        conn,
-        external_id="conv1",
-        harness_id=harness_id,
-        workspace_id=workspace_id,
-        started_at="2024-01-15T10:00:00Z",
-    )
-
-    conv2_id = insert_conversation(
-        conn,
-        external_id="conv2",
-        harness_id=harness_id,
-        workspace_id=workspace_id,
-        started_at="2024-01-16T10:00:00Z",
-    )
-
-    # Add prompts and responses for conv1
-    prompt1_id = insert_prompt(conn, conv1_id, "p1", "2024-01-15T10:00:00Z")
-    insert_prompt_content(conn, prompt1_id, 0, "text", '{"text": "Hello, how are you?"}')
-
-    response1_id = insert_response(
-        conn, conv1_id, prompt1_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
-        input_tokens=100, output_tokens=50
-    )
-    insert_response_content(conn, response1_id, 0, "text", '{"text": "I am doing well, thank you!"}')
-
-    # Add prompts and responses for conv2
-    prompt2_id = insert_prompt(conn, conv2_id, "p2", "2024-01-16T10:00:00Z")
-    insert_prompt_content(conn, prompt2_id, 0, "text", '{"text": "What is Python?"}')
-
-    response2_id = insert_response(
-        conn, conv2_id, prompt2_id, model_id, None, "r2", "2024-01-16T10:00:01Z",
-        input_tokens=200, output_tokens=150
-    )
-    insert_response_content(conn, response2_id, 0, "text", '{"text": "Python is a programming language."}')
-
-    conn.commit()
-    conn.close()
-
-    return db_path
-
-
-@pytest.fixture
-def test_db_with_tool_tags(tmp_path):
-    """Create a test database with tool calls and tags."""
-    db_path = tmp_path / "test_tools.db"
-    conn = create_database(db_path)
-
-    # Create harness, workspace, model, tool
-    harness_id = get_or_create_harness(conn, "test_harness", source="test", log_format="jsonl")
-    workspace_id = get_or_create_workspace(conn, "/test/project", "2024-01-01T10:00:00Z")
-    workspace2_id = get_or_create_workspace(conn, "/other/project", "2024-01-01T10:00:00Z")
-    model_id = get_or_create_model(conn, "claude-3-opus-20240229")
-    tool_id = get_or_create_tool(conn, "shell.execute")
-
-    # Create tags
-    test_tag_id = get_or_create_tag(conn, "shell:test")
-    vcs_tag_id = get_or_create_tag(conn, "shell:vcs")
-
-    # Conversation 1 (in /test/project) with test commands
-    conv1_id = insert_conversation(
-        conn, external_id="conv1", harness_id=harness_id,
-        workspace_id=workspace_id, started_at="2024-01-15T10:00:00Z",
-    )
-    prompt1_id = insert_prompt(conn, conv1_id, "p1", "2024-01-15T10:00:00Z")
-    insert_prompt_content(conn, prompt1_id, 0, "text", '{"text": "Run tests"}')
-    response1_id = insert_response(
-        conn, conv1_id, prompt1_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
-        input_tokens=100, output_tokens=50
-    )
-    tc1_id = insert_tool_call(
-        conn, response1_id, conv1_id, tool_id, "tc1",
-        '{"command": "pytest"}', '{"output": "OK"}', "success", "2024-01-15T10:00:01Z"
-    )
-    apply_tag(conn, "tool_call", tc1_id, test_tag_id)
-
-    # Conversation 2 (in /test/project) with vcs commands
-    conv2_id = insert_conversation(
-        conn, external_id="conv2", harness_id=harness_id,
-        workspace_id=workspace_id, started_at="2024-01-16T10:00:00Z",
-    )
-    prompt2_id = insert_prompt(conn, conv2_id, "p2", "2024-01-16T10:00:00Z")
-    insert_prompt_content(conn, prompt2_id, 0, "text", '{"text": "Commit changes"}')
-    response2_id = insert_response(
-        conn, conv2_id, prompt2_id, model_id, None, "r2", "2024-01-16T10:00:01Z",
-        input_tokens=200, output_tokens=150
-    )
-    tc2_id = insert_tool_call(
-        conn, response2_id, conv2_id, tool_id, "tc2",
-        '{"command": "git commit"}', '{"output": "OK"}', "success", "2024-01-16T10:00:01Z"
-    )
-    apply_tag(conn, "tool_call", tc2_id, vcs_tag_id)
-
-    # Conversation 3 (in /other/project) with test commands
-    conv3_id = insert_conversation(
-        conn, external_id="conv3", harness_id=harness_id,
-        workspace_id=workspace2_id, started_at="2024-01-17T10:00:00Z",
-    )
-    prompt3_id = insert_prompt(conn, conv3_id, "p3", "2024-01-17T10:00:00Z")
-    insert_prompt_content(conn, prompt3_id, 0, "text", '{"text": "Run more tests"}')
-    response3_id = insert_response(
-        conn, conv3_id, prompt3_id, model_id, None, "r3", "2024-01-17T10:00:01Z",
-        input_tokens=150, output_tokens=100
-    )
-    tc3_id = insert_tool_call(
-        conn, response3_id, conv3_id, tool_id, "tc3",
-        '{"command": "pytest -v"}', '{"output": "OK"}', "success", "2024-01-17T10:00:01Z"
-    )
-    apply_tag(conn, "tool_call", tc3_id, test_tag_id)
-
-    conn.commit()
-    conn.close()
-
-    return db_path
 
 
 class TestGetStats:
@@ -390,12 +249,6 @@ class TestAggregateByConversation:
 
 class TestFirstMention:
     def test_returns_earliest_above_threshold(self, test_db):
-        results = [
-            SearchResult("conv1", 0.9, "text1", "prompt", "/ws", "2024-01-02"),
-            SearchResult("conv2", 0.8, "text2", "prompt", "/ws", "2024-01-01"),
-        ]
-
-        # Need to use conversation IDs from the test DB
         conversations = list_conversations(db_path=test_db)
         results = [
             SearchResult(conversations[0].id, 0.9, "text1", "prompt", "/ws", conversations[0].started_at),
@@ -425,13 +278,11 @@ class TestFirstMention:
 
 class TestListConversationsToolTag:
     def test_filter_by_tool_tag(self, test_db_with_tool_tags):
-        # Filter by shell:test tag
         conversations = list_conversations(db_path=test_db_with_tool_tags, tool_tag="shell:test")
 
         assert len(conversations) == 2  # conv1 and conv3 have shell:test
 
     def test_filter_by_different_tool_tag(self, test_db_with_tool_tags):
-        # Filter by shell:vcs tag
         conversations = list_conversations(db_path=test_db_with_tool_tags, tool_tag="shell:vcs")
 
         assert len(conversations) == 1  # only conv2 has shell:vcs
@@ -442,7 +293,6 @@ class TestListConversationsToolTag:
         assert len(conversations) == 0
 
     def test_tool_tag_combines_with_workspace_filter(self, test_db_with_tool_tags):
-        # Filter by shell:test AND workspace containing "other"
         conversations = list_conversations(
             db_path=test_db_with_tool_tags,
             tool_tag="shell:test",
@@ -452,7 +302,6 @@ class TestListConversationsToolTag:
         assert len(conversations) == 1  # only conv3 matches both
 
     def test_filter_by_tool_tag_prefix(self, test_db_with_tool_tags):
-        # Trailing colon matches all shell:* tags
         conversations = list_conversations(db_path=test_db_with_tool_tags, tool_tag="shell:")
 
         assert len(conversations) == 3  # all conversations have shell:* tags
@@ -473,14 +322,12 @@ class TestGetToolTagSummary:
     def test_sorted_by_count_descending(self, test_db_with_tool_tags):
         tags = get_tool_tag_summary(db_path=test_db_with_tool_tags)
 
-        # shell:test has 2, shell:vcs has 1
         assert tags[0].name == "shell:test"
         assert tags[0].count == 2
         assert tags[1].name == "shell:vcs"
         assert tags[1].count == 1
 
     def test_respects_prefix_filter(self, test_db_with_tool_tags):
-        # No tags with "other:" prefix
         tags = get_tool_tag_summary(db_path=test_db_with_tool_tags, prefix="other:")
 
         assert len(tags) == 0
@@ -500,14 +347,11 @@ class TestGetToolTagsByWorkspace:
     def test_sorted_by_total_descending(self, test_db_with_tool_tags):
         results = get_tool_tags_by_workspace(db_path=test_db_with_tool_tags)
 
-        # /test/project has 2 total (1 test + 1 vcs), /other/project has 1
-        assert "test" in results[0].workspace or "project" in results[0].workspace
         assert results[0].total >= results[1].total
 
     def test_includes_tag_breakdown(self, test_db_with_tool_tags):
         results = get_tool_tags_by_workspace(db_path=test_db_with_tool_tags)
 
-        # Find the workspace with both tags
         ws_with_both = [r for r in results if r.total == 2][0]
         tag_names = [t.name for t in ws_with_both.tags]
         assert "shell:test" in tag_names
@@ -528,57 +372,27 @@ class TestIngestTimeShellTagging:
 
     def test_shell_execute_tagged_at_ingest(self, tmp_path):
         """store_conversation() auto-tags shell.execute calls with categorizable commands."""
-        from strata.domain.models import (
-            ContentBlock,
-            Conversation,
-            Harness,
-            Prompt,
-            Response,
-            ToolCall,
-            Usage,
-        )
+        from strata.domain.models import ToolCall
         from strata.storage.sqlite import create_database, store_conversation
 
         db_path = tmp_path / "test_ingest_tags.db"
         conn = create_database(db_path)
 
-        # Create a conversation with a pytest command (should get shell:test tag)
-        conversation = Conversation(
-            external_id="test-conv-1",
-            workspace_path="/test/project",
-            started_at="2024-01-01T10:00:00Z",
-            harness=Harness(name="test_harness", source="test", log_format="jsonl"),
-            prompts=[
-                Prompt(
-                    external_id="p1",
-                    timestamp="2024-01-01T10:00:00Z",
-                    content=[ContentBlock(block_type="text", content={"text": "Run tests"})],
-                    responses=[
-                        Response(
-                            external_id="r1",
-                            timestamp="2024-01-01T10:00:01Z",
-                            model="test-model",
-                            usage=Usage(input_tokens=100, output_tokens=50),
-                            content=[ContentBlock(block_type="text", content={"text": "Running tests..."})],
-                            tool_calls=[
-                                ToolCall(
-                                    tool_name="shell.execute",  # Canonical name
-                                    external_id="tc1",
-                                    input={"command": "pytest tests/"},
-                                    result={"output": "OK"},
-                                    status="success",
-                                    timestamp="2024-01-01T10:00:01Z",
-                                ),
-                            ],
-                        ),
-                    ],
+        conversation = make_conversation(
+            tool_calls=[
+                ToolCall(
+                    tool_name="shell.execute",
+                    external_id="tc1",
+                    input={"command": "pytest tests/"},
+                    result={"output": "OK"},
+                    status="success",
+                    timestamp="2024-01-01T10:00:01Z",
                 ),
             ],
         )
 
         store_conversation(conn, conversation, commit=True)
 
-        # Verify the tag was applied
         cur = conn.execute("""
             SELECT t.name
             FROM tool_call_tags tct
@@ -591,56 +405,28 @@ class TestIngestTimeShellTagging:
 
     def test_uncategorized_command_not_tagged(self, tmp_path):
         """Commands that don't match any category are not tagged."""
-        from strata.domain.models import (
-            ContentBlock,
-            Conversation,
-            Harness,
-            Prompt,
-            Response,
-            ToolCall,
-            Usage,
-        )
+        from strata.domain.models import ToolCall
         from strata.storage.sqlite import create_database, store_conversation
 
         db_path = tmp_path / "test_no_tags.db"
         conn = create_database(db_path)
 
-        conversation = Conversation(
+        conversation = make_conversation(
             external_id="test-conv-2",
-            workspace_path="/test/project",
-            started_at="2024-01-01T10:00:00Z",
-            harness=Harness(name="test_harness", source="test", log_format="jsonl"),
-            prompts=[
-                Prompt(
-                    external_id="p1",
-                    timestamp="2024-01-01T10:00:00Z",
-                    content=[ContentBlock(block_type="text", content={"text": "Do something"})],
-                    responses=[
-                        Response(
-                            external_id="r1",
-                            timestamp="2024-01-01T10:00:01Z",
-                            model="test-model",
-                            usage=Usage(input_tokens=100, output_tokens=50),
-                            content=[ContentBlock(block_type="text", content={"text": "Done"})],
-                            tool_calls=[
-                                ToolCall(
-                                    tool_name="shell.execute",  # Canonical name
-                                    external_id="tc1",
-                                    input={"command": "myunknowncommand --flag"},  # No category
-                                    result={"output": "hello"},
-                                    status="success",
-                                    timestamp="2024-01-01T10:00:01Z",
-                                ),
-                            ],
-                        ),
-                    ],
+            tool_calls=[
+                ToolCall(
+                    tool_name="shell.execute",
+                    external_id="tc1",
+                    input={"command": "myunknowncommand --flag"},
+                    result={"output": "hello"},
+                    status="success",
+                    timestamp="2024-01-01T10:00:01Z",
                 ),
             ],
         )
 
         store_conversation(conn, conversation, commit=True)
 
-        # Verify no tags were applied
         cur = conn.execute("SELECT COUNT(*) as cnt FROM tool_call_tags")
         count = cur.fetchone()["cnt"]
 

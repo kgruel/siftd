@@ -6,10 +6,9 @@ Covers:
 - Session-based dedup with timestamp comparison
 """
 
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from conftest import FIXTURES_DIR, make_conversation, make_session_adapter
 
 from strata.ingestion.orchestration import ingest_all
 from strata.storage.sqlite import (
@@ -19,9 +18,7 @@ from strata.storage.sqlite import (
     open_database,
 )
 from strata.adapters import claude_code
-from strata.domain import Conversation, Harness, Prompt, Response, ContentBlock, Source
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
+from strata.domain import Source
 
 
 def _make_adapter(dest, name="claude_code", dedup="file", parse_fn=None):
@@ -269,93 +266,40 @@ class TestEmptyFileHandling:
 class TestSessionBasedDedup:
     """Tests for session-based dedup with timestamp comparison."""
 
-    def _make_conversation(self, external_id, ended_at, workspace="/test"):
+    def _conv(self, external_id, ended_at, workspace="/test"):
         """Create a minimal conversation for testing."""
-        return Conversation(
+        return make_conversation(
             external_id=external_id,
-            harness=Harness(name="test_harness", source="test"),
-            workspace_path=workspace,
-            started_at="2024-01-01T00:00:00Z",
             ended_at=ended_at,
-            prompts=[
-                Prompt(
-                    external_id="p1",
-                    timestamp="2024-01-01T00:00:00Z",
-                    content=[ContentBlock(block_type="text", content={"text": "Hello"})],
-                    responses=[
-                        Response(
-                            external_id="r1",
-                            timestamp="2024-01-01T00:00:01Z",
-                            content=[ContentBlock(block_type="text", content={"text": "Hi"})],
-                        )
-                    ]
-                )
-            ]
+            workspace_path=workspace,
         )
 
     def test_newer_conversation_replaces_older(self, tmp_path):
         """Session with newer ended_at replaces existing conversation."""
         dest = tmp_path / "session.jsonl"
-        dest.write_text("dummy")  # File content doesn't matter for session dedup
+        dest.write_text("dummy")
 
         db_path = tmp_path / "test.db"
         conn = open_database(db_path)
 
-        # First: older conversation
-        older_conv = self._make_conversation("test_harness::session-1", "2024-01-01T10:00:00Z")
-
-        class OlderAdapter:
-            NAME = "test_harness"
-            DEDUP_STRATEGY = "session"
-            HARNESS_SOURCE = "test"
-
-            @staticmethod
-            def can_handle(source):
-                return True
-
-            @staticmethod
-            def parse(source):
-                yield older_conv
-
-            @staticmethod
-            def discover():
-                yield Source(kind="file", location=dest)
+        older_conv = self._conv("test_harness::session-1", "2024-01-01T10:00:00Z")
+        OlderAdapter = make_session_adapter(dest, parse_fn=lambda s: [older_conv])
 
         stats1 = ingest_all(conn, [OlderAdapter])
         assert stats1.files_ingested == 1
 
-        # Verify conversation exists
         cur = conn.execute("SELECT COUNT(*) FROM conversations")
         assert cur.fetchone()[0] == 1
 
-        # Second: newer conversation (same external_id)
-        newer_conv = self._make_conversation("test_harness::session-1", "2024-01-01T12:00:00Z")
-
-        class NewerAdapter:
-            NAME = "test_harness"
-            DEDUP_STRATEGY = "session"
-            HARNESS_SOURCE = "test"
-
-            @staticmethod
-            def can_handle(source):
-                return True
-
-            @staticmethod
-            def parse(source):
-                yield newer_conv
-
-            @staticmethod
-            def discover():
-                yield Source(kind="file", location=dest)
+        newer_conv = self._conv("test_harness::session-1", "2024-01-01T12:00:00Z")
+        NewerAdapter = make_session_adapter(dest, parse_fn=lambda s: [newer_conv])
 
         stats2 = ingest_all(conn, [NewerAdapter])
         assert stats2.files_replaced == 1
 
-        # Still only one conversation
         cur = conn.execute("SELECT COUNT(*) FROM conversations")
         assert cur.fetchone()[0] == 1
 
-        # Verify it's the newer one
         cur = conn.execute("SELECT ended_at FROM conversations")
         assert cur.fetchone()[0] == "2024-01-01T12:00:00Z"
 
@@ -369,54 +313,19 @@ class TestSessionBasedDedup:
         db_path = tmp_path / "test.db"
         conn = open_database(db_path)
 
-        # First: newer conversation
-        newer_conv = self._make_conversation("test_harness::session-1", "2024-01-01T12:00:00Z")
-
-        class NewerAdapter:
-            NAME = "test_harness"
-            DEDUP_STRATEGY = "session"
-            HARNESS_SOURCE = "test"
-
-            @staticmethod
-            def can_handle(source):
-                return True
-
-            @staticmethod
-            def parse(source):
-                yield newer_conv
-
-            @staticmethod
-            def discover():
-                yield Source(kind="file", location=dest)
+        newer_conv = self._conv("test_harness::session-1", "2024-01-01T12:00:00Z")
+        NewerAdapter = make_session_adapter(dest, parse_fn=lambda s: [newer_conv])
 
         stats1 = ingest_all(conn, [NewerAdapter])
         assert stats1.files_ingested == 1
 
-        # Second: older conversation (same external_id)
-        older_conv = self._make_conversation("test_harness::session-1", "2024-01-01T10:00:00Z")
-
-        class OlderAdapter:
-            NAME = "test_harness"
-            DEDUP_STRATEGY = "session"
-            HARNESS_SOURCE = "test"
-
-            @staticmethod
-            def can_handle(source):
-                return True
-
-            @staticmethod
-            def parse(source):
-                yield older_conv
-
-            @staticmethod
-            def discover():
-                yield Source(kind="file", location=dest)
+        older_conv = self._conv("test_harness::session-1", "2024-01-01T10:00:00Z")
+        OlderAdapter = make_session_adapter(dest, parse_fn=lambda s: [older_conv])
 
         stats2 = ingest_all(conn, [OlderAdapter])
         assert stats2.files_skipped == 1
         assert stats2.files_replaced == 0
 
-        # Still the newer one
         cur = conn.execute("SELECT ended_at FROM conversations")
         assert cur.fetchone()[0] == "2024-01-01T12:00:00Z"
 
@@ -430,36 +339,18 @@ class TestSessionBasedDedup:
         db_path = tmp_path / "test.db"
         conn = open_database(db_path)
 
-        conv = self._make_conversation("test_harness::session-1", "2024-01-01T10:00:00Z")
+        conv = self._conv("test_harness::session-1", "2024-01-01T10:00:00Z")
+        Adapter = make_session_adapter(dest, parse_fn=lambda s: [conv])
 
-        class TestAdapter:
-            NAME = "test_harness"
-            DEDUP_STRATEGY = "session"
-            HARNESS_SOURCE = "test"
-
-            @staticmethod
-            def can_handle(source):
-                return True
-
-            @staticmethod
-            def parse(source):
-                yield conv
-
-            @staticmethod
-            def discover():
-                yield Source(kind="file", location=dest)
-
-        stats1 = ingest_all(conn, [TestAdapter])
+        stats1 = ingest_all(conn, [Adapter])
         assert stats1.files_ingested == 1
 
-        # Get the conversation ID
         cur = conn.execute("SELECT id FROM conversations")
         original_id = cur.fetchone()[0]
 
-        stats2 = ingest_all(conn, [TestAdapter])
+        stats2 = ingest_all(conn, [Adapter])
         assert stats2.files_skipped == 1
 
-        # Same conversation ID (not replaced)
         cur = conn.execute("SELECT id FROM conversations")
         assert cur.fetchone()[0] == original_id
 

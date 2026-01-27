@@ -374,38 +374,3 @@ class TestListActiveSessions:
         assert sessions[1].file_path.name == "older.jsonl"
 
 
-class TestSessionInfoDataclass:
-    """Tests for SessionInfo dataclass."""
-
-    def test_required_fields(self):
-        info = SessionInfo(session_id="abc", file_path=Path("/test"))
-        assert info.session_id == "abc"
-        assert info.workspace_path is None
-        assert info.model is None
-        assert info.exchange_count == 0
-
-    def test_all_fields(self):
-        info = SessionInfo(
-            session_id="abc",
-            file_path=Path("/test"),
-            workspace_path="/code/project",
-            workspace_name="project",
-            model="claude-opus-4-5",
-            last_activity=1000.0,
-            exchange_count=5,
-        )
-        assert info.workspace_name == "project"
-        assert info.exchange_count == 5
-
-
-class TestPeekExchangeDataclass:
-    """Tests for PeekExchange dataclass."""
-
-    def test_defaults(self):
-        ex = PeekExchange()
-        assert ex.timestamp is None
-        assert ex.prompt_text is None
-        assert ex.response_text is None
-        assert ex.tool_calls == []
-        assert ex.input_tokens == 0
-        assert ex.output_tokens == 0

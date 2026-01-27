@@ -6,15 +6,14 @@ Each test uses a minimal fixture file to verify:
 - Prompts, responses, and tool calls are extracted correctly
 """
 
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+import pytest
+
+from conftest import FIXTURES_DIR
 
 from strata.domain.source import Source
 from strata.adapters import aider, claude_code, codex_cli, gemini_cli
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 class TestClaudeCodeAdapter:
@@ -95,29 +94,28 @@ class TestClaudeCodeAdapter:
 class TestCodexCliAdapter:
     """Tests for the Codex CLI adapter."""
 
+    @pytest.fixture
+    def codex_source(self, tmp_path):
+        """Copy codex fixture to a path with 'sessions' in it (required by adapter)."""
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+        dest = sessions_dir / "test.jsonl"
+        dest.write_text((FIXTURES_DIR / "codex_cli_minimal.jsonl").read_text())
+        return Source(kind="file", location=dest)
+
     def test_can_handle_jsonl_in_sessions(self):
         """Adapter handles .jsonl files in sessions path."""
-        # Codex requires 'sessions' in path
         source = Source(kind="file", location=Path("/mock/sessions/test.jsonl"))
         assert codex_cli.can_handle(source)
 
     def test_can_handle_rejects_non_sessions(self):
         """Adapter rejects jsonl not in sessions path."""
         source = Source(kind="file", location=FIXTURES_DIR / "codex_cli_minimal.jsonl")
-        # Fixture path doesn't have 'sessions' in it
         assert not codex_cli.can_handle(source)
 
-    def test_parse_extracts_conversation(self, tmp_path):
+    def test_parse_extracts_conversation(self, codex_source):
         """Parse yields a conversation with correct metadata."""
-        # Copy fixture to a path with 'sessions' in it
-        sessions_dir = tmp_path / "sessions"
-        sessions_dir.mkdir()
-        fixture = FIXTURES_DIR / "codex_cli_minimal.jsonl"
-        dest = sessions_dir / "test.jsonl"
-        dest.write_text(fixture.read_text())
-
-        source = Source(kind="file", location=dest)
-        convos = list(codex_cli.parse(source))
+        convos = list(codex_cli.parse(codex_source))
 
         assert len(convos) == 1
         conv = convos[0]
@@ -127,16 +125,9 @@ class TestCodexCliAdapter:
         assert conv.harness.name == "codex_cli"
         assert conv.harness.source == "openai"
 
-    def test_parse_extracts_prompts_and_responses(self, tmp_path):
+    def test_parse_extracts_prompts_and_responses(self, codex_source):
         """Parse extracts prompts with their responses."""
-        sessions_dir = tmp_path / "sessions"
-        sessions_dir.mkdir()
-        fixture = FIXTURES_DIR / "codex_cli_minimal.jsonl"
-        dest = sessions_dir / "test.jsonl"
-        dest.write_text(fixture.read_text())
-
-        source = Source(kind="file", location=dest)
-        conv = list(codex_cli.parse(source))[0]
+        conv = list(codex_cli.parse(codex_source))[0]
 
         assert len(conv.prompts) == 1
 
@@ -146,16 +137,9 @@ class TestCodexCliAdapter:
 
         assert len(prompt.responses) == 1
 
-    def test_parse_extracts_tool_calls(self, tmp_path):
+    def test_parse_extracts_tool_calls(self, codex_source):
         """Parse extracts tool calls with results."""
-        sessions_dir = tmp_path / "sessions"
-        sessions_dir.mkdir()
-        fixture = FIXTURES_DIR / "codex_cli_minimal.jsonl"
-        dest = sessions_dir / "test.jsonl"
-        dest.write_text(fixture.read_text())
-
-        source = Source(kind="file", location=dest)
-        conv = list(codex_cli.parse(source))[0]
+        conv = list(codex_cli.parse(codex_source))[0]
 
         response = conv.prompts[0].responses[0]
         assert len(response.tool_calls) == 1
@@ -178,20 +162,20 @@ class TestGeminiCliAdapter:
     def test_can_handle_rejects_non_chats(self):
         """Adapter rejects json not in chats directory."""
         source = Source(kind="file", location=FIXTURES_DIR / "gemini_cli_minimal.json")
-        # Fixture is not in a 'chats' directory
         assert not gemini_cli.can_handle(source)
 
-    def test_parse_extracts_conversation(self, tmp_path):
-        """Parse yields a conversation with correct metadata."""
-        # Copy fixture to a path with 'chats' in it
+    @pytest.fixture
+    def gemini_source(self, tmp_path):
+        """Copy gemini fixture to a path with 'chats' in it (required by adapter)."""
         chats_dir = tmp_path / "chats"
         chats_dir.mkdir()
-        fixture = FIXTURES_DIR / "gemini_cli_minimal.json"
         dest = chats_dir / "test.json"
-        dest.write_text(fixture.read_text())
+        dest.write_text((FIXTURES_DIR / "gemini_cli_minimal.json").read_text())
+        return Source(kind="file", location=dest)
 
-        source = Source(kind="file", location=dest)
-        convos = list(gemini_cli.parse(source))
+    def test_parse_extracts_conversation(self, gemini_source):
+        """Parse yields a conversation with correct metadata."""
+        convos = list(gemini_cli.parse(gemini_source))
 
         assert len(convos) == 1
         conv = convos[0]
@@ -200,16 +184,9 @@ class TestGeminiCliAdapter:
         assert conv.harness.name == "gemini_cli"
         assert conv.harness.source == "google"
 
-    def test_parse_extracts_prompts_and_responses(self, tmp_path):
+    def test_parse_extracts_prompts_and_responses(self, gemini_source):
         """Parse extracts prompts with their responses."""
-        chats_dir = tmp_path / "chats"
-        chats_dir.mkdir()
-        fixture = FIXTURES_DIR / "gemini_cli_minimal.json"
-        dest = chats_dir / "test.json"
-        dest.write_text(fixture.read_text())
-
-        source = Source(kind="file", location=dest)
-        conv = list(gemini_cli.parse(source))[0]
+        conv = list(gemini_cli.parse(gemini_source))[0]
 
         assert len(conv.prompts) == 1
 
@@ -221,16 +198,9 @@ class TestGeminiCliAdapter:
         response = prompt.responses[0]
         assert response.model == "gemini-2.0-flash"
 
-    def test_parse_extracts_tool_calls(self, tmp_path):
+    def test_parse_extracts_tool_calls(self, gemini_source):
         """Parse extracts tool calls with results."""
-        chats_dir = tmp_path / "chats"
-        chats_dir.mkdir()
-        fixture = FIXTURES_DIR / "gemini_cli_minimal.json"
-        dest = chats_dir / "test.json"
-        dest.write_text(fixture.read_text())
-
-        source = Source(kind="file", location=dest)
-        conv = list(gemini_cli.parse(source))[0]
+        conv = list(gemini_cli.parse(gemini_source))[0]
 
         response = conv.prompts[0].responses[0]
         assert len(response.tool_calls) == 1
@@ -240,32 +210,18 @@ class TestGeminiCliAdapter:
         assert tool_call.input.get("path") == "."
         assert tool_call.status == "success"
 
-    def test_parse_extracts_usage(self, tmp_path):
+    def test_parse_extracts_usage(self, gemini_source):
         """Parse extracts token usage."""
-        chats_dir = tmp_path / "chats"
-        chats_dir.mkdir()
-        fixture = FIXTURES_DIR / "gemini_cli_minimal.json"
-        dest = chats_dir / "test.json"
-        dest.write_text(fixture.read_text())
-
-        source = Source(kind="file", location=dest)
-        conv = list(gemini_cli.parse(source))[0]
+        conv = list(gemini_cli.parse(gemini_source))[0]
 
         response = conv.prompts[0].responses[0]
         assert response.usage is not None
         assert response.usage.input_tokens == 50
         assert response.usage.output_tokens == 30
 
-    def test_parse_extracts_thinking(self, tmp_path):
+    def test_parse_extracts_thinking(self, gemini_source):
         """Parse extracts thinking/thoughts blocks."""
-        chats_dir = tmp_path / "chats"
-        chats_dir.mkdir()
-        fixture = FIXTURES_DIR / "gemini_cli_minimal.json"
-        dest = chats_dir / "test.json"
-        dest.write_text(fixture.read_text())
-
-        source = Source(kind="file", location=dest)
-        conv = list(gemini_cli.parse(source))[0]
+        conv = list(gemini_cli.parse(gemini_source))[0]
 
         response = conv.prompts[0].responses[0]
         thinking_blocks = [b for b in response.content if b.block_type == "thinking"]
@@ -406,10 +362,17 @@ class TestAiderAdapter:
         ids2 = [c.external_id for c in aider.parse(source)]
         assert ids1 == ids2
 
-    def test_parse_token_count_helper(self):
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("4.5k", 4500),
+            ("1.2k", 1200),
+            ("256", 256),
+            ("1.5M", 1_500_000),
+            ("bad", None),
+        ],
+        ids=["4.5k", "1.2k", "plain-256", "1.5M", "bad-input"],
+    )
+    def test_parse_token_count_helper(self, raw, expected):
         """Token count parser handles k/m suffixes."""
-        assert aider._parse_token_count("4.5k") == 4500
-        assert aider._parse_token_count("1.2k") == 1200
-        assert aider._parse_token_count("256") == 256
-        assert aider._parse_token_count("1.5M") == 1_500_000
-        assert aider._parse_token_count("bad") is None
+        assert aider._parse_token_count(raw) == expected

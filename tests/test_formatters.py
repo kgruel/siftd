@@ -27,37 +27,49 @@ from strata.output.registry import (
 
 
 @pytest.fixture
-def mock_conn():
-    """Create a mock database connection with required schema for formatters."""
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.execute("""
-        CREATE TABLE workspaces (
-            id TEXT PRIMARY KEY,
-            path TEXT
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE conversations (
-            id TEXT PRIMARY KEY,
-            started_at TEXT,
-            workspace_id TEXT,
-            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
-        )
-    """)
-    conn.execute("INSERT INTO workspaces VALUES ('ws1', '/test/project')")
-    conn.execute("INSERT INTO conversations VALUES ('conv123', '2024-01-15T10:00:00Z', 'ws1')")
+def formatter_db(tmp_path):
+    """Create a real database with full schema and sample data for formatters.
+
+    Returns (conn, conv_id) so sample_results can reference the real ID.
+    """
+    from strata.storage.sqlite import (
+        create_database,
+        get_or_create_workspace,
+        get_or_create_harness,
+        insert_conversation,
+    )
+
+    db_path = tmp_path / "formatter_test.db"
+    conn = create_database(db_path)
+
+    harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+    workspace_id = get_or_create_workspace(conn, "/test/project", "2024-01-15T10:00:00Z")
+    conv_id = insert_conversation(
+        conn,
+        external_id="conv123",
+        harness_id=harness_id,
+        workspace_id=workspace_id,
+        started_at="2024-01-15T10:00:00Z",
+    )
     conn.commit()
+    return conn, conv_id
+
+
+@pytest.fixture
+def mock_conn(formatter_db):
+    """Database connection for formatter tests."""
+    conn, _ = formatter_db
     return conn
 
 
 @pytest.fixture
-def sample_results():
-    """Sample search results for testing formatters."""
+def sample_results(formatter_db):
+    """Sample search results with conversation_id matching the real DB."""
+    _, conv_id = formatter_db
     return [
         {
             "chunk_id": "chunk1",
-            "conversation_id": "conv123",
+            "conversation_id": conv_id,
             "score": 0.85,
             "chunk_type": "prompt",
             "text": "How do I implement caching?",
@@ -65,7 +77,7 @@ def sample_results():
         },
         {
             "chunk_id": "chunk2",
-            "conversation_id": "conv123",
+            "conversation_id": conv_id,
             "score": 0.72,
             "chunk_type": "response",
             "text": "You can use Redis or in-memory caching...",
