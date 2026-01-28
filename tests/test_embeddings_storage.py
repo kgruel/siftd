@@ -1,8 +1,14 @@
 """Tests for embeddings storage."""
 
 import math
+import sqlite3
 
-from strata.storage.embeddings import open_embeddings_db, search_similar, store_chunk
+from strata.storage.embeddings import (
+    open_embeddings_db,
+    prune_orphaned_chunks,
+    search_similar,
+    store_chunk,
+)
 
 
 def test_search_similar_empty_conversation_ids(tmp_path):
@@ -86,4 +92,60 @@ def test_open_embeddings_db_creates_schema(tmp_path):
         assert "chunks" in tables
     finally:
         conn.close()
+
+
+def _make_main_db(path, conversation_ids):
+    """Create a minimal main DB with given conversation IDs."""
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+    for cid in conversation_ids:
+        conn.execute("INSERT INTO conversations (id) VALUES (?)", (cid,))
+    conn.commit()
+    return conn
+
+
+def test_prune_orphaned_chunks_removes_orphans(tmp_path):
+    """Chunks for deleted conversations are pruned."""
+    main_conn = _make_main_db(tmp_path / "main.db", ["c1"])
+    embed_conn = open_embeddings_db(tmp_path / "embed.db")
+    try:
+        store_chunk(embed_conn, "c1", "exchange", "kept", [1.0, 0.0], token_count=1, commit=False)
+        store_chunk(embed_conn, "c2", "exchange", "orphan1", [0.0, 1.0], token_count=1, commit=False)
+        store_chunk(embed_conn, "c2", "exchange", "orphan2", [0.0, 1.0], token_count=1, commit=True)
+
+        pruned = prune_orphaned_chunks(main_conn, embed_conn)
+
+        assert pruned == 2
+        remaining = embed_conn.execute("SELECT conversation_id FROM chunks").fetchall()
+        assert [r[0] for r in remaining] == ["c1"]
+    finally:
+        embed_conn.close()
+        main_conn.close()
+
+
+def test_prune_orphaned_chunks_no_orphans(tmp_path):
+    """Returns 0 when all chunks have matching conversations."""
+    main_conn = _make_main_db(tmp_path / "main.db", ["c1", "c2"])
+    embed_conn = open_embeddings_db(tmp_path / "embed.db")
+    try:
+        store_chunk(embed_conn, "c1", "exchange", "text1", [1.0], token_count=1, commit=False)
+        store_chunk(embed_conn, "c2", "exchange", "text2", [0.0], token_count=1, commit=True)
+
+        pruned = prune_orphaned_chunks(main_conn, embed_conn)
+        assert pruned == 0
+    finally:
+        embed_conn.close()
+        main_conn.close()
+
+
+def test_prune_orphaned_chunks_empty_embeddings(tmp_path):
+    """Returns 0 when embeddings DB has no chunks."""
+    main_conn = _make_main_db(tmp_path / "main.db", ["c1"])
+    embed_conn = open_embeddings_db(tmp_path / "embed.db")
+    try:
+        pruned = prune_orphaned_chunks(main_conn, embed_conn)
+        assert pruned == 0
+    finally:
+        embed_conn.close()
+        main_conn.close()
 

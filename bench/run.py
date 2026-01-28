@@ -4,7 +4,6 @@
 import argparse
 import json
 import sqlite3
-import struct
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,47 +12,7 @@ from statistics import mean, median
 # bench/ is not a package — add src/ to path so strata imports work
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-
-def decode_embedding(blob: bytes) -> list[float]:
-    n = len(blob) // 4
-    return list(struct.unpack(f"{n}f", blob))
-
-
-def cosine_similarity(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = sum(x * x for x in a) ** 0.5
-    norm_b = sum(x * x for x in b) ** 0.5
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
-
-
-def search_similar(
-    conn: sqlite3.Connection,
-    query_embedding: list[float],
-    limit: int = 10,
-    conversation_ids: set[str] | None = None,
-) -> list[dict]:
-    if conversation_ids is not None:
-        placeholders = ",".join("?" for _ in conversation_ids)
-        sql = f"SELECT id, conversation_id, chunk_type, text, embedding FROM chunks WHERE conversation_id IN ({placeholders})"
-        cur = conn.execute(sql, list(conversation_ids))
-    else:
-        cur = conn.execute("SELECT id, conversation_id, chunk_type, text, embedding FROM chunks")
-    results = []
-    for row in cur:
-        stored = decode_embedding(row["embedding"])
-        score = cosine_similarity(query_embedding, stored)
-        results.append({
-            "chunk_id": row["id"],
-            "conversation_id": row["conversation_id"],
-            "chunk_type": row["chunk_type"],
-            "text": row["text"],
-            "score": score,
-            "embedding": stored,
-        })
-    results.sort(key=lambda x: x["score"], reverse=True)
-    return results[:limit]
+from strata.storage.embeddings import search_similar  # noqa: E402
 
 
 def enrich_results(results: list[dict], main_db: sqlite3.Connection) -> list[dict]:
@@ -202,6 +161,7 @@ def run_bench(
                 results = search_similar(
                     conn, query_embedding, limit=search_limit,
                     conversation_ids=conversation_ids,
+                    include_embeddings=use_mmr,
                 )
 
                 results = enrich_results(results, main_db)

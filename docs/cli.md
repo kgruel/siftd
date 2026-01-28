@@ -15,8 +15,9 @@ positional arguments:
     ingest              Ingest logs from all sources
     status              Show database statistics
     ask                 Semantic search over conversations
-    tag                 Apply a tag to a conversation (or other entity)
-    tags                List all tags
+    tag                 Apply or remove a tag on a conversation (or other
+                        entity)
+    tags                List, rename, or delete tags
     tools               Summarize tool usage by category
     query               List conversations with filters, or run SQL queries
     backfill            Backfill derived data from existing records
@@ -36,12 +37,13 @@ options:
 ## ingest
 
 ```
-usage: strata ingest [-h] [-v] [-p DIR]
+usage: strata ingest [-h] [-v] [-p DIR] [-a NAME]
 
 options:
-  -h, --help      show this help message and exit
-  -v, --verbose   Show all files including skipped
-  -p, --path DIR  Additional directories to scan (can be repeated)
+  -h, --help          show this help message and exit
+  -v, --verbose       Show all files including skipped
+  -p, --path DIR      Additional directories to scan (can be repeated)
+  -a, --adapter NAME  Only run specific adapter(s) (can be repeated)
 ```
 
 ## status
@@ -62,7 +64,8 @@ usage: strata ask [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
                   [--thread] [--embeddings-only] [--recall N]
                   [--role {user,assistant}] [--first] [--conversations]
                   [--refs [FILES]] [--threshold SCORE] [--json]
-                  [--format NAME] [--no-exclude-active]
+                  [--format NAME] [--no-exclude-active] [--no-diversity]
+                  [--lambda FLOAT] [-l NAME] [--all-tags NAME] [--no-tag NAME]
                   [query ...]
 
 positional arguments:
@@ -101,6 +104,13 @@ options:
   --format NAME         Use named formatter (built-in or drop-in plugin)
   --no-exclude-active   Include results from active sessions (excluded by
                         default)
+  --no-diversity        Disable MMR diversity reranking, use pure relevance
+                        order
+  --lambda FLOAT        MMR lambda: 1.0=pure relevance, 0.0=pure diversity
+                        (default: 0.7)
+  -l, --tag NAME        Filter by conversation tag (repeatable, OR logic)
+  --all-tags NAME       Require all specified tags (AND logic)
+  --no-tag NAME         Exclude conversations with this tag (NOT logic)
 
 examples:
   # search
@@ -122,6 +132,12 @@ examples:
   strata ask --refs "authelia"                       # file references + content
   strata ask --refs HANDOFF.md "setup"               # filter refs to specific file
 
+  # filter by tags
+  strata ask -l research:auth "auth flow"            # search within tagged conversations
+  strata ask -l research: -l useful: "pattern"       # OR — any research: or useful: tag
+  strata ask --all-tags important --all-tags reviewed "design"  # AND — must have both
+  strata ask -l research: --no-tag archived "auth"   # combine OR + NOT
+
   # save useful results for future retrieval
   strata tag 01HX... research:auth                   # bookmark a conversation
   strata tag --last research:architecture            # tag most recent conversation
@@ -136,7 +152,7 @@ examples:
 ## tag
 
 ```
-usage: strata tag [-h] [-n N] [positional ...]
+usage: strata tag [-h] [-n N] [-r] [positional ...]
 
 positional arguments:
   positional    [entity_type] entity_id tag
@@ -144,22 +160,35 @@ positional arguments:
 options:
   -h, --help    show this help message and exit
   -n, --last N  Tag N most recent conversations
+  -r, --remove  Remove tag instead of applying
 
 examples:
-  strata tag 01HX... important       # tag conversation (default)
-  strata tag --last important        # tag most recent conversation
-  strata tag --last 3 review         # tag 3 most recent conversations
-  strata tag workspace 01HY... proj  # explicit entity type
-  strata tag tool_call 01HZ... slow  # tag a tool call
+  strata tag 01HX... important              # tag conversation (default)
+  strata tag --last important               # tag most recent conversation
+  strata tag --last 3 review                # tag 3 most recent conversations
+  strata tag workspace 01HY... proj         # explicit entity type
+  strata tag tool_call 01HZ... slow         # tag a tool call
+  strata tag --remove 01HX... important     # remove tag from conversation
+  strata tag --remove --last important      # remove from most recent
+  strata tag -r workspace 01HY... proj      # remove from workspace
 ```
 
 ## tags
 
 ```
-usage: strata tags [-h]
+usage: strata tags [-h] [--rename OLD NEW] [--delete NAME] [--force]
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help        show this help message and exit
+  --rename OLD NEW  Rename a tag
+  --delete NAME     Delete a tag and all associations
+  --force           Force delete even if tag has associations
+
+examples:
+  strata tags                                      # list all tags
+  strata tags --rename important review:important   # rename tag
+  strata tags --delete old-tag                      # delete tag (refuses if applied)
+  strata tags --delete old-tag --force              # delete tag and all associations
 ```
 
 ## tools
@@ -184,8 +213,8 @@ examples:
 ```
 usage: strata query [-h] [-v] [-n COUNT] [--latest] [--oldest] [-w SUBSTR]
                     [-m NAME] [--since DATE] [--before DATE] [-s QUERY]
-                    [-t NAME] [-l NAME] [--tool-tag NAME] [--json] [--stats]
-                    [--var KEY=VALUE]
+                    [-t NAME] [-l NAME] [--all-tags NAME] [--no-tag NAME]
+                    [--tool-tag NAME] [--json] [--stats] [--var KEY=VALUE]
                     [conversation_id] [sql_name]
 
 positional arguments:
@@ -207,7 +236,9 @@ options:
   --before DATE         Conversations started before this date
   -s, --search QUERY    Full-text search (FTS5 syntax)
   -t, --tool NAME       Filter by canonical tool name (e.g. shell.execute)
-  -l, --tag NAME        Filter by conversation tag
+  -l, --tag NAME        Filter by conversation tag (repeatable, OR logic)
+  --all-tags NAME       Require all specified tags (AND logic)
+  --no-tag NAME         Exclude conversations with this tag (NOT logic)
   --tool-tag NAME       Filter by tool call tag (e.g. shell:test)
   --json                Output as JSON array
   --stats               Show summary totals after list
@@ -218,8 +249,11 @@ examples:
   strata query                         # list recent conversations
   strata query -w myproject            # filter by workspace
   strata query -s "error handling"     # FTS5 search
+  strata query -l research:auth        # conversations tagged research:auth
+  strata query -l research: -l useful: # OR — any research: or useful: tag
+  strata query --all-tags important --all-tags reviewed  # AND — must have both
+  strata query -l research: --no-tag archived            # combine OR + NOT
   strata query --tool-tag shell:test   # conversations with test commands
-  strata query -w proj --tool-tag shell:vcs  # combine filters
   strata query <id>                    # show conversation detail
   strata query sql                     # list available .sql files
   strata query sql cost                # run the 'cost' query

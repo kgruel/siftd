@@ -17,22 +17,10 @@ def list_checks() -> list[CheckInfo]:
         CheckInfo(
             name=check.name,
             description=check.description,
-            has_fix=hasattr(check, "fix") and check.fix(Finding(
-                check=check.name,
-                severity="info",
-                message="",
-                fix_available=True,
-            )) is not None or _check_has_fix(check),
+            has_fix=check.has_fix,
         )
         for check in BUILTIN_CHECKS
     ]
-
-
-def _check_has_fix(check) -> bool:
-    """Determine if a check has fix capability based on its findings."""
-    # For now, hardcode based on check name
-    # Checks with fixes: ingest-pending, embeddings-stale
-    return check.name in ("ingest-pending", "embeddings-stale")
 
 
 def run_checks(

@@ -79,6 +79,7 @@ class Check(Protocol):
 
     name: str
     description: str
+    has_fix: bool
 
     def run(self, ctx: CheckContext) -> list[Finding]: ...
 
@@ -95,6 +96,7 @@ class IngestPendingCheck:
 
     name = "ingest-pending"
     description = "Files discovered by adapters but not yet ingested"
+    has_fix = True
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         from strata.adapters.registry import load_all_adapters
@@ -152,6 +154,7 @@ class IngestErrorsCheck:
 
     name = "ingest-errors"
     description = "Files that failed ingestion (recorded with error)"
+    has_fix = False
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         findings = []
@@ -205,6 +208,7 @@ class EmbeddingsStaleCheck:
 
     name = "embeddings-stale"
     description = "Conversations not indexed in embeddings database"
+    has_fix = True
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         findings = []
@@ -262,6 +266,7 @@ class PricingGapsCheck:
 
     name = "pricing-gaps"
     description = "Models used in responses without pricing data"
+    has_fix = False
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         findings = []
@@ -318,6 +323,7 @@ class DropInsValidCheck:
 
     name = "drop-ins-valid"
     description = "Drop-in adapters, formatters, and queries load without errors"
+    has_fix = False
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         findings = []
@@ -530,11 +536,63 @@ class DropInsValidCheck:
         return None
 
 
+class OrphanedChunksCheck:
+    """Detects embedding chunks whose conversations no longer exist in the main DB."""
+
+    name = "orphaned-chunks"
+    description = "Embedding chunks referencing deleted conversations"
+    has_fix = True
+
+    def run(self, ctx: CheckContext) -> list[Finding]:
+        if not ctx.embed_db_path.exists():
+            return []
+
+        conn = ctx.get_db_conn()
+        embed_conn = ctx.get_embed_conn()
+
+        from strata.storage.embeddings import get_indexed_conversation_ids
+
+        embed_ids = get_indexed_conversation_ids(embed_conn)
+        if not embed_ids:
+            return []
+
+        main_ids = {
+            row[0]
+            for row in conn.execute("SELECT id FROM conversations").fetchall()
+        }
+
+        orphaned_ids = embed_ids - main_ids
+        if not orphaned_ids:
+            return []
+
+        # Count orphaned chunks (not just conversations)
+        placeholders = ",".join("?" * len(orphaned_ids))
+        count = embed_conn.execute(
+            f"SELECT COUNT(*) FROM chunks WHERE conversation_id IN ({placeholders})",
+            list(orphaned_ids),
+        ).fetchone()[0]
+
+        return [
+            Finding(
+                check=self.name,
+                severity="warning",
+                message=f"{count} orphaned chunk(s) from {len(orphaned_ids)} deleted conversation(s)",
+                fix_available=True,
+                fix_command="strata doctor orphaned-chunks --fix",
+                context={"chunk_count": count, "conversation_count": len(orphaned_ids)},
+            )
+        ]
+
+    def fix(self, finding: Finding) -> FixResult | None:
+        return None
+
+
 # Registry of built-in checks
 BUILTIN_CHECKS: list[Check] = [
     IngestPendingCheck(),
     IngestErrorsCheck(),
     EmbeddingsStaleCheck(),
+    OrphanedChunksCheck(),
     PricingGapsCheck(),
     DropInsValidCheck(),
 ]

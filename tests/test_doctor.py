@@ -16,6 +16,7 @@ from strata.doctor.checks import (
     DropInsValidCheck,
     EmbeddingsStaleCheck,
     IngestPendingCheck,
+    OrphanedChunksCheck,
     PricingGapsCheck,
 )
 
@@ -58,8 +59,20 @@ class TestListChecks:
         names = {c.name for c in checks}
         assert "ingest-pending" in names
         assert "embeddings-stale" in names
+        assert "orphaned-chunks" in names
         assert "pricing-gaps" in names
         assert "drop-ins-valid" in names
+
+    def test_has_fix_matches_class_attribute(self):
+        """has_fix in CheckInfo matches the class attribute on each check."""
+        checks = list_checks()
+        by_name = {c.name: c.has_fix for c in checks}
+        assert by_name["ingest-pending"] is True
+        assert by_name["ingest-errors"] is False
+        assert by_name["embeddings-stale"] is True
+        assert by_name["orphaned-chunks"] is True
+        assert by_name["pricing-gaps"] is False
+        assert by_name["drop-ins-valid"] is False
 
     def test_check_info_has_required_fields(self):
         """CheckInfo has all required fields."""
@@ -296,3 +309,60 @@ class TestCheckContext:
             queries_dir=tmp_path,
         )
         ctx.close()
+
+
+class TestOrphanedChunksCheck:
+    """Tests for the orphaned-chunks check."""
+
+    def test_no_embeddings_db(self, check_context):
+        """Returns no findings when embeddings DB doesn't exist."""
+        check = OrphanedChunksCheck()
+        findings = check.run(check_context)
+        assert findings == []
+
+    def test_no_orphans(self, check_context):
+        """Returns no findings when all chunks match conversations."""
+        from strata.storage.embeddings import open_embeddings_db, store_chunk
+
+        embed_conn = open_embeddings_db(check_context.embed_db_path)
+
+        # Get a real conversation ID from the test DB
+        main_conn = check_context.get_db_conn()
+        conv_ids = [
+            row[0] for row in main_conn.execute("SELECT id FROM conversations").fetchall()
+        ]
+        assert len(conv_ids) > 0
+
+        store_chunk(
+            embed_conn, conv_ids[0], "exchange", "text",
+            [1.0, 0.0], token_count=1, commit=True,
+        )
+        embed_conn.close()
+
+        # Re-open via context so the check uses the populated DB
+        check_context._embed_conn = None
+        check = OrphanedChunksCheck()
+        findings = check.run(check_context)
+        assert findings == []
+
+    def test_detects_orphans(self, check_context):
+        """Reports orphaned chunks for conversations not in main DB."""
+        from strata.storage.embeddings import open_embeddings_db, store_chunk
+
+        embed_conn = open_embeddings_db(check_context.embed_db_path)
+        store_chunk(
+            embed_conn, "nonexistent-conv", "exchange", "orphan",
+            [1.0, 0.0], token_count=1, commit=True,
+        )
+        embed_conn.close()
+
+        check_context._embed_conn = None
+        check = OrphanedChunksCheck()
+        findings = check.run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].check == "orphaned-chunks"
+        assert findings[0].severity == "warning"
+        assert findings[0].fix_available is True
+        assert findings[0].context["chunk_count"] == 1
+        assert findings[0].context["conversation_count"] == 1

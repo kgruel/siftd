@@ -192,3 +192,36 @@ def _decode_embedding(blob: bytes) -> list[float]:
     """Decode packed float32 blob to list of floats."""
     n = len(blob) // 4
     return list(struct.unpack(f"{n}f", blob))
+
+
+def prune_orphaned_chunks(
+    main_conn: sqlite3.Connection,
+    embeddings_conn: sqlite3.Connection,
+) -> int:
+    """Delete chunks whose conversation_id no longer exists in the main DB.
+
+    Cross-database: no FK between embeddings DB and main DB, so orphans
+    accumulate when conversations are deleted from main.
+
+    Returns count of pruned chunks.
+    """
+    # Conversation IDs present in main DB
+    main_ids = {
+        row[0]
+        for row in main_conn.execute("SELECT id FROM conversations").fetchall()
+    }
+
+    # Conversation IDs referenced by chunks in embeddings DB
+    embed_ids = get_indexed_conversation_ids(embeddings_conn)
+
+    orphaned_ids = embed_ids - main_ids
+    if not orphaned_ids:
+        return 0
+
+    placeholders = ",".join("?" * len(orphaned_ids))
+    cur = embeddings_conn.execute(
+        f"DELETE FROM chunks WHERE conversation_id IN ({placeholders})",
+        list(orphaned_ids),
+    )
+    embeddings_conn.commit()
+    return cur.rowcount
