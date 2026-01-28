@@ -10,7 +10,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Adapter plugin system**: built-in + drop-in (`~/.config/strata/adapters/*.py`) + entry points (`strata.adapters`)
 - **Ingestion**: orchestration layer with adapter-controlled dedup, `--path` for custom dirs, `-a/--adapter` filter, `discover(locations=None)` delegation (adapters own their glob patterns), error recording (failed files tracked to prevent retry loops)
 - **Storage**: SQLite with schema, ULIDs, schemaless attributes. Modular: `sqlite.py` (817 lines, core primitives), `tags.py` (tag CRUD), `fts.py` (FTS5 subsystem), `embeddings.py` (separate DB). Backfills extracted to top-level `backfill.py`.
-- **Shared utilities**: `ids.py` (ULID generation), `math.py` (cosine similarity), `adapters/_jsonl.py` (shared JSONL parsing), `domain/shell_categories.py` (command categorization), `domain/tags.py` (tag SQL builder)
+- **Shared utilities**: `ids.py` (ULID generation), `math.py` (cosine similarity), `adapters/_jsonl.py` (shared JSONL parsing), `domain/shell_categories.py` (command categorization), `storage/filters.py` (WhereBuilder + tag_condition), `storage/queries.py` (shared SQL extraction helpers)
 - **Tool canonicalization**: 16 canonical tools (`file.read`, `shell.execute`, `shell.stdin`, etc.), cross-harness aliases
 - **Model parsing**: raw names decomposed into family/version/variant/creator/released
 - **Provider tracking**: derived from adapter's `HARNESS_SOURCE`, populated on responses during ingestion
@@ -28,6 +28,10 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Shell command categorization**: 13 auto-tags (`shell:vcs`, `shell:test`, `shell:file`, etc.), 91% coverage of 25k+ commands
   - Auto-tagged at ingest time (no separate backfill needed for new data)
   - `strata backfill --shell-tags` still works for existing data
+- **Derivative conversation detection**: conversations containing `strata ask`/`strata query` tool calls auto-tagged `strata:derivative` at ingest
+  - Default-excluded from `strata ask` searches (prevents derivative content competing with originals)
+  - `--include-derivative` flag opts back in
+  - `strata backfill --derivative-tags` for existing data
   - `strata query --tool-tag shell:test` filters conversations by tool_call tags
   - `strata tools` summary command with `--by-workspace` rollups
 - **FTS5**: full-text search on prompt+response text content
@@ -150,9 +154,6 @@ strata/
 │   └── plugin.md               # Claude Code plugin (marketplace install, hooks, skill)
 ├── scripts/
 │   └── gen-cli-docs.sh         # Regenerates docs/cli.md from --help
-├── queries/
-│   ├── cost.sql                # Approximate cost by workspace
-│   └── shell-analysis.sql      # Shell command granularity analysis (tag breakdown, git actions, read/write)
 ├── bench/
 │   ├── queries.json            # 50 queries (10 groups)
 │   ├── corpus_analysis.py      # Token distribution profiling
@@ -170,10 +171,13 @@ strata/
 │   ├── paths.py                # XDG directory handling
 │   ├── models.py               # Model name parser
 │   ├── search.py               # Hybrid search orchestration + MMR diversity reranking
+│   ├── builtin_queries/
+│   │   ├── __init__.py         # Package marker
+│   │   ├── cost.sql            # Approximate cost by workspace
+│   │   └── shell-analysis.sql  # Shell command granularity analysis
 │   ├── domain/
 │   │   ├── models.py           # Dataclasses (Conversation, Prompt, Response, etc.)
 │   │   ├── shell_categories.py # Shell command categorization (extracted from storage)
-│   │   ├── tags.py             # Tag condition SQL builder (shared utility)
 │   │   └── source.py           # Source(kind, location, metadata) with .as_path property
 │   ├── api/                    # Public library API
 │   │   ├── __init__.py         # Re-exports all public functions
@@ -218,12 +222,19 @@ strata/
 │   └── storage/
 │       ├── schema.sql          # Full schema + FTS5 + pricing table
 │       ├── sqlite.py           # Core DB operations (817 lines: connection, entities, write, read, dedup)
-│       ├── tags.py             # Tag CRUD (get_or_create, apply, remove, rename, delete, list)
+│       ├── tags.py             # Tag CRUD (get_or_create, apply, remove, rename, delete, list) + derivative detection
 │       ├── fts.py              # FTS5 (ensure, rebuild, insert, search, recall)
+│       ├── queries.py          # Shared prompt/response text extraction helpers
+│       ├── filters.py          # WhereBuilder for dynamic filter assembly + tag_condition
 │       └── embeddings.py       # Embeddings DB schema + cosine similarity search + orphan pruning
 ├── docs/
 │   ├── principles.md           # Project principles catalog with strata conversation references
 │   ├── cli.md                  # Auto-generated CLI reference
+│   ├── dev/                    # Development feedback and research
+│   │   ├── review-experience-with-strata.md  # Using strata to review strata (Codex)
+│   │   ├── use-experience-feedback.md        # UX friction and strengths (Codex)
+│   │   ├── FEEDBACK-ANALYSIS.md              # Deep analysis of feedback (Claude)
+│   │   └── FEEDBACK-SUMMARY.md               # Adapter research summary
 │   ├── config.md               # Configuration file documentation
 │   ├── search.md               # Search pipeline, MMR, backends, bench
 │   ├── tags.md                 # Tag system, boolean filtering, conventions, workflow
@@ -248,12 +259,14 @@ strata/
     ├── test_models.py          # Model name parsing (parametrized)
     ├── test_peek.py            # Live session inspection tests
     ├── test_shell_categorization.py  # Shell command categorization (15 categories, parametrized)
-    └── test_chunker.py         # Token-aware chunking tests
+    ├── test_chunker.py         # Token-aware chunking tests
+    ├── test_derivative.py      # Derivative conversation detection, tagging, backfill (19 tests)
+    └── test_mmr.py             # MMR diversity reranking (12 tests)
 ```
 
 ### Release Status (0.1.0)
 - **Version**: 0.1.0 — first stable release for personal use
-- **Tests**: 262 passing, 1 skipped (fastembed optional). Integration-first, shared fixtures, parametrized, xdist-safe.
+- **Tests**: 293 passing, 1 skipped (fastembed optional). Integration-first, shared fixtures, parametrized, xdist-safe.
 - **Install**: `uv pip install .` or `pip install .` from repo root
 - **CLI**: `strata` available after install
 - **Plugin**: `claude plugin marketplace add kaygee/strata` for Claude Code integration
@@ -325,6 +338,12 @@ strata/
 | Narrative README over reference README | README tells a story: problem → data → personal search → agent search → self-teaching → institutional memory. Reference content extracted to `docs/`. README is introductory; docs are comprehensive. |
 | Synthesis = tagging, not LLM | Tags encode human/agent judgment without LLM cost. The data exposure (MMR, `--thread`, plugin skill) is the synthesis enabler. LLM-generated narratives deferred — let agents test the workflow first. |
 | Marketplace for plugin distribution | `.claude-plugin/marketplace.json` at repo root. `claude plugin marketplace add` + `claude plugin install` for global install. Dev mode still available via `--plugin-dir`. |
+| Derivative dedup: Option B (auto-tag + default-exclude) | `strata:derivative` auto-tag at ingest for conversations containing `strata ask`/`strata query` tool calls. `ask` excludes by default; `--include-derivative` opts back in. Noise from derivative content competing with originals justified changing default behavior. |
+| No ORM migration | Evaluated Piccolo, Peewee, SQLAlchemy Core. Gains (dynamic WHERE composition, schema-as-code) don't justify costs (rewriting every storage function, dual query paradigms, transaction boundary redesign). WhereBuilder helper extracted instead. |
+| Two-layer SQL strategy | `.sql` files in `builtin_queries/` for user-facing fixed-shape queries (status, tools, cost — inspectable, overridable). `storage/sql.py` for internal SQL constants + builder functions. Dynamic WHERE stays in Python. |
+| `builtin_queries/` as command implementations | Built-in queries moved from repo-root `queries/` into `src/strata/builtin_queries/` Python package. Proper `importlib.resources` discovery. Expand with `status.sql`, `tools.sql` to back CLI commands with inspectable/overridable SQL files. |
+| Read-only database connections | `open_database(read_only=True)` skips migrations and schema ensures. `open_embeddings_db(read_only=True)` uses `immutable=1` URI to avoid WAL sidecars. Read commands (query, ask, status, doctor) use read-only opens. |
+| Team scale: SQLite holds for ~12 users | 72k conversations, 2-6GB DB is comfortable. Concurrent writes handled by `busy_timeout`. Push model (local ingest + export to central store) is simplest architecture. Phase 0: busy_timeout, git_remote, user_id column. |
 
 ---
 
@@ -387,37 +406,56 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 **Gap identified**: Agents find useful content but have no workflow to mark it for later retrieval. `strata tag` exists but agents don't know about it.
 
-**Addressed (2026-01-25)**: Progressive help epilog now teaches the search → refine → save workflow. Tip after results explains WHY to tag. Active session exclusion prevents circular results (derivative content outranking originals). Remaining gap: provenance marking for ingested derivative content (conversations containing `strata ask` tool calls) — deferred until active exclusion proves insufficient.
+**Addressed (2026-01-25)**: Progressive help epilog now teaches the search → refine → save workflow. Tip after results explains WHY to tag. Active session exclusion prevents circular results (derivative content outranking originals).
+
+**Addressed (2026-01-27)**: Provenance marking implemented. Conversations containing `strata ask`/`strata query` tool calls auto-tagged `strata:derivative` at ingest. `ask` default-excludes derivative conversations; `--include-derivative` opts back in. Backfill for existing data via `strata backfill --derivative-tags`.
 
 ---
 
 ## Next Session
 
-**Recently completed (this session — release prep cleanup)**:
+**Recently completed (this session — SQL architecture, derivative dedup, research)**:
 
-- **Bench release prep** — stripped 7 unused features (-741 lines), reframed from "benchmark" to "workbench", bench now imports production code instead of reimplementing
-- **Test suite overhaul** — integration-first restructure: conftest.py with shared fixtures, parametrized tests, end-to-end ingest→query test, FTS5 search test, CLI smoke tests, shell categorization coverage. 179 → 262 tests.
-- **Code cleanup** — extracted 5 shared modules (ids.py, math.py, _jsonl.py, shell_categories.py, domain/tags.py), removed dead code, fixed architectural violations (FTS cleanup on delete, storage→adapter decoupling, timezone standardization to UTC)
-- **Storage refactoring** — sqlite.py split: tags.py (tag CRUD), fts.py (FTS5 subsystem), backfill.py (moved out of storage entirely, fixes architecture). sqlite.py: 1327 → 817 lines.
-- **CLI refactoring** — cmd_ask extracted to cli_ask.py (342 lines). cli.py: 1690 → 1361 lines. Only the one complex command warranted extraction.
-- **Doctor improvements** — declarative `has_fix` on check classes (no runtime probing), orphaned chunks check + `prune_orphaned_chunks()` function
-- **Bulk tag application** — `strata tag <id> tag1 tag2 tag3` applies multiple tags in one call
-- **Principles catalog** — `docs/principles.md` with categorized principles extracted from dev history via strata ask, tagged with `principles:*` for semantic retrieval
-- **ROADMAP.md** — updated stale references (label→tag, adapter list, line counts, test infrastructure done)
-- **Prior session**: documentation overhaul, plugin marketplace install, cleanup fixes, bench pairwise fix, synthesis decision, Claude Code plugin, MMR diversity reranking, tag ergonomics, aider adapter
+- **SQL query dedup** — extracted shared prompt/response SQL helpers to `storage/queries.py`. 4 duplicated query patterns → 2 shared functions. -15 net lines. (merged)
+- **MMR test coverage** — 12 new tests for `mmr_rerank()`: conversation penalty, λ=0/1 edge cases, cross-conversation cosine penalty. Orthogonal unit vectors for synthetic data. (merged)
+- **Derivative conversation dedup** — auto-tag `strata:derivative` at ingest for conversations containing `strata ask`/`strata query` tool calls. `ask` default-excludes; `--include-derivative` opts back in. Backfill command for existing data. 19 new tests. (merged)
+- **WhereBuilder** — extracted dynamic WHERE clause assembly to `storage/filters.py`. Unified `_build_tag_clauses` duplication between `api/conversations.py` and `search.py`. Absorbed `domain/tags.py` (deleted). -32 net lines. (merged)
+- **README polish** — tightened paragraph 3 (cross-project knowledge), reformatted feature bullets with bold verb leads, fixed "inherit"→"inherent" typo
+- **ORM evaluation** — evaluated Piccolo, Peewee, SQLAlchemy Core. Conclusion: don't migrate. Gains don't justify costs. WhereBuilder addresses the one real pain point (dynamic WHERE composition).
+- **Team-scale analysis** — SQLite holds for 12 users (72k conversations, 10x headroom). Push model architecture. Embedding search perf is the bottleneck. Phase 0-3 roadmap documented.
+- **SQL consolidation research** — full inventory of 142 SQL statements across 14 files. Proposed `storage/sql.py` with constants + builders. Implementation complete but has merge conflicts (needs rebase against WhereBuilder changes).
+- **`builtin_queries/` package** — SQL files moved from repo-root `queries/` into `src/strata/builtin_queries/` with proper `importlib.resources` discovery. Decision to expand with `status.sql`, `tools.sql` as command implementations.
+- **Read-only database connections** — `open_database(read_only=True)` and `open_embeddings_db(read_only=True)` skip migrations, use `immutable=1` for embeddings. Applied to all read paths. (Codex, unstaged)
+- **Tags drill-down + prefix** — `strata tags <name>` shows conversations, `--prefix` filters tag list. (Codex, unstaged)
+- **UX feedback analysis** — deep analysis of Codex's principles audit feedback. Identified FTS5 error handling gap, `--json` everywhere pattern, derived categorization at ingest, playbook sequencing features.
+- **Prior session**: release prep cleanup — bench strip, test overhaul (262 tests), code cleanup (5 shared modules), storage/CLI refactoring, doctor improvements, bulk tag, principles catalog
+
+**Unstaged Codex changes to commit**:
+
+- Read-only connections (sqlite.py, embeddings.py, API files, checks.py, search.py, cli_ask.py)
+- Tags drill-down + prefix filtering (cli.py)
+- `builtin_queries/` package (resources.py + new directory)
+- Doctor fix command update (checks.py)
+- `docs/dev/` feedback docs (review-experience, use-experience, feedback-analysis, feedback-summary)
+- Note: config.py rewrite was **reverted** (tomlkit stays)
 
 **Open threads for next session**:
 
-- **SQL query duplication in formatters** — prompt/response extraction SQL repeated 4 times across formatters.py and chunker.py. Extract to shared query helper.
-- **Storage Option B** — if sqlite.py grows past ~1000 lines, split further (connection/migrations/entities/write/read). Seams identified in research/storage PLAN.md.
-- **Bench hybrid comparison** — run comparing hybrid vs pure-embeddings on current corpus
-- **MMR test coverage** — default search strategy has zero tests. `mmr_rerank()`, `--lambda`, `--no-diversity` all untested.
-- **README polish** — narrative expanded this session, may want a final pass
-- **Principles adherence audit** — use `docs/principles.md` to review codebase for violations (the original purpose of the principles extraction)
-- **Session-aware dedup implementation** — plan exists. Cross-query dedup for sequential research queries.
+- **Land Codex changes** — commit the unstaged read-only connections, tags drill-down, builtin_queries, doctor fix, docs/dev
+- **SQL consolidation rebase** — implementation done (+815 -667) but conflicts in conversations.py and search.py from WhereBuilder merge. Rebase and reconcile.
+- **FTS5 error handling** — `query -s` passes raw input to FTS5 MATCH with no error handling. The OR-fallback exists in `fts5_recall_conversations` but not in the `query -s` path. One try/except + user-friendly message.
+- **`--json` on all query commands** — status, tools, doctor, query detail all lack JSON output. Formatter registry exists; wire it up. Aligns with "data platform over application" principle.
+- **Expand `builtin_queries/`** — add `status.sql`, `tools.sql` as command implementations. Consider review playbook queries (cost outliers, longest conversations, tool-intensive sessions, recent untagged).
+- **Embedding search performance** — pure Python cosine sim is O(n) and gets 12x worse at team scale. NumPy batch computation (~15ms) or sqlite-vec extension (~250ms at 360k chunks). Biggest bottleneck regardless of team scale.
+- **Connection management consistency** — `search.filter_conversations()` calls `sqlite3.connect()` directly, skipping migrations. Should use `open_database(read_only=True)`.
+- **Derived categorization at ingest** — shell-tag pattern generalizes: model family tags (`model:claude`), conversation shape tags (`shape:tool-heavy`), cost tier tags. Same `tag_at_ingest_boundary` mechanism.
 
 **Lower priority**:
 
+- **Tag `description` column** — exists in schema, never exposed in CLI. Becomes important at team scale.
+- **Playbook sequencing features** — `--tag-results`, `--ids-only`, session context. Manual-first: document sequences first, add features if patterns emerge.
+- **Storage Option B** — sqlite.py at 817 lines, split further if it grows past ~1000. Seams identified.
+- **Bench hybrid comparison** — run comparing hybrid vs pure-embeddings on current corpus. Deferred.
 - **Drop-in checks**: `~/.config/strata/checks/*.py` for user-defined health checks. Pattern exists, add when needed.
 - **Observe agent behavior**: Plugin/skill deployed. Watch whether agents discover tagging, `--thread`, workspace filtering.
 - **Synthesis layer**: LLM-generated narratives over structured retrieval output. Consumer of strata, not part of it.
@@ -429,14 +467,21 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 | Thread | Status | Notes |
 |--------|--------|-------|
-| Doc cross-reference | Deferred | Embedding docs alongside conversations. Deferred — unclear if concepts-only-in-docs is a real use case. `--refs` covers files referenced in conversations. |
-| Synthesis layer | Deferred | Current synthesis = tagging. LLM-generated narratives are a consumer of strata, not part of it. Deferred — let agents test improved plugin/skill workflow first. |
-| `workspaces.git_remote` | Deferred | Could resolve via `git remote -v`. Not blocking queries yet. |
+| SQL consolidation | Implementation done, needs rebase | `storage/sql.py` with 142 queries as constants + builders. Merge conflicts with WhereBuilder in conversations.py and search.py. |
+| FTS5 error handling | Open | `query -s` has no error handling for FTS5 syntax. OR-fallback exists in recall path but not query path. |
+| `--json` everywhere | Open | status, tools, doctor, query detail lack JSON output. Formatter registry exists, needs wiring. |
+| Expand `builtin_queries/` | Open | Add `status.sql`, `tools.sql`. Consider review/research playbook queries. |
+| Embedding search perf | Open | Pure Python cosine sim is O(n). NumPy or sqlite-vec. Biggest bottleneck, critical for team scale. |
+| Derived ingest-time tags | Open | Model family, conversation shape, cost tier. Generalizes shell-tag pattern. |
+| Doc cross-reference | Deferred | Embedding docs alongside conversations. Unclear if real use case. |
+| Synthesis layer | Deferred | Current synthesis = tagging. LLM narratives are a consumer. |
+| `workspaces.git_remote` | Deferred → Phase 0 for team | Resolves cross-user workspace identity. Part of team-scale Phase 0 prep. |
 | `strata enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
-| Billing context | Deferred | API vs subscription per workspace. Needed for precise cost, not approximate. |
-| Provenance marking | Deferred | Tag ingested conversations containing `strata ask` tool calls as `strata:derivative`, down-weight in search. Detectable from shell.execute tool call data. Deferred — active session exclusion may be sufficient. |
+| Billing context | Deferred | API vs subscription per workspace. Needed for precise cost. |
+| Provenance marking | Done | Implemented as `strata:derivative` auto-tag + default exclusion in `ask`. |
+| SQL duplication in formatters | Done | Extracted to `storage/queries.py`. |
 | Re-add adapters | Partially done | Aider built-in. Goose/Cursor available via plugin system. |
-| SQL duplication in formatters | Open | Prompt/response extraction SQL repeated 4 times across formatters.py and chunker.py. |
+| Team-scale architecture | Researched | SQLite holds. Push model recommended. Phase 0-3 plan in research task. |
 
 ---
 
@@ -447,5 +492,5 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 ---
 
-*Updated: 2026-01-27 (Release prep cleanup: bench strip, test overhaul 262 tests, code cleanup 5 shared modules, storage/CLI refactoring, doctor improvements, bulk tag, principles catalog)*
+*Updated: 2026-01-27 (SQL architecture session: derivative dedup, WhereBuilder, SQL consolidation research, ORM evaluation, team-scale analysis, UX feedback, 293 tests)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
