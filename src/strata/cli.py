@@ -344,6 +344,37 @@ def cmd_tags(args) -> int:
         conn.close()
         return 0
 
+    # Drill-down: show conversations with a given tag
+    if getattr(args, "name", None):
+        from strata.api import list_conversations
+
+        tag_name = args.name
+        conn.close()
+
+        try:
+            conversations = list_conversations(db_path=db, tags=[tag_name], limit=args.limit)
+        except FileNotFoundError as e:
+            print(str(e))
+            return 1
+
+        if not conversations:
+            print(f"No conversations found for tag: {tag_name}")
+            return 0
+
+        print(f"Conversations tagged '{tag_name}' (showing {len(conversations)}):")
+        for c in conversations:
+            cid = c.id[:12] if c.id else ""
+            ws = _fmt_workspace(c.workspace_path)
+            model = c.model or ""
+            started = c.started_at[:16].replace("T", " ") if c.started_at else ""
+            tokens = _fmt_tokens(c.total_tokens)
+            tag_str = f"  [{', '.join(c.tags)}]" if c.tags else ""
+            print(f"{cid}  {started}  {ws}  {model}  {c.prompt_count}p/{c.response_count}r  {tokens} tok{tag_str}")
+
+        if args.limit > 0 and len(conversations) >= args.limit:
+            print(f"\nTip: show more with `strata query -l {tag_name} -n 0`")
+        return 0
+
     # Default: list tags
     tags = list_tags(conn)
 
@@ -351,6 +382,14 @@ def cmd_tags(args) -> int:
         print("No tags defined.")
         conn.close()
         return 0
+
+    prefix = getattr(args, "prefix", None)
+    if prefix:
+        tags = [t for t in tags if t["name"].startswith(prefix)]
+        if not tags:
+            print(f"No tags found with prefix: {prefix}")
+            conn.close()
+            return 0
 
     for tag in tags:
         counts = []
@@ -440,7 +479,7 @@ def _fmt_tokens(n: int) -> str:
 
 def _fmt_workspace(path: str | None) -> str:
     """Format workspace path for display. Shows (root) for root/empty paths."""
-    if not path:
+    if path is None:
         return ""
     if path == "/" or path == "":
         return "(root)"
@@ -771,14 +810,13 @@ def cmd_config(args) -> int:
         return 0
 
     # strata config (show all)
-    doc = load_config()
-    if not doc:
+    path = config_file()
+    if not path.exists():
         print("No config file found.")
-        print(f"Create one at: {config_file()}")
+        print(f"Create one at: {path}")
         return 0
 
-    import tomlkit
-    print(tomlkit.dumps(doc).strip())
+    print(path.read_text().strip())
     return 0
 
 
@@ -1212,14 +1250,19 @@ def main(argv=None) -> int:
     # tags
     p_tags = subparsers.add_parser(
         "tags",
-        help="List, rename, or delete tags",
+        help="List, inspect, rename, or delete tags",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   strata tags                                      # list all tags
+  strata tags --prefix research:                   # list tags by prefix
+  strata tags research:auth                        # show conversations with a tag
   strata tags --rename important review:important   # rename tag
   strata tags --delete old-tag                      # delete tag (refuses if applied)
   strata tags --delete old-tag --force              # delete tag and all associations""",
     )
+    p_tags.add_argument("name", nargs="?", help="Tag name to drill into (shows conversations)")
+    p_tags.add_argument("--prefix", metavar="PREFIX", help="Filter tag list by prefix (list view only)")
+    p_tags.add_argument("-n", "--limit", type=int, default=10, help="Max conversations to show in drill-down (default: 10)")
     p_tags.add_argument("--rename", nargs=2, metavar=("OLD", "NEW"), help="Rename a tag")
     p_tags.add_argument("--delete", metavar="NAME", help="Delete a tag and all associations")
     p_tags.add_argument("--force", action="store_true", help="Force delete even if tag has associations")
