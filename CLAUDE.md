@@ -49,5 +49,14 @@ strata query -l research:<topic>   # retrieve tagged
 Tag conventions:
 - `research:*` — Investigation findings worth preserving
 - `useful:*` — General bookmarks (useful:pattern, useful:example)
+- `decision:*` — Key architectural/design decisions
+- `handoff:update` — Sessions that modified HANDOFF.md
+- `rationale:*` — Why we chose X over Y
+- `genesis:*` — First mention of a concept
 
 When you find something useful via `strata ask`, tag it before moving on.
+
+Before ending a session that updates HANDOFF.md:
+```
+strata tag --last handoff:update
+```
