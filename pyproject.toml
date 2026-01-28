@@ -5,7 +5,19 @@ build-backend = "hatchling.build"
 [project]
 name = "strata"
 version = "0.1.0"
+description = "Personal LLM usage analytics. Ingest conversation logs from CLI coding tools, query via FTS5 and semantic search."
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.12"
+keywords = ["llm", "analytics", "claude", "conversation", "search"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Documentation",
+]
 dependencies = [
     "httpx",
     "tqdm",
