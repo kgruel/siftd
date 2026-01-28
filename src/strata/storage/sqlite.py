@@ -802,23 +802,7 @@ def clear_ingested_file_error(
 # callers don't break. New code should import from the canonical location.
 # =============================================================================
 
-from strata.storage.tags import (  # noqa: E402, F811
-    apply_tag,
-    delete_tag,
-    get_or_create_tag,
-    list_tags,
-    remove_tag,
-    rename_tag,
-    tag_shell_command,  # noqa: F811
-)
-from strata.storage.fts import (  # noqa: E402, F811
-    ensure_fts_table,  # noqa: F811
-    fts5_recall_conversations,
-    insert_fts_content,  # noqa: F811
-    rebuild_fts_index,
-    search_content,
-)
-from strata.backfill import (  # noqa: E402
+from strata.backfill import (  # noqa: E402, F401
     backfill_models,
     backfill_providers,
     backfill_response_attributes,
@@ -826,8 +810,24 @@ from strata.backfill import (  # noqa: E402
 )
 
 # Re-export categorize_shell_command (was importable via sqlite.py's mid-file import)
-from strata.domain.shell_categories import (  # noqa: E402
+from strata.domain.shell_categories import (  # noqa: E402, F401
     SHELL_CATEGORIES,
     SHELL_TAG_PREFIX,
     categorize_shell_command,
+)
+from strata.storage.fts import (  # noqa: E402, F401, F811
+    ensure_fts_table,  # noqa: F811
+    fts5_recall_conversations,
+    insert_fts_content,  # noqa: F811
+    rebuild_fts_index,
+    search_content,
+)
+from strata.storage.tags import (  # noqa: E402, F401, F811
+    apply_tag,
+    delete_tag,
+    get_or_create_tag,
+    list_tags,
+    remove_tag,
+    rename_tag,
+    tag_shell_command,  # noqa: F811
 )

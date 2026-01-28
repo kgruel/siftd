@@ -42,7 +42,6 @@ def load_builtin_formatters() -> dict[str, "OutputFormatter"]:
     """Return the built-in formatter classes, keyed by name."""
     from strata.output.formatters import (
         ChunkListFormatter,
-        ContextFormatter,
         ConversationFormatter,
         FullExchangeFormatter,
         JsonFormatter,

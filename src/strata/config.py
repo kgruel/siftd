@@ -8,7 +8,6 @@ Example config:
 """
 
 import sys
-from pathlib import Path
 
 import tomlkit
 from tomlkit import TOMLDocument

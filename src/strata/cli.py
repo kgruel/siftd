@@ -5,9 +5,9 @@ import sys
 from pathlib import Path
 
 from strata.adapters.registry import load_all_adapters, wrap_adapter_paths
-from strata.ingestion import IngestStats, ingest_all
 from strata.backfill import backfill_derivative_tags, backfill_response_attributes, backfill_shell_tags
 from strata.cli_ask import build_ask_parser
+from strata.ingestion import IngestStats, ingest_all
 from strata.paths import data_dir, db_path, ensure_dirs, queries_dir
 from strata.storage.sqlite import create_database, open_database
 from strata.storage.tags import (
@@ -338,7 +338,7 @@ def cmd_tags(args) -> int:
             conn.close()
             return 1
 
-        removed = delete_tag(conn, tag_name, commit=True)
+        delete_tag(conn, tag_name, commit=True)
         parts = []
         if tag_info["conversation_count"]:
             parts.append(f"{tag_info['conversation_count']} conversations")
@@ -787,7 +787,7 @@ def cmd_backfill(args) -> int:
 
 def cmd_config(args) -> int:
     """View or modify config settings."""
-    from strata.config import get_config, load_config, set_config
+    from strata.config import get_config, set_config
     from strata.paths import config_file
 
     # strata config path

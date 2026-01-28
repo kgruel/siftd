@@ -485,15 +485,11 @@ class DropInsValidCheck:
 
     def _check_queries(self, queries_dir: Path) -> list[Finding]:
         """Validate query files have valid syntax."""
-        import re
-
         findings = []
 
         if not queries_dir.is_dir():
             return findings
 
-        # Pattern for valid $var references
-        var_pattern = re.compile(r"\$[a-zA-Z_][a-zA-Z0-9_]*")
 
         for sql_file in sorted(queries_dir.glob("*.sql")):
             try:

@@ -42,7 +42,7 @@ Full decision log: `strata query -l decision:` or search with `strata ask -w str
 | FTS5 error handling | Open | `query -s` lacks error handling |
 | `--json` everywhere | Open | status, tools, doctor lack JSON output |
 | Embedding search perf | Open | O(n) cosine sim bottleneck |
-| Derived ingest-time tags | Open | Generalize shell-tag pattern |
+| Derived ingest-time tags | Deferred | Generalize shell-tag pattern • `context:derived-tags` |
 | Export git linking | Deferred | Link sessions to branches/commits/PRs |
 | Export import format | Deferred | Portable `.strata` for reviewer import |
 | Plugin `--tools` mode | Deferred | Tool usage pattern analysis |

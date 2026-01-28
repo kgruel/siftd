@@ -2,7 +2,7 @@
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from strata.adapters.registry import load_all_adapters

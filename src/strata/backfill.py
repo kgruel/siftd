@@ -8,6 +8,10 @@ import json
 import sqlite3
 from pathlib import Path
 
+from strata.domain.shell_categories import (
+    SHELL_TAG_PREFIX,
+    categorize_shell_command,
+)
 from strata.models import parse_model_name
 from strata.storage.sqlite import get_or_create_provider, insert_response_attribute
 from strata.storage.tags import (
@@ -15,11 +19,6 @@ from strata.storage.tags import (
     apply_tag,
     get_or_create_tag,
     is_derivative_tool_call,
-)
-
-from strata.domain.shell_categories import (
-    SHELL_TAG_PREFIX,
-    categorize_shell_command,
 )
 
 

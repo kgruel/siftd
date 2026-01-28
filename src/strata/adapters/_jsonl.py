@@ -4,7 +4,7 @@ Common functions used by JSONL-based adapters (claude_code, codex_cli).
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from strata.domain import ContentBlock
@@ -22,7 +22,7 @@ def load_jsonl(path: Path) -> list[dict]:
 
 def now_iso() -> str:
     """ISO timestamp for now (UTC)."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def parse_block(block) -> ContentBlock:

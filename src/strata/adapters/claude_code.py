@@ -4,13 +4,11 @@ Pure parser: reads JSONL files and yields Conversation domain objects.
 No storage coupling.
 """
 
-import json
 from collections.abc import Iterable
 from pathlib import Path
 
 from strata.adapters._jsonl import load_jsonl, now_iso, parse_block
 from strata.domain import (
-    ContentBlock,
     Conversation,
     Harness,
     Prompt,

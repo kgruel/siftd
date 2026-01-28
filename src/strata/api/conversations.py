@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from strata.paths import db_path as default_db_path
-from strata.storage.filters import WhereBuilder, tag_condition as _tag_condition
+from strata.storage.filters import WhereBuilder
+from strata.storage.filters import tag_condition as _tag_condition
 from strata.storage.sqlite import open_database
 
 

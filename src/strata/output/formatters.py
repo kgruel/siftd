@@ -8,7 +8,7 @@ import json
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean as _mean
 from typing import Protocol
@@ -551,7 +551,7 @@ class JsonFormatter:
         # Build structured output
         output = {
             "query": ctx.query,
-            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "result_count": len(ctx.results),
             "results": [],
         }

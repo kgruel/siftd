@@ -10,7 +10,6 @@ from pathlib import Path
 from strata.api.conversations import (
     ConversationDetail,
     Exchange,
-    ToolCallSummary,
     get_conversation,
     list_conversations,
 )

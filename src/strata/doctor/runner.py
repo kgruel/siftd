@@ -45,10 +45,14 @@ def run_checks(
     """
     from strata.paths import (
         adapters_dir,
-        db_path as default_db_path,
-        embeddings_db_path as default_embed_path,
         formatters_dir,
         queries_dir,
+    )
+    from strata.paths import (
+        db_path as default_db_path,
+    )
+    from strata.paths import (
+        embeddings_db_path as default_embed_path,
     )
 
     # Resolve paths

@@ -8,7 +8,6 @@ from pathlib import Path
 from strata.adapters import aider, claude_code, codex_cli, gemini_cli
 from strata.paths import adapters_dir
 
-
 # Built-in adapters with their source modules (for copying)
 _BUILTIN_ADAPTERS = {
     "aider": aider,
