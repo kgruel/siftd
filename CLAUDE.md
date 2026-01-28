@@ -1,5 +1,12 @@
 Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, stores in SQLite, queries via FTS5 and user-defined SQL files.
 
+## Install
+
+```bash
+uv pip install .           # core (FTS5 search, tags, queries)
+uv pip install .[embed]    # with semantic search (strata ask)
+```
+
 ## Architecture
 
 Core loop: **Ingest → Store → Query**

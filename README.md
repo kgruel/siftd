@@ -26,8 +26,11 @@ The value is collapsing the loop. Reduce the tool calls, reduce the time to resp
 ## Install
 
 ```bash
-uv pip install .
+uv pip install .           # core functionality
+uv pip install .[embed]    # with semantic search (strata ask)
 ```
+
+Semantic search (`strata ask`) requires the `[embed]` extra. Core features — ingest, query, tags, peek — work without it.
 
 ## Getting started
 

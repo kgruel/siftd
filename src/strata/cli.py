@@ -101,6 +101,15 @@ def cmd_status(args) -> int:
     for t in stats.top_tools:
         print(f"  {t.name}: {t.usage_count}")
 
+    # Features status
+    from strata.embeddings import embeddings_available
+
+    print("\n--- Features ---")
+    if embeddings_available():
+        print("  Embeddings: installed")
+    else:
+        print("  Embeddings: not installed (pip install strata[embed])")
+
     return 0
 
 

@@ -133,7 +133,12 @@ def hybrid_search(
     Raises:
         FileNotFoundError: If the database files don't exist.
         RuntimeError: If no embedding backend is available.
+        EmbeddingsNotAvailable: If embedding dependencies are not installed.
     """
+    from strata.embeddings import require_embeddings
+
+    require_embeddings("Semantic search")
+
     from strata.embeddings import get_backend
     from strata.paths import db_path as default_db_path
     from strata.paths import embeddings_db_path as default_embed_path

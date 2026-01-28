@@ -32,6 +32,7 @@ def cmd_ask(args) -> int:
     """Semantic search over conversation content using embeddings."""
     import sqlite3 as _sqlite3
 
+    from strata.embeddings import embeddings_available
     from strata.storage.embeddings import (
         open_embeddings_db,
         search_similar,
@@ -48,8 +49,14 @@ def cmd_ask(args) -> int:
         print("Run 'strata ingest' to create it.")
         return 1
 
-    # Index or rebuild mode
+    # Index or rebuild mode — requires embeddings
     if args.index or args.rebuild:
+        if not embeddings_available():
+            print("Embedding support not installed.", file=sys.stderr)
+            print()
+            print("Install with:")
+            print("  pip install strata[embed]")
+            return 1
         return _ask_build_index(db, embed_db, rebuild=args.rebuild, backend_name=args.backend, verbose=True)
 
     # Search mode — need a query
@@ -63,6 +70,17 @@ def cmd_ask(args) -> int:
     if not embed_db.exists():
         print("No embeddings index found.")
         print("Run 'strata ask --index' to build it.")
+        return 1
+
+    # Check embeddings availability before search
+    if not embeddings_available():
+        print("Semantic search requires embedding support.", file=sys.stderr)
+        print()
+        print("Install with:")
+        print("  pip install strata[embed]")
+        print()
+        print("Or use FTS5 search:")
+        print(f'  strata query -s "{query}"')
         return 1
 
     # Resolve backend for query embedding

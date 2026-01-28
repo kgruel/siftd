@@ -155,7 +155,12 @@ def build_index(
     Raises:
         FileNotFoundError: If main database doesn't exist.
         RuntimeError: If no embedding backend is available.
+        EmbeddingsNotAvailable: If embedding dependencies are not installed.
     """
+    from strata.embeddings import require_embeddings
+
+    require_embeddings("Building embeddings index")
+
     from strata.embeddings import build_embeddings_index
 
     stats = build_embeddings_index(

@@ -735,14 +735,9 @@ name = "strata"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "fastembed" },
     { name = "httpx" },
-    { name = "huggingface-hub" },
     { name = "loguru" },
-    { name = "numpy" },
-    { name = "onnxruntime" },
     { name = "pyyaml" },
-    { name = "tokenizers" },
     { name = "tomlkit" },
     { name = "tqdm" },
 ]
@@ -753,24 +748,31 @@ dev = [
     { name = "ruff" },
     { name = "ty" },
 ]
+embed = [
+    { name = "fastembed" },
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "onnxruntime" },
+    { name = "tokenizers" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "fastembed" },
+    { name = "fastembed", marker = "extra == 'embed'" },
     { name = "httpx" },
-    { name = "huggingface-hub" },
+    { name = "huggingface-hub", marker = "extra == 'embed'" },
     { name = "loguru" },
-    { name = "numpy" },
-    { name = "onnxruntime" },
+    { name = "numpy", marker = "extra == 'embed'" },
+    { name = "onnxruntime", marker = "extra == 'embed'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pyyaml" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
-    { name = "tokenizers" },
+    { name = "tokenizers", marker = "extra == 'embed'" },
     { name = "tomlkit" },
     { name = "tqdm" },
     { name = "ty", marker = "extra == 'dev'" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["embed", "dev"]
 
 [[package]]
 name = "sympy"

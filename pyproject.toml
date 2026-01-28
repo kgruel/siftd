@@ -7,12 +7,6 @@ name = "strata"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "fastembed",
-    "numpy",
-    "onnxruntime",
-    "tokenizers",
-    "huggingface-hub",
-
     "httpx",
     "tqdm",
     "pyyaml",
@@ -24,6 +18,13 @@ dependencies = [
 strata = "strata.cli:main"
 
 [project.optional-dependencies]
+embed = [
+    "fastembed",
+    "numpy",
+    "onnxruntime",
+    "tokenizers",
+    "huggingface-hub",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.4",
@@ -36,6 +37,9 @@ packages = ["src/strata"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "embeddings: tests that require embedding dependencies",
+]
 
 [tool.ruff]
 line-length = 120

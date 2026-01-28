@@ -211,7 +211,11 @@ class EmbeddingsStaleCheck:
     has_fix = True
 
     def run(self, ctx: CheckContext) -> list[Finding]:
-        findings = []
+        from strata.embeddings import embeddings_available
+
+        # Skip entirely if embeddings not installed — not an error, it's optional
+        if not embeddings_available():
+            return []
 
         # Check if embeddings DB exists
         if not ctx.embed_db_path.exists():
@@ -243,7 +247,7 @@ class EmbeddingsStaleCheck:
         stale_ids = main_ids - indexed_ids
 
         if stale_ids:
-            findings.append(
+            return [
                 Finding(
                     check=self.name,
                     severity="info",
@@ -252,9 +256,9 @@ class EmbeddingsStaleCheck:
                     fix_command="strata ask --index",
                     context={"count": len(stale_ids)},
                 )
-            )
+            ]
 
-        return findings
+        return []
 
     def fix(self, finding: Finding) -> FixResult | None:
         # v1: report only, don't execute
@@ -544,6 +548,12 @@ class OrphanedChunksCheck:
     has_fix = True
 
     def run(self, ctx: CheckContext) -> list[Finding]:
+        from strata.embeddings import embeddings_available
+
+        # Skip if embeddings not installed — not an error
+        if not embeddings_available():
+            return []
+
         if not ctx.embed_db_path.exists():
             return []
 
@@ -587,10 +597,42 @@ class OrphanedChunksCheck:
         return None
 
 
+class EmbeddingsAvailableCheck:
+    """Reports embedding support installation status (informational only)."""
+
+    name = "embeddings-available"
+    description = "Embedding support installation status"
+    has_fix = False  # Not an error, just informational
+
+    def run(self, ctx: CheckContext) -> list[Finding]:
+        from strata.embeddings import embeddings_available
+
+        if embeddings_available():
+            return []  # No finding when available — it's optional, not an error
+
+        # Only report if user has an embeddings DB (indicates intent to use)
+        if ctx.embed_db_path.exists():
+            return [
+                Finding(
+                    check=self.name,
+                    severity="info",
+                    message="Embeddings database exists but embedding support not installed",
+                    fix_available=False,
+                    context={"install_hint": "pip install strata[embed]"},
+                )
+            ]
+
+        return []  # No DB, no finding — user may not need embeddings
+
+    def fix(self, finding: Finding) -> FixResult | None:
+        return None
+
+
 # Registry of built-in checks
 BUILTIN_CHECKS: list[Check] = [
     IngestPendingCheck(),
     IngestErrorsCheck(),
+    EmbeddingsAvailableCheck(),
     EmbeddingsStaleCheck(),
     OrphanedChunksCheck(),
     PricingGapsCheck(),

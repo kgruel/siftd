@@ -6,12 +6,32 @@ Fallback chain:
 3. API (configurable, requires key)
 
 Usage:
-    from embeddings import get_backend
-    backend = get_backend()
-    vectors = backend.embed(["hello", "world"])
+    from strata.embeddings import embeddings_available, get_backend
+
+    if embeddings_available():
+        backend = get_backend()
+        vectors = backend.embed(["hello", "world"])
+
+Note: Embedding functionality requires the [embed] extra:
+    pip install strata[embed]
 """
 
-from .base import EmbeddingBackend, get_backend
-from .indexer import IndexStats, build_embeddings_index
+from .availability import (
+    EmbeddingsNotAvailable,
+    embeddings_available,
+    require_embeddings,
+)
 
-__all__ = ["EmbeddingBackend", "get_backend", "IndexStats", "build_embeddings_index"]
+# Always export availability functions
+__all__ = [
+    "embeddings_available",
+    "require_embeddings",
+    "EmbeddingsNotAvailable",
+]
+
+# Conditionally export embedding functionality when deps are available
+if embeddings_available():
+    from .base import EmbeddingBackend, get_backend
+    from .indexer import IndexStats, build_embeddings_index
+
+    __all__ += ["EmbeddingBackend", "get_backend", "IndexStats", "build_embeddings_index"]

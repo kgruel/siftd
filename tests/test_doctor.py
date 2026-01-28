@@ -135,8 +135,11 @@ class TestIngestPendingCheck:
 class TestEmbeddingsStaleCheck:
     """Tests for the embeddings-stale check."""
 
-    def test_no_embeddings_db(self, check_context):
+    def test_no_embeddings_db(self, check_context, monkeypatch):
         """Reports info when embeddings DB doesn't exist."""
+        import strata.embeddings.availability as avail
+        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
+
         check = EmbeddingsStaleCheck()
         findings = check.run(check_context)
 
@@ -146,8 +149,11 @@ class TestEmbeddingsStaleCheck:
         assert findings[0].fix_available is True
         assert findings[0].fix_command == "strata ask --index"
 
-    def test_stale_conversations(self, check_context):
+    def test_stale_conversations(self, check_context, monkeypatch):
         """Reports stale conversations when embeddings DB exists but is empty."""
+        import strata.embeddings.availability as avail
+        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
+
         from strata.storage.embeddings import open_embeddings_db
 
         embed_conn = open_embeddings_db(check_context.embed_db_path)
@@ -314,14 +320,20 @@ class TestCheckContext:
 class TestOrphanedChunksCheck:
     """Tests for the orphaned-chunks check."""
 
-    def test_no_embeddings_db(self, check_context):
+    def test_no_embeddings_db(self, check_context, monkeypatch):
         """Returns no findings when embeddings DB doesn't exist."""
+        import strata.embeddings.availability as avail
+        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
+
         check = OrphanedChunksCheck()
         findings = check.run(check_context)
         assert findings == []
 
-    def test_no_orphans(self, check_context):
+    def test_no_orphans(self, check_context, monkeypatch):
         """Returns no findings when all chunks match conversations."""
+        import strata.embeddings.availability as avail
+        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
+
         from strata.storage.embeddings import open_embeddings_db, store_chunk
 
         embed_conn = open_embeddings_db(check_context.embed_db_path)
@@ -345,8 +357,11 @@ class TestOrphanedChunksCheck:
         findings = check.run(check_context)
         assert findings == []
 
-    def test_detects_orphans(self, check_context):
+    def test_detects_orphans(self, check_context, monkeypatch):
         """Reports orphaned chunks for conversations not in main DB."""
+        import strata.embeddings.availability as avail
+        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
+
         from strata.storage.embeddings import open_embeddings_db, store_chunk
 
         embed_conn = open_embeddings_db(check_context.embed_db_path)
