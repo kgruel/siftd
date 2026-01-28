@@ -75,6 +75,12 @@ def cmd_ask(args) -> int:
 
     # Compose filters: get candidate conversation IDs from main DB
     from strata.search import filter_conversations, get_active_conversation_ids
+    from strata.storage.tags import DERIVATIVE_TAG
+
+    exclude_tags = list(getattr(args, "no_tag", None) or [])
+    if not args.include_derivative:
+        exclude_tags.append(DERIVATIVE_TAG)
+
     candidate_ids = filter_conversations(
         db,
         workspace=args.workspace,
@@ -83,7 +89,7 @@ def cmd_ask(args) -> int:
         before=args.before,
         tags=getattr(args, "tag", None),
         all_tags=getattr(args, "all_tags", None),
-        exclude_tags=getattr(args, "no_tag", None),
+        exclude_tags=exclude_tags or None,
     )
 
     # Exclude conversations from active sessions (unless opted out)
@@ -334,6 +340,7 @@ def build_ask_parser(subparsers) -> None:
     p_ask.add_argument("--json", action="store_true", help="Output as structured JSON")
     p_ask.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
     p_ask.add_argument("--no-exclude-active", action="store_true", help="Include results from active sessions (excluded by default)")
+    p_ask.add_argument("--include-derivative", action="store_true", help="Include derivative conversations (strata ask/query results, excluded by default)")
     p_ask.add_argument("--no-diversity", action="store_true", help="Disable MMR diversity reranking, use pure relevance order")
     p_ask.add_argument("--lambda", type=float, default=0.7, dest="lambda_", metavar="FLOAT", help="MMR lambda: 1.0=pure relevance, 0.0=pure diversity (default: 0.7)")
     p_ask.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by conversation tag (repeatable, OR logic)")

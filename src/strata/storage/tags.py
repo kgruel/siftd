@@ -205,3 +205,51 @@ def tag_shell_command(
     apply_tag(conn, "tool_call", tool_call_id, tag_id)
 
     return category
+
+
+DERIVATIVE_TAG = "strata:derivative"
+
+
+def is_derivative_tool_call(tool_name: str, input_data: dict | None) -> bool:
+    """Check if a tool call indicates a derivative conversation.
+
+    Derivative conversations invoke `strata ask` or `strata query` —
+    their content pollutes future searches with repeated search results.
+
+    Detects two patterns:
+    - shell.execute with command containing 'strata ask' or 'strata query'
+    - skill.invoke with skill='strata' (the strata CLI skill)
+    """
+    if not input_data:
+        return False
+
+    if tool_name == "shell.execute":
+        cmd = input_data.get("command") or input_data.get("cmd") or ""
+        return "strata ask" in cmd or "strata query" in cmd
+
+    if tool_name == "skill.invoke":
+        skill = input_data.get("skill") or ""
+        return skill == "strata"
+
+    return False
+
+
+def tag_derivative_conversation(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    tool_name: str,
+    input_data: dict | None,
+) -> bool:
+    """Tag a conversation as derivative if a tool call matches.
+
+    Called at ingest time for each tool call. Applies the conversation-level
+    'strata:derivative' tag on the first matching tool call.
+
+    Returns True if the tag was newly applied.
+    """
+    if not is_derivative_tool_call(tool_name, input_data):
+        return False
+
+    tag_id = get_or_create_tag(conn, DERIVATIVE_TAG)
+    result = apply_tag(conn, "conversation", conversation_id, tag_id)
+    return result is not None

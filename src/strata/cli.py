@@ -6,7 +6,7 @@ from pathlib import Path
 
 from strata.adapters.registry import load_all_adapters, wrap_adapter_paths
 from strata.ingestion import IngestStats, ingest_all
-from strata.backfill import backfill_response_attributes, backfill_shell_tags
+from strata.backfill import backfill_derivative_tags, backfill_response_attributes, backfill_shell_tags
 from strata.cli_ask import build_ask_parser
 from strata.paths import data_dir, db_path, ensure_dirs, queries_dir
 from strata.storage.sqlite import create_database, open_database
@@ -720,6 +720,13 @@ def cmd_backfill(args) -> int:
                 print(f"  shell:{category}: {count}")
         else:
             print("No untagged shell commands found.")
+    elif args.derivative_tags:
+        print("Backfilling derivative conversation tags...")
+        count = backfill_derivative_tags(conn)
+        if count:
+            print(f"Tagged {count} conversations as strata:derivative.")
+        else:
+            print("No untagged derivative conversations found.")
     else:
         # Default: backfill response attributes (original behavior)
         print("Backfilling response attributes (cache tokens)...")
@@ -1276,6 +1283,7 @@ def main(argv=None) -> int:
     # backfill
     p_backfill = subparsers.add_parser("backfill", help="Backfill derived data from existing records")
     p_backfill.add_argument("--shell-tags", action="store_true", help="Tag shell.execute calls with shell:* categories")
+    p_backfill.add_argument("--derivative-tags", action="store_true", help="Tag conversations containing strata ask/query as strata:derivative")
     p_backfill.set_defaults(func=cmd_backfill)
 
     # path

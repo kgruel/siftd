@@ -10,7 +10,12 @@ from pathlib import Path
 
 from strata.models import parse_model_name
 from strata.storage.sqlite import get_or_create_provider, insert_response_attribute
-from strata.storage.tags import apply_tag, get_or_create_tag
+from strata.storage.tags import (
+    DERIVATIVE_TAG,
+    apply_tag,
+    get_or_create_tag,
+    is_derivative_tool_call,
+)
 
 from strata.domain.shell_categories import (
     SHELL_TAG_PREFIX,
@@ -214,3 +219,68 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
 
     conn.commit()
     return inserted
+
+
+def backfill_derivative_tags(conn: sqlite3.Connection) -> int:
+    """Backfill strata:derivative tags on conversations with strata ask/query tool calls.
+
+    Scans all tool calls for shell.execute commands containing 'strata ask' or
+    'strata query', and skill.invoke calls for the 'strata' skill. Tags the
+    parent conversation. Skips conversations already tagged.
+
+    Returns count of newly tagged conversations.
+    """
+    # Find tool IDs for shell.execute and skill.invoke
+    tool_ids = {}
+    for name in ("shell.execute", "skill.invoke"):
+        row = conn.execute("SELECT id FROM tools WHERE name = ?", (name,)).fetchone()
+        if row:
+            tool_ids[name] = row["id"]
+
+    if not tool_ids:
+        return 0
+
+    # Get conversations already tagged as derivative
+    already_tagged = set()
+    tag_row = conn.execute("SELECT id FROM tags WHERE name = ?", (DERIVATIVE_TAG,)).fetchone()
+    if tag_row:
+        rows = conn.execute(
+            "SELECT conversation_id FROM conversation_tags WHERE tag_id = ?",
+            (tag_row["id"],)
+        ).fetchall()
+        already_tagged = {r["conversation_id"] for r in rows}
+
+    # Find candidate tool calls from relevant tools
+    placeholders = ",".join("?" * len(tool_ids))
+    tool_id_list = list(tool_ids.values())
+    cur = conn.execute(f"""
+        SELECT tc.conversation_id, tc.input, t.name AS tool_name
+        FROM tool_calls tc
+        JOIN tools t ON t.id = tc.tool_id
+        WHERE tc.tool_id IN ({placeholders})
+    """, tool_id_list)
+
+    # Collect conversation IDs that need tagging
+    derivative_conv_ids: set[str] = set()
+    for row in cur.fetchall():
+        conv_id = row["conversation_id"]
+        if conv_id in already_tagged or conv_id in derivative_conv_ids:
+            continue
+
+        raw_input = row["input"]
+        try:
+            data = json.loads(raw_input) if isinstance(raw_input, str) else raw_input
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        if is_derivative_tool_call(row["tool_name"], data):
+            derivative_conv_ids.add(conv_id)
+
+    # Apply tags
+    if derivative_conv_ids:
+        tag_id = get_or_create_tag(conn, DERIVATIVE_TAG)
+        for conv_id in derivative_conv_ids:
+            apply_tag(conn, "conversation", conv_id, tag_id)
+
+    conn.commit()
+    return len(derivative_conv_ids)

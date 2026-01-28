@@ -17,7 +17,7 @@ from strata.domain import Conversation
 from strata.ids import ulid as _ulid
 from strata.models import parse_model_name
 from strata.storage.fts import ensure_fts_table, insert_fts_content
-from strata.storage.tags import tag_shell_command
+from strata.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
@@ -553,6 +553,11 @@ def store_conversation(conn: sqlite3.Connection, conversation: Conversation, *, 
                     "SELECT name FROM tools WHERE id = ?", (tool_id,)
                 ).fetchone()["name"]
                 tag_shell_command(conn, tool_call_id, canonical_name, tool_call.input)
+
+                # Auto-tag derivative conversations (contain strata ask/query)
+                tag_derivative_conversation(
+                    conn, conversation_id, canonical_name, tool_call.input
+                )
 
     if commit:
         conn.commit()
