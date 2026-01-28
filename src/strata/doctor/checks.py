@@ -53,7 +53,7 @@ class CheckContext:
         if self._db_conn is None:
             from strata.storage.sqlite import open_database
 
-            self._db_conn = open_database(self.db_path)
+            self._db_conn = open_database(self.db_path, read_only=True)
         return self._db_conn
 
     def get_embed_conn(self):
@@ -61,7 +61,7 @@ class CheckContext:
         if self._embed_conn is None:
             from strata.storage.embeddings import open_embeddings_db
 
-            self._embed_conn = open_embeddings_db(self.embed_db_path)
+            self._embed_conn = open_embeddings_db(self.embed_db_path, read_only=True)
         return self._embed_conn
 
     def close(self):
@@ -578,7 +578,7 @@ class OrphanedChunksCheck:
                 severity="warning",
                 message=f"{count} orphaned chunk(s) from {len(orphaned_ids)} deleted conversation(s)",
                 fix_available=True,
-                fix_command="strata doctor orphaned-chunks --fix",
+                fix_command="strata ask --rebuild",
                 context={"chunk_count": count, "conversation_count": len(orphaned_ids)},
             )
         ]

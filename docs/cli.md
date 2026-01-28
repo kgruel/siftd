@@ -17,7 +17,7 @@ positional arguments:
     ask                 Semantic search over conversations
     tag                 Apply or remove a tag on a conversation (or other
                         entity)
-    tags                List, rename, or delete tags
+    tags                List, inspect, rename, or delete tags
     tools               Summarize tool usage by category
     query               List conversations with filters, or run SQL queries
     backfill            Backfill derived data from existing records
@@ -31,7 +31,7 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --db PATH             Database path (default:
-                        /Users/kaygee/.local/share/strata/strata.db)
+                        ~/.local/share/strata/strata.db)
 ```
 
 ## ingest
@@ -64,8 +64,9 @@ usage: strata ask [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
                   [--thread] [--embeddings-only] [--recall N]
                   [--role {user,assistant}] [--first] [--conversations]
                   [--refs [FILES]] [--threshold SCORE] [--json]
-                  [--format NAME] [--no-exclude-active] [--no-diversity]
-                  [--lambda FLOAT] [-l NAME] [--all-tags NAME] [--no-tag NAME]
+                  [--format NAME] [--no-exclude-active] [--include-derivative]
+                  [--no-diversity] [--lambda FLOAT] [-l NAME]
+                  [--all-tags NAME] [--no-tag NAME]
                   [query ...]
 
 positional arguments:
@@ -104,6 +105,8 @@ options:
   --format NAME         Use named formatter (built-in or drop-in plugin)
   --no-exclude-active   Include results from active sessions (excluded by
                         default)
+  --include-derivative  Include derivative conversations (strata ask/query
+                        results, excluded by default)
   --no-diversity        Disable MMR diversity reranking, use pure relevance
                         order
   --lambda FLOAT        MMR lambda: 1.0=pure relevance, 0.0=pure diversity
@@ -155,7 +158,7 @@ examples:
 usage: strata tag [-h] [-n N] [-r] [positional ...]
 
 positional arguments:
-  positional    [entity_type] entity_id tag
+  positional    [entity_type] entity_id tag [tag2 ...]
 
 options:
   -h, --help    show this help message and exit
@@ -164,6 +167,7 @@ options:
 
 examples:
   strata tag 01HX... important              # tag conversation (default)
+  strata tag 01HX... important review       # apply multiple tags at once
   strata tag --last important               # tag most recent conversation
   strata tag --last 3 review                # tag 3 most recent conversations
   strata tag workspace 01HY... proj         # explicit entity type
@@ -176,16 +180,25 @@ examples:
 ## tags
 
 ```
-usage: strata tags [-h] [--rename OLD NEW] [--delete NAME] [--force]
+usage: strata tags [-h] [--prefix PREFIX] [-n LIMIT] [--rename OLD NEW]
+                   [--delete NAME] [--force]
+                   [name]
+
+positional arguments:
+  name               Tag name to drill into (shows conversations)
 
 options:
-  -h, --help        show this help message and exit
-  --rename OLD NEW  Rename a tag
-  --delete NAME     Delete a tag and all associations
-  --force           Force delete even if tag has associations
+  -h, --help         show this help message and exit
+  --prefix PREFIX    Filter tag list by prefix (list view only)
+  -n, --limit LIMIT  Max conversations to show in drill-down (default: 10)
+  --rename OLD NEW   Rename a tag
+  --delete NAME      Delete a tag and all associations
+  --force            Force delete even if tag has associations
 
 examples:
   strata tags                                      # list all tags
+  strata tags --prefix research:                   # list tags by prefix
+  strata tags research:auth                        # show conversations with a tag
   strata tags --rename important review:important   # rename tag
   strata tags --delete old-tag                      # delete tag (refuses if applied)
   strata tags --delete old-tag --force              # delete tag and all associations
@@ -263,11 +276,13 @@ examples:
 ## backfill
 
 ```
-usage: strata backfill [-h] [--shell-tags]
+usage: strata backfill [-h] [--shell-tags] [--derivative-tags]
 
 options:
-  -h, --help    show this help message and exit
-  --shell-tags  Tag shell.execute calls with shell:* categories
+  -h, --help         show this help message and exit
+  --shell-tags       Tag shell.execute calls with shell:* categories
+  --derivative-tags  Tag conversations containing strata ask/query as
+                     strata:derivative
 ```
 
 ## path

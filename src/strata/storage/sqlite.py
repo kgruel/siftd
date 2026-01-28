@@ -27,9 +27,19 @@ SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 # =============================================================================
 
 
-def open_database(db_path: Path) -> sqlite3.Connection:
-    """Open database connection, creating schema if needed."""
+def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
+    """Open database connection, creating schema if needed.
+
+    Args:
+        db_path: Path to the database file.
+        read_only: If True, open without running migrations/ensures that write.
+            This enables read-only operations (status/query/ask) against a DB that
+            lives on read-only media or in restricted environments.
+    """
     is_new = not db_path.exists()
+    if is_new and read_only:
+        raise FileNotFoundError(f"Database not found: {db_path}")
+
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -39,12 +49,13 @@ def open_database(db_path: Path) -> sqlite3.Connection:
         conn.executescript(schema)
         conn.commit()
 
-    _migrate_labels_to_tags(conn)
-    _migrate_add_error_column(conn)
-    ensure_fts_table(conn)
-    ensure_pricing_table(conn)
-    ensure_canonical_tools(conn)
-    ensure_tool_call_tags_table(conn)
+    if not read_only:
+        _migrate_labels_to_tags(conn)
+        _migrate_add_error_column(conn)
+        ensure_fts_table(conn)
+        ensure_pricing_table(conn)
+        ensure_canonical_tools(conn)
+        ensure_tool_call_tags_table(conn)
     return conn
 
 

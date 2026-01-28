@@ -14,15 +14,33 @@ from strata.ids import ulid as _ulid
 from strata.math import cosine_similarity as _cosine_similarity
 
 
-def open_embeddings_db(db_path: Path) -> sqlite3.Connection:
-    """Open embeddings database, creating schema if needed."""
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
+    """Open embeddings database.
 
-    _create_schema(conn)
-    _migrate(conn)
+    Args:
+        db_path: Path to embeddings DB.
+        read_only: If True, open without forcing WAL or creating/migrating schema.
+            This allows read-only operations in restricted environments.
+    """
+    if read_only and not db_path.exists():
+        raise FileNotFoundError(f"Embeddings database not found: {db_path}")
+
+    if not read_only:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if read_only:
+        # Use immutable=1 to avoid creating WAL/SHM sidecars when the DB lives on
+        # read-only media (or in sandboxed environments).
+        uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
+        conn = sqlite3.connect(uri, uri=True)
+    else:
+        conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    if not read_only:
+        conn.execute("PRAGMA journal_mode=WAL")
+
+        _create_schema(conn)
+        _migrate(conn)
 
     return conn
 

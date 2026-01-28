@@ -190,7 +190,7 @@ def hybrid_search(
     # Fetch wider candidate set for MMR to select from
     search_limit = limit * 3 if use_mmr else limit
 
-    embed_conn = open_embeddings_db(embed_db)
+    embed_conn = open_embeddings_db(embed_db, read_only=True)
     raw_results = search_similar(
         embed_conn,
         query_embedding,

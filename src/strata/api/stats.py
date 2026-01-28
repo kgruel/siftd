@@ -77,7 +77,7 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
     if not db.exists():
         raise FileNotFoundError(f"Database not found: {db}")
 
-    conn = open_database(db)
+    conn = open_database(db, read_only=True)
 
     # Table counts
     tables = [

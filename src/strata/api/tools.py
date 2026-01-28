@@ -46,7 +46,7 @@ def get_tool_tag_summary(
     if not db.exists():
         raise FileNotFoundError(f"Database not found: {db}")
 
-    conn = open_database(db)
+    conn = open_database(db, read_only=True)
 
     rows = conn.execute(
         """
@@ -89,7 +89,7 @@ def get_tool_tags_by_workspace(
     if not db.exists():
         raise FileNotFoundError(f"Database not found: {db}")
 
-    conn = open_database(db)
+    conn = open_database(db, read_only=True)
 
     # Get per-workspace, per-tag counts
     rows = conn.execute(

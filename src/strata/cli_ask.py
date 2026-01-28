@@ -145,7 +145,7 @@ def cmd_ask(args) -> int:
     # Embed query and search
     use_mmr = not args.no_diversity
     query_embedding = backend.embed_one(query)
-    embed_conn = open_embeddings_db(embed_db)
+    embed_conn = open_embeddings_db(embed_db, read_only=True)
     # Widen initial search for modes that aggregate or filter post-hoc
     search_limit = args.limit
     if args.thread:

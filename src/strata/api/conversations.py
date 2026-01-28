@@ -105,7 +105,7 @@ def list_conversations(
     if not db.exists():
         raise FileNotFoundError(f"Database not found: {db}")
 
-    conn = open_database(db)
+    conn = open_database(db, read_only=True)
 
     # Check if pricing table exists
     has_pricing = (
@@ -270,7 +270,7 @@ def get_conversation(
     if not db.exists():
         raise FileNotFoundError(f"Database not found: {db}")
 
-    conn = open_database(db)
+    conn = open_database(db, read_only=True)
 
     # Find conversation (support prefix match)
     conv = conn.execute(
