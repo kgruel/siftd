@@ -4,8 +4,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from strata.domain.tags import tag_condition as _tag_condition
 from strata.paths import db_path as default_db_path
+from strata.storage.filters import WhereBuilder, tag_condition as _tag_condition
 from strata.storage.sqlite import open_database
 
 
@@ -57,57 +57,6 @@ class ConversationDetail:
     total_output_tokens: int
     exchanges: list[Exchange]
     tags: list[str] = field(default_factory=list)
-
-
-def _build_tag_clauses(
-    tags: list[str] | None,
-    all_tags: list[str] | None,
-    exclude_tags: list[str] | None,
-) -> tuple[list[str], list[str]]:
-    """Build SQL WHERE conditions for boolean tag filtering.
-
-    Returns (conditions, params) to be ANDed into the main query.
-    """
-    conditions: list[str] = []
-    params: list[str] = []
-
-    # OR semantics: conversation has ANY of these tags
-    if tags:
-        or_parts = []
-        for t in tags:
-            op, val = _tag_condition(t)
-            or_parts.append(op)
-            params.append(val)
-        or_clause = " OR ".join(or_parts)
-        conditions.append(
-            f"c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
-            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {or_clause})"
-        )
-
-    # AND semantics: conversation has ALL of these tags
-    if all_tags:
-        for t in all_tags:
-            op, val = _tag_condition(t)
-            conditions.append(
-                f"c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
-                f" JOIN tags tg ON tg.id = ct.tag_id WHERE {op})"
-            )
-            params.append(val)
-
-    # NOT semantics: conversation has NONE of these tags
-    if exclude_tags:
-        not_parts = []
-        for t in exclude_tags:
-            op, val = _tag_condition(t)
-            not_parts.append(op)
-            params.append(val)
-        not_clause = " OR ".join(not_parts)
-        conditions.append(
-            f"c.id NOT IN (SELECT ct.conversation_id FROM conversation_tags ct"
-            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {not_clause})"
-        )
-
-    return conditions, params
 
 
 def list_conversations(
@@ -167,60 +116,45 @@ def list_conversations(
     )
 
     # Build WHERE clauses
-    conditions = []
-    params: list = []
-
-    if workspace:
-        conditions.append("w.path LIKE ?")
-        params.append(f"%{workspace}%")
-
-    if model:
-        conditions.append("(m.raw_name LIKE ? OR m.name LIKE ?)")
-        params.append(f"%{model}%")
-        params.append(f"%{model}%")
-
-    if since:
-        conditions.append("c.started_at >= ?")
-        params.append(since)
-
-    if before:
-        conditions.append("c.started_at < ?")
-        params.append(before)
+    wb = WhereBuilder()
+    wb.workspace(workspace)
+    wb.model(model)
+    wb.since(since)
+    wb.before(before)
 
     if search:
-        conditions.append(
-            "c.id IN (SELECT conversation_id FROM content_fts WHERE content_fts MATCH ?)"
+        wb.add(
+            "c.id IN (SELECT conversation_id FROM content_fts WHERE content_fts MATCH ?)",
+            search,
         )
-        params.append(search)
 
     if tool:
-        conditions.append(
+        wb.add(
             "c.id IN (SELECT tc.conversation_id FROM tool_calls tc"
-            " JOIN tools t ON t.id = tc.tool_id WHERE t.name = ?)"
+            " JOIN tools t ON t.id = tc.tool_id WHERE t.name = ?)",
+            tool,
         )
-        params.append(tool)
 
     # Legacy single-tag support: fold into the OR list
     effective_tags = list(tags or [])
     if tag:
         effective_tags.append(tag)
 
-    tag_conditions, tag_params = _build_tag_clauses(
-        effective_tags or None, all_tags, exclude_tags
-    )
-    conditions.extend(tag_conditions)
-    params.extend(tag_params)
+    wb.tags_any(effective_tags or None)
+    wb.tags_all(all_tags)
+    wb.tags_none(exclude_tags)
 
     if tool_tag:
         op, val = _tag_condition(tool_tag)
-        conditions.append(
+        wb.add(
             "c.id IN (SELECT tc.conversation_id FROM tool_calls tc"
             " JOIN tool_call_tags tct ON tct.tool_call_id = tc.id"
-            f" JOIN tags tg ON tg.id = tct.tag_id WHERE {op})"
+            f" JOIN tags tg ON tg.id = tct.tag_id WHERE {op})",
+            val,
         )
-        params.append(val)
 
-    where = "WHERE " + " AND ".join(conditions) if conditions else ""
+    where = wb.where_sql()
+    params = wb.params
     order = "ASC" if oldest_first else "DESC"
     limit_clause = f"LIMIT {limit}" if limit > 0 else ""
 

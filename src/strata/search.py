@@ -4,8 +4,8 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from strata.domain.tags import tag_condition as _tag_condition
 from strata.math import cosine_similarity as _cosine_sim
+from strata.storage.filters import WhereBuilder
 
 
 @dataclass
@@ -275,76 +275,28 @@ def filter_conversations(
     if not any([workspace, model, since, before, tags, all_tags, exclude_tags]):
         return None
 
+    wb = WhereBuilder()
+    wb.workspace(workspace)
+    wb.model(model)
+    wb.since(since)
+    wb.before(before)
+    wb.tags_any(tags)
+    wb.tags_all(all_tags)
+    wb.tags_none(exclude_tags)
+
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
 
-    conditions = []
-    params: list[str] = []
-
-    if workspace:
-        conditions.append("w.path LIKE ?")
-        params.append(f"%{workspace}%")
-
-    if model:
-        conditions.append("(m.raw_name LIKE ? OR m.name LIKE ?)")
-        params.append(f"%{model}%")
-        params.append(f"%{model}%")
-
-    if since:
-        conditions.append("c.started_at >= ?")
-        params.append(since)
-
-    if before:
-        conditions.append("c.started_at < ?")
-        params.append(before)
-
-    # OR semantics: conversation has ANY of these tags
-    if tags:
-        or_parts = []
-        for t in tags:
-            op, val = _tag_condition(t)
-            or_parts.append(op)
-            params.append(val)
-        or_clause = " OR ".join(or_parts)
-        conditions.append(
-            f"c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
-            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {or_clause})"
-        )
-
-    # AND semantics: conversation has ALL of these tags
-    if all_tags:
-        for t in all_tags:
-            op, val = _tag_condition(t)
-            conditions.append(
-                f"c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
-                f" JOIN tags tg ON tg.id = ct.tag_id WHERE {op})"
-            )
-            params.append(val)
-
-    # NOT semantics: conversation has NONE of these tags
-    if exclude_tags:
-        not_parts = []
-        for t in exclude_tags:
-            op, val = _tag_condition(t)
-            not_parts.append(op)
-            params.append(val)
-        not_clause = " OR ".join(not_parts)
-        conditions.append(
-            f"c.id NOT IN (SELECT ct.conversation_id FROM conversation_tags ct"
-            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {not_clause})"
-        )
-
-    where = "WHERE " + " AND ".join(conditions)
     sql = f"""
         SELECT DISTINCT c.id
         FROM conversations c
         LEFT JOIN workspaces w ON w.id = c.workspace_id
         LEFT JOIN responses r ON r.conversation_id = c.id
         LEFT JOIN models m ON m.id = r.model_id
-        {where}
+        {wb.where_sql()}
     """
 
-    rows = conn.execute(sql, params).fetchall()
+    rows = conn.execute(sql, wb.params).fetchall()
     conn.close()
     return {row["id"] for row in rows}
 
