@@ -124,7 +124,7 @@ class TestGetAskDefaults:
 
 class TestApplyAskConfig:
     def test_applies_default_formatter(self, config_dir):
-        from strata.cli import _apply_ask_config
+        from strata.cli_ask import _apply_ask_config
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[ask]\nformatter = "verbose"\n')
@@ -144,7 +144,7 @@ class TestApplyAskConfig:
         assert args.format == "verbose"
 
     def test_cli_flag_overrides_config(self, config_dir):
-        from strata.cli import _apply_ask_config
+        from strata.cli_ask import _apply_ask_config
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[ask]\nformatter = "verbose"\n')
@@ -165,7 +165,7 @@ class TestApplyAskConfig:
         assert args.format is None
 
     def test_explicit_format_overrides_config(self, config_dir):
-        from strata.cli import _apply_ask_config
+        from strata.cli_ask import _apply_ask_config
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[ask]\nformatter = "verbose"\n')
