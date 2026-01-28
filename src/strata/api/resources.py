@@ -84,18 +84,12 @@ def copy_query(
     if dest_dir is None:
         dest_dir = queries_dir()
 
-    # Locate source file in package
-    # Queries ship in a top-level 'queries' package directory
     try:
-        source_ref = importlib.resources.files("queries").joinpath(f"{name}.sql")
-    except (ModuleNotFoundError, TypeError):
-        # Fallback: try relative to strata package
-        try:
-            source_ref = importlib.resources.files("strata").joinpath(
-                f"../../../queries/{name}.sql"
-            )
-        except Exception as e:
-            raise CopyError(f"Cannot locate queries package: {e}") from e
+        source_ref = importlib.resources.files("strata.builtin_queries").joinpath(
+            f"{name}.sql"
+        )
+    except (ModuleNotFoundError, TypeError) as e:
+        raise CopyError(f"Cannot locate built-in queries package: {e}") from e
 
     if not source_ref.is_file():
         available = ", ".join(list_builtin_queries())
@@ -128,7 +122,7 @@ def list_builtin_queries() -> list[str]:
         List of query names that can be copied.
     """
     try:
-        queries_pkg = importlib.resources.files("queries")
+        queries_pkg = importlib.resources.files("strata.builtin_queries")
         return sorted(
             f.name[:-4]  # Remove .sql extension
             for f in queries_pkg.iterdir()

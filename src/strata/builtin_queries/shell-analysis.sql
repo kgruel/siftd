@@ -101,3 +101,4 @@ JOIN tags t ON t.id = tct.tag_id
 WHERE t.name = 'shell:test'
 GROUP BY tool
 ORDER BY count DESC;
+

@@ -24,3 +24,4 @@ WHERE r.input_tokens IS NOT NULL
 GROUP BY w.path, m.name, pv.name
 ORDER BY approx_cost_usd DESC
 LIMIT $limit
+
