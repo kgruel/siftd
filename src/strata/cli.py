@@ -7,15 +7,13 @@ from pathlib import Path
 from strata.adapters.registry import load_all_adapters, wrap_adapter_paths
 from strata.ingestion import IngestStats, ingest_all
 from strata.paths import data_dir, db_path, embeddings_db_path, ensure_dirs, queries_dir
-from strata.storage.sqlite import (
+from strata.backfill import backfill_response_attributes, backfill_shell_tags
+from strata.storage.sqlite import create_database, open_database
+from strata.storage.tags import (
     apply_tag,
-    backfill_response_attributes,
-    backfill_shell_tags,
-    create_database,
     delete_tag,
     get_or_create_tag,
     list_tags,
-    open_database,
     remove_tag,
     rename_tag,
 )
@@ -216,7 +214,7 @@ def cmd_ask(args) -> int:
     if not args.embeddings_only:
         import sqlite3 as _sqlite3_main
 
-        from strata.storage.sqlite import fts5_recall_conversations
+        from strata.storage.fts import fts5_recall_conversations
 
         main_conn = _sqlite3_main.connect(db)
         main_conn.row_factory = _sqlite3_main.Row

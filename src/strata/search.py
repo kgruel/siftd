@@ -138,7 +138,7 @@ def hybrid_search(
     from strata.paths import db_path as default_db_path
     from strata.paths import embeddings_db_path as default_embed_path
     from strata.storage.embeddings import open_embeddings_db, search_similar
-    from strata.storage.sqlite import fts5_recall_conversations
+    from strata.storage.fts import fts5_recall_conversations
 
     db = db_path if db_path is not None else default_db_path()
     embed_db = embed_db_path if embed_db_path is not None else default_embed_path()

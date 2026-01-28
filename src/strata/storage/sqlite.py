@@ -1,4 +1,12 @@
-"""SQLite storage adapter for strata."""
+"""SQLite storage adapter for strata.
+
+Core storage primitives: connection management, migrations, vocabulary entities,
+insert operations, conversation store/lookup/delete, and file deduplication.
+
+Tag operations: see storage/tags.py
+FTS5 operations: see storage/fts.py
+Backfill operations: see strata/backfill.py
+"""
 
 import hashlib
 import json
@@ -8,8 +16,15 @@ from pathlib import Path
 from strata.domain import Conversation
 from strata.ids import ulid as _ulid
 from strata.models import parse_model_name
+from strata.storage.fts import ensure_fts_table, insert_fts_content
+from strata.storage.tags import tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
+
+
+# =============================================================================
+# Connection and migrations
+# =============================================================================
 
 
 def open_database(db_path: Path) -> sqlite3.Connection:
@@ -36,8 +51,8 @@ def open_database(db_path: Path) -> sqlite3.Connection:
 def _migrate_labels_to_tags(conn: sqlite3.Connection) -> None:
     """Migrate old label tables to tag tables if they exist.
 
-    Renames: labels → tags, conversation_labels → conversation_tags,
-    workspace_labels → workspace_tags, and updates column names.
+    Renames: labels -> tags, conversation_labels -> conversation_tags,
+    workspace_labels -> workspace_tags, and updates column names.
     """
     # Check if old 'labels' table exists
     cur = conn.execute(
@@ -76,8 +91,40 @@ def _migrate_add_error_column(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def ensure_pricing_table(conn: sqlite3.Connection) -> None:
+    """Create the pricing table if it doesn't exist. Idempotent."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pricing (
+            id              TEXT PRIMARY KEY,
+            model_id        TEXT NOT NULL REFERENCES models(id),
+            provider_id     TEXT NOT NULL REFERENCES providers(id),
+            input_per_mtok  REAL,
+            output_per_mtok REAL,
+            UNIQUE (model_id, provider_id)
+        )
+    """)
+
+
+def ensure_tool_call_tags_table(conn: sqlite3.Connection) -> None:
+    """Create the tool_call_tags table if it doesn't exist. Idempotent."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tool_call_tags (
+            id              TEXT PRIMARY KEY,
+            tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id),
+            tag_id          TEXT NOT NULL REFERENCES tags(id),
+            applied_at      TEXT NOT NULL,
+            UNIQUE (tool_call_id, tag_id)
+        )
+    """)
+
+
 # Alias for backwards compatibility
 create_database = open_database
+
+
+# =============================================================================
+# Vocabulary entities (get-or-create)
+# =============================================================================
 
 
 def get_or_create_harness(conn: sqlite3.Connection, name: str, **kwargs) -> str:
@@ -236,7 +283,7 @@ def ensure_canonical_tools(conn: sqlite3.Connection) -> None:
 def ensure_tool_aliases(conn: sqlite3.Connection, harness_id: str, aliases: dict[str, str]) -> None:
     """Register tool alias mappings for a harness. Idempotent.
 
-    aliases: dict of raw_name → canonical_name
+    aliases: dict of raw_name -> canonical_name
     """
     for raw_name, canonical_name in aliases.items():
         # Look up the canonical tool id
@@ -249,6 +296,11 @@ def ensure_tool_aliases(conn: sqlite3.Connection, harness_id: str, aliases: dict
             "INSERT OR IGNORE INTO tool_aliases (id, raw_name, harness_id, tool_id) VALUES (?, ?, ?, ?)",
             (_ulid(), raw_name, harness_id, tool_id),
         )
+
+
+# =============================================================================
+# Insert operations
+# =============================================================================
 
 
 def insert_conversation(
@@ -727,600 +779,39 @@ def clear_ingested_file_error(
 
 
 # =============================================================================
-# FTS5 Full-Text Search
+# Compatibility re-exports
+#
+# These names were historically importable from strata.storage.sqlite.
+# They now live in their own modules but are re-exported here so existing
+# callers don't break. New code should import from the canonical location.
 # =============================================================================
 
+from strata.storage.tags import (  # noqa: E402, F811
+    apply_tag,
+    delete_tag,
+    get_or_create_tag,
+    list_tags,
+    remove_tag,
+    rename_tag,
+    tag_shell_command,  # noqa: F811
+)
+from strata.storage.fts import (  # noqa: E402, F811
+    ensure_fts_table,  # noqa: F811
+    fts5_recall_conversations,
+    insert_fts_content,  # noqa: F811
+    rebuild_fts_index,
+    search_content,
+)
+from strata.backfill import (  # noqa: E402
+    backfill_models,
+    backfill_providers,
+    backfill_response_attributes,
+    backfill_shell_tags,
+)
 
-def ensure_pricing_table(conn: sqlite3.Connection) -> None:
-    """Create the pricing table if it doesn't exist. Idempotent."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS pricing (
-            id              TEXT PRIMARY KEY,
-            model_id        TEXT NOT NULL REFERENCES models(id),
-            provider_id     TEXT NOT NULL REFERENCES providers(id),
-            input_per_mtok  REAL,
-            output_per_mtok REAL,
-            UNIQUE (model_id, provider_id)
-        )
-    """)
-
-
-def ensure_tool_call_tags_table(conn: sqlite3.Connection) -> None:
-    """Create the tool_call_tags table if it doesn't exist. Idempotent."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS tool_call_tags (
-            id              TEXT PRIMARY KEY,
-            tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id),
-            tag_id          TEXT NOT NULL REFERENCES tags(id),
-            applied_at      TEXT NOT NULL,
-            UNIQUE (tool_call_id, tag_id)
-        )
-    """)
-
-
-def ensure_fts_table(conn: sqlite3.Connection) -> None:
-    """Create the FTS5 virtual table if it doesn't exist. Idempotent."""
-    conn.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
-            text_content,
-            content_id UNINDEXED,
-            side UNINDEXED,
-            conversation_id UNINDEXED
-        )
-    """)
-
-
-def rebuild_fts_index(conn: sqlite3.Connection) -> None:
-    """Drop and rebuild the FTS index from all text content blocks.
-
-    Reads prompt_content and response_content where block_type='text',
-    extracts the text from JSON content, and populates content_fts.
-    """
-    conn.execute("DELETE FROM content_fts")
-
-    # Index prompt text blocks
-    conn.execute("""
-        INSERT INTO content_fts (text_content, content_id, side, conversation_id)
-        SELECT
-            json_extract(pc.content, '$.text'),
-            pc.id,
-            'prompt',
-            p.conversation_id
-        FROM prompt_content pc
-        JOIN prompts p ON p.id = pc.prompt_id
-        WHERE pc.block_type = 'text'
-          AND json_extract(pc.content, '$.text') IS NOT NULL
-    """)
-
-    # Index response text blocks
-    conn.execute("""
-        INSERT INTO content_fts (text_content, content_id, side, conversation_id)
-        SELECT
-            json_extract(rc.content, '$.text'),
-            rc.id,
-            'response',
-            r.conversation_id
-        FROM response_content rc
-        JOIN responses r ON r.id = rc.response_id
-        WHERE rc.block_type = 'text'
-          AND json_extract(rc.content, '$.text') IS NOT NULL
-    """)
-
-    conn.commit()
-
-
-def insert_fts_content(
-    conn: sqlite3.Connection,
-    content_id: str,
-    side: str,
-    conversation_id: str,
-    text: str,
-) -> None:
-    """Insert a single text entry into the FTS index."""
-    conn.execute(
-        "INSERT INTO content_fts (text_content, content_id, side, conversation_id) VALUES (?, ?, ?, ?)",
-        (text, content_id, side, conversation_id),
-    )
-
-
-def backfill_models(conn: sqlite3.Connection) -> int:
-    """Backfill parsed fields for existing model rows with NULL fields.
-
-    Updates rows where creator/family/version/variant are NULL.
-    Returns count of rows updated.
-    """
-    cur = conn.execute(
-        "SELECT id, raw_name FROM models WHERE creator IS NULL OR family IS NULL"
-    )
-    rows = cur.fetchall()
-    updated = 0
-    for row in rows:
-        parsed = parse_model_name(row["raw_name"])
-        # Skip if parsing produced no useful info (fallback case)
-        if parsed["creator"] is None:
-            continue
-        conn.execute(
-            """UPDATE models
-               SET name = ?, creator = ?, family = ?, version = ?, variant = ?, released = ?
-               WHERE id = ?""",
-            (parsed["name"], parsed["creator"], parsed["family"],
-             parsed["version"], parsed["variant"], parsed["released"], row["id"]),
-        )
-        updated += 1
-    conn.commit()
-    return updated
-
-
-def backfill_providers(conn: sqlite3.Connection) -> int:
-    """Backfill provider_id on responses where it's NULL.
-
-    Derives provider from the conversation's harness source field.
-    Returns count of rows updated.
-    """
-    # Get harness name → source mapping
-    cur = conn.execute("SELECT id, name, source FROM harnesses WHERE source IS NOT NULL")
-    harness_rows = cur.fetchall()
-    if not harness_rows:
-        return 0
-
-    updated = 0
-    for harness_row in harness_rows:
-        harness_id = harness_row["id"]
-        source = harness_row["source"]
-        provider_id = get_or_create_provider(conn, source)
-
-        # Update responses that belong to conversations from this harness
-        cur = conn.execute("""
-            UPDATE responses SET provider_id = ?
-            WHERE provider_id IS NULL
-              AND conversation_id IN (
-                  SELECT id FROM conversations WHERE harness_id = ?
-              )
-        """, (provider_id, harness_id))
-        updated += cur.rowcount
-
-    conn.commit()
-    return updated
-
-
-# =============================================================================
-# Tag functions
-# =============================================================================
-
-
-def get_or_create_tag(conn: sqlite3.Connection, name: str, description: str | None = None) -> str:
-    """Get or create a tag by name, return id (ULID)."""
-    cur = conn.execute("SELECT id FROM tags WHERE name = ?", (name,))
-    row = cur.fetchone()
-    if row:
-        return row["id"]
-
-    from datetime import datetime
-    ulid = _ulid()
-    conn.execute(
-        "INSERT INTO tags (id, name, description, created_at) VALUES (?, ?, ?, ?)",
-        (ulid, name, description, datetime.now().isoformat())
-    )
-    return ulid
-
-
-def apply_tag(
-    conn: sqlite3.Connection,
-    entity_type: str,
-    entity_id: str,
-    tag_id: str,
-    *,
-    commit: bool = False,
-) -> str | None:
-    """Apply a tag to an entity. Returns assignment id or None if already applied.
-
-    entity_type: 'conversation', 'workspace', or 'tool_call'
-    """
-    from datetime import datetime
-
-    if entity_type == "conversation":
-        table = "conversation_tags"
-        fk_col = "conversation_id"
-    elif entity_type == "workspace":
-        table = "workspace_tags"
-        fk_col = "workspace_id"
-    elif entity_type == "tool_call":
-        table = "tool_call_tags"
-        fk_col = "tool_call_id"
-    else:
-        raise ValueError(f"Unsupported entity_type: {entity_type}")
-
-    # Check if already applied
-    cur = conn.execute(
-        f"SELECT id FROM {table} WHERE {fk_col} = ? AND tag_id = ?",
-        (entity_id, tag_id)
-    )
-    if cur.fetchone():
-        return None
-
-    ulid = _ulid()
-    conn.execute(
-        f"INSERT INTO {table} (id, {fk_col}, tag_id, applied_at) VALUES (?, ?, ?, ?)",
-        (ulid, entity_id, tag_id, datetime.now().isoformat())
-    )
-    if commit:
-        conn.commit()
-    return ulid
-
-
-def remove_tag(
-    conn: sqlite3.Connection,
-    entity_type: str,
-    entity_id: str,
-    tag_id: str,
-    *,
-    commit: bool = False,
-) -> bool:
-    """Remove a tag from an entity. Returns True if a row was deleted, False if not applied.
-
-    entity_type: 'conversation', 'workspace', or 'tool_call'
-    """
-    if entity_type == "conversation":
-        table = "conversation_tags"
-        fk_col = "conversation_id"
-    elif entity_type == "workspace":
-        table = "workspace_tags"
-        fk_col = "workspace_id"
-    elif entity_type == "tool_call":
-        table = "tool_call_tags"
-        fk_col = "tool_call_id"
-    else:
-        raise ValueError(f"Unsupported entity_type: {entity_type}")
-
-    cur = conn.execute(
-        f"DELETE FROM {table} WHERE {fk_col} = ? AND tag_id = ?",
-        (entity_id, tag_id)
-    )
-    if commit:
-        conn.commit()
-    return cur.rowcount > 0
-
-
-def rename_tag(conn: sqlite3.Connection, old_name: str, new_name: str, *, commit: bool = False) -> bool:
-    """Rename a tag. Returns True if renamed, False if old_name not found.
-
-    Raises ValueError if new_name already exists.
-    """
-    # Check new_name doesn't already exist
-    cur = conn.execute("SELECT id FROM tags WHERE name = ?", (new_name,))
-    if cur.fetchone():
-        raise ValueError(f"Tag '{new_name}' already exists")
-
-    cur = conn.execute("UPDATE tags SET name = ? WHERE name = ?", (new_name, old_name))
-    if commit:
-        conn.commit()
-    return cur.rowcount > 0
-
-
-def delete_tag(conn: sqlite3.Connection, name: str, *, commit: bool = False) -> int:
-    """Delete a tag and all its associations. Returns count of entity associations removed."""
-    cur = conn.execute("SELECT id FROM tags WHERE name = ?", (name,))
-    row = cur.fetchone()
-    if not row:
-        return -1  # tag not found
-
-    tag_id = row["id"]
-
-    # Count and delete associations
-    removed = 0
-    for table in ("conversation_tags", "workspace_tags", "tool_call_tags"):
-        cur = conn.execute(f"DELETE FROM {table} WHERE tag_id = ?", (tag_id,))
-        removed += cur.rowcount
-
-    # Delete the tag itself
-    conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
-
-    if commit:
-        conn.commit()
-    return removed
-
-
-
-def list_tags(conn: sqlite3.Connection) -> list[dict]:
-    """List all tags with usage counts."""
-    cur = conn.execute("""
-        SELECT
-            t.name,
-            t.description,
-            t.created_at,
-            (SELECT COUNT(*) FROM conversation_tags ct WHERE ct.tag_id = t.id) as conversation_count,
-            (SELECT COUNT(*) FROM workspace_tags wt WHERE wt.tag_id = t.id) as workspace_count,
-            (SELECT COUNT(*) FROM tool_call_tags tt WHERE tt.tag_id = t.id) as tool_call_count
-        FROM tags t
-        ORDER BY t.name
-    """)
-    return [
-        {
-            "name": row["name"],
-            "description": row["description"],
-            "created_at": row["created_at"],
-            "conversation_count": row["conversation_count"],
-            "workspace_count": row["workspace_count"],
-            "tool_call_count": row["tool_call_count"],
-        }
-        for row in cur.fetchall()
-    ]
-
-
-# =============================================================================
-# Shell command categorization (delegated to domain/shell_categories.py)
-# =============================================================================
-
+# Re-export categorize_shell_command (was importable via sqlite.py's mid-file import)
 from strata.domain.shell_categories import (  # noqa: E402
     SHELL_CATEGORIES,
     SHELL_TAG_PREFIX,
     categorize_shell_command,
 )
-
-
-def tag_shell_command(
-    conn: sqlite3.Connection,
-    tool_call_id: str,
-    tool_name: str,
-    input_data: dict | None,
-) -> str | None:
-    """Tag a shell.execute tool call with its category at ingest time.
-
-    Args:
-        conn: Database connection
-        tool_call_id: The tool_call's ULID
-        tool_name: Canonical tool name (e.g., "shell.execute")
-        input_data: The tool call input dict
-
-    Returns:
-        The category name if tagged, None otherwise.
-    """
-    if tool_name != "shell.execute":
-        return None
-
-    if not input_data:
-        return None
-
-    # Extract command
-    cmd = input_data.get("command") or input_data.get("cmd") or ""
-    if not cmd:
-        return None
-
-    # Categorize
-    category = categorize_shell_command(cmd)
-    if not category:
-        return None
-
-    # Get or create tag and apply
-    tag_name = f"{SHELL_TAG_PREFIX}{category}"
-    tag_id = get_or_create_tag(conn, tag_name)
-    apply_tag(conn, "tool_call", tool_call_id, tag_id)
-
-    return category
-
-
-def backfill_shell_tags(conn: sqlite3.Connection) -> dict[str, int]:
-    """Backfill shell command tags for all shell.execute tool calls.
-
-    Categorizes each shell.execute call and applies the appropriate shell:* tag.
-    Skips tool calls that already have a shell:* tag.
-
-    Returns dict of category -> count of newly tagged calls.
-    """
-    # Get shell.execute tool id
-    cur = conn.execute("SELECT id FROM tools WHERE name = 'shell.execute'")
-    row = cur.fetchone()
-    if not row:
-        return {}
-    shell_tool_id = row["id"]
-
-    # Find all shell.execute calls that don't already have a shell:* tag
-    cur = conn.execute("""
-        SELECT tc.id, tc.input
-        FROM tool_calls tc
-        WHERE tc.tool_id = ?
-        AND tc.id NOT IN (
-            SELECT tct.tool_call_id
-            FROM tool_call_tags tct
-            JOIN tags t ON t.id = tct.tag_id
-            WHERE t.name LIKE 'shell:%'
-        )
-    """, (shell_tool_id,))
-
-    # Cache for tag IDs
-    tag_cache: dict[str, str] = {}
-    counts: dict[str, int] = {}
-
-    for row in cur.fetchall():
-        tool_call_id = row["id"]
-        raw_input = row["input"]
-
-        # Extract command from JSON input
-        try:
-            data = json.loads(raw_input)
-            cmd = data.get("command") or data.get("cmd") or ""
-        except (json.JSONDecodeError, TypeError):
-            cmd = raw_input or ""
-
-        # Categorize
-        category = categorize_shell_command(cmd)
-        if not category:
-            continue
-
-        # Get or create tag
-        tag_name = f"{SHELL_TAG_PREFIX}{category}"
-        if tag_name not in tag_cache:
-            tag_cache[tag_name] = get_or_create_tag(conn, tag_name)
-
-        # Apply tag
-        result = apply_tag(conn, "tool_call", tool_call_id, tag_cache[tag_name])
-        if result:
-            counts[category] = counts.get(category, 0) + 1
-
-    conn.commit()
-    return counts
-
-
-def backfill_response_attributes(conn: sqlite3.Connection) -> int:
-    """Backfill cache token attributes by re-reading raw JSONL files.
-
-    For each ingested claude_code file, re-parses the JSONL and extracts
-    cache_creation_input_tokens / cache_read_input_tokens from message.usage,
-    then stores them as response_attributes.
-
-    Returns count of attributes inserted.
-    """
-    from strata.adapters._jsonl import load_jsonl
-
-    # Find all ingested claude_code files
-    harness_row = conn.execute(
-        "SELECT id FROM harnesses WHERE name = ?", ("claude_code",)
-    ).fetchone()
-    if not harness_row:
-        return 0
-    harness_id = harness_row["id"]
-
-    files = conn.execute(
-        "SELECT path, conversation_id FROM ingested_files WHERE harness_id = ?",
-        (harness_id,)
-    ).fetchall()
-
-    inserted = 0
-    for file_row in files:
-        file_path = Path(file_row["path"])
-        conversation_id = file_row["conversation_id"]
-        if not file_path.exists():
-            continue
-
-        # Re-read the raw JSONL to extract cache tokens
-        records = load_jsonl(file_path)
-
-        # Match responses by external_id
-        for record in records:
-            if record.get("type") != "assistant":
-                continue
-            message_data = record.get("message") or {}
-            usage_data = message_data.get("usage") or {}
-            external_msg_id = record.get("uuid")
-            if not external_msg_id:
-                continue
-
-            cache_creation = usage_data.get("cache_creation_input_tokens")
-            cache_read = usage_data.get("cache_read_input_tokens")
-            if not cache_creation and not cache_read:
-                continue
-
-            # Find the response in DB
-            response_external_id = f"claude_code::{external_msg_id}"
-            row = conn.execute(
-                "SELECT id FROM responses WHERE conversation_id = ? AND external_id = ?",
-                (conversation_id, response_external_id)
-            ).fetchone()
-            if not row:
-                continue
-            response_id = row["id"]
-
-            if cache_creation:
-                insert_response_attribute(
-                    conn, response_id, "cache_creation_input_tokens",
-                    str(cache_creation), scope="provider"
-                )
-                inserted += 1
-            if cache_read:
-                insert_response_attribute(
-                    conn, response_id, "cache_read_input_tokens",
-                    str(cache_read), scope="provider"
-                )
-                inserted += 1
-
-    conn.commit()
-    return inserted
-
-
-def search_content(
-    conn: sqlite3.Connection,
-    query: str,
-    limit: int = 20,
-) -> list[dict]:
-    """Search text content using FTS5 MATCH.
-
-    Returns list of dicts with: conversation_id, side, snippet, rank.
-    """
-    cur = conn.execute(
-        """
-        SELECT
-            conversation_id,
-            side,
-            snippet(content_fts, 0, '>>>', '<<<', '...', 64) as snippet,
-            rank
-        FROM content_fts
-        WHERE content_fts MATCH ?
-        ORDER BY rank
-        LIMIT ?
-        """,
-        (query, limit),
-    )
-    return [
-        {
-            "conversation_id": row["conversation_id"],
-            "side": row["side"],
-            "snippet": row["snippet"],
-            "rank": row["rank"],
-        }
-        for row in cur.fetchall()
-    ]
-
-
-def _fts5_or_rewrite(query: str) -> str | None:
-    """Split query into tokens, filter short ones, join with OR for broad recall."""
-    import re
-    tokens = re.findall(r"\w+", query)
-    tokens = [t for t in tokens if len(t) >= 3]
-    if not tokens:
-        return None
-    return " OR ".join(f'"{t}"' for t in tokens)
-
-
-def _fts5_conversation_ids(
-    conn: sqlite3.Connection, fts_query: str, limit: int
-) -> set[str]:
-    """Run FTS5 MATCH and return distinct conversation IDs."""
-    cur = conn.execute(
-        """
-        SELECT conversation_id FROM content_fts
-        WHERE content_fts MATCH ?
-        GROUP BY conversation_id
-        ORDER BY MIN(rank)
-        LIMIT ?
-        """,
-        (fts_query, limit),
-    )
-    return {row["conversation_id"] for row in cur.fetchall()}
-
-
-def fts5_recall_conversations(
-    conn: sqlite3.Connection, query: str, limit: int = 80
-) -> tuple[set[str], str]:
-    """FTS5 recall: try AND semantics first, fall back to OR for broader recall.
-
-    Returns (conversation_ids, mode) where mode is "and", "or", or "none".
-    """
-    # Phase 1: implicit AND (raw query)
-    try:
-        ids = _fts5_conversation_ids(conn, query, limit)
-        if len(ids) >= 10:
-            return ids, "and"
-    except Exception:
-        pass  # malformed FTS query, fall through to OR rewrite
-
-    # Phase 2: OR rewrite for broader recall
-    or_query = _fts5_or_rewrite(query)
-    if or_query:
-        try:
-            ids = _fts5_conversation_ids(conn, or_query, limit)
-            if ids:
-                return ids, "or"
-        except Exception:
-            pass
-
-    return set(), "none"

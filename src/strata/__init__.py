@@ -23,7 +23,7 @@ from strata.api import (
     hybrid_search,
     list_conversations,
 )
-from strata.storage.sqlite import apply_tag, get_or_create_tag, list_tags
+from strata.storage.tags import apply_tag, get_or_create_tag, list_tags
 
 __all__ = [
     # conversations
