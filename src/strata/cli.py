@@ -375,22 +375,22 @@ def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: s
 
     return 0
 
-def _parse_tag_args(positional: list[str]) -> tuple[str, str, str] | None:
+def _parse_tag_args(positional: list[str]) -> tuple[str, str, list[str]] | None:
     """Parse positional args for tag command.
 
-    Returns (entity_type, entity_id, tag_name) or None if invalid.
+    Returns (entity_type, entity_id, tag_names) or None if invalid.
     Supports:
-      - <id> <tag>                    -> conversation, id, tag
-      - <entity_type> <id> <tag>      -> entity_type, id, tag
+      - <id> <tag> [tag2 ...]                    -> conversation, id, [tags]
+      - <entity_type> <id> <tag> [tag2 ...]      -> entity_type, id, [tags]
     """
-    if len(positional) == 2:
+    if len(positional) >= 2:
+        # Check if first arg is an entity type
+        if positional[0] in ("conversation", "workspace", "tool_call"):
+            if len(positional) < 3:
+                return None
+            return (positional[0], positional[1], positional[2:])
         # Default: conversation
-        return ("conversation", positional[0], positional[1])
-    elif len(positional) == 3:
-        entity_type = positional[0]
-        if entity_type not in ("conversation", "workspace", "tool_call"):
-            return None
-        return (entity_type, positional[1], positional[2])
+        return ("conversation", positional[0], positional[1:])
     return None
 
 
@@ -469,15 +469,15 @@ def cmd_tag(args) -> int:
     # Parse positional args
     parsed = _parse_tag_args(args.positional or [])
     if not parsed:
-        print("Usage: strata tag <id> <tag>")
-        print("       strata tag <entity_type> <id> <tag>")
+        print("Usage: strata tag <id> <tag> [tag2 ...]")
+        print("       strata tag <entity_type> <id> <tag> [tag2 ...]")
         print("       strata tag --last <tag>")
-        print("       strata tag --remove <id> <tag>")
+        print("       strata tag --remove <id> <tag> [tag2 ...]")
         print("\nEntity types: conversation (default), workspace, tool_call")
         conn.close()
         return 1
 
-    entity_type, entity_id, tag_name = parsed
+    entity_type, entity_id, tag_names = parsed
 
     # Validate entity exists (support prefix match for conversations)
     if entity_type == "conversation":
@@ -504,27 +504,28 @@ def cmd_tag(args) -> int:
     resolved_id = row["id"]
 
     if removing:
-        # Look up existing tag (don't create on remove)
-        tag_row = conn.execute("SELECT id FROM tags WHERE name = ?", (tag_name,)).fetchone()
-        if not tag_row:
-            print(f"Tag '{tag_name}' not found")
-            conn.close()
-            return 1
-        tag_id = tag_row["id"]
-
-        result = remove_tag(conn, entity_type, resolved_id, tag_id, commit=True)
-        if result:
-            print(f"Removed tag '{tag_name}' from {entity_type} {resolved_id[:12]}")
-        else:
-            print(f"Tag '{tag_name}' not applied to {entity_type} {resolved_id[:12]}")
+        removed = 0
+        for tag_name in tag_names:
+            tag_row = conn.execute("SELECT id FROM tags WHERE name = ?", (tag_name,)).fetchone()
+            if not tag_row:
+                print(f"Tag '{tag_name}' not found")
+                continue
+            if remove_tag(conn, entity_type, resolved_id, tag_row["id"], commit=False):
+                print(f"Removed tag '{tag_name}' from {entity_type} {resolved_id[:12]}")
+                removed += 1
+            else:
+                print(f"Tag '{tag_name}' not applied to {entity_type} {resolved_id[:12]}")
+        conn.commit()
     else:
-        tag_id = get_or_create_tag(conn, tag_name)
-        result = apply_tag(conn, entity_type, resolved_id, tag_id, commit=True)
-
-        if result:
-            print(f"Applied tag '{tag_name}' to {entity_type} {resolved_id[:12]}")
-        else:
-            print(f"Tag '{tag_name}' already applied to {entity_type} {resolved_id[:12]}")
+        applied = 0
+        for tag_name in tag_names:
+            tag_id = get_or_create_tag(conn, tag_name)
+            if apply_tag(conn, entity_type, resolved_id, tag_id, commit=False):
+                print(f"Applied tag '{tag_name}' to {entity_type} {resolved_id[:12]}")
+                applied += 1
+            else:
+                print(f"Tag '{tag_name}' already applied to {entity_type} {resolved_id[:12]}")
+        conn.commit()
 
     conn.close()
     return 0
@@ -1517,6 +1518,7 @@ def main(argv=None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   strata tag 01HX... important              # tag conversation (default)
+  strata tag 01HX... important review       # apply multiple tags at once
   strata tag --last important               # tag most recent conversation
   strata tag --last 3 review                # tag 3 most recent conversations
   strata tag workspace 01HY... proj         # explicit entity type
@@ -1525,7 +1527,7 @@ def main(argv=None) -> int:
   strata tag --remove --last important      # remove from most recent
   strata tag -r workspace 01HY... proj      # remove from workspace""",
     )
-    p_tag.add_argument("positional", nargs="*", help="[entity_type] entity_id tag")
+    p_tag.add_argument("positional", nargs="*", help="[entity_type] entity_id tag [tag2 ...]")
     p_tag.add_argument("-n", "--last", type=int, metavar="N", help="Tag N most recent conversations")
     p_tag.add_argument("-r", "--remove", action="store_true", help="Remove tag instead of applying")
     p_tag.set_defaults(func=cmd_tag)
