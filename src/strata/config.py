@@ -8,9 +8,12 @@ Example config:
 """
 
 import sys
+from typing import cast
 
 import tomlkit
+import tomlkit.exceptions
 from tomlkit import TOMLDocument
+from tomlkit.container import Container
 
 from strata.paths import config_dir, config_file
 
@@ -74,7 +77,7 @@ def set_config(key: str, value: str) -> None:
         current = current[part]
 
     # Set the final value
-    current[parts[-1]] = value
+    cast(Container, current)[parts[-1]] = value
 
     # Ensure config directory exists and write
     config_dir().mkdir(parents=True, exist_ok=True)

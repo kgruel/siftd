@@ -1,5 +1,6 @@
 """Health check definitions and built-in checks."""
 
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -45,8 +46,8 @@ class CheckContext:
     queries_dir: Path
 
     # Lazy-loaded connections (populated on first access)
-    _db_conn: object = field(default=None, repr=False)
-    _embed_conn: object = field(default=None, repr=False)
+    _db_conn: sqlite3.Connection | None = field(default=None, repr=False)
+    _embed_conn: sqlite3.Connection | None = field(default=None, repr=False)
 
     def get_db_conn(self):
         """Get main database connection (lazy-loaded)."""
@@ -66,11 +67,11 @@ class CheckContext:
 
     def close(self):
         """Close any open connections."""
-        if self._db_conn is not None:
-            self._db_conn.close()
+        if (conn := self._db_conn) is not None:
+            conn.close()
             self._db_conn = None
-        if self._embed_conn is not None:
-            self._embed_conn.close()
+        if (embed_conn := self._embed_conn) is not None:
+            embed_conn.close()
             self._embed_conn = None
 
 

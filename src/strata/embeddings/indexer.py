@@ -156,4 +156,4 @@ def _get_tokenizer():
     from fastembed import TextEmbedding
 
     emb = TextEmbedding("BAAI/bge-small-en-v1.5")
-    return emb.model.tokenizer
+    return emb.model.tokenizer  # type: ignore[union-attr]

@@ -3,6 +3,7 @@
 import argparse
 import sys
 from pathlib import Path
+from typing import cast
 
 from strata.paths import db_path, embeddings_db_path
 
@@ -173,7 +174,7 @@ def cmd_ask(args) -> int:
     # Widen further for MMR to have candidates to diversify from
     if use_mmr:
         search_limit = max(search_limit * 3, search_limit)
-    results = search_similar(
+    results: list[dict] = search_similar(
         embed_conn,
         query_embedding,
         limit=search_limit,
@@ -216,7 +217,7 @@ def cmd_ask(args) -> int:
         if not earliest:
             print(f"No results above relevance threshold for: {query}")
             return 0
-        results = [earliest]
+        results = [cast(dict, earliest)]
 
     # Trim to requested limit after post-processing (except --conversations which handles its own limit)
     if not args.conversations:
