@@ -1177,6 +1177,65 @@ def cmd_peek(args) -> int:
     return 0
 
 
+def cmd_export(args) -> int:
+    """Export conversations for PR review."""
+    from strata.api import ExportOptions, export_conversations, format_export
+
+    db = Path(args.db) if args.db else db_path()
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'strata ingest' to create it.")
+        return 1
+
+    # Determine what to export
+    conversation_ids = [args.conversation_id] if args.conversation_id else None
+    last = args.last
+
+    # Default: if no ID and no --last specified, export last 1
+    if not conversation_ids and last is None:
+        last = 1
+
+    try:
+        conversations = export_conversations(
+            conversation_ids=conversation_ids,
+            last=last,
+            workspace=args.workspace,
+            tags=args.tag,
+            exclude_tags=getattr(args, "exclude_tag", None),
+            since=args.since,
+            before=args.before,
+            search=args.search,
+            db_path=db,
+        )
+    except FileNotFoundError as e:
+        print(str(e))
+        return 1
+
+    if not conversations:
+        print("No conversations found matching criteria.")
+        return 1
+
+    # Format output
+    options = ExportOptions(
+        format=args.format,
+        prompts_only=args.prompts_only,
+        no_header=args.no_header,
+    )
+
+    output = format_export(conversations, options)
+
+    # Write to file or stdout
+    if args.output:
+        output_path = Path(args.output)
+        output_path.write_text(output)
+        print(f"Exported {len(conversations)} session(s) to {output_path}")
+    else:
+        print(output)
+
+    return 0
+
+
 def _print_stats(stats: IngestStats) -> None:
     """Print ingestion statistics."""
     print(f"\n{'='*50}")
@@ -1403,6 +1462,38 @@ def main(argv=None) -> int:
     p_peek.add_argument("--tail", action="store_true", help="Raw JSONL tail (last 20 lines)")
     p_peek.add_argument("--json", action="store_true", help="Output as structured JSON")
     p_peek.set_defaults(func=cmd_peek)
+
+    # export
+    p_export = subparsers.add_parser(
+        "export",
+        help="Export conversations for PR review workflows",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  strata export --last                   # export most recent session (prompts)
+  strata export --last 3                 # export last 3 sessions
+  strata export 01HX4G7K                 # export specific session (prefix match)
+  strata export -w myproject --since yesterday  # filter by workspace and time
+  strata export -l decision:auth         # export tagged conversations
+  strata export --last --format json     # structured JSON output
+  strata export --last --format exchanges  # include response summaries
+  strata export --last --prompts-only    # omit tool call details
+  strata export --last --exclude-tag private  # exclude private sessions
+  strata export --last -o context.md     # write to file""",
+    )
+    p_export.add_argument("conversation_id", nargs="?", help="Conversation ID to export (prefix match)")
+    p_export.add_argument("-n", "--last", type=int, nargs="?", const=1, metavar="N", help="Export N most recent sessions (default: 1 if no ID given)")
+    p_export.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
+    p_export.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by tag (repeatable, OR logic)")
+    p_export.add_argument("--exclude-tag", action="append", metavar="NAME", help="Exclude sessions with this tag (repeatable)")
+    p_export.add_argument("--since", metavar="DATE", help="Sessions after this date (ISO or YYYY-MM-DD)")
+    p_export.add_argument("--before", metavar="DATE", help="Sessions before this date")
+    p_export.add_argument("-s", "--search", metavar="QUERY", help="Full-text search filter")
+    p_export.add_argument("-f", "--format", choices=["prompts", "exchanges", "json"], default="prompts",
+                          help="Output format: prompts (default), exchanges, json")
+    p_export.add_argument("--prompts-only", action="store_true", help="Omit response text and tool calls")
+    p_export.add_argument("--no-header", action="store_true", help="Omit session metadata header")
+    p_export.add_argument("-o", "--output", metavar="FILE", help="Write to file instead of stdout")
+    p_export.set_defaults(func=cmd_export)
 
     args = parser.parse_args(argv)
     return args.func(args)

@@ -6,12 +6,12 @@ _Auto-generated from `--help` output._
 
 ```
 usage: strata [-h] [--db PATH]
-              {ingest,status,ask,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek} ...
+              {ingest,status,ask,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export} ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {ingest,status,ask,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek}
+  {ingest,status,ask,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export}
     ingest              Ingest logs from all sources
     status              Show database statistics
     ask                 Semantic search over conversations
@@ -27,6 +27,7 @@ positional arguments:
     copy                Copy built-in resources for customization
     doctor              Run health checks and maintenance
     peek                Inspect live sessions from disk (bypasses SQLite)
+    export              Export conversations for PR review workflows
 
 options:
   -h, --help            show this help message and exit
@@ -386,4 +387,46 @@ examples:
   strata peek c520f862           # detail view for session
   strata peek c520 --last 10     # show last 10 exchanges
   strata peek c520 --tail        # raw JSONL tail
+```
+
+## export
+
+```
+usage: strata export [-h] [-n [N]] [-w SUBSTR] [-l NAME] [--exclude-tag NAME]
+                     [--since DATE] [--before DATE] [-s QUERY]
+                     [-f {prompts,exchanges,json}] [--prompts-only]
+                     [--no-header] [-o FILE]
+                     [conversation_id]
+
+positional arguments:
+  conversation_id       Conversation ID to export (prefix match)
+
+options:
+  -h, --help            show this help message and exit
+  -n, --last [N]        Export N most recent sessions (default: 1 if no ID
+                        given)
+  -w, --workspace SUBSTR
+                        Filter by workspace path substring
+  -l, --tag NAME        Filter by tag (repeatable, OR logic)
+  --exclude-tag NAME    Exclude sessions with this tag (repeatable)
+  --since DATE          Sessions after this date (ISO or YYYY-MM-DD)
+  --before DATE         Sessions before this date
+  -s, --search QUERY    Full-text search filter
+  -f, --format {prompts,exchanges,json}
+                        Output format: prompts (default), exchanges, json
+  --prompts-only        Omit response text and tool calls
+  --no-header           Omit session metadata header
+  -o, --output FILE     Write to file instead of stdout
+
+examples:
+  strata export --last                   # export most recent session (prompts)
+  strata export --last 3                 # export last 3 sessions
+  strata export 01HX4G7K                 # export specific session (prefix match)
+  strata export -w myproject --since yesterday  # filter by workspace and time
+  strata export -l decision:auth         # export tagged conversations
+  strata export --last --format json     # structured JSON output
+  strata export --last --format exchanges  # include response summaries
+  strata export --last --prompts-only    # omit tool call details
+  strata export --last --exclude-tag private  # exclude private sessions
+  strata export --last -o context.md     # write to file
 ```

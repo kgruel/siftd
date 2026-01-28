@@ -71,6 +71,15 @@ from strata.api.tools import (
     get_tool_tag_summary,
     get_tool_tags_by_workspace,
 )
+from strata.api.export import (
+    ExportedConversation,
+    ExportOptions,
+    export_conversations,
+    format_export,
+    format_exchanges,
+    format_json,
+    format_prompts,
+)
 
 __all__ = [
     # adapters
@@ -132,4 +141,12 @@ __all__ = [
     "WorkspaceTagUsage",
     "get_tool_tag_summary",
     "get_tool_tags_by_workspace",
+    # export
+    "ExportedConversation",
+    "ExportOptions",
+    "export_conversations",
+    "format_export",
+    "format_exchanges",
+    "format_json",
+    "format_prompts",
 ]
