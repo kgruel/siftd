@@ -9,14 +9,15 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 - **Four adapters**: `claude_code` (file dedup), `gemini_cli` (session dedup), `codex_cli` (file dedup), `aider` (file dedup, markdown chat history)
 - **Adapter plugin system**: built-in + drop-in (`~/.config/strata/adapters/*.py`) + entry points (`strata.adapters`)
 - **Ingestion**: orchestration layer with adapter-controlled dedup, `--path` for custom dirs, `-a/--adapter` filter, `discover(locations=None)` delegation (adapters own their glob patterns), error recording (failed files tracked to prevent retry loops)
-- **Storage**: SQLite with schema, ULIDs, schemaless attributes
+- **Storage**: SQLite with schema, ULIDs, schemaless attributes. Modular: `sqlite.py` (817 lines, core primitives), `tags.py` (tag CRUD), `fts.py` (FTS5 subsystem), `embeddings.py` (separate DB). Backfills extracted to top-level `backfill.py`.
+- **Shared utilities**: `ids.py` (ULID generation), `math.py` (cosine similarity), `adapters/_jsonl.py` (shared JSONL parsing), `domain/shell_categories.py` (command categorization), `domain/tags.py` (tag SQL builder)
 - **Tool canonicalization**: 16 canonical tools (`file.read`, `shell.execute`, `shell.stdin`, etc.), cross-harness aliases
 - **Model parsing**: raw names decomposed into family/version/variant/creator/released
 - **Provider tracking**: derived from adapter's `HARNESS_SOURCE`, populated on responses during ingestion
 - **Cache tokens**: `cache_creation_input_tokens`, `cache_read_input_tokens` extracted into `response_attributes`
 - **Cost tracking**: flat `pricing` table (model+provider → rates), approximate cost via query-time JOIN
 - **Tags**: full classification system with CRUD, boolean filtering, and composition with search
-  - Apply: `strata tag <id> <tag>` (defaults to conversation), `--last N` for recent conversations
+  - Apply: `strata tag <id> <tag> [tag2 ...]` (bulk application, defaults to conversation), `--last N` for recent conversations
   - Remove: `strata tag --remove <id> <tag>`, composes with `--last`
   - Manage: `strata tags --rename OLD NEW`, `strata tags --delete NAME` (with `--force` guard)
   - Browse: `strata tags` (list with counts), `strata tags <name>` (drill-down to conversations), `--prefix` filtering
@@ -59,7 +60,8 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - Prefix matching on session ID (like `strata query <id>`)
   - Uses adapter `DEFAULT_LOCATIONS` to find files; mtime for "active" detection
   - Self-contained `peek/` package: `scanner.py` (discovery + metadata), `reader.py` (detail parsing)
-- **CLI**: `ingest`, `status`, `query`, `tag` (apply/remove), `tags` (list/drill-down/rename/delete), `backfill`, `path`, `ask`, `adapters`, `copy`, `tools`, `doctor`, `peek`
+- **CLI**: `ingest`, `status`, `query`, `tag` (apply/remove/bulk), `tags` (list/drill-down/rename/delete), `backfill`, `path`, `ask`, `adapters`, `copy`, `tools`, `doctor`, `peek`
+  - `cli.py` (1361 lines): argparse + 13 command handlers. `cli_ask.py` (342 lines): `cmd_ask` extracted — the only command complex enough to warrant its own file.
   - `strata adapters` — list discovered adapters (built-in, drop-in, entry point)
   - `strata copy adapter <name>` — copy built-in adapter to config for customization
   - `strata copy query <name>` — copy built-in query to config
@@ -68,7 +70,8 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
   - `strata doctor` — run all checks
   - `strata doctor checks` — list available checks
   - `strata doctor fixes` — show fix commands for issues
-  - Built-in checks: `ingest-pending`, `ingest-errors`, `embeddings-stale`, `pricing-gaps`, `drop-ins-valid`
+  - Built-in checks: `ingest-pending`, `ingest-errors`, `embeddings-stale`, `pricing-gaps`, `drop-ins-valid`, `orphaned-chunks`
+  - Checks declare `has_fix = True/False` as class attribute (no runtime probing)
   - API: `list_checks()`, `run_checks()`, `apply_fix()` in `strata.api`
 - **Library API** (`strata.api`): Programmatic access to all CLI functionality
   - `list_conversations()`, `get_conversation()` — conversation queries (boolean tag filters: `tags`, `all_tags`, `exclude_tags`, plus `tool_tag`)
@@ -159,14 +162,19 @@ strata/
 │   ├── strategies/             # exchange-window.json
 │   └── runs/                   # Run output (gitignored)
 ├── src/
-│   ├── cli.py                  # Argparse + thin command handlers (dispatcher only)
+│   ├── cli.py                  # Argparse + 13 command handlers (1361 lines)
+│   ├── cli_ask.py              # cmd_ask + helpers, extracted (342 lines)
+│   ├── backfill.py             # Backfill operations (moved out of storage/)
+│   ├── ids.py                  # ULID generation (shared utility)
+│   ├── math.py                 # Cosine similarity (shared utility)
 │   ├── paths.py                # XDG directory handling
 │   ├── models.py               # Model name parser
 │   ├── search.py               # Hybrid search orchestration + MMR diversity reranking
 │   ├── domain/
 │   │   ├── models.py           # Dataclasses (Conversation, Prompt, Response, etc.)
-│   │   ├── protocols.py        # Adapter/Storage protocols
-│   │   └── source.py           # Source(kind, location, metadata)
+│   │   ├── shell_categories.py # Shell command categorization (extracted from storage)
+│   │   ├── tags.py             # Tag condition SQL builder (shared utility)
+│   │   └── source.py           # Source(kind, location, metadata) with .as_path property
 │   ├── api/                    # Public library API
 │   │   ├── __init__.py         # Re-exports all public functions
 │   │   ├── conversations.py    # list_conversations(), get_conversation(), query files
@@ -183,6 +191,7 @@ strata/
 │   │   └── registry.py         # Formatter plugin discovery (drop-in + entry points)
 │   ├── adapters/
 │   │   ├── __init__.py         # Adapter exports
+│   │   ├── _jsonl.py           # Shared JSONL utilities (load, now_iso, parse_block)
 │   │   ├── registry.py         # Plugin discovery + wrap_adapter_paths() + discover(locations) delegation
 │   │   ├── aider.py            # Markdown parser, chat history sessions, cost extraction
 │   │   ├── claude_code.py      # JSONL parser, TOOL_ALIASES, cache token extraction
@@ -200,7 +209,7 @@ strata/
 │   │   └── orchestration.py    # ingest_all(), IngestStats, dedup strategies
 │   ├── doctor/
 │   │   ├── __init__.py         # Re-exports
-│   │   ├── checks.py           # Check protocol + 5 built-in checks
+│   │   ├── checks.py           # Check protocol + 6 built-in checks (has_fix declarative)
 │   │   └── runner.py           # list_checks(), run_checks(), apply_fix()
 │   ├── peek/
 │   │   ├── __init__.py         # Re-exports
@@ -208,27 +217,48 @@ strata/
 │   │   └── reader.py           # PeekExchange, SessionDetail, read_session_detail(), tail_session()
 │   └── storage/
 │       ├── schema.sql          # Full schema + FTS5 + pricing table
-│       ├── sqlite.py           # All DB operations, backfills, tag CRUD (apply/remove/rename/delete)
-│       └── embeddings.py       # Embeddings DB schema + cosine similarity search
+│       ├── sqlite.py           # Core DB operations (817 lines: connection, entities, write, read, dedup)
+│       ├── tags.py             # Tag CRUD (get_or_create, apply, remove, rename, delete, list)
+│       ├── fts.py              # FTS5 (ensure, rebuild, insert, search, recall)
+│       └── embeddings.py       # Embeddings DB schema + cosine similarity search + orphan pruning
+├── docs/
+│   ├── principles.md           # Project principles catalog with strata conversation references
+│   ├── cli.md                  # Auto-generated CLI reference
+│   ├── config.md               # Configuration file documentation
+│   ├── search.md               # Search pipeline, MMR, backends, bench
+│   ├── tags.md                 # Tag system, boolean filtering, conventions, workflow
+│   ├── api.md                  # Library API reference
+│   ├── data-model.md           # Schema, tables, cost model, IDs
+│   ├── adapters.md             # Built-in + drop-in + entry point adapter authoring
+│   ├── queries.md              # SQL queries with examples
+│   └── plugin.md               # Claude Code plugin (marketplace install, hooks, skill)
 └── tests/
+    ├── conftest.py             # Shared fixtures (test_db, make_conversation, FIXTURES_DIR)
     ├── fixtures/               # Minimal adapter test fixtures
-    ├── test_adapters.py        # Adapter parsing tests
+    ├── test_adapters.py        # Adapter parsing tests (parametrized)
     ├── test_api.py             # API layer tests (conversations, stats, search)
-    ├── test_doctor.py          # Health check tests (23 tests)
-    ├── test_embeddings_storage.py  # Embeddings DB edge cases
-    ├── test_models.py          # Model name parsing tests
-    ├── test_peek.py            # Live session inspection tests (27 tests)
-    └── test_chunker.py         # Token-aware chunking smoke tests
+    ├── test_cli.py             # CLI smoke tests (--help, status, query, bulk tag)
+    ├── test_config.py          # Config load/get/set tests
+    ├── test_doctor.py          # Health check tests
+    ├── test_embeddings_storage.py  # Embeddings DB tests
+    ├── test_exclude_active.py  # Active session exclusion tests
+    ├── test_formatters.py      # Output formatter tests
+    ├── test_ingestion.py       # Ingest pipeline tests
+    ├── test_integration.py     # End-to-end: ingest→query→stats, FTS5, store round-trip
+    ├── test_models.py          # Model name parsing (parametrized)
+    ├── test_peek.py            # Live session inspection tests
+    ├── test_shell_categorization.py  # Shell command categorization (15 categories, parametrized)
+    └── test_chunker.py         # Token-aware chunking tests
 ```
 
 ### Release Status (0.1.0)
 - **Version**: 0.1.0 — first stable release for personal use
-- **Tests**: 179 passing, 14 config tests require `tomlkit` in env (adapters, API, config, doctor, formatters, embeddings, ingestion, models, peek, chunker)
+- **Tests**: 262 passing, 1 skipped (fastembed optional). Integration-first, shared fixtures, parametrized, xdist-safe.
 - **Install**: `uv pip install .` or `pip install .` from repo root
 - **CLI**: `strata` available after install
 - **Plugin**: `claude plugin marketplace add kaygee/strata` for Claude Code integration
 - **Pre-commit hook**: Auto-regenerates `docs/cli.md` (local-only, not versioned)
-- **Docs**: README (narrative) + 9 reference docs in `docs/` + plugin README
+- **Docs**: README (narrative) + 10 reference docs in `docs/` (including `principles.md`) + plugin README
 
 ---
 
@@ -271,7 +301,14 @@ strata/
 | Plugin over skill for agent DX | Hooks (session-start, prompt-submit, post-tool-use) provide active nudges. Skill bundled inside plugin for single-source distribution. |
 | "Tag" over "label" | Shorter, fits tool vibe. Renamed before extending to tool_calls. |
 | Shell tags via tool_call_tags | Same join-table pattern as conversation/workspace tags. Namespaced `shell:*` to separate auto from manual. |
-| CLI as thin dispatcher | Business logic in `strata.api`, presentation in `strata.output`. CLI is ~500 lines of argparse + routing. |
+| CLI as thin dispatcher | Business logic in `strata.api`, presentation in `strata.output`. CLI is argparse + routing. |
+| Extract only what strains the format | `cmd_ask` is the only command complex enough (210 lines, multi-stage pipeline) for its own file. Don't pre-decompose 13 stable thin wrappers. |
+| Extract by concern, not by entity | Storage split into tags/FTS/backfill subsystems, not per-table modules. Captures actual seams. |
+| Backfills are operations, not storage | Backfill functions use storage but aren't storage primitives. Moved out to fix storage→adapter dependency. |
+| No repository pattern | "Functions that take `conn`" is already the thin interface. Only one implementation, no polymorphism needed. |
+| Shared utilities over inline duplication | ULID, cosine sim, JSONL parsing, tag SQL — extracted when found in 2+ locations. Zero-dependency utility modules. |
+| UTC timestamps everywhere | Standardized from naive local time. `datetime.now(timezone.utc).isoformat()` across all adapters. |
+| Principles as tagged semantic index | Project principles documented in `docs/principles.md` with strata conversation references. Tagged `principles:*` for retrieval via `strata query -l principles:architecture`. |
 | OutputFormatter protocol | Pluggable presentation for `strata ask`. Each output mode (`--thread`, `--context`, etc.) is a formatter class. |
 | Library API re-exports | Top-level `from strata import ...` exposes public functions. CLI is just one consumer. |
 | `strata copy` for customization | Copy built-in adapters/queries to config dir for modification. Same-name overrides built-in. |
@@ -356,38 +393,35 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 ## Next Session
 
-**Recently completed (this session)**:
+**Recently completed (this session — release prep cleanup)**:
 
-- **Documentation overhaul** — narrative README + reference docs
-  - README rewritten as story arc: problem (knowledge vanishes) → data (what accumulates) → personal search → agent search (grounding practices, genesis of ideas, mining tool use) → self-teaching workflow → institutional memory. 160 lines, down from 696.
-  - Reference content extracted to 7 new docs: `search.md`, `tags.md`, `api.md`, `data-model.md`, `adapters.md`, `queries.md`, `plugin.md`
-  - `docs/cli.md` regenerated (now says "strata" not "tbd", includes `peek` and all flags)
-  - Plugin reference `ask.md` updated with `--lambda` and `--no-diversity`
-- **Plugin marketplace install** — global distribution setup
-  - `.claude-plugin/marketplace.json` at repo root
-  - `plugin.json` updated with author, homepage, hooks/skills paths
-  - `plugin/README.md` with marketplace + dev mode install instructions
-- **Cleanup fixes**
-  - Removed unused `semantic-text-splitter` dependency from `pyproject.toml`
-  - Added `aider` to adapter `__all__` exports
-  - Renamed 5 `tbd_` → `strata_` dynamic module prefixes (registries, doctor)
-  - Fixed `scripts/gen-cli-docs.sh` to use `strata` instead of `tbd`
-- **Bench release prep** — stripped to core: removed legacy per-block extraction, presentation metrics, first-mention, conversation aggregation, cross-query overlap, pairwise similarity, role filtering. Kept exchange-window strategy, score metrics, conversation redundancy, workspace count.
-- **Session-aware dedup** — subtask plan merged (design phase, `they-plan` workflow)
-- **Synthesis layer decision**: Synthesis = better data exposure + tagging, not LLM integration. Tags are lightweight synthesis. Let agents test improved plugin/skill in the wild before adding complexity.
-- **Prior session**: Claude Code plugin, MMR diversity reranking, bench update (50 queries, diversity metrics), tag ergonomics, aider adapter
+- **Bench release prep** — stripped 7 unused features (-741 lines), reframed from "benchmark" to "workbench", bench now imports production code instead of reimplementing
+- **Test suite overhaul** — integration-first restructure: conftest.py with shared fixtures, parametrized tests, end-to-end ingest→query test, FTS5 search test, CLI smoke tests, shell categorization coverage. 179 → 262 tests.
+- **Code cleanup** — extracted 5 shared modules (ids.py, math.py, _jsonl.py, shell_categories.py, domain/tags.py), removed dead code, fixed architectural violations (FTS cleanup on delete, storage→adapter decoupling, timezone standardization to UTC)
+- **Storage refactoring** — sqlite.py split: tags.py (tag CRUD), fts.py (FTS5 subsystem), backfill.py (moved out of storage entirely, fixes architecture). sqlite.py: 1327 → 817 lines.
+- **CLI refactoring** — cmd_ask extracted to cli_ask.py (342 lines). cli.py: 1690 → 1361 lines. Only the one complex command warranted extraction.
+- **Doctor improvements** — declarative `has_fix` on check classes (no runtime probing), orphaned chunks check + `prune_orphaned_chunks()` function
+- **Bulk tag application** — `strata tag <id> tag1 tag2 tag3` applies multiple tags in one call
+- **Principles catalog** — `docs/principles.md` with categorized principles extracted from dev history via strata ask, tagged with `principles:*` for semantic retrieval
+- **ROADMAP.md** — updated stale references (label→tag, adapter list, line counts, test infrastructure done)
+- **Prior session**: documentation overhaul, plugin marketplace install, cleanup fixes, bench pairwise fix, synthesis decision, Claude Code plugin, MMR diversity reranking, tag ergonomics, aider adapter
 
-**Potential directions**:
+**Open threads for next session**:
 
-- **MMR test coverage**: Default search strategy has zero tests. `mmr_rerank()`, `--lambda`, `--no-diversity` all untested.
-- **Session-aware dedup implementation**: Plan exists (subtask). Cross-query dedup for sequential research queries. Opt-in mechanism, caller-managed state.
-- **Drop-in checks**: `~/.config/strata/checks/*.py` for user-defined health checks. Pattern exists, add when needed.
-- **Observe agent behavior**: Plugin/skill deployed. Watch whether agents discover tagging, `--thread`, workspace filtering. Validate progressive disclosure works in practice.
+- **SQL query duplication in formatters** — prompt/response extraction SQL repeated 4 times across formatters.py and chunker.py. Extract to shared query helper.
+- **Storage Option B** — if sqlite.py grows past ~1000 lines, split further (connection/migrations/entities/write/read). Seams identified in research/storage PLAN.md.
+- **Bench hybrid comparison** — run comparing hybrid vs pure-embeddings on current corpus
+- **MMR test coverage** — default search strategy has zero tests. `mmr_rerank()`, `--lambda`, `--no-diversity` all untested.
+- **README polish** — narrative expanded this session, may want a final pass
+- **Principles adherence audit** — use `docs/principles.md` to review codebase for violations (the original purpose of the principles extraction)
+- **Session-aware dedup implementation** — plan exists. Cross-query dedup for sequential research queries.
 
 **Lower priority**:
 
-- **Synthesis layer**: LLM-generated narratives over structured retrieval output. Consumer of strata, not part of it. Current synthesis mechanism is tagging.
-- **Doc cross-reference**: Embedding docs alongside conversations. Unclear if concepts-only-in-docs is a real use case.
+- **Drop-in checks**: `~/.config/strata/checks/*.py` for user-defined health checks. Pattern exists, add when needed.
+- **Observe agent behavior**: Plugin/skill deployed. Watch whether agents discover tagging, `--thread`, workspace filtering.
+- **Synthesis layer**: LLM-generated narratives over structured retrieval output. Consumer of strata, not part of it.
+- **Doc cross-reference**: Embedding docs alongside conversations. Unclear if real use case.
 
 ---
 
@@ -401,7 +435,8 @@ Analyzed real strata usage by agents in non-strata workspaces:
 | `strata enrich` | Deferred | Only justified for expensive ops (LLM-based labeling). |
 | Billing context | Deferred | API vs subscription per workspace. Needed for precise cost, not approximate. |
 | Provenance marking | Deferred | Tag ingested conversations containing `strata ask` tool calls as `strata:derivative`, down-weight in search. Detectable from shell.execute tool call data. Deferred — active session exclusion may be sufficient. |
-| Re-add adapters | Partially done | Cline and Aider re-added as built-in. Goose/Cursor still available at commit `f5e3409` if needed. |
+| Re-add adapters | Partially done | Aider built-in. Goose/Cursor available via plugin system. |
+| SQL duplication in formatters | Open | Prompt/response extraction SQL repeated 4 times across formatters.py and chunker.py. |
 
 ---
 
@@ -412,5 +447,5 @@ Analyzed real strata usage by agents in non-strata workspaces:
 
 ---
 
-*Updated: 2026-01-27 (Documentation overhaul: narrative README + 7 reference docs, plugin marketplace install, cleanup fixes, bench pairwise fix, synthesis decision)*
+*Updated: 2026-01-27 (Release prep cleanup: bench strip, test overhaul 262 tests, code cleanup 5 shared modules, storage/CLI refactoring, doctor improvements, bulk tag, principles catalog)*
 *Origin: Redesign from tbd-v1, see `/Users/kaygee/Code/tbd/docs/reference/a-simple-datastore.md`*
