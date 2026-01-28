@@ -11,6 +11,8 @@ from __future__ import annotations
 import sqlite3
 from typing import TYPE_CHECKING
 
+from strata.storage.queries import fetch_conversation_exchanges
+
 if TYPE_CHECKING:
     from tokenizers import Tokenizer
 
@@ -203,74 +205,14 @@ def _load_exchanges(
 
     Each exchange is: {"text": str, "prompt_id": str}
     """
-    # Build WHERE clause
-    conditions = []
-    params: list[str] = []
-    if conversation_id:
-        conditions.append("p.conversation_id = ?")
-        params.append(conversation_id)
+    exchanges = fetch_conversation_exchanges(
+        conn, conversation_id=conversation_id
+    )
 
-    where = ""
-    if conditions:
-        where = "WHERE " + " AND ".join(conditions)
-
-    # Get prompts with their concatenated text blocks
-    prompt_rows = conn.execute(f"""
-        SELECT
-            p.id AS prompt_id,
-            p.conversation_id,
-            p.timestamp,
-            GROUP_CONCAT(json_extract(pc.content, '$.text'), '\n') AS text
-        FROM prompts p
-        JOIN prompt_content pc ON pc.prompt_id = p.id
-        {where}
-        AND pc.block_type = 'text'
-        AND json_extract(pc.content, '$.text') IS NOT NULL
-        GROUP BY p.id
-        ORDER BY p.timestamp
-    """, params).fetchall()
-
-    # Get responses linked to prompts
-    response_texts: dict[str, str] = {}
-    resp_rows = conn.execute("""
-        SELECT
-            r.prompt_id,
-            GROUP_CONCAT(json_extract(rc.content, '$.text'), '\n') AS text
-        FROM responses r
-        JOIN response_content rc ON rc.response_id = r.id
-        WHERE rc.block_type = 'text'
-          AND json_extract(rc.content, '$.text') IS NOT NULL
-          AND r.prompt_id IS NOT NULL
-        GROUP BY r.id
-    """).fetchall()
-    for row in resp_rows:
-        response_texts[row[0]] = row[1]
-
-    # Group into exchanges by conversation
-    exchanges: dict[str, list[dict]] = {}
-    for row in prompt_rows:
-        conv_id = row[1]
-        if exclude_ids and conv_id in exclude_ids:
-            continue
-        prompt_text = (row[3] or "").strip()
-        response_text = (response_texts.get(row[0]) or "").strip()
-
-        # Skip if both are empty
-        if not prompt_text and not response_text:
-            continue
-
-        if conv_id not in exchanges:
-            exchanges[conv_id] = []
-
-        exchange_text = ""
-        if prompt_text:
-            exchange_text += prompt_text
-        if response_text:
-            if exchange_text:
-                exchange_text += "\n\n"
-            exchange_text += response_text
-
-        exchanges[conv_id].append({"text": exchange_text, "prompt_id": row[0]})
+    if exclude_ids:
+        exchanges = {
+            cid: exs for cid, exs in exchanges.items() if cid not in exclude_ids
+        }
 
     return exchanges
 

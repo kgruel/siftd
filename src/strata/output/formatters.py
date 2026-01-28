@@ -13,6 +13,8 @@ from pathlib import Path
 from statistics import mean as _mean
 from typing import Protocol
 
+from strata.storage.queries import fetch_prompt_response_texts
+
 
 @dataclass
 class FormatterContext:
@@ -264,41 +266,9 @@ class FullExchangeFormatter:
                 print(f"    {line}")
             return
 
-        placeholders = ",".join("?" * len(source_ids))
+        exchanges = fetch_prompt_response_texts(conn, source_ids)
 
-        # Get prompt text
-        prompt_rows = conn.execute(
-            f"""
-            SELECT p.id, GROUP_CONCAT(json_extract(pc.content, '$.text'), '\n') AS text
-            FROM prompts p
-            JOIN prompt_content pc ON pc.prompt_id = p.id
-            WHERE p.id IN ({placeholders})
-              AND pc.block_type = 'text'
-              AND json_extract(pc.content, '$.text') IS NOT NULL
-            GROUP BY p.id
-            ORDER BY p.timestamp
-        """,
-            source_ids,
-        ).fetchall()
-
-        # Get response text
-        response_rows = conn.execute(
-            f"""
-            SELECT r.prompt_id, GROUP_CONCAT(json_extract(rc.content, '$.text'), '\n') AS text
-            FROM responses r
-            JOIN response_content rc ON rc.response_id = r.id
-            WHERE r.prompt_id IN ({placeholders})
-              AND rc.block_type = 'text'
-              AND json_extract(rc.content, '$.text') IS NOT NULL
-            GROUP BY r.id
-        """,
-            source_ids,
-        ).fetchall()
-        resp_by_prompt = {row[0]: row[1] for row in response_rows}
-
-        for row in prompt_rows:
-            prompt_text = (row[1] or "").strip()
-            response_text = (resp_by_prompt.get(row[0]) or "").strip()
+        for _pid, prompt_text, response_text in exchanges:
             if prompt_text:
                 print(f"    > {prompt_text.splitlines()[0]}")
                 for line in prompt_text.splitlines()[1:]:
@@ -389,43 +359,10 @@ class ContextFormatter:
         end = min(len(prompt_order), max(source_indices) + self.n + 1)
         context_ids = prompt_order[start:end]
 
-        placeholders = ",".join("?" * len(context_ids))
+        exchanges = fetch_prompt_response_texts(conn, context_ids)
 
-        # Get prompt text
-        prompt_rows = conn.execute(
-            f"""
-            SELECT p.id, GROUP_CONCAT(json_extract(pc.content, '$.text'), '\n') AS text
-            FROM prompts p
-            JOIN prompt_content pc ON pc.prompt_id = p.id
-            WHERE p.id IN ({placeholders})
-              AND pc.block_type = 'text'
-              AND json_extract(pc.content, '$.text') IS NOT NULL
-            GROUP BY p.id
-            ORDER BY p.timestamp
-        """,
-            context_ids,
-        ).fetchall()
-
-        # Get response text
-        response_rows = conn.execute(
-            f"""
-            SELECT r.prompt_id, GROUP_CONCAT(json_extract(rc.content, '$.text'), '\n') AS text
-            FROM responses r
-            JOIN response_content rc ON rc.response_id = r.id
-            WHERE r.prompt_id IN ({placeholders})
-              AND rc.block_type = 'text'
-              AND json_extract(rc.content, '$.text') IS NOT NULL
-            GROUP BY r.id
-        """,
-            context_ids,
-        ).fetchall()
-        resp_by_prompt = {row[0]: row[1] for row in response_rows}
-
-        for row in prompt_rows:
-            pid = row[0]
+        for pid, prompt_text, response_text in exchanges:
             marker = ">>>" if pid in source_set else "   "
-            prompt_text = (row[1] or "").strip()
-            response_text = (resp_by_prompt.get(pid) or "").strip()
             if prompt_text:
                 print(f"    {marker} > {prompt_text.splitlines()[0]}")
                 for line in prompt_text.splitlines()[1:]:
@@ -524,42 +461,9 @@ class ThreadFormatter:
 
     def _print_exchange(self, conn: sqlite3.Connection, source_ids: list[str]) -> None:
         """Print role-labeled exchange text for tier 1 thread output."""
-        placeholders = ",".join("?" * len(source_ids))
+        exchanges = fetch_prompt_response_texts(conn, source_ids)
 
-        # Get prompt text
-        prompt_rows = conn.execute(
-            f"""
-            SELECT p.id, GROUP_CONCAT(json_extract(pc.content, '$.text'), '\n') AS text
-            FROM prompts p
-            JOIN prompt_content pc ON pc.prompt_id = p.id
-            WHERE p.id IN ({placeholders})
-              AND pc.block_type = 'text'
-              AND json_extract(pc.content, '$.text') IS NOT NULL
-            GROUP BY p.id
-            ORDER BY p.timestamp
-        """,
-            source_ids,
-        ).fetchall()
-
-        # Get response text
-        response_rows = conn.execute(
-            f"""
-            SELECT r.prompt_id, GROUP_CONCAT(json_extract(rc.content, '$.text'), '\n') AS text
-            FROM responses r
-            JOIN response_content rc ON rc.response_id = r.id
-            WHERE r.prompt_id IN ({placeholders})
-              AND rc.block_type = 'text'
-              AND json_extract(rc.content, '$.text') IS NOT NULL
-            GROUP BY r.id
-        """,
-            source_ids,
-        ).fetchall()
-        resp_by_prompt = {row[0]: row[1] for row in response_rows}
-
-        for row in prompt_rows:
-            prompt_text = (row[1] or "").strip()
-            response_text = (resp_by_prompt.get(row[0]) or "").strip()
-
+        for _pid, prompt_text, response_text in exchanges:
             if prompt_text:
                 # Truncate very long prompts sensibly
                 if len(prompt_text) > 500:
@@ -571,7 +475,7 @@ class ThreadFormatter:
                     response_text = response_text[:800] + "..."
                 print(f"  [asst] {response_text}")
 
-        if not prompt_rows:
+        if not exchanges:
             print("  (no exchange text available)")
 
 
