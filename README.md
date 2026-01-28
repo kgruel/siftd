@@ -1,10 +1,28 @@
-# strata
+s
+ t
+  r
+   a
+    t
+     a >_
 
 Every conversation you have with an LLM coding tool — Claude Code, Gemini CLI, Codex, Aider — produces a log file. Decisions, rationale, dead ends, breakthroughs. When the session ends, that knowledge disappears into a directory you'll never open.
 
 After a few months, you have thousands of conversations across dozens of projects. You've solved problems you'll face again. You've established patterns you'll forget you established. Your agents have researched concepts, proposed architectures, debugged issues — and none of that context carries forward to the next session.
 
-strata makes it searchable. And once it's searchable, your agents can use it too.
+These contexts are mixed - an insight while working in one project may have relevance in another. Tool-use patterns may appear one shot from your perspective, but turn out to be common in aggregate. You have a perception breakthrough in the middle of something else and discuss it with the agent at that time... it starts getting muddled.
+
+strata normalizes this data and makes it searchable. 
+
+- You can query your sessions directly with `query` and a variety of composable filters (or direct sql). 
+- A `queries` command allows dropping .sql files in your config directory and they're available for agents to run as a subcommand. An agent makes a highly specific series of queries for your domain? Ask it to encapsulate that into an .sql and use it in the future.
+- You can embed your conversations, semantically query them with `ask`, then `tag` the results to thread further semantic meaning through them. `philosophy:testing`, `genesis:strata`, `testing:anti-pattern`. When agents start making their own, it gets interesting.. `forcing-function`, `the-great-deletion`, `self-similarity`.
+- You can additionally `tag` tool-calls. This is a useful feature for two reasons: one, tools are normalized into broad strokes (`shell.execute`, `file.read`). You can add tags to categorize this down - I have `shell:vcs` and similar to help exclude results. The other reason I get into below.
+
+strata was built with strata, subtask and Claude Code. I did not write any of the code in this project. I read (I won't claim all of it, but just about) the code and reviewed the output. The design decisions were mine. The documentation (when it has a voice) is mine. The development cycle was effectively a single ongoing conversation with a Claude Code instance, directing Subtasks to be split off for development, and manual compaction handled via a HANDOFF.md. Every attempt was made to smooth out friction, whether in the api surface or command construction. 
+
+When strata was reliable enough to be used in conjunction, it was. Every feature came from review of its use by agents and myself. The intent behind the creation is to collapse cognitive loops by removing the friction inherit on both sides. Nothing provided by strata is unavailable otherwise - at the core, every one of these features can be handled by grepping jsonl files.
+
+The value is collapsing the loop. Reduce the tool calls, reduce the time to response. Reduce the noise in the calls, reduce the context pollution. Reduce the context pollution, have richer, longer conversations in your window. Longer conversations in your window is more useful output you generate before having to compact. Compact into a single MD file that can be recursed through the project history with the _why_ provenance right there because the tool call to write it is right next to the reason it's being written - and now the loop has shrunk.
 
 ## Install
 
@@ -36,11 +54,11 @@ Those 847 conversations span months of work across 31 projects. Every prompt you
 The data isn't just text. Each conversation captures:
 
 - **What you asked and what you were told** — the full prompt+response exchange
-- **What tools were used** — file reads, edits, shell commands, searches — 89k tool calls with inputs and outputs
+- **What tools were used** — file reads, edits, shell commands, searches 
 - **Where work happened** — which project directory, which model, when
 - **How much it cost** — token counts, approximate pricing
 
-This is your development history in structured form. Not commit messages after the fact — the actual working conversation as it happened.
+This is your development history in structured form. Not commit messages after the fact — the actual working conversation as it happened - this is the sum of your cognitive effort - at the time it was done.
 
 ## Finding things
 
@@ -92,7 +110,7 @@ strata query --tool-tag shell:vcs       # which ones touched git?
 strata tools --by-workspace             # what patterns emerge per project?
 ```
 
-When you see that `pytest tests/ -x -q` runs 200 times across your projects, that's a pattern worth encoding into a script. The tool data shows you what your development workflow actually looks like — not what you think it looks like.
+When you see that `pytest tests/ -x -q` runs 200 times across your projects, that's a pattern worth encoding into a script, or adding to a hook. The tool data shows you what your development workflow actually looks like — not what you think it looks like. Pull patterns out of your entire development flow. Some are specific to a project, others might be universal. 
 
 ## The workflow teaches itself
 

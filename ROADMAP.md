@@ -5,10 +5,10 @@
 ### Foundation (done)
 Core loop is solid: ingest → store → query.
 
-- Domain model, two adapters (claude_code, gemini_cli)
+- Domain model, four adapters (claude_code, codex_cli, gemini_cli, aider)
 - SQLite schema, FTS5 search, query runner
 - Tool canonicalization, model parsing
-- CLI: `ingest`, `status`, `search`, `queries`, `path`
+- CLI: `ingest`, `status`, `ask`, `query`, `tag`, `tags`, `tools`, `peek`, `doctor`, `config`, `adapters`, `copy`, `backfill`, `path`
 
 ### Enrichment (done)
 Make the stored data more queryable without changing the core loop.
@@ -16,7 +16,7 @@ Make the stored data more queryable without changing the core loop.
 - [x] Approximate cost tracking (flat pricing table, query-time computation)
 - [x] Provider population from adapter source
 - [x] Cache token extraction into response_attributes
-- [x] Manual labels via `strata label`
+- [x] Manual labels via `strata tag`
 - [x] Queries UX (missing var detection, var listing)
 
 ### Expansion (done)
@@ -36,8 +36,9 @@ Hybrid retrieval improves relevance; package is installable for programmatic acc
 - [x] Bench pipeline hybrid mode (`--hybrid`, `--recall N`, per-query recall metadata in output)
 - [x] Installable package (`pyproject.toml`, `uv.lock`, `strata.search.hybrid_search` public API)
 
-### Next: Reliability
-- [ ] Test infrastructure (pytest, CI basics)
+### Reliability (done)
+- [x] Test infrastructure (pytest, 253 tests, integration-first, shared fixtures, parametrized)
+- [x] Bench pipeline stripped to workbench: build → run → view → corpus_analysis
 - [ ] Bench runs comparing hybrid vs pure-embeddings retrieval quality
 
 ### Precision (future, only when justified)
@@ -55,12 +56,12 @@ Add complexity only when real usage demands it.
 | Item | Rationale |
 |------|-----------|
 | Pluggable storage | Storage is the gravity well — SQL files, FTS5, attributes are all SQLite-specific. No real use case for alternatives. |
-| Additional adapters | Cline/Goose/Cursor/Aider removed (no data). Plugin system supports re-adding as drop-in files. Recovery: commit `f5e3409`. |
+| Additional adapters | Cline/Goose/Cursor removed (no data). Aider is built-in. Plugin system supports adding others as drop-in files. |
 | `workspaces.git_remote` | Not blocking any current queries. Add when workspace identity matters across machines. |
 | `strata enrich` | Only justified for expensive operations (LLM classification). Manual labels cover current needs. |
 | Temporal pricing | Anthropic hasn't changed prices frequently enough to warrant the complexity. |
 | Billing context | Requires solving "which workspace uses which billing" — deferred until API spend tracking is a real need. |
-| cli.py decomposition | 1166 lines, maintenance hotspot. Not blocking functionality. Refactor when it becomes painful. |
+| cli.py decomposition | ~1700 lines, maintenance hotspot. Not blocking functionality. Refactor when it becomes painful. |
 
 ---
 
