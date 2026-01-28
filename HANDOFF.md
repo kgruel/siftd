@@ -4,14 +4,13 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ## Current Focus
 
-**Version 0.1.0 shipped.** 293 tests passing.
+**Version 0.1.0 shipped.** Core features stable.
 
-Landing unstaged Codex changes:
-- Read-only database connections
-- Tags drill-down + prefix filtering
-- `builtin_queries/` package
-- Doctor fix command update
-- `docs/dev/` feedback docs
+Recent additions:
+- `strata export` command for PR review workflows
+- Optional embeddings via `strata[embed]`
+- Strata-first documentation pattern (this HANDOFF)
+- API-first skill + `/strata` quick search modes
 
 ## Active Blockers
 
@@ -29,6 +28,10 @@ None.
 | CLI as thin dispatcher | `principles:cli` |
 | Retrieval vs synthesis boundary | `strata ask -w strata "retrieval synthesis boundary"` |
 | Team-scale SQLite analysis | `strata ask -w strata "team scale SQLite"` |
+| Strata-first docs pattern | `strata ask -w strata "strata-first documentation"` |
+| Optional embeddings | `strata ask -w strata "optional embeddings strata[embed]"` |
+| Export for PR workflows | `strata ask -w strata "export prompts PR review"` |
+| Team via push/pull (not shared DB) | `strata ask -w strata "team scale push pull"` |
 
 Full decision log: `strata query -l decision:` or search with `strata ask -w strata "decision rationale"`.
 
@@ -36,19 +39,21 @@ Full decision log: `strata query -l decision:` or search with `strata ask -w str
 
 | Thread | Status | Reference |
 |--------|--------|-----------|
-| SQL consolidation | Implemented, needs rebase | `strata ask -w strata "sql consolidation constants"` |
 | FTS5 error handling | Open | `query -s` lacks error handling |
 | `--json` everywhere | Open | status, tools, doctor lack JSON output |
 | Embedding search perf | Open | O(n) cosine sim bottleneck |
 | Derived ingest-time tags | Open | Generalize shell-tag pattern |
+| Export git linking | Deferred | Link sessions to branches/commits/PRs |
+| Export import format | Deferred | Portable `.strata` for reviewer import |
+| Plugin `--tools` mode | Deferred | Tool usage pattern analysis |
 
 ## History
 
 | Date | Session | Summary |
 |------|---------|---------|
+| 2026-01-28 | `01KG19R9S1P2` | Export command, optional embeddings, strata-first docs pattern |
 | 2026-01-27 | `01KG14WC7XHC` | SQL architecture, derivative dedup, WhereBuilder, 293 tests |
 | 2026-01-26 | `01KG0E1E7RXC` | Renamed tbd → strata, plugin/skill deployment |
-| 2026-01-25 | `01KFV90WV2YC` | Agent usage analysis, plugin work |
 
 Walk back further: `strata query -l handoff:update --since 2026-01`
 

@@ -191,3 +191,68 @@ strata tag --last 3 review                            # tag your last 3 conversa
 These conventions are shared with the project's CLAUDE.md, so tags are consistent across all agents and sessions.
 
 > Boolean tag filtering, tag rename/delete, tool call tags: `reference/tags.md`.
+
+## Strata-First Documentation
+
+HANDOFF.md and CLAUDE.md are thin indexes. Strata holds the depth.
+
+### Reading HANDOFF references
+
+HANDOFF.md contains references instead of inline rationale:
+
+```markdown
+## Key Decisions
+| Topic | Reference |
+|-------|-----------|
+| Auth approach | `01KFMBEQRGX7` • `decision:auth` |
+```
+
+To get context, run the reference:
+```bash
+strata query 01KFMBEQRGX7              # specific conversation
+strata query -l decision:auth          # all auth decisions
+strata ask -w project "auth approach"  # or search
+```
+
+### Documentation tags
+
+| Tag | When to apply |
+|-----|---------------|
+| `decision:*` | Key architectural/design decisions |
+| `handoff:update` | Sessions that modified HANDOFF.md |
+| `rationale:*` | Why we chose X over Y |
+| `genesis:*` | First discussion of a concept |
+
+### End-of-session workflow
+
+If you modified HANDOFF.md during the session:
+
+1. **Tag the session:**
+   ```bash
+   strata tag --last handoff:update
+   ```
+
+2. **Update HANDOFF.md:**
+   - Revise Current Focus section
+   - Add row to History table: `| date | session-id | summary |`
+
+3. **Tag any decisions made:**
+   ```bash
+   strata tag --last decision:topic-name
+   ```
+
+### Walking back through history
+
+Reconstruct how a decision evolved:
+```bash
+# List all HANDOFF updates
+strata query -l handoff:update --since 2025-01
+
+# Search within HANDOFF sessions
+strata ask -l handoff:update "topic" --chrono
+
+# Find when something was first discussed
+strata ask --first "concept name"
+```
+
+Each HANDOFF update conversation contains the HANDOFF state at that moment (in the prompt), so you can see what changed and why.
