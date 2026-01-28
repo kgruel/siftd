@@ -2,6 +2,8 @@
 
 Ingest and query conversation logs from LLM coding tools. Stores in SQLite, searches via FTS5 and embeddings.
 
+Warning: This project is under active development and breaking changes may occur.
+
 ## Install
 
 ```bash
