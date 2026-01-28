@@ -2,7 +2,7 @@
   "name": "strata",
   "owner": {
     "name": "kaygee",
-    "url": "https://github.com/kaygee"
+    "url": "https://github.com/kgruel"
   },
   "metadata": {
     "description": "Strata plugin marketplace — conversation research for Claude Code agents",
@@ -16,9 +16,9 @@
       "version": "1.0.0",
       "author": {
         "name": "kaygee",
-        "url": "https://github.com/kaygee"
+        "url": "https://github.com/kgruel"
       },
-      "repository": "https://github.com/kaygee/strata",
+      "repository": "https://github.com/kgruel/strata",
       "license": "MIT",
       "keywords": ["conversations", "search", "research", "history", "analytics"],
       "category": "productivity",

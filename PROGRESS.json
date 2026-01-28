@@ -1,8 +1,0 @@
-[
-    {"step": "Add --tool-tag filter to list_conversations API", "done": true},
-    {"step": "Add --tool-tag argument to CLI query command", "done": true},
-    {"step": "Add tbd tools summary command", "done": true},
-    {"step": "Add workspace rollups (--by-workspace option)", "done": true},
-    {"step": "Add tests for new functionality", "done": true},
-    {"step": "Commit changes", "done": true}
-]
