@@ -4,13 +4,12 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ## Current Focus
 
-**Version 0.1.0 shipped.** Core features stable.
+**Version 0.1.0 tagged.** Ready for PyPI publish after configuring trusted publishing.
 
 Recent additions:
-- `strata export` command for PR review workflows
-- Optional embeddings via `strata[embed]`
-- Strata-first documentation pattern (this HANDOFF)
-- API-first skill + `/strata` quick search modes
+- CI workflows (test + lint on PR, publish on tag)
+- Pre-commit hook with ty + ruff
+- Type errors resolved
 
 ## Active Blockers
 
@@ -39,18 +38,20 @@ Full decision log: `strata query -l decision:` or search with `strata ask -w str
 
 | Thread | Status | Reference |
 |--------|--------|-----------|
-| FTS5 error handling | Open | `query -s` lacks error handling |
 | `--json` everywhere | Open | status, tools, doctor lack JSON output |
-| Embedding search perf | Open | O(n) cosine sim bottleneck |
+| Built-in query examples | Open | `builtin_queries/` is empty |
+| CLI test coverage | Open | `path`, `config` commands untested at CLI level |
+| Embedding search perf | Deferred | O(n) cosine sim — acceptable for v0.1.0 |
+| FTS5 error handling | Deferred | Graceful degradation approach is fine |
 | Derived ingest-time tags | Deferred | Generalize shell-tag pattern • `context:derived-tags` |
 | Export git linking | Deferred | Link sessions to branches/commits/PRs |
 | Export import format | Deferred | Portable `.strata` for reviewer import |
-| Plugin `--tools` mode | Deferred | Tool usage pattern analysis |
 
 ## History
 
 | Date | Session | Summary |
 |------|---------|---------|
+| 2026-01-28 | (this session) | v0.1.0 release prep: CI, pre-commit, type fixes, release review |
 | 2026-01-28 | `01KG19R9S1P2` | Export command, optional embeddings, strata-first docs pattern |
 | 2026-01-27 | `01KG14WC7XHC` | SQL architecture, derivative dedup, WhereBuilder, 293 tests |
 | 2026-01-26 | `01KG0E1E7RXC` | Renamed tbd → strata, plugin/skill deployment |
@@ -91,10 +92,9 @@ uv run pytest tests/ -v
 
 ## See Also
 
-- `docs/principles.md` — design principles with strata references
-- `docs/search.md` — search pipeline, MMR, backends
 - `docs/cli.md` — CLI reference (auto-generated)
-- `README.md` — narrative introduction
+- `README.md` — project introduction
+- `.subtask/tasks/review--release-prep/REPORT.md` — v0.1.0 release review
 
 ---
 

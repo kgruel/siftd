@@ -51,9 +51,6 @@ strata query -l decision:
 ## Documentation
 
 - [CLI Reference](docs/cli.md)
-- [Configuration](docs/config.md)
-- [Search Pipeline](docs/search.md)
-- [Python API](docs/api.md)
 
 ## License
 
