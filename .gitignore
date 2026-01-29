@@ -8,3 +8,5 @@ bench/runs/
 .venv/
 dist/
 .claude/
+HANDOFF.md
+ROADMAP.md
