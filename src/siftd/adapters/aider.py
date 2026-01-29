@@ -24,6 +24,7 @@ from siftd.domain import (
 )
 
 # Adapter self-description
+ADAPTER_INTERFACE_VERSION = 1
 NAME = "aider"
 DEFAULT_LOCATIONS = ["~/.aider"]
 SOURCE_KINDS = ["file"]

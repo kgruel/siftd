@@ -8,8 +8,12 @@ from types import ModuleType
 
 from siftd.adapters import aider, claude_code, codex_cli, gemini_cli
 
+# Current adapter interface version
+ADAPTER_INTERFACE_VERSION = 1
+
 # Required module-level attributes for a valid adapter
 _REQUIRED_ATTRS = {
+    "ADAPTER_INTERFACE_VERSION": int,
     "NAME": str,
     "DEFAULT_LOCATIONS": list,
     "DEDUP_STRATEGY": str,
@@ -27,6 +31,8 @@ def _validate_adapter(module: ModuleType, origin: str) -> str | None:
 
     Returns an error message string if invalid, None if valid.
     """
+    import inspect
+
     for attr, expected_type in _REQUIRED_ATTRS.items():
         if not hasattr(module, attr):
             return f"{origin}: missing required attribute '{attr}'"
@@ -40,6 +46,12 @@ def _validate_adapter(module: ModuleType, origin: str) -> str | None:
     for func_name in _REQUIRED_CALLABLES:
         if not hasattr(module, func_name) or not callable(getattr(module, func_name)):
             return f"{origin}: missing required function '{func_name}'"
+
+    # Validate discover() accepts locations= keyword argument
+    discover_func = getattr(module, "discover")
+    sig = inspect.signature(discover_func)
+    if "locations" not in sig.parameters:
+        return f"{origin}: discover() must accept 'locations' keyword argument"
 
     return None
 
@@ -116,24 +128,7 @@ class _AdapterPathOverride:
 
     def discover(self, locations=None):
         """Discover using overridden paths, delegating to the adapter."""
-        try:
-            return self._adapter.discover(locations=self._paths)
-        except TypeError:
-            # Fallback for adapters that don't accept locations kwarg
-            # (e.g. drop-in adapters that haven't been updated)
-            return self._fallback_discover()
-
-    def _fallback_discover(self):
-        """Generic fallback: yield all files, let can_handle filter."""
-        from siftd.domain import Source
-
-        for location in self._paths:
-            base = Path(location).expanduser()
-            if not base.exists():
-                continue
-            for f in base.rglob("*"):
-                if f.is_file():
-                    yield Source(kind="file", location=f)
+        return self._adapter.discover(locations=self._paths)
 
 
 def wrap_adapter_paths(adapter, paths: list[str]):

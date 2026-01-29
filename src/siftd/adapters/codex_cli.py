@@ -20,6 +20,7 @@ from siftd.domain import (
 )
 
 # Adapter self-description
+ADAPTER_INTERFACE_VERSION = 1
 NAME = "codex_cli"
 DEFAULT_LOCATIONS = ["~/.codex/sessions"]
 SOURCE_KINDS = ["file"]

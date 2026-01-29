@@ -19,6 +19,7 @@ from siftd.domain import (
 )
 
 # Adapter self-description
+ADAPTER_INTERFACE_VERSION = 1
 NAME = "claude_code"
 DEFAULT_LOCATIONS = ["~/.claude/projects", "~/.config/claude/projects"]
 SOURCE_KINDS = ["file"]

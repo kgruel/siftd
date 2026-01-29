@@ -216,12 +216,13 @@ class TestDropInsValidCheck:
         """No findings for valid adapter file."""
         adapter_file = check_context.adapters_dir / "good_adapter.py"
         adapter_file.write_text("""
+ADAPTER_INTERFACE_VERSION = 1
 NAME = "test_adapter"
 DEFAULT_LOCATIONS = ["~/test"]
 DEDUP_STRATEGY = "file"
 HARNESS_SOURCE = "test"
 
-def discover():
+def discover(locations=None):
     return []
 
 def can_handle(source):
