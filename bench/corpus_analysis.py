@@ -99,7 +99,7 @@ def format_histogram_label(low, high):
     return f"{low}-{high}"
 
 
-def print_section(title: str, token_counts: list[int], total: int = None):
+def print_section(title: str, token_counts: list[int], total: int | None = None):
     """Print a stats section with histogram."""
     stats = compute_stats(token_counts)
     if not stats:
