@@ -1,5 +1,5 @@
 {
-  "description": "Nudges agents toward the strata skill for conversation research",
+  "description": "Nudges agents toward the siftd skill for conversation research",
   "hooks": {
     "SessionStart": [
       {

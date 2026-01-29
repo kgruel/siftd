@@ -1,15 +1,15 @@
-# strata plugin for Claude Code
+# siftd plugin for Claude Code
 
 Gives Claude Code agents access to your conversation history. Provides skills for semantic search, query, and tagging, plus hooks that nudge agents toward using the skill workflow.
 
 ## Prerequisites
 
-strata must be installed and indexed:
+siftd must be installed and indexed:
 
 ```bash
-uv pip install /path/to/strata   # or pip install .
-strata ingest                     # ingest conversation logs
-strata ask --index                # build embeddings index
+uv pip install /path/to/siftd   # or pip install .
+siftd ingest                     # ingest conversation logs
+siftd ask --index                # build embeddings index
 ```
 
 ## Install
@@ -17,34 +17,34 @@ strata ask --index                # build embeddings index
 ### From marketplace (recommended)
 
 ```bash
-# Add the strata marketplace
-claude plugin marketplace add kaygee/strata
+# Add the siftd marketplace
+claude plugin marketplace add kaygee/siftd
 
 # Install the plugin
-claude plugin install strata@strata
+claude plugin install siftd@siftd
 ```
 
 Scope options:
 
 ```bash
-claude plugin install strata@strata                # user (default) — all projects
-claude plugin install strata@strata --scope project # project — shared via .claude/settings.json
-claude plugin install strata@strata --scope local   # local — gitignored, personal only
+claude plugin install siftd@siftd                # user (default) — all projects
+claude plugin install siftd@siftd --scope project # project — shared via .claude/settings.json
+claude plugin install siftd@siftd --scope local   # local — gitignored, personal only
 ```
 
-Or interactively: run `/plugin` in Claude Code, navigate to **Discover**, select strata, and choose your scope.
+Or interactively: run `/plugin` in Claude Code, navigate to **Discover**, select siftd, and choose your scope.
 
 ### Dev mode (for development)
 
 ```bash
-claude --plugin-dir /path/to/strata/plugin/
+claude --plugin-dir /path/to/siftd/plugin/
 ```
 
 ## What it provides
 
-### Skill: `strata`
+### Skill: `siftd`
 
-The `/strata` skill teaches agents the research workflow: search past conversations, drill down into results, and tag findings for later retrieval.
+The `/siftd` skill teaches agents the research workflow: search past conversations, drill down into results, and tag findings for later retrieval.
 
 Reference docs cover `ask`, `query`, and `tags` commands with all flags and composition patterns.
 
@@ -54,9 +54,9 @@ Three hooks nudge agents toward the skill:
 
 | Hook | Trigger | Behavior |
 |------|---------|----------|
-| `SessionStart` | Session start/resume | Reminds agent that strata is available |
-| `UserPromptSubmit` | User mentions "strata" | Suggests loading the skill |
-| `PostToolUse` | Agent runs `strata` in Bash | Nudges toward using the Skill tool instead |
+| `SessionStart` | Session start/resume | Reminds agent that siftd is available |
+| `UserPromptSubmit` | User mentions "siftd" | Suggests loading the skill |
+| `PostToolUse` | Agent runs `siftd` in Bash | Nudges toward using the Skill tool instead |
 
 ## Structure
 
@@ -71,7 +71,7 @@ plugin/
 │   ├── skill-reminder.sh
 │   └── skill-required.sh
 └── skills/
-    └── strata/
+    └── siftd/
         ├── SKILL.md
         └── reference/
             ├── ask.md
@@ -83,7 +83,7 @@ plugin/
 
 ```bash
 # Update the marketplace (pulls latest plugin versions)
-claude plugin marketplace update strata
+claude plugin marketplace update siftd
 ```
 
 Or in Claude Code: `/plugin` → marketplace tab → update.

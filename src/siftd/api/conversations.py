@@ -1,0 +1,590 @@
+"""Conversation listing and detail API."""
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from siftd.paths import db_path as default_db_path
+from siftd.storage.filters import WhereBuilder
+from siftd.storage.filters import tag_condition as _tag_condition
+from siftd.storage.sqlite import open_database
+
+
+@dataclass
+class ToolCallSummary:
+    """Collapsed tool call for timeline display."""
+
+    tool_name: str
+    status: str
+    count: int = 1
+
+
+@dataclass
+class Exchange:
+    """A prompt-response pair in the timeline."""
+
+    timestamp: str | None
+    prompt_text: str | None
+    response_text: str | None
+    input_tokens: int
+    output_tokens: int
+    tool_calls: list[ToolCallSummary] = field(default_factory=list)
+
+
+@dataclass
+class ConversationSummary:
+    """Summary row for conversation listing."""
+
+    id: str
+    workspace_path: str | None
+    model: str | None
+    started_at: str | None
+    prompt_count: int
+    response_count: int
+    total_tokens: int
+    cost: float | None
+    tags: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ConversationDetail:
+    """Full conversation with timeline."""
+
+    id: str
+    workspace_path: str | None
+    model: str | None
+    started_at: str | None
+    total_input_tokens: int
+    total_output_tokens: int
+    exchanges: list[Exchange]
+    tags: list[str] = field(default_factory=list)
+
+
+def list_conversations(
+    *,
+    db_path: Path | None = None,
+    workspace: str | None = None,
+    model: str | None = None,
+    since: str | None = None,
+    before: str | None = None,
+    search: str | None = None,
+    tool: str | None = None,
+    tag: str | None = None,
+    tags: list[str] | None = None,
+    all_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+    tool_tag: str | None = None,
+    limit: int = 10,
+    oldest_first: bool = False,
+) -> list[ConversationSummary]:
+    """List conversations with optional filtering.
+
+    Args:
+        db_path: Path to database. Uses default if not specified.
+        workspace: Filter by workspace path substring.
+        model: Filter by model name substring.
+        since: Filter conversations started after this date (ISO format).
+        before: Filter conversations started before this date.
+        search: FTS5 full-text search query.
+        tool: Filter by canonical tool name (e.g., 'shell.execute').
+        tag: Filter by tag name (single, backward compat — prefer tags).
+        tags: OR filter — conversations with any of these tags.
+        all_tags: AND filter — conversations with all of these tags.
+        exclude_tags: NOT filter — exclude conversations with any of these tags.
+        tool_tag: Filter by tool call tag (e.g., 'shell:test').
+        limit: Maximum results to return (0 = unlimited).
+        oldest_first: Sort by oldest first instead of newest.
+
+    Returns:
+        List of ConversationSummary objects.
+
+    Raises:
+        FileNotFoundError: If database does not exist.
+    """
+    db = db_path or default_db_path()
+
+    if not db.exists():
+        raise FileNotFoundError(f"Database not found: {db}")
+
+    conn = open_database(db, read_only=True)
+
+    # Check if pricing table exists
+    has_pricing = (
+        conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pricing'"
+        ).fetchone()[0]
+        > 0
+    )
+
+    # Build WHERE clauses
+    wb = WhereBuilder()
+    wb.workspace(workspace)
+    wb.model(model)
+    wb.since(since)
+    wb.before(before)
+
+    if search:
+        wb.add(
+            "c.id IN (SELECT conversation_id FROM content_fts WHERE content_fts MATCH ?)",
+            search,
+        )
+
+    if tool:
+        wb.add(
+            "c.id IN (SELECT tc.conversation_id FROM tool_calls tc"
+            " JOIN tools t ON t.id = tc.tool_id WHERE t.name = ?)",
+            tool,
+        )
+
+    # Legacy single-tag support: fold into the OR list
+    effective_tags = list(tags or [])
+    if tag:
+        effective_tags.append(tag)
+
+    wb.tags_any(effective_tags or None)
+    wb.tags_all(all_tags)
+    wb.tags_none(exclude_tags)
+
+    if tool_tag:
+        op, val = _tag_condition(tool_tag)
+        wb.add(
+            "c.id IN (SELECT tc.conversation_id FROM tool_calls tc"
+            " JOIN tool_call_tags tct ON tct.tool_call_id = tc.id"
+            f" JOIN tags tg ON tg.id = tct.tag_id WHERE {op})",
+            val,
+        )
+
+    where = wb.where_sql()
+    params = wb.params
+    order = "ASC" if oldest_first else "DESC"
+    limit_clause = f"LIMIT {limit}" if limit > 0 else ""
+
+    cost_expr = (
+        """ROUND(SUM(
+            COALESCE(r.input_tokens, 0) * COALESCE(pr.input_per_mtok, 0)
+            + COALESCE(r.output_tokens, 0) * COALESCE(pr.output_per_mtok, 0)
+        ) / 1000000.0, 4)"""
+        if has_pricing
+        else "NULL"
+    )
+    pricing_join = (
+        "LEFT JOIN pricing pr ON pr.model_id = r.model_id AND pr.provider_id = r.provider_id"
+        if has_pricing
+        else ""
+    )
+
+    sql = f"""
+        SELECT
+            c.id AS conversation_id,
+            w.path AS workspace,
+            (SELECT m2.name FROM responses r2
+             LEFT JOIN models m2 ON m2.id = r2.model_id
+             WHERE r2.conversation_id = c.id
+             GROUP BY m2.name
+             ORDER BY COUNT(*) DESC
+             LIMIT 1) AS model,
+            c.started_at,
+            (SELECT COUNT(*) FROM prompts WHERE conversation_id = c.id) AS prompts,
+            COUNT(DISTINCT r.id) AS responses,
+            COALESCE(SUM(r.input_tokens), 0) + COALESCE(SUM(r.output_tokens), 0) AS tokens,
+            {cost_expr} AS cost
+        FROM conversations c
+        LEFT JOIN workspaces w ON w.id = c.workspace_id
+        LEFT JOIN responses r ON r.conversation_id = c.id
+        LEFT JOIN models m ON m.id = r.model_id
+        LEFT JOIN providers pv ON pv.id = r.provider_id
+        {pricing_join}
+        {where}
+        GROUP BY c.id
+        ORDER BY c.started_at {order}
+        {limit_clause}
+    """
+
+    rows = conn.execute(sql, params).fetchall()
+
+    # Bulk-fetch tags for returned conversations (single query, no N+1)
+    conv_ids = [row["conversation_id"] for row in rows]
+    tags_by_conv: dict[str, list[str]] = {}
+    if conv_ids:
+        placeholders = ",".join("?" for _ in conv_ids)
+        tag_rows = conn.execute(
+            f"SELECT ct.conversation_id, t.name "
+            f"FROM conversation_tags ct "
+            f"JOIN tags t ON t.id = ct.tag_id "
+            f"WHERE ct.conversation_id IN ({placeholders}) "
+            f"ORDER BY t.name",
+            conv_ids,
+        ).fetchall()
+        for tr in tag_rows:
+            tags_by_conv.setdefault(tr["conversation_id"], []).append(tr["name"])
+
+    conn.close()
+
+    return [
+        ConversationSummary(
+            id=row["conversation_id"],
+            workspace_path=row["workspace"],
+            model=row["model"],
+            started_at=row["started_at"],
+            prompt_count=row["prompts"],
+            response_count=row["responses"],
+            total_tokens=row["tokens"],
+            cost=row["cost"],
+            tags=tags_by_conv.get(row["conversation_id"], []),
+        )
+        for row in rows
+    ]
+
+
+def _extract_text(raw: str) -> str:
+    """Extract plain text from a content block (may be JSON-wrapped)."""
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict) and "text" in obj:
+            return obj["text"]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return raw
+
+
+def get_conversation(
+    conversation_id: str,
+    *,
+    db_path: Path | None = None,
+) -> ConversationDetail | None:
+    """Get full conversation detail by ID.
+
+    Supports prefix matching on conversation ID.
+
+    Args:
+        conversation_id: Full or prefix of conversation ULID.
+        db_path: Path to database. Uses default if not specified.
+
+    Returns:
+        ConversationDetail with timeline, or None if not found.
+
+    Raises:
+        FileNotFoundError: If database does not exist.
+    """
+    db = db_path or default_db_path()
+
+    if not db.exists():
+        raise FileNotFoundError(f"Database not found: {db}")
+
+    conn = open_database(db, read_only=True)
+
+    # Find conversation (support prefix match)
+    conv = conn.execute(
+        "SELECT c.id, c.started_at, w.path AS workspace "
+        "FROM conversations c LEFT JOIN workspaces w ON w.id = c.workspace_id "
+        "WHERE c.id = ? OR c.id LIKE ?",
+        (conversation_id, f"{conversation_id}%"),
+    ).fetchone()
+
+    if not conv:
+        conn.close()
+        return None
+
+    conv_id = conv["id"]
+
+    # Model (most frequent)
+    model_row = conn.execute(
+        "SELECT m.name FROM responses r "
+        "LEFT JOIN models m ON m.id = r.model_id "
+        "WHERE r.conversation_id = ? "
+        "GROUP BY m.name ORDER BY COUNT(*) DESC LIMIT 1",
+        (conv_id,),
+    ).fetchone()
+    model_name = model_row["name"] if model_row else None
+
+    # Token totals
+    totals = conn.execute(
+        "SELECT COALESCE(SUM(input_tokens), 0) AS input_tok, "
+        "COALESCE(SUM(output_tokens), 0) AS output_tok "
+        "FROM responses WHERE conversation_id = ?",
+        (conv_id,),
+    ).fetchone()
+    total_input = totals["input_tok"]
+    total_output = totals["output_tok"]
+
+    # Fetch prompts
+    prompts = conn.execute(
+        "SELECT id, timestamp FROM prompts WHERE conversation_id = ? ORDER BY timestamp",
+        (conv_id,),
+    ).fetchall()
+
+    # Fetch prompt text content
+    prompt_texts: dict[str, str] = {}
+    for p in prompts:
+        blocks = conn.execute(
+            "SELECT content FROM prompt_content "
+            "WHERE prompt_id = ? AND block_type = 'text' ORDER BY block_index",
+            (p["id"],),
+        ).fetchall()
+        parts = [_extract_text(b["content"]) for b in blocks]
+        prompt_texts[p["id"]] = " ".join(parts).strip()
+
+    # Fetch responses
+    responses = conn.execute(
+        "SELECT id, prompt_id, timestamp, input_tokens, output_tokens "
+        "FROM responses WHERE conversation_id = ? ORDER BY timestamp",
+        (conv_id,),
+    ).fetchall()
+
+    # Fetch response text content
+    response_texts: dict[str, str] = {}
+    for r in responses:
+        blocks = conn.execute(
+            "SELECT content FROM response_content "
+            "WHERE response_id = ? AND block_type = 'text' ORDER BY block_index",
+            (r["id"],),
+        ).fetchall()
+        parts = [_extract_text(b["content"]) for b in blocks]
+        response_texts[r["id"]] = " ".join(parts).strip()
+
+    # Fetch tool calls grouped by response
+    tool_calls = conn.execute(
+        "SELECT tc.response_id, t.name AS tool_name, tc.status "
+        "FROM tool_calls tc "
+        "LEFT JOIN tools t ON t.id = tc.tool_id "
+        "WHERE tc.conversation_id = ? "
+        "ORDER BY tc.timestamp",
+        (conv_id,),
+    ).fetchall()
+
+    tc_by_response: dict[str, list] = {}
+    for tc in tool_calls:
+        tc_by_response.setdefault(tc["response_id"], []).append(tc)
+
+    # Build exchanges: pair prompts with their responses
+    # Group responses by prompt_id
+    responses_by_prompt: dict[str, list] = {}
+    for r in responses:
+        if r["prompt_id"]:
+            responses_by_prompt.setdefault(r["prompt_id"], []).append(r)
+
+    exchanges = []
+    for p in prompts:
+        prompt_id = p["id"]
+        prompt_text = prompt_texts.get(prompt_id, "")
+
+        # Get responses for this prompt
+        prompt_responses = responses_by_prompt.get(prompt_id, [])
+        if not prompt_responses:
+            # Prompt with no response yet
+            exchanges.append(
+                Exchange(
+                    timestamp=p["timestamp"],
+                    prompt_text=prompt_text or None,
+                    response_text=None,
+                    input_tokens=0,
+                    output_tokens=0,
+                    tool_calls=[],
+                )
+            )
+            continue
+
+        # Usually one response per prompt, but handle multiple
+        for r in prompt_responses:
+            response_text = response_texts.get(r["id"], "")
+
+            # Collapse consecutive same tool+status calls
+            tcs = tc_by_response.get(r["id"], [])
+            collapsed_tools = _collapse_tool_calls(tcs)
+
+            exchanges.append(
+                Exchange(
+                    timestamp=r["timestamp"] or p["timestamp"],
+                    prompt_text=prompt_text or None,
+                    response_text=response_text or None,
+                    input_tokens=r["input_tokens"] or 0,
+                    output_tokens=r["output_tokens"] or 0,
+                    tool_calls=collapsed_tools,
+                )
+            )
+
+    # Fetch tags
+    tag_rows = conn.execute(
+        "SELECT t.name FROM conversation_tags ct "
+        "JOIN tags t ON t.id = ct.tag_id "
+        "WHERE ct.conversation_id = ? ORDER BY t.name",
+        (conv_id,),
+    ).fetchall()
+    tags = [tr["name"] for tr in tag_rows]
+
+    conn.close()
+
+    return ConversationDetail(
+        id=conv_id,
+        workspace_path=conv["workspace"],
+        model=model_name,
+        started_at=conv["started_at"],
+        total_input_tokens=total_input,
+        total_output_tokens=total_output,
+        exchanges=exchanges,
+        tags=tags,
+    )
+
+
+def _collapse_tool_calls(tool_calls: list) -> list[ToolCallSummary]:
+    """Collapse consecutive tool calls with same name+status."""
+    if not tool_calls:
+        return []
+
+    collapsed = []
+    prev_key = None
+    count = 0
+
+    for tc in tool_calls:
+        name = tc["tool_name"] or "unknown"
+        status = tc["status"] or "unknown"
+        key = (name, status)
+
+        if key == prev_key:
+            count += 1
+        else:
+            if prev_key is not None:
+                collapsed.append(
+                    ToolCallSummary(tool_name=prev_key[0], status=prev_key[1], count=count)
+                )
+            prev_key = key
+            count = 1
+
+    if prev_key is not None:
+        collapsed.append(
+            ToolCallSummary(tool_name=prev_key[0], status=prev_key[1], count=count)
+        )
+
+    return collapsed
+
+
+# =============================================================================
+# User-defined SQL query files
+# =============================================================================
+
+
+@dataclass
+class QueryFile:
+    """Metadata about a user-defined SQL query file."""
+
+    name: str
+    path: Path
+    variables: list[str]
+
+
+@dataclass
+class QueryResult:
+    """Result of running a SQL query file."""
+
+    columns: list[str]
+    rows: list[list]
+
+
+def list_query_files() -> list[QueryFile]:
+    """List available user-defined SQL query files.
+
+    Scans the queries directory for .sql files and extracts variable names.
+
+    Returns:
+        List of QueryFile with name, path, and required variables.
+    """
+    import re
+
+    from siftd.paths import queries_dir
+
+    qdir = queries_dir()
+    if not qdir.exists():
+        return []
+
+    var_pattern = re.compile(r"\$\{(\w+)\}|\$(\w+)")
+    result = []
+
+    for f in sorted(qdir.glob("*.sql")):
+        matches = var_pattern.findall(f.read_text())
+        var_names = sorted(set(m[0] or m[1] for m in matches))
+        result.append(QueryFile(name=f.stem, path=f, variables=var_names))
+
+    return result
+
+
+class QueryError(Exception):
+    """Error running a SQL query file."""
+
+    pass
+
+
+def run_query_file(
+    name: str,
+    variables: dict[str, str] | None = None,
+    *,
+    db_path: Path | None = None,
+) -> QueryResult:
+    """Run a user-defined SQL query file.
+
+    Args:
+        name: Query file name (without .sql extension).
+        variables: Dict of variable substitutions ($var or ${var}).
+        db_path: Path to database. Uses default if not specified.
+
+    Returns:
+        QueryResult with columns and rows.
+
+    Raises:
+        FileNotFoundError: If database or query file doesn't exist.
+        QueryError: If variables are missing or SQL fails.
+    """
+    import re
+    import sqlite3
+    from string import Template
+
+    from siftd.paths import queries_dir
+
+    db = db_path or default_db_path()
+    if not db.exists():
+        raise FileNotFoundError(f"Database not found: {db}")
+
+    qdir = queries_dir()
+    sql_file = qdir / f"{name}.sql"
+    if not sql_file.exists():
+        raise FileNotFoundError(f"Query file not found: {sql_file}")
+
+    sql = sql_file.read_text()
+
+    # Variable substitution
+    if variables:
+        sql = Template(sql).safe_substitute(variables)
+    else:
+        sql = Template(sql).safe_substitute()
+
+    # Check for unsubstituted variables
+    remaining = re.findall(r"\$\{(\w+)\}|\$(\w+)", sql)
+    if remaining:
+        missing = sorted(set(m[0] or m[1] for m in remaining))
+        raise QueryError(f"Missing variables: {', '.join(missing)}")
+
+    # Execute
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+
+    try:
+        statements = [s.strip() for s in sql.split(";") if s.strip()]
+        last_rows = None
+        for stmt in statements:
+            cursor = conn.execute(stmt)
+            if cursor.description:
+                last_rows = (cursor.description, cursor.fetchall())
+
+        if last_rows:
+            desc, rows = last_rows
+            columns = [d[0] for d in desc]
+            row_data = [
+                [v if v is not None else None for v in row] for row in rows
+            ]
+            return QueryResult(columns=columns, rows=row_data)
+        else:
+            return QueryResult(columns=[], rows=[])
+
+    except sqlite3.Error as e:
+        raise QueryError(f"SQL error: {e}") from e
+    finally:
+        conn.close()

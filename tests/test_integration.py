@@ -8,12 +8,12 @@ from pathlib import Path
 
 from conftest import FIXTURES_DIR, make_conversation
 
-from strata.adapters import claude_code
-from strata.api import get_conversation, get_stats, list_conversations
-from strata.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall, Usage
-from strata.domain.source import Source
-from strata.ingestion.orchestration import ingest_all
-from strata.storage.sqlite import (
+from siftd.adapters import claude_code
+from siftd.api import get_conversation, get_stats, list_conversations
+from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall, Usage
+from siftd.domain.source import Source
+from siftd.ingestion.orchestration import ingest_all
+from siftd.storage.sqlite import (
     create_database,
     open_database,
     rebuild_fts_index,

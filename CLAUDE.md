@@ -4,7 +4,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ```bash
 uv pip install .           # core (FTS5 search, tags, queries)
-uv pip install .[embed]    # with semantic search (strata ask)
+uv pip install .[embed]    # with semantic search (siftd ask)
 ```
 
 ## Architecture
@@ -33,24 +33,24 @@ Core loop: **Ingest → Store → Query**
 
 - `commit=False` default on storage functions; caller controls transaction boundaries
 - ULIDs for all primary keys
-- XDG paths: data `~/.local/share/strata`, config `~/.config/strata`
+- XDG paths: data `~/.local/share/siftd`, config `~/.config/siftd`
 - New CLI commands follow existing argparse patterns in `src/cli.py`
 - New adapters implement `can_handle(source)`, `parse(source)`, `discover()`, set `HARNESS_SOURCE`
-- Queries go in `~/.config/strata/queries/*.sql`, use `$var` for parameters
+- Queries go in `~/.config/siftd/queries/*.sql`, use `$var` for parameters
 
-## Agent Memory (strata)
+## Agent Memory (siftd)
 
 Search past conversations:
 ```
-strata ask "your query"              # semantic search
-strata ask -w projectname "query"    # filter by workspace
-strata query <id>                    # drill down into conversation
+siftd ask "your query"              # semantic search
+siftd ask -w projectname "query"    # filter by workspace
+siftd query <id>                    # drill down into conversation
 ```
 
 Tag useful findings:
 ```
-strata tag <id> research:<topic>   # bookmark for later
-strata query -l research:<topic>   # retrieve tagged
+siftd tag <id> research:<topic>   # bookmark for later
+siftd query -l research:<topic>   # retrieve tagged
 ```
 
 Tag conventions:
@@ -61,9 +61,9 @@ Tag conventions:
 - `rationale:*` — Why we chose X over Y
 - `genesis:*` — First mention of a concept
 
-When you find something useful via `strata ask`, tag it before moving on.
+When you find something useful via `siftd ask`, tag it before moving on.
 
 Before ending a session that updates HANDOFF.md:
 ```
-strata tag --last handoff:update
+siftd tag --last handoff:update
 ```

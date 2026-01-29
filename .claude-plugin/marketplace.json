@@ -1,16 +1,16 @@
 {
-  "name": "strata",
+  "name": "siftd",
   "owner": {
     "name": "kaygee",
     "url": "https://github.com/kgruel"
   },
   "metadata": {
-    "description": "Strata plugin marketplace — conversation research for Claude Code agents",
+    "description": "Siftd plugin marketplace — conversation research for Claude Code agents",
     "version": "1.0.0"
   },
   "plugins": [
     {
-      "name": "strata",
+      "name": "siftd",
       "source": "./plugin",
       "description": "Search and research past conversations from CLI coding sessions",
       "version": "1.0.0",
@@ -18,7 +18,7 @@
         "name": "kaygee",
         "url": "https://github.com/kgruel"
       },
-      "repository": "https://github.com/kgruel/strata",
+      "repository": "https://github.com/kgruel/siftd",
       "license": "MIT",
       "keywords": ["conversations", "search", "research", "history", "analytics"],
       "category": "productivity",

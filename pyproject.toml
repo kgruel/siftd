@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "strata"
+name = "siftd"
 version = "0.1.0"
 description = "Personal LLM usage analytics. Ingest conversation logs from CLI coding tools, query via FTS5 and semantic search."
 readme = "README.md"
@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [project.scripts]
-strata = "strata.cli:main"
+siftd = "siftd.cli:main"
 
 [project.optional-dependencies]
 embed = [
@@ -44,7 +44,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/strata"]
+packages = ["src/siftd"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

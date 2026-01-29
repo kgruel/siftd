@@ -9,10 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean, median
 
-# bench/ is not a package — add src/ to path so strata imports work
+# bench/ is not a package — add src/ to path so siftd imports work
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from strata.storage.embeddings import search_similar  # noqa: E402
+from siftd.storage.embeddings import search_similar  # noqa: E402
 
 
 def enrich_results(results: list[dict], main_db: sqlite3.Connection) -> list[dict]:
@@ -123,7 +123,7 @@ def run_bench(
 
     use_mmr = rerank_mode == "mmr"
     if use_mmr:
-        from strata.search import mmr_rerank
+        from siftd.search import mmr_rerank
 
     main_db = sqlite3.connect(main_db_path)
     main_db.row_factory = sqlite3.Row
@@ -145,7 +145,7 @@ def run_bench(
             for query_text in group["queries"]:
                 conversation_ids = None
                 if hybrid:
-                    from strata.storage.sqlite import fts5_recall_conversations
+                    from siftd.storage.sqlite import fts5_recall_conversations
                     fts5_ids, fts5_mode = fts5_recall_conversations(main_db, query_text, limit=recall_limit)
                     db_recall_meta[query_text] = {
                         "fts5_conversations": len(fts5_ids),
@@ -409,8 +409,8 @@ def main():
     parser.add_argument(
         "--db",
         type=Path,
-        default=Path.home() / ".local/share/strata/strata.db",
-        help="Path to main strata.db (default: ~/.local/share/strata/strata.db)",
+        default=Path.home() / ".local/share/siftd/siftd.db",
+        help="Path to main siftd.db (default: ~/.local/share/siftd/siftd.db)",
     )
     parser.add_argument(
         "--strategy",
@@ -499,7 +499,7 @@ def main():
         params[key] = value
 
     # Initialize backend
-    from strata.embeddings.fastembed_backend import FastEmbedBackend
+    from siftd.embeddings.fastembed_backend import FastEmbedBackend
     print("Initializing embedding model...", file=sys.stderr)
     backend = FastEmbedBackend()
     tokenizer = get_tokenizer(backend)

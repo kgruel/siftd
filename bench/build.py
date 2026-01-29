@@ -12,18 +12,18 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# bench/ is not a package — add src/ to path so strata imports work
+# bench/ is not a package — add src/ to path so siftd imports work
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from strata.embeddings.fastembed_backend import FastEmbedBackend
-from strata.paths import data_dir
-from strata.storage.embeddings import open_embeddings_db, store_chunk, set_meta
+from siftd.embeddings.fastembed_backend import FastEmbedBackend
+from siftd.paths import data_dir
+from siftd.storage.embeddings import open_embeddings_db, store_chunk, set_meta
 
 
 def extract_chunks(main_conn: sqlite3.Connection, params: dict) -> list[dict]:
     """Extract chunks from main DB using the exchange-window chunker."""
     from fastembed import TextEmbedding
-    from strata.embeddings.chunker import extract_exchange_window_chunks
+    from siftd.embeddings.chunker import extract_exchange_window_chunks
 
     target_tokens = params.get("target_tokens", 256)
     max_tokens = params.get("max_tokens", 512)
@@ -93,7 +93,7 @@ def main():
     parser = argparse.ArgumentParser(description="Build embeddings DB from a strategy file")
     parser.add_argument("--strategy", type=Path, required=True, help="Path to strategy JSON file")
     parser.add_argument("--output", type=Path, default=None, help="Output embeddings DB path")
-    parser.add_argument("--db", type=Path, default=None, help="Path to main strata.db")
+    parser.add_argument("--db", type=Path, default=None, help="Path to main siftd.db")
     args = parser.parse_args()
 
     if not args.strategy.exists():
@@ -101,7 +101,7 @@ def main():
         sys.exit(1)
 
     # Resolve main DB path
-    db = args.db or (data_dir() / "strata.db")
+    db = args.db or (data_dir() / "siftd.db")
     if not db.exists():
         print(f"Main DB not found: {db}")
         sys.exit(1)

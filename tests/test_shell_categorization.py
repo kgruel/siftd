@@ -2,7 +2,7 @@
 
 import pytest
 
-from strata.storage.sqlite import categorize_shell_command
+from siftd.storage.sqlite import categorize_shell_command
 
 
 @pytest.mark.parametrize(

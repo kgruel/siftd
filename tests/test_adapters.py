@@ -12,8 +12,8 @@ import pytest
 
 from conftest import FIXTURES_DIR
 
-from strata.domain.source import Source
-from strata.adapters import aider, claude_code, codex_cli, gemini_cli
+from siftd.domain.source import Source
+from siftd.adapters import aider, claude_code, codex_cli, gemini_cli
 
 
 class TestClaudeCodeAdapter:

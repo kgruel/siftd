@@ -6,7 +6,7 @@ OUTPUT="${1:-docs/cli.md}"
 mkdir -p "$(dirname "$OUTPUT")"
 
 # Generate from the in-repo source tree so docs stay in sync with code changes.
-CLI=(env PYTHONPATH=src python3 -m strata.cli)
+CLI=(env PYTHONPATH=src python3 -m siftd.cli)
 
 sanitize_paths() {
     # Replace absolute $HOME paths with ~ for portable docs.
@@ -14,7 +14,7 @@ sanitize_paths() {
 }
 
 {
-    echo "# strata CLI Reference"
+    echo "# siftd CLI Reference"
     echo ""
     echo "_Auto-generated from \`--help\` output._"
     echo ""

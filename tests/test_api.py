@@ -6,7 +6,7 @@ import pytest
 
 from conftest import make_conversation
 
-from strata.api import (
+from siftd.api import (
     ConversationDetail,
     ConversationSummary,
     DatabaseStats,
@@ -18,8 +18,8 @@ from strata.api import (
     get_tool_tags_by_workspace,
     list_conversations,
 )
-from strata.api.search import ConversationScore, aggregate_by_conversation, first_mention
-from strata.search import SearchResult
+from siftd.api.search import ConversationScore, aggregate_by_conversation, first_mention
+from siftd.search import SearchResult
 
 
 class TestGetStats:
@@ -370,8 +370,8 @@ class TestIngestTimeShellTagging:
 
     def test_shell_execute_tagged_at_ingest(self, tmp_path):
         """store_conversation() auto-tags shell.execute calls with categorizable commands."""
-        from strata.domain.models import ToolCall
-        from strata.storage.sqlite import create_database, store_conversation
+        from siftd.domain.models import ToolCall
+        from siftd.storage.sqlite import create_database, store_conversation
 
         db_path = tmp_path / "test_ingest_tags.db"
         conn = create_database(db_path)
@@ -403,8 +403,8 @@ class TestIngestTimeShellTagging:
 
     def test_uncategorized_command_not_tagged(self, tmp_path):
         """Commands that don't match any category are not tagged."""
-        from strata.domain.models import ToolCall
-        from strata.storage.sqlite import create_database, store_conversation
+        from siftd.domain.models import ToolCall
+        from siftd.storage.sqlite import create_database, store_conversation
 
         db_path = tmp_path / "test_no_tags.db"
         conn = create_database(db_path)

@@ -19,7 +19,7 @@ Example:
 import argparse
 import sys
 
-from strata.api import get_conversation, hybrid_search
+from siftd.api import get_conversation, hybrid_search
 
 
 def find_tech_decisions(

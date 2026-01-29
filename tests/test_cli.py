@@ -2,24 +2,24 @@
 
 import pytest
 
-from strata.cli import main
+from siftd.cli import main
 
 
 def test_help_exits_zero():
-    """strata --help exits with code 0."""
+    """siftd --help exits with code 0."""
     with pytest.raises(SystemExit) as exc_info:
         main(["--help"])
     assert exc_info.value.code == 0
 
 
 def test_status_with_db(test_db):
-    """strata --db <path> status runs successfully."""
+    """siftd --db <path> status runs successfully."""
     rc = main(["--db", str(test_db), "status"])
     assert rc == 0
 
 
 def test_query_with_db(test_db):
-    """strata --db <path> query lists conversations."""
+    """siftd --db <path> query lists conversations."""
     rc = main(["--db", str(test_db), "query"])
     assert rc == 0
 
@@ -32,8 +32,8 @@ def test_unknown_subcommand():
 
 
 def test_tag_bulk_apply(test_db, capsys):
-    """strata tag <id> tag1 tag2 tag3 applies all tags in one call."""
-    from strata.storage.sqlite import open_database
+    """siftd tag <id> tag1 tag2 tag3 applies all tags in one call."""
+    from siftd.storage.sqlite import open_database
 
     conn = open_database(test_db)
     conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
@@ -61,8 +61,8 @@ def test_tag_bulk_apply(test_db, capsys):
 
 
 def test_tag_bulk_remove(test_db, capsys):
-    """strata tag --remove <id> tag1 tag2 removes multiple tags."""
-    from strata.storage.sqlite import open_database
+    """siftd tag --remove <id> tag1 tag2 removes multiple tags."""
+    from siftd.storage.sqlite import open_database
 
     conn = open_database(test_db)
     conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]

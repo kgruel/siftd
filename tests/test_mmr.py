@@ -2,7 +2,7 @@
 
 import pytest
 
-from strata.search import mmr_rerank
+from siftd.search import mmr_rerank
 
 
 # ---------------------------------------------------------------------------

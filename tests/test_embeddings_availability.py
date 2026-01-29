@@ -8,14 +8,14 @@ class TestEmbeddingsAvailability:
 
     def test_embeddings_available_returns_bool(self):
         """embeddings_available() returns a boolean."""
-        from strata.embeddings import embeddings_available
+        from siftd.embeddings import embeddings_available
 
         result = embeddings_available()
         assert isinstance(result, bool)
 
     def test_availability_is_cached(self, monkeypatch):
         """Result is cached after first check."""
-        import strata.embeddings.availability as avail
+        import siftd.embeddings.availability as avail
 
         # Reset cached value
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", None)
@@ -32,7 +32,7 @@ class TestEmbeddingsAvailability:
 
     def test_require_embeddings_does_nothing_when_available(self, monkeypatch):
         """require_embeddings() passes silently when deps are installed."""
-        import strata.embeddings.availability as avail
+        import siftd.embeddings.availability as avail
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
 
@@ -41,7 +41,7 @@ class TestEmbeddingsAvailability:
 
     def test_require_embeddings_raises_when_unavailable(self, monkeypatch):
         """require_embeddings() raises EmbeddingsNotAvailable when deps missing."""
-        import strata.embeddings.availability as avail
+        import siftd.embeddings.availability as avail
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 
@@ -49,19 +49,19 @@ class TestEmbeddingsAvailability:
             avail.require_embeddings("Semantic search")
 
         assert "Semantic search" in str(exc_info.value)
-        assert "pip install strata[embed]" in str(exc_info.value)
-        assert "strata query -s" in str(exc_info.value)
+        assert "pip install siftd[embed]" in str(exc_info.value)
+        assert "siftd query -s" in str(exc_info.value)
 
     def test_exception_message_includes_install_hint(self, monkeypatch):
         """EmbeddingsNotAvailable message tells user how to install."""
-        import strata.embeddings.availability as avail
+        import siftd.embeddings.availability as avail
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 
         try:
             avail.require_embeddings("Building index")
         except avail.EmbeddingsNotAvailable as e:
-            assert "pip install strata[embed]" in e.message
+            assert "pip install siftd[embed]" in e.message
             assert "Building index" in e.message
 
 
@@ -70,7 +70,7 @@ class TestEmbeddingsModuleExports:
 
     def test_always_exports_availability_functions(self):
         """Availability functions are always exported."""
-        from strata.embeddings import (
+        from siftd.embeddings import (
             EmbeddingsNotAvailable,
             embeddings_available,
             require_embeddings,
@@ -82,11 +82,11 @@ class TestEmbeddingsModuleExports:
 
     def test_conditional_exports_match_availability(self):
         """Backend exports only present when embeddings available."""
-        from strata.embeddings import embeddings_available
+        from siftd.embeddings import embeddings_available
 
         if embeddings_available():
             # Should be able to import these
-            from strata.embeddings import (
+            from siftd.embeddings import (
                 EmbeddingBackend,
                 IndexStats,
                 build_embeddings_index,
@@ -100,7 +100,7 @@ class TestEmbeddingsModuleExports:
             assert IndexStats is not None
         else:
             # These should not be importable
-            import strata.embeddings as emb
+            import siftd.embeddings as emb
 
             assert not hasattr(emb, "get_backend")
             assert not hasattr(emb, "EmbeddingBackend")
@@ -112,8 +112,8 @@ class TestDoctorChecks:
 
     def test_embeddings_stale_check_skips_when_unavailable(self, tmp_path, monkeypatch):
         """EmbeddingsStaleCheck returns no findings when embeddings not installed."""
-        import strata.embeddings.availability as avail
-        from strata.doctor.checks import CheckContext, EmbeddingsStaleCheck
+        import siftd.embeddings.availability as avail
+        from siftd.doctor.checks import CheckContext, EmbeddingsStaleCheck
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 
@@ -132,8 +132,8 @@ class TestDoctorChecks:
 
     def test_orphaned_chunks_check_skips_when_unavailable(self, tmp_path, monkeypatch):
         """OrphanedChunksCheck returns no findings when embeddings not installed."""
-        import strata.embeddings.availability as avail
-        from strata.doctor.checks import CheckContext, OrphanedChunksCheck
+        import siftd.embeddings.availability as avail
+        from siftd.doctor.checks import CheckContext, OrphanedChunksCheck
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 
@@ -152,8 +152,8 @@ class TestDoctorChecks:
 
     def test_embeddings_available_check_reports_when_db_exists(self, tmp_path, monkeypatch):
         """EmbeddingsAvailableCheck reports info when DB exists but deps missing."""
-        import strata.embeddings.availability as avail
-        from strata.doctor.checks import CheckContext, EmbeddingsAvailableCheck
+        import siftd.embeddings.availability as avail
+        from siftd.doctor.checks import CheckContext, EmbeddingsAvailableCheck
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 
@@ -178,8 +178,8 @@ class TestDoctorChecks:
 
     def test_embeddings_available_check_silent_when_no_db(self, tmp_path, monkeypatch):
         """EmbeddingsAvailableCheck returns nothing when no embeddings DB exists."""
-        import strata.embeddings.availability as avail
-        from strata.doctor.checks import CheckContext, EmbeddingsAvailableCheck
+        import siftd.embeddings.availability as avail
+        from siftd.doctor.checks import CheckContext, EmbeddingsAvailableCheck
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 

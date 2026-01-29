@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from strata.storage.sqlite import (
+from siftd.storage.sqlite import (
     create_database,
     get_or_create_harness,
     get_or_create_model,
@@ -18,7 +18,7 @@ from strata.storage.sqlite import (
     insert_tool_call,
     open_database,
 )
-from strata.storage.tags import (
+from siftd.storage.tags import (
     DERIVATIVE_TAG,
     is_derivative_tool_call,
     tag_derivative_conversation,
@@ -32,29 +32,29 @@ from strata.storage.tags import (
 class TestIsDerivativeToolCall:
     """Unit tests for is_derivative_tool_call()."""
 
-    def test_shell_strata_ask(self):
-        assert is_derivative_tool_call("shell.execute", {"command": "strata ask 'some query'"})
+    def test_shell_siftd_ask(self):
+        assert is_derivative_tool_call("shell.execute", {"command": "siftd ask 'some query'"})
 
-    def test_shell_strata_query(self):
-        assert is_derivative_tool_call("shell.execute", {"command": "strata query abc123"})
+    def test_shell_siftd_query(self):
+        assert is_derivative_tool_call("shell.execute", {"command": "siftd query abc123"})
 
-    def test_shell_strata_ask_with_flags(self):
-        assert is_derivative_tool_call("shell.execute", {"command": "strata ask -w myproject 'query'"})
+    def test_shell_siftd_ask_with_flags(self):
+        assert is_derivative_tool_call("shell.execute", {"command": "siftd ask -w myproject 'query'"})
 
     def test_shell_cmd_key(self):
         """Some adapters use 'cmd' instead of 'command'."""
-        assert is_derivative_tool_call("shell.execute", {"cmd": "strata ask 'test'"})
+        assert is_derivative_tool_call("shell.execute", {"cmd": "siftd ask 'test'"})
 
     def test_shell_non_matching_command(self):
         assert not is_derivative_tool_call("shell.execute", {"command": "pytest tests/"})
 
-    def test_shell_strata_other_subcommand(self):
-        """strata ingest, strata tag, etc. are NOT derivative."""
-        assert not is_derivative_tool_call("shell.execute", {"command": "strata ingest"})
-        assert not is_derivative_tool_call("shell.execute", {"command": "strata tag abc123 foo"})
+    def test_shell_siftd_other_subcommand(self):
+        """siftd ingest, siftd tag, etc. are NOT derivative."""
+        assert not is_derivative_tool_call("shell.execute", {"command": "siftd ingest"})
+        assert not is_derivative_tool_call("shell.execute", {"command": "siftd tag abc123 foo"})
 
-    def test_skill_invoke_strata(self):
-        assert is_derivative_tool_call("skill.invoke", {"skill": "strata"})
+    def test_skill_invoke_siftd(self):
+        assert is_derivative_tool_call("skill.invoke", {"skill": "siftd"})
 
     def test_skill_invoke_other(self):
         assert not is_derivative_tool_call("skill.invoke", {"skill": "commit"})
@@ -101,7 +101,7 @@ class TestTagDerivativeConversation:
 
     def test_tags_matching_conversation(self, conn):
         result = tag_derivative_conversation(
-            conn, self.conv_id, "shell.execute", {"command": "strata ask 'test'"},
+            conn, self.conv_id, "shell.execute", {"command": "siftd ask 'test'"},
         )
         assert result is True
 
@@ -129,10 +129,10 @@ class TestTagDerivativeConversation:
     def test_idempotent(self, conn):
         """Tagging the same conversation twice doesn't duplicate."""
         tag_derivative_conversation(
-            conn, self.conv_id, "shell.execute", {"command": "strata ask 'q1'"},
+            conn, self.conv_id, "shell.execute", {"command": "siftd ask 'q1'"},
         )
         result = tag_derivative_conversation(
-            conn, self.conv_id, "shell.execute", {"command": "strata ask 'q2'"},
+            conn, self.conv_id, "shell.execute", {"command": "siftd ask 'q2'"},
         )
         # Second call returns False (already tagged)
         assert result is False
@@ -153,9 +153,9 @@ class TestBackfillDerivativeTags:
 
     @pytest.fixture
     def db_with_tool_calls(self, tmp_path):
-        """DB with 3 conversations: one derivative (strata ask), one derivative
-        (strata query), one normal."""
-        from strata.storage.tags import apply_tag, get_or_create_tag
+        """DB with 3 conversations: one derivative (siftd ask), one derivative
+        (siftd query), one normal."""
+        from siftd.storage.tags import apply_tag, get_or_create_tag
 
         db_path = tmp_path / "backfill.db"
         conn = create_database(db_path)
@@ -165,7 +165,7 @@ class TestBackfillDerivativeTags:
         model_id = get_or_create_model(conn, "test-model")
         shell_tool_id = get_or_create_tool(conn, "shell.execute")
 
-        # Conv 1: derivative (strata ask)
+        # Conv 1: derivative (siftd ask)
         conv1 = insert_conversation(
             conn, external_id="c1", harness_id=harness_id,
             workspace_id=ws_id, started_at="2024-01-01T00:00:00Z",
@@ -175,10 +175,10 @@ class TestBackfillDerivativeTags:
         r1 = insert_response(conn, conv1, p1, model_id, None, "r1", "2024-01-01T00:00:01Z",
                              input_tokens=10, output_tokens=5)
         insert_tool_call(conn, r1, conv1, shell_tool_id, "tc1",
-                         json.dumps({"command": "strata ask 'some query'"}),
+                         json.dumps({"command": "siftd ask 'some query'"}),
                          '{"output": "results"}', "success", "2024-01-01T00:00:01Z")
 
-        # Conv 2: derivative (strata query)
+        # Conv 2: derivative (siftd query)
         conv2 = insert_conversation(
             conn, external_id="c2", harness_id=harness_id,
             workspace_id=ws_id, started_at="2024-01-02T00:00:00Z",
@@ -188,7 +188,7 @@ class TestBackfillDerivativeTags:
         r2 = insert_response(conn, conv2, p2, model_id, None, "r2", "2024-01-02T00:00:01Z",
                              input_tokens=10, output_tokens=5)
         insert_tool_call(conn, r2, conv2, shell_tool_id, "tc2",
-                         json.dumps({"command": "strata query abc123"}),
+                         json.dumps({"command": "siftd query abc123"}),
                          '{"output": "details"}', "success", "2024-01-02T00:00:01Z")
 
         # Conv 3: normal (pytest)
@@ -209,7 +209,7 @@ class TestBackfillDerivativeTags:
         return db_path
 
     def test_backfill_tags_derivative_conversations(self, db_with_tool_calls):
-        from strata.backfill import backfill_derivative_tags
+        from siftd.backfill import backfill_derivative_tags
 
         conn = open_database(db_with_tool_calls)
         count = backfill_derivative_tags(conn)
@@ -227,7 +227,7 @@ class TestBackfillDerivativeTags:
         conn.close()
 
     def test_backfill_skips_already_tagged(self, db_with_tool_calls):
-        from strata.backfill import backfill_derivative_tags
+        from siftd.backfill import backfill_derivative_tags
 
         conn = open_database(db_with_tool_calls)
         # First run
@@ -239,7 +239,7 @@ class TestBackfillDerivativeTags:
 
     def test_backfill_returns_zero_when_no_tools(self, tmp_path):
         """Empty DB with no tool calls returns 0."""
-        from strata.backfill import backfill_derivative_tags
+        from siftd.backfill import backfill_derivative_tags
 
         db_path = tmp_path / "empty.db"
         conn = create_database(db_path)

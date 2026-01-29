@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from strata.output import (
+from siftd.output import (
     ChunkListFormatter,
     FormatterContext,
     JsonFormatter,
@@ -16,7 +16,7 @@ from strata.output import (
     get_formatter,
     select_formatter,
 )
-from strata.output.registry import (
+from siftd.output.registry import (
     FormatterRegistry,
     _validate_formatter,
     load_dropin_formatters,
@@ -29,7 +29,7 @@ def formatter_db(tmp_path):
 
     Returns (conn, conv_id) so sample_results can reference the real ID.
     """
-    from strata.storage.sqlite import (
+    from siftd.storage.sqlite import (
         create_database,
         get_or_create_workspace,
         get_or_create_harness,

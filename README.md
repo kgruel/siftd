@@ -1,4 +1,4 @@
-# strata
+# siftd
 
 Ingest and query conversation logs from LLM coding tools. Stores in SQLite, searches via FTS5 and embeddings.
 
@@ -7,27 +7,27 @@ Warning: This project is under active development and breaking changes may occur
 ## Install
 
 ```bash
-pip install strata              # core (query, tags, ingest)
-pip install strata[embed]       # with semantic search
+pip install siftd              # core (query, tags, ingest)
+pip install siftd[embed]       # with semantic search
 ```
 
 ## Usage
 
 ```bash
 # Ingest logs from Claude Code, Gemini CLI, Codex, Aider
-strata ingest
+siftd ingest
 
 # List recent conversations
-strata query -w .               # current workspace
-strata query --since 7d         # last week
+siftd query -w .               # current workspace
+siftd query --since 7d         # last week
 
 # Semantic search (requires [embed])
-strata ask "how did I handle auth"
-strata ask -w myproject "error handling"
+siftd ask "how did I handle auth"
+siftd ask -w myproject "error handling"
 
 # Tag and filter
-strata tag 01JGK3 decision:auth
-strata query -l decision:
+siftd tag 01JGK3 decision:auth
+siftd query -l decision:
 ```
 
 ## Supported Tools

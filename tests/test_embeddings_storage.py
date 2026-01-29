@@ -3,7 +3,7 @@
 import math
 import sqlite3
 
-from strata.storage.embeddings import (
+from siftd.storage.embeddings import (
     open_embeddings_db,
     prune_orphaned_chunks,
     search_similar,

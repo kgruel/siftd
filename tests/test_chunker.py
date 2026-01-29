@@ -5,7 +5,7 @@ import pytest
 pytest.importorskip("fastembed")
 
 from fastembed import TextEmbedding
-from strata.embeddings.chunker import chunk_text
+from siftd.embeddings.chunker import chunk_text
 
 
 @pytest.fixture(scope="module")

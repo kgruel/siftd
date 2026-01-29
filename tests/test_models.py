@@ -2,7 +2,7 @@
 
 import pytest
 
-from strata.models import parse_model_name
+from siftd.models import parse_model_name
 
 
 @pytest.mark.parametrize(

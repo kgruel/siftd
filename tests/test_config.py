@@ -10,18 +10,18 @@ import pytest
 def config_dir(tmp_path, monkeypatch):
     """Set up a temporary config directory."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    return tmp_path / "strata"
+    return tmp_path / "siftd"
 
 
 class TestLoadConfig:
     def test_missing_file_returns_empty(self, config_dir):
-        from strata.config import load_config
+        from siftd.config import load_config
 
         doc = load_config()
         assert len(doc) == 0
 
     def test_valid_config_loads(self, config_dir):
-        from strata.config import load_config
+        from siftd.config import load_config
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[ask]\nformatter = "verbose"\n')
@@ -30,7 +30,7 @@ class TestLoadConfig:
         assert doc["ask"]["formatter"] == "verbose"
 
     def test_invalid_toml_returns_empty(self, config_dir, capsys):
-        from strata.config import load_config
+        from siftd.config import load_config
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text("invalid [ toml")
@@ -44,7 +44,7 @@ class TestLoadConfig:
 
 class TestGetConfig:
     def test_get_existing_key(self, config_dir):
-        from strata.config import get_config
+        from siftd.config import get_config
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[ask]\nformatter = "json"\n')
@@ -52,7 +52,7 @@ class TestGetConfig:
         assert get_config("ask.formatter") == "json"
 
     def test_get_missing_key(self, config_dir):
-        from strata.config import get_config
+        from siftd.config import get_config
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[ask]\nformatter = "json"\n')
@@ -61,7 +61,7 @@ class TestGetConfig:
         assert get_config("nonexistent.key") is None
 
     def test_get_table_returns_none(self, config_dir):
-        from strata.config import get_config
+        from siftd.config import get_config
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[ask]\nformatter = "json"\n')
@@ -72,7 +72,7 @@ class TestGetConfig:
 
 class TestSetConfig:
     def test_set_creates_file(self, config_dir):
-        from strata.config import set_config
+        from siftd.config import set_config
 
         set_config("ask.formatter", "verbose")
 
@@ -80,7 +80,7 @@ class TestSetConfig:
         assert "verbose" in content
 
     def test_set_preserves_existing(self, config_dir):
-        from strata.config import set_config
+        from siftd.config import set_config
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('# My config\n[ask]\nformatter = "json"\n')
@@ -94,7 +94,7 @@ class TestSetConfig:
         assert "20" in content
 
     def test_set_updates_existing_key(self, config_dir):
-        from strata.config import get_config, set_config
+        from siftd.config import get_config, set_config
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[ask]\nformatter = "json"\n')
@@ -106,7 +106,7 @@ class TestSetConfig:
 
 class TestGetAskDefaults:
     def test_returns_formatter_as_format(self, config_dir):
-        from strata.config import get_ask_defaults
+        from siftd.config import get_ask_defaults
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[ask]\nformatter = "thread"\n')
@@ -116,7 +116,7 @@ class TestGetAskDefaults:
         assert defaults == {"format": "thread"}
 
     def test_empty_when_no_config(self, config_dir):
-        from strata.config import get_ask_defaults
+        from siftd.config import get_ask_defaults
 
         defaults = get_ask_defaults()
         assert defaults == {}
@@ -124,7 +124,7 @@ class TestGetAskDefaults:
 
 class TestApplyAskConfig:
     def test_applies_default_formatter(self, config_dir):
-        from strata.cli_ask import _apply_ask_config
+        from siftd.cli_ask import _apply_ask_config
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[ask]\nformatter = "verbose"\n')
@@ -144,7 +144,7 @@ class TestApplyAskConfig:
         assert args.format == "verbose"
 
     def test_cli_flag_overrides_config(self, config_dir):
-        from strata.cli_ask import _apply_ask_config
+        from siftd.cli_ask import _apply_ask_config
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[ask]\nformatter = "verbose"\n')
@@ -165,7 +165,7 @@ class TestApplyAskConfig:
         assert args.format is None
 
     def test_explicit_format_overrides_config(self, config_dir):
-        from strata.cli_ask import _apply_ask_config
+        from siftd.cli_ask import _apply_ask_config
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[ask]\nformatter = "verbose"\n')

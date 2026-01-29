@@ -15,10 +15,10 @@ import statistics
 import sys
 from pathlib import Path
 
-# bench/ is not a package — add src/ to path so strata imports work
+# bench/ is not a package — add src/ to path so siftd imports work
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from strata.paths import data_dir
+from siftd.paths import data_dir
 
 
 MODEL_MAX_TOKENS = 512
@@ -189,7 +189,7 @@ def main():
         "--embed-db",
         type=Path,
         default=None,
-        help="Path to embeddings DB (default: ~/.local/share/strata/embeddings.db)",
+        help="Path to embeddings DB (default: ~/.local/share/siftd/embeddings.db)",
     )
     args = parser.parse_args()
 

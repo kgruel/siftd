@@ -4,14 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from strata.api import (
+from siftd.api import (
     CheckInfo,
     Finding,
     FixResult,
     list_checks,
     run_checks,
 )
-from strata.doctor.checks import (
+from siftd.doctor.checks import (
     CheckContext,
     DropInsValidCheck,
     EmbeddingsStaleCheck,
@@ -137,7 +137,7 @@ class TestEmbeddingsStaleCheck:
 
     def test_no_embeddings_db(self, check_context, monkeypatch):
         """Reports info when embeddings DB doesn't exist."""
-        import strata.embeddings.availability as avail
+        import siftd.embeddings.availability as avail
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
 
         check = EmbeddingsStaleCheck()
@@ -147,14 +147,14 @@ class TestEmbeddingsStaleCheck:
         assert findings[0].severity == "info"
         assert "not found" in findings[0].message
         assert findings[0].fix_available is True
-        assert findings[0].fix_command == "strata ask --index"
+        assert findings[0].fix_command == "siftd ask --index"
 
     def test_stale_conversations(self, check_context, monkeypatch):
         """Reports stale conversations when embeddings DB exists but is empty."""
-        import strata.embeddings.availability as avail
+        import siftd.embeddings.availability as avail
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
 
-        from strata.storage.embeddings import open_embeddings_db
+        from siftd.storage.embeddings import open_embeddings_db
 
         embed_conn = open_embeddings_db(check_context.embed_db_path)
         embed_conn.close()
@@ -322,7 +322,7 @@ class TestOrphanedChunksCheck:
 
     def test_no_embeddings_db(self, check_context, monkeypatch):
         """Returns no findings when embeddings DB doesn't exist."""
-        import strata.embeddings.availability as avail
+        import siftd.embeddings.availability as avail
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
 
         check = OrphanedChunksCheck()
@@ -331,10 +331,10 @@ class TestOrphanedChunksCheck:
 
     def test_no_orphans(self, check_context, monkeypatch):
         """Returns no findings when all chunks match conversations."""
-        import strata.embeddings.availability as avail
+        import siftd.embeddings.availability as avail
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
 
-        from strata.storage.embeddings import open_embeddings_db, store_chunk
+        from siftd.storage.embeddings import open_embeddings_db, store_chunk
 
         embed_conn = open_embeddings_db(check_context.embed_db_path)
 
@@ -359,10 +359,10 @@ class TestOrphanedChunksCheck:
 
     def test_detects_orphans(self, check_context, monkeypatch):
         """Reports orphaned chunks for conversations not in main DB."""
-        import strata.embeddings.availability as avail
+        import siftd.embeddings.availability as avail
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
 
-        from strata.storage.embeddings import open_embeddings_db, store_chunk
+        from siftd.storage.embeddings import open_embeddings_db, store_chunk
 
         embed_conn = open_embeddings_db(check_context.embed_db_path)
         store_chunk(

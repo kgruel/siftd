@@ -1,15 +1,15 @@
 #!/bin/bash
-# When user mentions strata, remind agent to load the skill for workflow guidance.
+# When user mentions siftd, remind agent to load the skill for workflow guidance.
 
 INPUT=$(cat)
 PROMPT=$(echo "$INPUT" | jq -r '.prompt // empty')
 
-if echo "$PROMPT" | grep -qi "strata"; then
+if echo "$PROMPT" | grep -qi "siftd"; then
   cat <<'EOF'
 {
   "hookSpecificOutput": {
     "hookEventName": "UserPromptSubmit",
-    "additionalContext": "If not already loaded, invoke Skill tool with skill: \"strata\" to load research workflow instructions."
+    "additionalContext": "If not already loaded, invoke Skill tool with skill: \"siftd\" to load research workflow instructions."
   }
 }
 EOF

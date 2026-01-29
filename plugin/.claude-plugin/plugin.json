@@ -1,13 +1,13 @@
 {
-  "name": "strata",
+  "name": "siftd",
   "version": "1.0.0",
   "description": "Search and research past conversations from CLI coding sessions",
   "author": {
     "name": "kaygee",
     "url": "https://github.com/kaygee"
   },
-  "repository": "https://github.com/kaygee/strata",
-  "homepage": "https://github.com/kaygee/strata",
+  "repository": "https://github.com/kaygee/siftd",
+  "homepage": "https://github.com/kaygee/siftd",
   "license": "MIT",
   "keywords": ["conversations", "search", "research", "history", "analytics"],
   "hooks": "./hooks/hooks.json",

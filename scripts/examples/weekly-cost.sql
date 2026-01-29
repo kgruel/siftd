@@ -1,8 +1,8 @@
 -- Weekly cost report by workspace
 -- Groups conversations by ISO week, sums tokens, computes approximate cost.
 --
--- Usage: strata query sql weekly-cost weeks=4
---        strata query sql weekly-cost weeks=12 workspace=myproject
+-- Usage: siftd query sql weekly-cost weeks=4
+--        siftd query sql weekly-cost weeks=12 workspace=myproject
 
 SELECT
     strftime('%Y-W%W', c.started_at) AS week,

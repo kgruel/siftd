@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from strata.api import (
+from siftd.api import (
     ExportedConversation,
     ExportOptions,
     export_conversations,
@@ -15,7 +15,7 @@ from strata.api import (
     format_prompts,
     list_conversations,
 )
-from strata.api.conversations import Exchange, ToolCallSummary
+from siftd.api.conversations import Exchange, ToolCallSummary
 
 
 class TestExportConversations:
@@ -232,19 +232,19 @@ class TestFormatExport:
 
 class TestExportCLI:
     def test_export_last_default(self, test_db):
-        from strata.cli import main
+        from siftd.cli import main
 
         result = main(["--db", str(test_db), "export"])
         assert result == 0
 
     def test_export_last_n(self, test_db):
-        from strata.cli import main
+        from siftd.cli import main
 
         result = main(["--db", str(test_db), "export", "--last", "2"])
         assert result == 0
 
     def test_export_format_json(self, test_db, capsys):
-        from strata.cli import main
+        from siftd.cli import main
 
         result = main(["--db", str(test_db), "export", "--format", "json"])
         assert result == 0
@@ -254,7 +254,7 @@ class TestExportCLI:
         assert isinstance(data, list)
 
     def test_export_format_exchanges(self, test_db, capsys):
-        from strata.cli import main
+        from siftd.cli import main
 
         result = main(["--db", str(test_db), "export", "--format", "exchanges"])
         assert result == 0
@@ -263,7 +263,7 @@ class TestExportCLI:
         assert "**User:**" in captured.out
 
     def test_export_to_file(self, test_db, tmp_path):
-        from strata.cli import main
+        from siftd.cli import main
 
         output_file = tmp_path / "export.md"
         result = main(["--db", str(test_db), "export", "-o", str(output_file)])
@@ -274,7 +274,7 @@ class TestExportCLI:
         assert "## Session" in content
 
     def test_export_prompts_only(self, test_db, capsys):
-        from strata.cli import main
+        from siftd.cli import main
 
         result = main([
             "--db", str(test_db),
@@ -287,7 +287,7 @@ class TestExportCLI:
         assert "**Assistant:**" not in captured.out
 
     def test_export_no_header(self, test_db, capsys):
-        from strata.cli import main
+        from siftd.cli import main
 
         result = main(["--db", str(test_db), "export", "--no-header"])
         assert result == 0
@@ -296,7 +296,7 @@ class TestExportCLI:
         assert "## Session" not in captured.out
 
     def test_export_workspace_filter(self, test_db):
-        from strata.cli import main
+        from siftd.cli import main
 
         result = main([
             "--db", str(test_db),
@@ -305,13 +305,13 @@ class TestExportCLI:
         assert result == 0
 
     def test_export_missing_db(self, tmp_path):
-        from strata.cli import main
+        from siftd.cli import main
 
         result = main(["--db", str(tmp_path / "nope.db"), "export"])
         assert result == 1
 
     def test_export_no_matches(self, test_db, capsys):
-        from strata.cli import main
+        from siftd.cli import main
 
         result = main([
             "--db", str(test_db),

@@ -17,10 +17,10 @@ Example:
 import argparse
 import sys
 
-from strata.api import aggregate_by_conversation, hybrid_search
-from strata.paths import db_path
-from strata.storage.sqlite import open_database
-from strata.storage.tags import apply_tag, get_or_create_tag
+from siftd.api import aggregate_by_conversation, hybrid_search
+from siftd.paths import db_path
+from siftd.storage.sqlite import open_database
+from siftd.storage.tags import apply_tag, get_or_create_tag
 
 
 def main():

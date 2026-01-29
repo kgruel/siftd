@@ -1,10 +1,10 @@
-"""Shared test fixtures for the strata test suite."""
+"""Shared test fixtures for the siftd test suite."""
 
 from pathlib import Path
 
 import pytest
 
-from strata.domain.models import (
+from siftd.domain.models import (
     ContentBlock,
     Conversation,
     Harness,
@@ -13,8 +13,8 @@ from strata.domain.models import (
     ToolCall,
     Usage,
 )
-from strata.domain.source import Source
-from strata.storage.sqlite import (
+from siftd.domain.source import Source
+from siftd.storage.sqlite import (
     apply_tag,
     create_database,
     get_or_create_harness,

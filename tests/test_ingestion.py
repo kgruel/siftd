@@ -10,15 +10,15 @@ from pathlib import Path
 
 from conftest import FIXTURES_DIR, make_conversation, make_session_adapter
 
-from strata.ingestion.orchestration import ingest_all
-from strata.storage.sqlite import (
+from siftd.ingestion.orchestration import ingest_all
+from siftd.storage.sqlite import (
     check_file_ingested,
     compute_file_hash,
     get_ingested_file_info,
     open_database,
 )
-from strata.adapters import claude_code
-from strata.domain import Source
+from siftd.adapters import claude_code
+from siftd.domain import Source
 
 
 def _make_adapter(dest, name="claude_code", dedup="file", parse_fn=None):

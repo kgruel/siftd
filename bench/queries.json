@@ -37,7 +37,7 @@
       "name": "specific",
       "description": "Queries targeting known features in this corpus",
       "queries": [
-        "how strata discovers and loads adapter plugins from the drop-in directory",
+        "how siftd discovers and loads adapter plugins from the drop-in directory",
         "FTS5 tokenizer configuration for searching conversation turns",
         "model name parsing and token cost lookup logic",
         "tool call canonicalization across different LLM providers",
@@ -72,7 +72,7 @@
       "queries": [
         "how does the ingestion pipeline work",
         "ingestion dedup strategy for already-processed files",
-        "what search features does strata have",
+        "what search features does siftd have",
         "hybrid FTS5 and embeddings search ranking",
         "how are conversations stored and queried"
       ]

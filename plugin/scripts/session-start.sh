@@ -1,5 +1,5 @@
 #!/bin/bash
-# After compaction/resume, remind agent that strata is available for research.
+# After compaction/resume, remind agent that siftd is available for research.
 
 INPUT=$(cat)
 
@@ -14,14 +14,14 @@ case "$REASON" in
   *) exit 0 ;;
 esac
 
-# Only fire if strata is installed
-command -v strata >/dev/null 2>&1 || exit 0
+# Only fire if siftd is installed
+command -v siftd >/dev/null 2>&1 || exit 0
 
 cat <<'EOF'
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "additionalContext": "Context was compacted. strata is available for researching past conversations. Load the skill first: Skill tool with skill: \"strata\"."
+    "additionalContext": "Context was compacted. siftd is available for researching past conversations. Load the skill first: Skill tool with skill: \"siftd\"."
   }
 }
 EOF

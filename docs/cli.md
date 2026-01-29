@@ -1,11 +1,11 @@
-# strata CLI Reference
+# siftd CLI Reference
 
 _Auto-generated from `--help` output._
 
 ## Main
 
 ```
-usage: strata [-h] [--db PATH]
+usage: siftd [-h] [--db PATH]
               {ingest,status,ask,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export} ...
 
 Aggregate and query LLM conversation logs
@@ -32,13 +32,13 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --db PATH             Database path (default:
-                        ~/.local/share/strata/strata.db)
+                        ~/.local/share/siftd/siftd.db)
 ```
 
 ## ingest
 
 ```
-usage: strata ingest [-h] [-v] [-p DIR] [-a NAME]
+usage: siftd ingest [-h] [-v] [-p DIR] [-a NAME]
 
 options:
   -h, --help          show this help message and exit
@@ -50,7 +50,7 @@ options:
 ## status
 
 ```
-usage: strata status [-h]
+usage: siftd status [-h]
 
 options:
   -h, --help  show this help message and exit
@@ -59,7 +59,7 @@ options:
 ## ask
 
 ```
-usage: strata ask [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
+usage: siftd ask [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
                   [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                   [--index] [--rebuild] [--backend NAME] [--embed-db PATH]
                   [--thread] [--embeddings-only] [--recall N]
@@ -106,7 +106,7 @@ options:
   --format NAME         Use named formatter (built-in or drop-in plugin)
   --no-exclude-active   Include results from active sessions (excluded by
                         default)
-  --include-derivative  Include derivative conversations (strata ask/query
+  --include-derivative  Include derivative conversations (siftd ask/query
                         results, excluded by default)
   --no-diversity        Disable MMR diversity reranking, use pure relevance
                         order
@@ -118,45 +118,45 @@ options:
 
 examples:
   # search
-  strata ask "error handling"                        # basic semantic search
-  strata ask -w myproject "auth flow"                # filter by workspace
-  strata ask --since 2024-06 "testing"               # filter by date
+  siftd ask "error handling"                        # basic semantic search
+  siftd ask -w myproject "auth flow"                # filter by workspace
+  siftd ask --since 2024-06 "testing"               # filter by date
 
   # refine
-  strata ask "design decision" --thread              # narrative: top conversations expanded
-  strata ask "why we chose X" --context 2            # ±2 surrounding exchanges
-  strata ask "testing approach" --role user           # just your prompts, not responses
-  strata ask "event sourcing" --conversations        # rank whole conversations, not chunks
-  strata ask "when first discussed Y" --first        # earliest match above threshold
-  strata ask --threshold 0.7 "architecture"          # only high-relevance results
+  siftd ask "design decision" --thread              # narrative: top conversations expanded
+  siftd ask "why we chose X" --context 2            # ±2 surrounding exchanges
+  siftd ask "testing approach" --role user           # just your prompts, not responses
+  siftd ask "event sourcing" --conversations        # rank whole conversations, not chunks
+  siftd ask "when first discussed Y" --first        # earliest match above threshold
+  siftd ask --threshold 0.7 "architecture"          # only high-relevance results
 
   # inspect
-  strata ask -v "chunking"                           # full chunk text
-  strata ask --full "chunking"                       # complete prompt+response exchange
-  strata ask --refs "authelia"                       # file references + content
-  strata ask --refs HANDOFF.md "setup"               # filter refs to specific file
+  siftd ask -v "chunking"                           # full chunk text
+  siftd ask --full "chunking"                       # complete prompt+response exchange
+  siftd ask --refs "authelia"                       # file references + content
+  siftd ask --refs HANDOFF.md "setup"               # filter refs to specific file
 
   # filter by tags
-  strata ask -l research:auth "auth flow"            # search within tagged conversations
-  strata ask -l research: -l useful: "pattern"       # OR — any research: or useful: tag
-  strata ask --all-tags important --all-tags reviewed "design"  # AND — must have both
-  strata ask -l research: --no-tag archived "auth"   # combine OR + NOT
+  siftd ask -l research:auth "auth flow"            # search within tagged conversations
+  siftd ask -l research: -l useful: "pattern"       # OR — any research: or useful: tag
+  siftd ask --all-tags important --all-tags reviewed "design"  # AND — must have both
+  siftd ask -l research: --no-tag archived "auth"   # combine OR + NOT
 
   # save useful results for future retrieval
-  strata tag 01HX... research:auth                   # bookmark a conversation
-  strata tag --last research:architecture            # tag most recent conversation
-  strata query -l research:auth                      # retrieve tagged conversations
+  siftd tag 01HX... research:auth                   # bookmark a conversation
+  siftd tag --last research:architecture            # tag most recent conversation
+  siftd query -l research:auth                      # retrieve tagged conversations
 
   # tuning
-  strata ask --embeddings-only "chunking"            # skip FTS5, pure embeddings
-  strata ask --recall 200 "error"                    # widen FTS5 candidate pool
-  strata ask --chrono "chunking"                     # sort by time instead of score
+  siftd ask --embeddings-only "chunking"            # skip FTS5, pure embeddings
+  siftd ask --recall 200 "error"                    # widen FTS5 candidate pool
+  siftd ask --chrono "chunking"                     # sort by time instead of score
 ```
 
 ## tag
 
 ```
-usage: strata tag [-h] [-n N] [-r] [positional ...]
+usage: siftd tag [-h] [-n N] [-r] [positional ...]
 
 positional arguments:
   positional    [entity_type] entity_id tag [tag2 ...]
@@ -167,21 +167,21 @@ options:
   -r, --remove  Remove tag instead of applying
 
 examples:
-  strata tag 01HX... important              # tag conversation (default)
-  strata tag 01HX... important review       # apply multiple tags at once
-  strata tag --last important               # tag most recent conversation
-  strata tag --last 3 review                # tag 3 most recent conversations
-  strata tag workspace 01HY... proj         # explicit entity type
-  strata tag tool_call 01HZ... slow         # tag a tool call
-  strata tag --remove 01HX... important     # remove tag from conversation
-  strata tag --remove --last important      # remove from most recent
-  strata tag -r workspace 01HY... proj      # remove from workspace
+  siftd tag 01HX... important              # tag conversation (default)
+  siftd tag 01HX... important review       # apply multiple tags at once
+  siftd tag --last important               # tag most recent conversation
+  siftd tag --last 3 review                # tag 3 most recent conversations
+  siftd tag workspace 01HY... proj         # explicit entity type
+  siftd tag tool_call 01HZ... slow         # tag a tool call
+  siftd tag --remove 01HX... important     # remove tag from conversation
+  siftd tag --remove --last important      # remove from most recent
+  siftd tag -r workspace 01HY... proj      # remove from workspace
 ```
 
 ## tags
 
 ```
-usage: strata tags [-h] [--prefix PREFIX] [-n LIMIT] [--rename OLD NEW]
+usage: siftd tags [-h] [--prefix PREFIX] [-n LIMIT] [--rename OLD NEW]
                    [--delete NAME] [--force]
                    [name]
 
@@ -197,18 +197,18 @@ options:
   --force            Force delete even if tag has associations
 
 examples:
-  strata tags                                      # list all tags
-  strata tags --prefix research:                   # list tags by prefix
-  strata tags research:auth                        # show conversations with a tag
-  strata tags --rename important review:important   # rename tag
-  strata tags --delete old-tag                      # delete tag (refuses if applied)
-  strata tags --delete old-tag --force              # delete tag and all associations
+  siftd tags                                      # list all tags
+  siftd tags --prefix research:                   # list tags by prefix
+  siftd tags research:auth                        # show conversations with a tag
+  siftd tags --rename important review:important   # rename tag
+  siftd tags --delete old-tag                      # delete tag (refuses if applied)
+  siftd tags --delete old-tag --force              # delete tag and all associations
 ```
 
 ## tools
 
 ```
-usage: strata tools [-h] [--by-workspace] [--prefix PREFIX] [-n LIMIT]
+usage: siftd tools [-h] [--by-workspace] [--prefix PREFIX] [-n LIMIT]
 
 options:
   -h, --help         show this help message and exit
@@ -217,15 +217,15 @@ options:
   -n, --limit LIMIT  Max workspaces for --by-workspace (default: 20)
 
 examples:
-  strata tools                    # shell command categories summary
-  strata tools --by-workspace     # breakdown by workspace
-  strata tools --prefix shell:    # filter by tag prefix
+  siftd tools                    # shell command categories summary
+  siftd tools --by-workspace     # breakdown by workspace
+  siftd tools --prefix shell:    # filter by tag prefix
 ```
 
 ## query
 
 ```
-usage: strata query [-h] [-v] [-n COUNT] [--latest] [--oldest] [-w SUBSTR]
+usage: siftd query [-h] [-v] [-n COUNT] [--latest] [--oldest] [-w SUBSTR]
                     [-m NAME] [--since DATE] [--before DATE] [-s QUERY]
                     [-t NAME] [-l NAME] [--all-tags NAME] [--no-tag NAME]
                     [--tool-tag NAME] [--json] [--stats] [--var KEY=VALUE]
@@ -260,36 +260,36 @@ options:
                         subcommand)
 
 examples:
-  strata query                         # list recent conversations
-  strata query -w myproject            # filter by workspace
-  strata query -s "error handling"     # FTS5 search
-  strata query -l research:auth        # conversations tagged research:auth
-  strata query -l research: -l useful: # OR — any research: or useful: tag
-  strata query --all-tags important --all-tags reviewed  # AND — must have both
-  strata query -l research: --no-tag archived            # combine OR + NOT
-  strata query --tool-tag shell:test   # conversations with test commands
-  strata query <id>                    # show conversation detail
-  strata query sql                     # list available .sql files
-  strata query sql cost                # run the 'cost' query
-  strata query sql cost --var ws=proj  # run with variable substitution
+  siftd query                         # list recent conversations
+  siftd query -w myproject            # filter by workspace
+  siftd query -s "error handling"     # FTS5 search
+  siftd query -l research:auth        # conversations tagged research:auth
+  siftd query -l research: -l useful: # OR — any research: or useful: tag
+  siftd query --all-tags important --all-tags reviewed  # AND — must have both
+  siftd query -l research: --no-tag archived            # combine OR + NOT
+  siftd query --tool-tag shell:test   # conversations with test commands
+  siftd query <id>                    # show conversation detail
+  siftd query sql                     # list available .sql files
+  siftd query sql cost                # run the 'cost' query
+  siftd query sql cost --var ws=proj  # run with variable substitution
 ```
 
 ## backfill
 
 ```
-usage: strata backfill [-h] [--shell-tags] [--derivative-tags]
+usage: siftd backfill [-h] [--shell-tags] [--derivative-tags]
 
 options:
   -h, --help         show this help message and exit
   --shell-tags       Tag shell.execute calls with shell:* categories
-  --derivative-tags  Tag conversations containing strata ask/query as
-                     strata:derivative
+  --derivative-tags  Tag conversations containing siftd ask/query as
+                     siftd:derivative
 ```
 
 ## path
 
 ```
-usage: strata path [-h]
+usage: siftd path [-h]
 
 options:
   -h, --help  show this help message and exit
@@ -298,7 +298,7 @@ options:
 ## config
 
 ```
-usage: strata config [-h] [{get,set,path}] [key] [value]
+usage: siftd config [-h] [{get,set,path}] [key] [value]
 
 positional arguments:
   {get,set,path}  Action to perform
@@ -309,16 +309,16 @@ options:
   -h, --help      show this help message and exit
 
 examples:
-  strata config                        # show all config
-  strata config path                   # show config file path
-  strata config get ask.formatter      # get specific value
-  strata config set ask.formatter verbose  # set value
+  siftd config                        # show all config
+  siftd config path                   # show config file path
+  siftd config get ask.formatter      # get specific value
+  siftd config set ask.formatter verbose  # set value
 ```
 
 ## adapters
 
 ```
-usage: strata adapters [-h]
+usage: siftd adapters [-h]
 
 options:
   -h, --help  show this help message and exit
@@ -327,7 +327,7 @@ options:
 ## copy
 
 ```
-usage: strata copy [-h] [--all] [--force] {adapter,query} [name]
+usage: siftd copy [-h] [--all] [--force] {adapter,query} [name]
 
 positional arguments:
   {adapter,query}  Resource type to copy
@@ -339,15 +339,15 @@ options:
   --force          Overwrite existing files
 
 examples:
-  strata copy adapter claude_code    # copy adapter to ~/.config/strata/adapters/
-  strata copy adapter --all          # copy all built-in adapters
-  strata copy query cost             # copy query to ~/.config/strata/queries/
+  siftd copy adapter claude_code    # copy adapter to ~/.config/siftd/adapters/
+  siftd copy adapter --all          # copy all built-in adapters
+  siftd copy query cost             # copy query to ~/.config/siftd/queries/
 ```
 
 ## doctor
 
 ```
-usage: strata doctor [-h] [subcommand]
+usage: siftd doctor [-h] [subcommand]
 
 positional arguments:
   subcommand  'checks' to list, 'fixes' to show fixes, or check name
@@ -356,16 +356,16 @@ options:
   -h, --help  show this help message and exit
 
 examples:
-  strata doctor                    # run all checks
-  strata doctor checks             # list available checks
-  strata doctor fixes              # show fix commands for issues
-  strata doctor ingest-pending     # run specific check
+  siftd doctor                    # run all checks
+  siftd doctor checks             # list available checks
+  siftd doctor fixes              # show fix commands for issues
+  siftd doctor ingest-pending     # run specific check
 ```
 
 ## peek
 
 ```
-usage: strata peek [-h] [-w SUBSTR] [--all] [--last N] [--tail] [--json]
+usage: siftd peek [-h] [-w SUBSTR] [--all] [--last N] [--tail] [--json]
                    [session_id]
 
 positional arguments:
@@ -381,18 +381,18 @@ options:
   --json                Output as structured JSON
 
 examples:
-  strata peek                    # list active sessions (last 2 hours)
-  strata peek --all              # list all sessions
-  strata peek -w myproject        # filter by workspace name
-  strata peek c520f862           # detail view for session
-  strata peek c520 --last 10     # show last 10 exchanges
-  strata peek c520 --tail        # raw JSONL tail
+  siftd peek                    # list active sessions (last 2 hours)
+  siftd peek --all              # list all sessions
+  siftd peek -w myproject        # filter by workspace name
+  siftd peek c520f862           # detail view for session
+  siftd peek c520 --last 10     # show last 10 exchanges
+  siftd peek c520 --tail        # raw JSONL tail
 ```
 
 ## export
 
 ```
-usage: strata export [-h] [-n [N]] [-w SUBSTR] [-l NAME] [--exclude-tag NAME]
+usage: siftd export [-h] [-n [N]] [-w SUBSTR] [-l NAME] [--exclude-tag NAME]
                      [--since DATE] [--before DATE] [-s QUERY]
                      [-f {prompts,exchanges,json}] [--prompts-only]
                      [--no-header] [-o FILE]
@@ -419,14 +419,14 @@ options:
   -o, --output FILE     Write to file instead of stdout
 
 examples:
-  strata export --last                   # export most recent session (prompts)
-  strata export --last 3                 # export last 3 sessions
-  strata export 01HX4G7K                 # export specific session (prefix match)
-  strata export -w myproject --since yesterday  # filter by workspace and time
-  strata export -l decision:auth         # export tagged conversations
-  strata export --last --format json     # structured JSON output
-  strata export --last --format exchanges  # include response summaries
-  strata export --last --prompts-only    # omit tool call details
-  strata export --last --exclude-tag private  # exclude private sessions
-  strata export --last -o context.md     # write to file
+  siftd export --last                   # export most recent session (prompts)
+  siftd export --last 3                 # export last 3 sessions
+  siftd export 01HX4G7K                 # export specific session (prefix match)
+  siftd export -w myproject --since yesterday  # filter by workspace and time
+  siftd export -l decision:auth         # export tagged conversations
+  siftd export --last --format json     # structured JSON output
+  siftd export --last --format exchanges  # include response summaries
+  siftd export --last --prompts-only    # omit tool call details
+  siftd export --last --exclude-tag private  # exclude private sessions
+  siftd export --last -o context.md     # write to file
 ```
