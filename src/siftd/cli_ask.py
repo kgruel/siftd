@@ -53,10 +53,10 @@ def cmd_ask(args) -> int:
     # Index or rebuild mode — requires embeddings
     if args.index or args.rebuild:
         if not embeddings_available():
-            print("Embedding support not installed.", file=sys.stderr)
+            print("Semantic search requires the [embed] extra.", file=sys.stderr)
             print()
             print("Install with:")
-            print("  pip install siftd[embed]")
+            print("  siftd install embed")
             return 1
         return _ask_build_index(db, embed_db, rebuild=args.rebuild, backend_name=args.backend, verbose=True)
 
@@ -75,12 +75,12 @@ def cmd_ask(args) -> int:
 
     # Check embeddings availability before search
     if not embeddings_available():
-        print("Semantic search requires embedding support.", file=sys.stderr)
+        print("Semantic search requires the [embed] extra.", file=sys.stderr)
         print()
         print("Install with:")
-        print("  pip install siftd[embed]")
+        print("  siftd install embed")
         print()
-        print("Or use FTS5 search:")
+        print("Or use FTS5 search instead:")
         print(f'  siftd query -s "{query}"')
         return 1
 
@@ -296,9 +296,11 @@ def build_ask_parser(subparsers) -> None:
     """Add the 'ask' subparser to the CLI."""
     p_ask = subparsers.add_parser(
         "ask",
-        help="Semantic search over conversations",
+        help="Semantic search over conversations (requires [embed] extra)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""examples:
+        epilog="""Note: Requires the [embed] extra. Install with: siftd install embed
+
+examples:
   # search
   siftd ask "error handling"                        # basic semantic search
   siftd ask -w myproject "auth flow"                # filter by workspace

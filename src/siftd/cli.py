@@ -109,7 +109,7 @@ def cmd_status(args) -> int:
     if embeddings_available():
         print("  Embeddings: installed")
     else:
-        print("  Embeddings: not installed (pip install siftd[embed])")
+        print("  Embeddings: not installed (run: siftd install embed)")
 
     return 0
 

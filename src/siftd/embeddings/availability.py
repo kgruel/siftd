@@ -31,10 +31,10 @@ class EmbeddingsNotAvailable(Exception):
     def __init__(self, operation: str = "This operation"):
         self.operation = operation
         self.message = (
-            f"{operation} requires embedding support.\n\n"
+            f"{operation} requires the [embed] extra.\n\n"
             "Install with:\n"
-            "  pip install siftd[embed]\n\n"
-            "Or use FTS5 search:\n"
+            "  siftd install embed\n\n"
+            "Or use FTS5 search instead:\n"
             "  siftd query -s \"your search\""
         )
         super().__init__(self.message)
