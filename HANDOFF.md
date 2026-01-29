@@ -4,12 +4,20 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ## Current Focus
 
-**Version 0.1.0 tagged.** Ready for PyPI publish after configuring trusted publishing.
+**Rename to `siftd`** — "strata" is taken on PyPI.
+
+Active task: `plan/rename-siftd` (they-plan workflow, drafting PLAN.md)
+
+Once renamed:
+- Re-tag v0.1.0
+- Configure PyPI trusted publishing for siftd
+- Push and publish
 
 Recent additions:
 - CI workflows (test + lint on PR, publish on tag)
 - Pre-commit hook with ty + ruff
 - Type errors resolved
+- Release review completed (no blockers)
 
 ## Active Blockers
 
@@ -51,7 +59,7 @@ Full decision log: `strata query -l decision:` or search with `strata ask -w str
 
 | Date | Session | Summary |
 |------|---------|---------|
-| 2026-01-28 | (this session) | v0.1.0 release prep: CI, pre-commit, type fixes, release review |
+| 2026-01-28 | (pending tag) | Release prep: CI, pre-commit, type fixes, review; rename to siftd in progress |
 | 2026-01-28 | `01KG19R9S1P2` | Export command, optional embeddings, strata-first docs pattern |
 | 2026-01-27 | `01KG14WC7XHC` | SQL architecture, derivative dedup, WhereBuilder, 293 tests |
 | 2026-01-26 | `01KG0E1E7RXC` | Renamed tbd → strata, plugin/skill deployment |
