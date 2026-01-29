@@ -52,6 +52,7 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
     if not read_only:
         _migrate_labels_to_tags(conn)
         _migrate_add_error_column(conn)
+        _migrate_add_cascade_deletes(conn)
         ensure_fts_table(conn)
         ensure_pricing_table(conn)
         ensure_canonical_tools(conn)
@@ -100,6 +101,194 @@ def _migrate_add_error_column(conn: sqlite3.Connection) -> None:
     if "error" not in columns:
         conn.execute("ALTER TABLE ingested_files ADD COLUMN error TEXT")
         conn.commit()
+
+
+def _migrate_add_cascade_deletes(conn: sqlite3.Connection) -> None:
+    """Add ON DELETE CASCADE to foreign key constraints.
+
+    SQLite doesn't support ALTER TABLE to modify FK constraints, so we must
+    recreate each table. We check if migration is needed by inspecting the
+    table DDL in sqlite_master.
+    """
+    # Check if migration is needed by looking at prompts table DDL
+    cur = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='prompts'"
+    )
+    row = cur.fetchone()
+    if not row:
+        return  # Table doesn't exist yet
+    if "ON DELETE CASCADE" in row[0]:
+        return  # Already migrated
+
+    # Disable FK enforcement during migration (required for table recreation)
+    conn.execute("PRAGMA foreign_keys = OFF")
+
+    # Tables that need migration, in order that respects dependencies
+    # (parent tables first for drops, child tables first for creates)
+    tables_to_migrate = [
+        # (table_name, new_ddl, columns_to_copy)
+        ("prompts", """
+            CREATE TABLE prompts_new (
+                id              TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                external_id     TEXT,
+                timestamp       TEXT NOT NULL,
+                UNIQUE (conversation_id, external_id)
+            )
+        """, "id, conversation_id, external_id, timestamp"),
+        ("responses", """
+            CREATE TABLE responses_new (
+                id              TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                prompt_id       TEXT REFERENCES prompts(id) ON DELETE CASCADE,
+                model_id        TEXT REFERENCES models(id) ON DELETE SET NULL,
+                provider_id     TEXT REFERENCES providers(id) ON DELETE SET NULL,
+                external_id     TEXT,
+                timestamp       TEXT NOT NULL,
+                input_tokens    INTEGER,
+                output_tokens   INTEGER,
+                UNIQUE (conversation_id, external_id)
+            )
+        """, "id, conversation_id, prompt_id, model_id, provider_id, external_id, timestamp, input_tokens, output_tokens"),
+        ("tool_calls", """
+            CREATE TABLE tool_calls_new (
+                id              TEXT PRIMARY KEY,
+                response_id     TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                tool_id         TEXT REFERENCES tools(id) ON DELETE SET NULL,
+                external_id     TEXT,
+                input           TEXT,
+                result          TEXT,
+                status          TEXT,
+                timestamp       TEXT
+            )
+        """, "id, response_id, conversation_id, tool_id, external_id, input, result, status, timestamp"),
+        ("prompt_content", """
+            CREATE TABLE prompt_content_new (
+                id              TEXT PRIMARY KEY,
+                prompt_id       TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
+                block_index     INTEGER NOT NULL,
+                block_type      TEXT NOT NULL,
+                content         TEXT NOT NULL,
+                UNIQUE (prompt_id, block_index)
+            )
+        """, "id, prompt_id, block_index, block_type, content"),
+        ("response_content", """
+            CREATE TABLE response_content_new (
+                id              TEXT PRIMARY KEY,
+                response_id     TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+                block_index     INTEGER NOT NULL,
+                block_type      TEXT NOT NULL,
+                content         TEXT NOT NULL,
+                UNIQUE (response_id, block_index)
+            )
+        """, "id, response_id, block_index, block_type, content"),
+        ("conversation_attributes", """
+            CREATE TABLE conversation_attributes_new (
+                id              TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                key             TEXT NOT NULL,
+                value           TEXT NOT NULL,
+                scope           TEXT,
+                UNIQUE (conversation_id, key, scope)
+            )
+        """, "id, conversation_id, key, value, scope"),
+        ("prompt_attributes", """
+            CREATE TABLE prompt_attributes_new (
+                id              TEXT PRIMARY KEY,
+                prompt_id       TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
+                key             TEXT NOT NULL,
+                value           TEXT NOT NULL,
+                scope           TEXT,
+                UNIQUE (prompt_id, key, scope)
+            )
+        """, "id, prompt_id, key, value, scope"),
+        ("response_attributes", """
+            CREATE TABLE response_attributes_new (
+                id              TEXT PRIMARY KEY,
+                response_id     TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+                key             TEXT NOT NULL,
+                value           TEXT NOT NULL,
+                scope           TEXT,
+                UNIQUE (response_id, key, scope)
+            )
+        """, "id, response_id, key, value, scope"),
+        ("tool_call_attributes", """
+            CREATE TABLE tool_call_attributes_new (
+                id              TEXT PRIMARY KEY,
+                tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
+                key             TEXT NOT NULL,
+                value           TEXT NOT NULL,
+                scope           TEXT,
+                UNIQUE (tool_call_id, key, scope)
+            )
+        """, "id, tool_call_id, key, value, scope"),
+        ("conversation_tags", """
+            CREATE TABLE conversation_tags_new (
+                id              TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                tag_id          TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                applied_at      TEXT NOT NULL,
+                UNIQUE (conversation_id, tag_id)
+            )
+        """, "id, conversation_id, tag_id, applied_at"),
+        ("tool_call_tags", """
+            CREATE TABLE tool_call_tags_new (
+                id              TEXT PRIMARY KEY,
+                tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
+                tag_id          TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                applied_at      TEXT NOT NULL,
+                UNIQUE (tool_call_id, tag_id)
+            )
+        """, "id, tool_call_id, tag_id, applied_at"),
+        ("ingested_files", """
+            CREATE TABLE ingested_files_new (
+                id              TEXT PRIMARY KEY,
+                path            TEXT NOT NULL UNIQUE,
+                file_hash       TEXT NOT NULL,
+                harness_id      TEXT NOT NULL REFERENCES harnesses(id) ON DELETE CASCADE,
+                conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+                ingested_at     TEXT NOT NULL,
+                error           TEXT
+            )
+        """, "id, path, file_hash, harness_id, conversation_id, ingested_at, error"),
+    ]
+
+    for table_name, new_ddl, columns in tables_to_migrate:
+        # Check if table exists
+        cur = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,)
+        )
+        if not cur.fetchone():
+            continue  # Table doesn't exist, skip
+
+        # Create new table
+        conn.execute(new_ddl)
+        # Copy data
+        conn.execute(f"INSERT INTO {table_name}_new ({columns}) SELECT {columns} FROM {table_name}")
+        # Drop old table
+        conn.execute(f"DROP TABLE {table_name}")
+        # Rename new table
+        conn.execute(f"ALTER TABLE {table_name}_new RENAME TO {table_name}")
+
+    # Recreate indexes that were dropped with the tables
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompts_conversation ON prompts(conversation_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompts_timestamp ON prompts(timestamp)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_responses_conversation ON responses(conversation_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_responses_prompt ON responses(prompt_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_responses_model ON responses(model_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_responses_timestamp ON responses(timestamp)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_response ON tool_calls(response_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_conversation ON tool_calls(conversation_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_status ON tool_calls(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_content_prompt ON prompt_content(prompt_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_response_content_response ON response_content(response_id)")
+
+    conn.commit()
+    # Re-enable FK enforcement
+    conn.execute("PRAGMA foreign_keys = ON")
 
 
 def ensure_pricing_table(conn: sqlite3.Connection) -> None:
@@ -609,50 +798,19 @@ def get_harness_id_by_name(conn: sqlite3.Connection, name: str) -> str | None:
 def delete_conversation(conn: sqlite3.Connection, conversation_id: str) -> None:
     """Delete a conversation and all related data.
 
-    Cascades to: prompts, responses, tool_calls, content blocks,
-    attributes, tags, ingested_files.
+    Uses ON DELETE CASCADE to automatically remove child records:
+    prompts, responses, tool_calls, content blocks, attributes, tags,
+    and ingested_files.
+
+    Note: FTS index (content_fts) must be cleaned up manually since
+    it's a virtual table without FK support.
     """
-    # Clean up FTS index entries for this conversation
+    # Clean up FTS index entries (virtual tables don't support CASCADE)
     conn.execute(
         "DELETE FROM content_fts WHERE conversation_id = ?", (conversation_id,)
     )
 
-    # Delete in order to respect foreign keys (or rely on CASCADE if defined)
-    # Content and attributes first
-    conn.execute("""
-        DELETE FROM prompt_content
-        WHERE prompt_id IN (SELECT id FROM prompts WHERE conversation_id = ?)
-    """, (conversation_id,))
-    conn.execute("""
-        DELETE FROM response_content
-        WHERE response_id IN (SELECT id FROM responses WHERE conversation_id = ?)
-    """, (conversation_id,))
-    conn.execute("""
-        DELETE FROM prompt_attributes
-        WHERE prompt_id IN (SELECT id FROM prompts WHERE conversation_id = ?)
-    """, (conversation_id,))
-    conn.execute("""
-        DELETE FROM response_attributes
-        WHERE response_id IN (SELECT id FROM responses WHERE conversation_id = ?)
-    """, (conversation_id,))
-    conn.execute("""
-        DELETE FROM tool_call_attributes
-        WHERE tool_call_id IN (SELECT id FROM tool_calls WHERE conversation_id = ?)
-    """, (conversation_id,))
-
-    # Then tool_calls, responses, prompts
-    conn.execute("DELETE FROM tool_calls WHERE conversation_id = ?", (conversation_id,))
-    conn.execute("DELETE FROM responses WHERE conversation_id = ?", (conversation_id,))
-    conn.execute("DELETE FROM prompts WHERE conversation_id = ?", (conversation_id,))
-
-    # Conversation attributes and tags
-    conn.execute("DELETE FROM conversation_attributes WHERE conversation_id = ?", (conversation_id,))
-    conn.execute("DELETE FROM conversation_tags WHERE conversation_id = ?", (conversation_id,))
-
-    # Ingested files pointing to this conversation
-    conn.execute("DELETE FROM ingested_files WHERE conversation_id = ?", (conversation_id,))
-
-    # Finally the conversation itself
+    # Delete conversation - CASCADE handles all child tables
     conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
 
 

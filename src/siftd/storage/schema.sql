@@ -53,8 +53,8 @@ CREATE TABLE tools (
 CREATE TABLE tool_aliases (
     id              TEXT PRIMARY KEY,           -- ULID
     raw_name        TEXT NOT NULL,              -- Read, read_file, Bash, run_shell_command
-    harness_id      TEXT NOT NULL REFERENCES harnesses(id),
-    tool_id         TEXT NOT NULL REFERENCES tools(id),
+    harness_id      TEXT NOT NULL REFERENCES harnesses(id) ON DELETE CASCADE,
+    tool_id         TEXT NOT NULL REFERENCES tools(id) ON DELETE CASCADE,
     UNIQUE (raw_name, harness_id)
 );
 
@@ -64,8 +64,8 @@ CREATE INDEX idx_tool_aliases_harness ON tool_aliases(harness_id);
 -- Flat pricing lookup for approximate cost computation
 CREATE TABLE pricing (
     id              TEXT PRIMARY KEY,           -- ULID
-    model_id        TEXT NOT NULL REFERENCES models(id),
-    provider_id     TEXT NOT NULL REFERENCES providers(id),
+    model_id        TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
+    provider_id     TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
     input_per_mtok  REAL,                       -- $ per million input tokens
     output_per_mtok REAL,                       -- $ per million output tokens
     UNIQUE (model_id, provider_id)
@@ -88,8 +88,8 @@ CREATE TABLE workspaces (
 CREATE TABLE conversations (
     id              TEXT PRIMARY KEY,           -- ULID
     external_id     TEXT NOT NULL,              -- harness's identifier
-    harness_id      TEXT NOT NULL REFERENCES harnesses(id),
-    workspace_id    TEXT REFERENCES workspaces(id),
+    harness_id      TEXT NOT NULL REFERENCES harnesses(id) ON DELETE CASCADE,
+    workspace_id    TEXT REFERENCES workspaces(id) ON DELETE SET NULL,
     started_at      TEXT NOT NULL,              -- ISO timestamp
     ended_at        TEXT,                       -- ISO timestamp, NULL if unknown/abandoned
     UNIQUE (harness_id, external_id)
@@ -98,7 +98,7 @@ CREATE TABLE conversations (
 -- User's input
 CREATE TABLE prompts (
     id              TEXT PRIMARY KEY,           -- ULID
-    conversation_id TEXT NOT NULL REFERENCES conversations(id),
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     external_id     TEXT,                       -- harness's message ID
     timestamp       TEXT NOT NULL,
     UNIQUE (conversation_id, external_id)
@@ -107,10 +107,10 @@ CREATE TABLE prompts (
 -- Model's output
 CREATE TABLE responses (
     id              TEXT PRIMARY KEY,           -- ULID
-    conversation_id TEXT NOT NULL REFERENCES conversations(id),
-    prompt_id       TEXT REFERENCES prompts(id),  -- what it's responding to
-    model_id        TEXT REFERENCES models(id),
-    provider_id     TEXT REFERENCES providers(id),
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    prompt_id       TEXT REFERENCES prompts(id) ON DELETE CASCADE,
+    model_id        TEXT REFERENCES models(id) ON DELETE SET NULL,
+    provider_id     TEXT REFERENCES providers(id) ON DELETE SET NULL,
     external_id     TEXT,                       -- harness's message ID
     timestamp       TEXT NOT NULL,
     input_tokens    INTEGER,                    -- universal
@@ -121,9 +121,9 @@ CREATE TABLE responses (
 -- Tool invocations during response generation
 CREATE TABLE tool_calls (
     id              TEXT PRIMARY KEY,           -- ULID
-    response_id     TEXT NOT NULL REFERENCES responses(id),
-    conversation_id TEXT NOT NULL REFERENCES conversations(id),  -- denormalized for convenience
-    tool_id         TEXT REFERENCES tools(id),
+    response_id     TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    tool_id         TEXT REFERENCES tools(id) ON DELETE SET NULL,
     external_id     TEXT,                       -- model-assigned tool_call_id
     input           TEXT,                       -- JSON arguments
     result          TEXT,                       -- JSON result
@@ -139,7 +139,7 @@ CREATE TABLE tool_calls (
 -- Content blocks in prompts (usually just text, but could be attachments)
 CREATE TABLE prompt_content (
     id              TEXT PRIMARY KEY,           -- ULID
-    prompt_id       TEXT NOT NULL REFERENCES prompts(id),
+    prompt_id       TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
     block_index     INTEGER NOT NULL,
     block_type      TEXT NOT NULL,              -- text, image, file
     content         TEXT NOT NULL,              -- the actual content or reference
@@ -149,7 +149,7 @@ CREATE TABLE prompt_content (
 -- Content blocks in responses (text, thinking, tool references)
 CREATE TABLE response_content (
     id              TEXT PRIMARY KEY,           -- ULID
-    response_id     TEXT NOT NULL REFERENCES responses(id),
+    response_id     TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
     block_index     INTEGER NOT NULL,
     block_type      TEXT NOT NULL,              -- text, thinking, tool_use, tool_result
     content         TEXT NOT NULL,
@@ -163,7 +163,7 @@ CREATE TABLE response_content (
 
 CREATE TABLE conversation_attributes (
     id              TEXT PRIMARY KEY,           -- ULID
-    conversation_id TEXT NOT NULL REFERENCES conversations(id),
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     key             TEXT NOT NULL,
     value           TEXT NOT NULL,
     scope           TEXT,                       -- NULL=user, 'provider', 'analyzer', etc.
@@ -172,7 +172,7 @@ CREATE TABLE conversation_attributes (
 
 CREATE TABLE prompt_attributes (
     id              TEXT PRIMARY KEY,           -- ULID
-    prompt_id       TEXT NOT NULL REFERENCES prompts(id),
+    prompt_id       TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
     key             TEXT NOT NULL,
     value           TEXT NOT NULL,
     scope           TEXT,
@@ -181,7 +181,7 @@ CREATE TABLE prompt_attributes (
 
 CREATE TABLE response_attributes (
     id              TEXT PRIMARY KEY,           -- ULID
-    response_id     TEXT NOT NULL REFERENCES responses(id),
+    response_id     TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
     key             TEXT NOT NULL,
     value           TEXT NOT NULL,
     scope           TEXT,
@@ -190,7 +190,7 @@ CREATE TABLE response_attributes (
 
 CREATE TABLE tool_call_attributes (
     id              TEXT PRIMARY KEY,           -- ULID
-    tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id),
+    tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
     key             TEXT NOT NULL,
     value           TEXT NOT NULL,
     scope           TEXT,
@@ -211,24 +211,24 @@ CREATE TABLE tags (
 
 CREATE TABLE workspace_tags (
     id              TEXT PRIMARY KEY,           -- ULID
-    workspace_id    TEXT NOT NULL REFERENCES workspaces(id),
-    tag_id          TEXT NOT NULL REFERENCES tags(id),
+    workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    tag_id          TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     applied_at      TEXT NOT NULL,
     UNIQUE (workspace_id, tag_id)
 );
 
 CREATE TABLE conversation_tags (
     id              TEXT PRIMARY KEY,           -- ULID
-    conversation_id TEXT NOT NULL REFERENCES conversations(id),
-    tag_id          TEXT NOT NULL REFERENCES tags(id),
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    tag_id          TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     applied_at      TEXT NOT NULL,
     UNIQUE (conversation_id, tag_id)
 );
 
 CREATE TABLE tool_call_tags (
     id              TEXT PRIMARY KEY,           -- ULID
-    tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id),
-    tag_id          TEXT NOT NULL REFERENCES tags(id),
+    tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
+    tag_id          TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     applied_at      TEXT NOT NULL,
     UNIQUE (tool_call_id, tag_id)
 );
@@ -242,8 +242,8 @@ CREATE TABLE ingested_files (
     id              TEXT PRIMARY KEY,           -- ULID
     path            TEXT NOT NULL UNIQUE,
     file_hash       TEXT NOT NULL,
-    harness_id      TEXT NOT NULL REFERENCES harnesses(id),
-    conversation_id TEXT REFERENCES conversations(id),
+    harness_id      TEXT NOT NULL REFERENCES harnesses(id) ON DELETE CASCADE,
+    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
     ingested_at     TEXT NOT NULL,
     error           TEXT                        -- NULL = success, non-NULL = failure message
 );
