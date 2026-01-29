@@ -75,4 +75,3 @@ class Conversation:
     prompts: list[Prompt] = field(default_factory=list)
     workspace_path: str | None = None
     ended_at: str | None = None
-    default_model: str | None = None

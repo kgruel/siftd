@@ -6,15 +6,16 @@ _Auto-generated from `--help` output._
 
 ```
 usage: siftd [-h] [--db PATH]
-              {ingest,status,ask,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export} ...
+             {ingest,status,ask,install,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export} ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {ingest,status,ask,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export}
+  {ingest,status,ask,install,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export}
     ingest              Ingest logs from all sources
     status              Show database statistics
     ask                 Semantic search over conversations
+    install             Install optional dependencies
     tag                 Apply or remove a tag on a conversation (or other
                         entity)
     tags                List, inspect, rename, or delete tags
@@ -60,15 +61,14 @@ options:
 
 ```
 usage: siftd ask [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
-                  [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
-                  [--index] [--rebuild] [--backend NAME] [--embed-db PATH]
-                  [--thread] [--embeddings-only] [--recall N]
-                  [--role {user,assistant}] [--first] [--conversations]
-                  [--refs [FILES]] [--threshold SCORE] [--json]
-                  [--format NAME] [--no-exclude-active] [--include-derivative]
-                  [--no-diversity] [--lambda FLOAT] [-l NAME]
-                  [--all-tags NAME] [--no-tag NAME]
-                  [query ...]
+                 [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
+                 [--index] [--rebuild] [--backend NAME] [--embed-db PATH]
+                 [--thread] [--embeddings-only] [--recall N]
+                 [--role {user,assistant}] [--first] [--conversations]
+                 [--refs [FILES]] [--threshold SCORE] [--json] [--format NAME]
+                 [--no-exclude-active] [--include-derivative] [--no-diversity]
+                 [--lambda FLOAT] [-l NAME] [--all-tags NAME] [--no-tag NAME]
+                 [query ...]
 
 positional arguments:
   query                 Natural language search query
@@ -153,6 +153,23 @@ examples:
   siftd ask --chrono "chunking"                     # sort by time instead of score
 ```
 
+## install
+
+```
+usage: siftd install [-h] [--dry-run] {embed}
+
+positional arguments:
+  {embed}     Optional extra to install
+
+options:
+  -h, --help  show this help message and exit
+  --dry-run   Show what would be run without executing
+
+examples:
+  siftd install embed             # install semantic search dependencies
+  siftd install embed --dry-run   # show what would be installed
+```
+
 ## tag
 
 ```
@@ -182,8 +199,8 @@ examples:
 
 ```
 usage: siftd tags [-h] [--prefix PREFIX] [-n LIMIT] [--rename OLD NEW]
-                   [--delete NAME] [--force]
-                   [name]
+                  [--delete NAME] [--force]
+                  [name]
 
 positional arguments:
   name               Tag name to drill into (shows conversations)
@@ -226,10 +243,10 @@ examples:
 
 ```
 usage: siftd query [-h] [-v] [-n COUNT] [--latest] [--oldest] [-w SUBSTR]
-                    [-m NAME] [--since DATE] [--before DATE] [-s QUERY]
-                    [-t NAME] [-l NAME] [--all-tags NAME] [--no-tag NAME]
-                    [--tool-tag NAME] [--json] [--stats] [--var KEY=VALUE]
-                    [conversation_id] [sql_name]
+                   [-m NAME] [--since DATE] [--before DATE] [-s QUERY]
+                   [-t NAME] [-l NAME] [--all-tags NAME] [--no-tag NAME]
+                   [--tool-tag NAME] [--json] [--stats] [--var KEY=VALUE]
+                   [conversation_id] [sql_name]
 
 positional arguments:
   conversation_id       Conversation ID for detail view, or 'sql' for SQL
@@ -366,7 +383,7 @@ examples:
 
 ```
 usage: siftd peek [-h] [-w SUBSTR] [--all] [--last N] [--tail] [--json]
-                   [session_id]
+                  [session_id]
 
 positional arguments:
   session_id            Session ID prefix for detail view
@@ -393,10 +410,10 @@ examples:
 
 ```
 usage: siftd export [-h] [-n [N]] [-w SUBSTR] [-l NAME] [--exclude-tag NAME]
-                     [--since DATE] [--before DATE] [-s QUERY]
-                     [-f {prompts,exchanges,json}] [--prompts-only]
-                     [--no-header] [-o FILE]
-                     [conversation_id]
+                    [--since DATE] [--before DATE] [-s QUERY]
+                    [-f {prompts,exchanges,json}] [--prompts-only]
+                    [--no-header] [-o FILE]
+                    [conversation_id]
 
 positional arguments:
   conversation_id       Conversation ID to export (prefix match)
