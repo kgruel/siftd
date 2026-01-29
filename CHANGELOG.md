@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-01-29
+### Added
+
+- `siftd install embed` — Convenience command to auto-detect installation method and install embedding dependencies
+- `:var` parameterized syntax for query files — safe quoting via sqlite3, alongside existing `$var` text substitution
+- `ADAPTER_INTERFACE_VERSION = 1` — Required attribute for all adapters, enables future interface migrations
+- `ON DELETE CASCADE` on schema foreign keys — Child records now cascade on parent delete
+
+### Changed
+
+- Adapter `discover()` function now requires `locations` keyword argument (fallback removed)
+- Error messages for missing `[embed]` extra now reference `siftd install embed` and suggest FTS5 alternative
+
+### Removed
+
+- `Conversation.default_model` field — Was defined but never populated or used
+
+### Fixed
+
+- Type checker (`ty`) configuration for optional dependencies — No longer blocks commits
+- `bench/corpus_analysis.py` type annotation bug
+
+## [0.1.0] - 2026-01-28
 
 Initial public release.
 
@@ -38,7 +59,6 @@ Initial public release.
 - `siftd export` — Export conversations for PR review workflows
 - `siftd doctor` — Run health checks and maintenance
 - `siftd peek` — Inspect live sessions from disk (bypasses SQLite)
-- `siftd install embed` — Convenience command to install embedding dependencies
 - `siftd path` — Show XDG paths
 - `siftd config` — View or modify configuration
 - `siftd adapters` — List discovered adapters
@@ -47,8 +67,7 @@ Initial public release.
 
 #### Query System
 - User-defined SQL queries via `~/.config/siftd/queries/*.sql`
-- `$var` syntax for text substitution (table names, columns)
-- `:var` syntax for parameterized values (safe quoting)
+- `$var` syntax for text substitution
 - Built-in queries: `cost.sql`, `shell-analysis.sql`
 
 #### Python API
@@ -61,19 +80,12 @@ Initial public release.
 - SQLite with FTS5 for full-text search
 - ULID primary keys throughout
 - Normalized schema with proper foreign key constraints
-- `ON DELETE CASCADE` for referential integrity
 - Extensible `*_attributes` tables for variable metadata
 
 #### Developer Experience
 - XDG Base Directory compliance for paths
 - `--db PATH` override for all commands
 - JSON output mode for scripting (`--json`)
-- Adapter interface versioning (`ADAPTER_INTERFACE_VERSION = 1`)
-
-### Fixed
-
-- Improved error messages when `[embed]` extra not installed
-- Type checker configuration for optional dependencies
 
 ---
 
