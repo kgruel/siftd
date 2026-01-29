@@ -192,9 +192,9 @@ These conventions are shared with the project's CLAUDE.md, so tags are consisten
 
 > Boolean tag filtering, tag rename/delete, tool call tags: `reference/tags.md`.
 
-## Strata-First Documentation
+## Siftd-First Documentation
 
-HANDOFF.md and CLAUDE.md are thin indexes. Strata holds the depth.
+HANDOFF.md and CLAUDE.md are thin indexes. Siftd holds the depth.
 
 ### Reading HANDOFF references
 

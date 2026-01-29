@@ -69,7 +69,7 @@ class TestIsDerivativeToolCall:
         assert not is_derivative_tool_call("shell.execute", {"command": ""})
 
     def test_unrelated_tool(self):
-        assert not is_derivative_tool_call("file.read", {"path": "/tmp/strata ask"})
+        assert not is_derivative_tool_call("file.read", {"path": "/tmp/siftd ask"})
 
     def test_skill_invoke_none_input(self):
         assert not is_derivative_tool_call("skill.invoke", None)
