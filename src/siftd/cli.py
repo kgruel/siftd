@@ -7,6 +7,7 @@ from pathlib import Path
 from siftd.adapters.registry import load_all_adapters, wrap_adapter_paths
 from siftd.backfill import backfill_derivative_tags, backfill_response_attributes, backfill_shell_tags
 from siftd.cli_ask import build_ask_parser
+from siftd.cli_install import build_install_parser
 from siftd.ingestion import IngestStats, ingest_all
 from siftd.paths import data_dir, db_path, ensure_dirs, queries_dir
 from siftd.storage.sqlite import create_database, open_database
@@ -1293,6 +1294,9 @@ def main(argv=None) -> int:
 
     # ask (semantic search) — defined in cli_ask.py
     build_ask_parser(subparsers)
+
+    # install (optional dependencies) — defined in cli_install.py
+    build_install_parser(subparsers)
 
     # tag
     p_tag = subparsers.add_parser(
