@@ -117,11 +117,42 @@ siftd query sql
 siftd query sql cost
 ```
 
-**Run with variable substitution:**
+**Run with variables:**
 ```bash
 siftd query sql cost --var ws=myproject
 ```
-Variables use `$var` syntax in SQL files. Pass values with `--var KEY=VALUE`.
+
+### Variable syntax
+
+Two syntaxes are supported:
+
+| Syntax | Behavior | Use for |
+|--------|----------|---------|
+| `$var` or `${var}` | Text substitution | Table names, column names, structural SQL |
+| `:var` | Parameterized (safe) | String values, dates, numbers |
+
+**Template variables (`$var`)** are replaced before execution. Use for structural elements:
+```sql
+SELECT * FROM $table WHERE $column IS NOT NULL
+```
+
+**Parameter variables (`:var`)** are passed to SQLite as named parameters with automatic quoting. Use for values:
+```sql
+SELECT * FROM conversations
+WHERE workspace LIKE '%' || :ws || '%'
+  AND started_at > :since
+```
+
+**Mixed example:**
+```sql
+-- $table for structure, :filter for value
+SELECT * FROM $table WHERE name = :filter
+```
+```bash
+siftd query sql myquery --var table=conversations --var filter="project's name"
+```
+
+The `:var` syntax handles quotes and special characters safely — no SQL injection risk for values.
 
 ## Composition examples
 

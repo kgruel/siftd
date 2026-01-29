@@ -465,11 +465,25 @@ def _collapse_tool_calls(tool_calls: list) -> list[ToolCallSummary]:
 
 @dataclass
 class QueryFile:
-    """Metadata about a user-defined SQL query file."""
+    """Metadata about a user-defined SQL query file.
+
+    Attributes:
+        name: Query file stem (without .sql extension).
+        path: Full path to the .sql file.
+        template_vars: Variables using $var syntax (text substitution).
+        param_vars: Variables using :var syntax (parameterized, safe).
+        variables: All variable names (union of template_vars and param_vars).
+    """
 
     name: str
     path: Path
-    variables: list[str]
+    template_vars: list[str]
+    param_vars: list[str]
+
+    @property
+    def variables(self) -> list[str]:
+        """All variable names (template + param)."""
+        return sorted(set(self.template_vars + self.param_vars))
 
 
 @dataclass
@@ -484,6 +498,9 @@ def list_query_files() -> list[QueryFile]:
     """List available user-defined SQL query files.
 
     Scans the queries directory for .sql files and extracts variable names.
+    Distinguishes between:
+    - Template variables ($var): text substitution, for structural elements
+    - Param variables (:var): parameterized, for values (safe quoting)
 
     Returns:
         List of QueryFile with name, path, and required variables.
@@ -496,13 +513,27 @@ def list_query_files() -> list[QueryFile]:
     if not qdir.exists():
         return []
 
-    var_pattern = re.compile(r"\$\{(\w+)\}|\$(\w+)")
+    template_pattern = re.compile(r"\$\{(\w+)\}|\$(\w+)")
+    # Match :var but not ::var (Postgres cast) or :=var (assignment)
+    param_pattern = re.compile(r"(?<!:):(\w+)\b(?!=)")
     result = []
 
     for f in sorted(qdir.glob("*.sql")):
-        matches = var_pattern.findall(f.read_text())
-        var_names = sorted(set(m[0] or m[1] for m in matches))
-        result.append(QueryFile(name=f.stem, path=f, variables=var_names))
+        sql = f.read_text()
+        template_matches = template_pattern.findall(sql)
+        template_vars = sorted(set(m[0] or m[1] for m in template_matches))
+
+        param_matches = param_pattern.findall(sql)
+        param_vars = sorted(set(param_matches))
+
+        result.append(
+            QueryFile(
+                name=f.stem,
+                path=f,
+                template_vars=template_vars,
+                param_vars=param_vars,
+            )
+        )
 
     return result
 
@@ -521,9 +552,13 @@ def run_query_file(
 ) -> QueryResult:
     """Run a user-defined SQL query file.
 
+    Supports two variable syntaxes:
+    - $var or ${var}: Text substitution (for structural elements like tables)
+    - :var: Parameterized query (for values, with safe quoting)
+
     Args:
         name: Query file name (without .sql extension).
-        variables: Dict of variable substitutions ($var or ${var}).
+        variables: Dict of variable values. Same dict serves both syntaxes.
         db_path: Path to database. Uses default if not specified.
 
     Returns:
@@ -532,6 +567,16 @@ def run_query_file(
     Raises:
         FileNotFoundError: If database or query file doesn't exist.
         QueryError: If variables are missing or SQL fails.
+
+    Example:
+        SQL file with both syntaxes::
+
+            SELECT * FROM $table
+            WHERE workspace LIKE '%' || :ws || '%'
+              AND started_at > :since
+
+        Call with: run_query_file("myquery", {"table": "conversations",
+                                              "ws": "project", "since": "2025-01"})
     """
     import re
     import sqlite3
@@ -549,20 +594,31 @@ def run_query_file(
         raise FileNotFoundError(f"Query file not found: {sql_file}")
 
     sql = sql_file.read_text()
+    variables = variables or {}
 
-    # Variable substitution
-    if variables:
-        sql = Template(sql).safe_substitute(variables)
-    else:
-        sql = Template(sql).safe_substitute()
+    # 1. Extract :param names before $var substitution
+    # Match :var but not ::var (Postgres cast) or :=var (assignment)
+    param_pattern = re.compile(r"(?<!:):(\w+)\b(?!=)")
+    param_names = set(param_pattern.findall(sql))
 
-    # Check for unsubstituted variables
-    remaining = re.findall(r"\$\{(\w+)\}|\$(\w+)", sql)
-    if remaining:
-        missing = sorted(set(m[0] or m[1] for m in remaining))
-        raise QueryError(f"Missing variables: {', '.join(missing)}")
+    # 2. Text-substitute $var / ${var}
+    sql = Template(sql).safe_substitute(variables)
 
-    # Execute
+    # 3. Check for unsubstituted $vars
+    remaining_template = re.findall(r"\$\{(\w+)\}|\$(\w+)", sql)
+    if remaining_template:
+        missing = sorted(set(m[0] or m[1] for m in remaining_template))
+        raise QueryError(f"Missing template variables: {', '.join(missing)}")
+
+    # 4. Build params dict for :var (only those present in SQL)
+    params = {k: v for k, v in variables.items() if k in param_names}
+
+    # 5. Check for unbound :params
+    unbound = param_names - set(params.keys())
+    if unbound:
+        raise QueryError(f"Missing parameter variables: {', '.join(sorted(unbound))}")
+
+    # 6. Execute with params
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
 
@@ -570,7 +626,8 @@ def run_query_file(
         statements = [s.strip() for s in sql.split(";") if s.strip()]
         last_rows = None
         for stmt in statements:
-            cursor = conn.execute(stmt)
+            # Pass params to each statement (sqlite3 uses :name syntax)
+            cursor = conn.execute(stmt, params)
             if cursor.description:
                 last_rows = (cursor.description, cursor.fetchall())
 
