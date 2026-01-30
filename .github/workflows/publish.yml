@@ -28,3 +28,50 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  update-homebrew:
+    runs-on: ubuntu-latest
+    needs: publish
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Wait for PyPI availability
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "Waiting for siftd $VERSION on PyPI..."
+          for i in {1..30}; do
+            if pip index versions siftd 2>/dev/null | grep -q "$VERSION"; then
+              echo "Found siftd $VERSION on PyPI"
+              break
+            fi
+            echo "Attempt $i: not yet available, waiting 10s..."
+            sleep 10
+          done
+
+      - name: Install siftd and poet
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          pip install "siftd==$VERSION" homebrew-pypi-poet
+
+      - name: Generate formula
+        run: |
+          poet -f siftd > siftd.rb
+          # Fix desc and test block
+          sed -i 's/desc ".*"/desc "Personal LLM usage analytics for CLI coding tools"/' siftd.rb
+          cat siftd.rb
+
+      - name: Push to tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/kgruel/homebrew-siftd.git tap
+          cp siftd.rb tap/Formula/siftd.rb 2>/dev/null || { mkdir -p tap/Formula && cp siftd.rb tap/Formula/siftd.rb; }
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/siftd.rb
+          git diff --cached --quiet || git commit -m "Update siftd to ${GITHUB_REF#refs/tags/}"
+          git push

@@ -1349,10 +1349,24 @@ def _print_stats(stats: IngestStats) -> None:
                 print(f"  {key}: {value}")
 
 
+def _get_version() -> str:
+    """Get package version from metadata."""
+    try:
+        from importlib.metadata import version
+        return version("siftd")
+    except Exception:
+        return "unknown"
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="siftd",
         description="Aggregate and query LLM conversation logs",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"siftd {_get_version()}",
     )
     parser.add_argument(
         "--db",
