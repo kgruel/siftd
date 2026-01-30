@@ -5,20 +5,21 @@ import sys
 from pathlib import Path
 
 from siftd.adapters.registry import load_all_adapters, wrap_adapter_paths
+from siftd.api import (
+    apply_tag,
+    create_database,
+    delete_tag,
+    get_or_create_tag,
+    list_tags,
+    open_database,
+    remove_tag,
+    rename_tag,
+)
 from siftd.backfill import backfill_derivative_tags, backfill_response_attributes, backfill_shell_tags
 from siftd.cli_ask import build_ask_parser
 from siftd.cli_install import build_install_parser
 from siftd.ingestion import IngestStats, ingest_all
 from siftd.paths import data_dir, db_path, ensure_dirs, queries_dir
-from siftd.storage.sqlite import create_database, open_database
-from siftd.storage.tags import (
-    apply_tag,
-    delete_tag,
-    get_or_create_tag,
-    list_tags,
-    remove_tag,
-    rename_tag,
-)
 
 
 def cmd_ingest(args) -> int:
@@ -314,39 +315,39 @@ def cmd_tags(args) -> int:
         tag_name = args.delete
 
         # Check associations first
-        tags = list_tags(conn)
-        tag_info = next((t for t in tags if t["name"] == tag_name), None)
+        tags = list_tags(conn=conn)
+        tag_info = next((t for t in tags if t.name == tag_name), None)
         if not tag_info:
             print(f"Tag not found: {tag_name}")
             conn.close()
             return 1
 
         total_associations = (
-            tag_info["conversation_count"]
-            + tag_info["workspace_count"]
-            + tag_info["tool_call_count"]
+            tag_info.conversation_count
+            + tag_info.workspace_count
+            + tag_info.tool_call_count
         )
 
         if total_associations > 0 and not args.force:
             parts = []
-            if tag_info["conversation_count"]:
-                parts.append(f"{tag_info['conversation_count']} conversations")
-            if tag_info["workspace_count"]:
-                parts.append(f"{tag_info['workspace_count']} workspaces")
-            if tag_info["tool_call_count"]:
-                parts.append(f"{tag_info['tool_call_count']} tool_calls")
+            if tag_info.conversation_count:
+                parts.append(f"{tag_info.conversation_count} conversations")
+            if tag_info.workspace_count:
+                parts.append(f"{tag_info.workspace_count} workspaces")
+            if tag_info.tool_call_count:
+                parts.append(f"{tag_info.tool_call_count} tool_calls")
             print(f"Tag '{tag_name}' is applied to {', '.join(parts)}. Use --force to delete.")
             conn.close()
             return 1
 
         delete_tag(conn, tag_name, commit=True)
         parts = []
-        if tag_info["conversation_count"]:
-            parts.append(f"{tag_info['conversation_count']} conversations")
-        if tag_info["workspace_count"]:
-            parts.append(f"{tag_info['workspace_count']} workspaces")
-        if tag_info["tool_call_count"]:
-            parts.append(f"{tag_info['tool_call_count']} tool_calls")
+        if tag_info.conversation_count:
+            parts.append(f"{tag_info.conversation_count} conversations")
+        if tag_info.workspace_count:
+            parts.append(f"{tag_info.workspace_count} workspaces")
+        if tag_info.tool_call_count:
+            parts.append(f"{tag_info.tool_call_count} tool_calls")
         if parts:
             print(f"Deleted tag '{tag_name}' (was applied to {', '.join(parts)})")
         else:
@@ -386,7 +387,7 @@ def cmd_tags(args) -> int:
         return 0
 
     # Default: list tags
-    tags = list_tags(conn)
+    tags = list_tags(conn=conn)
 
     if not tags:
         print("No tags defined.")
@@ -395,7 +396,7 @@ def cmd_tags(args) -> int:
 
     prefix = getattr(args, "prefix", None)
     if prefix:
-        tags = [t for t in tags if t["name"].startswith(prefix)]
+        tags = [t for t in tags if t.name.startswith(prefix)]
         if not tags:
             print(f"No tags found with prefix: {prefix}")
             conn.close()
@@ -403,15 +404,15 @@ def cmd_tags(args) -> int:
 
     for tag in tags:
         counts = []
-        if tag["conversation_count"]:
-            counts.append(f"{tag['conversation_count']} conversations")
-        if tag["workspace_count"]:
-            counts.append(f"{tag['workspace_count']} workspaces")
-        if tag["tool_call_count"]:
-            counts.append(f"{tag['tool_call_count']} tool_calls")
+        if tag.conversation_count:
+            counts.append(f"{tag.conversation_count} conversations")
+        if tag.workspace_count:
+            counts.append(f"{tag.workspace_count} workspaces")
+        if tag.tool_call_count:
+            counts.append(f"{tag.tool_call_count} tool_calls")
         count_str = f" ({', '.join(counts)})" if counts else ""
-        desc = f" - {tag['description']}" if tag["description"] else ""
-        print(f"  {tag['name']}{desc}{count_str}")
+        desc = f" - {tag.description}" if tag.description else ""
+        print(f"  {tag.name}{desc}{count_str}")
 
     conn.close()
     return 0

@@ -18,7 +18,87 @@ __all__ = [
     "aggregate_by_conversation",
     "first_mention",
     "build_index",
+    # Embeddings
+    "open_embeddings_db",
+    "search_similar",
+    # FTS5
+    "fts5_recall_conversations",
 ]
+
+
+def open_embeddings_db(
+    db_path: Path,
+    *,
+    read_only: bool = False,
+) -> sqlite3.Connection:
+    """Open the embeddings database.
+
+    Args:
+        db_path: Path to the embeddings database file.
+        read_only: If True, open in read-only mode.
+
+    Returns:
+        An open sqlite3.Connection.
+    """
+    from siftd.storage.embeddings import open_embeddings_db as _open_embeddings_db
+
+    return _open_embeddings_db(db_path, read_only=read_only)
+
+
+def search_similar(
+    conn: sqlite3.Connection,
+    query_embedding: list[float],
+    *,
+    limit: int = 10,
+    conversation_ids: set[str] | None = None,
+    role_source_ids: set[str] | None = None,
+    include_embeddings: bool = False,
+) -> list[dict]:
+    """Search for similar chunks in the embeddings database.
+
+    Args:
+        conn: Connection to embeddings database.
+        query_embedding: The query embedding vector.
+        limit: Maximum results to return.
+        conversation_ids: Optional set of conversation IDs to filter by.
+        role_source_ids: Optional set of source IDs to filter by role.
+        include_embeddings: If True, include embedding vectors in results.
+
+    Returns:
+        List of result dicts with score, chunk_id, conversation_id, text, etc.
+    """
+    from siftd.storage.embeddings import search_similar as _search_similar
+
+    return _search_similar(
+        conn,
+        query_embedding,
+        limit=limit,
+        conversation_ids=conversation_ids,
+        role_source_ids=role_source_ids,
+        include_embeddings=include_embeddings,
+    )
+
+
+def fts5_recall_conversations(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    limit: int = 80,
+) -> tuple[set[str], str]:
+    """FTS5 recall to narrow candidate conversations for embedding search.
+
+    Args:
+        conn: Connection to main database.
+        query: The search query string.
+        limit: Maximum conversation IDs to return.
+
+    Returns:
+        Tuple of (conversation_id set, mode string).
+        Mode is "prefix", "exact", or "none".
+    """
+    from siftd.storage.fts import fts5_recall_conversations as _fts5_recall
+
+    return _fts5_recall(conn, query, limit=limit)
 
 
 @dataclass

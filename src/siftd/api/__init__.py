@@ -22,6 +22,10 @@ from siftd.api.conversations import (
     list_query_files,
     run_query_file,
 )
+from siftd.api.database import (
+    create_database,
+    open_database,
+)
 from siftd.api.doctor import (
     CheckInfo,
     Finding,
@@ -64,7 +68,10 @@ from siftd.api.search import (
     aggregate_by_conversation,
     build_index,
     first_mention,
+    fts5_recall_conversations,
     hybrid_search,
+    open_embeddings_db,
+    search_similar,
 )
 from siftd.api.stats import (
     DatabaseStats,
@@ -73,6 +80,16 @@ from siftd.api.stats import (
     ToolStats,
     WorkspaceStats,
     get_stats,
+)
+from siftd.api.tags import (
+    DERIVATIVE_TAG,
+    TagInfo,
+    apply_tag,
+    delete_tag,
+    get_or_create_tag,
+    list_tags,
+    remove_tag,
+    rename_tag,
 )
 from siftd.api.tools import (
     TagUsage,
@@ -86,6 +103,18 @@ __all__ = [
     "AdapterInfo",
     "list_adapters",
     "list_builtin_adapters",
+    # database
+    "create_database",
+    "open_database",
+    # tags
+    "DERIVATIVE_TAG",
+    "TagInfo",
+    "apply_tag",
+    "delete_tag",
+    "get_or_create_tag",
+    "list_tags",
+    "remove_tag",
+    "rename_tag",
     # doctor
     "CheckInfo",
     "Finding",
@@ -129,6 +158,9 @@ __all__ = [
     "aggregate_by_conversation",
     "first_mention",
     "build_index",
+    "open_embeddings_db",
+    "search_similar",
+    "fts5_recall_conversations",
     # stats
     "DatabaseStats",
     "TableCounts",

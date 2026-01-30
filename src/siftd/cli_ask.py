@@ -33,11 +33,8 @@ def cmd_ask(args) -> int:
     """Semantic search over conversation content using embeddings."""
     import sqlite3 as _sqlite3
 
+    from siftd.api import open_embeddings_db, search_similar
     from siftd.embeddings import embeddings_available
-    from siftd.storage.embeddings import (
-        open_embeddings_db,
-        search_similar,
-    )
 
     # Apply config defaults before processing
     _apply_ask_config(args)
@@ -93,8 +90,8 @@ def cmd_ask(args) -> int:
         return 1
 
     # Compose filters: get candidate conversation IDs from main DB
+    from siftd.api import DERIVATIVE_TAG
     from siftd.search import filter_conversations, get_active_conversation_ids
-    from siftd.storage.tags import DERIVATIVE_TAG
 
     exclude_tags = list(getattr(args, "no_tag", None) or [])
     if not args.include_derivative:
@@ -132,7 +129,7 @@ def cmd_ask(args) -> int:
     if not args.embeddings_only:
         import sqlite3 as _sqlite3_main
 
-        from siftd.storage.fts import fts5_recall_conversations
+        from siftd.api import fts5_recall_conversations
 
         main_conn = _sqlite3_main.connect(db)
         main_conn.row_factory = _sqlite3_main.Row
