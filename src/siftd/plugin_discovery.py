@@ -17,7 +17,6 @@ from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
-
 Validator = Callable[[ModuleType, str], str | None]
 
 

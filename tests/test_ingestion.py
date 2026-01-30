@@ -340,3 +340,72 @@ class TestSessionBasedDedup:
         assert cur.fetchone()[0] == original_id
 
         conn.close()
+
+    def test_timestamp_comparison_varied_formats(self, tmp_path):
+        """Session dedup handles varied timestamp formats (Z vs +00:00)."""
+        dest = tmp_path / "session.jsonl"
+        dest.write_text("dummy")
+
+        db_path = tmp_path / "test.db"
+        conn = open_database(db_path)
+
+        # First: use Z suffix
+        conv_z = self._conv("test_harness::session-1", "2024-01-01T10:00:00Z")
+        AdapterZ = make_session_adapter(dest, parse_fn=lambda s: [conv_z])
+
+        stats1 = ingest_all(conn, [AdapterZ])
+        assert stats1.files_ingested == 1
+
+        # Second: same time but with +00:00 format — should be treated as equal
+        conv_offset = self._conv("test_harness::session-1", "2024-01-01T10:00:00+00:00")
+        AdapterOffset = make_session_adapter(dest, parse_fn=lambda s: [conv_offset])
+
+        stats2 = ingest_all(conn, [AdapterOffset])
+        assert stats2.files_skipped == 1  # Same time, should skip
+        assert stats2.files_replaced == 0
+
+        # Third: newer time with Z suffix — should replace
+        conv_newer = self._conv("test_harness::session-1", "2024-01-01T12:00:00Z")
+        AdapterNewer = make_session_adapter(dest, parse_fn=lambda s: [conv_newer])
+
+        stats3 = ingest_all(conn, [AdapterNewer])
+        assert stats3.files_replaced == 1
+
+        conn.close()
+
+
+class TestMultiConversationWarning:
+    """Tests for 0/1 conversation per source enforcement."""
+
+    def test_multiple_conversations_takes_first(self, tmp_path, caplog):
+        """When adapter yields multiple conversations, only first is used."""
+        dest = tmp_path / "multi.jsonl"
+        dest.write_text("dummy")
+
+        db_path = tmp_path / "test.db"
+        conn = open_database(db_path)
+
+        conv1 = make_conversation(external_id="conv-1", ended_at="2024-01-01T10:00:00Z")
+        conv2 = make_conversation(external_id="conv-2", ended_at="2024-01-01T11:00:00Z")
+
+        def multi_parse(source):
+            return [conv1, conv2]
+
+        adapter = make_test_adapter(dest, parse_fn=multi_parse)
+
+        import logging
+        with caplog.at_level(logging.WARNING):
+            stats = ingest_all(conn, [adapter])
+
+        # Only one conversation should be stored
+        assert stats.conversations == 1
+        assert stats.files_ingested == 1
+
+        cur = conn.execute("SELECT COUNT(*) FROM conversations")
+        assert cur.fetchone()[0] == 1
+
+        # Should have logged a warning
+        assert "yielded 2 conversations" in caplog.text
+        assert "taking first only" in caplog.text
+
+        conn.close()

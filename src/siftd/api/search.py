@@ -3,6 +3,7 @@
 Re-exports core search functionality and adds post-processing functions.
 """
 
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean as _mean

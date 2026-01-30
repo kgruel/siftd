@@ -12,6 +12,8 @@ The API layer handles parameter validation and dataclass mapping.
 import sqlite3
 from dataclasses import dataclass
 
+from siftd.storage.sql_helpers import placeholders
+
 
 @dataclass
 class ExchangeRow:
@@ -166,8 +168,6 @@ def fetch_exchanges(
         )
 
     return result
-
-from siftd.storage.sql_helpers import placeholders
 
 
 def fetch_prompt_response_texts(
