@@ -550,6 +550,52 @@ class EmbeddingsAvailableCheck:
         return None
 
 
+class FreelistCheck:
+    """Reports SQLite freelist pages that could be reclaimed with VACUUM."""
+
+    name = "freelist"
+    description = "SQLite freelist pages (reclaimable with VACUUM)"
+    has_fix = False  # VACUUM is manual, not auto-applied
+
+    def run(self, ctx: CheckContext) -> list[Finding]:
+        conn = ctx.get_db_conn()
+
+        freelist_count = conn.execute("PRAGMA freelist_count").fetchone()[0]
+        page_count = conn.execute("PRAGMA page_count").fetchone()[0]
+        page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+
+        if freelist_count == 0:
+            return []
+
+        # Calculate wasted space
+        wasted_bytes = freelist_count * page_size
+        if wasted_bytes < 1024 * 1024:  # < 1MB
+            wasted_str = f"{wasted_bytes / 1024:.0f}KB"
+        else:
+            wasted_str = f"{wasted_bytes / (1024 * 1024):.1f}MB"
+
+        pct = (freelist_count / page_count * 100) if page_count > 0 else 0
+
+        return [
+            Finding(
+                check=self.name,
+                severity="info",
+                message=f"{freelist_count} free page(s) ({wasted_str}, {pct:.0f}% of DB) could be reclaimed",
+                fix_available=False,
+                context={
+                    "freelist_count": freelist_count,
+                    "page_count": page_count,
+                    "page_size": page_size,
+                    "wasted_bytes": wasted_bytes,
+                    "tip": f"sqlite3 {ctx.db_path} 'VACUUM'",
+                },
+            )
+        ]
+
+    def fix(self, finding: Finding) -> FixResult | None:
+        return None
+
+
 # Registry of built-in checks
 BUILTIN_CHECKS: list[Check] = [
     IngestPendingCheck(),
@@ -559,4 +605,5 @@ BUILTIN_CHECKS: list[Check] = [
     OrphanedChunksCheck(),
     PricingGapsCheck(),
     DropInsValidCheck(),
+    FreelistCheck(),
 ]

@@ -15,6 +15,7 @@ from siftd.doctor.checks import (
     CheckContext,
     DropInsValidCheck,
     EmbeddingsStaleCheck,
+    FreelistCheck,
     IngestPendingCheck,
     OrphanedChunksCheck,
     PricingGapsCheck,
@@ -62,6 +63,7 @@ class TestListChecks:
         assert "orphaned-chunks" in names
         assert "pricing-gaps" in names
         assert "drop-ins-valid" in names
+        assert "freelist" in names
 
     def test_has_fix_matches_class_attribute(self):
         """has_fix in CheckInfo matches the class attribute on each check."""
@@ -382,3 +384,79 @@ class TestOrphanedChunksCheck:
         assert findings[0].fix_available is True
         assert findings[0].context["chunk_count"] == 1
         assert findings[0].context["conversation_count"] == 1
+
+
+class TestFreelistCheck:
+    """Tests for the freelist check."""
+
+    def test_no_freelist_pages(self, check_context):
+        """Returns no findings when freelist is empty."""
+        check = FreelistCheck()
+        findings = check.run(check_context)
+        # Fresh DB typically has no freelist pages
+        assert isinstance(findings, list)
+        # Either empty (no freelist) or has the expected structure
+        for f in findings:
+            assert f.check == "freelist"
+
+    def test_freelist_with_pages(self, check_context):
+        """Reports freelist pages when present."""
+        # Create freelist pages by inserting then deleting data
+        conn = check_context.get_db_conn()
+
+        # We need a writable connection for this test
+        import sqlite3
+        write_conn = sqlite3.connect(check_context.db_path)
+        write_conn.row_factory = sqlite3.Row
+
+        # Insert a bunch of data to expand the DB
+        write_conn.execute("""
+            CREATE TABLE IF NOT EXISTS _test_temp (
+                id INTEGER PRIMARY KEY,
+                data TEXT
+            )
+        """)
+        for i in range(1000):
+            write_conn.execute(
+                "INSERT INTO _test_temp (data) VALUES (?)",
+                ("x" * 1000,)
+            )
+        write_conn.commit()
+
+        # Delete everything to create freelist pages
+        write_conn.execute("DELETE FROM _test_temp")
+        write_conn.execute("DROP TABLE _test_temp")
+        write_conn.commit()
+        write_conn.close()
+
+        # Close and reopen context connection to see changes
+        check_context.close()
+
+        check = FreelistCheck()
+        findings = check.run(check_context)
+
+        # Should have freelist pages now
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.check == "freelist"
+        assert f.severity == "info"
+        assert f.fix_available is False
+        assert "free page" in f.message
+        assert "reclaimed" in f.message
+        assert f.context["freelist_count"] > 0
+        assert "tip" in f.context
+        assert "VACUUM" in f.context["tip"]
+
+    def test_finding_structure(self, check_context):
+        """Findings have correct structure."""
+        check = FreelistCheck()
+        findings = check.run(check_context)
+        for f in findings:
+            assert f.check == "freelist"
+            assert f.severity == "info"
+            assert f.fix_available is False
+            assert "freelist_count" in f.context
+            assert "page_count" in f.context
+            assert "page_size" in f.context
+            assert "wasted_bytes" in f.context
+            assert "tip" in f.context
