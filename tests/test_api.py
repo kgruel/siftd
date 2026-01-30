@@ -1,9 +1,8 @@
 """Tests for the public API module."""
 
-from pathlib import Path
+import json
 
 import pytest
-
 from conftest import make_conversation
 
 from siftd.api import (
@@ -429,3 +428,148 @@ class TestIngestTimeShellTagging:
         count = cur.fetchone()["cnt"]
 
         assert count == 0
+
+
+class TestFetchFileRefs:
+    """Tests for fetch_file_refs including content-addressable blob support."""
+
+    def test_fetch_file_refs_with_deduped_result(self, tmp_path):
+        """fetch_file_refs returns content from content_blobs when result is deduped."""
+        from siftd.api.file_refs import fetch_file_refs
+        from siftd.storage.sqlite import (
+            create_database,
+            get_or_create_harness,
+            get_or_create_tool,
+            get_or_create_workspace,
+            insert_conversation,
+            insert_prompt,
+            insert_response,
+            insert_tool_call,
+        )
+
+        db_path = tmp_path / "test_file_refs.db"
+        conn = create_database(db_path)
+
+        harness_id = get_or_create_harness(conn, "test", source="test")
+        workspace_id = get_or_create_workspace(conn, "/test", "2024-01-01T10:00:00Z")
+        tool_id = get_or_create_tool(conn, "file.read")
+        conv_id = insert_conversation(conn, "c1", harness_id, workspace_id, "2024-01-01T10:00:00Z")
+        prompt_id = insert_prompt(conn, conv_id, "p1", "2024-01-01T10:00:00Z")
+        response_id = insert_response(conn, conv_id, prompt_id, None, None, "r1", "2024-01-01T10:00:01Z")
+
+        # Insert with dedupe_result=True (default) - stores in content_blobs
+        result_json = json.dumps({"content": "deduped file content"})
+        insert_tool_call(
+            conn, response_id, conv_id, tool_id, "tc1",
+            '{"file_path": "/test/hello.py"}', result_json, "success", "2024-01-01T10:00:01Z",
+            dedupe_result=True,
+        )
+        conn.commit()
+
+        # Verify result is in blob, not inline
+        cur = conn.execute("SELECT result, result_hash FROM tool_calls WHERE external_id = 'tc1'")
+        row = cur.fetchone()
+        assert row["result"] is None, "Expected result to be stored in blob, not inline"
+        assert row["result_hash"] is not None, "Expected result_hash to reference blob"
+
+        # Now test fetch_file_refs retrieves content correctly
+        refs = fetch_file_refs(conn, [prompt_id])
+
+        assert prompt_id in refs
+        assert len(refs[prompt_id]) == 1
+        ref = refs[prompt_id][0]
+        assert ref.path == "/test/hello.py"
+        assert ref.basename == "hello.py"
+        assert ref.op == "r"
+        assert ref.content == "deduped file content"
+
+        conn.close()
+
+    def test_fetch_file_refs_with_inline_result(self, tmp_path):
+        """fetch_file_refs returns content from inline result when not deduped."""
+        from siftd.api.file_refs import fetch_file_refs
+        from siftd.storage.sqlite import (
+            create_database,
+            get_or_create_harness,
+            get_or_create_tool,
+            get_or_create_workspace,
+            insert_conversation,
+            insert_prompt,
+            insert_response,
+            insert_tool_call,
+        )
+
+        db_path = tmp_path / "test_file_refs_inline.db"
+        conn = create_database(db_path)
+
+        harness_id = get_or_create_harness(conn, "test", source="test")
+        workspace_id = get_or_create_workspace(conn, "/test", "2024-01-01T10:00:00Z")
+        tool_id = get_or_create_tool(conn, "file.read")
+        conv_id = insert_conversation(conn, "c1", harness_id, workspace_id, "2024-01-01T10:00:00Z")
+        prompt_id = insert_prompt(conn, conv_id, "p1", "2024-01-01T10:00:00Z")
+        response_id = insert_response(conn, conv_id, prompt_id, None, None, "r1", "2024-01-01T10:00:01Z")
+
+        # Insert with dedupe_result=False - stores inline
+        result_json = '{"content": "inline content"}'
+        insert_tool_call(
+            conn, response_id, conv_id, tool_id, "tc1",
+            '{"file_path": "/test/inline.txt"}', result_json, "success", "2024-01-01T10:00:01Z",
+            dedupe_result=False,
+        )
+        conn.commit()
+
+        refs = fetch_file_refs(conn, [prompt_id])
+
+        assert prompt_id in refs
+        assert len(refs[prompt_id]) == 1
+        ref = refs[prompt_id][0]
+        assert ref.path == "/test/inline.txt"
+        assert ref.content == "inline content"
+
+        conn.close()
+
+    def test_fetch_file_refs_mixed_storage(self, tmp_path):
+        """fetch_file_refs handles mix of inline and blob-stored results."""
+        from siftd.api.file_refs import fetch_file_refs
+        from siftd.storage.sqlite import (
+            create_database,
+            get_or_create_harness,
+            get_or_create_tool,
+            get_or_create_workspace,
+            insert_conversation,
+            insert_prompt,
+            insert_response,
+            insert_tool_call,
+        )
+
+        db_path = tmp_path / "test_file_refs_mixed.db"
+        conn = create_database(db_path)
+
+        harness_id = get_or_create_harness(conn, "test", source="test")
+        workspace_id = get_or_create_workspace(conn, "/test", "2024-01-01T10:00:00Z")
+        tool_id = get_or_create_tool(conn, "file.read")
+        conv_id = insert_conversation(conn, "c1", harness_id, workspace_id, "2024-01-01T10:00:00Z")
+        prompt_id = insert_prompt(conn, conv_id, "p1", "2024-01-01T10:00:00Z")
+        response_id = insert_response(conn, conv_id, prompt_id, None, None, "r1", "2024-01-01T10:00:01Z")
+
+        # One blob-stored, one inline
+        insert_tool_call(
+            conn, response_id, conv_id, tool_id, "tc1",
+            '{"file_path": "/test/blob.txt"}', '{"content": "blob content"}', "success", "2024-01-01T10:00:01Z",
+            dedupe_result=True,
+        )
+        insert_tool_call(
+            conn, response_id, conv_id, tool_id, "tc2",
+            '{"file_path": "/test/inline.txt"}', '{"content": "inline content"}', "success", "2024-01-01T10:00:02Z",
+            dedupe_result=False,
+        )
+        conn.commit()
+
+        refs = fetch_file_refs(conn, [prompt_id])
+
+        assert len(refs[prompt_id]) == 2
+        paths = {r.path: r.content for r in refs[prompt_id]}
+        assert paths["/test/blob.txt"] == "blob content"
+        assert paths["/test/inline.txt"] == "inline content"
+
+        conn.close()

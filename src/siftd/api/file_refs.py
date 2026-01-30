@@ -75,10 +75,11 @@ def fetch_file_refs(
         f"""
         SELECT r.prompt_id, t.name AS tool_name,
                tc.input AS input_json,
-               tc.result AS result_json
+               COALESCE(tc.result, cb.content) AS result_json
         FROM tool_calls tc
         JOIN responses r ON r.id = tc.response_id
         JOIN tools t ON t.id = tc.tool_id
+        LEFT JOIN content_blobs cb ON tc.result_hash = cb.hash
         WHERE r.prompt_id IN ({placeholders})
           AND t.name IN ('file.read', 'file.write', 'file.edit')
         ORDER BY tc.timestamp
