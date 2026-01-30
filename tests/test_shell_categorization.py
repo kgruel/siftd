@@ -2,7 +2,7 @@
 
 import pytest
 
-from siftd.storage.sqlite import categorize_shell_command
+from siftd.domain.shell_categories import categorize_shell_command
 
 
 @pytest.mark.parametrize(

@@ -108,6 +108,8 @@ def _parse_gemini(raw_name: str) -> dict:
     )
     if m:
         version, variant, preview = m.groups()
+        # Intentionally exclude "-preview" from canonical name so
+        # preview and GA releases collapse to the same model identity.
         name = f"gemini-{version}-{variant}"
         return {
             "name": name,

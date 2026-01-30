@@ -2,7 +2,7 @@
 
 import pytest
 
-from siftd.models import parse_model_name
+from siftd.model_names import parse_model_name
 
 
 @pytest.mark.parametrize(

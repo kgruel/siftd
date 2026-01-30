@@ -11,17 +11,15 @@ from siftd.api import get_conversation, get_stats, list_conversations
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall, Usage
 from siftd.domain.source import Source
 from siftd.ingestion.orchestration import ingest_all
+from siftd.storage.fts import rebuild_fts_index, search_content
 from siftd.storage.sqlite import (
-    apply_tag,
     create_database,
     delete_conversation,
-    get_or_create_tag,
     open_database,
-    rebuild_fts_index,
     record_ingested_file,
-    search_content,
     store_conversation,
 )
+from siftd.storage.tags import apply_tag, get_or_create_tag
 
 
 def _make_file_adapter(dest):
@@ -380,10 +378,8 @@ class TestEnsureTablesCascade:
         4. CASCADE should remove child records without FK error
         """
         from siftd.storage.sqlite import (
-            apply_tag,
             get_or_create_harness,
             get_or_create_model,
-            get_or_create_tag,
             get_or_create_tool,
             get_or_create_workspace,
             insert_conversation,
@@ -392,6 +388,7 @@ class TestEnsureTablesCascade:
             insert_tool_call,
             open_database,
         )
+        from siftd.storage.tags import apply_tag, get_or_create_tag
 
         db_path = tmp_path / "upgrade_test.db"
         conn = open_database(db_path)
@@ -441,10 +438,8 @@ class TestEnsureTablesCascade:
     def test_ensure_tool_call_tags_cascades_on_tag_deletion(self, tmp_path):
         """tool_call_tags created via ensure_* cascades on tag deletion."""
         from siftd.storage.sqlite import (
-            apply_tag,
             get_or_create_harness,
             get_or_create_model,
-            get_or_create_tag,
             get_or_create_tool,
             get_or_create_workspace,
             insert_conversation,
@@ -453,6 +448,7 @@ class TestEnsureTablesCascade:
             insert_tool_call,
             open_database,
         )
+        from siftd.storage.tags import apply_tag, get_or_create_tag
 
         db_path = tmp_path / "upgrade_test2.db"
         conn = open_database(db_path)

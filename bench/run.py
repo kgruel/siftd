@@ -145,7 +145,7 @@ def run_bench(
             for query_text in group["queries"]:
                 conversation_ids = None
                 if hybrid:
-                    from siftd.storage.sqlite import fts5_recall_conversations
+                    from siftd.storage.fts import fts5_recall_conversations
                     fts5_ids, fts5_mode = fts5_recall_conversations(main_db, query_text, limit=recall_limit)
                     db_recall_meta[query_text] = {
                         "fts5_conversations": len(fts5_ids),

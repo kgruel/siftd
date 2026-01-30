@@ -15,11 +15,9 @@ from siftd.domain.models import (
 )
 from siftd.domain.source import Source
 from siftd.storage.sqlite import (
-    apply_tag,
     create_database,
     get_or_create_harness,
     get_or_create_model,
-    get_or_create_tag,
     get_or_create_tool,
     get_or_create_workspace,
     insert_conversation,
@@ -30,6 +28,7 @@ from siftd.storage.sqlite import (
     insert_tool_call,
     record_ingested_file,
 )
+from siftd.storage.tags import apply_tag, get_or_create_tag
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 

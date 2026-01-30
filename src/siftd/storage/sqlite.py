@@ -15,7 +15,7 @@ from pathlib import Path
 
 from siftd.domain import Conversation
 from siftd.ids import ulid as _ulid
-from siftd.models import parse_model_name
+from siftd.model_names import parse_model_name
 from siftd.storage.fts import ensure_fts_table, insert_fts_content
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
@@ -1022,42 +1022,3 @@ def clear_ingested_file_error(
 ) -> None:
     """Clear error and delete the ingested_files record so the file can be re-ingested."""
     conn.execute("DELETE FROM ingested_files WHERE path = ?", (path,))
-
-
-# =============================================================================
-# Compatibility re-exports
-#
-# These names were historically importable from siftd.storage.sqlite.
-# They now live in their own modules but are re-exported here so existing
-# callers don't break. New code should import from the canonical location.
-# =============================================================================
-
-from siftd.backfill import (  # noqa: E402, F401
-    backfill_models,
-    backfill_providers,
-    backfill_response_attributes,
-    backfill_shell_tags,
-)
-
-# Re-export categorize_shell_command (was importable via sqlite.py's mid-file import)
-from siftd.domain.shell_categories import (  # noqa: E402, F401
-    SHELL_CATEGORIES,
-    SHELL_TAG_PREFIX,
-    categorize_shell_command,
-)
-from siftd.storage.fts import (  # noqa: E402, F401, F811
-    ensure_fts_table,  # noqa: F811
-    fts5_recall_conversations,
-    insert_fts_content,  # noqa: F811
-    rebuild_fts_index,
-    search_content,
-)
-from siftd.storage.tags import (  # noqa: E402, F401, F811
-    apply_tag,
-    delete_tag,
-    get_or_create_tag,
-    list_tags,
-    remove_tag,
-    rename_tag,
-    tag_shell_command,  # noqa: F811
-)

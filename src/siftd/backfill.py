@@ -12,7 +12,7 @@ from siftd.domain.shell_categories import (
     SHELL_TAG_PREFIX,
     categorize_shell_command,
 )
-from siftd.models import parse_model_name
+from siftd.model_names import parse_model_name
 from siftd.storage.sqlite import get_or_create_provider, insert_response_attribute
 from siftd.storage.tags import (
     DERIVATIVE_TAG,
