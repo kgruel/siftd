@@ -1,0 +1,107 @@
+"""Tests for read-only database mode."""
+
+import os
+import stat
+
+import pytest
+
+from siftd.storage.sqlite import open_database
+
+
+class TestReadOnlyMode:
+    """Tests for open_database read_only parameter."""
+
+    def test_read_only_succeeds_on_readonly_file(self, tmp_path):
+        """read_only=True opens successfully when file is chmod read-only."""
+        db_path = tmp_path / "test.db"
+
+        # Create DB with some data
+        conn = open_database(db_path)
+        conn.execute("SELECT 1")
+        conn.close()
+
+        # Make file read-only
+        os.chmod(db_path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+
+        try:
+            # Should succeed with read_only=True
+            conn = open_database(db_path, read_only=True)
+            result = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()
+            assert result[0] == 0
+            conn.close()
+        finally:
+            # Restore permissions for cleanup
+            os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)
+
+    def test_read_only_false_fails_on_readonly_file(self, tmp_path):
+        """read_only=False fails when file is chmod read-only."""
+        db_path = tmp_path / "test.db"
+
+        # Create DB
+        conn = open_database(db_path)
+        conn.close()
+
+        # Make file read-only
+        os.chmod(db_path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+
+        try:
+            # Should fail with read_only=False (default)
+            with pytest.raises(Exception):
+                conn = open_database(db_path, read_only=False)
+                # Force a write to trigger the error (some systems may delay)
+                conn.execute("INSERT INTO harnesses (id, name) VALUES ('x', 'x')")
+                conn.commit()
+        finally:
+            # Restore permissions for cleanup
+            os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)
+
+    def test_read_only_raises_on_missing_file(self, tmp_path):
+        """read_only=True raises FileNotFoundError if DB doesn't exist."""
+        db_path = tmp_path / "nonexistent.db"
+
+        with pytest.raises(FileNotFoundError, match="Database not found"):
+            open_database(db_path, read_only=True)
+
+    def test_read_only_skips_migrations(self, tmp_path):
+        """read_only=True does not attempt migrations."""
+        db_path = tmp_path / "test.db"
+
+        # Create a minimal DB without running migrations
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+        conn.close()
+
+        # Make file read-only
+        os.chmod(db_path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+
+        try:
+            # Should open without error (no migration attempts)
+            conn = open_database(db_path, read_only=True)
+            # Verify we can read
+            tables = [r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()]
+            assert "conversations" in tables
+            conn.close()
+        finally:
+            os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)
+
+    def test_read_only_uses_uri_mode(self, tmp_path):
+        """read_only=True uses URI mode with immutable flag."""
+        db_path = tmp_path / "test.db"
+
+        # Create DB
+        conn = open_database(db_path)
+        conn.close()
+
+        # Open read-only and verify no WAL/SHM files created
+        conn = open_database(db_path, read_only=True)
+        conn.execute("SELECT 1")
+        conn.close()
+
+        # WAL and SHM files should not exist
+        wal_path = tmp_path / "test.db-wal"
+        shm_path = tmp_path / "test.db-shm"
+        assert not wal_path.exists(), "WAL file should not be created in read-only mode"
+        assert not shm_path.exists(), "SHM file should not be created in read-only mode"

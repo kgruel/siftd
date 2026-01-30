@@ -40,7 +40,13 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
     if is_new and read_only:
         raise FileNotFoundError(f"Database not found: {db_path}")
 
-    conn = sqlite3.connect(db_path)
+    if read_only:
+        # Use URI mode with mode=ro&immutable=1 to avoid creating WAL/SHM sidecars
+        # and to work on read-only filesystems. Mirrors embeddings.py approach.
+        uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
+        conn = sqlite3.connect(uri, uri=True)
+    else:
+        conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
 
