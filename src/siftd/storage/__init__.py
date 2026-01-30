@@ -1,5 +1,12 @@
 """Storage backends for siftd."""
 
+from .blobs import (
+    compute_content_hash,
+    get_content,
+    get_ref_count,
+    release_content,
+    store_content,
+)
 from .sqlite import (
     check_file_ingested,
     compute_file_hash,
@@ -40,4 +47,10 @@ __all__ = [
     "find_conversation_by_external_id",
     "get_harness_id_by_name",
     "delete_conversation",
+    # Blob storage
+    "store_content",
+    "get_content",
+    "release_content",
+    "get_ref_count",
+    "compute_content_hash",
 ]

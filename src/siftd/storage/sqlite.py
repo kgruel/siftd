@@ -57,6 +57,7 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         ensure_pricing_table(conn)
         ensure_canonical_tools(conn)
         ensure_tool_call_tags_table(conn)
+        ensure_content_blobs_table(conn)
     return conn
 
 
@@ -316,6 +317,49 @@ def ensure_tool_call_tags_table(conn: sqlite3.Connection) -> None:
             UNIQUE (tool_call_id, tag_id)
         )
     """)
+
+
+def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
+    """Create content_blobs table and result_hash column if they don't exist. Idempotent."""
+    # Create content_blobs table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS content_blobs (
+            hash TEXT PRIMARY KEY,
+            content TEXT NOT NULL,
+            ref_count INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_content_blobs_ref_count ON content_blobs(ref_count)"
+    )
+
+    # Add result_hash column to tool_calls if it doesn't exist
+    cur = conn.execute("PRAGMA table_info(tool_calls)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "result_hash" not in columns:
+        conn.execute(
+            "ALTER TABLE tool_calls ADD COLUMN result_hash TEXT REFERENCES content_blobs(hash)"
+        )
+
+    # Create trigger for ref_count cleanup on delete
+    # Check if trigger already exists
+    cur = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='tr_tool_calls_delete_release_blob'"
+    )
+    if not cur.fetchone():
+        conn.execute("""
+            CREATE TRIGGER tr_tool_calls_delete_release_blob
+            AFTER DELETE ON tool_calls
+            FOR EACH ROW
+            WHEN OLD.result_hash IS NOT NULL
+            BEGIN
+                UPDATE content_blobs SET ref_count = ref_count - 1 WHERE hash = OLD.result_hash;
+                DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count = 0;
+            END
+        """)
+
+    conn.commit()
 
 
 # Alias for backwards compatibility
@@ -618,15 +662,37 @@ def insert_tool_call(
     result_json: str | None,
     status: str | None,
     timestamp: str | None,
+    *,
+    dedupe_result: bool = True,
 ) -> str:
-    """Insert tool call, return id (ULID)."""
+    """Insert tool call, return id (ULID).
+
+    Args:
+        dedupe_result: If True (default), stores result in content_blobs for
+            deduplication. If False, stores inline in result column.
+    """
+    from siftd.storage.blobs import store_content
+
     ulid = _ulid()
-    conn.execute(
-        """INSERT INTO tool_calls
-           (id, response_id, conversation_id, tool_id, external_id, input, result, status, timestamp)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (ulid, response_id, conversation_id, tool_id, external_id, input_json, result_json, status, timestamp)
-    )
+    result_hash = None
+
+    if result_json is not None and dedupe_result:
+        # Store in content_blobs and reference by hash
+        result_hash = store_content(conn, result_json)
+        conn.execute(
+            """INSERT INTO tool_calls
+               (id, response_id, conversation_id, tool_id, external_id, input, result_hash, status, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (ulid, response_id, conversation_id, tool_id, external_id, input_json, result_hash, status, timestamp)
+        )
+    else:
+        # Store inline (legacy behavior or dedupe disabled)
+        conn.execute(
+            """INSERT INTO tool_calls
+               (id, response_id, conversation_id, tool_id, external_id, input, result, status, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (ulid, response_id, conversation_id, tool_id, external_id, input_json, result_json, status, timestamp)
+        )
     return ulid
 
 

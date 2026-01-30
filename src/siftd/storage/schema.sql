@@ -126,7 +126,8 @@ CREATE TABLE tool_calls (
     tool_id         TEXT REFERENCES tools(id) ON DELETE SET NULL,
     external_id     TEXT,                       -- model-assigned tool_call_id
     input           TEXT,                       -- JSON arguments
-    result          TEXT,                       -- JSON result
+    result          TEXT,                       -- JSON result (legacy, use result_hash)
+    result_hash     TEXT REFERENCES content_blobs(hash),  -- deduplicated result
     status          TEXT,                       -- success, error, pending
     timestamp       TEXT
 );
@@ -273,6 +274,30 @@ CREATE INDEX idx_tool_calls_status ON tool_calls(status);
 
 CREATE INDEX idx_prompt_content_prompt ON prompt_content(prompt_id);
 CREATE INDEX idx_response_content_response ON response_content(response_id);
+
+--------------------------------------------------------------------------------
+-- CONTENT-ADDRESSABLE STORAGE
+-- Deduplicated blob storage for large content (tool_calls.result)
+--------------------------------------------------------------------------------
+
+CREATE TABLE content_blobs (
+    hash TEXT PRIMARY KEY,              -- SHA256 of content (natural key)
+    content TEXT NOT NULL,
+    ref_count INTEGER DEFAULT 1,
+    created_at TEXT NOT NULL            -- ISO timestamp
+);
+
+CREATE INDEX idx_content_blobs_ref_count ON content_blobs(ref_count);
+
+-- Trigger to decrement ref_count and garbage collect when tool_calls are deleted
+CREATE TRIGGER tr_tool_calls_delete_release_blob
+AFTER DELETE ON tool_calls
+FOR EACH ROW
+WHEN OLD.result_hash IS NOT NULL
+BEGIN
+    UPDATE content_blobs SET ref_count = ref_count - 1 WHERE hash = OLD.result_hash;
+    DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count = 0;
+END;
 
 --------------------------------------------------------------------------------
 -- FTS5 FULL-TEXT SEARCH INDEX
