@@ -1,8 +1,8 @@
-# siftd CLI Reference
+# CLI Reference
 
 _Auto-generated from `--help` output._
 
-## Main
+## siftd
 
 ```
 usage: siftd [-h] [--db PATH]
@@ -14,7 +14,8 @@ positional arguments:
   {ingest,status,ask,install,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export}
     ingest              Ingest logs from all sources
     status              Show database statistics
-    ask                 Semantic search over conversations
+    ask                 Semantic search over conversations (requires [embed]
+                        extra)
     install             Install optional dependencies
     tag                 Apply or remove a tag on a conversation (or other
                         entity)
@@ -33,10 +34,10 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --db PATH             Database path (default:
-                        ~/.local/share/siftd/siftd.db)
+                        /Users/kaygee/.local/share/siftd/siftd.db)
 ```
 
-## ingest
+## siftd ingest
 
 ```
 usage: siftd ingest [-h] [-v] [-p DIR] [-a NAME]
@@ -48,7 +49,7 @@ options:
   -a, --adapter NAME  Only run specific adapter(s) (can be repeated)
 ```
 
-## status
+## siftd status
 
 ```
 usage: siftd status [-h]
@@ -57,7 +58,7 @@ options:
   -h, --help  show this help message and exit
 ```
 
-## ask
+## siftd ask
 
 ```
 usage: siftd ask [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
@@ -116,6 +117,8 @@ options:
   --all-tags NAME       Require all specified tags (AND logic)
   --no-tag NAME         Exclude conversations with this tag (NOT logic)
 
+Note: Requires the [embed] extra. Install with: siftd install embed
+
 examples:
   # search
   siftd ask "error handling"                        # basic semantic search
@@ -153,7 +156,7 @@ examples:
   siftd ask --chrono "chunking"                     # sort by time instead of score
 ```
 
-## install
+## siftd install
 
 ```
 usage: siftd install [-h] [--dry-run] {embed}
@@ -170,7 +173,7 @@ examples:
   siftd install embed --dry-run   # show what would be installed
 ```
 
-## tag
+## siftd tag
 
 ```
 usage: siftd tag [-h] [-n N] [-r] [positional ...]
@@ -195,7 +198,7 @@ examples:
   siftd tag -r workspace 01HY... proj      # remove from workspace
 ```
 
-## tags
+## siftd tags
 
 ```
 usage: siftd tags [-h] [--prefix PREFIX] [-n LIMIT] [--rename OLD NEW]
@@ -222,7 +225,7 @@ examples:
   siftd tags --delete old-tag --force              # delete tag and all associations
 ```
 
-## tools
+## siftd tools
 
 ```
 usage: siftd tools [-h] [--by-workspace] [--prefix PREFIX] [-n LIMIT]
@@ -239,7 +242,7 @@ examples:
   siftd tools --prefix shell:    # filter by tag prefix
 ```
 
-## query
+## siftd query
 
 ```
 usage: siftd query [-h] [-v] [-n COUNT] [--latest] [--oldest] [-w SUBSTR]
@@ -291,7 +294,7 @@ examples:
   siftd query sql cost --var ws=proj  # run with variable substitution
 ```
 
-## backfill
+## siftd backfill
 
 ```
 usage: siftd backfill [-h] [--shell-tags] [--derivative-tags]
@@ -303,7 +306,7 @@ options:
                      siftd:derivative
 ```
 
-## path
+## siftd path
 
 ```
 usage: siftd path [-h]
@@ -312,7 +315,7 @@ options:
   -h, --help  show this help message and exit
 ```
 
-## config
+## siftd config
 
 ```
 usage: siftd config [-h] [{get,set,path}] [key] [value]
@@ -332,7 +335,7 @@ examples:
   siftd config set ask.formatter verbose  # set value
 ```
 
-## adapters
+## siftd adapters
 
 ```
 usage: siftd adapters [-h]
@@ -341,7 +344,7 @@ options:
   -h, --help  show this help message and exit
 ```
 
-## copy
+## siftd copy
 
 ```
 usage: siftd copy [-h] [--all] [--force] {adapter,query} [name]
@@ -361,7 +364,7 @@ examples:
   siftd copy query cost             # copy query to ~/.config/siftd/queries/
 ```
 
-## doctor
+## siftd doctor
 
 ```
 usage: siftd doctor [-h] [subcommand]
@@ -379,7 +382,7 @@ examples:
   siftd doctor ingest-pending     # run specific check
 ```
 
-## peek
+## siftd peek
 
 ```
 usage: siftd peek [-h] [-w SUBSTR] [--all] [--last N] [--tail] [--json]
@@ -406,7 +409,7 @@ examples:
   siftd peek c520 --tail        # raw JSONL tail
 ```
 
-## export
+## siftd export
 
 ```
 usage: siftd export [-h] [-n [N]] [-w SUBSTR] [-l NAME] [--exclude-tag NAME]

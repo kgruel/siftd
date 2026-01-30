@@ -1,6 +1,8 @@
 # siftd
 
-Ingest and query conversation logs from LLM coding tools. Stores in SQLite, searches via FTS5 and embeddings.
+AI coding tools generate conversations that contain valuable context—decisions, rationale, debugging sessions, code explanations. But these conversations live in tool-specific formats, scattered across your filesystem, difficult to search, and easy to forget.
+
+siftd aggregates conversation logs from your coding tools into a single searchable index. Find that auth decision you made three weeks ago. See how you solved a similar bug before. Build a knowledge base from your own development history.
 
 Warning: This project is under active development and breaking changes may occur.
 
@@ -50,7 +52,9 @@ siftd query -l decision:
 
 ## Documentation
 
-- [CLI Reference](docs/cli.md)
+- [CLI Reference](docs/reference/cli.md)
+- [API Reference](docs/reference/api.md)
+- [Schema Reference](docs/reference/schema.md)
 
 ## License
 

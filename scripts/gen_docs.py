@@ -5,6 +5,7 @@ Usage:
     python scripts/gen_docs.py          # Generate all docs
     python scripts/gen_docs.py api      # Generate API reference only
     python scripts/gen_docs.py schema   # Generate schema reference only
+    python scripts/gen_docs.py cli      # Generate CLI reference only
 """
 
 from __future__ import annotations
@@ -597,17 +598,89 @@ def generate_schema_docs() -> str:
 
 
 # =============================================================================
+# CLI Reference Generation
+# =============================================================================
+
+
+def run_help(args: list[str]) -> str:
+    """Run siftd CLI with given args and capture help output."""
+    import io
+    from contextlib import redirect_stdout, redirect_stderr
+    from siftd.cli import main as cli_main
+
+    # Capture stdout/stderr from argparse --help
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    try:
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            cli_main(args)
+    except SystemExit:
+        pass  # argparse exits after --help
+
+    return stdout.getvalue() or stderr.getvalue()
+
+
+def extract_subcommands(help_text: str) -> list[str]:
+    """Extract subcommand names from main help output."""
+    # Look for the {cmd1,cmd2,...} pattern in usage line
+    match = re.search(r"\{([^}]+)\}", help_text)
+    if match:
+        return [cmd.strip() for cmd in match.group(1).split(",")]
+    return []
+
+
+def generate_cli_docs() -> str:
+    """Generate CLI reference documentation."""
+    lines = [
+        "# CLI Reference",
+        "",
+        "_Auto-generated from `--help` output._",
+        "",
+    ]
+
+    # Get main help
+    main_help = run_help(["--help"])
+    subcommands = extract_subcommands(main_help)
+
+    lines.append("## siftd")
+    lines.append("")
+    lines.append("```")
+    lines.append(main_help.strip())
+    lines.append("```")
+    lines.append("")
+
+    # Get help for each subcommand
+    for cmd in subcommands:
+        cmd_help = run_help([cmd, "--help"])
+        lines.append(f"## siftd {cmd}")
+        lines.append("")
+        lines.append("```")
+        lines.append(cmd_help.strip())
+        lines.append("```")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
 
 def main() -> None:
-    targets = sys.argv[1:] if len(sys.argv) > 1 else ["api", "schema"]
+    targets = sys.argv[1:] if len(sys.argv) > 1 else ["cli", "api", "schema"]
 
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
     for target in targets:
-        if target == "api":
+        if target == "cli":
+            content = generate_cli_docs()
+            out_path = DOCS_DIR / "cli.md"
+            out_path.write_text(content)
+            print(f"Generated: {out_path}")
+
+        elif target == "api":
             content = generate_api_docs()
             out_path = DOCS_DIR / "api.md"
             out_path.write_text(content)

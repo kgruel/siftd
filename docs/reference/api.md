@@ -24,7 +24,7 @@ Information about a discovered adapter.
 | `name` | `str` |  |
 | `source` | `str` |  |
 | `locations` | `list[str]` |  |
-| `file_path` | `Union[str, None]` |  |
+| `file_path` | `str \| None` |  |
 
 ### Functions
 
@@ -33,7 +33,7 @@ Information about a discovered adapter.
 List all discovered adapters from all sources.
 
 ```python
-def list_adapters(*, dropin_path: Union[Path, None] = ...) -> list[AdapterInfo]
+def list_adapters(*, dropin_path: pathlib._local.Path | None = ...) -> list[AdapterInfo]
 ```
 
 **Returns:** List of AdapterInfo for all discovered adapters.
@@ -72,8 +72,8 @@ A single issue detected by a check.
 | `severity` | `str` |  |
 | `message` | `str` |  |
 | `fix_available` | `bool` |  |
-| `fix_command` | `Union[str, None]` |  |
-| `context` | `Union[dict, None]` |  |
+| `fix_command` | `str \| None` |  |
+| `context` | `dict \| None` |  |
 
 ### FixResult
 
@@ -109,7 +109,7 @@ def list_checks() -> list[CheckInfo]
 Run health checks and return findings.
 
 ```python
-def run_checks(*, checks: Union[list[str], None] = ..., db_path: Union[Path, None] = ..., embed_db_path: Union[Path, None] = ...) -> list[Finding]
+def run_checks(*, checks: list[str] | None = ..., db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ...) -> list[Finding]
 ```
 
 **Parameters:**
@@ -134,9 +134,9 @@ PeekExchange(timestamp: str | None = None, prompt_text: str | None = None, respo
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `timestamp` | `Union[str, None]` |  |
-| `prompt_text` | `Union[str, None]` |  |
-| `response_text` | `Union[str, None]` |  |
+| `timestamp` | `str \| None` |  |
+| `prompt_text` | `str \| None` |  |
+| `response_text` | `str \| None` |  |
 | `tool_calls` | `list[tuple[str, int]]` |  |
 | `input_tokens` | `int` |  |
 | `output_tokens` | `int` |  |
@@ -148,20 +148,20 @@ SessionDetail(info: siftd.peek.scanner.SessionInfo, started_at: str | None = Non
 | Field | Type | Description |
 |-------|------|-------------|
 | `info` | `SessionInfo` |  |
-| `started_at` | `Union[str, None]` |  |
+| `started_at` | `str \| None` |  |
 | `exchanges` | `list[PeekExchange]` |  |
 
 ### SessionInfo
 
-SessionInfo(session_id: str, file_path: pathlib.Path, workspace_path: str | None = None, workspace_name: str | None = None, model: str | None = None, last_activity: float = 0.0, exchange_count: int = 0)
+SessionInfo(session_id: str, file_path: pathlib._local.Path, workspace_path: str | None = None, workspace_name: str | None = None, model: str | None = None, last_activity: float = 0.0, exchange_count: int = 0)
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `session_id` | `str` |  |
 | `file_path` | `Path` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `workspace_name` | `Union[str, None]` |  |
-| `model` | `Union[str, None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `workspace_name` | `str \| None` |  |
+| `model` | `str \| None` |  |
 | `last_activity` | `float` |  |
 | `exchange_count` | `int` |  |
 
@@ -172,7 +172,7 @@ SessionInfo(session_id: str, file_path: pathlib.Path, workspace_path: str | None
 Find a session file by ID prefix match.
 
 ```python
-def find_session_file(session_id_prefix: str) -> Union[Path, None]
+def find_session_file(session_id_prefix: str) -> pathlib._local.Path | None
 ```
 
 **Returns:** Path to the matching file, or None if not found.
@@ -182,7 +182,7 @@ def find_session_file(session_id_prefix: str) -> Union[Path, None]
 Discover active session files and extract lightweight metadata.
 
 ```python
-def list_active_sessions(*, workspace: Union[str, None] = ..., threshold_seconds: int = ..., include_inactive: bool = ...) -> list[SessionInfo]
+def list_active_sessions(*, workspace: str | None = ..., threshold_seconds: int = ..., include_inactive: bool = ...) -> list[SessionInfo]
 ```
 
 **Parameters:**
@@ -197,7 +197,7 @@ def list_active_sessions(*, workspace: Union[str, None] = ..., threshold_seconds
 Read session detail from a JSONL file.
 
 ```python
-def read_session_detail(path: Path, *, last_n: int = ...) -> Union[SessionDetail, None]
+def read_session_detail(path: Path, *, last_n: int = ...) -> siftd.peek.reader.SessionDetail | None
 ```
 
 **Parameters:**
@@ -231,13 +231,13 @@ Summary row for conversation listing.
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `str` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `model` | `Union[str, None]` |  |
-| `started_at` | `Union[str, None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `model` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
 | `prompt_count` | `int` |  |
 | `response_count` | `int` |  |
 | `total_tokens` | `int` |  |
-| `cost` | `Union[float, None]` |  |
+| `cost` | `float \| None` |  |
 | `tags` | `list[str]` |  |
 
 ### ConversationDetail
@@ -247,9 +247,9 @@ Full conversation with timeline.
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `str` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `model` | `Union[str, None]` |  |
-| `started_at` | `Union[str, None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `model` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
 | `total_input_tokens` | `int` |  |
 | `total_output_tokens` | `int` |  |
 | `exchanges` | `list[Exchange]` |  |
@@ -261,9 +261,9 @@ A prompt-response pair in the timeline.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `timestamp` | `Union[str, None]` |  |
-| `prompt_text` | `Union[str, None]` |  |
-| `response_text` | `Union[str, None]` |  |
+| `timestamp` | `str \| None` |  |
+| `prompt_text` | `str \| None` |  |
+| `response_text` | `str \| None` |  |
 | `input_tokens` | `int` |  |
 | `output_tokens` | `int` |  |
 | `tool_calls` | `list[ToolCallSummary]` |  |
@@ -285,7 +285,7 @@ Collapsed tool call for timeline display.
 List conversations with optional filtering.
 
 ```python
-def list_conversations(*, db_path: Union[Path, None] = ..., workspace: Union[str, None] = ..., model: Union[str, None] = ..., since: Union[str, None] = ..., before: Union[str, None] = ..., search: Union[str, None] = ..., tool: Union[str, None] = ..., tag: Union[str, None] = ..., tags: Union[list[str], None] = ..., all_tags: Union[list[str], None] = ..., exclude_tags: Union[list[str], None] = ..., tool_tag: Union[str, None] = ..., limit: int = ..., oldest_first: bool = ...) -> list[ConversationSummary]
+def list_conversations(*, db_path: pathlib._local.Path | None = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., tool: str | None = ..., tag: str | None = ..., tags: list[str] | None = ..., all_tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., tool_tag: str | None = ..., limit: int = ..., oldest_first: bool = ...) -> list[ConversationSummary]
 ```
 
 **Parameters:**
@@ -315,7 +315,7 @@ def list_conversations(*, db_path: Union[Path, None] = ..., workspace: Union[str
 Get full conversation detail by ID.
 
 ```python
-def get_conversation(conversation_id: str, *, db_path: Union[Path, None] = ...) -> Union[ConversationDetail, None]
+def get_conversation(conversation_id: str, *, db_path: pathlib._local.Path | None = ...) -> siftd.api.conversations.ConversationDetail | None
 ```
 
 **Parameters:**
@@ -343,7 +343,7 @@ def list_query_files() -> list[QueryFile]
 Run a user-defined SQL query file.
 
 ```python
-def run_query_file(name: str, variables: Union[dict[str, str], None] = ..., *, db_path: Union[Path, None] = ...) -> QueryResult
+def run_query_file(name: str, variables: dict[str, str] | None = ..., *, db_path: pathlib._local.Path | None = ...) -> QueryResult
 ```
 
 **Parameters:**
@@ -400,7 +400,7 @@ A file operation reference from a tool call.
 | `path` | `str` |  |
 | `basename` | `str` |  |
 | `op` | `str` |  |
-| `content` | `Union[str, None]` |  |
+| `content` | `str \| None` |  |
 
 ### Functions
 
@@ -433,7 +433,7 @@ Error copying a resource.
 Copy a built-in adapter to the config directory for customization.
 
 ```python
-def copy_adapter(name: str, *, dest_dir: Union[Path, None] = ..., force: bool = ...) -> Path
+def copy_adapter(name: str, *, dest_dir: pathlib._local.Path | None = ..., force: bool = ...) -> Path
 ```
 
 **Parameters:**
@@ -452,7 +452,7 @@ def copy_adapter(name: str, *, dest_dir: Union[Path, None] = ..., force: bool = 
 Copy a built-in query to the config directory for customization.
 
 ```python
-def copy_query(name: str, *, dest_dir: Union[Path, None] = ..., force: bool = ...) -> Path
+def copy_query(name: str, *, dest_dir: pathlib._local.Path | None = ..., force: bool = ...) -> Path
 ```
 
 **Parameters:**
@@ -490,10 +490,10 @@ A single search result from hybrid_search.
 | `score` | `float` |  |
 | `text` | `str` |  |
 | `chunk_type` | `str` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `started_at` | `Union[str, None]` |  |
-| `chunk_id` | `Union[str, None]` |  |
-| `source_ids` | `Union[list[str], None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
+| `chunk_id` | `str \| None` |  |
+| `source_ids` | `list[str] \| None` |  |
 
 ### ConversationScore
 
@@ -506,8 +506,8 @@ Aggregated conversation-level search result.
 | `mean_score` | `float` |  |
 | `chunk_count` | `int` |  |
 | `best_excerpt` | `str` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `started_at` | `Union[str, None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
 
 ### Functions
 
@@ -516,7 +516,7 @@ Aggregated conversation-level search result.
 Run hybrid FTS5+embeddings search, return structured results.
 
 ```python
-def hybrid_search(query: str, *, db_path: Union[Path, None] = ..., embed_db_path: Union[Path, None] = ..., limit: int = ..., recall: int = ..., embeddings_only: bool = ..., workspace: Union[str, None] = ..., model: Union[str, None] = ..., since: Union[str, None] = ..., before: Union[str, None] = ..., backend: Union[str, None] = ..., exclude_active: bool = ..., rerank: str = ..., lambda_: float = ...) -> list[SearchResult]
+def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., limit: int = ..., recall: int = ..., embeddings_only: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., backend: str | None = ..., exclude_active: bool = ..., rerank: str = ..., lambda_: float = ...) -> list[SearchResult]
 ```
 
 **Parameters:**
@@ -562,7 +562,7 @@ def aggregate_by_conversation(results: list[SearchResult], *, limit: int = ...) 
 Find chronologically earliest result above relevance threshold.
 
 ```python
-def first_mention(results: Union[list[SearchResult], list[dict]], *, threshold: float = ..., db_path: Union[Path, None] = ...) -> Union[SearchResult, dict, None]
+def first_mention(results: list[siftd.search.SearchResult] | list[dict], *, threshold: float = ..., db_path: pathlib._local.Path | None = ...) -> siftd.search.SearchResult | dict | None
 ```
 
 **Parameters:**
@@ -577,7 +577,7 @@ def first_mention(results: Union[list[SearchResult], list[dict]], *, threshold: 
 Build or update the embeddings index.
 
 ```python
-def build_index(*, db_path: Union[Path, None] = ..., embed_db_path: Union[Path, None] = ..., rebuild: bool = ..., backend: Union[str, None] = ..., verbose: bool = ...) -> dict
+def build_index(*, db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., rebuild: bool = ..., backend: str | None = ..., verbose: bool = ...) -> dict
 ```
 
 **Parameters:**
@@ -636,8 +636,8 @@ Harness metadata.
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | `str` |  |
-| `source` | `Union[str, None]` |  |
-| `log_format` | `Union[str, None]` |  |
+| `source` | `str \| None` |  |
+| `log_format` | `str \| None` |  |
 
 ### WorkspaceStats
 
@@ -664,7 +664,7 @@ Tool with usage count.
 Get comprehensive database statistics.
 
 ```python
-def get_stats(*, db_path: Union[Path, None] = ...) -> DatabaseStats
+def get_stats(*, db_path: pathlib._local.Path | None = ...) -> DatabaseStats
 ```
 
 **Returns:** DatabaseStats with counts, harnesses, workspaces, models, tools.
@@ -703,7 +703,7 @@ Per-workspace breakdown of tool tag usage.
 Get summary of tool call tags by category.
 
 ```python
-def get_tool_tag_summary(*, db_path: Union[Path, None] = ..., prefix: str = ...) -> list[TagUsage]
+def get_tool_tag_summary(*, db_path: pathlib._local.Path | None = ..., prefix: str = ...) -> list[TagUsage]
 ```
 
 **Parameters:**
@@ -721,7 +721,7 @@ def get_tool_tag_summary(*, db_path: Union[Path, None] = ..., prefix: str = ...)
 Get tool tag usage broken down by workspace.
 
 ```python
-def get_tool_tags_by_workspace(*, db_path: Union[Path, None] = ..., prefix: str = ..., limit: int = ...) -> list[WorkspaceTagUsage]
+def get_tool_tags_by_workspace(*, db_path: pathlib._local.Path | None = ..., prefix: str = ..., limit: int = ...) -> list[WorkspaceTagUsage]
 ```
 
 **Parameters:**
@@ -746,10 +746,10 @@ A conversation prepared for export.
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `str` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `workspace_name` | `Union[str, None]` |  |
-| `model` | `Union[str, None]` |  |
-| `started_at` | `Union[str, None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `workspace_name` | `str \| None` |  |
+| `model` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
 | `exchanges` | `list[Exchange]` |  |
 | `tags` | `list[str]` |  |
 | `total_tokens` | `int` |  |
@@ -771,7 +771,7 @@ Options controlling export output.
 Export conversations matching the specified criteria.
 
 ```python
-def export_conversations(*, conversation_ids: Union[list[str], None] = ..., last: Union[int, None] = ..., workspace: Union[str, None] = ..., tags: Union[list[str], None] = ..., exclude_tags: Union[list[str], None] = ..., since: Union[str, None] = ..., before: Union[str, None] = ..., search: Union[str, None] = ..., db_path: Union[Path, None] = ...) -> list[ExportedConversation]
+def export_conversations(*, conversation_ids: list[str] | None = ..., last: int | None = ..., workspace: str | None = ..., tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib._local.Path | None = ...) -> list[ExportedConversation]
 ```
 
 **Parameters:**
