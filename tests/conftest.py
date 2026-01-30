@@ -83,16 +83,35 @@ def make_conversation(
     )
 
 
-def make_session_adapter(dest, *, name="test_harness", dedup="session", parse_fn=None):
-    """Factory for test adapters with configurable dedup strategy and parse function."""
+def make_test_adapter(
+    dest,
+    *,
+    name="test_harness",
+    dedup="file",
+    harness_source="test",
+    can_handle_fn=None,
+    parse_fn=None,
+):
+    """Factory for test adapters with configurable dedup strategy and parse function.
+
+    Args:
+        dest: Path to the file the adapter will discover
+        name: Adapter NAME attribute
+        dedup: DEDUP_STRATEGY attribute ('file' or 'session')
+        harness_source: HARNESS_SOURCE attribute (e.g., 'test', 'anthropic', 'openai')
+        can_handle_fn: Optional custom can_handle(source) function
+        parse_fn: Optional custom parse(source) function
+    """
 
     class _Adapter:
         NAME = name
         DEDUP_STRATEGY = dedup
-        HARNESS_SOURCE = "test"
+        HARNESS_SOURCE = harness_source
 
         @staticmethod
         def can_handle(source):
+            if can_handle_fn:
+                return can_handle_fn(source)
             return True
 
         @staticmethod
@@ -106,6 +125,11 @@ def make_session_adapter(dest, *, name="test_harness", dedup="session", parse_fn
             yield Source(kind="file", location=dest)
 
     return _Adapter
+
+
+def make_session_adapter(dest, *, name="test_harness", dedup="session", parse_fn=None):
+    """Factory for test adapters with session-based dedup (convenience wrapper)."""
+    return make_test_adapter(dest, name=name, dedup=dedup, parse_fn=parse_fn)
 
 
 @pytest.fixture

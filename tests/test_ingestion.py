@@ -6,9 +6,7 @@ Covers:
 - Session-based dedup with timestamp comparison
 """
 
-from pathlib import Path
-
-from conftest import FIXTURES_DIR, make_conversation, make_session_adapter
+from conftest import FIXTURES_DIR, make_conversation, make_session_adapter, make_test_adapter
 
 from siftd.ingestion.orchestration import ingest_all
 from siftd.storage.sqlite import (
@@ -18,31 +16,18 @@ from siftd.storage.sqlite import (
     open_database,
 )
 from siftd.adapters import claude_code
-from siftd.domain import Source
 
 
 def _make_adapter(dest, name="claude_code", dedup="file", parse_fn=None):
-    """Factory for test adapters."""
-    class TestAdapter:
-        NAME = name
-        DEDUP_STRATEGY = dedup
-        HARNESS_SOURCE = "anthropic"
-
-        @staticmethod
-        def can_handle(source):
-            return claude_code.can_handle(source)
-
-        @staticmethod
-        def parse(source):
-            if parse_fn:
-                return parse_fn(source)
-            return claude_code.parse(source)
-
-        @staticmethod
-        def discover():
-            yield Source(kind="file", location=dest)
-
-    return TestAdapter
+    """Factory for file-based dedup test adapters using claude_code parser."""
+    return make_test_adapter(
+        dest,
+        name=name,
+        dedup=dedup,
+        harness_source="anthropic",
+        can_handle_fn=claude_code.can_handle,
+        parse_fn=parse_fn if parse_fn else claude_code.parse,
+    )
 
 
 class TestHashBasedDedup:
