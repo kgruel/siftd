@@ -49,7 +49,7 @@ class TestEmbeddingsAvailability:
             avail.require_embeddings("Semantic search")
 
         assert "Semantic search" in str(exc_info.value)
-        assert "pip install siftd[embed]" in str(exc_info.value)
+        assert "siftd install embed" in str(exc_info.value)
         assert "siftd query -s" in str(exc_info.value)
 
     def test_exception_message_includes_install_hint(self, monkeypatch):
@@ -61,7 +61,7 @@ class TestEmbeddingsAvailability:
         try:
             avail.require_embeddings("Building index")
         except avail.EmbeddingsNotAvailable as e:
-            assert "pip install siftd[embed]" in e.message
+            assert "siftd install embed" in e.message
             assert "Building index" in e.message
 
 
