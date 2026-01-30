@@ -1,6 +1,10 @@
 """CLI smoke tests — verify commands parse and run without import errors."""
 
+from pathlib import Path
+
 import pytest
+
+from conftest import FIXTURES_DIR
 
 from siftd.cli import main
 
@@ -88,3 +92,203 @@ def test_tag_bulk_remove(test_db, capsys):
     ).fetchall()
     conn.close()
     assert [r["name"] for r in tags] == ["beta"]
+
+
+class TestIngestCommand:
+    """Smoke tests for siftd ingest command."""
+
+    def test_ingest_creates_db(self, tmp_path, capsys):
+        """siftd ingest creates database if it doesn't exist."""
+        db_path = tmp_path / "new.db"
+        fixture = FIXTURES_DIR / "claude_code_minimal.jsonl"
+        dest = tmp_path / "projects" / "test-session" / "conversation.jsonl"
+        dest.parent.mkdir(parents=True)
+        dest.write_text(fixture.read_text())
+
+        rc = main([
+            "--db", str(db_path),
+            "ingest",
+            "--adapter", "claude_code",
+            "--path", str(tmp_path / "projects"),
+        ])
+
+        assert rc == 0
+        assert db_path.exists()
+        captured = capsys.readouterr()
+        assert "Creating database" in captured.out
+
+    def test_ingest_with_existing_db(self, test_db, capsys):
+        """siftd ingest works with existing database."""
+        rc = main([
+            "--db", str(test_db),
+            "ingest",
+            "--adapter", "claude_code",
+            "--path", "/nonexistent/path",  # No files, but should still run
+        ])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "Using database" in captured.out
+
+    def test_ingest_verbose_flag(self, tmp_path, capsys):
+        """siftd ingest --verbose shows skipped files."""
+        db_path = tmp_path / "test.db"
+
+        # First ingest
+        fixture = FIXTURES_DIR / "claude_code_minimal.jsonl"
+        dest = tmp_path / "projects" / "test-session" / "conversation.jsonl"
+        dest.parent.mkdir(parents=True)
+        dest.write_text(fixture.read_text())
+
+        main([
+            "--db", str(db_path),
+            "ingest",
+            "--adapter", "claude_code",
+            "--path", str(tmp_path / "projects"),
+        ])
+
+        # Second ingest with verbose - should show skipped
+        rc = main([
+            "--db", str(db_path),
+            "ingest",
+            "--verbose",
+            "--adapter", "claude_code",
+            "--path", str(tmp_path / "projects"),
+        ])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "[skipped]" in captured.out
+
+    def test_ingest_unknown_adapter(self, tmp_path, capsys):
+        """siftd ingest with unknown adapter returns error."""
+        db_path = tmp_path / "test.db"
+
+        rc = main([
+            "--db", str(db_path),
+            "ingest",
+            "--adapter", "nonexistent_adapter",
+        ])
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "No adapters matched" in captured.out
+
+
+class TestBackfillCommand:
+    """Smoke tests for siftd backfill command."""
+
+    def test_backfill_derivative_tags(self, test_db, capsys):
+        """siftd backfill --derivative-tags runs successfully."""
+        rc = main(["--db", str(test_db), "backfill", "--derivative-tags"])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        # Should indicate completion (may find 0 or more)
+        assert "derivative" in captured.out.lower() or "tagged" in captured.out.lower() or "No" in captured.out
+
+    def test_backfill_shell_tags(self, test_db_with_tool_tags, capsys):
+        """siftd backfill --shell-tags runs on database with tool calls."""
+        rc = main(["--db", str(test_db_with_tool_tags), "backfill", "--shell-tags"])
+
+        assert rc == 0
+        # Should complete without error
+
+    def test_backfill_missing_db(self, tmp_path, capsys):
+        """siftd backfill with missing database returns error."""
+        rc = main(["--db", str(tmp_path / "missing.db"), "backfill", "--derivative-tags"])
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "not found" in captured.out.lower() or "Database" in captured.out
+
+
+class TestQuerySqlCommand:
+    """Smoke tests for siftd query sql (run-query) command."""
+
+    def test_query_sql_list(self, test_db, tmp_path, monkeypatch, capsys):
+        """siftd query sql (no args) lists available query files."""
+        queries = tmp_path / "queries"
+        queries.mkdir()
+        (queries / "count_convs.sql").write_text("SELECT COUNT(*) FROM conversations")
+        (queries / "by_workspace.sql").write_text("SELECT * FROM conversations WHERE workspace_id = :ws")
+        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+
+        rc = main(["--db", str(test_db), "query", "sql"])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "count_convs" in captured.out
+        assert "by_workspace" in captured.out
+        assert "(vars: ws)" in captured.out or "ws" in captured.out
+
+    def test_query_sql_run(self, test_db, tmp_path, monkeypatch, capsys):
+        """siftd query sql <name> runs the query."""
+        queries = tmp_path / "queries"
+        queries.mkdir()
+        (queries / "count.sql").write_text("SELECT COUNT(*) as n FROM conversations")
+        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+
+        rc = main(["--db", str(test_db), "query", "sql", "count"])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        # Should show the count (2 from test_db)
+        assert "2" in captured.out
+
+    def test_query_sql_with_var(self, test_db, tmp_path, monkeypatch, capsys):
+        """siftd query sql <name> --var key=value works."""
+        queries = tmp_path / "queries"
+        queries.mkdir()
+        (queries / "find.sql").write_text(
+            "SELECT id FROM conversations WHERE external_id = :ext_id"
+        )
+        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+
+        rc = main([
+            "--db", str(test_db),
+            "query", "sql", "find",
+            "--var", "ext_id=conv1",
+        ])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        # Should find the conversation
+        assert "id" in captured.out.lower() or captured.out.strip()
+
+    def test_query_sql_missing_var(self, test_db, tmp_path, monkeypatch, capsys):
+        """siftd query sql with missing required var returns error."""
+        queries = tmp_path / "queries"
+        queries.mkdir()
+        (queries / "needs.sql").write_text("SELECT * FROM $table")
+        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+
+        rc = main(["--db", str(test_db), "query", "sql", "needs"])
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "table" in captured.out.lower()  # Should mention missing var
+
+    def test_query_sql_not_found(self, test_db, tmp_path, monkeypatch, capsys):
+        """siftd query sql with unknown query returns error."""
+        queries = tmp_path / "queries"
+        queries.mkdir()
+        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+
+        rc = main(["--db", str(test_db), "query", "sql", "nonexistent"])
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "not found" in captured.out.lower()
+
+    def test_query_sql_empty_queries_dir(self, test_db, tmp_path, monkeypatch, capsys):
+        """siftd query sql with no query files shows message."""
+        queries = tmp_path / "queries"
+        queries.mkdir()
+        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+
+        rc = main(["--db", str(test_db), "query", "sql"])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "No queries found" in captured.out
