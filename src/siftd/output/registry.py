@@ -1,11 +1,14 @@
 """Formatter registry: discovers built-in, drop-in, and entry point formatters."""
 
-import importlib.metadata
-import importlib.util
-import sys
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING
+
+from siftd.plugin_discovery import (
+    load_dropin_modules,
+    load_entrypoint_modules,
+    validate_required_interface,
+)
 
 if TYPE_CHECKING:
     from siftd.output.formatters import OutputFormatter
@@ -24,18 +27,12 @@ def _validate_formatter(module: ModuleType, origin: str) -> str | None:
 
     Returns an error message string if invalid, None if valid.
     """
-    for attr, expected_type in _REQUIRED_ATTRS.items():
-        if not hasattr(module, attr):
-            return f"{origin}: missing required attribute '{attr}'"
-        value = getattr(module, attr)
-        if not isinstance(value, expected_type):
-            return f"{origin}: '{attr}' must be {expected_type.__name__}, got {type(value).__name__}"
-
-    for func_name in _REQUIRED_CALLABLES:
-        if not hasattr(module, func_name) or not callable(getattr(module, func_name)):
-            return f"{origin}: missing required function '{func_name}'"
-
-    return None
+    return validate_required_interface(
+        module,
+        origin,
+        required_attrs=_REQUIRED_ATTRS,
+        required_callables=_REQUIRED_CALLABLES,
+    )
 
 
 def load_builtin_formatters() -> dict[str, "OutputFormatter"]:
@@ -62,56 +59,21 @@ def load_builtin_formatters() -> dict[str, "OutputFormatter"]:
 
 def load_dropin_formatters(path: Path) -> dict[str, ModuleType]:
     """Scan a directory for .py formatter files, import and validate them."""
-    formatters: dict[str, ModuleType] = {}
-    if not path.is_dir():
-        return formatters
-
-    for py_file in sorted(path.glob("*.py")):
-        if py_file.name.startswith("_"):
-            continue
-        module_name = f"siftd_dropin_formatter_{py_file.stem}"
-        try:
-            spec = importlib.util.spec_from_file_location(module_name, py_file)
-            if spec is None or spec.loader is None:
-                print(f"Warning: could not load drop-in formatter {py_file.name}", file=sys.stderr)
-                continue
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-        except Exception as e:
-            print(f"Warning: failed to import drop-in formatter {py_file.name}: {e}", file=sys.stderr)
-            continue
-
-        error = _validate_formatter(module, f"drop-in {py_file.name}")
-        if error:
-            print(f"Warning: {error}", file=sys.stderr)
-            continue
-
-        formatters[module.NAME] = module
-
-    return formatters
+    modules = load_dropin_modules(
+        path,
+        module_name_prefix="siftd_dropin_formatter_",
+        validate=_validate_formatter,
+    )
+    return {m.NAME: m for m in modules}
 
 
 def load_entrypoint_formatters() -> dict[str, ModuleType]:
     """Discover formatters registered via the 'siftd.formatters' entry point group."""
-    formatters: dict[str, ModuleType] = {}
-    eps = importlib.metadata.entry_points(group="siftd.formatters")
-
-    for ep in eps:
-        try:
-            module = ep.load()
-        except Exception as e:
-            print(f"Warning: failed to load entry point formatter '{ep.name}': {e}", file=sys.stderr)
-            continue
-
-        error = _validate_formatter(module, f"entry point '{ep.name}'")
-        if error:
-            print(f"Warning: {error}", file=sys.stderr)
-            continue
-
-        name = getattr(module, "NAME", ep.name)
-        formatters[name] = module
-
-    return formatters
+    modules = load_entrypoint_modules(
+        "siftd.formatters",
+        validate=_validate_formatter,
+    )
+    return {m.NAME: m for m in modules}
 
 
 class FormatterRegistry:

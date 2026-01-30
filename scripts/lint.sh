@@ -3,6 +3,11 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Auto-setup worktree if venv missing (e.g., subtask workers)
+if [ ! -d ".venv" ]; then
+    ./scripts/setup-worktree.sh
+fi
+
 errors=0
 
 # Type check - show only errors/warnings, not progress
