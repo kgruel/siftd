@@ -4,8 +4,6 @@ These test the full flow: parse fixture → ingest → query → detail.
 Each test creates an isolated database and runs real adapters.
 """
 
-from pathlib import Path
-
 from conftest import FIXTURES_DIR, make_conversation
 
 from siftd.adapters import claude_code
@@ -360,5 +358,137 @@ class TestCascadeDelete:
         assert conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 0
+
+        conn.close()
+
+
+class TestEnsureTablesCascade:
+    """Test that ensure_* functions create tables with proper ON DELETE CASCADE.
+
+    This tests the upgrade path where tables are created via ensure_* functions
+    rather than via schema.sql. The ensure_* functions must define CASCADE
+    constraints that match schema.sql.
+    """
+
+    def test_ensure_tool_call_tags_has_cascade(self, tmp_path):
+        """tool_call_tags created via ensure_* cascades on tool_call deletion.
+
+        Simulates the upgrade path:
+        1. DB exists without tool_call_tags table
+        2. ensure_tool_call_tags_table() creates it
+        3. Data inserted, then parent deleted
+        4. CASCADE should remove child records without FK error
+        """
+        from siftd.storage.sqlite import (
+            apply_tag,
+            get_or_create_harness,
+            get_or_create_model,
+            get_or_create_tag,
+            get_or_create_tool,
+            get_or_create_workspace,
+            insert_conversation,
+            insert_prompt,
+            insert_response,
+            insert_tool_call,
+            open_database,
+        )
+
+        db_path = tmp_path / "upgrade_test.db"
+        conn = open_database(db_path)
+
+        # Set up parent records
+        harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+        workspace_id = get_or_create_workspace(conn, "/test", "2024-01-01T00:00:00Z")
+        model_id = get_or_create_model(conn, "test-model")
+        tool_id = get_or_create_tool(conn, "Bash")
+        tag_id = get_or_create_tag(conn, "test:cascade")
+
+        # Create conversation → prompt → response → tool_call chain
+        conv_id = insert_conversation(
+            conn, external_id="cascade-test", harness_id=harness_id,
+            workspace_id=workspace_id, started_at="2024-01-01T00:00:00Z",
+        )
+        prompt_id = insert_prompt(conn, conv_id, "p1", "2024-01-01T00:00:00Z")
+        response_id = insert_response(
+            conn, conv_id, prompt_id, model_id, None, "r1", "2024-01-01T00:00:01Z",
+            input_tokens=10, output_tokens=5,
+        )
+        tool_call_id = insert_tool_call(
+            conn, response_id, conv_id, tool_id, "tc1",
+            '{"command": "ls"}', '{"output": "..."}', "success", "2024-01-01T00:00:02Z",
+        )
+
+        # Apply tag to tool_call (uses tool_call_tags table)
+        apply_tag(conn, "tool_call", tool_call_id, tag_id)
+        conn.commit()
+
+        # Verify tool_call_tag exists
+        assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 1
+
+        # Delete the conversation (should cascade to tool_calls → tool_call_tags)
+        conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+        conn.commit()
+
+        # tool_call_tags should be gone via CASCADE, no FK error
+        assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 0
+
+        # Tag itself should still exist (only junction record removed)
+        assert conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0] == 1
+
+        conn.close()
+
+    def test_ensure_tool_call_tags_cascades_on_tag_deletion(self, tmp_path):
+        """tool_call_tags created via ensure_* cascades on tag deletion."""
+        from siftd.storage.sqlite import (
+            apply_tag,
+            get_or_create_harness,
+            get_or_create_model,
+            get_or_create_tag,
+            get_or_create_tool,
+            get_or_create_workspace,
+            insert_conversation,
+            insert_prompt,
+            insert_response,
+            insert_tool_call,
+            open_database,
+        )
+
+        db_path = tmp_path / "upgrade_test2.db"
+        conn = open_database(db_path)
+
+        # Set up data
+        harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+        workspace_id = get_or_create_workspace(conn, "/test", "2024-01-01T00:00:00Z")
+        model_id = get_or_create_model(conn, "test-model")
+        tool_id = get_or_create_tool(conn, "Bash")
+        tag_id = get_or_create_tag(conn, "deleteme:tag")
+
+        conv_id = insert_conversation(
+            conn, external_id="tag-cascade", harness_id=harness_id,
+            workspace_id=workspace_id, started_at="2024-01-01T00:00:00Z",
+        )
+        prompt_id = insert_prompt(conn, conv_id, "p1", "2024-01-01T00:00:00Z")
+        response_id = insert_response(
+            conn, conv_id, prompt_id, model_id, None, "r1", "2024-01-01T00:00:01Z",
+            input_tokens=10, output_tokens=5,
+        )
+        tool_call_id = insert_tool_call(
+            conn, response_id, conv_id, tool_id, "tc1",
+            '{"command": "ls"}', '{"output": "..."}', "success", "2024-01-01T00:00:02Z",
+        )
+
+        apply_tag(conn, "tool_call", tool_call_id, tag_id)
+        conn.commit()
+
+        assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 1
+
+        # Delete the tag (should cascade to tool_call_tags)
+        conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+        conn.commit()
+
+        # tool_call_tags junction should be gone, tool_call remains
+        assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
 
         conn.close()

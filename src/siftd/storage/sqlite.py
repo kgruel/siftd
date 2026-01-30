@@ -303,8 +303,8 @@ def ensure_pricing_table(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS pricing (
             id              TEXT PRIMARY KEY,
-            model_id        TEXT NOT NULL REFERENCES models(id),
-            provider_id     TEXT NOT NULL REFERENCES providers(id),
+            model_id        TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
+            provider_id     TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
             input_per_mtok  REAL,
             output_per_mtok REAL,
             UNIQUE (model_id, provider_id)
@@ -317,8 +317,8 @@ def ensure_tool_call_tags_table(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS tool_call_tags (
             id              TEXT PRIMARY KEY,
-            tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id),
-            tag_id          TEXT NOT NULL REFERENCES tags(id),
+            tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
+            tag_id          TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
             applied_at      TEXT NOT NULL,
             UNIQUE (tool_call_id, tag_id)
         )
