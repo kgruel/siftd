@@ -1,15 +1,13 @@
 """Adapter registry: discovers built-in, drop-in, and entry point adapters."""
 
+import importlib.metadata
+import importlib.util
+import inspect
 import sys
 from pathlib import Path
 from types import ModuleType
 
 from siftd.adapters import aider, claude_code, codex_cli, gemini_cli
-from siftd.plugin_discovery import (
-    load_dropin_modules,
-    load_entrypoint_modules,
-    validate_required_interface,
-)
 
 # Current adapter interface version
 ADAPTER_INTERFACE_VERSION = 1
@@ -34,16 +32,12 @@ def _validate_adapter(module: ModuleType, origin: str) -> str | None:
 
     Returns an error message string if invalid, None if valid.
     """
-    import inspect
-
-    error = validate_required_interface(
-        module,
-        origin,
-        required_attrs=_REQUIRED_ATTRS,
-        required_callables=_REQUIRED_CALLABLES,
-    )
-    if error:
-        return error
+    for attr, expected_type in _REQUIRED_ATTRS.items():
+        if not hasattr(module, attr):
+            return f"{origin}: missing required attribute '{attr}'"
+        value = getattr(module, attr)
+        if not isinstance(value, expected_type):
+            return f"{origin}: '{attr}' must be {expected_type.__name__}, got {type(value).__name__}"
 
     adapter_version = getattr(module, "ADAPTER_INTERFACE_VERSION")
     if adapter_version != ADAPTER_INTERFACE_VERSION:
@@ -51,6 +45,10 @@ def _validate_adapter(module: ModuleType, origin: str) -> str | None:
 
     if module.DEDUP_STRATEGY not in _VALID_DEDUP_STRATEGIES:
         return f"{origin}: DEDUP_STRATEGY must be 'file' or 'session', got '{module.DEDUP_STRATEGY}'"
+
+    for func_name in _REQUIRED_CALLABLES:
+        if not hasattr(module, func_name) or not callable(getattr(module, func_name)):
+            return f"{origin}: missing required function '{func_name}'"
 
     # Validate discover() accepts locations= keyword argument
     discover_func = getattr(module, "discover")
@@ -68,19 +66,55 @@ def load_builtin_adapters() -> list:
 
 def load_dropin_adapters(path: Path) -> list:
     """Scan a directory for .py adapter files, import and validate them."""
-    return load_dropin_modules(
-        path,
-        module_name_prefix="siftd_dropin_adapter_",
-        validate=_validate_adapter,
-    )
+    adapters = []
+    if not path.is_dir():
+        return adapters
+
+    for py_file in sorted(path.glob("*.py")):
+        if py_file.name.startswith("_"):
+            continue
+        module_name = f"siftd_dropin_adapter_{py_file.stem}"
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, py_file)
+            if spec is None or spec.loader is None:
+                print(f"Warning: could not load drop-in adapter {py_file.name}", file=sys.stderr)
+                continue
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception as e:
+            print(f"Warning: failed to import drop-in adapter {py_file.name}: {e}", file=sys.stderr)
+            continue
+
+        error = _validate_adapter(module, f"drop-in {py_file.name}")
+        if error:
+            print(f"Warning: {error}", file=sys.stderr)
+            continue
+
+        adapters.append(module)
+
+    return adapters
 
 
 def load_entrypoint_adapters() -> list:
     """Discover adapters registered via the 'siftd.adapters' entry point group."""
-    return load_entrypoint_modules(
-        "siftd.adapters",
-        validate=_validate_adapter,
-    )
+    adapters = []
+    eps = importlib.metadata.entry_points(group="siftd.adapters")
+
+    for ep in eps:
+        try:
+            module = ep.load()
+        except Exception as e:
+            print(f"Warning: failed to load entry point adapter '{ep.name}': {e}", file=sys.stderr)
+            continue
+
+        error = _validate_adapter(module, f"entry point '{ep.name}'")
+        if error:
+            print(f"Warning: {error}", file=sys.stderr)
+            continue
+
+        adapters.append(module)
+
+    return adapters
 
 
 class _AdapterPathOverride:
