@@ -77,6 +77,46 @@ def cmd_status(args) -> int:
         print("Run 'siftd ingest' to create it.")
         return 1
 
+    # JSON output
+    if args.json:
+        import json
+
+        from siftd.embeddings import embeddings_available
+
+        out = {
+            "db_path": str(stats.db_path),
+            "db_size_bytes": stats.db_size_bytes,
+            "counts": {
+                "conversations": stats.counts.conversations,
+                "prompts": stats.counts.prompts,
+                "responses": stats.counts.responses,
+                "tool_calls": stats.counts.tool_calls,
+                "harnesses": stats.counts.harnesses,
+                "workspaces": stats.counts.workspaces,
+                "tools": stats.counts.tools,
+                "models": stats.counts.models,
+                "ingested_files": stats.counts.ingested_files,
+            },
+            "harnesses": [
+                {"name": h.name, "source": h.source, "log_format": h.log_format}
+                for h in stats.harnesses
+            ],
+            "top_workspaces": [
+                {"path": w.path, "conversation_count": w.conversation_count}
+                for w in stats.top_workspaces
+            ],
+            "models": stats.models,
+            "top_tools": [
+                {"name": t.name, "usage_count": t.usage_count}
+                for t in stats.top_tools
+            ],
+            "features": {
+                "embeddings": embeddings_available(),
+            },
+        }
+        print(json.dumps(out, indent=2))
+        return 0
+
     print(f"Database: {stats.db_path}")
     print(f"Size: {stats.db_size_bytes / 1024:.1f} KB")
 
@@ -965,6 +1005,15 @@ def cmd_doctor(args) -> int:
     # siftd doctor checks — list available checks
     if subcommand == "checks":
         checks = list_checks()
+        if args.json:
+            import json
+
+            out = [
+                {"name": c.name, "description": c.description, "has_fix": c.has_fix}
+                for c in checks
+            ]
+            print(json.dumps(out, indent=2))
+            return 0
         print("Available checks:")
         for check in checks:
             fix_marker = " [fix]" if check.has_fix else ""
@@ -982,6 +1031,33 @@ def cmd_doctor(args) -> int:
     except ValueError as e:
         print(f"Error: {e}")
         return 1
+
+    # JSON output
+    if args.json:
+        import json
+
+        error_count = sum(1 for f in findings if f.severity == "error")
+        out = {
+            "findings": [
+                {
+                    "check": f.check,
+                    "severity": f.severity,
+                    "message": f.message,
+                    "fix_available": f.fix_available,
+                    "fix_command": f.fix_command,
+                    "context": f.context,
+                }
+                for f in findings
+            ],
+            "summary": {
+                "total": len(findings),
+                "error": error_count,
+                "warning": sum(1 for f in findings if f.severity == "warning"),
+                "info": sum(1 for f in findings if f.severity == "info"),
+            },
+        }
+        print(json.dumps(out, indent=2))
+        return 1 if error_count > 0 else 0
 
     if not findings:
         print("No issues found.")
@@ -1295,6 +1371,7 @@ def main(argv=None) -> int:
 
     # status
     p_status = subparsers.add_parser("status", help="Show database statistics")
+    p_status.add_argument("--json", action="store_true", help="Output as JSON")
     p_status.set_defaults(func=cmd_status)
 
     # ask (semantic search) — defined in cli_ask.py
@@ -1455,9 +1532,11 @@ def main(argv=None) -> int:
   siftd doctor                    # run all checks
   siftd doctor checks             # list available checks
   siftd doctor fixes              # show fix commands for issues
-  siftd doctor ingest-pending     # run specific check""",
+  siftd doctor ingest-pending     # run specific check
+  siftd doctor --json             # output as JSON""",
     )
     p_doctor.add_argument("subcommand", nargs="?", help="'checks' to list, 'fixes' to show fixes, or check name")
+    p_doctor.add_argument("--json", action="store_true", help="Output as JSON")
     p_doctor.set_defaults(func=cmd_doctor)
 
     # peek
