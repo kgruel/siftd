@@ -1,7 +1,7 @@
 {
   "name": "siftd",
   "owner": {
-    "name": "kaygee",
+    "name": "kgruel",
     "url": "https://github.com/kgruel"
   },
   "metadata": {
@@ -15,7 +15,7 @@
       "description": "Search and research past conversations from CLI coding sessions",
       "version": "1.0.0",
       "author": {
-        "name": "kaygee",
+        "name": "kgruel",
         "url": "https://github.com/kgruel"
       },
       "repository": "https://github.com/kgruel/siftd",

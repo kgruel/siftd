@@ -86,7 +86,7 @@ Physical paths where work happens
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
 | `id` | TEXT | PRIMARY KEY | ULID |
-| `path` | TEXT | NOT NULL UNIQUE | /Users/kaygee/Code/tbd |
+| `path` | TEXT | NOT NULL UNIQUE | /Users/kgruel/Code/siftd |
 | `git_remote` | TEXT |  | git@github.com:user/repo.git |
 | `discovered_at` | TEXT | NOT NULL | ISO timestamp |
 

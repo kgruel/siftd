@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "description": "Search and research past conversations from CLI coding sessions",
   "author": {
-    "name": "kaygee",
-    "url": "https://github.com/kaygee"
+    "name": "kgruel",
+    "url": "https://github.com/kgruel"
   },
-  "repository": "https://github.com/kaygee/siftd",
-  "homepage": "https://github.com/kaygee/siftd",
+  "repository": "https://github.com/kgruel/siftd",
+  "homepage": "https://github.com/kgruel/siftd",
   "license": "MIT",
   "keywords": ["conversations", "search", "research", "history", "analytics"],
   "hooks": "./hooks/hooks.json",

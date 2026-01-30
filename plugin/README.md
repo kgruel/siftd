@@ -18,7 +18,7 @@ siftd ask --index                # build embeddings index
 
 ```bash
 # Add the siftd marketplace
-claude plugin marketplace add kaygee/siftd
+claude plugin marketplace add kgruel/siftd
 
 # Install the plugin
 claude plugin install siftd@siftd

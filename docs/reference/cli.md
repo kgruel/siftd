@@ -34,7 +34,7 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --db PATH             Database path (default:
-                        /Users/kaygee/.local/share/siftd/siftd.db)
+                        /Users/kgruel/.local/share/siftd/siftd.db)
 ```
 
 ## siftd ingest
