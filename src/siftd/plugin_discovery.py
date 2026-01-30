@@ -1,137 +1,187 @@
-"""Shared plugin discovery helpers.
+"""Plugin discovery: shared utilities for loading drop-in and entry point plugins."""
 
-siftd supports extensibility via:
-- Drop-in Python files under XDG config dirs (e.g. ~/.config/siftd/adapters/*.py)
-- Python entry points (e.g. group 'siftd.adapters')
-
-This module centralizes the common discovery mechanics so individual registries
-only need to define interface validation rules and how to map modules to names.
-"""
-
-from __future__ import annotations
-
-import importlib.metadata
 import importlib.util
 import sys
-from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
+from typing import Callable
 
+# Type alias for validator functions
 Validator = Callable[[ModuleType, str], str | None]
-
-
-def warn(message: str) -> None:
-    """Print a warning message to stderr."""
-    print(f"Warning: {message}", file=sys.stderr)
 
 
 def validate_required_interface(
     module: ModuleType,
     origin: str,
-    *,
     required_attrs: dict[str, type],
     required_callables: list[str],
 ) -> str | None:
-    """Validate a module has required attrs and callables.
+    """Validate a module has required attributes and callables.
 
-    Returns an error message string if invalid, None if valid.
+    Args:
+        module: The module to validate.
+        origin: Human-readable origin string for error messages.
+        required_attrs: Dict mapping attribute name to expected type.
+        required_callables: List of required callable attribute names.
+
+    Returns:
+        Error message string if invalid, None if valid.
     """
+    errors = []
+
     for attr, expected_type in required_attrs.items():
         if not hasattr(module, attr):
-            return f"{origin}: missing required attribute '{attr}'"
-        value = getattr(module, attr)
-        if not isinstance(value, expected_type):
-            return f"{origin}: '{attr}' must be {expected_type.__name__}, got {type(value).__name__}"
+            errors.append(f"missing '{attr}'")
+        elif not isinstance(getattr(module, attr), expected_type):
+            actual = type(getattr(module, attr)).__name__
+            errors.append(f"'{attr}' wrong type (expected {expected_type.__name__}, got {actual})")
 
     for func_name in required_callables:
-        if not hasattr(module, func_name) or not callable(getattr(module, func_name)):
-            return f"{origin}: missing required function '{func_name}'"
+        if not hasattr(module, func_name):
+            errors.append(f"missing function '{func_name}'")
+        elif not callable(getattr(module, func_name)):
+            errors.append(f"'{func_name}' is not callable")
 
+    if errors:
+        return f"{origin}: {', '.join(errors)}"
     return None
 
 
 def load_dropin_modules(
     path: Path,
-    *,
     module_name_prefix: str,
     validate: Validator,
-    warn_fn: Callable[[str], None] = warn,
 ) -> list[ModuleType]:
-    """Load validated drop-in modules from a directory.
+    """Load .py files from a directory as drop-in plugin modules.
 
     Args:
-        path: Directory containing .py files.
-        module_name_prefix: Prefix used to construct synthetic module names.
-        validate: Validation callback returning error string, or None if valid.
-        warn_fn: Called with warning messages (defaults to printing to stderr).
+        path: Directory to scan for .py files.
+        module_name_prefix: Prefix for generated module names (e.g., "siftd_dropin_adapter_").
+        validate: Validation function that returns error string or None.
 
     Returns:
-        List of loaded modules that passed validation.
+        List of successfully loaded and validated modules.
     """
-    modules: list[ModuleType] = []
     if not path.is_dir():
-        return modules
+        return []
+
+    modules = []
 
     for py_file in sorted(path.glob("*.py")):
         if py_file.name.startswith("_"):
             continue
 
         module_name = f"{module_name_prefix}{py_file.stem}"
+        origin = f"drop-in {py_file.name}"
 
         try:
             spec = importlib.util.spec_from_file_location(module_name, py_file)
             if spec is None or spec.loader is None:
-                warn_fn(f"could not load drop-in module {py_file.name}")
+                print(f"Warning: {origin}: could not create module spec", file=sys.stderr)
                 continue
+
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
+
+            error = validate(module, origin)
+            if error:
+                print(f"Warning: {error}", file=sys.stderr)
+                continue
+
+            modules.append(module)
+
         except Exception as e:
-            warn_fn(f"failed to import drop-in module {py_file.name}: {e}")
-            continue
-
-        error = validate(module, f"drop-in {py_file.name}")
-        if error:
-            warn_fn(error)
-            continue
-
-        modules.append(module)
+            print(f"Warning: {origin}: import failed: {e}", file=sys.stderr)
 
     return modules
 
 
 def load_entrypoint_modules(
     group: str,
-    *,
     validate: Validator,
-    warn_fn: Callable[[str], None] = warn,
 ) -> list[ModuleType]:
-    """Load validated modules from a Python entry point group.
+    """Load plugin modules registered via entry points.
 
     Args:
-        group: Entry point group name (e.g. "siftd.adapters").
-        validate: Validation callback returning error string, or None if valid.
-        warn_fn: Called with warning messages (defaults to printing to stderr).
+        group: Entry point group name (e.g., "siftd.adapters").
+        validate: Validation function that returns error string or None.
 
     Returns:
-        List of loaded modules that passed validation.
+        List of successfully loaded and validated modules.
     """
-    modules: list[ModuleType] = []
-    eps = importlib.metadata.entry_points(group=group)
+    try:
+        from importlib.metadata import entry_points
+    except ImportError:
+        return []
 
-    for ep in eps:
+    modules = []
+
+    # Python 3.10+ returns SelectableGroups, earlier returns dict
+    eps = entry_points()
+    if hasattr(eps, "select"):
+        group_eps = eps.select(group=group)
+    else:
+        group_eps = eps.get(group, [])
+
+    for ep in group_eps:
+        origin = f"entry point {ep.name}"
         try:
             module = ep.load()
+            error = validate(module, origin)
+            if error:
+                print(f"Warning: {error}", file=sys.stderr)
+                continue
+            modules.append(module)
         except Exception as e:
-            warn_fn(f"failed to load entry point {group} '{ep.name}': {e}")
-            continue
-
-        origin = f"entry point '{ep.name}'"
-        error = validate(module, origin)
-        if error:
-            warn_fn(error)
-            continue
-
-        modules.append(module)
+            print(f"Warning: {origin}: load failed: {e}", file=sys.stderr)
 
     return modules
 
+
+def validate_dropin_module(
+    py_file: Path,
+    module_name_prefix: str,
+    validate: Validator,
+) -> tuple[ModuleType | None, list[str]]:
+    """Validate a single drop-in module file, returning all errors.
+
+    Unlike load_dropin_modules which prints warnings and skips invalid modules,
+    this function returns detailed error information for diagnostics.
+
+    Args:
+        py_file: Path to the .py file.
+        module_name_prefix: Prefix for generated module name.
+        validate: Validation function that returns error string or None.
+
+    Returns:
+        Tuple of (module or None, list of error strings).
+        If module is returned, errors list is empty.
+        If module is None, errors list contains the failure reasons.
+    """
+    module_name = f"{module_name_prefix}{py_file.stem}"
+    origin = f"drop-in {py_file.name}"
+    errors = []
+
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, py_file)
+        if spec is None or spec.loader is None:
+            return None, [f"{origin}: could not create module spec"]
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        error = validate(module, origin)
+        if error:
+            # Parse errors from validate message (format: "origin: err1, err2")
+            # Extract just the error part after the origin prefix
+            if ": " in error:
+                error_part = error.split(": ", 1)[1]
+                errors = [e.strip() for e in error_part.split(", ")]
+            else:
+                errors = [error]
+            return None, errors
+
+        return module, []
+
+    except Exception as e:
+        return None, [f"import failed: {e}"]

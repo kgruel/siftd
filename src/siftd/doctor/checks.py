@@ -345,10 +345,9 @@ class DropInsValidCheck:
         return findings
 
     def _check_adapters(self, adapters_dir: Path) -> list[Finding]:
-        """Validate drop-in adapter files."""
-        import importlib.util
-
-        from siftd.adapters.registry import _REQUIRED_ATTRS, _REQUIRED_CALLABLES, _VALID_DEDUP_STRATEGIES
+        """Validate drop-in adapter files using the same validator as the registry."""
+        from siftd.adapters.registry import _validate_adapter
+        from siftd.plugin_discovery import validate_dropin_module
 
         findings = []
 
@@ -359,57 +358,18 @@ class DropInsValidCheck:
             if py_file.name.startswith("_"):
                 continue
 
-            module_name = f"siftd_doctor_check_adapter_{py_file.stem}"
-            try:
-                spec = importlib.util.spec_from_file_location(module_name, py_file)
-                if spec is None or spec.loader is None:
-                    findings.append(
-                        Finding(
-                            check=self.name,
-                            severity="error",
-                            message=f"Adapter '{py_file.name}': could not create module spec",
-                            fix_available=False,
-                        )
-                    )
-                    continue
+            module, errors = validate_dropin_module(
+                py_file,
+                module_name_prefix="siftd_doctor_check_adapter_",
+                validate=_validate_adapter,
+            )
 
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-
-                # Validate required attributes
-                errors = []
-                for attr, expected_type in _REQUIRED_ATTRS.items():
-                    if not hasattr(module, attr):
-                        errors.append(f"missing '{attr}'")
-                    elif not isinstance(getattr(module, attr), expected_type):
-                        errors.append(f"'{attr}' wrong type")
-
-                if hasattr(module, "DEDUP_STRATEGY"):
-                    if module.DEDUP_STRATEGY not in _VALID_DEDUP_STRATEGIES:
-                        errors.append(f"invalid DEDUP_STRATEGY '{module.DEDUP_STRATEGY}'")
-
-                for func_name in _REQUIRED_CALLABLES:
-                    if not hasattr(module, func_name) or not callable(
-                        getattr(module, func_name)
-                    ):
-                        errors.append(f"missing function '{func_name}'")
-
-                if errors:
-                    findings.append(
-                        Finding(
-                            check=self.name,
-                            severity="error",
-                            message=f"Adapter '{py_file.name}': {', '.join(errors)}",
-                            fix_available=False,
-                        )
-                    )
-
-            except Exception as e:
+            if errors:
                 findings.append(
                     Finding(
                         check=self.name,
                         severity="error",
-                        message=f"Adapter '{py_file.name}': import failed: {e}",
+                        message=f"Adapter '{py_file.name}': {', '.join(errors)}",
                         fix_available=False,
                     )
                 )
@@ -417,10 +377,9 @@ class DropInsValidCheck:
         return findings
 
     def _check_formatters(self, formatters_dir: Path) -> list[Finding]:
-        """Validate drop-in formatter files."""
-        import importlib.util
-
-        from siftd.output.registry import _REQUIRED_ATTRS, _REQUIRED_CALLABLES
+        """Validate drop-in formatter files using the same validator as the registry."""
+        from siftd.output.registry import _validate_formatter
+        from siftd.plugin_discovery import validate_dropin_module
 
         findings = []
 
@@ -431,53 +390,18 @@ class DropInsValidCheck:
             if py_file.name.startswith("_"):
                 continue
 
-            module_name = f"siftd_doctor_check_formatter_{py_file.stem}"
-            try:
-                spec = importlib.util.spec_from_file_location(module_name, py_file)
-                if spec is None or spec.loader is None:
-                    findings.append(
-                        Finding(
-                            check=self.name,
-                            severity="error",
-                            message=f"Formatter '{py_file.name}': could not create module spec",
-                            fix_available=False,
-                        )
-                    )
-                    continue
+            module, errors = validate_dropin_module(
+                py_file,
+                module_name_prefix="siftd_doctor_check_formatter_",
+                validate=_validate_formatter,
+            )
 
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-
-                # Validate required attributes
-                errors = []
-                for attr, expected_type in _REQUIRED_ATTRS.items():
-                    if not hasattr(module, attr):
-                        errors.append(f"missing '{attr}'")
-                    elif not isinstance(getattr(module, attr), expected_type):
-                        errors.append(f"'{attr}' wrong type")
-
-                for func_name in _REQUIRED_CALLABLES:
-                    if not hasattr(module, func_name) or not callable(
-                        getattr(module, func_name)
-                    ):
-                        errors.append(f"missing function '{func_name}'")
-
-                if errors:
-                    findings.append(
-                        Finding(
-                            check=self.name,
-                            severity="error",
-                            message=f"Formatter '{py_file.name}': {', '.join(errors)}",
-                            fix_available=False,
-                        )
-                    )
-
-            except Exception as e:
+            if errors:
                 findings.append(
                     Finding(
                         check=self.name,
                         severity="error",
-                        message=f"Formatter '{py_file.name}': import failed: {e}",
+                        message=f"Formatter '{py_file.name}': {', '.join(errors)}",
                         fix_available=False,
                     )
                 )

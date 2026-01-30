@@ -262,7 +262,7 @@ def create_formatter():
 
         assert len(formatters) == 0
         captured = capsys.readouterr()
-        assert "missing required attribute 'NAME'" in captured.err
+        assert "missing 'NAME'" in captured.err
 
     def test_skip_underscore_files(self, tmp_path):
         # Files starting with _ should be skipped
@@ -319,7 +319,7 @@ class TestValidateFormatter:
         error = _validate_formatter(module, "test")
 
         assert error is not None
-        assert "must be str" in error
+        assert "wrong type" in error
 
     def test_missing_create_formatter(self):
         module = MagicMock()
