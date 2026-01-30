@@ -40,6 +40,10 @@ def _validate_adapter(module: ModuleType, origin: str) -> str | None:
         if not isinstance(value, expected_type):
             return f"{origin}: '{attr}' must be {expected_type.__name__}, got {type(value).__name__}"
 
+    adapter_version = getattr(module, "ADAPTER_INTERFACE_VERSION")
+    if adapter_version != ADAPTER_INTERFACE_VERSION:
+        return f"{origin}: incompatible interface version {adapter_version}, expected {ADAPTER_INTERFACE_VERSION}"
+
     if module.DEDUP_STRATEGY not in _VALID_DEDUP_STRATEGIES:
         return f"{origin}: DEDUP_STRATEGY must be 'file' or 'session', got '{module.DEDUP_STRATEGY}'"
 

@@ -7,6 +7,8 @@ Each test uses a minimal fixture file to verify:
 """
 
 from pathlib import Path
+from types import ModuleType
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,6 +16,52 @@ from conftest import FIXTURES_DIR
 
 from siftd.domain.source import Source
 from siftd.adapters import aider, claude_code, codex_cli, gemini_cli
+from siftd.adapters.registry import _validate_adapter, ADAPTER_INTERFACE_VERSION
+
+
+class TestValidateAdapter:
+    """Tests for adapter validation logic."""
+
+    def _make_valid_adapter(self, version: int = ADAPTER_INTERFACE_VERSION) -> ModuleType:
+        """Create a mock adapter module with all required attributes."""
+        module = ModuleType("test_adapter")
+        module.ADAPTER_INTERFACE_VERSION = version
+        module.NAME = "test"
+        module.DEFAULT_LOCATIONS = []
+        module.DEDUP_STRATEGY = "file"
+        module.HARNESS_SOURCE = "test"
+        module.discover = lambda locations=None: []
+        module.can_handle = lambda source: False
+        module.parse = lambda source: iter([])
+        return module
+
+    def test_valid_adapter_passes(self):
+        """Adapter with correct version passes validation."""
+        module = self._make_valid_adapter(ADAPTER_INTERFACE_VERSION)
+        assert _validate_adapter(module, "test") is None
+
+    def test_version_mismatch_returns_error(self):
+        """Adapter with wrong version returns error."""
+        module = self._make_valid_adapter(version=999)
+        error = _validate_adapter(module, "test-adapter")
+        assert error is not None
+        assert "incompatible interface version 999" in error
+        assert f"expected {ADAPTER_INTERFACE_VERSION}" in error
+
+    def test_version_zero_returns_error(self):
+        """Adapter with version 0 returns error."""
+        module = self._make_valid_adapter(version=0)
+        error = _validate_adapter(module, "old-adapter")
+        assert error is not None
+        assert "incompatible interface version 0" in error
+
+    def test_future_version_returns_error(self):
+        """Adapter with future version returns error."""
+        future_version = ADAPTER_INTERFACE_VERSION + 1
+        module = self._make_valid_adapter(version=future_version)
+        error = _validate_adapter(module, "future-adapter")
+        assert error is not None
+        assert f"incompatible interface version {future_version}" in error
 
 
 class TestClaudeCodeAdapter:
