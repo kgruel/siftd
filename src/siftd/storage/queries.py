@@ -1,8 +1,12 @@
-"""Shared SQL query helpers for prompt/response text extraction.
+"""Centralized SQL read queries for siftd storage.
 
-These queries are the common pattern across formatters and chunker:
-GROUP_CONCAT of text blocks from prompt_content / response_content,
-filtered to block_type='text' with non-null json text.
+This module is the canonical read layer:
+- Conversation listing and detail queries
+- Stats and aggregation queries
+- Prompt/response text extraction
+
+All functions accept a connection and return rows/dicts.
+The API layer handles parameter validation and dataclass mapping.
 """
 
 import sqlite3
@@ -163,6 +167,8 @@ def fetch_exchanges(
 
     return result
 
+from siftd.storage.sql_helpers import placeholders
+
 
 def fetch_prompt_response_texts(
     conn: sqlite3.Connection,
@@ -221,3 +227,296 @@ def fetch_conversation_exchanges(
         })
 
     return result
+
+
+# =============================================================================
+# Conversation queries
+# =============================================================================
+
+
+def has_pricing_table(conn: sqlite3.Connection) -> bool:
+    """Check if pricing table exists in database."""
+    row = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pricing'"
+    ).fetchone()
+    return row[0] > 0
+
+
+def fetch_conversation_by_id_or_prefix(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+) -> dict | None:
+    """Find conversation by exact ID or prefix match.
+
+    Returns dict with id, started_at, workspace or None if not found.
+    """
+    row = conn.execute(
+        "SELECT c.id, c.started_at, w.path AS workspace "
+        "FROM conversations c LEFT JOIN workspaces w ON w.id = c.workspace_id "
+        "WHERE c.id = ? OR c.id LIKE ?",
+        (conversation_id, f"{conversation_id}%"),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def fetch_conversation_model(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+) -> str | None:
+    """Get most frequently used model name for a conversation."""
+    row = conn.execute(
+        "SELECT m.name FROM responses r "
+        "LEFT JOIN models m ON m.id = r.model_id "
+        "WHERE r.conversation_id = ? "
+        "GROUP BY m.name ORDER BY COUNT(*) DESC LIMIT 1",
+        (conversation_id,),
+    ).fetchone()
+    return row["name"] if row else None
+
+
+def fetch_conversation_token_totals(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+) -> tuple[int, int]:
+    """Get total input and output tokens for a conversation.
+
+    Returns (input_tokens, output_tokens).
+    """
+    row = conn.execute(
+        "SELECT COALESCE(SUM(input_tokens), 0) AS input_tok, "
+        "COALESCE(SUM(output_tokens), 0) AS output_tok "
+        "FROM responses WHERE conversation_id = ?",
+        (conversation_id,),
+    ).fetchone()
+    return row["input_tok"], row["output_tok"]
+
+
+def fetch_prompts_for_conversation(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+) -> list[sqlite3.Row]:
+    """Fetch all prompts for a conversation, ordered by timestamp."""
+    return conn.execute(
+        "SELECT id, timestamp FROM prompts WHERE conversation_id = ? ORDER BY timestamp",
+        (conversation_id,),
+    ).fetchall()
+
+
+def fetch_prompt_text_content(
+    conn: sqlite3.Connection,
+    prompt_id: str,
+) -> list[sqlite3.Row]:
+    """Fetch text content blocks for a prompt."""
+    return conn.execute(
+        "SELECT content FROM prompt_content "
+        "WHERE prompt_id = ? AND block_type = 'text' ORDER BY block_index",
+        (prompt_id,),
+    ).fetchall()
+
+
+def fetch_responses_for_conversation(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+) -> list[sqlite3.Row]:
+    """Fetch all responses for a conversation, ordered by timestamp."""
+    return conn.execute(
+        "SELECT id, prompt_id, timestamp, input_tokens, output_tokens "
+        "FROM responses WHERE conversation_id = ? ORDER BY timestamp",
+        (conversation_id,),
+    ).fetchall()
+
+
+def fetch_response_text_content(
+    conn: sqlite3.Connection,
+    response_id: str,
+) -> list[sqlite3.Row]:
+    """Fetch text content blocks for a response."""
+    return conn.execute(
+        "SELECT content FROM response_content "
+        "WHERE response_id = ? AND block_type = 'text' ORDER BY block_index",
+        (response_id,),
+    ).fetchall()
+
+
+def fetch_tool_calls_for_conversation(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+) -> list[sqlite3.Row]:
+    """Fetch tool calls for a conversation with tool names."""
+    return conn.execute(
+        "SELECT tc.response_id, t.name AS tool_name, tc.status "
+        "FROM tool_calls tc "
+        "LEFT JOIN tools t ON t.id = tc.tool_id "
+        "WHERE tc.conversation_id = ? "
+        "ORDER BY tc.timestamp",
+        (conversation_id,),
+    ).fetchall()
+
+
+def fetch_conversation_tags(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+) -> list[str]:
+    """Fetch tag names for a conversation."""
+    rows = conn.execute(
+        "SELECT t.name FROM conversation_tags ct "
+        "JOIN tags t ON t.id = ct.tag_id "
+        "WHERE ct.conversation_id = ? ORDER BY t.name",
+        (conversation_id,),
+    ).fetchall()
+    return [row["name"] for row in rows]
+
+
+def fetch_tags_for_conversations(
+    conn: sqlite3.Connection,
+    conversation_ids: list[str],
+) -> dict[str, list[str]]:
+    """Bulk fetch tags for multiple conversations.
+
+    Returns dict mapping conversation_id to list of tag names.
+    """
+    if not conversation_ids:
+        return {}
+
+    ph = placeholders(len(conversation_ids))
+    rows = conn.execute(
+        f"SELECT ct.conversation_id, t.name "
+        f"FROM conversation_tags ct "
+        f"JOIN tags t ON t.id = ct.tag_id "
+        f"WHERE ct.conversation_id IN ({ph}) "
+        f"ORDER BY t.name",
+        conversation_ids,
+    ).fetchall()
+
+    tags_by_conv: dict[str, list[str]] = {}
+    for row in rows:
+        tags_by_conv.setdefault(row["conversation_id"], []).append(row["name"])
+    return tags_by_conv
+
+
+# =============================================================================
+# Stats queries
+# =============================================================================
+
+
+def fetch_table_count(conn: sqlite3.Connection, table_name: str) -> int:
+    """Get row count for a table."""
+    return conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+
+
+def fetch_harnesses(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Fetch all harness records."""
+    return conn.execute("SELECT name, source, log_format FROM harnesses").fetchall()
+
+
+def fetch_top_workspaces(
+    conn: sqlite3.Connection,
+    limit: int = 10,
+) -> list[sqlite3.Row]:
+    """Fetch workspaces with conversation counts, ordered by count desc."""
+    return conn.execute(
+        """
+        SELECT w.path, COUNT(c.id) as convs
+        FROM workspaces w
+        LEFT JOIN conversations c ON c.workspace_id = w.id
+        GROUP BY w.id
+        ORDER BY convs DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+
+def fetch_model_names(conn: sqlite3.Connection) -> list[str]:
+    """Fetch all model raw_names."""
+    rows = conn.execute("SELECT raw_name FROM models").fetchall()
+    return [row["raw_name"] for row in rows]
+
+
+def fetch_top_tools(
+    conn: sqlite3.Connection,
+    limit: int = 10,
+) -> list[sqlite3.Row]:
+    """Fetch tools by usage count, ordered by count desc."""
+    return conn.execute(
+        """
+        SELECT t.name, COUNT(tc.id) as uses
+        FROM tools t
+        JOIN tool_calls tc ON tc.tool_id = t.id
+        GROUP BY t.id
+        ORDER BY uses DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+
+# =============================================================================
+# Tool tag queries
+# =============================================================================
+
+
+def fetch_tool_tags_by_prefix(
+    conn: sqlite3.Connection,
+    prefix: str,
+) -> list[sqlite3.Row]:
+    """Fetch tool call tag usage counts filtered by prefix."""
+    return conn.execute(
+        """
+        SELECT t.name, COUNT(tct.id) as count
+        FROM tags t
+        JOIN tool_call_tags tct ON tct.tag_id = t.id
+        WHERE t.name LIKE ?
+        GROUP BY t.id
+        ORDER BY count DESC
+        """,
+        (f"{prefix}%",),
+    ).fetchall()
+
+
+def fetch_tool_tags_by_workspace(
+    conn: sqlite3.Connection,
+    prefix: str,
+) -> list[sqlite3.Row]:
+    """Fetch per-workspace tool tag usage counts."""
+    return conn.execute(
+        """
+        SELECT
+            COALESCE(w.path, '(no workspace)') as workspace,
+            t.name as tag,
+            COUNT(tct.id) as count
+        FROM tool_call_tags tct
+        JOIN tags t ON t.id = tct.tag_id
+        JOIN tool_calls tc ON tc.id = tct.tool_call_id
+        JOIN conversations c ON c.id = tc.conversation_id
+        LEFT JOIN workspaces w ON w.id = c.workspace_id
+        WHERE t.name LIKE ?
+        GROUP BY w.id, t.id
+        ORDER BY workspace, count DESC
+        """,
+        (f"{prefix}%",),
+    ).fetchall()
+
+
+# =============================================================================
+# Search queries
+# =============================================================================
+
+
+def fetch_conversation_timestamps(
+    conn: sqlite3.Connection,
+    conversation_ids: list[str],
+) -> dict[str, str]:
+    """Fetch started_at timestamps for conversations.
+
+    Returns dict mapping conversation_id to started_at (or empty string).
+    """
+    if not conversation_ids:
+        return {}
+
+    ph = placeholders(len(conversation_ids))
+    rows = conn.execute(
+        f"SELECT id, started_at FROM conversations WHERE id IN ({ph})",
+        conversation_ids,
+    ).fetchall()
+    return {row["id"]: row["started_at"] or "" for row in rows}

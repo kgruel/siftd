@@ -4,6 +4,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from siftd.paths import db_path as default_db_path
+from siftd.storage.queries import (
+    fetch_harnesses,
+    fetch_model_names,
+    fetch_table_count,
+    fetch_top_tools,
+    fetch_top_workspaces,
+)
 from siftd.storage.sqlite import open_database
 
 
@@ -80,28 +87,22 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
     conn = open_database(db, read_only=True)
 
     # Table counts
-    tables = [
-        ("conversations", "conversations"),
-        ("prompts", "prompts"),
-        ("responses", "responses"),
-        ("tool_calls", "tool_calls"),
-        ("harnesses", "harnesses"),
-        ("workspaces", "workspaces"),
-        ("tools", "tools"),
-        ("models", "models"),
-        ("ingested_files", "ingested_files"),
+    table_names = [
+        "conversations",
+        "prompts",
+        "responses",
+        "tool_calls",
+        "harnesses",
+        "workspaces",
+        "tools",
+        "models",
+        "ingested_files",
     ]
-    count_values = {}
-    for attr_name, table_name in tables:
-        count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
-        count_values[attr_name] = count
-
+    count_values = {name: fetch_table_count(conn, name) for name in table_names}
     counts = TableCounts(**count_values)
 
     # Harnesses
-    harness_rows = conn.execute(
-        "SELECT name, source, log_format FROM harnesses"
-    ).fetchall()
+    harness_rows = fetch_harnesses(conn)
     harnesses = [
         HarnessInfo(
             name=row["name"],
@@ -112,32 +113,17 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
     ]
 
     # Top workspaces
-    workspace_rows = conn.execute("""
-        SELECT w.path, COUNT(c.id) as convs
-        FROM workspaces w
-        LEFT JOIN conversations c ON c.workspace_id = w.id
-        GROUP BY w.id
-        ORDER BY convs DESC
-        LIMIT 10
-    """).fetchall()
+    workspace_rows = fetch_top_workspaces(conn, limit=10)
     top_workspaces = [
         WorkspaceStats(path=row["path"], conversation_count=row["convs"])
         for row in workspace_rows
     ]
 
     # Models
-    model_rows = conn.execute("SELECT raw_name FROM models").fetchall()
-    models = [row["raw_name"] for row in model_rows]
+    models = fetch_model_names(conn)
 
     # Top tools by usage
-    tool_rows = conn.execute("""
-        SELECT t.name, COUNT(tc.id) as uses
-        FROM tools t
-        JOIN tool_calls tc ON tc.tool_id = t.id
-        GROUP BY t.id
-        ORDER BY uses DESC
-        LIMIT 10
-    """).fetchall()
+    tool_rows = fetch_top_tools(conn, limit=10)
     top_tools = [
         ToolStats(name=row["name"], usage_count=row["uses"]) for row in tool_rows
     ]

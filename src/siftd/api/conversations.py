@@ -7,6 +7,19 @@ from pathlib import Path
 from siftd.paths import db_path as default_db_path
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.filters import tag_condition as _tag_condition
+from siftd.storage.queries import (
+    fetch_conversation_by_id_or_prefix,
+    fetch_conversation_model,
+    fetch_conversation_tags,
+    fetch_conversation_token_totals,
+    fetch_prompt_text_content,
+    fetch_prompts_for_conversation,
+    fetch_response_text_content,
+    fetch_responses_for_conversation,
+    fetch_tags_for_conversations,
+    fetch_tool_calls_for_conversation,
+    has_pricing_table,
+)
 from siftd.storage.sqlite import open_database
 
 
@@ -109,12 +122,7 @@ def list_conversations(
     conn = open_database(db, read_only=True)
 
     # Check if pricing table exists
-    has_pricing = (
-        conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pricing'"
-        ).fetchone()[0]
-        > 0
-    )
+    has_pricing = has_pricing_table(conn)
 
     # Build WHERE clauses
     wb = WhereBuilder()
@@ -204,19 +212,7 @@ def list_conversations(
 
     # Bulk-fetch tags for returned conversations (single query, no N+1)
     conv_ids = [row["conversation_id"] for row in rows]
-    tags_by_conv: dict[str, list[str]] = {}
-    if conv_ids:
-        placeholders = ",".join("?" for _ in conv_ids)
-        tag_rows = conn.execute(
-            f"SELECT ct.conversation_id, t.name "
-            f"FROM conversation_tags ct "
-            f"JOIN tags t ON t.id = ct.tag_id "
-            f"WHERE ct.conversation_id IN ({placeholders}) "
-            f"ORDER BY t.name",
-            conv_ids,
-        ).fetchall()
-        for tr in tag_rows:
-            tags_by_conv.setdefault(tr["conversation_id"], []).append(tr["name"])
+    tags_by_conv = fetch_tags_for_conversations(conn, conv_ids)
 
     conn.close()
 
@@ -274,84 +270,35 @@ def get_conversation(
     conn = open_database(db, read_only=True)
 
     # Find conversation (support prefix match)
-    conv = conn.execute(
-        "SELECT c.id, c.started_at, w.path AS workspace "
-        "FROM conversations c LEFT JOIN workspaces w ON w.id = c.workspace_id "
-        "WHERE c.id = ? OR c.id LIKE ?",
-        (conversation_id, f"{conversation_id}%"),
-    ).fetchone()
-
+    conv = fetch_conversation_by_id_or_prefix(conn, conversation_id)
     if not conv:
         conn.close()
         return None
 
     conv_id = conv["id"]
 
-    # Model (most frequent)
-    model_row = conn.execute(
-        "SELECT m.name FROM responses r "
-        "LEFT JOIN models m ON m.id = r.model_id "
-        "WHERE r.conversation_id = ? "
-        "GROUP BY m.name ORDER BY COUNT(*) DESC LIMIT 1",
-        (conv_id,),
-    ).fetchone()
-    model_name = model_row["name"] if model_row else None
+    # Model (most frequent) and token totals
+    model_name = fetch_conversation_model(conn, conv_id)
+    total_input, total_output = fetch_conversation_token_totals(conn, conv_id)
 
-    # Token totals
-    totals = conn.execute(
-        "SELECT COALESCE(SUM(input_tokens), 0) AS input_tok, "
-        "COALESCE(SUM(output_tokens), 0) AS output_tok "
-        "FROM responses WHERE conversation_id = ?",
-        (conv_id,),
-    ).fetchone()
-    total_input = totals["input_tok"]
-    total_output = totals["output_tok"]
-
-    # Fetch prompts
-    prompts = conn.execute(
-        "SELECT id, timestamp FROM prompts WHERE conversation_id = ? ORDER BY timestamp",
-        (conv_id,),
-    ).fetchall()
-
-    # Fetch prompt text content
+    # Fetch prompts and their text content
+    prompts = fetch_prompts_for_conversation(conn, conv_id)
     prompt_texts: dict[str, str] = {}
     for p in prompts:
-        blocks = conn.execute(
-            "SELECT content FROM prompt_content "
-            "WHERE prompt_id = ? AND block_type = 'text' ORDER BY block_index",
-            (p["id"],),
-        ).fetchall()
+        blocks = fetch_prompt_text_content(conn, p["id"])
         parts = [_extract_text(b["content"]) for b in blocks]
         prompt_texts[p["id"]] = " ".join(parts).strip()
 
-    # Fetch responses
-    responses = conn.execute(
-        "SELECT id, prompt_id, timestamp, input_tokens, output_tokens "
-        "FROM responses WHERE conversation_id = ? ORDER BY timestamp",
-        (conv_id,),
-    ).fetchall()
-
-    # Fetch response text content
+    # Fetch responses and their text content
+    responses = fetch_responses_for_conversation(conn, conv_id)
     response_texts: dict[str, str] = {}
     for r in responses:
-        blocks = conn.execute(
-            "SELECT content FROM response_content "
-            "WHERE response_id = ? AND block_type = 'text' ORDER BY block_index",
-            (r["id"],),
-        ).fetchall()
+        blocks = fetch_response_text_content(conn, r["id"])
         parts = [_extract_text(b["content"]) for b in blocks]
         response_texts[r["id"]] = " ".join(parts).strip()
 
     # Fetch tool calls grouped by response
-    tool_calls = conn.execute(
-        "SELECT tc.response_id, t.name AS tool_name, tc.status "
-        "FROM tool_calls tc "
-        "LEFT JOIN tools t ON t.id = tc.tool_id "
-        "WHERE tc.conversation_id = ? "
-        "ORDER BY tc.timestamp",
-        (conv_id,),
-    ).fetchall()
-
+    tool_calls = fetch_tool_calls_for_conversation(conn, conv_id)
     tc_by_response: dict[str, list] = {}
     for tc in tool_calls:
         tc_by_response.setdefault(tc["response_id"], []).append(tc)
@@ -404,13 +351,7 @@ def get_conversation(
             )
 
     # Fetch tags
-    tag_rows = conn.execute(
-        "SELECT t.name FROM conversation_tags ct "
-        "JOIN tags t ON t.id = ct.tag_id "
-        "WHERE ct.conversation_id = ? ORDER BY t.name",
-        (conv_id,),
-    ).fetchall()
-    tags = [tr["name"] for tr in tag_rows]
+    tags = fetch_conversation_tags(conn, conv_id)
 
     conn.close()
 

@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from siftd.paths import db_path as default_db_path
+from siftd.storage.queries import (
+    fetch_tool_tags_by_prefix,
+    fetch_tool_tags_by_workspace,
+)
 from siftd.storage.sqlite import open_database
 
 
@@ -48,17 +52,7 @@ def get_tool_tag_summary(
 
     conn = open_database(db, read_only=True)
 
-    rows = conn.execute(
-        """
-        SELECT t.name, COUNT(tct.id) as count
-        FROM tags t
-        JOIN tool_call_tags tct ON tct.tag_id = t.id
-        WHERE t.name LIKE ?
-        GROUP BY t.id
-        ORDER BY count DESC
-        """,
-        (f"{prefix}%",),
-    ).fetchall()
+    rows = fetch_tool_tags_by_prefix(conn, prefix)
 
     conn.close()
 
@@ -92,23 +86,7 @@ def get_tool_tags_by_workspace(
     conn = open_database(db, read_only=True)
 
     # Get per-workspace, per-tag counts
-    rows = conn.execute(
-        """
-        SELECT
-            COALESCE(w.path, '(no workspace)') as workspace,
-            t.name as tag,
-            COUNT(tct.id) as count
-        FROM tool_call_tags tct
-        JOIN tags t ON t.id = tct.tag_id
-        JOIN tool_calls tc ON tc.id = tct.tool_call_id
-        JOIN conversations c ON c.id = tc.conversation_id
-        LEFT JOIN workspaces w ON w.id = c.workspace_id
-        WHERE t.name LIKE ?
-        GROUP BY w.id, t.id
-        ORDER BY workspace, count DESC
-        """,
-        (f"{prefix}%",),
-    ).fetchall()
+    rows = fetch_tool_tags_by_workspace(conn, prefix)
 
     conn.close()
 

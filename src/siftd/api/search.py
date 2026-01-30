@@ -3,13 +3,13 @@
 Re-exports core search functionality and adds post-processing functions.
 """
 
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean as _mean
 
 # Re-export core search API
 from siftd.search import SearchResult, hybrid_search
+from siftd.storage.queries import fetch_conversation_timestamps
 
 __all__ = [
     "SearchResult",
@@ -191,17 +191,12 @@ def first_mention(
     db = db_path or default_db_path()
 
     # Get timestamps for conversations
-    conv_ids = list({_get(r, "conversation_id") for r in above})
-    conn = sqlite3.connect(db)
-    conn.row_factory = sqlite3.Row
-    placeholders = ",".join("?" * len(conv_ids))
-    rows = conn.execute(
-        f"SELECT id, started_at FROM conversations WHERE id IN ({placeholders})",
-        conv_ids,
-    ).fetchall()
-    conn.close()
+    from siftd.storage.sqlite import open_database
 
-    conv_times = {row["id"]: row["started_at"] or "" for row in rows}
+    conv_ids = list({_get(r, "conversation_id") for r in above})
+    conn = open_database(db, read_only=True)
+    conv_times = fetch_conversation_timestamps(conn, conv_ids)
+    conn.close()
 
     # Sort by conversation start time, then by chunk_id (ULID = time-ordered)
     above.sort(key=lambda r: (conv_times.get(_get(r, "conversation_id"), ""), _get(r, "chunk_id") or ""))
