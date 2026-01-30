@@ -1,13 +1,11 @@
 """Adapter registry: discovers built-in, drop-in, and entry point adapters."""
 
-import importlib.metadata
-import importlib.util
 import inspect
-import sys
 from pathlib import Path
 from types import ModuleType
 
 from siftd.adapters import aider, claude_code, codex_cli, gemini_cli
+from siftd.plugin_discovery import PluginInfo, load_dropin_modules, load_entrypoint_modules
 
 # Current adapter interface version
 ADAPTER_INTERFACE_VERSION = 1
@@ -59,62 +57,36 @@ def _validate_adapter(module: ModuleType, origin: str) -> str | None:
     return None
 
 
-def load_builtin_adapters() -> list:
-    """Return the built-in adapter modules."""
-    return [aider, claude_code, codex_cli, gemini_cli]
+def load_builtin_adapters() -> list[PluginInfo]:
+    """Return the built-in adapter modules as PluginInfo."""
+    builtins = [aider, claude_code, codex_cli, gemini_cli]
+    return [
+        PluginInfo(
+            name=getattr(m, "NAME", m.__name__.split(".")[-1]),
+            origin="builtin",
+            module=m,
+        )
+        for m in builtins
+    ]
 
 
-def load_dropin_adapters(path: Path) -> list:
+def load_dropin_adapters(path: Path) -> list[PluginInfo]:
     """Scan a directory for .py adapter files, import and validate them."""
-    adapters = []
-    if not path.is_dir():
-        return adapters
-
-    for py_file in sorted(path.glob("*.py")):
-        if py_file.name.startswith("_"):
-            continue
-        module_name = f"siftd_dropin_adapter_{py_file.stem}"
-        try:
-            spec = importlib.util.spec_from_file_location(module_name, py_file)
-            if spec is None or spec.loader is None:
-                print(f"Warning: could not load drop-in adapter {py_file.name}", file=sys.stderr)
-                continue
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-        except Exception as e:
-            print(f"Warning: failed to import drop-in adapter {py_file.name}: {e}", file=sys.stderr)
-            continue
-
-        error = _validate_adapter(module, f"drop-in {py_file.name}")
-        if error:
-            print(f"Warning: {error}", file=sys.stderr)
-            continue
-
-        adapters.append(module)
-
-    return adapters
+    return load_dropin_modules(
+        path,
+        module_name_prefix="siftd_dropin_adapter_",
+        validate=_validate_adapter,
+        get_name=lambda m: getattr(m, "NAME", "unknown"),
+    )
 
 
-def load_entrypoint_adapters() -> list:
+def load_entrypoint_adapters() -> list[PluginInfo]:
     """Discover adapters registered via the 'siftd.adapters' entry point group."""
-    adapters = []
-    eps = importlib.metadata.entry_points(group="siftd.adapters")
-
-    for ep in eps:
-        try:
-            module = ep.load()
-        except Exception as e:
-            print(f"Warning: failed to load entry point adapter '{ep.name}': {e}", file=sys.stderr)
-            continue
-
-        error = _validate_adapter(module, f"entry point '{ep.name}'")
-        if error:
-            print(f"Warning: {error}", file=sys.stderr)
-            continue
-
-        adapters.append(module)
-
-    return adapters
+    return load_entrypoint_modules(
+        group="siftd.adapters",
+        validate=_validate_adapter,
+        get_name=lambda m: getattr(m, "NAME", "unknown"),
+    )
 
 
 class _AdapterPathOverride:
@@ -147,10 +119,13 @@ def wrap_adapter_paths(adapter, paths: list[str]):
     return _AdapterPathOverride(adapter, paths)
 
 
-def load_all_adapters(dropin_path: Path | None = None) -> list:
+def load_all_adapters(dropin_path: Path | None = None) -> list[PluginInfo]:
     """Load adapters from all sources, deduplicated by NAME.
 
     Priority: drop-in > entry point > built-in (drop-ins can override built-ins).
+
+    Returns:
+        List of PluginInfo for all discovered adapters, deduplicated by name.
     """
     from siftd.paths import adapters_dir
 
@@ -162,25 +137,15 @@ def load_all_adapters(dropin_path: Path | None = None) -> list:
     builtins = load_builtin_adapters()
 
     seen_names: set[str] = set()
-    result: list = []
+    result: list[PluginInfo] = []
 
-    for source_label, adapter_list in [
-        ("drop-in", dropins),
-        ("entry point", entrypoints),
-        ("built-in", builtins),
-    ]:
-        for adapter in adapter_list:
-            name = getattr(adapter, "NAME", None)
-            if name is None:
-                print(
-                    f"Warning: adapter from {source_label} has no NAME, skipping",
-                    file=sys.stderr,
-                )
-                continue
-            if name in seen_names:
+    # Priority order: drop-in > entry point > built-in
+    for plugin_list in [dropins, entrypoints, builtins]:
+        for plugin in plugin_list:
+            if plugin.name in seen_names:
                 # Silently skip - expected when drop-in overrides built-in
                 continue
-            seen_names.add(name)
-            result.append(adapter)
+            seen_names.add(plugin.name)
+            result.append(plugin)
 
     return result

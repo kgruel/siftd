@@ -2,12 +2,36 @@
 
 import importlib.util
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Callable
+from typing import Literal
 
 # Type alias for validator functions
 Validator = Callable[[ModuleType, str], str | None]
+
+# Type alias for plugin origins
+PluginOrigin = Literal["builtin", "dropin", "entrypoint"]
+
+
+@dataclass
+class PluginInfo:
+    """Unified provenance information for discovered plugins.
+
+    Attributes:
+        name: Human-readable name of the plugin.
+        origin: How the plugin was discovered ("builtin", "dropin", "entrypoint").
+        module: The loaded module object.
+        source_path: For drop-ins, the path to the .py file. None otherwise.
+        entrypoint: For entry points, the entry point name. None otherwise.
+    """
+
+    name: str
+    origin: PluginOrigin
+    module: ModuleType
+    source_path: Path | None = None
+    entrypoint: str | None = None
 
 
 def validate_required_interface(
@@ -51,21 +75,24 @@ def load_dropin_modules(
     path: Path,
     module_name_prefix: str,
     validate: Validator,
-) -> list[ModuleType]:
+    *,
+    get_name: Callable[[ModuleType], str] | None = None,
+) -> list[PluginInfo]:
     """Load .py files from a directory as drop-in plugin modules.
 
     Args:
         path: Directory to scan for .py files.
         module_name_prefix: Prefix for generated module names (e.g., "siftd_dropin_adapter_").
         validate: Validation function that returns error string or None.
+        get_name: Optional function to extract plugin name from module. Defaults to file stem.
 
     Returns:
-        List of successfully loaded and validated modules.
+        List of PluginInfo for successfully loaded and validated modules.
     """
     if not path.is_dir():
         return []
 
-    modules = []
+    plugins: list[PluginInfo] = []
 
     for py_file in sorted(path.glob("*.py")):
         if py_file.name.startswith("_"):
@@ -88,33 +115,44 @@ def load_dropin_modules(
                 print(f"Warning: {error}", file=sys.stderr)
                 continue
 
-            modules.append(module)
+            name = get_name(module) if get_name else py_file.stem
+            plugins.append(
+                PluginInfo(
+                    name=name,
+                    origin="dropin",
+                    module=module,
+                    source_path=py_file,
+                )
+            )
 
         except Exception as e:
             print(f"Warning: {origin}: import failed: {e}", file=sys.stderr)
 
-    return modules
+    return plugins
 
 
 def load_entrypoint_modules(
     group: str,
     validate: Validator,
-) -> list[ModuleType]:
+    *,
+    get_name: Callable[[ModuleType], str] | None = None,
+) -> list[PluginInfo]:
     """Load plugin modules registered via entry points.
 
     Args:
         group: Entry point group name (e.g., "siftd.adapters").
         validate: Validation function that returns error string or None.
+        get_name: Optional function to extract plugin name from module. Defaults to entry point name.
 
     Returns:
-        List of successfully loaded and validated modules.
+        List of PluginInfo for successfully loaded and validated modules.
     """
     try:
         from importlib.metadata import entry_points
     except ImportError:
         return []
 
-    modules = []
+    plugins: list[PluginInfo] = []
 
     # Python 3.10+ returns SelectableGroups, earlier returns dict
     eps = entry_points()
@@ -131,11 +169,20 @@ def load_entrypoint_modules(
             if error:
                 print(f"Warning: {error}", file=sys.stderr)
                 continue
-            modules.append(module)
+
+            name = get_name(module) if get_name else ep.name
+            plugins.append(
+                PluginInfo(
+                    name=name,
+                    origin="entrypoint",
+                    module=module,
+                    entrypoint=ep.name,
+                )
+            )
         except Exception as e:
             print(f"Warning: {origin}: load failed: {e}", file=sys.stderr)
 
-    return modules
+    return plugins
 
 
 def validate_dropin_module(

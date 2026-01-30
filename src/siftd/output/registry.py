@@ -1,12 +1,16 @@
 """Formatter registry: discovers built-in, drop-in, and entry point formatters."""
 
-import importlib.metadata
-import importlib.util
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING
+
+from siftd.plugin_discovery import (
+    PluginInfo,
+    load_dropin_modules,
+    load_entrypoint_modules,
+    validate_required_interface,
+)
 
 if TYPE_CHECKING:
     from siftd.output.formatters import OutputFormatter
@@ -28,18 +32,9 @@ def _validate_formatter(module: ModuleType, origin: str) -> str | None:
 
     Returns an error message string if invalid, None if valid.
     """
-    for attr, expected_type in _REQUIRED_ATTRS.items():
-        if not hasattr(module, attr):
-            return f"{origin}: missing required attribute '{attr}'"
-        value = getattr(module, attr)
-        if not isinstance(value, expected_type):
-            return f"{origin}: '{attr}' must be {expected_type.__name__}, got {type(value).__name__}"
-
-    for func_name in _REQUIRED_CALLABLES:
-        if not hasattr(module, func_name) or not callable(getattr(module, func_name)):
-            return f"{origin}: missing required function '{func_name}'"
-
-    return None
+    return validate_required_interface(
+        module, origin, _REQUIRED_ATTRS, _REQUIRED_CALLABLES
+    )
 
 
 def load_builtin_factories() -> dict[str, FormatterFactory]:
@@ -64,57 +59,23 @@ def load_builtin_factories() -> dict[str, FormatterFactory]:
     }
 
 
-def load_dropin_formatters(path: Path) -> dict[str, ModuleType]:
+def load_dropin_formatters(path: Path) -> list[PluginInfo]:
     """Scan a directory for .py formatter files, import and validate them."""
-    formatters: dict[str, ModuleType] = {}
-    if not path.is_dir():
-        return formatters
-
-    for py_file in sorted(path.glob("*.py")):
-        if py_file.name.startswith("_"):
-            continue
-        module_name = f"siftd_dropin_formatter_{py_file.stem}"
-        try:
-            spec = importlib.util.spec_from_file_location(module_name, py_file)
-            if spec is None or spec.loader is None:
-                print(f"Warning: could not load drop-in formatter {py_file.name}", file=sys.stderr)
-                continue
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-        except Exception as e:
-            print(f"Warning: failed to import drop-in formatter {py_file.name}: {e}", file=sys.stderr)
-            continue
-
-        error = _validate_formatter(module, f"drop-in {py_file.name}")
-        if error:
-            print(f"Warning: {error}", file=sys.stderr)
-            continue
-
-        formatters[module.NAME] = module
-
-    return formatters
+    return load_dropin_modules(
+        path,
+        module_name_prefix="siftd_dropin_formatter_",
+        validate=_validate_formatter,
+        get_name=lambda m: getattr(m, "NAME", "unknown"),
+    )
 
 
-def load_entrypoint_formatters() -> dict[str, ModuleType]:
+def load_entrypoint_formatters() -> list[PluginInfo]:
     """Discover formatters registered via the 'siftd.formatters' entry point group."""
-    formatters: dict[str, ModuleType] = {}
-    eps = importlib.metadata.entry_points(group="siftd.formatters")
-
-    for ep in eps:
-        try:
-            module = ep.load()
-        except Exception as e:
-            print(f"Warning: failed to load entry point formatter '{ep.name}': {e}", file=sys.stderr)
-            continue
-
-        error = _validate_formatter(module, f"entry point '{ep.name}'")
-        if error:
-            print(f"Warning: {error}", file=sys.stderr)
-            continue
-
-        formatters[module.NAME] = module
-
-    return formatters
+    return load_entrypoint_modules(
+        group="siftd.formatters",
+        validate=_validate_formatter,
+        get_name=lambda m: getattr(m, "NAME", "unknown"),
+    )
 
 
 class FormatterRegistry:
@@ -133,12 +94,12 @@ class FormatterRegistry:
         self._factories.update(load_builtin_factories())
 
         # Entry points override built-ins
-        for name, module in load_entrypoint_formatters().items():
-            self._factories[name] = module.create_formatter
+        for plugin in load_entrypoint_formatters():
+            self._factories[plugin.name] = plugin.module.create_formatter
 
         # Drop-ins have highest priority
-        for name, module in load_dropin_formatters(dropin_path).items():
-            self._factories[name] = module.create_formatter
+        for plugin in load_dropin_formatters(dropin_path):
+            self._factories[plugin.name] = plugin.module.create_formatter
 
     def get(self, name: str) -> "OutputFormatter | None":
         """Get a formatter by name."""

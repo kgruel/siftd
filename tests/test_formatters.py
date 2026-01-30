@@ -246,9 +246,10 @@ def create_formatter():
 '''
         (tmp_path / "custom.py").write_text(formatter_code)
 
-        formatters = load_dropin_formatters(tmp_path)
+        plugins = load_dropin_formatters(tmp_path)
 
-        assert "custom" in formatters
+        assert len(plugins) == 1
+        assert plugins[0].name == "custom"
 
     def test_skip_invalid_dropin(self, tmp_path, capsys):
         # Create an invalid drop-in (missing NAME)
@@ -258,9 +259,9 @@ def create_formatter():
 '''
         (tmp_path / "invalid.py").write_text(formatter_code)
 
-        formatters = load_dropin_formatters(tmp_path)
+        plugins = load_dropin_formatters(tmp_path)
 
-        assert len(formatters) == 0
+        assert len(plugins) == 0
         captured = capsys.readouterr()
         assert "missing" in captured.err and "NAME" in captured.err
 
@@ -268,9 +269,9 @@ def create_formatter():
         # Files starting with _ should be skipped
         (tmp_path / "_helper.py").write_text("NAME = 'helper'")
 
-        formatters = load_dropin_formatters(tmp_path)
+        plugins = load_dropin_formatters(tmp_path)
 
-        assert len(formatters) == 0
+        assert len(plugins) == 0
 
     def test_dropin_overrides_builtin(self, tmp_path):
         # Create a drop-in that overrides 'json'

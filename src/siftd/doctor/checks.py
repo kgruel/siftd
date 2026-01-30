@@ -103,14 +103,15 @@ class IngestPendingCheck:
         from siftd.adapters.registry import load_all_adapters
 
         findings = []
-        adapters = load_all_adapters()
+        plugins = load_all_adapters()
         conn = ctx.get_db_conn()
 
         # Get all ingested file paths
         cur = conn.execute("SELECT path FROM ingested_files")
         ingested_paths = {row[0] for row in cur.fetchall()}
 
-        for adapter in adapters:
+        for plugin in plugins:
+            adapter = plugin.module
             try:
                 discovered = list(adapter.discover())
             except Exception as e:
@@ -118,7 +119,7 @@ class IngestPendingCheck:
                     Finding(
                         check=self.name,
                         severity="warning",
-                        message=f"Adapter '{adapter.NAME}' discover() failed: {e}",
+                        message=f"Adapter '{plugin.name}' discover() failed: {e}",
                         fix_available=False,
                     )
                 )
@@ -136,10 +137,10 @@ class IngestPendingCheck:
                     Finding(
                         check=self.name,
                         severity="info",
-                        message=f"Adapter '{adapter.NAME}': {len(pending)} file(s) pending ingestion",
+                        message=f"Adapter '{plugin.name}': {len(pending)} file(s) pending ingestion",
                         fix_available=True,
                         fix_command="siftd ingest",
-                        context={"adapter": adapter.NAME, "count": len(pending)},
+                        context={"adapter": plugin.name, "count": len(pending)},
                     )
                 )
 

@@ -145,10 +145,10 @@ def find_session_file(session_id_prefix: str) -> Path | None:
     from siftd.adapters.registry import load_all_adapters
 
     prefix_lower = session_id_prefix.lower()
-    adapters = load_all_adapters()
+    plugins = load_all_adapters()
 
-    for adapter in adapters:
-        locations = getattr(adapter, "DEFAULT_LOCATIONS", [])
+    for plugin in plugins:
+        locations = getattr(plugin.module, "DEFAULT_LOCATIONS", [])
         for location in locations:
             base = Path(location).expanduser()
             if not base.exists():

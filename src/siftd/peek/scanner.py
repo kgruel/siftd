@@ -36,12 +36,12 @@ def list_active_sessions(
     Returns:
         List of SessionInfo sorted by last_activity (most recent first).
     """
-    adapters = load_all_adapters()
+    plugins = load_all_adapters()
     now = time.time()
     sessions: list[SessionInfo] = []
 
-    for adapter in adapters:
-        locations = getattr(adapter, "DEFAULT_LOCATIONS", [])
+    for plugin in plugins:
+        locations = getattr(plugin.module, "DEFAULT_LOCATIONS", [])
         for location in locations:
             base = Path(location).expanduser()
             if not base.exists():

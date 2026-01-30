@@ -3,6 +3,7 @@
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,13 @@ from siftd.peek.scanner import (
     _scan_session_file,
     list_active_sessions,
 )
+from siftd.plugin_discovery import PluginInfo
+
+
+def _make_fake_plugin(name: str, locations: list[str]) -> PluginInfo:
+    """Create a fake PluginInfo for testing."""
+    fake_module = SimpleNamespace(NAME=name, DEFAULT_LOCATIONS=locations)
+    return PluginInfo(name=name, origin="builtin", module=fake_module)
 
 
 def _write_session(path: Path, records: list[dict]) -> None:
@@ -248,25 +256,21 @@ class TestFindSessionFile:
 
     def test_finds_by_prefix(self, sample_session, monkeypatch):
         """find_session_file locates a file by session ID prefix."""
-        # Mock load_all_adapters to return a fake adapter pointing to our tmp dir
-        class FakeAdapter:
-            DEFAULT_LOCATIONS = [str(sample_session.parent.parent)]
-
+        # Mock load_all_adapters to return a fake plugin pointing to our tmp dir
+        plugin = _make_fake_plugin("test", [str(sample_session.parent.parent)])
         monkeypatch.setattr(
             "siftd.adapters.registry.load_all_adapters",
-            lambda: [FakeAdapter()],
+            lambda: [plugin],
         )
         result = find_session_file("abc12345")
         assert result is not None
         assert result.name == sample_session.name
 
     def test_returns_none_for_no_match(self, session_dir, monkeypatch):
-        class FakeAdapter:
-            DEFAULT_LOCATIONS = [str(session_dir.parent)]
-
+        plugin = _make_fake_plugin("test", [str(session_dir.parent)])
         monkeypatch.setattr(
             "siftd.adapters.registry.load_all_adapters",
-            lambda: [FakeAdapter()],
+            lambda: [plugin],
         )
         result = find_session_file("zzzznotfound")
         assert result is None
@@ -277,26 +281,20 @@ class TestListActiveSessions:
 
     def test_lists_recent_sessions(self, sample_session, monkeypatch):
         """list_active_sessions finds recently modified session files."""
-        class FakeAdapter:
-            NAME = "test"
-            DEFAULT_LOCATIONS = [str(sample_session.parent.parent)]
-
+        plugin = _make_fake_plugin("test", [str(sample_session.parent.parent)])
         monkeypatch.setattr(
             "siftd.peek.scanner.load_all_adapters",
-            lambda: [FakeAdapter()],
+            lambda: [plugin],
         )
         sessions = list_active_sessions()
         assert len(sessions) == 1
         assert sessions[0].session_id == "test-session"
 
     def test_filters_by_workspace(self, sample_session, monkeypatch):
-        class FakeAdapter:
-            NAME = "test"
-            DEFAULT_LOCATIONS = [str(sample_session.parent.parent)]
-
+        plugin = _make_fake_plugin("test", [str(sample_session.parent.parent)])
         monkeypatch.setattr(
             "siftd.peek.scanner.load_all_adapters",
-            lambda: [FakeAdapter()],
+            lambda: [plugin],
         )
         # Should match
         sessions = list_active_sessions(workspace="project")
@@ -316,13 +314,10 @@ class TestListActiveSessions:
         old_time = time.time() - 10800
         os.utime(path, (old_time, old_time))
 
-        class FakeAdapter:
-            NAME = "test"
-            DEFAULT_LOCATIONS = [str(session_dir.parent)]
-
+        plugin = _make_fake_plugin("test", [str(session_dir.parent)])
         monkeypatch.setattr(
             "siftd.peek.scanner.load_all_adapters",
-            lambda: [FakeAdapter()],
+            lambda: [plugin],
         )
         sessions = list_active_sessions()
         assert len(sessions) == 0
@@ -336,13 +331,10 @@ class TestListActiveSessions:
         old_time = time.time() - 10800
         os.utime(path, (old_time, old_time))
 
-        class FakeAdapter:
-            NAME = "test"
-            DEFAULT_LOCATIONS = [str(session_dir.parent)]
-
+        plugin = _make_fake_plugin("test", [str(session_dir.parent)])
         monkeypatch.setattr(
             "siftd.peek.scanner.load_all_adapters",
-            lambda: [FakeAdapter()],
+            lambda: [plugin],
         )
         sessions = list_active_sessions(include_inactive=True)
         assert len(sessions) == 1
@@ -360,13 +352,10 @@ class TestListActiveSessions:
         os.utime(path1, (now - 600, now - 600))  # 10 min ago
         os.utime(path2, (now - 60, now - 60))  # 1 min ago
 
-        class FakeAdapter:
-            NAME = "test"
-            DEFAULT_LOCATIONS = [str(session_dir.parent)]
-
+        plugin = _make_fake_plugin("test", [str(session_dir.parent)])
         monkeypatch.setattr(
             "siftd.peek.scanner.load_all_adapters",
-            lambda: [FakeAdapter()],
+            lambda: [plugin],
         )
         sessions = list_active_sessions()
         assert len(sessions) == 2

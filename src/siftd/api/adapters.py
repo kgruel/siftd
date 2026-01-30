@@ -1,12 +1,16 @@
 """Adapter discovery API."""
 
-import importlib.metadata
-import importlib.util
 from dataclasses import dataclass
 from pathlib import Path
 
 from siftd.adapters import aider, claude_code, codex_cli, gemini_cli
+from siftd.adapters.registry import (
+    load_builtin_adapters,
+    load_dropin_adapters,
+    load_entrypoint_adapters,
+)
 from siftd.paths import adapters_dir
+from siftd.plugin_discovery import PluginInfo
 
 # Built-in adapters with their source modules (for copying)
 _BUILTIN_ADAPTERS = {
@@ -19,12 +23,35 @@ _BUILTIN_ADAPTERS = {
 
 @dataclass
 class AdapterInfo:
-    """Information about a discovered adapter."""
+    """Extended adapter information for display/reporting.
+
+    Extends PluginInfo with adapter-specific metadata like DEFAULT_LOCATIONS.
+    """
 
     name: str
-    source: str  # "built-in", "drop-in", "entrypoint"
+    origin: str  # "builtin", "dropin", "entrypoint"
     locations: list[str]
-    file_path: str | None = None  # For drop-in, the .py file path
+    source_path: str | None = None  # For drop-in, the .py file path
+    entrypoint: str | None = None  # For entry points, the entry point name
+
+
+def plugin_to_adapter_info(plugin: PluginInfo) -> AdapterInfo:
+    """Convert a PluginInfo to an AdapterInfo with adapter-specific metadata.
+
+    Args:
+        plugin: Plugin information from the registry.
+
+    Returns:
+        AdapterInfo with locations extracted from the adapter module.
+    """
+    locations = getattr(plugin.module, "DEFAULT_LOCATIONS", [])
+    return AdapterInfo(
+        name=plugin.name,
+        origin=plugin.origin,
+        locations=locations,
+        source_path=str(plugin.source_path) if plugin.source_path else None,
+        entrypoint=plugin.entrypoint,
+    )
 
 
 def list_adapters(*, dropin_path: Path | None = None) -> list[AdapterInfo]:
@@ -33,7 +60,7 @@ def list_adapters(*, dropin_path: Path | None = None) -> list[AdapterInfo]:
     Unlike load_all_adapters(), this function:
     - Returns metadata instead of modules
     - Does NOT deduplicate (shows all sources)
-    - Includes invalid adapters with error info (future)
+    - Includes adapter-specific info like DEFAULT_LOCATIONS
 
     Args:
         dropin_path: Custom drop-in directory. Uses default if not specified.
@@ -47,73 +74,16 @@ def list_adapters(*, dropin_path: Path | None = None) -> list[AdapterInfo]:
     result: list[AdapterInfo] = []
 
     # Built-in adapters
-    for name, module in _BUILTIN_ADAPTERS.items():
-        locations = getattr(module, "DEFAULT_LOCATIONS", [])
-        result.append(
-            AdapterInfo(
-                name=name,
-                source="built-in",
-                locations=locations,
-            )
-        )
+    for plugin in load_builtin_adapters():
+        result.append(plugin_to_adapter_info(plugin))
 
     # Drop-in adapters
-    if dropin_path.is_dir():
-        for py_file in sorted(dropin_path.glob("*.py")):
-            if py_file.name.startswith("_"):
-                continue
-
-            module_name = f"siftd_dropin_adapter_{py_file.stem}"
-            try:
-                spec = importlib.util.spec_from_file_location(module_name, py_file)
-                if spec is None or spec.loader is None:
-                    continue
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-
-                name = getattr(module, "NAME", py_file.stem)
-                locations = getattr(module, "DEFAULT_LOCATIONS", [])
-                result.append(
-                    AdapterInfo(
-                        name=name,
-                        source="drop-in",
-                        locations=locations,
-                        file_path=str(py_file),
-                    )
-                )
-            except Exception:
-                # Include broken adapters with just the filename as name
-                result.append(
-                    AdapterInfo(
-                        name=py_file.stem,
-                        source="drop-in",
-                        locations=[],
-                        file_path=str(py_file),
-                    )
-                )
+    for plugin in load_dropin_adapters(dropin_path):
+        result.append(plugin_to_adapter_info(plugin))
 
     # Entry point adapters
-    eps = importlib.metadata.entry_points(group="siftd.adapters")
-    for ep in eps:
-        try:
-            module = ep.load()
-            name = getattr(module, "NAME", ep.name)
-            locations = getattr(module, "DEFAULT_LOCATIONS", [])
-            result.append(
-                AdapterInfo(
-                    name=name,
-                    source="entrypoint",
-                    locations=locations,
-                )
-            )
-        except Exception:
-            result.append(
-                AdapterInfo(
-                    name=ep.name,
-                    source="entrypoint",
-                    locations=[],
-                )
-            )
+    for plugin in load_entrypoint_adapters():
+        result.append(plugin_to_adapter_info(plugin))
 
     return result
 

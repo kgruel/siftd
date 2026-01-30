@@ -41,16 +41,20 @@ def cmd_ingest(args) -> int:
             name = Path(source.location).name
             print(f"  [{status}] {name}")
 
-    adapters = load_all_adapters()
+    plugins = load_all_adapters()
     if args.adapter:
         names = set(args.adapter)
-        adapters = [a for a in adapters if a.NAME in names]
-        if not adapters:
+        plugins = [p for p in plugins if p.name in names]
+        if not plugins:
             print(f"No adapters matched: {', '.join(args.adapter)}")
             return 1
+
+    # Extract modules for ingestion (wrap with path overrides if needed)
     if args.path:
-        adapters = [wrap_adapter_paths(a, args.path) for a in adapters]
+        adapters = [wrap_adapter_paths(p.module, args.path) for p in plugins]
         print(f"Scanning: {', '.join(args.path)}")
+    else:
+        adapters = [p.module for p in plugins]
 
     print("\nIngesting...")
     stats = ingest_all(conn, adapters, on_file=on_file)
@@ -843,14 +847,14 @@ def cmd_adapters(args) -> int:
 
     # Compute column widths
     name_width = max(len(a.name) for a in adapters)
-    source_width = max(len(a.source) for a in adapters)
+    origin_width = max(len(a.origin) for a in adapters)
 
     # Header
-    print(f"{'NAME':<{name_width}}  {'SOURCE':<{source_width}}  LOCATIONS")
+    print(f"{'NAME':<{name_width}}  {'ORIGIN':<{origin_width}}  LOCATIONS")
 
     for a in adapters:
         locations = ", ".join(a.locations) if a.locations else "-"
-        print(f"{a.name:<{name_width}}  {a.source:<{source_width}}  {locations}")
+        print(f"{a.name:<{name_width}}  {a.origin:<{origin_width}}  {locations}")
 
     return 0
 
