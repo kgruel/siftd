@@ -469,6 +469,9 @@ def cmd_tools(args) -> int:
     db = Path(args.db) if args.db else db_path()
 
     if not db.exists():
+        if args.json:
+            print("[]")
+            return 0
         print(f"Database not found: {db}")
         print("Run 'siftd ingest' to create it.")
         return 1
@@ -484,11 +487,35 @@ def cmd_tools(args) -> int:
                 limit=args.limit,
             )
         except FileNotFoundError as e:
+            if args.json:
+                print("[]")
+                return 0
             print(str(e))
             return 1
 
         if not results:
+            if args.json:
+                print("[]")
+                return 0
             print(f"No tool calls with '{prefix}*' tags found.")
+            return 0
+
+        # JSON output for by-workspace mode
+        if args.json:
+            import json
+
+            out = [
+                {
+                    "workspace": ws_usage.workspace,
+                    "total": ws_usage.total,
+                    "tags": [
+                        {"name": tag.name, "count": tag.count}
+                        for tag in ws_usage.tags
+                    ],
+                }
+                for ws_usage in results
+            ]
+            print(json.dumps(out, indent=2))
             return 0
 
         for ws_usage in results:
@@ -505,12 +532,34 @@ def cmd_tools(args) -> int:
     try:
         tags = get_tool_tag_summary(db_path=db, prefix=prefix)
     except FileNotFoundError as e:
+        if args.json:
+            print("[]")
+            return 0
         print(str(e))
         return 1
 
     if not tags:
+        if args.json:
+            print("[]")
+            return 0
         print(f"No tool calls with '{prefix}*' tags found.")
         print("Run 'siftd backfill --shell-tags' to categorize shell commands.")
+        return 0
+
+    # JSON output for summary mode
+    if args.json:
+        import json
+
+        total = sum(t.count for t in tags)
+        out = [
+            {
+                "name": tag.name,
+                "count": tag.count,
+                "percentage": round((tag.count / total) * 100, 1) if total > 0 else 0,
+            }
+            for tag in tags
+        ]
+        print(json.dumps(out, indent=2))
         return 0
 
     total = sum(t.count for t in tags)
@@ -882,7 +931,27 @@ def cmd_adapters(args) -> int:
     adapters = list_adapters()
 
     if not adapters:
-        print("No adapters found.")
+        if args.json:
+            print("[]")
+        else:
+            print("No adapters found.")
+        return 0
+
+    # JSON output
+    if args.json:
+        import json
+
+        out = [
+            {
+                "name": a.name,
+                "origin": a.origin,
+                "locations": a.locations,
+                "source_path": a.source_path,
+                "entrypoint": a.entrypoint,
+            }
+            for a in adapters
+        ]
+        print(json.dumps(out, indent=2))
         return 0
 
     # Compute column widths
@@ -1449,6 +1518,7 @@ def main(argv=None) -> int:
     p_tools.add_argument("--by-workspace", action="store_true", help="Show breakdown by workspace")
     p_tools.add_argument("--prefix", metavar="PREFIX", help="Tag prefix to filter (default: shell:)")
     p_tools.add_argument("-n", "--limit", type=int, default=20, help="Max workspaces for --by-workspace (default: 20)")
+    p_tools.add_argument("--json", action="store_true", help="Output as JSON")
     p_tools.set_defaults(func=cmd_tools)
 
     # query
@@ -1519,6 +1589,7 @@ def main(argv=None) -> int:
 
     # adapters
     p_adapters = subparsers.add_parser("adapters", help="List discovered adapters")
+    p_adapters.add_argument("--json", action="store_true", help="Output as JSON")
     p_adapters.set_defaults(func=cmd_adapters)
 
     # copy

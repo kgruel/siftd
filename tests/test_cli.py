@@ -292,3 +292,93 @@ class TestQuerySqlCommand:
         assert rc == 0
         captured = capsys.readouterr()
         assert "No queries found" in captured.out
+
+
+class TestToolsCommand:
+    """Tests for siftd tools command."""
+
+    def test_tools_json_empty(self, test_db, capsys):
+        """siftd tools --json outputs [] when no tool tags."""
+        rc = main(["--db", str(test_db), "tools", "--json"])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "[]"
+
+    def test_tools_json_with_data(self, test_db_with_tool_tags, capsys):
+        """siftd tools --json outputs JSON array of tag info."""
+        import json
+
+        rc = main(["--db", str(test_db_with_tool_tags), "tools", "--json"])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert isinstance(data, list)
+        assert len(data) > 0
+        # Each entry should have name, count, percentage
+        for item in data:
+            assert "name" in item
+            assert "count" in item
+            assert "percentage" in item
+
+    def test_tools_json_by_workspace(self, test_db_with_tool_tags, capsys):
+        """siftd tools --json --by-workspace outputs JSON array."""
+        import json
+
+        rc = main(["--db", str(test_db_with_tool_tags), "tools", "--json", "--by-workspace"])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert isinstance(data, list)
+        assert len(data) > 0
+        # Each entry should have workspace, total, tags
+        for item in data:
+            assert "workspace" in item
+            assert "total" in item
+            assert "tags" in item
+            assert isinstance(item["tags"], list)
+
+    def test_tools_json_missing_db(self, tmp_path, capsys):
+        """siftd tools --json outputs [] when database doesn't exist."""
+        rc = main(["--db", str(tmp_path / "missing.db"), "tools", "--json"])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "[]"
+
+
+class TestAdaptersCommand:
+    """Tests for siftd adapters command."""
+
+    def test_adapters_json(self, capsys):
+        """siftd adapters --json outputs JSON array of adapter info."""
+        import json
+
+        rc = main(["adapters", "--json"])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert isinstance(data, list)
+        # Should have at least built-in adapters
+        assert len(data) > 0
+        # Each entry should have name, origin, locations
+        for item in data:
+            assert "name" in item
+            assert "origin" in item
+            assert "locations" in item
+
+    def test_adapters_json_includes_builtin(self, capsys):
+        """siftd adapters --json includes built-in adapters."""
+        import json
+
+        rc = main(["adapters", "--json"])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        names = [a["name"] for a in data]
+        # Should include at least claude_code
+        assert "claude_code" in names
