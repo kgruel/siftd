@@ -23,7 +23,6 @@ from siftd.domain import (
 ADAPTER_INTERFACE_VERSION = 1
 NAME = "codex_cli"
 DEFAULT_LOCATIONS = ["~/.codex/sessions"]
-SOURCE_KINDS = ["file"]
 DEDUP_STRATEGY = "file"  # one conversation per file
 
 # Harness metadata

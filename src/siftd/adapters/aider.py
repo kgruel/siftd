@@ -27,7 +27,6 @@ from siftd.domain import (
 ADAPTER_INTERFACE_VERSION = 1
 NAME = "aider"
 DEFAULT_LOCATIONS = ["~/.aider"]
-SOURCE_KINDS = ["file"]
 DEDUP_STRATEGY = "file"  # each history file is a distinct source
 
 # Harness metadata

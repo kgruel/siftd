@@ -25,7 +25,6 @@ from siftd.domain import (
 ADAPTER_INTERFACE_VERSION = 1
 NAME = "gemini_cli"
 DEFAULT_LOCATIONS = ["~/.gemini/tmp"]
-SOURCE_KINDS = ["file"]
 DEDUP_STRATEGY = "session"  # one conversation per session, latest wins
 
 # Harness metadata

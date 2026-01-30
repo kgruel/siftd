@@ -22,7 +22,6 @@ from siftd.domain import (
 ADAPTER_INTERFACE_VERSION = 1
 NAME = "claude_code"
 DEFAULT_LOCATIONS = ["~/.claude/projects", "~/.config/claude/projects"]
-SOURCE_KINDS = ["file"]
 DEDUP_STRATEGY = "file"  # one conversation per file
 
 # Harness metadata
