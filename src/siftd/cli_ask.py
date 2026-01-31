@@ -133,6 +133,8 @@ def cmd_ask(args) -> int:
                 candidate_ids = all_ids - exclude_active_ids
 
     # Hybrid recall: FTS5 narrows candidates, embeddings rerank
+    fts5_ids: set[str] | None = None
+    fts5_mode: str | None = None
     if not args.embeddings_only:
         from siftd.api import fts5_recall_conversations
 
@@ -201,6 +203,18 @@ def cmd_ask(args) -> int:
     if not results:
         print(f"No results for: {query}")
         return 0
+
+    # Update breakdown with FTS5 recall info
+    from siftd.search import ScoreBreakdown
+    for r in results:
+        if "breakdown" in r and isinstance(r["breakdown"], ScoreBreakdown):
+            breakdown = r["breakdown"]
+            if fts5_ids:
+                breakdown.fts5_matched = r["conversation_id"] in fts5_ids
+                breakdown.fts5_mode = fts5_mode if breakdown.fts5_matched else None
+            else:
+                breakdown.fts5_matched = False
+                breakdown.fts5_mode = None
 
     # Apply temporal weighting if requested (before MMR so it affects reranking)
     if args.recency and results:
@@ -373,7 +387,12 @@ examples:
   # tuning
   siftd ask --embeddings-only "chunking"            # skip FTS5, pure embeddings
   siftd ask --recall 200 "error"                    # widen FTS5 candidate pool
-  siftd ask --chrono "chunking"                     # sort by time instead of score""",
+  siftd ask --chrono "chunking"                     # sort by time instead of score
+
+  # diversity vs relevance (MMR reranking)
+  siftd ask --no-diversity "chunking"               # pure relevance order (deterministic)
+  siftd ask --lambda 0.5 "design"                   # more diverse results (less redundancy)
+  siftd ask --json "auth" | jq '.results[0].breakdown'  # score component breakdown""",
     )
     p_ask.add_argument("query", nargs="*", help="Natural language search query")
     p_ask.add_argument("-n", "--limit", type=int, default=10, help="Max results (default: 10)")
@@ -400,8 +419,8 @@ examples:
     p_ask.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
     p_ask.add_argument("--no-exclude-active", action="store_true", help="Include results from active sessions (excluded by default)")
     p_ask.add_argument("--include-derivative", action="store_true", help="Include derivative conversations (siftd ask/query results, excluded by default)")
-    p_ask.add_argument("--no-diversity", action="store_true", help="Disable MMR diversity reranking, use pure relevance order")
-    p_ask.add_argument("--lambda", type=float, default=0.7, dest="lambda_", metavar="FLOAT", help="MMR lambda: 1.0=pure relevance, 0.0=pure diversity (default: 0.7)")
+    p_ask.add_argument("--no-diversity", action="store_true", help="Disable MMR diversity reranking for deterministic pure relevance order")
+    p_ask.add_argument("--lambda", type=float, default=0.7, dest="lambda_", metavar="FLOAT", help="MMR lambda: 1.0=pure relevance, 0.0=pure diversity (default: 0.7). MMR reranks results to balance relevance with diversity, reducing redundant results from the same conversation.")
     p_ask.add_argument("--recency", action="store_true", help="Boost recent results (exponential decay, mild 15%% boost)")
     p_ask.add_argument("--recency-half-life", type=float, default=30.0, metavar="DAYS", help="Days until recency boost decays to half (default: 30)")
     p_ask.add_argument("--recency-max-boost", type=float, default=1.15, metavar="MULT", help="Max boost multiplier for today's results (default: 1.15)")

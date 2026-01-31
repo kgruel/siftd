@@ -189,25 +189,30 @@ def search_similar(
     query_array = np.asarray(query_embedding, dtype=np.float32)
     scores = cosine_similarity_batch(query_array, embeddings_array)
 
-    # Build results with scores
+    # Build results with scores and breakdown for explainability
+    from siftd.search import ScoreBreakdown
+
     results = []
     for i, row in enumerate(rows):
         source_ids_val = json.loads(row["source_ids"]) if row["source_ids"] else []
+        embedding_sim = float(scores[i])
         result = {
             "chunk_id": row["id"],
             "conversation_id": row["conversation_id"],
             "chunk_type": row["chunk_type"],
             "text": row["text"],
-            "score": float(scores[i]),
+            "score": embedding_sim,
             "source_ids": source_ids_val,
+            "breakdown": ScoreBreakdown(embedding_sim=embedding_sim),
         }
         if include_embeddings:
             result["embedding"] = embeddings_array[i]
         results.append(result)
 
-    # Use numpy argsort for faster sorting
-    score_indices = np.argsort(scores)[::-1][:limit]
-    return [results[i] for i in score_indices]
+    # Sort by score descending, with chunk_id as deterministic tie-breaker
+    # (ULIDs are lexicographically sortable by creation time, so older chunks win ties)
+    results.sort(key=lambda r: (-r["score"], r["chunk_id"]))
+    return results[:limit]
 
 
 def chunk_count(conn: sqlite3.Connection) -> int:

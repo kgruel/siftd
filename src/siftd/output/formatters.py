@@ -570,6 +570,8 @@ class JsonFormatter:
         self, ctx: FormatterContext, meta: dict[str, dict]
     ) -> list[dict]:
         """Format results as individual chunks."""
+        from siftd.search import ScoreBreakdown
+
         results = []
         for r in ctx.results:
             conv_id = r["conversation_id"]
@@ -587,6 +589,11 @@ class JsonFormatter:
                     "workspace": m.get("workspace"),
                 },
             }
+
+            # Include score breakdown for explainability
+            breakdown = r.get("breakdown")
+            if breakdown and isinstance(breakdown, ScoreBreakdown):
+                chunk["breakdown"] = breakdown.to_dict()
 
             # Include file refs if present
             file_refs = r.get("file_refs")

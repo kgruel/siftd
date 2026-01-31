@@ -11,6 +11,50 @@ from siftd.storage.sql_helpers import batched_in_query
 from siftd.storage.sqlite import open_database
 
 
+@dataclass
+class ScoreBreakdown:
+    """Detailed score components for explainability.
+
+    Tracks how the final score was computed through the scoring pipeline:
+    - embedding_sim: Raw cosine similarity [0-1]
+    - recency_boost: Multiplier applied (1.0 if recency disabled)
+    - pre_mmr_score: embedding_sim * recency_boost
+    - mmr_penalty: Diversity penalty applied (None if MMR disabled)
+    - mmr_rank: Position in MMR selection order (1-indexed, None if MMR disabled)
+    - final_score: Score after all adjustments
+    - fts5_matched: Was this conversation in FTS5 recall set?
+    - fts5_mode: FTS5 match mode ("and", "or", or None if no FTS5 match)
+    """
+
+    embedding_sim: float
+    recency_boost: float = 1.0
+    pre_mmr_score: float | None = None
+    mmr_penalty: float | None = None
+    mmr_rank: int | None = None
+    final_score: float | None = None
+    fts5_matched: bool = False
+    fts5_mode: str | None = None
+
+    def __post_init__(self):
+        if self.pre_mmr_score is None:
+            self.pre_mmr_score = self.embedding_sim * self.recency_boost
+        if self.final_score is None:
+            self.final_score = self.pre_mmr_score
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "embedding_sim": round(self.embedding_sim, 4),
+            "recency_boost": round(self.recency_boost, 4),
+            "pre_mmr_score": round(self.pre_mmr_score, 4) if self.pre_mmr_score else None,
+            "mmr_penalty": round(self.mmr_penalty, 4) if self.mmr_penalty is not None else None,
+            "mmr_rank": self.mmr_rank,
+            "final_score": round(self.final_score, 4) if self.final_score else None,
+            "fts5_matched": self.fts5_matched,
+            "fts5_mode": self.fts5_mode,
+        }
+
+
 def apply_temporal_weight(
     results: list[dict],
     timestamps: dict[str, str],
@@ -33,12 +77,14 @@ def apply_temporal_weight(
 
     Args:
         results: List of result dicts with 'conversation_id' and 'score'.
+            If results have 'breakdown' (ScoreBreakdown), it will be updated.
         timestamps: Dict mapping conversation_id to ISO timestamp string.
         half_life_days: Days until boost decays to half. Default 30.
         max_boost: Maximum boost multiplier for today's results. Default 1.15.
 
     Returns:
         Results with adjusted 'score' values (original list is not modified).
+        ScoreBreakdown.recency_boost is updated if present.
     """
     if not results or max_boost <= 1.0:
         return results
@@ -51,6 +97,7 @@ def apply_temporal_weight(
         r_copy = dict(r)
         conv_id = r["conversation_id"]
         ts_str = timestamps.get(conv_id, "")
+        weight = 1.0
 
         if ts_str:
             try:
@@ -67,6 +114,13 @@ def apply_temporal_weight(
                 r_copy["score"] = r["score"] * weight
             except (ValueError, TypeError):
                 pass  # Keep original score if timestamp parsing fails
+
+        # Update breakdown if present
+        if "breakdown" in r_copy and isinstance(r_copy["breakdown"], ScoreBreakdown):
+            breakdown = r_copy["breakdown"]
+            breakdown.recency_boost = float(weight)
+            breakdown.pre_mmr_score = breakdown.embedding_sim * breakdown.recency_boost
+            breakdown.final_score = breakdown.pre_mmr_score
 
         weighted.append(r_copy)
 
@@ -137,6 +191,7 @@ def mmr_rerank(
     remaining = set(range(n))
     selected: list[int] = []
     selected_convs: set[str] = set()
+    chunk_ids = [r.get("chunk_id", "") for r in results]
 
     # Track max similarity to selected set for each candidate
     max_sim_to_selected = np.zeros(n, dtype=np.float32)
@@ -144,6 +199,7 @@ def mmr_rerank(
     while remaining and len(selected) < limit:
         best_idx = -1
         best_score = float("-inf")
+        best_chunk_id = ""
 
         for idx in remaining:
             conv_id = conv_ids[idx]
@@ -155,9 +211,12 @@ def mmr_rerank(
                 penalty = 0.0
 
             mmr_score = lambda_ * relevances[idx] - (1 - lambda_) * penalty
-            if mmr_score > best_score:
+            chunk_id = chunk_ids[idx]
+            # Deterministic tie-breaker: use chunk_id (ULIDs sort by creation time)
+            if (mmr_score, chunk_id) > (best_score, best_chunk_id):
                 best_score = mmr_score
                 best_idx = idx
+                best_chunk_id = chunk_id
 
         remaining.remove(best_idx)
         selected.append(best_idx)
@@ -171,11 +230,37 @@ def mmr_rerank(
                 if sim > max_sim_to_selected[idx]:
                     max_sim_to_selected[idx] = sim
 
-    # Return selected results without embedding key
+    # Track penalty at selection time for breakdown
+    penalties: dict[int, float] = {}
+    for rank, idx in enumerate(selected):
+        # Recompute penalty for this result at selection time
+        conv_id = conv_ids[idx]
+        convs_before = set(conv_ids[i] for i in selected[:rank])
+        if conv_id in convs_before:
+            penalties[idx] = 1.0
+        elif rank == 0:
+            penalties[idx] = 0.0
+        else:
+            # Approximate: use current max_sim value (slightly conservative)
+            penalties[idx] = float(max_sim_to_selected[idx])
+
+    # Return selected results without embedding key, with MMR breakdown
     reranked = []
-    for idx in selected:
+    for rank, idx in enumerate(selected):
         r = dict(results[idx])
         r.pop("embedding", None)
+
+        # Update breakdown if present
+        if "breakdown" in r and isinstance(r["breakdown"], ScoreBreakdown):
+            breakdown = r["breakdown"]
+            breakdown.mmr_penalty = penalties.get(idx, 0.0)
+            breakdown.mmr_rank = rank + 1  # 1-indexed rank
+            # Final score after MMR: pre_mmr - (1-lambda)*penalty
+            breakdown.final_score = (
+                lambda_ * (breakdown.pre_mmr_score or breakdown.embedding_sim)
+                - (1 - lambda_) * breakdown.mmr_penalty
+            )
+
         reranked.append(r)
     return reranked
 
@@ -316,8 +401,9 @@ def hybrid_search(
             max_boost=recency_max_boost,
         )
         # Re-sort by weighted score (MMR does its own reranking)
+        # Use chunk_id as deterministic tie-breaker (ULIDs sort by creation time)
         if not use_mmr:
-            raw_results = sorted(raw_results, key=lambda r: r["score"], reverse=True)
+            raw_results = sorted(raw_results, key=lambda r: (-r["score"], r.get("chunk_id", "")))
 
     # Apply MMR reranking if requested
     if use_mmr:
