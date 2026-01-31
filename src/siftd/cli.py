@@ -1483,7 +1483,9 @@ def cmd_peek(args) -> int:
             return 0
 
         # Detail mode
-        detail = read_session_detail(path, last_n=args.last)
+        # Default to 5 exchanges if --last not specified
+        last_n = args.last if args.last is not None else 5
+        detail = read_session_detail(path, last_n=last_n)
         if detail is None:
             print(f"Could not read session: {path}")
             return 1
@@ -1572,7 +1574,14 @@ def cmd_peek(args) -> int:
         return 0
 
     # List mode
+    # Determine limit: --limit takes precedence, then --last, then default 10
     limit = getattr(args, "limit", None)
+    if limit is None and args.last is not None:
+        # --last N in list mode acts as --limit N
+        limit = args.last
+    if limit is None:
+        # Default to 10 sessions (like siftd query -n 10)
+        limit = 10
     sessions = list_active_sessions(
         workspace=args.workspace,
         include_inactive=args.all,
@@ -1994,11 +2003,12 @@ exit codes:
         help="Inspect live sessions from disk (bypasses SQLite)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  siftd peek                    # list active sessions (last 2 hours)
-  siftd peek --all              # list all sessions
+  siftd peek                    # list latest 10 sessions
+  siftd peek --last 5           # list latest 5 sessions
+  siftd peek --all              # list all sessions (no time limit)
   siftd peek --all --limit 50   # list all, but only first 50
   siftd peek -w myproject       # filter by workspace name
-  siftd peek c520f862           # detail view for session
+  siftd peek c520f862           # detail view for session (last 5 exchanges)
   siftd peek c520 --last 10     # show last 10 exchanges
   siftd peek c520 --full        # show full text (no truncation)
   siftd peek c520 --tail        # raw JSONL tail
@@ -2009,8 +2019,8 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_peek.add_argument("session_id", nargs="?", help="Session ID prefix for detail view")
     p_peek.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace name substring")
     p_peek.add_argument("--all", action="store_true", help="Include inactive sessions (not just last 2 hours)")
-    p_peek.add_argument("--limit", type=int, metavar="N", help="Maximum number of sessions to list")
-    p_peek.add_argument("--last", type=int, default=5, metavar="N", help="Number of exchanges to show (default: 5, minimum: 1)")
+    p_peek.add_argument("--limit", type=int, metavar="N", help="Maximum number of sessions to list (default: 10)")
+    p_peek.add_argument("-n", "--last", type=int, metavar="N", help="List mode: number of sessions (default: 10). Detail mode: number of exchanges (default: 5)")
     p_peek.add_argument("--full", action="store_true", help="Show full text (no truncation)")
     p_peek.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: 200)")
     p_peek.add_argument("--tail", action="store_true", help="Raw JSONL tail (last 20 records)")
@@ -2051,7 +2061,11 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_export.set_defaults(func=cmd_export)
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        # Exit cleanly on Ctrl+C (130 = 128 + SIGINT)
+        return 130
 
 
 if __name__ == "__main__":
