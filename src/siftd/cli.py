@@ -30,6 +30,7 @@ from siftd.cli_ask import build_ask_parser
 from siftd.cli_install import build_install_parser
 from siftd.ingestion import IngestStats, ingest_all
 from siftd.paths import data_dir, db_path, ensure_dirs, queries_dir, session_id_file
+from siftd.storage.fts import rebuild_fts_index
 
 
 def parse_date(value: str | None) -> str | None:
@@ -83,6 +84,14 @@ def cmd_ingest(args) -> int:
         print(f"Using database: {db}")
 
     conn = create_database(db)
+
+    # Handle --rebuild-fts flag
+    if args.rebuild_fts:
+        print("Rebuilding FTS index...")
+        rebuild_fts_index(conn)
+        print("FTS index rebuilt.")
+        conn.close()
+        return 0
 
     def on_file(source, status):
         if args.verbose or status not in ("skipped", "skipped (older)"):
@@ -1762,11 +1771,13 @@ def main(argv=None) -> int:
   siftd ingest                      # ingest from all adapters
   siftd ingest -v                   # show all files including skipped
   siftd ingest -a claude_code       # only run claude_code adapter
-  siftd ingest -p ~/logs -p /tmp    # scan additional directories""",
+  siftd ingest -p ~/logs -p /tmp    # scan additional directories
+  siftd ingest --rebuild-fts        # rebuild FTS index from scratch""",
     )
     p_ingest.add_argument("-v", "--verbose", action="store_true", help="Show all files including skipped")
     p_ingest.add_argument("-p", "--path", action="append", metavar="DIR", help="Additional directories to scan (can be repeated)")
     p_ingest.add_argument("-a", "--adapter", action="append", metavar="NAME", help="Only run specific adapter(s) (can be repeated)")
+    p_ingest.add_argument("--rebuild-fts", action="store_true", help="Rebuild FTS index from existing data (skips ingestion)")
     p_ingest.set_defaults(func=cmd_ingest)
 
     # status
