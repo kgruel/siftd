@@ -439,7 +439,7 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
 ## siftd export
 
 ```
-usage: siftd export [-h] [-n [N]] [-w SUBSTR] [-l NAME] [--exclude-tag NAME]
+usage: siftd export [-h] [-n [N]] [-w SUBSTR] [-l NAME] [--no-tag NAME]
                     [--since DATE] [--before DATE] [-s QUERY]
                     [-f {prompts,exchanges,json}] [--prompts-only]
                     [--no-header] [-o FILE]
@@ -455,7 +455,7 @@ options:
   -w, --workspace SUBSTR
                         Filter by workspace path substring
   -l, --tag NAME        Filter by tag (repeatable, OR logic)
-  --exclude-tag NAME    Exclude sessions with this tag (repeatable)
+  --no-tag NAME         Exclude sessions with this tag (repeatable)
   --since DATE          Sessions after this date (ISO format: YYYY-MM-DD)
   --before DATE         Sessions before this date (ISO format: YYYY-MM-DD)
   -s, --search QUERY    Full-text search filter
@@ -474,6 +474,6 @@ examples:
   siftd export --last --format json     # structured JSON output
   siftd export --last --format exchanges  # include response summaries
   siftd export --last --prompts-only    # omit tool call details
-  siftd export --last --exclude-tag private  # exclude private sessions
+  siftd export --last --no-tag private  # exclude private sessions
   siftd export --last -o context.md     # write to file
 ```

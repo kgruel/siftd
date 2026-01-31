@@ -1650,7 +1650,7 @@ def cmd_export(args) -> int:
             last=last,
             workspace=args.workspace,
             tags=args.tag,
-            exclude_tags=getattr(args, "exclude_tag", None),
+            exclude_tags=getattr(args, "no_tag", None),
             since=parse_date(args.since),
             before=parse_date(args.before),
             search=args.search,
@@ -2032,14 +2032,14 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
   siftd export --last --format json     # structured JSON output
   siftd export --last --format exchanges  # include response summaries
   siftd export --last --prompts-only    # omit tool call details
-  siftd export --last --exclude-tag private  # exclude private sessions
+  siftd export --last --no-tag private  # exclude private sessions
   siftd export --last -o context.md     # write to file""",
     )
     p_export.add_argument("conversation_id", nargs="?", help="Conversation ID to export (prefix match)")
     p_export.add_argument("-n", "--last", type=int, nargs="?", const=1, metavar="N", help="Export N most recent sessions (default: 1 if no ID given)")
     p_export.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
     p_export.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by tag (repeatable, OR logic)")
-    p_export.add_argument("--exclude-tag", action="append", metavar="NAME", help="Exclude sessions with this tag (repeatable)")
+    p_export.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude sessions with this tag (repeatable)")
     p_export.add_argument("--since", metavar="DATE", help="Sessions after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
     p_export.add_argument("--before", metavar="DATE", help="Sessions before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
     p_export.add_argument("-s", "--search", metavar="QUERY", help="Full-text search filter")
