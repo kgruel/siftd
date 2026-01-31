@@ -654,12 +654,16 @@ def select_formatter(args: argparse.Namespace) -> OutputFormatter:
     # Check for explicit formatter name (supports plugins)
     format_name = getattr(args, "format", None)
     if format_name:
-        from siftd.output.registry import get_formatter
+        from siftd.output.registry import get_formatter, get_registry
 
         formatter = get_formatter(format_name)
         if formatter:
             return formatter
-        # Fall through to built-in selection if not found
+        # Unknown format name: error with available options
+        available = get_registry().list_names()
+        raise ValueError(
+            f"Unknown format '{format_name}'. Available: {', '.join(available)}"
+        )
 
     # --json is shorthand for --format json
     if getattr(args, "json", False):

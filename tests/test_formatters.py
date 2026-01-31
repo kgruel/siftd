@@ -200,6 +200,14 @@ class TestSelectFormatter:
         formatter = select_formatter(args)
         assert isinstance(formatter, JsonFormatter)
 
+    def test_unknown_format_raises_error(self):
+        args = argparse.Namespace(format="nonexistent")
+        with pytest.raises(ValueError) as exc_info:
+            select_formatter(args)
+        assert "Unknown format 'nonexistent'" in str(exc_info.value)
+        assert "Available:" in str(exc_info.value)
+        assert "json" in str(exc_info.value)
+
 
 class TestFormatterRegistry:
     def test_builtin_formatters_available(self):
