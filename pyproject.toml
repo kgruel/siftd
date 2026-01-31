@@ -40,6 +40,7 @@ embed = [
 ]
 dev = [
     "pytest>=8.0",
+    "pytest-xdist",
     "ruff>=0.4",
     "ty",
 ]
