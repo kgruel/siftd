@@ -98,6 +98,7 @@ def cmd_ask(args) -> int:
 
     # Compose filters: get candidate conversation IDs from main DB
     from siftd.api import DERIVATIVE_TAG
+    from siftd.cli import parse_date
     from siftd.search import filter_conversations, get_active_conversation_ids
 
     exclude_tags = list(getattr(args, "no_tag", None) or [])
@@ -108,8 +109,8 @@ def cmd_ask(args) -> int:
         db,
         workspace=args.workspace,
         model=args.model,
-        since=args.since,
-        before=args.before,
+        since=parse_date(args.since),
+        before=parse_date(args.before),
         tags=getattr(args, "tag", None),
         all_tags=getattr(args, "all_tags", None),
         exclude_tags=exclude_tags or None,
@@ -165,13 +166,18 @@ def cmd_ask(args) -> int:
     # Widen further for MMR to have candidates to diversify from
     if use_mmr:
         search_limit = max(search_limit * 3, search_limit)
-    results: list[dict] = search_similar(
-        embed_conn,
-        query_embedding,
-        limit=search_limit,
-        conversation_ids=candidate_ids,
-        include_embeddings=use_mmr,
-    )
+    try:
+        results: list[dict] = search_similar(
+            embed_conn,
+            query_embedding,
+            limit=search_limit,
+            conversation_ids=candidate_ids,
+            include_embeddings=use_mmr,
+        )
+    except ValueError as e:
+        embed_conn.close()
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
     embed_conn.close()
 
     if not results:

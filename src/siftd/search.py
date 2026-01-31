@@ -315,6 +315,9 @@ def hybrid_search(
             half_life_days=recency_half_life,
             max_boost=recency_max_boost,
         )
+        # Re-sort by weighted score (MMR does its own reranking)
+        if not use_mmr:
+            raw_results = sorted(raw_results, key=lambda r: r["score"], reverse=True)
 
     # Apply MMR reranking if requested
     if use_mmr:

@@ -178,6 +178,13 @@ def search_similar(
     for i, row in enumerate(rows):
         embeddings_array[i] = _decode_embedding_numpy(row["embedding"])
 
+    # Validate query embedding dimension matches index
+    if len(query_embedding) != embedding_dim:
+        raise ValueError(
+            f"Query embedding dimension ({len(query_embedding)}) does not match index dimension ({embedding_dim}). "
+            f"Rebuild the index with 'siftd ask --rebuild' using the same embedding backend."
+        )
+
     # Compute all similarities at once
     query_array = np.asarray(query_embedding, dtype=np.float32)
     scores = cosine_similarity_batch(query_array, embeddings_array)

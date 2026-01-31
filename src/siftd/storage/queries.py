@@ -77,6 +77,7 @@ def fetch_exchanges(
     # Get prompts (with optional prompt_ids batching)
     if prompt_ids is not None:
         # Use batched_in_query for prompt_ids, with other conditions as prefix
+        # Note: ORDER BY in query is per-batch; we sort globally after
         where_prefix = " AND ".join(conditions) + " AND " if conditions else ""
         prompt_rows = batched_in_query(
             conn,
@@ -85,6 +86,8 @@ def fetch_exchanges(
             prompt_ids,
             prefix_params=tuple(params),
         )
+        # Restore global timestamp ordering across batches
+        prompt_rows = sorted(prompt_rows, key=lambda r: r["timestamp"])
     elif conditions:
         # Only non-batched filters
         where_clause = "WHERE " + " AND ".join(conditions)
