@@ -737,6 +737,7 @@ source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "loguru" },
+    { name = "numpy" },
     { name = "pyyaml" },
     { name = "tomlkit" },
     { name = "tqdm" },
@@ -762,6 +763,7 @@ requires-dist = [
     { name = "httpx" },
     { name = "huggingface-hub", marker = "extra == 'embed'" },
     { name = "loguru" },
+    { name = "numpy" },
     { name = "numpy", marker = "extra == 'embed'" },
     { name = "onnxruntime", marker = "extra == 'embed'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },

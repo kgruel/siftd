@@ -3,7 +3,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from siftd.math import cosine_similarity as _cosine_sim
+import numpy as np
+
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.sql_helpers import batched_in_query
 from siftd.storage.sqlite import open_database
@@ -52,37 +53,60 @@ def mmr_rerank(
     if not results:
         return []
 
-    remaining = list(range(len(results)))
+    n = len(results)
+
+    # Pre-compute embeddings matrix for vectorized similarity
+    # Embeddings may be numpy arrays or lists; stack them
+    embeddings = np.vstack([
+        r["embedding"] if isinstance(r["embedding"], np.ndarray) else np.asarray(r["embedding"], dtype=np.float32)
+        for r in results
+    ])
+
+    # Normalize all embeddings once for faster dot products
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms = np.where(norms == 0, 1, norms)
+    embeddings_normalized = embeddings / norms
+
+    # Pre-compute relevance scores
+    relevances = np.array([r["score"] for r in results], dtype=np.float32)
+    conv_ids = [r["conversation_id"] for r in results]
+
+    remaining = set(range(n))
     selected: list[int] = []
     selected_convs: set[str] = set()
+
+    # Track max similarity to selected set for each candidate
+    max_sim_to_selected = np.zeros(n, dtype=np.float32)
 
     while remaining and len(selected) < limit:
         best_idx = -1
         best_score = float("-inf")
 
         for idx in remaining:
-            r = results[idx]
-            relevance = r["score"]
-
-            conv_id = r["conversation_id"]
+            conv_id = conv_ids[idx]
             if conv_id in selected_convs:
                 penalty = 1.0
             elif selected:
-                penalty = max(
-                    _cosine_sim(r["embedding"], results[s]["embedding"])
-                    for s in selected
-                )
+                penalty = float(max_sim_to_selected[idx])
             else:
                 penalty = 0.0
 
-            mmr_score = lambda_ * relevance - (1 - lambda_) * penalty
+            mmr_score = lambda_ * relevances[idx] - (1 - lambda_) * penalty
             if mmr_score > best_score:
                 best_score = mmr_score
                 best_idx = idx
 
         remaining.remove(best_idx)
         selected.append(best_idx)
-        selected_convs.add(results[best_idx]["conversation_id"])
+        selected_convs.add(conv_ids[best_idx])
+
+        # Update max similarities: compute similarity of all remaining to newly selected
+        if remaining:
+            new_vec = embeddings_normalized[best_idx]
+            for idx in remaining:
+                sim = float(np.dot(embeddings_normalized[idx], new_vec))
+                if sim > max_sim_to_selected[idx]:
+                    max_sim_to_selected[idx] = sim
 
     # Return selected results without embedding key
     reranked = []

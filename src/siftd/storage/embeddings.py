@@ -10,8 +10,10 @@ import struct
 import time
 from pathlib import Path
 
+import numpy as np
+
 from siftd.ids import ulid as _ulid
-from siftd.math import cosine_similarity as _cosine_similarity
+from siftd.math import cosine_similarity_batch
 from siftd.storage.sql_helpers import batched_execute, batched_in_query
 
 
@@ -169,31 +171,52 @@ def search_similar(
     else:
         rows = conn.execute("SELECT id, conversation_id, chunk_type, text, embedding, source_ids FROM chunks").fetchall()
 
-    results = []
+    if not rows:
+        return []
+
+    # Apply role filter and collect valid rows
+    valid_rows = []
     for row in rows:
         source_ids_val = json.loads(row["source_ids"]) if row["source_ids"] else []
 
-        # Role filter: skip chunks that don't overlap with allowed source IDs
         if role_source_ids is not None:
             if not source_ids_val or not set(source_ids_val) & role_source_ids:
                 continue
 
-        stored_embedding = _decode_embedding(row["embedding"])
-        score = _cosine_similarity(query_embedding, stored_embedding)
+        valid_rows.append((row, source_ids_val))
+
+    if not valid_rows:
+        return []
+
+    # Batch decode embeddings into numpy array
+    embedding_dim = len(rows[0]["embedding"]) // 4  # float32 = 4 bytes
+    embeddings_array = np.empty((len(valid_rows), embedding_dim), dtype=np.float32)
+
+    for i, (row, _) in enumerate(valid_rows):
+        embeddings_array[i] = _decode_embedding_numpy(row["embedding"])
+
+    # Compute all similarities at once
+    query_array = np.asarray(query_embedding, dtype=np.float32)
+    scores = cosine_similarity_batch(query_array, embeddings_array)
+
+    # Build results with scores
+    results = []
+    for i, (row, source_ids_val) in enumerate(valid_rows):
         result = {
             "chunk_id": row["id"],
             "conversation_id": row["conversation_id"],
             "chunk_type": row["chunk_type"],
             "text": row["text"],
-            "score": score,
+            "score": float(scores[i]),
             "source_ids": source_ids_val,
         }
         if include_embeddings:
-            result["embedding"] = stored_embedding
+            result["embedding"] = embeddings_array[i]
         results.append(result)
 
-    results.sort(key=lambda x: x["score"], reverse=True)
-    return results[:limit]
+    # Use numpy argsort for faster sorting
+    score_indices = np.argsort(scores)[::-1][:limit]
+    return [results[i] for i in score_indices]
 
 
 def chunk_count(conn: sqlite3.Connection) -> int:
@@ -211,6 +234,11 @@ def _decode_embedding(blob: bytes) -> list[float]:
     """Decode packed float32 blob to list of floats."""
     n = len(blob) // 4
     return list(struct.unpack(f"{n}f", blob))
+
+
+def _decode_embedding_numpy(blob: bytes) -> np.ndarray:
+    """Decode packed float32 blob to numpy array (zero-copy)."""
+    return np.frombuffer(blob, dtype=np.float32)
 
 
 def prune_orphaned_chunks(
