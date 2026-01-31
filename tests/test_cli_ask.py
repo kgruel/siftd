@@ -339,6 +339,58 @@ class TestAskOutputFormats:
         assert len(out2) >= len(out1)
 
 
+class TestAskFlagValidation:
+    """Tests for flag combination validation."""
+
+    def test_json_with_refs_errors(self, indexed_db, capsys):
+        """--json with --refs returns error (refs would break JSON validity)."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            json=True,
+            refs=True,
+        )
+
+        result = cmd_ask(args)
+        captured = capsys.readouterr()
+
+        assert result == 1
+        assert "--refs is not supported with --json" in captured.err
+
+    def test_json_without_refs_works(self, indexed_db, capsys):
+        """--json without --refs outputs valid JSON."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            json=True,
+            refs=None,
+        )
+
+        result = cmd_ask(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+        import json
+        data = json.loads(captured.out)
+        assert isinstance(data, (list, dict))
+
+    def test_refs_without_json_works(self, indexed_db, capsys):
+        """--refs without --json outputs refs as before."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            json=False,
+            refs=True,
+        )
+
+        result = cmd_ask(args)
+        # Should succeed (refs content may or may not be present depending on data)
+        assert result == 0
+
+
 class TestAskEdgeCases:
     """Edge case tests."""
 

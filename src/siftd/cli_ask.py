@@ -65,6 +65,11 @@ def cmd_ask(args) -> int:
         print("       siftd ask --rebuild   (rebuild index from scratch)")
         return 1
 
+    # --refs with --json is not supported (refs dump would break JSON validity)
+    if args.json and args.refs:
+        print("Error: --refs is not supported with --json", file=sys.stderr)
+        return 1
+
     if not embed_db.exists():
         print("No embeddings index found.")
         print("Run 'siftd ask --index' to build it.")
