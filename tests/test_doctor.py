@@ -11,9 +11,12 @@ from siftd.api import (
 )
 from siftd.doctor.checks import (
     CheckContext,
+    ConfigValidCheck,
     DropInsValidCheck,
     EmbeddingsStaleCheck,
     FreelistCheck,
+    FtsIntegrityCheck,
+    FtsStaleCheck,
     IngestPendingCheck,
     OrphanedChunksCheck,
     PricingGapsCheck,
@@ -64,6 +67,12 @@ class TestListChecks:
         assert "drop-ins-valid" in names
         assert "freelist" in names
         assert "schema-current" in names
+        # New P1 checks
+        assert "fts-stale" in names
+        assert "fts-integrity" in names
+        assert "config-valid" in names
+        # embeddings-compat is from main (replaces embeddings-dimension-mismatch)
+        assert "embeddings-compat" in names
 
     def test_has_fix_matches_class_attribute(self):
         """has_fix in CheckInfo matches the class attribute on each check."""
@@ -685,3 +694,238 @@ class TestSchemaCurrentCheck:
             assert isinstance(f.context["pending"], list)
         finally:
             ctx.close()
+
+
+class TestFtsStaleCheck:
+    """Tests for the fts-stale check."""
+
+    def test_no_fts_table(self, tmp_path):
+        """Returns no findings when FTS table doesn't exist yet."""
+        import sqlite3
+
+        # Create a minimal DB without FTS table
+        db_path = tmp_path / "no_fts.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+        conn.execute("CREATE TABLE prompt_content (id TEXT PRIMARY KEY, block_type TEXT)")
+        conn.execute("CREATE TABLE response_content (id TEXT PRIMARY KEY, block_type TEXT)")
+        conn.commit()
+        conn.close()
+
+        ctx = CheckContext(
+            db_path=db_path,
+            embed_db_path=tmp_path / "embed.db",
+            adapters_dir=tmp_path / "adapters",
+            formatters_dir=tmp_path / "formatters",
+            queries_dir=tmp_path / "queries",
+        )
+        try:
+            check = FtsStaleCheck()
+            findings = check.run(ctx)
+            # schema-current check will catch missing FTS, so this returns empty
+            assert findings == []
+        finally:
+            ctx.close()
+
+    def test_fts_in_sync(self, check_context):
+        """Returns no findings when FTS is in sync with content."""
+        from siftd.storage.fts import ensure_fts_table, rebuild_fts_index
+
+        conn = check_context.get_db_conn()
+
+        # Need a writable connection
+        import sqlite3
+        write_conn = sqlite3.connect(check_context.db_path)
+        write_conn.row_factory = sqlite3.Row
+        ensure_fts_table(write_conn)
+        rebuild_fts_index(write_conn)
+        write_conn.close()
+
+        # Close and reopen to see changes
+        check_context.close()
+
+        check = FtsStaleCheck()
+        findings = check.run(check_context)
+        assert findings == []
+
+    def test_detects_orphaned_fts_entries(self, check_context):
+        """Reports findings when FTS has entries not in content tables."""
+        from siftd.storage.fts import ensure_fts_table
+
+        import sqlite3
+        write_conn = sqlite3.connect(check_context.db_path)
+        write_conn.row_factory = sqlite3.Row
+        ensure_fts_table(write_conn)
+
+        # Insert orphaned FTS entry (content_id doesn't exist)
+        write_conn.execute("""
+            INSERT INTO content_fts (text_content, content_id, side, conversation_id)
+            VALUES ('orphan text', 'nonexistent-id', 'prompt', 'some-conv')
+        """)
+        write_conn.commit()
+        write_conn.close()
+
+        check_context.close()
+
+        check = FtsStaleCheck()
+        findings = check.run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].check == "fts-stale"
+        assert findings[0].severity == "warning"
+        assert findings[0].fix_available is True
+        assert findings[0].fix_command == "siftd ingest --rebuild-fts"
+        assert findings[0].context["orphaned_count"] == 1
+
+    def test_detects_missing_fts_entries(self, check_context):
+        """Reports findings when content exists but not in FTS."""
+        from siftd.storage.fts import ensure_fts_table
+
+        import sqlite3
+        write_conn = sqlite3.connect(check_context.db_path)
+        write_conn.row_factory = sqlite3.Row
+        ensure_fts_table(write_conn)
+        # Don't call rebuild_fts_index, so content exists but FTS is empty
+        write_conn.commit()
+        write_conn.close()
+
+        check_context.close()
+
+        check = FtsStaleCheck()
+        findings = check.run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].check == "fts-stale"
+        assert "missing" in findings[0].message
+        assert findings[0].context["missing_prompt_count"] > 0 or \
+               findings[0].context["missing_response_count"] > 0
+
+
+class TestFtsIntegrityCheck:
+    """Tests for the fts-integrity check."""
+
+    def test_no_fts_table(self, tmp_path):
+        """Returns no findings when FTS table doesn't exist."""
+        import sqlite3
+
+        # Create a minimal DB without FTS table
+        db_path = tmp_path / "no_fts.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+
+        ctx = CheckContext(
+            db_path=db_path,
+            embed_db_path=tmp_path / "embed.db",
+            adapters_dir=tmp_path / "adapters",
+            formatters_dir=tmp_path / "formatters",
+            queries_dir=tmp_path / "queries",
+        )
+        try:
+            check = FtsIntegrityCheck()
+            findings = check.run(ctx)
+            assert findings == []
+        finally:
+            ctx.close()
+
+    def test_healthy_fts(self, check_context):
+        """Returns no findings when FTS integrity is OK."""
+        from siftd.storage.fts import ensure_fts_table, rebuild_fts_index
+
+        import sqlite3
+        write_conn = sqlite3.connect(check_context.db_path)
+        write_conn.row_factory = sqlite3.Row
+        ensure_fts_table(write_conn)
+        rebuild_fts_index(write_conn)
+        write_conn.close()
+
+        check_context.close()
+
+        check = FtsIntegrityCheck()
+        findings = check.run(check_context)
+        assert findings == []
+
+    def test_finding_structure(self, check_context):
+        """Check has correct attributes."""
+        check = FtsIntegrityCheck()
+        assert check.name == "fts-integrity"
+        assert check.has_fix is True
+        assert check.requires_db is True
+        assert check.cost == "fast"
+
+
+class TestConfigValidCheck:
+    """Tests for the config-valid check."""
+
+    def test_no_config_file(self, check_context, monkeypatch, tmp_path):
+        """Returns no findings when config file doesn't exist."""
+        # Point to non-existent config
+        monkeypatch.setattr(
+            "siftd.paths.config_file",
+            lambda: tmp_path / "nonexistent" / "config.toml"
+        )
+
+        check = ConfigValidCheck()
+        findings = check.run(check_context)
+        assert findings == []
+
+    def test_valid_config(self, check_context, monkeypatch, tmp_path):
+        """Returns no findings for valid config file."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[ask]\nformatter = "default"\n')
+
+        monkeypatch.setattr(
+            "siftd.paths.config_file",
+            lambda: config_path
+        )
+
+        check = ConfigValidCheck()
+        findings = check.run(check_context)
+        assert findings == []
+
+    def test_invalid_toml_syntax(self, check_context, monkeypatch, tmp_path):
+        """Reports error for invalid TOML syntax."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[ask\nformatter = "broken')
+
+        monkeypatch.setattr(
+            "siftd.paths.config_file",
+            lambda: config_path
+        )
+
+        check = ConfigValidCheck()
+        findings = check.run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].check == "config-valid"
+        assert findings[0].severity == "error"
+        assert "syntax" in findings[0].message.lower() or "TOML" in findings[0].message
+
+    def test_unknown_formatter(self, check_context, monkeypatch, tmp_path):
+        """Reports warning for unknown formatter name."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[ask]\nformatter = "nonexistent_formatter"\n')
+
+        monkeypatch.setattr(
+            "siftd.paths.config_file",
+            lambda: config_path
+        )
+
+        check = ConfigValidCheck()
+        findings = check.run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].check == "config-valid"
+        assert findings[0].severity == "warning"
+        assert "nonexistent_formatter" in findings[0].message
+        assert "valid" in findings[0].message.lower()
+
+    def test_finding_structure(self, check_context):
+        """Check has correct attributes."""
+        check = ConfigValidCheck()
+        assert check.name == "config-valid"
+        assert check.has_fix is False
+        assert check.requires_db is False
+        assert check.requires_embed_db is False
+        assert check.cost == "fast"

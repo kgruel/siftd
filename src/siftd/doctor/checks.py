@@ -777,6 +777,129 @@ class PendingTagsCheck:
         return findings
 
 
+class FtsStaleCheck:
+    """Detects FTS5 index out of sync with main content tables."""
+
+    name = "fts-stale"
+    description = "FTS5 search index out of sync with content tables"
+    has_fix = True
+    requires_db = True
+    requires_embed_db = False
+    cost: CheckCost = "fast"
+
+    def run(self, ctx: CheckContext) -> list[Finding]:
+        conn = ctx.get_db_conn()
+
+        # Check if FTS table exists
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts'"
+        )
+        if not cur.fetchone():
+            return []  # FTS not created yet, schema-current will catch this
+
+        # Check for orphaned FTS entries (in FTS but not in content tables)
+        orphaned_count = conn.execute("""
+            SELECT COUNT(*) FROM content_fts
+            WHERE content_id NOT IN (SELECT id FROM prompt_content)
+              AND content_id NOT IN (SELECT id FROM response_content)
+        """).fetchone()[0]
+
+        # Check for missing FTS entries (in content tables but not in FTS)
+        missing_prompt_count = conn.execute("""
+            SELECT COUNT(*) FROM prompt_content pc
+            WHERE pc.block_type = 'text'
+              AND pc.id NOT IN (SELECT content_id FROM content_fts WHERE side = 'prompt')
+        """).fetchone()[0]
+
+        missing_response_count = conn.execute("""
+            SELECT COUNT(*) FROM response_content rc
+            WHERE rc.block_type = 'text'
+              AND rc.id NOT IN (SELECT content_id FROM content_fts WHERE side = 'response')
+        """).fetchone()[0]
+
+        total_issues = orphaned_count + missing_prompt_count + missing_response_count
+
+        if total_issues == 0:
+            return []
+
+        parts = []
+        if orphaned_count > 0:
+            parts.append(f"{orphaned_count} orphaned")
+        if missing_prompt_count + missing_response_count > 0:
+            parts.append(f"{missing_prompt_count + missing_response_count} missing")
+
+        return [
+            Finding(
+                check=self.name,
+                severity="warning",
+                message=f"FTS index out of sync: {', '.join(parts)} entries",
+                fix_available=True,
+                fix_command="siftd ingest --rebuild-fts",
+                context={
+                    "orphaned_count": orphaned_count,
+                    "missing_prompt_count": missing_prompt_count,
+                    "missing_response_count": missing_response_count,
+                },
+            )
+        ]
+
+
+class FtsIntegrityCheck:
+    """Checks FTS5 table integrity for corruption."""
+
+    name = "fts-integrity"
+    description = "FTS5 search index integrity"
+    has_fix = True
+    requires_db = True
+    requires_embed_db = False
+    cost: CheckCost = "fast"
+
+    def run(self, ctx: CheckContext) -> list[Finding]:
+        # FTS5 integrity-check requires write access (special command syntax),
+        # so we need to open a separate writable connection for this check.
+        from siftd.storage.sqlite import open_database
+
+        # Check if FTS table exists using read-only connection first
+        conn = ctx.get_db_conn()
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts'"
+        )
+        if not cur.fetchone():
+            return []  # FTS not created yet
+
+        # Now open a writable connection for the integrity check
+        try:
+            write_conn = open_database(ctx.db_path, read_only=False)
+        except Exception as e:
+            return [
+                Finding(
+                    check=self.name,
+                    severity="warning",
+                    message=f"Cannot check FTS integrity (read-only): {e}",
+                    fix_available=False,
+                    context={"error": str(e)},
+                )
+            ]
+
+        try:
+            # FTS5 integrity-check returns 'ok' or error rows
+            write_conn.execute("INSERT INTO content_fts(content_fts) VALUES('integrity-check')")
+            return []  # No error means integrity is OK
+        except sqlite3.IntegrityError as e:
+            return [
+                Finding(
+                    check=self.name,
+                    severity="error",
+                    message=f"FTS5 index corruption detected: {e}",
+                    fix_available=True,
+                    fix_command="siftd ingest --rebuild-fts",
+                    context={"error": str(e)},
+                )
+            ]
+        finally:
+            write_conn.close()
+
+
 class EmbeddingsCompatCheck:
     """Validates embedding index compatibility with current backend configuration."""
 
@@ -905,6 +1028,82 @@ class EmbeddingsCompatCheck:
         return findings
 
 
+class ConfigValidCheck:
+    """Validates configuration file syntax and known keys."""
+
+    name = "config-valid"
+    description = "Configuration file syntax and values"
+    has_fix = False  # Manual fix required
+    requires_db = False
+    requires_embed_db = False
+    cost: CheckCost = "fast"
+
+    def run(self, ctx: CheckContext) -> list[Finding]:
+        from siftd.paths import config_file
+
+        path = config_file()
+
+        if not path.exists():
+            return []  # No config file is valid (uses defaults)
+
+        findings = []
+
+        # Check TOML syntax
+        try:
+            import tomlkit
+            import tomlkit.exceptions
+
+            content = path.read_text()
+            doc = tomlkit.parse(content)
+        except tomlkit.exceptions.TOMLKitError as e:
+            return [
+                Finding(
+                    check=self.name,
+                    severity="error",
+                    message=f"Invalid TOML syntax in config file: {e}",
+                    fix_available=False,
+                    context={"path": str(path), "error": str(e)},
+                )
+            ]
+        except OSError as e:
+            return [
+                Finding(
+                    check=self.name,
+                    severity="error",
+                    message=f"Cannot read config file: {e}",
+                    fix_available=False,
+                    context={"path": str(path), "error": str(e)},
+                )
+            ]
+
+        # Validate known keys
+        ask_config = doc.get("ask", {})
+        if isinstance(ask_config, dict):
+            formatter = ask_config.get("formatter")
+            if formatter is not None:
+                # Check if formatter is valid
+                findings.extend(self._validate_formatter(str(formatter)))
+
+        return findings
+
+    def _validate_formatter(self, formatter_name: str) -> list[Finding]:
+        """Validate that the formatter name is registered."""
+        from siftd.output.registry import get_registry
+
+        valid_names = get_registry().list_names()
+        if formatter_name not in valid_names:
+            return [
+                Finding(
+                    check=self.name,
+                    severity="warning",
+                    message=f"Unknown formatter '{formatter_name}' in config (valid: {', '.join(sorted(valid_names))})",
+                    fix_available=False,
+                    context={"formatter": formatter_name, "valid_formatters": valid_names},
+                )
+            ]
+        return []
+
+
 # Registry of built-in checks
 BUILTIN_CHECKS: list[Check] = [
     IngestPendingCheck(),
@@ -918,4 +1117,7 @@ BUILTIN_CHECKS: list[Check] = [
     FreelistCheck(),
     SchemaCurrentCheck(),
     PendingTagsCheck(),
+    FtsStaleCheck(),
+    FtsIntegrityCheck(),
+    ConfigValidCheck(),
 ]
