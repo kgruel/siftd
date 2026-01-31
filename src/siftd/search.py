@@ -5,6 +5,7 @@ from pathlib import Path
 
 from siftd.math import cosine_similarity as _cosine_sim
 from siftd.storage.filters import WhereBuilder
+from siftd.storage.sql_helpers import batched_in_query
 from siftd.storage.sqlite import open_database
 
 
@@ -218,13 +219,13 @@ def hybrid_search(
     # Enrich with metadata from main DB
     main_conn = open_database(db, read_only=True)
     conv_ids = list({r["conversation_id"] for r in raw_results})
-    placeholders = ",".join("?" * len(conv_ids))
-    meta_rows = main_conn.execute(
-        f"SELECT c.id, c.started_at, w.path AS workspace FROM conversations c "
-        f"LEFT JOIN workspaces w ON w.id = c.workspace_id "
-        f"WHERE c.id IN ({placeholders})",
+    meta_rows = batched_in_query(
+        main_conn,
+        "SELECT c.id, c.started_at, w.path AS workspace FROM conversations c "
+        "LEFT JOIN workspaces w ON w.id = c.workspace_id "
+        "WHERE c.id IN ({placeholders})",
         conv_ids,
-    ).fetchall()
+    )
     main_conn.close()
     meta = {row["id"]: dict(row) for row in meta_rows}
 
@@ -327,27 +328,28 @@ def resolve_role_ids(
     conn = open_database(db, read_only=True)
 
     if candidate_ids is not None:
-        placeholders = ",".join("?" * len(candidate_ids))
-        conv_filter = f"AND p.conversation_id IN ({placeholders})"
-        params: list = list(candidate_ids)
+        # Use batched query for large candidate sets
+        if role == "user":
+            rows = batched_in_query(
+                conn,
+                "SELECT p.id FROM prompts p WHERE p.conversation_id IN ({placeholders})",
+                candidate_ids,
+            )
+        else:
+            rows = batched_in_query(
+                conn,
+                "SELECT DISTINCT r.prompt_id AS id FROM responses r "
+                "JOIN prompts p ON p.id = r.prompt_id "
+                "WHERE p.conversation_id IN ({placeholders})",
+                candidate_ids,
+            )
     else:
-        conv_filter = ""
-        params = []
-
-    if role == "user":
-        # Prompts are user messages — return their IDs directly
-        rows = conn.execute(
-            f"SELECT p.id FROM prompts p WHERE 1=1 {conv_filter}", params
-        ).fetchall()
-    else:
-        # 'assistant': return prompt IDs that have responses (assistant replied)
-        rows = conn.execute(
-            f"""SELECT DISTINCT r.prompt_id AS id
-                FROM responses r
-                JOIN prompts p ON p.id = r.prompt_id
-                WHERE 1=1 {conv_filter}""",
-            params,
-        ).fetchall()
+        if role == "user":
+            rows = conn.execute("SELECT p.id FROM prompts p").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT DISTINCT r.prompt_id AS id FROM responses r"
+            ).fetchall()
 
     conn.close()
     return {row["id"] for row in rows} if rows else None
@@ -382,11 +384,11 @@ def get_active_conversation_ids(db: Path) -> set[str]:
     file_paths = [str(s.file_path) for s in sessions]
 
     conn = open_database(db, read_only=True)
-    placeholders = ",".join("?" * len(file_paths))
-    rows = conn.execute(
-        f"SELECT conversation_id FROM ingested_files WHERE path IN ({placeholders}) AND conversation_id IS NOT NULL",
+    rows = batched_in_query(
+        conn,
+        "SELECT conversation_id FROM ingested_files WHERE path IN ({placeholders}) AND conversation_id IS NOT NULL",
         file_paths,
-    ).fetchall()
+    )
     conn.close()
 
     return {row["conversation_id"] for row in rows}

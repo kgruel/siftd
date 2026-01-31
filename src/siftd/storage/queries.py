@@ -12,7 +12,7 @@ The API layer handles parameter validation and dataclass mapping.
 import sqlite3
 from dataclasses import dataclass
 
-from siftd.storage.sql_helpers import placeholders
+from siftd.storage.sql_helpers import batched_in_query
 
 
 @dataclass
@@ -50,31 +50,37 @@ def fetch_exchanges(
     if prompt_ids is not None and len(prompt_ids) == 0:
         return []
 
-    # Build filter conditions
-    conditions = []
-    params: list[str] = []
-
-    if conversation_id is not None:
-        conditions.append("p.conversation_id = ?")
-        params.append(conversation_id)
-
-    if prompt_ids is not None:
-        placeholders = ",".join("?" * len(prompt_ids))
-        conditions.append(f"p.id IN ({placeholders})")
-        params.extend(prompt_ids)
-
-    where_clause = ""
-    if conditions:
-        where_clause = "WHERE " + " AND ".join(conditions)
-
-    # Get prompts first (filtered)
-    prompt_sql = f"""
-        SELECT p.conversation_id, p.id, p.timestamp
-        FROM prompts p
-        {where_clause}
-        ORDER BY p.timestamp
-    """
-    prompt_rows = conn.execute(prompt_sql, params).fetchall()
+    # Get prompts (filtered by conversation_id and/or prompt_ids)
+    if prompt_ids is not None and conversation_id is not None:
+        # Both filters: batch the prompt_ids, add conversation filter
+        prompt_rows = batched_in_query(
+            conn,
+            "SELECT conversation_id, id, timestamp FROM prompts "
+            "WHERE conversation_id = ? AND id IN ({placeholders}) "
+            "ORDER BY timestamp",
+            prompt_ids,
+            prefix_params=(conversation_id,),
+        )
+    elif prompt_ids is not None:
+        # Only prompt_ids filter
+        prompt_rows = batched_in_query(
+            conn,
+            "SELECT conversation_id, id, timestamp FROM prompts "
+            "WHERE id IN ({placeholders}) ORDER BY timestamp",
+            prompt_ids,
+        )
+    elif conversation_id is not None:
+        # Only conversation filter (no batching needed)
+        prompt_rows = conn.execute(
+            "SELECT conversation_id, id, timestamp FROM prompts "
+            "WHERE conversation_id = ? ORDER BY timestamp",
+            (conversation_id,),
+        ).fetchall()
+    else:
+        # No filters
+        prompt_rows = conn.execute(
+            "SELECT conversation_id, id, timestamp FROM prompts ORDER BY timestamp"
+        ).fetchall()
 
     if not prompt_rows:
         return []
@@ -82,47 +88,47 @@ def fetch_exchanges(
     # Build lookup of prompt_id -> (conversation_id, timestamp)
     prompt_info = {row[1]: (row[0], row[2]) for row in prompt_rows}
     prompt_id_list = list(prompt_info.keys())
-    placeholders = ",".join("?" * len(prompt_id_list))
 
-    # Fetch prompt content blocks in order
-    prompt_content_sql = f"""
-        SELECT prompt_id, json_extract(content, '$.text') AS text
-        FROM prompt_content
-        WHERE prompt_id IN ({placeholders})
-          AND block_type = 'text'
-          AND json_extract(content, '$.text') IS NOT NULL
-        ORDER BY prompt_id, block_index
-    """
-    prompt_content_rows = conn.execute(prompt_content_sql, prompt_id_list).fetchall()
+    # Fetch prompt content blocks in order (batched)
+    prompt_content_rows = batched_in_query(
+        conn,
+        "SELECT prompt_id, json_extract(content, '$.text') AS text "
+        "FROM prompt_content "
+        "WHERE prompt_id IN ({placeholders}) "
+        "AND block_type = 'text' "
+        "AND json_extract(content, '$.text') IS NOT NULL "
+        "ORDER BY prompt_id, block_index",
+        prompt_id_list,
+    )
 
     # Aggregate prompt text by prompt_id
     prompt_texts: dict[str, list[str]] = {}
     for row in prompt_content_rows:
         prompt_texts.setdefault(row[0], []).append(row[1])
 
-    # Fetch responses for these prompts
-    response_sql = f"""
-        SELECT r.id, r.prompt_id, r.timestamp
-        FROM responses r
-        WHERE r.prompt_id IN ({placeholders})
-        ORDER BY r.prompt_id, r.timestamp
-    """
-    response_rows = conn.execute(response_sql, prompt_id_list).fetchall()
+    # Fetch responses for these prompts (batched)
+    response_rows = batched_in_query(
+        conn,
+        "SELECT id, prompt_id, timestamp FROM responses "
+        "WHERE prompt_id IN ({placeholders}) "
+        "ORDER BY prompt_id, timestamp",
+        prompt_id_list,
+    )
 
     if response_rows:
         response_ids = [row[0] for row in response_rows]
-        response_placeholders = ",".join("?" * len(response_ids))
 
-        # Fetch response content blocks in order
-        response_content_sql = f"""
-            SELECT response_id, json_extract(content, '$.text') AS text
-            FROM response_content
-            WHERE response_id IN ({response_placeholders})
-              AND block_type = 'text'
-              AND json_extract(content, '$.text') IS NOT NULL
-            ORDER BY response_id, block_index
-        """
-        response_content_rows = conn.execute(response_content_sql, response_ids).fetchall()
+        # Fetch response content blocks in order (batched)
+        response_content_rows = batched_in_query(
+            conn,
+            "SELECT response_id, json_extract(content, '$.text') AS text "
+            "FROM response_content "
+            "WHERE response_id IN ({placeholders}) "
+            "AND block_type = 'text' "
+            "AND json_extract(content, '$.text') IS NOT NULL "
+            "ORDER BY response_id, block_index",
+            response_ids,
+        )
 
         # Aggregate response content by response_id
         response_content_texts: dict[str, list[str]] = {}
@@ -378,15 +384,15 @@ def fetch_tags_for_conversations(
     if not conversation_ids:
         return {}
 
-    ph = placeholders(len(conversation_ids))
-    rows = conn.execute(
-        f"SELECT ct.conversation_id, t.name "
-        f"FROM conversation_tags ct "
-        f"JOIN tags t ON t.id = ct.tag_id "
-        f"WHERE ct.conversation_id IN ({ph}) "
-        f"ORDER BY t.name",
+    rows = batched_in_query(
+        conn,
+        "SELECT ct.conversation_id, t.name "
+        "FROM conversation_tags ct "
+        "JOIN tags t ON t.id = ct.tag_id "
+        "WHERE ct.conversation_id IN ({placeholders}) "
+        "ORDER BY t.name",
         conversation_ids,
-    ).fetchall()
+    )
 
     tags_by_conv: dict[str, list[str]] = {}
     for row in rows:
@@ -514,11 +520,11 @@ def fetch_conversation_timestamps(
     if not conversation_ids:
         return {}
 
-    ph = placeholders(len(conversation_ids))
-    rows = conn.execute(
-        f"SELECT id, started_at FROM conversations WHERE id IN ({ph})",
+    rows = batched_in_query(
+        conn,
+        "SELECT id, started_at FROM conversations WHERE id IN ({placeholders})",
         conversation_ids,
-    ).fetchall()
+    )
     return {row["id"]: row["started_at"] or "" for row in rows}
 
 
@@ -533,9 +539,9 @@ def fetch_prompt_timestamps(
     if not prompt_ids:
         return {}
 
-    ph = placeholders(len(prompt_ids))
-    rows = conn.execute(
-        f"SELECT id, timestamp FROM prompts WHERE id IN ({ph})",
+    rows = batched_in_query(
+        conn,
+        "SELECT id, timestamp FROM prompts WHERE id IN ({placeholders})",
         prompt_ids,
-    ).fetchall()
+    )
     return {row["id"]: row["timestamp"] or "" for row in rows}

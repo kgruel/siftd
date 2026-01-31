@@ -12,6 +12,7 @@ from pathlib import Path
 
 from siftd.ids import ulid as _ulid
 from siftd.math import cosine_similarity as _cosine_similarity
+from siftd.storage.sql_helpers import batched_execute, batched_in_query
 
 
 def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
@@ -160,16 +161,16 @@ def search_similar(
         return []
 
     if conversation_ids is not None:
-        placeholders = ",".join("?" * len(conversation_ids))
-        cur = conn.execute(
-            f"SELECT id, conversation_id, chunk_type, text, embedding, source_ids FROM chunks WHERE conversation_id IN ({placeholders})",
-            list(conversation_ids),
+        rows = batched_in_query(
+            conn,
+            "SELECT id, conversation_id, chunk_type, text, embedding, source_ids FROM chunks WHERE conversation_id IN ({placeholders})",
+            conversation_ids,
         )
     else:
-        cur = conn.execute("SELECT id, conversation_id, chunk_type, text, embedding, source_ids FROM chunks")
+        rows = conn.execute("SELECT id, conversation_id, chunk_type, text, embedding, source_ids FROM chunks").fetchall()
 
     results = []
-    for row in cur:
+    for row in rows:
         source_ids_val = json.loads(row["source_ids"]) if row["source_ids"] else []
 
         # Role filter: skip chunks that don't overlap with allowed source IDs
@@ -236,10 +237,10 @@ def prune_orphaned_chunks(
     if not orphaned_ids:
         return 0
 
-    placeholders = ",".join("?" * len(orphaned_ids))
-    cur = embeddings_conn.execute(
-        f"DELETE FROM chunks WHERE conversation_id IN ({placeholders})",
-        list(orphaned_ids),
+    deleted = batched_execute(
+        embeddings_conn,
+        "DELETE FROM chunks WHERE conversation_id IN ({placeholders})",
+        orphaned_ids,
     )
     embeddings_conn.commit()
-    return cur.rowcount
+    return deleted
