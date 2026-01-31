@@ -1641,7 +1641,6 @@ def main(argv=None) -> int:
     p_query.add_argument("sql_name", nargs="?", help="SQL query name (when using 'sql' subcommand)")
     p_query.add_argument("-v", "--verbose", action="store_true", help="Full table with all columns")
     p_query.add_argument("-n", "--count", type=int, default=10, help="Number of conversations to show (0=all, default: 10)")
-    p_query.add_argument("--latest", action="store_true", default=True, help="Sort by newest first (default)")
     p_query.add_argument("--oldest", action="store_true", help="Sort by oldest first")
     p_query.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
     p_query.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")

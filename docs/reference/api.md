@@ -63,6 +63,8 @@ Metadata about an available check.
 | `description` | `str` |  |
 | `has_fix` | `bool` |  |
 | `requires_db` | `bool` |  |
+| `requires_embed_db` | `bool` |  |
+| `cost` | `Literal[fast, slow]` |  |
 
 ### Finding
 
@@ -70,33 +72,14 @@ A single issue detected by a check.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `check` | `str` |  |
-| `severity` | `str` |  |
-| `message` | `str` |  |
-| `fix_available` | `bool` |  |
-| `fix_command` | `str \| None` |  |
-| `context` | `dict \| None` |  |
-
-### FixResult
-
-Result of applying a fix.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | `bool` |  |
-| `message` | `str` |  |
+| `check` | `str` | Check name that produced this finding (e.g., "ingest-pending"). |
+| `severity` | `str` | One of "info", "warning", or "error". |
+| `message` | `str` | Human-readable description of the issue. |
+| `fix_available` | `bool` | Whether a fix suggestion exists. |
+| `fix_command` | `str \| None` | CLI command to fix the issue (advisory only, not executed automatically). User must run this command manually. |
+| `context` | `dict \| None` | Optional structured data for programmatic consumers. |
 
 ### Functions
-
-### apply_fix
-
-Apply fix for a finding (if available).
-
-```python
-def apply_fix(finding: Finding) -> FixResult
-```
-
-**Returns:** FixResult indicating success/failure.
 
 ### list_checks
 

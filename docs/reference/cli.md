@@ -248,9 +248,9 @@ examples:
 ## siftd query
 
 ```
-usage: siftd query [-h] [-v] [-n COUNT] [--latest] [--oldest] [-w SUBSTR]
-                   [-m NAME] [--since DATE] [--before DATE] [-s QUERY]
-                   [-t NAME] [-l NAME] [--all-tags NAME] [--no-tag NAME]
+usage: siftd query [-h] [-v] [-n COUNT] [--oldest] [-w SUBSTR] [-m NAME]
+                   [--since DATE] [--before DATE] [-s QUERY] [-t NAME]
+                   [-l NAME] [--all-tags NAME] [--no-tag NAME]
                    [--tool-tag NAME] [--json] [--stats] [--var KEY=VALUE]
                    [conversation_id] [sql_name]
 
@@ -263,7 +263,6 @@ options:
   -h, --help            show this help message and exit
   -v, --verbose         Full table with all columns
   -n, --count COUNT     Number of conversations to show (0=all, default: 10)
-  --latest              Sort by newest first (default)
   --oldest              Sort by oldest first
   -w, --workspace SUBSTR
                         Filter by workspace path substring
