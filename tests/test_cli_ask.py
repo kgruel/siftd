@@ -7,6 +7,8 @@ import argparse
 
 import pytest
 
+pytestmark = pytest.mark.embeddings
+
 pytest.importorskip("fastembed")
 
 from siftd.cli_ask import cmd_ask

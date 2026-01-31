@@ -10,6 +10,8 @@ import sqlite3
 
 import pytest
 
+pytestmark = pytest.mark.embeddings
+
 from conftest import text_block
 
 pytest.importorskip("fastembed")
