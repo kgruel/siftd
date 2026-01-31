@@ -1,8 +1,10 @@
 """CLI for siftd - conversation log aggregator."""
 
 import argparse
+import re
 import sqlite3
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 from siftd.adapters.registry import load_all_adapters, wrap_adapter_paths
@@ -21,6 +23,44 @@ from siftd.cli_ask import build_ask_parser
 from siftd.cli_install import build_install_parser
 from siftd.ingestion import IngestStats, ingest_all
 from siftd.paths import data_dir, db_path, ensure_dirs, queries_dir
+
+
+def parse_date(value: str | None) -> str | None:
+    """Parse date string to ISO format (YYYY-MM-DD).
+
+    Supports:
+    - ISO format: 2024-01-01 (passthrough)
+    - Relative days: 7d, 3d (subtract N days from today)
+    - Relative weeks: 1w, 2w (subtract N weeks from today)
+    - Keywords: yesterday, today
+    """
+    if not value:
+        return None
+
+    value = value.strip().lower()
+
+    # Keywords
+    if value == "today":
+        return date.today().isoformat()
+    if value == "yesterday":
+        return (date.today() - timedelta(days=1)).isoformat()
+
+    # Relative days: 7d, 3d
+    if match := re.fullmatch(r"(\d+)d", value):
+        days = int(match.group(1))
+        return (date.today() - timedelta(days=days)).isoformat()
+
+    # Relative weeks: 1w, 2w
+    if match := re.fullmatch(r"(\d+)w", value):
+        weeks = int(match.group(1))
+        return (date.today() - timedelta(weeks=weeks)).isoformat()
+
+    # ISO format passthrough (validate format)
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return value
+
+    # Invalid format - return as-is, let downstream handle
+    return value
 
 
 def cmd_ingest(args) -> int:
@@ -745,8 +785,8 @@ def cmd_query(args) -> int:
             db_path=db,
             workspace=args.workspace,
             model=args.model,
-            since=args.since,
-            before=args.before,
+            since=parse_date(args.since),
+            before=parse_date(args.before),
             search=args.search,
             tool=args.tool,
             tags=args.tag,
@@ -1459,8 +1499,8 @@ def cmd_export(args) -> int:
             workspace=args.workspace,
             tags=args.tag,
             exclude_tags=getattr(args, "exclude_tag", None),
-            since=args.since,
-            before=args.before,
+            since=parse_date(args.since),
+            before=parse_date(args.before),
             search=args.search,
             db_path=db,
         )
@@ -1654,8 +1694,8 @@ def main(argv=None) -> int:
     p_query.add_argument("--oldest", action="store_true", help="Sort by oldest first (default: newest first)")
     p_query.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
     p_query.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
-    p_query.add_argument("--since", metavar="DATE", help="Conversations started after this date (ISO format: YYYY-MM-DD)")
-    p_query.add_argument("--before", metavar="DATE", help="Conversations started before this date (ISO format: YYYY-MM-DD)")
+    p_query.add_argument("--since", metavar="DATE", help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    p_query.add_argument("--before", metavar="DATE", help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
     p_query.add_argument("-s", "--search", metavar="QUERY", help="Full-text search (FTS5 syntax)")
     p_query.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
     p_query.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by conversation tag (repeatable, OR logic)")
@@ -1795,8 +1835,8 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_export.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
     p_export.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by tag (repeatable, OR logic)")
     p_export.add_argument("--exclude-tag", action="append", metavar="NAME", help="Exclude sessions with this tag (repeatable)")
-    p_export.add_argument("--since", metavar="DATE", help="Sessions after this date (ISO format: YYYY-MM-DD)")
-    p_export.add_argument("--before", metavar="DATE", help="Sessions before this date (ISO format: YYYY-MM-DD)")
+    p_export.add_argument("--since", metavar="DATE", help="Sessions after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    p_export.add_argument("--before", metavar="DATE", help="Sessions before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
     p_export.add_argument("-s", "--search", metavar="QUERY", help="Full-text search filter")
     p_export.add_argument("-f", "--format", choices=["prompts", "exchanges", "json"], default="prompts",
                           help="Output format: prompts (default), exchanges, json")
