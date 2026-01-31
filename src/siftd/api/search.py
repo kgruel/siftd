@@ -95,7 +95,7 @@ def fts5_recall_conversations(
 
     Returns:
         Tuple of (conversation_id set, mode string).
-        Mode is "prefix", "exact", or "none".
+        Mode is "and", "or", or "none".
     """
     from siftd.storage.fts import fts5_recall_conversations as _fts5_recall
 
@@ -171,7 +171,7 @@ def first_mention(
 
     Args:
         results: List of SearchResult or raw dicts from search.
-            Dicts must have 'score', 'conversation_id', and optionally 'source_ids'.
+            Dicts must have 'score', 'conversation_id', and 'source_ids'.
         threshold: Minimum score to consider relevant.
         db_path: Path to database (for timestamp lookup). Uses default if not specified.
 

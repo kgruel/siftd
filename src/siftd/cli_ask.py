@@ -68,6 +68,10 @@ def cmd_ask(args) -> int:
         print("Error: --refs is not supported with --json", file=sys.stderr)
         return 1
 
+    # --thread with --json: warn and ignore (JSON formatter doesn't use thread grouping)
+    if args.json and args.thread:
+        print("Note: --thread is ignored with --json output", file=sys.stderr)
+
     if not embed_db.exists():
         print("No embeddings index found.")
         print("Run 'siftd ask --index' to build it.")

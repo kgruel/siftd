@@ -134,7 +134,14 @@ def fts5_recall_conversations(
 ) -> tuple[set[str], str]:
     """FTS5 recall: try AND semantics first, fall back to OR for broader recall.
 
-    Returns (conversation_ids, mode) where mode is "and", "or", or "none".
+    Args:
+        conn: Database connection.
+        query: Search query string.
+        limit: Maximum conversation IDs to return.
+
+    Returns:
+        Tuple of (conversation_id set, mode string).
+        Mode is "and", "or", or "none".
     """
     # Phase 1: implicit AND (raw query)
     try:

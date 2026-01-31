@@ -428,7 +428,7 @@ def cmd_tags(args) -> int:
             print(f"{cid}  {started}  {ws}  {model}  {c.prompt_count}p/{c.response_count}r  {tokens} tok{tag_str}")
 
         if args.limit > 0 and len(conversations) >= args.limit:
-            print(f"\nTip: show more with `siftd query -l {tag_name} -n 0`")
+            print(f"\nTip: show more with `siftd query -l {tag_name} -n 0`", file=sys.stderr)
         return 0
 
     # Default: list tags
@@ -761,11 +761,16 @@ def cmd_query(args) -> int:
         print("Run 'siftd ingest' to create it.")
         return 1
     except sqlite3.OperationalError as e:
-        if "fts5" in str(e).lower() or "syntax" in str(e).lower():
+        err_msg = str(e).lower()
+        if "no such table" in err_msg and "fts" in err_msg:
+            print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
+        elif "fts5" in err_msg or "syntax" in err_msg:
             print(f"Invalid search query: {e}", file=sys.stderr)
             print("Tip: Check your search query for syntax errors.", file=sys.stderr)
-            return 1
-        raise
+        else:
+            print(f"Database error: {e}", file=sys.stderr)
+            print("Tip: Run 'siftd doctor' to check database health.", file=sys.stderr)
+        return 1
 
     if not conversations:
         if args.json:
@@ -1463,11 +1468,16 @@ def cmd_export(args) -> int:
         print(str(e))
         return 1
     except sqlite3.OperationalError as e:
-        if "fts5" in str(e).lower() or "syntax" in str(e).lower():
+        err_msg = str(e).lower()
+        if "no such table" in err_msg and "fts" in err_msg:
+            print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
+        elif "fts5" in err_msg or "syntax" in err_msg:
             print(f"Invalid search query: {e}", file=sys.stderr)
             print("Tip: Check your search query for syntax errors.", file=sys.stderr)
-            return 1
-        raise
+        else:
+            print(f"Database error: {e}", file=sys.stderr)
+            print("Tip: Run 'siftd doctor' to check database health.", file=sys.stderr)
+        return 1
 
     if not conversations:
         print("No conversations found matching criteria.")

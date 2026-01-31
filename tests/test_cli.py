@@ -385,6 +385,38 @@ class TestAdaptersCommand:
 class TestFTS5ErrorHandling:
     """Tests for FTS5 query syntax error handling."""
 
+    def test_query_no_fts_table_gives_helpful_error(self, test_db, capsys):
+        """siftd query -s on DB without FTS table gives 'run ingest' hint."""
+        # Drop the FTS table from the existing test database
+        import sqlite3
+        conn = sqlite3.connect(test_db)
+        conn.execute("DROP TABLE IF EXISTS content_fts")
+        conn.commit()
+        conn.close()
+
+        rc = main(["--db", str(test_db), "query", "-s", "test"])
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "FTS index not found" in captured.err
+        assert "ingest" in captured.err.lower()
+
+    def test_export_no_fts_table_gives_helpful_error(self, test_db, capsys):
+        """siftd export -s on DB without FTS table gives 'run ingest' hint."""
+        # Drop the FTS table from the existing test database
+        import sqlite3
+        conn = sqlite3.connect(test_db)
+        conn.execute("DROP TABLE IF EXISTS content_fts")
+        conn.commit()
+        conn.close()
+
+        rc = main(["--db", str(test_db), "export", "-s", "test"])
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "FTS index not found" in captured.err
+        assert "ingest" in captured.err.lower()
+
     def test_query_malformed_fts5_incomplete_or(self, test_db, capsys):
         """siftd query -s 'foo OR' returns friendly error, exits 1."""
         rc = main(["--db", str(test_db), "query", "-s", "foo OR"])

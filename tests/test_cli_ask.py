@@ -358,6 +358,26 @@ class TestAskFlagValidation:
         assert result == 1
         assert "--refs is not supported with --json" in captured.err
 
+    def test_json_with_thread_warns_but_succeeds(self, indexed_db, capsys):
+        """--json with --thread warns to stderr but outputs valid JSON."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            json=True,
+            thread=True,
+        )
+
+        result = cmd_ask(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+        assert "--thread is ignored with --json output" in captured.err
+        # Output should still be valid JSON
+        import json
+        data = json.loads(captured.out)
+        assert isinstance(data, (list, dict))
+
     def test_json_without_refs_works(self, indexed_db, capsys):
         """--json without --refs outputs valid JSON."""
         args = make_args(

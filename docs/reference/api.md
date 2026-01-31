@@ -560,7 +560,7 @@ def first_mention(results: list[siftd.search.SearchResult] | list[dict], *, thre
 
 **Parameters:**
 
-- `results`: List of SearchResult or raw dicts from search. Dicts must have 'score', 'conversation_id', and optionally 'chunk_id'.
+- `results`: List of SearchResult or raw dicts from search. Dicts must have 'score', 'conversation_id', and 'source_ids'.
 - `threshold`: Minimum score to consider relevant.
 
 **Returns:** Earliest result above threshold (same type as input), or None if none qualify.
@@ -633,7 +633,7 @@ def fts5_recall_conversations(conn: Connection, query: str, *, limit: int = ...)
 - `conn`: Connection to main database.
 - `query`: The search query string.
 
-**Returns:** Tuple of (conversation_id set, mode string). Mode is "prefix", "exact", or "none".
+**Returns:** Tuple of (conversation_id set, mode string). Mode is "and", "or", or "none".
 
 ## Stats
 
