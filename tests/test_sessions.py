@@ -193,11 +193,11 @@ class TestCleanupStaleSessions:
 
     def test_cleanup_deletes_old_sessions(self, db):
         """Sessions older than max_age_hours are deleted."""
-        # Insert a session with old started_at
+        # Insert a session with old started_at and last_seen_at
         old_time = (datetime.now() - timedelta(hours=72)).isoformat()
         db.execute(
-            "INSERT INTO active_sessions (harness_session_id, adapter_name, started_at) VALUES (?, ?, ?)",
-            ("old-session", "claude_code", old_time),
+            "INSERT INTO active_sessions (harness_session_id, adapter_name, started_at, last_seen_at) VALUES (?, ?, ?, ?)",
+            ("old-session", "claude_code", old_time, old_time),
         )
         db.commit()
 
@@ -250,12 +250,12 @@ class TestOrphanedAndStaleCounts:
         assert count == 1
 
     def test_stale_sessions_count(self, db):
-        """Count sessions older than max_age_hours."""
-        # Insert an old session
+        """Count sessions older than max_age_hours (uses last_seen_at)."""
+        # Insert an old session with old last_seen_at
         old_time = (datetime.now() - timedelta(hours=72)).isoformat()
         db.execute(
-            "INSERT INTO active_sessions (harness_session_id, adapter_name, started_at) VALUES (?, ?, ?)",
-            ("old-session", "claude_code", old_time),
+            "INSERT INTO active_sessions (harness_session_id, adapter_name, started_at, last_seen_at) VALUES (?, ?, ?, ?)",
+            ("old-session", "claude_code", old_time, old_time),
         )
 
         # Register a new session

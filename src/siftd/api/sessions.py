@@ -6,6 +6,9 @@ Exposes live session registration and pending tag operations to CLI.
 import sqlite3
 
 from siftd.storage.sessions import (
+    cleanup_stale_sessions as _cleanup_stale_sessions,
+)
+from siftd.storage.sessions import (
     is_session_registered as _is_session_registered,
 )
 from siftd.storage.sessions import (
@@ -16,6 +19,7 @@ from siftd.storage.sessions import (
 )
 
 __all__ = [
+    "cleanup_stale_sessions",
     "is_session_registered",
     "queue_tag",
     "register_session",
@@ -60,3 +64,16 @@ def is_session_registered(
 ) -> bool:
     """Check if session exists in active_sessions."""
     return _is_session_registered(conn, harness_session_id)
+
+
+def cleanup_stale_sessions(
+    conn: sqlite3.Connection,
+    max_age_hours: int = 48,
+    *,
+    commit: bool = False,
+) -> tuple[int, int]:
+    """Delete sessions and pending tags older than max_age_hours.
+
+    Returns (sessions_deleted, tags_deleted).
+    """
+    return _cleanup_stale_sessions(conn, max_age_hours, commit=commit)

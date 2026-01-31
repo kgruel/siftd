@@ -29,9 +29,18 @@ def ensure_session_tables(conn: sqlite3.Connection) -> None:
             harness_session_id TEXT PRIMARY KEY,
             adapter_name TEXT NOT NULL,
             workspace_path TEXT,
-            started_at TEXT NOT NULL
+            started_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL
         )
     """)
+
+    # Migration: add last_seen_at column if missing (for existing databases)
+    cur = conn.execute("PRAGMA table_info(active_sessions)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "last_seen_at" not in columns:
+        conn.execute("ALTER TABLE active_sessions ADD COLUMN last_seen_at TEXT")
+        # Initialize last_seen_at from started_at for existing rows
+        conn.execute("UPDATE active_sessions SET last_seen_at = started_at WHERE last_seen_at IS NULL")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS pending_tags (
@@ -76,18 +85,23 @@ def register_session(
     *,
     commit: bool = False,
 ) -> str:
-    """Upsert into active_sessions. Returns harness_session_id."""
+    """Upsert into active_sessions. Returns harness_session_id.
+
+    On insert: sets both started_at and last_seen_at to now.
+    On update: refreshes last_seen_at (keeps original started_at).
+    """
     now = datetime.now().isoformat()
 
     conn.execute(
         """
-        INSERT INTO active_sessions (harness_session_id, adapter_name, workspace_path, started_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO active_sessions (harness_session_id, adapter_name, workspace_path, started_at, last_seen_at)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT (harness_session_id) DO UPDATE SET
             adapter_name = excluded.adapter_name,
-            workspace_path = excluded.workspace_path
+            workspace_path = excluded.workspace_path,
+            last_seen_at = excluded.last_seen_at
         """,
-        (harness_session_id, adapter_name, workspace_path, now),
+        (harness_session_id, adapter_name, workspace_path, now, now),
     )
 
     if commit:
@@ -226,7 +240,7 @@ def get_session_info(
     """Get session info from active_sessions. Returns dict or None."""
     cur = conn.execute(
         """
-        SELECT harness_session_id, adapter_name, workspace_path, started_at
+        SELECT harness_session_id, adapter_name, workspace_path, started_at, last_seen_at
         FROM active_sessions
         WHERE harness_session_id = ?
         """,
@@ -239,6 +253,7 @@ def get_session_info(
             "adapter_name": row["adapter_name"],
             "workspace_path": row["workspace_path"],
             "started_at": row["started_at"],
+            "last_seen_at": row["last_seen_at"],
         }
     return None
 
@@ -251,15 +266,18 @@ def cleanup_stale_sessions(
 ) -> tuple[int, int]:
     """Delete sessions and pending tags older than max_age_hours.
 
+    Uses last_seen_at (not started_at) to determine staleness,
+    so sessions that are re-registered stay fresh.
+
     Returns (sessions_deleted, tags_deleted).
     """
     cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
     sessions_deleted = 0
     tags_deleted = 0
 
-    # Get stale session IDs
+    # Get stale session IDs (use last_seen_at, fallback to started_at for migrated rows)
     cur = conn.execute(
-        "SELECT harness_session_id FROM active_sessions WHERE started_at < ?",
+        "SELECT harness_session_id FROM active_sessions WHERE COALESCE(last_seen_at, started_at) < ?",
         (cutoff,),
     )
     stale_session_ids = [row["harness_session_id"] for row in cur.fetchall()]
@@ -312,10 +330,13 @@ def get_stale_sessions_count(
     conn: sqlite3.Connection,
     max_age_hours: int = 48,
 ) -> int:
-    """Count sessions older than max_age_hours."""
+    """Count sessions older than max_age_hours.
+
+    Uses last_seen_at (not started_at) to determine staleness.
+    """
     cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
     cur = conn.execute(
-        "SELECT COUNT(*) FROM active_sessions WHERE started_at < ?",
+        "SELECT COUNT(*) FROM active_sessions WHERE COALESCE(last_seen_at, started_at) < ?",
         (cutoff,),
     )
     return cur.fetchone()[0]

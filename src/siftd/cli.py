@@ -1233,6 +1233,38 @@ def cmd_copy(args) -> int:
         return 1
 
 
+def _doctor_fix_pending_tags(args) -> int:
+    """Clean up stale sessions and orphaned pending tags."""
+    from siftd.api.sessions import cleanup_stale_sessions
+
+    db = Path(args.db) if args.db else db_path()
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'siftd ingest' to create it.")
+        return 1
+
+    conn = open_database(db)
+
+    sessions_deleted, tags_deleted = cleanup_stale_sessions(conn, max_age_hours=48, commit=True)
+
+    if args.json:
+        import json
+        out = {
+            "sessions_deleted": sessions_deleted,
+            "tags_deleted": tags_deleted,
+        }
+        print(json.dumps(out, indent=2))
+    else:
+        if sessions_deleted or tags_deleted:
+            print(f"Cleaned up {sessions_deleted} stale session(s) and {tags_deleted} orphaned tag(s)")
+        else:
+            print("No stale sessions or orphaned tags to clean up")
+
+    conn.close()
+    return 0
+
+
 def _doctor_list(args) -> int:
     """List available doctor checks."""
     from siftd.api import list_checks
@@ -1357,6 +1389,9 @@ def cmd_doctor(args) -> int:
         return _doctor_run(args, check_names=check_names)
 
     if action == "fix":
+        # doctor fix --pending-tags — clean up stale sessions and orphaned pending tags
+        if getattr(args, "pending_tags", False):
+            return _doctor_fix_pending_tags(args)
         # doctor fix — run all checks and show fixes
         return _doctor_run(args, show_fixes=True)
 
@@ -1934,6 +1969,7 @@ live session tagging:
   siftd doctor run ingest-pending       # run specific check
   siftd doctor run check1 check2        # run multiple checks
   siftd doctor fix                      # show fix commands for issues
+  siftd doctor fix --pending-tags       # clean up stale sessions/tags
   siftd doctor --json                   # output as JSON
   siftd doctor --strict                 # exit 1 on warnings (for CI)
 
@@ -1949,6 +1985,7 @@ exit codes:
     p_doctor.add_argument("subcommand", nargs="*", help="list | run [checks...] | fix | <check-name>")
     p_doctor.add_argument("--json", action="store_true", help="Output as JSON")
     p_doctor.add_argument("--strict", action="store_true", help="Exit 1 on warnings (not just errors). Useful for CI.")
+    p_doctor.add_argument("--pending-tags", action="store_true", help="Clean up stale sessions and orphaned pending tags (use with 'fix')")
     p_doctor.set_defaults(func=cmd_doctor)
 
     # peek

@@ -19,9 +19,10 @@ esac
 command -v siftd >/dev/null 2>&1 || exit 0
 
 # Register this session for live tagging
+# Use namespaced session ID (claude_code::sessionId) to match adapter's external_id format
 SESSION_ID=$(echo "$INPUT" | jq -r '.sessionId // empty')
 if [ -n "$SESSION_ID" ]; then
-  siftd register --session "$SESSION_ID" --adapter claude_code --workspace "$PWD" 2>/dev/null
+  siftd register --session "claude_code::$SESSION_ID" --adapter claude_code --workspace "$PWD" 2>/dev/null
 fi
 
 cat <<'EOF'

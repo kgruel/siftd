@@ -10,6 +10,8 @@ from siftd.domain.source import Source
 from siftd.ingestion import ingest_all
 from siftd.storage.sessions import (
     get_pending_tags,
+    get_session_info,
+    get_stale_sessions_count,
     is_session_registered,
     queue_tag,
     register_session,
@@ -300,3 +302,117 @@ class TestLiveTaggingFlow:
 
         for tag in tags_to_queue:
             assert tag in applied_tags
+
+    def test_namespaced_session_id_matches_adapter_format(self, live_db, tmp_path):
+        """Verify namespaced session IDs work end-to-end.
+
+        This test uses the real claude_code adapter's external_id format:
+        `claude_code::{raw_session_id}` to ensure the hook and ingest match.
+
+        Previously, the hook registered raw IDs but the adapter namespaced them,
+        causing pending tags to never be found at ingest time.
+        """
+        raw_session_id = "abc123def456"
+        namespaced_session_id = f"claude_code::{raw_session_id}"
+        tag_name = "decision:architecture"
+
+        test_file = tmp_path / "session.jsonl"
+        test_file.write_text("{}")
+
+        # Conversation external_id uses namespaced format (as real claude_code adapter does)
+        conversation = make_conversation(
+            external_id=namespaced_session_id,
+            workspace_path="/test/project",
+            started_at="2024-01-15T10:00:00Z",
+            harness_name="claude_code",
+            harness_source="anthropic",
+        )
+
+        # Register with namespaced ID (as the fixed hook now does)
+        register_session(live_db["conn"], namespaced_session_id, "claude_code", "/test/project", commit=True)
+        assert is_session_registered(live_db["conn"], namespaced_session_id)
+
+        # Queue tag with namespaced ID
+        queue_tag(live_db["conn"], namespaced_session_id, tag_name, commit=True)
+        pending = get_pending_tags(live_db["conn"], namespaced_session_id)
+        assert len(pending) == 1
+
+        # Ingest with live-enabled adapter
+        adapter = make_live_adapter(str(test_file), conversation)
+        ingest_all(live_db["conn"], [adapter])
+
+        # Verify tag was applied
+        cur = live_db["conn"].execute("""
+            SELECT t.name FROM tags t
+            JOIN conversation_tags ct ON ct.tag_id = t.id
+            JOIN conversations c ON c.id = ct.conversation_id
+            WHERE c.external_id = ?
+        """, (namespaced_session_id,))
+        tags = [row[0] for row in cur.fetchall()]
+        assert tag_name in tags
+
+        # Verify pending tags consumed
+        pending = get_pending_tags(live_db["conn"], namespaced_session_id)
+        assert len(pending) == 0
+
+        # Verify session unregistered
+        assert not is_session_registered(live_db["conn"], namespaced_session_id)
+
+    def test_reregister_refreshes_last_seen_at(self, live_db):
+        """Re-registering a session updates last_seen_at but keeps started_at."""
+        session_id = "reregister-session"
+
+        # First registration
+        register_session(live_db["conn"], session_id, "live_test", "/project", commit=True)
+        info1 = get_session_info(live_db["conn"], session_id)
+        assert info1 is not None
+        original_started_at = info1["started_at"]
+        original_last_seen_at = info1["last_seen_at"]
+
+        # Re-register (simulate hook firing again on resume/compact)
+        import time
+        time.sleep(0.01)  # Ensure timestamp difference
+        register_session(live_db["conn"], session_id, "live_test", "/project", commit=True)
+
+        info2 = get_session_info(live_db["conn"], session_id)
+        assert info2 is not None
+
+        # started_at should be unchanged (keeps original session start time)
+        assert info2["started_at"] == original_started_at
+
+        # last_seen_at should be updated (session is still active)
+        assert info2["last_seen_at"] >= original_last_seen_at
+
+    def test_stale_sessions_use_last_seen_at(self, live_db):
+        """Staleness check uses last_seen_at, not started_at."""
+        from datetime import datetime, timedelta
+
+        session_id = "stale-check-session"
+
+        # Register session with old started_at
+        old_time = (datetime.now() - timedelta(hours=100)).isoformat()
+        live_db["conn"].execute(
+            """
+            INSERT INTO active_sessions (harness_session_id, adapter_name, workspace_path, started_at, last_seen_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (session_id, "live_test", "/project", old_time, datetime.now().isoformat()),
+        )
+        live_db["conn"].commit()
+
+        # Session was started 100h ago but last_seen_at is now
+        # Should NOT be considered stale (48h threshold)
+        stale_count = get_stale_sessions_count(live_db["conn"], max_age_hours=48)
+        assert stale_count == 0
+
+        # Now make last_seen_at old too
+        very_old_time = (datetime.now() - timedelta(hours=100)).isoformat()
+        live_db["conn"].execute(
+            "UPDATE active_sessions SET last_seen_at = ? WHERE harness_session_id = ?",
+            (very_old_time, session_id),
+        )
+        live_db["conn"].commit()
+
+        # Now it should be stale
+        stale_count = get_stale_sessions_count(live_db["conn"], max_age_hours=48)
+        assert stale_count == 1
