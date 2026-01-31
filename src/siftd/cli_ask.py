@@ -240,6 +240,10 @@ def cmd_ask(args) -> int:
                     r_refs.extend(refs_by_prompt.get(sid, []))
                 r["file_refs"] = r_refs
 
+    # Privacy warning for full content display
+    if args.full or args.refs:
+        print("Note: Showing full content which may contain sensitive information.", file=sys.stderr)
+
     # Select and run formatter
     from siftd.output import FormatterContext, print_refs_content, select_formatter
     formatter = select_formatter(args)

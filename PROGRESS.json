@@ -1,0 +1,5 @@
+[
+    {"step": "Add privacy warning for --full and --refs flags in cli_ask.py", "done": true},
+    {"step": "Add tests for privacy warning behavior", "done": true},
+    {"step": "Run test suite to verify no regressions", "done": true}
+]

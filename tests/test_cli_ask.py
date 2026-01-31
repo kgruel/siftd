@@ -556,3 +556,53 @@ class TestAskThreadMode:
         # JSON output is {"results": [...], ...}
         results = data.get("results", data) if isinstance(data, dict) else data
         assert len(results) <= 3, f"Expected <=3 results without --thread, got {len(results)}"
+
+
+class TestAskPrivacyWarning:
+    """Tests for privacy warning on --full and --refs flags."""
+
+    def test_full_flag_prints_privacy_warning(self, indexed_db, capsys):
+        """--full prints privacy warning to stderr."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            full=True,
+        )
+
+        result = cmd_ask(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+        assert "Showing full content which may contain sensitive information" in captured.err
+
+    def test_refs_flag_prints_privacy_warning(self, indexed_db, capsys):
+        """--refs prints privacy warning to stderr."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            refs=True,
+        )
+
+        result = cmd_ask(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+        assert "Showing full content which may contain sensitive information" in captured.err
+
+    def test_normal_output_no_privacy_warning(self, indexed_db, capsys):
+        """Normal output (no --full or --refs) has no privacy warning."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            full=False,
+            refs=None,
+        )
+
+        result = cmd_ask(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+        assert "Showing full content which may contain sensitive information" not in captured.err
