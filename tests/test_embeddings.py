@@ -10,6 +10,8 @@ import sqlite3
 
 import pytest
 
+from conftest import text_block
+
 pytest.importorskip("fastembed")
 
 from siftd.embeddings.base import get_backend
@@ -59,14 +61,14 @@ def main_db_with_conversations(tmp_path):
         workspace_id=workspace_id, started_at="2024-01-15T10:00:00Z",
     )
     prompt1_id = insert_prompt(conn, conv1_id, "p1", "2024-01-15T10:00:00Z")
-    insert_prompt_content(conn, prompt1_id, 0, "text", '{"text": "What is Python?"}')
+    insert_prompt_content(conn, prompt1_id, 0, "text", text_block("What is Python?"))
     response1_id = insert_response(
         conn, conv1_id, prompt1_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
         input_tokens=10, output_tokens=50,
     )
     insert_response_content(
         conn, response1_id, 0, "text",
-        '{"text": "Python is a high-level programming language known for its readability."}'
+        text_block("Python is a high-level programming language known for its readability.")
     )
 
     # Conversation 2: multi-turn exchange
@@ -75,20 +77,20 @@ def main_db_with_conversations(tmp_path):
         workspace_id=workspace_id, started_at="2024-01-16T10:00:00Z",
     )
     prompt2a_id = insert_prompt(conn, conv2_id, "p2a", "2024-01-16T10:00:00Z")
-    insert_prompt_content(conn, prompt2a_id, 0, "text", '{"text": "Hello"}')
+    insert_prompt_content(conn, prompt2a_id, 0, "text", text_block("Hello"))
     response2a_id = insert_response(
         conn, conv2_id, prompt2a_id, model_id, None, "r2a", "2024-01-16T10:00:01Z",
         input_tokens=5, output_tokens=10,
     )
-    insert_response_content(conn, response2a_id, 0, "text", '{"text": "Hi there!"}')
+    insert_response_content(conn, response2a_id, 0, "text", text_block("Hi there!"))
 
     prompt2b_id = insert_prompt(conn, conv2_id, "p2b", "2024-01-16T10:01:00Z")
-    insert_prompt_content(conn, prompt2b_id, 0, "text", '{"text": "How are you?"}')
+    insert_prompt_content(conn, prompt2b_id, 0, "text", text_block("How are you?"))
     response2b_id = insert_response(
         conn, conv2_id, prompt2b_id, model_id, None, "r2b", "2024-01-16T10:01:01Z",
         input_tokens=5, output_tokens=15,
     )
-    insert_response_content(conn, response2b_id, 0, "text", '{"text": "I am doing well, thanks!"}')
+    insert_response_content(conn, response2b_id, 0, "text", text_block("I am doing well, thanks!"))
 
     conn.commit()
     conn.close()

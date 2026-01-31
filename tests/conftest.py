@@ -1,8 +1,14 @@
 """Shared test fixtures for the siftd test suite."""
 
+import json
 from pathlib import Path
 
 import pytest
+
+
+def text_block(text: str) -> str:
+    """Create JSON content for a text block."""
+    return json.dumps({"text": text})
 
 from siftd.domain.models import (
     ContentBlock,
