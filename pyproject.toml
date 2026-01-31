@@ -40,6 +40,7 @@ embed = [
 ]
 dev = [
     "pytest>=8.0",
+    "pytest-cov",
     "pytest-xdist",
     "ruff>=0.4",
     "ty",
@@ -51,6 +52,7 @@ packages = ["src/siftd"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "-n auto"
 markers = [
     "embeddings: tests that require embedding dependencies",
 ]
