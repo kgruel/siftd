@@ -1,6 +1,7 @@
 """CLI for siftd - conversation log aggregator."""
 
 import argparse
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -759,6 +760,12 @@ def cmd_query(args) -> int:
         print(str(e))
         print("Run 'siftd ingest' to create it.")
         return 1
+    except sqlite3.OperationalError as e:
+        if "fts5" in str(e).lower() or "syntax" in str(e).lower():
+            print(f"Invalid search query: {e}", file=sys.stderr)
+            print("Tip: Check your search query for syntax errors.", file=sys.stderr)
+            return 1
+        raise
 
     if not conversations:
         if args.json:
@@ -1455,6 +1462,12 @@ def cmd_export(args) -> int:
     except FileNotFoundError as e:
         print(str(e))
         return 1
+    except sqlite3.OperationalError as e:
+        if "fts5" in str(e).lower() or "syntax" in str(e).lower():
+            print(f"Invalid search query: {e}", file=sys.stderr)
+            print("Tip: Check your search query for syntax errors.", file=sys.stderr)
+            return 1
+        raise
 
     if not conversations:
         print("No conversations found matching criteria.")

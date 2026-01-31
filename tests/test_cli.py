@@ -380,3 +380,60 @@ class TestAdaptersCommand:
         names = [a["name"] for a in data]
         # Should include at least claude_code
         assert "claude_code" in names
+
+
+class TestFTS5ErrorHandling:
+    """Tests for FTS5 query syntax error handling."""
+
+    def test_query_malformed_fts5_incomplete_or(self, test_db, capsys):
+        """siftd query -s 'foo OR' returns friendly error, exits 1."""
+        rc = main(["--db", str(test_db), "query", "-s", "foo OR"])
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "Invalid search query" in captured.err
+        assert "syntax" in captured.err.lower()
+
+    def test_query_malformed_fts5_incomplete_and(self, test_db, capsys):
+        """siftd query -s 'foo AND' returns friendly error, exits 1."""
+        rc = main(["--db", str(test_db), "query", "-s", "foo AND"])
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "Invalid search query" in captured.err
+
+    def test_query_malformed_fts5_unbalanced_parens(self, test_db, capsys):
+        """siftd query -s 'foo (' returns friendly error, exits 1."""
+        rc = main(["--db", str(test_db), "query", "-s", "foo ("])
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "Invalid search query" in captured.err
+
+    def test_query_valid_fts5_still_works(self, test_db):
+        """siftd query -s with valid FTS5 query still works."""
+        rc = main(["--db", str(test_db), "query", "-s", "hello"])
+        assert rc == 0
+
+    def test_export_malformed_fts5_incomplete_or(self, test_db, capsys):
+        """siftd export -s 'foo OR' returns friendly error, exits 1."""
+        rc = main(["--db", str(test_db), "export", "-s", "foo OR"])
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "Invalid search query" in captured.err
+
+    def test_export_malformed_fts5_incomplete_and(self, test_db, capsys):
+        """siftd export -s 'incomplete AND' returns friendly error, exits 1."""
+        rc = main(["--db", str(test_db), "export", "-s", "incomplete AND"])
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "Invalid search query" in captured.err
+
+    def test_export_valid_fts5_still_works(self, test_db):
+        """siftd export -s with valid FTS5 query still works."""
+        # Uses valid query; may find 0 results but shouldn't error
+        rc = main(["--db", str(test_db), "export", "-s", "hello"])
+        # rc could be 0 (found) or 1 (not found), but not a crash
+        assert rc in (0, 1)
