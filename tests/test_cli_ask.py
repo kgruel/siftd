@@ -372,3 +372,105 @@ class TestAskEdgeCases:
 
         # Either returns 0 with "No results" or returns successfully
         assert result == 0
+
+
+class TestAskThreadMode:
+    """Tests for --thread mode candidate pool handling."""
+
+    @pytest.fixture
+    def multi_chunk_db(self, tmp_path):
+        """Create database with many chunks across conversations for thread tests."""
+        db_path = tmp_path / "main.db"
+        conn = create_database(db_path)
+
+        harness_id = get_or_create_harness(conn, "test_harness", source="test", log_format="jsonl")
+        model_id = get_or_create_model(conn, "test-model")
+        ws_id = get_or_create_workspace(conn, "/projects/test", "2024-01-01T10:00:00Z")
+
+        # Create 10 conversations with 2 exchanges each = 20 chunks
+        # All about "error handling" to ensure they match the query
+        for i in range(10):
+            conv_id = insert_conversation(
+                conn, external_id=f"conv-{i}", harness_id=harness_id,
+                workspace_id=ws_id, started_at=f"2024-01-{10+i:02d}T10:00:00Z",
+            )
+            # First exchange
+            p1_id = insert_prompt(conn, conv_id, f"p{i}-1", f"2024-01-{10+i:02d}T10:00:00Z")
+            insert_prompt_content(conn, p1_id, 0, "text", f'{{"text": "How do I handle errors in scenario {i}?"}}')
+            r1_id = insert_response(
+                conn, conv_id, p1_id, model_id, None, f"r{i}-1", f"2024-01-{10+i:02d}T10:00:01Z",
+                input_tokens=10, output_tokens=100,
+            )
+            insert_response_content(
+                conn, r1_id, 0, "text",
+                f'{{"text": "For error handling in scenario {i}, use try/except blocks and proper logging."}}'
+            )
+            # Second exchange
+            p2_id = insert_prompt(conn, conv_id, f"p{i}-2", f"2024-01-{10+i:02d}T10:01:00Z")
+            insert_prompt_content(conn, p2_id, 0, "text", f'{{"text": "What about error recovery in case {i}?"}}')
+            r2_id = insert_response(
+                conn, conv_id, p2_id, model_id, None, f"r{i}-2", f"2024-01-{10+i:02d}T10:01:01Z",
+                input_tokens=10, output_tokens=100,
+            )
+            insert_response_content(
+                conn, r2_id, 0, "text",
+                f'{{"text": "Error recovery for case {i} should include retry logic and graceful degradation."}}'
+            )
+
+        conn.commit()
+        conn.close()
+
+        embed_db_path = tmp_path / "embeddings.db"
+        build_embeddings_index(db_path=db_path, embed_db_path=embed_db_path, verbose=False)
+
+        return {"db_path": db_path, "embed_db_path": embed_db_path}
+
+    def test_thread_mode_returns_more_than_limit(self, multi_chunk_db, capsys):
+        """--thread mode should not trim results to --limit.
+
+        The widened candidate pool (40+) should be preserved for the thread
+        formatter to group by conversation, rather than being trimmed early.
+        """
+        args = make_args(
+            query=["error", "handling"],
+            db=str(multi_chunk_db["db_path"]),
+            embed_db=str(multi_chunk_db["embed_db_path"]),
+            limit=3,  # Request only 3, but thread mode should get more
+            thread=True,
+            json=True,  # JSON for easy counting
+        )
+
+        result = cmd_ask(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+
+        import json
+        data = json.loads(captured.out)
+        # JSON output is {"results": [...], ...}
+        results = data.get("results", data) if isinstance(data, dict) else data
+        # Thread mode should return more results than --limit since it
+        # manages its own candidate pool for conversation grouping
+        assert len(results) > 3, f"Expected >3 results for --thread, got {len(results)}"
+
+    def test_non_thread_mode_respects_limit(self, multi_chunk_db, capsys):
+        """Non-thread mode should respect --limit as before."""
+        args = make_args(
+            query=["error", "handling"],
+            db=str(multi_chunk_db["db_path"]),
+            embed_db=str(multi_chunk_db["embed_db_path"]),
+            limit=3,
+            thread=False,
+            json=True,
+        )
+
+        result = cmd_ask(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+
+        import json
+        data = json.loads(captured.out)
+        # JSON output is {"results": [...], ...}
+        results = data.get("results", data) if isinstance(data, dict) else data
+        assert len(results) <= 3, f"Expected <=3 results without --thread, got {len(results)}"

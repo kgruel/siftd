@@ -216,8 +216,11 @@ def cmd_ask(args) -> int:
             return 0
         results = [cast(dict, earliest)]
 
-    # Trim to requested limit after post-processing (except --conversations which handles its own limit)
-    if not args.conversations:
+    # Trim to requested limit after post-processing
+    # Skip for modes that manage their own candidate pools:
+    # - --conversations: aggregates per conversation, handles own limit
+    # - --thread: widened pool for grouping, formatter handles presentation
+    if not args.conversations and not args.thread:
         results = results[:args.limit]
 
     # Enrich results with metadata from main DB
