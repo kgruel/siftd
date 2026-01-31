@@ -1,4 +1,5 @@
 ---
+skill-interface-version: 1
 name: siftd
 description: "Search and research past conversations from CLI coding sessions. Use when researching past decisions, design rationale, project history, or finding where an idea originated. Also use when the user mentions siftd, siftd ask, or searching past conversations."
 argument-hint: "[query] or [--recent] or [--genesis query]"
@@ -56,6 +57,7 @@ User: `/siftd --genesis "chunking strategy"`
 → Show earliest conversation mentioning this concept
 
 ---
+skill-interface-version: 1
 
 # Research Patterns
 

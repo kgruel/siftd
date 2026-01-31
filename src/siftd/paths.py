@@ -4,8 +4,10 @@ Follows XDG Base Directory Specification:
 - XDG_DATA_HOME (~/.local/share) - database, persistent data
 - XDG_CONFIG_HOME (~/.config) - configuration files
 - XDG_CACHE_HOME (~/.cache) - cache files
+- XDG_STATE_HOME (~/.local/state) - runtime state (sessions, etc.)
 """
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -33,6 +35,22 @@ def cache_dir() -> Path:
     """Return the cache directory (~/.cache/siftd)."""
     base = _get_xdg_path("XDG_CACHE_HOME", "~/.cache")
     return base / APP_NAME
+
+
+def state_dir() -> Path:
+    """Return the state directory (~/.local/state/siftd)."""
+    base = _get_xdg_path("XDG_STATE_HOME", "~/.local/state")
+    return base / APP_NAME
+
+
+def session_id_file(workspace_path: str) -> Path:
+    """Return the session ID file for a workspace.
+
+    Uses a hash of the workspace path to create a unique directory:
+    ~/.local/state/siftd/sessions/<workspace-hash>/session-id
+    """
+    workspace_hash = hashlib.sha256(workspace_path.encode()).hexdigest()[:12]
+    return state_dir() / "sessions" / workspace_hash / "session-id"
 
 
 def queries_dir() -> Path:

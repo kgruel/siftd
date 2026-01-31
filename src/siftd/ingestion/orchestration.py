@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from siftd.domain import Source
+from siftd.storage.sessions import consume_pending_tags, unregister_session
 from siftd.storage.sqlite import (
     clear_ingested_file_error,
     compute_file_hash,
@@ -35,6 +36,7 @@ from siftd.storage.sqlite import (
     record_ingested_file,
     store_conversation,
 )
+from siftd.storage.tags import apply_tag, get_or_create_tag
 
 from .discovery import discover_all
 
@@ -243,6 +245,9 @@ def ingest_all(
                         file_hash = compute_file_hash(location)
                         record_ingested_file(conn, file_path, file_hash, conv_id)
 
+                        # Apply pending tags from live session
+                        _apply_pending_tags(conn, adapter, conversation, conv_id)
+
                         conn.commit()
 
                         # Update stats
@@ -270,6 +275,9 @@ def ingest_all(
                     location = source.as_path
                     file_hash = compute_file_hash(location)
                     record_ingested_file(conn, file_path, file_hash, conv_id)
+
+                    # Apply pending tags from live session
+                    _apply_pending_tags(conn, adapter, conversation, conv_id)
 
                     conn.commit()
 
@@ -384,6 +392,9 @@ def _ingest_file(
     _update_stats_for_conversation(stats, harness_name, conversation)
     record_ingested_file(conn, file_path, file_hash, conv_id)
 
+    # Apply pending tags from live session
+    _apply_pending_tags(conn, adapter, conversation, conv_id)
+
     conn.commit()
     stats.files_ingested += 1
 
@@ -425,6 +436,9 @@ def _reingest_file(
     _update_stats_for_conversation(stats, harness_name, conversation)
     record_ingested_file(conn, file_path, file_hash, conv_id)
 
+    # Apply pending tags from live session
+    _apply_pending_tags(conn, adapter, conversation, conv_id)
+
     conn.commit()
     stats.files_replaced += 1
     stats.by_harness[harness_name]["replaced"] += 1
@@ -447,3 +461,82 @@ def _update_stats_for_conversation(
             stats.by_harness[harness_name]["responses"] += 1
             stats.tool_calls += len(response.tool_calls)
             stats.by_harness[harness_name]["tool_calls"] += len(response.tool_calls)
+
+
+def _apply_pending_tags(
+    conn: sqlite3.Connection,
+    adapter: AdapterModule,
+    conversation,
+    conversation_id: str,
+) -> int:
+    """Apply pending tags for a session and unregister it.
+
+    Only applies to adapters with SUPPORTS_LIVE_REGISTRATION = True.
+    Returns the number of tags applied.
+    """
+    if not getattr(adapter, "SUPPORTS_LIVE_REGISTRATION", False):
+        return 0
+
+    session_id = conversation.external_id
+    pending = consume_pending_tags(conn, session_id)
+
+    if not pending:
+        # No pending tags, but still unregister the session
+        unregister_session(conn, session_id)
+        return 0
+
+    applied = 0
+    for pt in pending:
+        tag_id = get_or_create_tag(conn, pt.tag_name)
+
+        if pt.entity_type == "conversation":
+            result = apply_tag(conn, "conversation", conversation_id, tag_id)
+            if result:
+                applied += 1
+                logger.debug(f"Applied tag '{pt.tag_name}' to conversation {conversation_id[:12]}")
+
+        elif pt.entity_type == "exchange":
+            # Look up the prompt at exchange_index
+            prompt_id = _get_prompt_by_index(conn, conversation_id, pt.exchange_index)
+            if prompt_id:
+                result = apply_tag(conn, "prompt", prompt_id, tag_id)
+                if result:
+                    applied += 1
+                    logger.debug(
+                        f"Applied tag '{pt.tag_name}' to prompt {prompt_id[:12]} "
+                        f"(exchange {pt.exchange_index})"
+                    )
+            else:
+                logger.warning(
+                    f"Exchange index {pt.exchange_index} not found for session {session_id[:8]}; "
+                    f"tag '{pt.tag_name}' not applied"
+                )
+
+    # Unregister the session
+    unregister_session(conn, session_id)
+    return applied
+
+
+def _get_prompt_by_index(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    exchange_index: int | None,
+) -> str | None:
+    """Get the prompt ID at a specific exchange index (0-based).
+
+    Returns None if index is out of range or None.
+    """
+    if exchange_index is None:
+        return None
+
+    cur = conn.execute(
+        """
+        SELECT id FROM prompts
+        WHERE conversation_id = ?
+        ORDER BY timestamp
+        LIMIT 1 OFFSET ?
+        """,
+        (conversation_id, exchange_index),
+    )
+    row = cur.fetchone()
+    return row["id"] if row else None

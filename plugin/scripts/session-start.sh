@@ -1,5 +1,6 @@
 #!/bin/bash
 # After compaction/resume, remind agent that siftd is available for research.
+# Also registers the session for live tagging.
 
 INPUT=$(cat)
 
@@ -10,12 +11,18 @@ REASON=$(
 )
 
 case "$REASON" in
-  compact|resume) ;;
+  compact|resume|start) ;;
   *) exit 0 ;;
 esac
 
 # Only fire if siftd is installed
 command -v siftd >/dev/null 2>&1 || exit 0
+
+# Register this session for live tagging
+SESSION_ID=$(echo "$INPUT" | jq -r '.sessionId // empty')
+if [ -n "$SESSION_ID" ]; then
+  siftd register --session "$SESSION_ID" --adapter claude_code --workspace "$PWD" 2>/dev/null
+fi
 
 cat <<'EOF'
 {

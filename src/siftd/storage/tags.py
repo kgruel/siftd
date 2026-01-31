@@ -31,7 +31,7 @@ def apply_tag(
 ) -> str | None:
     """Apply a tag to an entity. Returns assignment id or None if already applied.
 
-    entity_type: 'conversation', 'workspace', or 'tool_call'
+    entity_type: 'conversation', 'workspace', 'tool_call', or 'prompt'
     """
     if entity_type == "conversation":
         table = "conversation_tags"
@@ -42,6 +42,9 @@ def apply_tag(
     elif entity_type == "tool_call":
         table = "tool_call_tags"
         fk_col = "tool_call_id"
+    elif entity_type == "prompt":
+        table = "prompt_tags"
+        fk_col = "prompt_id"
     else:
         raise ValueError(f"Unsupported entity_type: {entity_type}")
 
@@ -73,7 +76,7 @@ def remove_tag(
 ) -> bool:
     """Remove a tag from an entity. Returns True if a row was deleted, False if not applied.
 
-    entity_type: 'conversation', 'workspace', or 'tool_call'
+    entity_type: 'conversation', 'workspace', 'tool_call', or 'prompt'
     """
     if entity_type == "conversation":
         table = "conversation_tags"
@@ -84,6 +87,9 @@ def remove_tag(
     elif entity_type == "tool_call":
         table = "tool_call_tags"
         fk_col = "tool_call_id"
+    elif entity_type == "prompt":
+        table = "prompt_tags"
+        fk_col = "prompt_id"
     else:
         raise ValueError(f"Unsupported entity_type: {entity_type}")
 
@@ -123,7 +129,7 @@ def delete_tag(conn: sqlite3.Connection, name: str, *, commit: bool = False) -> 
 
     # Count and delete associations
     removed = 0
-    for table in ("conversation_tags", "workspace_tags", "tool_call_tags"):
+    for table in ("conversation_tags", "workspace_tags", "tool_call_tags", "prompt_tags"):
         cur = conn.execute(f"DELETE FROM {table} WHERE tag_id = ?", (tag_id,))
         removed += cur.rowcount
 
@@ -144,7 +150,8 @@ def list_tags(conn: sqlite3.Connection) -> list[dict]:
             t.created_at,
             (SELECT COUNT(*) FROM conversation_tags ct WHERE ct.tag_id = t.id) as conversation_count,
             (SELECT COUNT(*) FROM workspace_tags wt WHERE wt.tag_id = t.id) as workspace_count,
-            (SELECT COUNT(*) FROM tool_call_tags tt WHERE tt.tag_id = t.id) as tool_call_count
+            (SELECT COUNT(*) FROM tool_call_tags tt WHERE tt.tag_id = t.id) as tool_call_count,
+            (SELECT COUNT(*) FROM prompt_tags pt WHERE pt.tag_id = t.id) as prompt_count
         FROM tags t
         ORDER BY t.name
     """)
@@ -156,6 +163,7 @@ def list_tags(conn: sqlite3.Connection) -> list[dict]:
             "conversation_count": row["conversation_count"],
             "workspace_count": row["workspace_count"],
             "tool_call_count": row["tool_call_count"],
+            "prompt_count": row["prompt_count"],
         }
         for row in cur.fetchall()
     ]

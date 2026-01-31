@@ -32,6 +32,7 @@ ADAPTER_INTERFACE_VERSION = 1
 NAME = "claude_code"
 DEFAULT_LOCATIONS = ["~/.claude/projects", "~/.config/claude/projects"]
 DEDUP_STRATEGY = "file"  # one conversation per file
+SUPPORTS_LIVE_REGISTRATION = True  # supports tagging during active sessions
 
 # Harness metadata
 HARNESS_SOURCE = "anthropic"

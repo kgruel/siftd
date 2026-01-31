@@ -17,6 +17,7 @@ from siftd.domain import Conversation
 from siftd.ids import ulid as _ulid
 from siftd.model_names import parse_model_name
 from siftd.storage.fts import ensure_fts_table, insert_fts_content
+from siftd.storage.sessions import ensure_prompt_tags_table, ensure_session_tables
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
@@ -64,6 +65,8 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         ensure_canonical_tools(conn)
         ensure_tool_call_tags_table(conn)
         ensure_content_blobs_table(conn)
+        ensure_session_tables(conn)
+        ensure_prompt_tags_table(conn)
     return conn
 
 

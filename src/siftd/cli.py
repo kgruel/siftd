@@ -18,11 +18,18 @@ from siftd.api import (
     remove_tag,
     rename_tag,
 )
+from siftd.api.sessions import (
+    is_session_registered,
+    register_session,
+)
+from siftd.api.sessions import (
+    queue_tag as queue_pending_tag,
+)
 from siftd.backfill import backfill_derivative_tags, backfill_response_attributes, backfill_shell_tags
 from siftd.cli_ask import build_ask_parser
 from siftd.cli_install import build_install_parser
 from siftd.ingestion import IngestStats, ingest_all
-from siftd.paths import data_dir, db_path, ensure_dirs, queries_dir
+from siftd.paths import data_dir, db_path, ensure_dirs, queries_dir, session_id_file
 
 
 def parse_date(value: str | None) -> str | None:
@@ -230,9 +237,119 @@ def _parse_tag_args(positional: list[str]) -> tuple[str, str, list[str]] | None:
     return None
 
 
+def cmd_register(args) -> int:
+    """Register an active session for live tagging."""
+    import os
+
+    db = Path(args.db) if args.db else db_path()
+    ensure_dirs()
+
+    # Create database if it doesn't exist
+    conn = create_database(db)
+
+    session_id = args.session
+    adapter_name = args.adapter
+    workspace_path = args.workspace or os.getcwd()
+
+    # Resolve workspace to absolute path
+    workspace_path = str(Path(workspace_path).resolve())
+
+    # Register the session
+    register_session(conn, session_id, adapter_name, workspace_path, commit=True)
+
+    # Write session ID to XDG state dir
+    sid_file = session_id_file(workspace_path)
+    sid_file.parent.mkdir(parents=True, exist_ok=True)
+    sid_file.write_text(session_id)
+
+    conn.close()
+    print(f"Registered session {session_id[:8]}... for {adapter_name}")
+    return 0
+
+
+def cmd_session_id(args) -> int:
+    """Print the session ID for the current workspace."""
+    import os
+
+    workspace_path = args.workspace or os.getcwd()
+    workspace_path = str(Path(workspace_path).resolve())
+
+    sid_file = session_id_file(workspace_path)
+    if not sid_file.exists():
+        # Exit silently with non-zero for scripting
+        return 1
+
+    session_id = sid_file.read_text().strip()
+    if not session_id:
+        return 1
+
+    print(session_id)
+    return 0
+
+
+def _tag_session(args, db: Path, session_id: str) -> int:
+    """Queue pending tags for a session (--session mode)."""
+    ensure_dirs()
+
+    # Create database if it doesn't exist
+    conn = create_database(db)
+
+    # Check if --remove was specified (not supported for --session)
+    if args.remove:
+        print("Error: --remove not supported with --session")
+        print("Use 'siftd doctor fix --pending-tags' to clear pending tags")
+        conn.close()
+        return 1
+
+    # Parse tag names from positional args
+    tag_names = args.positional or []
+    if not tag_names:
+        print("Usage: siftd tag --session <id> <tag> [tag2 ...]")
+        print("       siftd tag --session <id> --exchange <index> <tag> [tag2 ...]")
+        conn.close()
+        return 1
+
+    # Check if session is registered (warn but proceed)
+    if not is_session_registered(conn, session_id):
+        print(f"Warning: Session {session_id[:8]}... not registered", file=sys.stderr)
+
+    # Determine entity type and exchange index
+    exchange_index = getattr(args, "exchange", None)
+    entity_type = "exchange" if exchange_index is not None else "conversation"
+
+    # Queue each tag
+    queued = 0
+    for tag_name in tag_names:
+        result = queue_pending_tag(
+            conn,
+            session_id,
+            tag_name,
+            entity_type=entity_type,
+            exchange_index=exchange_index,
+            commit=False,
+        )
+        if result:
+            queued += 1
+            if exchange_index is not None:
+                print(f"Queued tag '{tag_name}' for exchange {exchange_index}")
+            else:
+                print(f"Queued tag '{tag_name}' for session {session_id[:8]}...")
+        else:
+            print(f"Tag '{tag_name}' already queued")
+
+    conn.commit()
+    conn.close()
+    return 0
+
+
 def cmd_tag(args) -> int:
     """Apply or remove a tag on a conversation, workspace, or tool_call."""
     db = Path(args.db) if args.db else db_path()
+
+    # Handle --session mode (queue pending tags)
+    session_id = getattr(args, "session", None)
+    if session_id:
+        return _tag_session(args, db, session_id)
 
     if not db.exists():
         print(f"Database not found: {db}")
@@ -1619,6 +1736,34 @@ def main(argv=None) -> int:
     # install (optional dependencies) — defined in cli_install.py
     build_install_parser(subparsers)
 
+    # register
+    p_register = subparsers.add_parser(
+        "register",
+        help="Register an active session for live tagging",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  siftd register --session abc123 --adapter claude_code
+  siftd register --session abc123 --adapter claude_code --workspace /path/to/project""",
+    )
+    p_register.add_argument("--session", "-s", required=True, metavar="ID", help="Harness session ID")
+    p_register.add_argument("--adapter", "-a", required=True, metavar="NAME", help="Adapter name (e.g., claude_code)")
+    p_register.add_argument("--workspace", "-w", metavar="PATH", help="Workspace path (default: current directory)")
+    p_register.set_defaults(func=cmd_register)
+
+    # session-id
+    p_session_id = subparsers.add_parser(
+        "session-id",
+        help="Print the session ID for the current workspace",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  siftd session-id                    # print session ID for current directory
+  siftd session-id --workspace /path  # print session ID for specific workspace
+
+Exits with code 1 if no session ID found (for scripting).""",
+    )
+    p_session_id.add_argument("--workspace", "-w", metavar="PATH", help="Workspace path (default: current directory)")
+    p_session_id.set_defaults(func=cmd_session_id)
+
     # tag
     p_tag = subparsers.add_parser(
         "tag",
@@ -1633,11 +1778,17 @@ def main(argv=None) -> int:
   siftd tag tool_call 01HZ... slow         # tag a tool call
   siftd tag --remove 01HX... important     # remove tag from conversation
   siftd tag --remove --last important      # remove from most recent
-  siftd tag -r workspace 01HY... proj      # remove from workspace""",
+  siftd tag -r workspace 01HY... proj      # remove from workspace
+
+live session tagging:
+  siftd tag --session abc123 decision:auth       # queue tag for session
+  siftd tag --session abc123 --exchange 5 key    # queue tag for exchange 5""",
     )
     p_tag.add_argument("positional", nargs="*", help="[entity_type] entity_id tag [tag2 ...]")
     p_tag.add_argument("-n", "--last", type=int, metavar="N", help="Tag N most recent conversations")
     p_tag.add_argument("-r", "--remove", action="store_true", help="Remove tag instead of applying")
+    p_tag.add_argument("--session", metavar="ID", help="Queue tag for a live session (applied at ingest)")
+    p_tag.add_argument("--exchange", type=int, metavar="INDEX", help="Tag specific exchange (0-based, requires --session)")
     p_tag.set_defaults(func=cmd_tag)
 
     # tags
