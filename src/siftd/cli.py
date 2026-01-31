@@ -1110,6 +1110,7 @@ def cmd_doctor(args) -> int:
         findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
 
         error_count = sum(1 for f in findings if f.severity == "error")
+        warning_count = sum(1 for f in findings if f.severity == "warning")
         out = {
             "findings": [
                 {
@@ -1125,12 +1126,13 @@ def cmd_doctor(args) -> int:
             "summary": {
                 "total": len(findings),
                 "error": error_count,
-                "warning": sum(1 for f in findings if f.severity == "warning"),
+                "warning": warning_count,
                 "info": sum(1 for f in findings if f.severity == "info"),
             },
         }
         print(json.dumps(out, indent=2))
-        return 1 if error_count > 0 else 0
+        fail_count = error_count + warning_count if args.strict else error_count
+        return 1 if fail_count > 0 else 0
 
     if not findings:
         print("No issues found.")
@@ -1168,7 +1170,8 @@ def cmd_doctor(args) -> int:
                     print(f"  {f.fix_command}")
                     seen_commands.add(f.fix_command)
 
-    return 1 if error_count > 0 else 0
+    fail_count = error_count + warning_count if args.strict else error_count
+    return 1 if fail_count > 0 else 0
 
 
 def _fmt_ago(seconds: float) -> str:
@@ -1666,10 +1669,16 @@ def main(argv=None) -> int:
   siftd doctor checks             # list available checks
   siftd doctor fixes              # show fix commands for issues
   siftd doctor ingest-pending     # run specific check
-  siftd doctor --json             # output as JSON""",
+  siftd doctor --json             # output as JSON
+  siftd doctor --strict           # exit 1 on warnings (for CI)
+
+exit codes:
+  0  no errors (or no warnings with --strict)
+  1  errors found (or warnings with --strict)""",
     )
     p_doctor.add_argument("subcommand", nargs="?", help="'checks' to list, 'fixes' to show fixes, or check name")
     p_doctor.add_argument("--json", action="store_true", help="Output as JSON")
+    p_doctor.add_argument("--strict", action="store_true", help="Exit 1 on warnings (not just errors). Useful for CI.")
     p_doctor.set_defaults(func=cmd_doctor)
 
     # peek
