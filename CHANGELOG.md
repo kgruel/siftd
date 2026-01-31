@@ -11,21 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Relative date parsing** — `--since` and `--before` now accept `7d`, `1w`, `yesterday`, `today` in addition to ISO format
-- **Temporal weighting** — `--recency` flag boosts recent results in semantic search (exponential decay, configurable via `--recency-half-life` and `--recency-max-boost`)
-- **IN() list batching** — Queries with large ID lists now batch automatically to avoid SQLite's 999 variable limit
-- Help examples added to `siftd ingest` and `siftd backfill` epilogs
+- `--since`/`--before` accept relative dates: `7d`, `1w`, `yesterday`, `today`
+- `--recency` flag for temporal weighting in semantic search (with `--recency-half-life`, `--recency-max-boost`)
+- Automatic batching for large IN() lists (avoids SQLite 999-variable limit)
+- Help examples in `siftd ingest` and `siftd backfill` epilogs
 
 ### Changed
 
-- **Vector search 14-21x faster** — Similarity computation vectorized with numpy (promoted to core dependency)
-- **Incremental indexing faster** — `exclude_conversation_ids` filter pushed from Python to SQL
-- Unknown `--format` values now error with list of available formatters (was silent fallback)
-- Date format documentation updated across all commands to show relative date support
+- Vector search uses numpy batch operations (14-21x faster); numpy now a core dependency
+- `exclude_conversation_ids` filter pushed to SQL for incremental indexing
+- Unknown `--format` values error with available options (was silent fallback)
 
 ### Removed
 
-- `--role` flag from `siftd ask` — Was ineffective (exchange chunks always matched) and not worth the complexity to fix
+- `--role` flag from `siftd ask` (exchange chunks always matched; not worth fixing)
 
 ## [0.2.0] - 2026-01-30
 
