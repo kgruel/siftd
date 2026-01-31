@@ -1,11 +1,11 @@
 """Public search API for programmatic access by agent harnesses."""
 
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
 from siftd.math import cosine_similarity as _cosine_sim
 from siftd.storage.filters import WhereBuilder
+from siftd.storage.sqlite import open_database
 
 
 @dataclass
@@ -164,8 +164,7 @@ def hybrid_search(
                 candidate_ids = candidate_ids - excluded
             else:
                 # Need to get all conversation IDs minus excluded
-                conn_tmp = sqlite3.connect(db)
-                conn_tmp.row_factory = sqlite3.Row
+                conn_tmp = open_database(db, read_only=True)
                 all_ids = {
                     row["id"]
                     for row in conn_tmp.execute("SELECT id FROM conversations").fetchall()
@@ -175,8 +174,7 @@ def hybrid_search(
 
     # Hybrid recall: FTS5 narrows candidates, embeddings rerank
     if not embeddings_only:
-        main_conn = sqlite3.connect(db)
-        main_conn.row_factory = sqlite3.Row
+        main_conn = open_database(db, read_only=True)
         fts5_ids, _fts5_mode = fts5_recall_conversations(main_conn, query, limit=recall)
         main_conn.close()
 
@@ -218,8 +216,7 @@ def hybrid_search(
         )
 
     # Enrich with metadata from main DB
-    main_conn = sqlite3.connect(db)
-    main_conn.row_factory = sqlite3.Row
+    main_conn = open_database(db, read_only=True)
     conv_ids = list({r["conversation_id"] for r in raw_results})
     placeholders = ",".join("?" * len(conv_ids))
     meta_rows = main_conn.execute(
@@ -289,8 +286,7 @@ def filter_conversations(
     wb.tags_all(all_tags)
     wb.tags_none(exclude_tags)
 
-    conn = sqlite3.connect(db)
-    conn.row_factory = sqlite3.Row
+    conn = open_database(db, read_only=True)
 
     sql = f"""
         SELECT DISTINCT c.id
@@ -328,8 +324,7 @@ def resolve_role_ids(
     if candidate_ids is not None and not candidate_ids:
         return None
 
-    conn = sqlite3.connect(db)
-    conn.row_factory = sqlite3.Row
+    conn = open_database(db, read_only=True)
 
     if candidate_ids is not None:
         placeholders = ",".join("?" * len(candidate_ids))
@@ -386,8 +381,7 @@ def get_active_conversation_ids(db: Path) -> set[str]:
 
     file_paths = [str(s.file_path) for s in sessions]
 
-    conn = sqlite3.connect(db)
-    conn.row_factory = sqlite3.Row
+    conn = open_database(db, read_only=True)
     placeholders = ",".join("?" * len(file_paths))
     rows = conn.execute(
         f"SELECT conversation_id FROM ingested_files WHERE path IN ({placeholders}) AND conversation_id IS NOT NULL",

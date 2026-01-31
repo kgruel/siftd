@@ -31,9 +31,7 @@ def _apply_ask_config(args) -> None:
 
 def cmd_ask(args) -> int:
     """Semantic search over conversation content using embeddings."""
-    import sqlite3 as _sqlite3
-
-    from siftd.api import open_embeddings_db, search_similar
+    from siftd.api import open_database, open_embeddings_db, search_similar
     from siftd.embeddings import embeddings_available
 
     # Apply config defaults before processing
@@ -121,8 +119,7 @@ def cmd_ask(args) -> int:
             if candidate_ids is not None:
                 candidate_ids = candidate_ids - exclude_active_ids
             else:
-                conn_tmp = _sqlite3.connect(db)
-                conn_tmp.row_factory = _sqlite3.Row
+                conn_tmp = open_database(db, read_only=True)
                 all_ids = {
                     row["id"]
                     for row in conn_tmp.execute("SELECT id FROM conversations").fetchall()
@@ -132,12 +129,9 @@ def cmd_ask(args) -> int:
 
     # Hybrid recall: FTS5 narrows candidates, embeddings rerank
     if not args.embeddings_only:
-        import sqlite3 as _sqlite3_main
-
         from siftd.api import fts5_recall_conversations
 
-        main_conn = _sqlite3_main.connect(db)
-        main_conn.row_factory = _sqlite3_main.Row
+        main_conn = open_database(db, read_only=True)
         fts5_ids, fts5_mode = fts5_recall_conversations(main_conn, query, limit=args.recall)
         main_conn.close()
 
@@ -229,8 +223,7 @@ def cmd_ask(args) -> int:
         results = results[:args.limit]
 
     # Enrich results with metadata from main DB
-    main_conn = _sqlite3.connect(db)
-    main_conn.row_factory = _sqlite3.Row
+    main_conn = open_database(db, read_only=True)
 
     # Enrich results with file refs (skip for --conversations mode)
     if not args.conversations:
