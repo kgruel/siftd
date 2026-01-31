@@ -188,8 +188,8 @@ def cmd_install(args) -> int:
         print("  siftd ask --index    # build embeddings index")
         print('  siftd ask "query"    # search')
     else:
-        print("Warning: Installation completed but embed dependencies not detected.")
-        print("You may need to restart your shell or check for errors above.")
+        print("Warning: Installation completed but embed dependencies not detected.", file=sys.stderr)
+        print("You may need to restart your shell or check for errors above.", file=sys.stderr)
 
     return 0
 

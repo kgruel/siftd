@@ -31,6 +31,7 @@ Optional peek hooks (for `siftd peek` support):
     show "preview unavailable" in peek listings. See docs/writing-adapters.md.
 """
 
+import sys
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -127,7 +128,7 @@ def parse(source: Source) -> Iterable[Conversation]:
     if errors:
         # Log or handle parse errors
         for e in errors:
-            print(f"Warning: {path}:{e.line_number}: {e.error}")
+            print(f"Warning: {path}:{e.line_number}: {e.error}", file=sys.stderr)
     if not records:
         return
 
