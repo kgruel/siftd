@@ -263,6 +263,30 @@ def parse(source):
         assert findings[0].severity == "warning"
         assert "empty" in findings[0].message
 
+    def test_invalid_sql_syntax(self, check_context):
+        """Reports error for invalid SQL syntax via EXPLAIN."""
+        query_file = check_context.queries_dir / "bad_syntax.sql"
+        query_file.write_text("SELECT * FROM WHERE")  # Invalid SQL
+
+        check = DropInsValidCheck()
+        findings = check.run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].check == "drop-ins-valid"
+        assert findings[0].severity == "error"
+        assert "bad_syntax.sql" in findings[0].message
+
+    def test_valid_sql_with_placeholders(self, check_context):
+        """Valid SQL with $var placeholders should pass."""
+        query_file = check_context.queries_dir / "valid.sql"
+        query_file.write_text("SELECT * FROM foo WHERE id = $id AND name = $name")
+
+        check = DropInsValidCheck()
+        findings = check.run(check_context)
+
+        # No findings for valid SQL (table doesn't exist but syntax is valid)
+        assert findings == []
+
     def test_skips_underscore_files(self, check_context):
         """Skips files starting with underscore."""
         adapter_file = check_context.adapters_dir / "_private.py"

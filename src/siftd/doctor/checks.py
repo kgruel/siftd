@@ -410,12 +410,11 @@ class DropInsValidCheck:
         return findings
 
     def _check_queries(self, queries_dir: Path) -> list[Finding]:
-        """Validate query files have valid syntax."""
+        """Validate query files have valid syntax using SQLite EXPLAIN."""
         findings = []
 
         if not queries_dir.is_dir():
             return findings
-
 
         for sql_file in sorted(queries_dir.glob("*.sql")):
             try:
@@ -433,14 +432,14 @@ class DropInsValidCheck:
                     )
                     continue
 
-                # Check for balanced quotes (basic syntax check)
-                single_quotes = content.count("'") - content.count("\\'")
-                if single_quotes % 2 != 0:
+                # Use SQLite EXPLAIN to validate syntax
+                error = self._validate_sql_syntax(content)
+                if error:
                     findings.append(
                         Finding(
                             check=self.name,
                             severity="error",
-                            message=f"Query '{sql_file.name}': unbalanced single quotes",
+                            message=f"Query '{sql_file.name}': {error}",
                             fix_available=False,
                         )
                     )
@@ -456,6 +455,32 @@ class DropInsValidCheck:
                 )
 
         return findings
+
+    def _validate_sql_syntax(self, sql: str) -> str | None:
+        """Return error message if SQL has syntax errors, None if valid.
+
+        Uses SQLite EXPLAIN on an in-memory database to catch syntax errors.
+        Missing table/column errors are ignored (runtime validation).
+        """
+        import re
+
+        # Substitute $var placeholders with NULL to allow EXPLAIN to parse
+        # Query files use $var for user-provided values
+        sql_for_explain = re.sub(r"\$\w+", "NULL", sql)
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.execute(f"EXPLAIN {sql_for_explain}")
+            return None
+        except sqlite3.Error as e:
+            msg = str(e)
+            # Ignore missing table/column errors — those are runtime validation
+            # Real syntax errors: "syntax error", "incomplete input", etc.
+            if msg.startswith("no such table:") or msg.startswith("no such column:"):
+                return None
+            return msg
+        finally:
+            conn.close()
 
     def fix(self, finding: Finding) -> FixResult | None:
         # No automated fix for invalid drop-ins
