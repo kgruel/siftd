@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-01-31
+
+### Added
+
+- **Live session tagging** — Tag active sessions before they're ingested:
+  - `/siftd:tag` Claude Code skill for tagging from within sessions
+  - `active_sessions` and `pending_tags` tables for deferred tag application
+  - Tags applied automatically at next ingest
+  - `siftd doctor fix --pending-tags` to clean up orphaned/stale pending tags
+- **Skill interface versioning** — `skill-interface-version: 1` in skill frontmatter for stability promises
+- **Index compatibility validation** — Embedding index now tracks schema version, backend, model, and dimension:
+  - Actionable error messages when backend/model mismatch detected
+  - `EmbeddingsCompatCheck` doctor check for configuration drift
+  - Incremental indexing blocked when it would mix incompatible embeddings
+- **Score explainability** — `--json` output includes `breakdown` with component scores:
+  - `embedding_sim`, `recency_boost`, `pre_mmr_score`, `mmr_penalty`, `mmr_rank`, `final_score`
+  - `fts5_matched` and `fts5_mode` for hybrid search transparency
+- **Deterministic search results** — Chunk ID (ULID) used as tie-breaker throughout scoring pipeline
+- **3 new doctor checks**:
+  - `fts-stale` — Detects FTS5 index out of sync with content tables
+  - `fts-integrity` — Checks FTS5 table integrity for corruption
+  - `config-valid` — Validates config file syntax and formatter names
+
+### Changed
+
+- `--exclude-tag` renamed to `--no-tag` in export command (consistency with other filters)
+- Architectural tests moved to `tests/architecture/` for clearer separation
+
+### Fixed
+
+- **P0**: Session ID mismatch in live tagging — hooks now use namespaced `claude_code::sessionId`
+- **P1**: Active session staleness detection — added `last_seen_at` timestamp
+- Test isolation issues with XDG_CONFIG_HOME in ask tests
+
 ## [0.3.0] - 2026-01-30
 
 ### Added
@@ -144,7 +178,8 @@ Initial public release.
 
 ---
 
-[Unreleased]: https://github.com/anthropics/siftd/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/anthropics/siftd/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/anthropics/siftd/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/anthropics/siftd/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/anthropics/siftd/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/anthropics/siftd/compare/v0.1.0...v0.1.1
