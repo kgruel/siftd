@@ -155,3 +155,62 @@ def test_domain_is_pure():
     if violations:
         msg = "Domain layer purity violations:\n" + "\n".join(violations)
         pytest.fail(msg)
+
+
+def find_sqlite3_connect_calls(file_path: Path) -> list[tuple[int, str]]:
+    """Find sqlite3.connect() calls in a Python file.
+
+    Returns list of (line_number, call_text) tuples.
+    Excludes :memory: connections which don't touch the filesystem.
+    """
+    source = file_path.read_text()
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    calls = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            # Match sqlite3.connect(...)
+            if (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "connect"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "sqlite3"
+            ):
+                # Allow :memory: connections (no filesystem access)
+                if node.args and isinstance(node.args[0], ast.Constant):
+                    if node.args[0].value == ":memory:":
+                        continue
+                calls.append((node.lineno, "sqlite3.connect()"))
+    return calls
+
+
+def test_no_sqlite3_connect_outside_storage():
+    """Verify sqlite3.connect() is only used in storage/.
+
+    All DB connections should go through open_database() or open_embeddings_db()
+    to ensure consistent read-only handling and avoid WAL/SHM file creation.
+    """
+    src_dir = Path(__file__).parent.parent / "src" / "siftd"
+
+    violations = []
+    storage_dir = src_dir / "storage"
+
+    for py_file in src_dir.rglob("*.py"):
+        # Allow sqlite3.connect() inside storage/
+        if storage_dir in py_file.parents or py_file.parent == storage_dir:
+            continue
+
+        for line_num, call_text in find_sqlite3_connect_calls(py_file):
+            rel_path = py_file.relative_to(src_dir.parent.parent)
+            violations.append(f"{rel_path}:{line_num}: {call_text}")
+
+    if violations:
+        msg = (
+            "sqlite3.connect() found outside storage/. "
+            "Use open_database() or open_embeddings_db() instead:\n"
+            + "\n".join(violations)
+        )
+        pytest.fail(msg)

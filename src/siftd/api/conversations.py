@@ -560,8 +560,7 @@ def run_query_file(
         raise QueryError(f"Missing parameter variables: {', '.join(sorted(unbound))}")
 
     # 6. Execute with params
-    conn = sqlite3.connect(db)
-    conn.row_factory = sqlite3.Row
+    conn = open_database(db, read_only=False)
 
     try:
         statements = [s.strip() for s in sql.split(";") if s.strip()]

@@ -3,7 +3,6 @@
 Builds and maintains the embeddings index for semantic search.
 """
 
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +18,7 @@ from siftd.storage.embeddings import (
     set_meta,
     store_chunk,
 )
+from siftd.storage.sqlite import open_database
 
 
 @dataclass
@@ -73,8 +73,7 @@ def build_embeddings_index(
     already_indexed = get_indexed_conversation_ids(embed_conn)
 
     # Get exchange-window chunks from main DB
-    main_conn = sqlite3.connect(db)
-    main_conn.row_factory = sqlite3.Row
+    main_conn = open_database(db, read_only=True)
 
     tokenizer = _get_tokenizer()
     target_tokens = 256
