@@ -1593,7 +1593,16 @@ def main(argv=None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # ingest
-    p_ingest = subparsers.add_parser("ingest", help="Ingest logs from all sources")
+    p_ingest = subparsers.add_parser(
+        "ingest",
+        help="Ingest logs from all sources",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  siftd ingest                      # ingest from all adapters
+  siftd ingest -v                   # show all files including skipped
+  siftd ingest -a claude_code       # only run claude_code adapter
+  siftd ingest -p ~/logs -p /tmp    # scan additional directories""",
+    )
     p_ingest.add_argument("-v", "--verbose", action="store_true", help="Show all files including skipped")
     p_ingest.add_argument("-p", "--path", action="append", metavar="DIR", help="Additional directories to scan (can be repeated)")
     p_ingest.add_argument("-a", "--adapter", action="append", metavar="NAME", help="Only run specific adapter(s) (can be repeated)")
@@ -1708,7 +1717,15 @@ def main(argv=None) -> int:
     p_query.set_defaults(func=cmd_query)
 
     # backfill
-    p_backfill = subparsers.add_parser("backfill", help="Backfill derived data from existing records")
+    p_backfill = subparsers.add_parser(
+        "backfill",
+        help="Backfill derived data from existing records",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  siftd backfill                    # backfill response attributes (cache tokens)
+  siftd backfill --shell-tags       # categorize shell commands as shell:git, shell:test, etc.
+  siftd backfill --derivative-tags  # mark siftd-generated conversations""",
+    )
     p_backfill.add_argument("--shell-tags", action="store_true", help="Tag shell.execute calls with shell:* categories")
     p_backfill.add_argument("--derivative-tags", action="store_true", help="Tag conversations containing siftd ask/query as siftd:derivative")
     p_backfill.set_defaults(func=cmd_backfill)
