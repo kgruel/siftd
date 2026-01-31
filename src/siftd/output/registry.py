@@ -2,14 +2,13 @@
 
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
 from typing import TYPE_CHECKING
 
+from siftd.output.validation import validate_formatter
 from siftd.plugin_discovery import (
     PluginInfo,
     load_dropin_modules,
     load_entrypoint_modules,
-    validate_required_interface,
 )
 
 if TYPE_CHECKING:
@@ -18,23 +17,8 @@ if TYPE_CHECKING:
 # Type alias for formatter factories
 FormatterFactory = Callable[[], "OutputFormatter"]
 
-# Required module-level attributes for a valid formatter module
-_REQUIRED_ATTRS = {
-    "NAME": str,
-}
-
-# Required callable attributes
-_REQUIRED_CALLABLES = ["create_formatter"]
-
-
-def _validate_formatter(module: ModuleType, origin: str) -> str | None:
-    """Validate a formatter module has the required interface.
-
-    Returns an error message string if invalid, None if valid.
-    """
-    return validate_required_interface(
-        module, origin, _REQUIRED_ATTRS, _REQUIRED_CALLABLES
-    )
+# Re-export for backwards compatibility (deprecated, use siftd.output.validation)
+_validate_formatter = validate_formatter
 
 
 def load_builtin_factories() -> dict[str, FormatterFactory]:

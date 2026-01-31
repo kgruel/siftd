@@ -3,8 +3,6 @@
 from siftd.doctor import (
     CheckInfo,
     Finding,
-    FixResult,
-    apply_fix,
     list_checks,
     run_checks,
 )
@@ -12,8 +10,6 @@ from siftd.doctor import (
 __all__ = [
     "CheckInfo",
     "Finding",
-    "FixResult",
-    "apply_fix",
     "list_checks",
     "run_checks",
 ]

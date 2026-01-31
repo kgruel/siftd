@@ -17,6 +17,7 @@ from siftd.doctor.checks import (
     IngestPendingCheck,
     OrphanedChunksCheck,
     PricingGapsCheck,
+    SchemaCurrentCheck,
 )
 
 
@@ -62,6 +63,7 @@ class TestListChecks:
         assert "pricing-gaps" in names
         assert "drop-ins-valid" in names
         assert "freelist" in names
+        assert "schema-current" in names
 
     def test_has_fix_matches_class_attribute(self):
         """has_fix in CheckInfo matches the class attribute on each check."""
@@ -82,10 +84,14 @@ class TestListChecks:
             assert hasattr(check, "description")
             assert hasattr(check, "has_fix")
             assert hasattr(check, "requires_db")
+            assert hasattr(check, "requires_embed_db")
+            assert hasattr(check, "cost")
             assert isinstance(check.name, str)
             assert isinstance(check.description, str)
             assert isinstance(check.has_fix, bool)
             assert isinstance(check.requires_db, bool)
+            assert isinstance(check.requires_embed_db, bool)
+            assert check.cost in ("fast", "slow")
 
     def test_requires_db_attribute(self):
         """requires_db in CheckInfo matches expected values."""
@@ -98,9 +104,42 @@ class TestListChecks:
         assert by_name["orphaned-chunks"] is True
         assert by_name["pricing-gaps"] is True
         assert by_name["freelist"] is True
+        assert by_name["schema-current"] is True
         # Checks that don't need the database
         assert by_name["drop-ins-valid"] is False
         assert by_name["embeddings-available"] is False
+
+    def test_requires_embed_db_attribute(self):
+        """requires_embed_db in CheckInfo matches expected values."""
+        checks = list_checks()
+        by_name = {c.name: c.requires_embed_db for c in checks}
+        # Checks that need the embeddings database
+        assert by_name["embeddings-stale"] is True
+        assert by_name["orphaned-chunks"] is True
+        # Checks that don't need the embeddings database
+        assert by_name["ingest-pending"] is False
+        assert by_name["ingest-errors"] is False
+        assert by_name["pricing-gaps"] is False
+        assert by_name["drop-ins-valid"] is False
+        assert by_name["embeddings-available"] is False
+        assert by_name["freelist"] is False
+        assert by_name["schema-current"] is False
+
+    def test_cost_attribute(self):
+        """cost in CheckInfo matches expected values."""
+        checks = list_checks()
+        by_name = {c.name: c.cost for c in checks}
+        # Only ingest-pending is slow (runs discover())
+        assert by_name["ingest-pending"] == "slow"
+        # Everything else is fast
+        assert by_name["ingest-errors"] == "fast"
+        assert by_name["embeddings-stale"] == "fast"
+        assert by_name["orphaned-chunks"] == "fast"
+        assert by_name["pricing-gaps"] == "fast"
+        assert by_name["drop-ins-valid"] == "fast"
+        assert by_name["embeddings-available"] == "fast"
+        assert by_name["freelist"] == "fast"
+        assert by_name["schema-current"] == "fast"
 
 
 class TestRunChecks:
@@ -326,6 +365,32 @@ def parse(source):
         findings = check.run(check_context)
         assert findings == []
 
+    def test_adapter_syntax_error(self, check_context):
+        """Reports error for adapter with Python syntax error."""
+        adapter_file = check_context.adapters_dir / "syntax_error.py"
+        adapter_file.write_text("def broken(\n")  # Invalid Python syntax
+
+        check = DropInsValidCheck()
+        findings = check.run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].check == "drop-ins-valid"
+        assert findings[0].severity == "error"
+        assert "syntax_error.py" in findings[0].message
+        assert "syntax error" in findings[0].message
+
+    def test_formatter_syntax_error(self, check_context):
+        """Reports error for formatter with Python syntax error."""
+        formatter_file = check_context.formatters_dir / "bad_syntax.py"
+        formatter_file.write_text("class Broken(:\n")  # Invalid Python syntax
+
+        check = DropInsValidCheck()
+        findings = check.run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].check == "drop-ins-valid"
+        assert "syntax error" in findings[0].message
+
 
 class TestFindingDataclass:
     """Finding defaults that callers depend on."""
@@ -514,3 +579,109 @@ class TestFreelistCheck:
             assert "page_size" in f.context
             assert "wasted_bytes" in f.context
             assert "tip" in f.context
+
+
+class TestSchemaCurrentCheck:
+    """Tests for the schema-current check."""
+
+    def test_fully_migrated_db_no_findings(self, check_context):
+        """Returns no findings when database is fully migrated."""
+        # The test_db fixture creates a fully migrated DB
+        check = SchemaCurrentCheck()
+        findings = check.run(check_context)
+        assert findings == []
+
+    def test_detects_missing_error_column(self, tmp_path):
+        """Reports finding when error column is missing from ingested_files."""
+        import sqlite3
+
+        # Create a minimal DB without the error column
+        db_path = tmp_path / "old.db"
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE ingested_files (
+                id TEXT PRIMARY KEY,
+                path TEXT NOT NULL UNIQUE,
+                file_hash TEXT NOT NULL,
+                harness_id TEXT NOT NULL,
+                conversation_id TEXT,
+                ingested_at TEXT NOT NULL
+            )
+        """)
+        # Create prompts table without CASCADE to trigger that check too
+        conn.execute("""
+            CREATE TABLE prompts (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                external_id TEXT,
+                timestamp TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+        ctx = CheckContext(
+            db_path=db_path,
+            embed_db_path=tmp_path / "embed.db",
+            adapters_dir=tmp_path / "adapters",
+            formatters_dir=tmp_path / "formatters",
+            queries_dir=tmp_path / "queries",
+        )
+        try:
+            check = SchemaCurrentCheck()
+            findings = check.run(ctx)
+
+            assert len(findings) == 1
+            assert findings[0].check == "schema-current"
+            assert findings[0].severity == "warning"
+            assert "pending" in findings[0].message
+            assert findings[0].fix_available is True
+            assert findings[0].fix_command == "siftd ingest"
+            assert "pending" in findings[0].context
+            assert len(findings[0].context["pending"]) > 0
+        finally:
+            ctx.close()
+
+    def test_finding_structure(self, tmp_path):
+        """Findings have correct structure when migrations are pending."""
+        import sqlite3
+
+        # Create a bare-bones DB
+        db_path = tmp_path / "minimal.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("""
+            CREATE TABLE ingested_files (
+                id TEXT PRIMARY KEY,
+                path TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE prompts (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+        ctx = CheckContext(
+            db_path=db_path,
+            embed_db_path=tmp_path / "embed.db",
+            adapters_dir=tmp_path,
+            formatters_dir=tmp_path,
+            queries_dir=tmp_path,
+        )
+        try:
+            check = SchemaCurrentCheck()
+            findings = check.run(ctx)
+
+            assert len(findings) == 1
+            f = findings[0]
+            assert f.check == "schema-current"
+            assert f.severity == "warning"
+            assert f.fix_available is True
+            assert f.fix_command == "siftd ingest"
+            assert isinstance(f.context["pending"], list)
+        finally:
+            ctx.close()

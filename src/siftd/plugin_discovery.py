@@ -1,5 +1,6 @@
 """Plugin discovery: shared utilities for loading drop-in and entry point plugins."""
 
+import ast
 import importlib.util
 import sys
 from collections.abc import Callable
@@ -232,3 +233,49 @@ def validate_dropin_module(
 
     except Exception as e:
         return None, [f"import failed: {e}"]
+
+
+def validate_dropin_ast(
+    py_file: Path,
+    required_names: list[str],
+) -> list[str]:
+    """Validate a drop-in module has required names using AST parsing only.
+
+    This is a side-effect-free validation that doesn't import/execute the module.
+    Useful for doctor checks to validate plugins without running arbitrary code.
+
+    Args:
+        py_file: Path to the .py file.
+        required_names: List of required module-level names (attributes or functions).
+
+    Returns:
+        List of error strings. Empty list if all required names are present.
+    """
+    try:
+        source = py_file.read_text()
+    except Exception as e:
+        return [f"read failed: {e}"]
+
+    try:
+        tree = ast.parse(source, filename=str(py_file))
+    except SyntaxError as e:
+        return [f"syntax error: {e.msg} (line {e.lineno})"]
+
+    # Collect all module-level names (assignments, function defs, class defs)
+    defined_names: set[str] = set()
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    defined_names.add(target.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            defined_names.add(node.target.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined_names.add(node.name)
+
+    # Check for missing required names
+    missing = [name for name in required_names if name not in defined_names]
+    if missing:
+        return [f"missing '{name}'" for name in missing]
+
+    return []

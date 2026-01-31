@@ -7,7 +7,6 @@ from siftd.doctor.checks import (
     CheckContext,
     CheckInfo,
     Finding,
-    FixResult,
 )
 
 
@@ -19,6 +18,8 @@ def list_checks() -> list[CheckInfo]:
             description=check.description,
             has_fix=check.has_fix,
             requires_db=check.requires_db,
+            requires_embed_db=check.requires_embed_db,
+            cost=check.cost,
         )
         for check in BUILTIN_CHECKS
     ]
@@ -106,27 +107,3 @@ def run_checks(
         return findings
     finally:
         ctx.close()
-
-
-def apply_fix(finding: Finding) -> FixResult:
-    """Apply fix for a finding (if available).
-
-    Note: v1 fixes are "report the command" not "execute it".
-
-    Args:
-        finding: The finding to fix.
-
-    Returns:
-        FixResult indicating success/failure.
-    """
-    if not finding.fix_available:
-        return FixResult(success=False, message="No fix available for this finding")
-
-    if not finding.fix_command:
-        return FixResult(success=False, message="Fix available but no command specified")
-
-    # v1: Just report the command, don't execute
-    return FixResult(
-        success=True,
-        message=f"To fix: {finding.fix_command}",
-    )

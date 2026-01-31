@@ -1,60 +1,13 @@
 """Adapter registry: discovers built-in, drop-in, and entry point adapters."""
 
-import inspect
 from pathlib import Path
-from types import ModuleType
 
 from siftd.adapters import aider, claude_code, codex_cli, gemini_cli
+from siftd.adapters.validation import validate_adapter
 from siftd.plugin_discovery import PluginInfo, load_dropin_modules, load_entrypoint_modules
 
-# Current adapter interface version
-ADAPTER_INTERFACE_VERSION = 1
-
-# Required module-level attributes for a valid adapter
-_REQUIRED_ATTRS = {
-    "ADAPTER_INTERFACE_VERSION": int,
-    "NAME": str,
-    "DEFAULT_LOCATIONS": list,
-    "DEDUP_STRATEGY": str,
-    "HARNESS_SOURCE": str,
-}
-
-# Required callable attributes
-_REQUIRED_CALLABLES = ["discover", "can_handle", "parse"]
-
-_VALID_DEDUP_STRATEGIES = {"file", "session"}
-
-
-def _validate_adapter(module: ModuleType, origin: str) -> str | None:
-    """Validate an adapter module has the required interface.
-
-    Returns an error message string if invalid, None if valid.
-    """
-    for attr, expected_type in _REQUIRED_ATTRS.items():
-        if not hasattr(module, attr):
-            return f"{origin}: missing required attribute '{attr}'"
-        value = getattr(module, attr)
-        if not isinstance(value, expected_type):
-            return f"{origin}: '{attr}' must be {expected_type.__name__}, got {type(value).__name__}"
-
-    adapter_version = getattr(module, "ADAPTER_INTERFACE_VERSION")
-    if adapter_version != ADAPTER_INTERFACE_VERSION:
-        return f"{origin}: incompatible interface version {adapter_version}, expected {ADAPTER_INTERFACE_VERSION}"
-
-    if module.DEDUP_STRATEGY not in _VALID_DEDUP_STRATEGIES:
-        return f"{origin}: DEDUP_STRATEGY must be 'file' or 'session', got '{module.DEDUP_STRATEGY}'"
-
-    for func_name in _REQUIRED_CALLABLES:
-        if not hasattr(module, func_name) or not callable(getattr(module, func_name)):
-            return f"{origin}: missing required function '{func_name}'"
-
-    # Validate discover() accepts locations= keyword argument
-    discover_func = getattr(module, "discover")
-    sig = inspect.signature(discover_func)
-    if "locations" not in sig.parameters:
-        return f"{origin}: discover() must accept 'locations' keyword argument"
-
-    return None
+# Re-export for backwards compatibility (deprecated, use siftd.adapters.validation)
+_validate_adapter = validate_adapter
 
 
 def load_builtin_adapters() -> list[PluginInfo]:

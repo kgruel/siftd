@@ -13,7 +13,7 @@ import pytest
 from conftest import FIXTURES_DIR
 
 from siftd.adapters import aider, claude_code, codex_cli, gemini_cli
-from siftd.adapters.registry import ADAPTER_INTERFACE_VERSION, _validate_adapter
+from siftd.adapters.validation import ADAPTER_INTERFACE_VERSION, validate_adapter
 from siftd.domain.source import Source
 
 
@@ -36,12 +36,12 @@ class TestValidateAdapter:
     def test_valid_adapter_passes(self):
         """Adapter with correct version passes validation."""
         module = self._make_valid_adapter(ADAPTER_INTERFACE_VERSION)
-        assert _validate_adapter(module, "test") is None
+        assert validate_adapter(module, "test") is None
 
     def test_version_mismatch_returns_error(self):
         """Adapter with wrong version returns error."""
         module = self._make_valid_adapter(version=999)
-        error = _validate_adapter(module, "test-adapter")
+        error = validate_adapter(module, "test-adapter")
         assert error is not None
         assert "incompatible interface version 999" in error
         assert f"expected {ADAPTER_INTERFACE_VERSION}" in error
@@ -49,7 +49,7 @@ class TestValidateAdapter:
     def test_version_zero_returns_error(self):
         """Adapter with version 0 returns error."""
         module = self._make_valid_adapter(version=0)
-        error = _validate_adapter(module, "old-adapter")
+        error = validate_adapter(module, "old-adapter")
         assert error is not None
         assert "incompatible interface version 0" in error
 
@@ -57,7 +57,7 @@ class TestValidateAdapter:
         """Adapter with future version returns error."""
         future_version = ADAPTER_INTERFACE_VERSION + 1
         module = self._make_valid_adapter(version=future_version)
-        error = _validate_adapter(module, "future-adapter")
+        error = validate_adapter(module, "future-adapter")
         assert error is not None
         assert f"incompatible interface version {future_version}" in error
 

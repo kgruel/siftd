@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 from importlib.metadata import distribution
+from pathlib import Path
 
 
 def detect_install_method() -> str:
@@ -41,7 +42,7 @@ def detect_install_method() -> str:
         dist = distribution("siftd")
         files = dist.files
         if files:
-            location = str(files[0].locate().parent)
+            location = str(Path(files[0].locate()).parent)
             user_site = site.getusersitepackages()
             if user_site and location.startswith(user_site):
                 return "pip_user"

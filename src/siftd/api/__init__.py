@@ -29,8 +29,6 @@ from siftd.api.database import (
 from siftd.api.doctor import (
     CheckInfo,
     Finding,
-    FixResult,
-    apply_fix,
     list_checks,
     run_checks,
 )
@@ -118,8 +116,6 @@ __all__ = [
     # doctor
     "CheckInfo",
     "Finding",
-    "FixResult",
-    "apply_fix",
     "list_checks",
     "run_checks",
     # peek

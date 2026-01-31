@@ -3,19 +3,32 @@
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
+
+# Cost classification for --fast mode filtering
+CheckCost = Literal["fast", "slow"]
 
 
 @dataclass
 class Finding:
-    """A single issue detected by a check."""
+    """A single issue detected by a check.
 
-    check: str  # check name (e.g., "ingest-pending")
-    severity: str  # "info" | "warning" | "error"
-    message: str  # human-readable description
+    Attributes:
+        check: Check name that produced this finding (e.g., "ingest-pending").
+        severity: One of "info", "warning", or "error".
+        message: Human-readable description of the issue.
+        fix_available: Whether a fix suggestion exists.
+        fix_command: CLI command to fix the issue (advisory only, not executed
+            automatically). User must run this command manually.
+        context: Optional structured data for programmatic consumers.
+    """
+
+    check: str
+    severity: str
+    message: str
     fix_available: bool
-    fix_command: str | None = None  # CLI command if fix available
-    context: dict | None = None  # optional structured data
+    fix_command: str | None = None
+    context: dict | None = None
 
 
 @dataclass
@@ -26,14 +39,8 @@ class CheckInfo:
     description: str
     has_fix: bool
     requires_db: bool
-
-
-@dataclass
-class FixResult:
-    """Result of applying a fix."""
-
-    success: bool
-    message: str
+    requires_embed_db: bool
+    cost: CheckCost
 
 
 @dataclass
@@ -77,16 +84,30 @@ class CheckContext:
 
 
 class Check(Protocol):
-    """Protocol for health checks."""
+    """Protocol for health checks.
+
+    Checks detect issues and may provide fix suggestions via Finding.fix_command.
+    Fixes are advisory only - they report what command to run but don't execute it.
+
+    Attributes:
+        name: Unique check identifier (e.g., "ingest-pending").
+        description: Human-readable description of what the check does.
+        has_fix: Whether this check can suggest fixes (via Finding.fix_command).
+        requires_db: Whether check needs main database to exist.
+        requires_embed_db: Whether check needs embeddings database to exist.
+        cost: "fast" or "slow" for --fast mode filtering.
+    """
 
     name: str
     description: str
     has_fix: bool
-    requires_db: bool  # Whether check needs main database to exist
+    requires_db: bool
+    requires_embed_db: bool
+    cost: CheckCost
 
-    def run(self, ctx: CheckContext) -> list[Finding]: ...
-
-    def fix(self, finding: Finding) -> FixResult | None: ...
+    def run(self, ctx: CheckContext) -> list[Finding]:
+        """Run the check and return any findings."""
+        ...
 
 
 # =============================================================================
@@ -101,6 +122,8 @@ class IngestPendingCheck:
     description = "Files discovered by adapters but not yet ingested"
     has_fix = True
     requires_db = True
+    requires_embed_db = False
+    cost: CheckCost = "slow"  # Runs discover() on all adapters
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         from siftd.adapters.registry import load_all_adapters
@@ -149,10 +172,6 @@ class IngestPendingCheck:
 
         return findings
 
-    def fix(self, finding: Finding) -> FixResult | None:
-        # v1: report only, don't execute
-        return None
-
 
 class IngestErrorsCheck:
     """Reports files that failed ingestion."""
@@ -161,6 +180,8 @@ class IngestErrorsCheck:
     description = "Files that failed ingestion (recorded with error)"
     has_fix = False
     requires_db = True
+    requires_embed_db = False
+    cost: CheckCost = "fast"
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         findings = []
@@ -205,9 +226,6 @@ class IngestErrorsCheck:
 
         return findings
 
-    def fix(self, finding: Finding) -> FixResult | None:
-        return None
-
 
 class EmbeddingsStaleCheck:
     """Detects conversations not indexed in embeddings database."""
@@ -216,6 +234,8 @@ class EmbeddingsStaleCheck:
     description = "Conversations not indexed in embeddings database"
     has_fix = True
     requires_db = True
+    requires_embed_db = True
+    cost: CheckCost = "fast"
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         from siftd.embeddings import embeddings_available
@@ -267,10 +287,6 @@ class EmbeddingsStaleCheck:
 
         return []
 
-    def fix(self, finding: Finding) -> FixResult | None:
-        # v1: report only, don't execute
-        return None
-
 
 class PricingGapsCheck:
     """Detects models used in responses without pricing data."""
@@ -279,6 +295,8 @@ class PricingGapsCheck:
     description = "Models used in responses without pricing data"
     has_fix = False
     requires_db = True
+    requires_embed_db = False
+    cost: CheckCost = "fast"
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         findings = []
@@ -325,10 +343,6 @@ class PricingGapsCheck:
 
         return findings
 
-    def fix(self, finding: Finding) -> FixResult | None:
-        # No automated fix for pricing gaps
-        return None
-
 
 class DropInsValidCheck:
     """Validates drop-in adapters, formatters, and queries can load."""
@@ -337,6 +351,8 @@ class DropInsValidCheck:
     description = "Drop-in adapters, formatters, and queries load without errors"
     has_fix = False
     requires_db = False
+    requires_embed_db = False
+    cost: CheckCost = "fast"
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         findings = []
@@ -352,10 +368,27 @@ class DropInsValidCheck:
 
         return findings
 
+    # Required module-level names for adapters (must be defined at module level)
+    _ADAPTER_REQUIRED_NAMES = [
+        "ADAPTER_INTERFACE_VERSION",
+        "NAME",
+        "DEFAULT_LOCATIONS",
+        "DEDUP_STRATEGY",
+        "HARNESS_SOURCE",
+        "discover",
+        "can_handle",
+        "parse",
+    ]
+
+    # Required module-level names for formatters
+    _FORMATTER_REQUIRED_NAMES = [
+        "NAME",
+        "create_formatter",
+    ]
+
     def _check_adapters(self, adapters_dir: Path) -> list[Finding]:
-        """Validate drop-in adapter files using the same validator as the registry."""
-        from siftd.adapters.registry import _validate_adapter
-        from siftd.plugin_discovery import validate_dropin_module
+        """Validate drop-in adapter files using AST parsing (no import/execution)."""
+        from siftd.plugin_discovery import validate_dropin_ast
 
         findings = []
 
@@ -366,11 +399,7 @@ class DropInsValidCheck:
             if py_file.name.startswith("_"):
                 continue
 
-            module, errors = validate_dropin_module(
-                py_file,
-                module_name_prefix="siftd_doctor_check_adapter_",
-                validate=_validate_adapter,
-            )
+            errors = validate_dropin_ast(py_file, self._ADAPTER_REQUIRED_NAMES)
 
             if errors:
                 findings.append(
@@ -385,9 +414,8 @@ class DropInsValidCheck:
         return findings
 
     def _check_formatters(self, formatters_dir: Path) -> list[Finding]:
-        """Validate drop-in formatter files using the same validator as the registry."""
-        from siftd.output.registry import _validate_formatter
-        from siftd.plugin_discovery import validate_dropin_module
+        """Validate drop-in formatter files using AST parsing (no import/execution)."""
+        from siftd.plugin_discovery import validate_dropin_ast
 
         findings = []
 
@@ -398,11 +426,7 @@ class DropInsValidCheck:
             if py_file.name.startswith("_"):
                 continue
 
-            module, errors = validate_dropin_module(
-                py_file,
-                module_name_prefix="siftd_doctor_check_formatter_",
-                validate=_validate_formatter,
-            )
+            errors = validate_dropin_ast(py_file, self._FORMATTER_REQUIRED_NAMES)
 
             if errors:
                 findings.append(
@@ -489,10 +513,6 @@ class DropInsValidCheck:
         finally:
             conn.close()
 
-    def fix(self, finding: Finding) -> FixResult | None:
-        # No automated fix for invalid drop-ins
-        return None
-
 
 class OrphanedChunksCheck:
     """Detects embedding chunks whose conversations no longer exist in the main DB."""
@@ -501,6 +521,8 @@ class OrphanedChunksCheck:
     description = "Embedding chunks referencing deleted conversations"
     has_fix = True
     requires_db = True
+    requires_embed_db = True
+    cost: CheckCost = "fast"
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         from siftd.embeddings import embeddings_available
@@ -548,9 +570,6 @@ class OrphanedChunksCheck:
             )
         ]
 
-    def fix(self, finding: Finding) -> FixResult | None:
-        return None
-
 
 class EmbeddingsAvailableCheck:
     """Reports embedding support installation status (informational only)."""
@@ -559,6 +578,8 @@ class EmbeddingsAvailableCheck:
     description = "Embedding support installation status"
     has_fix = False  # Not an error, just informational
     requires_db = False
+    requires_embed_db = False
+    cost: CheckCost = "fast"
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         from siftd.embeddings import embeddings_available
@@ -580,9 +601,6 @@ class EmbeddingsAvailableCheck:
 
         return []  # No DB, no finding — user may not need embeddings
 
-    def fix(self, finding: Finding) -> FixResult | None:
-        return None
-
 
 class FreelistCheck:
     """Reports SQLite freelist pages that could be reclaimed with VACUUM."""
@@ -591,6 +609,8 @@ class FreelistCheck:
     description = "SQLite freelist pages (reclaimable with VACUUM)"
     has_fix = False  # VACUUM is manual, not auto-applied
     requires_db = True
+    requires_embed_db = False
+    cost: CheckCost = "fast"
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         conn = ctx.get_db_conn()
@@ -627,8 +647,77 @@ class FreelistCheck:
             )
         ]
 
-    def fix(self, finding: Finding) -> FixResult | None:
-        return None
+
+class SchemaCurrentCheck:
+    """Checks if database schema is up to date with expected migrations."""
+
+    name = "schema-current"
+    description = "Database schema migrations are up to date"
+    has_fix = True
+    requires_db = True
+    requires_embed_db = False
+    cost: CheckCost = "fast"
+
+    def run(self, ctx: CheckContext) -> list[Finding]:
+        conn = ctx.get_db_conn()
+        pending_migrations: list[str] = []
+
+        # Check 1: error column on ingested_files (added in _migrate_add_error_column)
+        cur = conn.execute("PRAGMA table_info(ingested_files)")
+        columns = {row[1] for row in cur.fetchall()}
+        if "error" not in columns:
+            pending_migrations.append("add error column to ingested_files")
+
+        # Check 2: CASCADE deletes on prompts (added in _migrate_add_cascade_deletes)
+        cur = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='prompts'"
+        )
+        row = cur.fetchone()
+        if row and "ON DELETE CASCADE" not in (row[0] or ""):
+            pending_migrations.append("add CASCADE deletes to foreign keys")
+
+        # Check 3: pricing table exists (ensure_pricing_table)
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='pricing'"
+        )
+        if not cur.fetchone():
+            pending_migrations.append("create pricing table")
+
+        # Check 4: content_blobs table exists (ensure_content_blobs_table)
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='content_blobs'"
+        )
+        if not cur.fetchone():
+            pending_migrations.append("create content_blobs table")
+
+        # Check 5: tool_call_tags table exists (ensure_tool_call_tags_table)
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='tool_call_tags'"
+        )
+        if not cur.fetchone():
+            pending_migrations.append("create tool_call_tags table")
+
+        # Check 6: FTS5 content_fts table exists (ensure_fts_table)
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts'"
+        )
+        if not cur.fetchone():
+            pending_migrations.append("create FTS5 search index")
+
+        if not pending_migrations:
+            return []
+
+        return [
+            Finding(
+                check=self.name,
+                severity="warning",
+                message=f"{len(pending_migrations)} migration(s) pending: {', '.join(pending_migrations[:3])}"
+                + ("..." if len(pending_migrations) > 3 else ""),
+                fix_available=True,
+                fix_command="siftd ingest",
+                context={"pending": pending_migrations},
+            )
+        ]
 
 
 # Registry of built-in checks
@@ -641,4 +730,5 @@ BUILTIN_CHECKS: list[Check] = [
     PricingGapsCheck(),
     DropInsValidCheck(),
     FreelistCheck(),
+    SchemaCurrentCheck(),
 ]

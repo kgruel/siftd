@@ -3,19 +3,18 @@
 from siftd.doctor.checks import (
     Check,
     CheckContext,
+    CheckCost,
     CheckInfo,
     Finding,
-    FixResult,
 )
-from siftd.doctor.runner import apply_fix, list_checks, run_checks
+from siftd.doctor.runner import list_checks, run_checks
 
 __all__ = [
     "Check",
     "CheckContext",
+    "CheckCost",
     "CheckInfo",
     "Finding",
-    "FixResult",
-    "apply_fix",
     "list_checks",
     "run_checks",
 ]
