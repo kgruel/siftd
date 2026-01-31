@@ -12,8 +12,6 @@ import pytest
 
 pytestmark = pytest.mark.embeddings
 
-from conftest import text_block
-
 pytest.importorskip("fastembed")
 
 from siftd.embeddings.base import get_backend
@@ -25,17 +23,9 @@ from siftd.storage.embeddings import (
     open_embeddings_db,
     search_similar,
 )
-from siftd.storage.sqlite import (
-    create_database,
-    get_or_create_harness,
-    get_or_create_model,
-    get_or_create_workspace,
-    insert_conversation,
-    insert_prompt,
-    insert_prompt_content,
-    insert_response,
-    insert_response_content,
-)
+from siftd.storage.sqlite import create_database
+
+# Uses semantic_search_db fixture from conftest.py
 
 
 @pytest.fixture(scope="module")
@@ -48,56 +38,9 @@ def tokenizer():
 
 
 @pytest.fixture
-def main_db_with_conversations(tmp_path):
-    """Create a main database with conversations for indexing tests."""
-    db_path = tmp_path / "main.db"
-    conn = create_database(db_path)
-
-    harness_id = get_or_create_harness(conn, "test_harness", source="test", log_format="jsonl")
-    workspace_id = get_or_create_workspace(conn, "/test/project", "2024-01-01T10:00:00Z")
-    model_id = get_or_create_model(conn, "test-model")
-
-    # Conversation 1: short exchange
-    conv1_id = insert_conversation(
-        conn, external_id="conv1", harness_id=harness_id,
-        workspace_id=workspace_id, started_at="2024-01-15T10:00:00Z",
-    )
-    prompt1_id = insert_prompt(conn, conv1_id, "p1", "2024-01-15T10:00:00Z")
-    insert_prompt_content(conn, prompt1_id, 0, "text", text_block("What is Python?"))
-    response1_id = insert_response(
-        conn, conv1_id, prompt1_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
-        input_tokens=10, output_tokens=50,
-    )
-    insert_response_content(
-        conn, response1_id, 0, "text",
-        text_block("Python is a high-level programming language known for its readability.")
-    )
-
-    # Conversation 2: multi-turn exchange
-    conv2_id = insert_conversation(
-        conn, external_id="conv2", harness_id=harness_id,
-        workspace_id=workspace_id, started_at="2024-01-16T10:00:00Z",
-    )
-    prompt2a_id = insert_prompt(conn, conv2_id, "p2a", "2024-01-16T10:00:00Z")
-    insert_prompt_content(conn, prompt2a_id, 0, "text", text_block("Hello"))
-    response2a_id = insert_response(
-        conn, conv2_id, prompt2a_id, model_id, None, "r2a", "2024-01-16T10:00:01Z",
-        input_tokens=5, output_tokens=10,
-    )
-    insert_response_content(conn, response2a_id, 0, "text", text_block("Hi there!"))
-
-    prompt2b_id = insert_prompt(conn, conv2_id, "p2b", "2024-01-16T10:01:00Z")
-    insert_prompt_content(conn, prompt2b_id, 0, "text", text_block("How are you?"))
-    response2b_id = insert_response(
-        conn, conv2_id, prompt2b_id, model_id, None, "r2b", "2024-01-16T10:01:01Z",
-        input_tokens=5, output_tokens=15,
-    )
-    insert_response_content(conn, response2b_id, 0, "text", text_block("I am doing well, thanks!"))
-
-    conn.commit()
-    conn.close()
-
-    return {"db_path": db_path, "conv1_id": conv1_id, "conv2_id": conv2_id}
+def main_db_with_conversations(semantic_search_db):
+    """Alias to shared semantic_search_db fixture for embeddings tests."""
+    return semantic_search_db
 
 
 class TestExtractExchangeWindowChunks:

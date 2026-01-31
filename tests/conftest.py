@@ -264,6 +264,72 @@ def test_db_with_tool_tags(tmp_path):
 
 
 @pytest.fixture
+def semantic_search_db(tmp_path):
+    """Create a database with conversations suited for semantic search tests.
+
+    Contains:
+    - 1 harness, 1 model
+    - 2 workspaces: /projects/python-app, /projects/rust-cli
+    - 2 conversations (one per workspace) with semantically distinct content
+    - Each conversation has a prompt/response about error handling
+
+    Returns dict with db_path, workspace paths, and conversation IDs.
+    """
+    db_path = tmp_path / "main.db"
+    conn = create_database(db_path)
+
+    harness_id = get_or_create_harness(conn, "test_harness", source="test", log_format="jsonl")
+    model_id = get_or_create_model(conn, "test-model")
+
+    # Workspace 1: Python project
+    ws1_id = get_or_create_workspace(conn, "/projects/python-app", "2024-01-01T10:00:00Z")
+
+    conv1_id = insert_conversation(
+        conn, external_id="conv-python", harness_id=harness_id,
+        workspace_id=ws1_id, started_at="2024-01-15T10:00:00Z",
+    )
+    p1_id = insert_prompt(conn, conv1_id, "p1", "2024-01-15T10:00:00Z")
+    insert_prompt_content(conn, p1_id, 0, "text", '{"text": "How do I handle exceptions in Python?"}')
+    r1_id = insert_response(
+        conn, conv1_id, p1_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
+        input_tokens=10, output_tokens=100,
+    )
+    insert_response_content(
+        conn, r1_id, 0, "text",
+        '{"text": "Use try/except blocks to catch and handle exceptions. You can catch specific exception types."}'
+    )
+
+    # Workspace 2: Rust project
+    ws2_id = get_or_create_workspace(conn, "/projects/rust-cli", "2024-01-01T10:00:00Z")
+
+    conv2_id = insert_conversation(
+        conn, external_id="conv-rust", harness_id=harness_id,
+        workspace_id=ws2_id, started_at="2024-01-16T10:00:00Z",
+    )
+    p2_id = insert_prompt(conn, conv2_id, "p2", "2024-01-16T10:00:00Z")
+    insert_prompt_content(conn, p2_id, 0, "text", '{"text": "How do I handle errors in Rust?"}')
+    r2_id = insert_response(
+        conn, conv2_id, p2_id, model_id, None, "r2", "2024-01-16T10:00:01Z",
+        input_tokens=10, output_tokens=100,
+    )
+    insert_response_content(
+        conn, r2_id, 0, "text",
+        '{"text": "Use Result<T, E> for recoverable errors. Use the ? operator to propagate errors."}'
+    )
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "db_path": db_path,
+        "ws1_path": "/projects/python-app",
+        "ws2_path": "/projects/rust-cli",
+        "conv1_id": conv1_id,
+        "conv2_id": conv2_id,
+    }
+
+
+@pytest.fixture
 def test_db_with_ingested_files(tmp_path):
     """Create a test database with conversations linked to ingested files.
 
