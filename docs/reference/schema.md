@@ -86,7 +86,7 @@ Physical paths where work happens
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
 | `id` | TEXT | PRIMARY KEY | ULID |
-| `path` | TEXT | NOT NULL UNIQUE | /Users/kgruel/Code/siftd |
+| `path` | TEXT | NOT NULL UNIQUE | /Users/kaygee/Code/tbd |
 | `git_remote` | TEXT |  | git@github.com:user/repo.git |
 | `discovered_at` | TEXT | NOT NULL | ISO timestamp |
 
@@ -144,7 +144,8 @@ Tool invocations during response generation
 | `tool_id` | TEXT | REFERENCES tools(id) ON DELETE SET NULL |  |
 | `external_id` | TEXT |  | model-assigned tool_call_id |
 | `input` | TEXT |  | JSON arguments |
-| `result` | TEXT |  | JSON result |
+| `result` | TEXT |  | JSON result (legacy, use result_hash) |
+| `result_hash` | TEXT | REFERENCES content_blobs(hash) | deduplicated result |
 | `status` | TEXT |  | success, error, pending |
 | `timestamp` | TEXT |  |  |
 
@@ -267,6 +268,17 @@ Content blocks in responses (text, thinking, tool references)
 | `conversation_id` | TEXT | REFERENCES conversations(id) ON DELETE CASCADE |  |
 | `ingested_at` | TEXT | NOT NULL |  |
 | `error` | TEXT |  | NULL = success, non-NULL = failure message |
+
+## CONTENT-ADDRESSABLE STORAGE
+
+### content_blobs
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `hash` | TEXT | PRIMARY KEY | SHA256 of content (natural key) |
+| `content` | TEXT | NOT NULL |  |
+| `ref_count` | INTEGER | DEFAULT 1 |  |
+| `created_at` | TEXT | NOT NULL | ISO timestamp |
 
 ## FTS5 FULL-TEXT SEARCH INDEX
 

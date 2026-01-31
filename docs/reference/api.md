@@ -17,14 +17,15 @@ from siftd import api
 
 ### AdapterInfo
 
-Information about a discovered adapter.
+Extended adapter information for display/reporting.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | `str` |  |
-| `source` | `str` |  |
+| `origin` | `str` |  |
 | `locations` | `list[str]` |  |
-| `file_path` | `str \| None` |  |
+| `source_path` | `str \| None` |  |
+| `entrypoint` | `str \| None` |  |
 
 ### Functions
 
@@ -61,6 +62,7 @@ Metadata about an available check.
 | `name` | `str` |  |
 | `description` | `str` |  |
 | `has_fix` | `bool` |  |
+| `requires_db` | `bool` |  |
 
 ### Finding
 
@@ -130,7 +132,7 @@ def run_checks(*, checks: list[str] | None = ..., db_path: pathlib._local.Path |
 
 ### PeekExchange
 
-PeekExchange(timestamp: str | None = None, prompt_text: str | None = None, response_text: str | None = None, tool_calls: list[tuple[str, int]] = <factory>, input_tokens: int = 0, output_tokens: int = 0)
+A single user→assistant exchange for detail view.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -143,7 +145,7 @@ PeekExchange(timestamp: str | None = None, prompt_text: str | None = None, respo
 
 ### SessionDetail
 
-SessionDetail(info: siftd.peek.scanner.SessionInfo, started_at: str | None = None, exchanges: list[siftd.peek.reader.PeekExchange] = <factory>)
+Full session detail for detail view.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -153,7 +155,7 @@ SessionDetail(info: siftd.peek.scanner.SessionInfo, started_at: str | None = Non
 
 ### SessionInfo
 
-SessionInfo(session_id: str, file_path: pathlib._local.Path, workspace_path: str | None = None, workspace_name: str | None = None, model: str | None = None, last_activity: float = 0.0, exchange_count: int = 0)
+Session metadata for list display.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -164,6 +166,8 @@ SessionInfo(session_id: str, file_path: pathlib._local.Path, workspace_path: str
 | `model` | `str \| None` |  |
 | `last_activity` | `float` |  |
 | `exchange_count` | `int` |  |
+| `preview_available` | `bool` |  |
+| `adapter_name` | `str \| None` |  |
 
 ### Functions
 
@@ -177,48 +181,54 @@ def find_session_file(session_id_prefix: str) -> pathlib._local.Path | None
 
 **Returns:** Path to the matching file, or None if not found.
 
+**Raises:**
+
+- `AmbiguousSessionError`: If multiple files match the prefix.
+
 ### list_active_sessions
 
 Discover active session files and extract lightweight metadata.
 
 ```python
-def list_active_sessions(*, workspace: str | None = ..., threshold_seconds: int = ..., include_inactive: bool = ...) -> list[SessionInfo]
+def list_active_sessions(*, workspace: str | None = ..., threshold_seconds: int = ..., include_inactive: bool = ..., limit: int | None = ...) -> list[SessionInfo]
 ```
 
 **Parameters:**
 
 - `workspace`: Filter by workspace name substring.
 - `threshold_seconds`: Only include files modified within this many seconds. Default is 7200 (2 hours).
+- `include_inactive`: If True, include all sessions regardless of mtime.
 
 **Returns:** List of SessionInfo sorted by last_activity (most recent first).
 
 ### read_session_detail
 
-Read session detail from a JSONL file.
+Read session detail from a session file.
 
 ```python
-def read_session_detail(path: Path, *, last_n: int = ...) -> siftd.peek.reader.SessionDetail | None
+def read_session_detail(path: Path, *, last_n: int = ...) -> siftd.peek.types.SessionDetail | None
 ```
 
 **Parameters:**
 
-- `path`: Path to the JSONL session file.
+- `path`: Path to the session file.
 
 **Returns:** SessionDetail or None if the file can't be read.
 
 ### tail_session
 
-Read and format the last N lines of a session file.
+Read and format the last N records of a session file.
 
 ```python
-def tail_session(path: Path, *, lines: int = ...) -> list[str]
+def tail_session(path: Path, *, lines: int = ..., raw: bool = ...) -> list[str]
 ```
 
 **Parameters:**
 
-- `path`: Path to the JSONL session file.
+- `path`: Path to the session file.
+- `lines`: Number of records to return.
 
-**Returns:** List of formatted JSON strings (pretty-printed single records).
+**Returns:** List of formatted strings — one per record.
 
 ## Conversations
 
@@ -595,6 +605,53 @@ def build_index(*, db_path: pathlib._local.Path | None = ..., embed_db_path: pat
 - `RuntimeError`: If no embedding backend is available.
 - `EmbeddingsNotAvailable`: If embedding dependencies are not installed.
 
+### open_embeddings_db
+
+Open the embeddings database.
+
+```python
+def open_embeddings_db(db_path: Path, *, read_only: bool = ...) -> Connection
+```
+
+**Parameters:**
+
+- `db_path`: Path to the embeddings database file.
+
+**Returns:** An open sqlite3.Connection.
+
+### search_similar
+
+Search for similar chunks in the embeddings database.
+
+```python
+def search_similar(conn: Connection, query_embedding: list[float], *, limit: int = ..., conversation_ids: set[str] | None = ..., role_source_ids: set[str] | None = ..., include_embeddings: bool = ...) -> list[dict]
+```
+
+**Parameters:**
+
+- `conn`: Connection to embeddings database.
+- `query_embedding`: The query embedding vector.
+- `limit`: Maximum results to return.
+- `conversation_ids`: Optional set of conversation IDs to filter by.
+- `role_source_ids`: Optional set of source IDs to filter by role.
+
+**Returns:** List of result dicts with score, chunk_id, conversation_id, text, etc.
+
+### fts5_recall_conversations
+
+FTS5 recall to narrow candidate conversations for embedding search.
+
+```python
+def fts5_recall_conversations(conn: Connection, query: str, *, limit: int = ...) -> tuple[set[str], str]
+```
+
+**Parameters:**
+
+- `conn`: Connection to main database.
+- `query`: The search query string.
+
+**Returns:** Tuple of (conversation_id set, mode string). Mode is "prefix", "exact", or "none".
+
 ## Stats
 
 ### Data Types
@@ -848,3 +905,148 @@ def format_prompts(conversations: list[ExportedConversation], *, no_header: bool
 - `conversations`: List of exported conversations.
 
 **Returns:** Markdown string with numbered prompts.
+
+## Other
+
+### Data Types
+
+### TagInfo
+
+Tag with usage counts.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `str` |  |
+| `description` | `str \| None` |  |
+| `created_at` | `str` |  |
+| `conversation_count` | `int` |  |
+| `workspace_count` | `int` |  |
+| `tool_call_count` | `int` |  |
+
+### Functions
+
+### create_database
+
+Create or open a database, running migrations.
+
+```python
+def create_database(db_path: pathlib._local.Path | None = ...) -> Connection
+```
+
+**Returns:** An open sqlite3.Connection with schema initialized.
+
+### open_database
+
+Open a database connection.
+
+```python
+def open_database(db_path: pathlib._local.Path | None = ..., *, read_only: bool = ...) -> Connection
+```
+
+**Parameters:**
+
+- `db_path`: Path to the database file. If None, uses the default path.
+
+**Returns:** An open sqlite3.Connection with row_factory set.
+
+**Raises:**
+
+- `FileNotFoundError`: If read_only=True and database doesn't exist.
+
+### apply_tag
+
+Apply a tag to an entity.
+
+```python
+def apply_tag(conn: Connection, entity_type: str, entity_id: str, tag_id: str, *, commit: bool = ...) -> str | None
+```
+
+**Parameters:**
+
+- `conn`: Database connection.
+- `entity_type`: One of 'conversation', 'workspace', 'tool_call'.
+- `entity_id`: The entity's ULID.
+- `tag_id`: The tag's ULID.
+
+**Returns:** Assignment ID if newly applied, None if already applied.
+
+### delete_tag
+
+Delete a tag and all its associations.
+
+```python
+def delete_tag(conn: Connection, name: str, *, commit: bool = ...) -> int
+```
+
+**Parameters:**
+
+- `conn`: Database connection.
+- `name`: Tag name to delete.
+
+**Returns:** Count of entity associations removed, or -1 if tag not found.
+
+### get_or_create_tag
+
+Get or create a tag by name.
+
+```python
+def get_or_create_tag(conn: Connection, name: str, description: str | None = ...) -> str
+```
+
+**Parameters:**
+
+- `conn`: Database connection.
+- `name`: Tag name.
+
+**Returns:** Tag ID (ULID).
+
+### list_tags
+
+List all tags with usage counts.
+
+```python
+def list_tags(db_path: pathlib._local.Path | None = ..., conn: sqlite3.Connection | None = ...) -> list[TagInfo]
+```
+
+**Parameters:**
+
+- `db_path`: Path to database. Ignored if conn provided.
+
+**Returns:** List of TagInfo objects sorted by name.
+
+### remove_tag
+
+Remove a tag from an entity.
+
+```python
+def remove_tag(conn: Connection, entity_type: str, entity_id: str, tag_id: str, *, commit: bool = ...) -> bool
+```
+
+**Parameters:**
+
+- `conn`: Database connection.
+- `entity_type`: One of 'conversation', 'workspace', 'tool_call'.
+- `entity_id`: The entity's ULID.
+- `tag_id`: The tag's ULID.
+
+**Returns:** True if removed, False if not applied.
+
+### rename_tag
+
+Rename a tag.
+
+```python
+def rename_tag(conn: Connection, old_name: str, new_name: str, *, commit: bool = ...) -> bool
+```
+
+**Parameters:**
+
+- `conn`: Database connection.
+- `old_name`: Current tag name.
+- `new_name`: New tag name.
+
+**Returns:** True if renamed, False if old_name not found.
+
+**Raises:**
+
+- `ValueError`: If new_name already exists.

@@ -371,21 +371,34 @@ examples:
 ## siftd doctor
 
 ```
-usage: siftd doctor [-h] [--json] [subcommand]
+usage: siftd doctor [-h] [--json] [--strict] [subcommand ...]
 
 positional arguments:
-  subcommand  'checks' to list, 'fixes' to show fixes, or check name
+  subcommand  list | run [checks...] | fix | <check-name>
 
 options:
   -h, --help  show this help message and exit
   --json      Output as JSON
+  --strict    Exit 1 on warnings (not just errors). Useful for CI.
 
 examples:
-  siftd doctor                    # run all checks
-  siftd doctor checks             # list available checks
-  siftd doctor fixes              # show fix commands for issues
-  siftd doctor ingest-pending     # run specific check
-  siftd doctor --json             # output as JSON
+  siftd doctor                          # run all checks
+  siftd doctor list                     # list available checks
+  siftd doctor run                      # run all checks (explicit)
+  siftd doctor run ingest-pending       # run specific check
+  siftd doctor run check1 check2        # run multiple checks
+  siftd doctor fix                      # show fix commands for issues
+  siftd doctor --json                   # output as JSON
+  siftd doctor --strict                 # exit 1 on warnings (for CI)
+
+legacy (still supported):
+  siftd doctor checks                   # same as 'list'
+  siftd doctor fixes                    # same as 'fix'
+  siftd doctor ingest-pending           # same as 'run ingest-pending'
+
+exit codes:
+  0  no errors (or no warnings with --strict)
+  1  errors found (or warnings with --strict)
 ```
 
 ## siftd peek

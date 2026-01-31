@@ -1064,36 +1064,36 @@ def cmd_copy(args) -> int:
         return 1
 
 
-def cmd_doctor(args) -> int:
-    """Run health checks and report findings."""
-    from siftd.api import list_checks, run_checks
+def _doctor_list(args) -> int:
+    """List available doctor checks."""
+    from siftd.api import list_checks
+
+    checks = list_checks()
+    if args.json:
+        import json
+
+        out = [
+            {"name": c.name, "description": c.description, "has_fix": c.has_fix}
+            for c in checks
+        ]
+        print(json.dumps(out, indent=2))
+        return 0
+    print("Available checks:")
+    for check in checks:
+        fix_marker = " [fix]" if check.has_fix else ""
+        print(f"  {check.name}{fix_marker}")
+        print(f"    {check.description}")
+    return 0
+
+
+def _doctor_run(args, check_names: list[str] | None = None, show_fixes: bool = False) -> int:
+    """Run doctor checks and display findings."""
+    from siftd.api import run_checks
 
     db = Path(args.db) if args.db else None
-    subcommand = args.subcommand
 
-    # siftd doctor checks — list available checks
-    if subcommand == "checks":
-        checks = list_checks()
-        if args.json:
-            import json
-
-            out = [
-                {"name": c.name, "description": c.description, "has_fix": c.has_fix}
-                for c in checks
-            ]
-            print(json.dumps(out, indent=2))
-            return 0
-        print("Available checks:")
-        for check in checks:
-            fix_marker = " [fix]" if check.has_fix else ""
-            print(f"  {check.name}{fix_marker}")
-            print(f"    {check.description}")
-        return 0
-
-    # Run checks (default or specific)
-    checks_to_run = [subcommand] if subcommand and subcommand != "fixes" else None
     try:
-        findings = run_checks(checks=checks_to_run, db_path=db)
+        findings = run_checks(checks=check_names or None, db_path=db)
     except FileNotFoundError as e:
         print(str(e))
         return 1
@@ -1143,7 +1143,6 @@ def cmd_doctor(args) -> int:
     findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
 
     icons = {"info": "i", "warning": "!", "error": "x"}
-    show_fixes = subcommand == "fixes"
 
     for finding in findings:
         icon = icons.get(finding.severity, "?")
@@ -1159,7 +1158,7 @@ def cmd_doctor(args) -> int:
     print()
     print(f"Found {len(findings)} issue(s): {error_count} error, {warning_count} warning, {info_count} info")
 
-    # siftd doctor fixes — show consolidated fix commands
+    # Show consolidated fix commands
     if show_fixes:
         fixable = [f for f in findings if f.fix_available and f.fix_command]
         if fixable:
@@ -1172,6 +1171,40 @@ def cmd_doctor(args) -> int:
 
     fail_count = error_count + warning_count if args.strict else error_count
     return 1 if fail_count > 0 else 0
+
+
+def cmd_doctor(args) -> int:
+    """Run health checks and report findings."""
+    subcommand_args = args.subcommand or []
+    action = subcommand_args[0] if subcommand_args else None
+
+    # New subcommands: list, run, fix
+    if action == "list":
+        return _doctor_list(args)
+
+    if action == "run":
+        # doctor run [check1] [check2] ...
+        check_names = subcommand_args[1:] if len(subcommand_args) > 1 else None
+        return _doctor_run(args, check_names=check_names)
+
+    if action == "fix":
+        # doctor fix — run all checks and show fixes
+        return _doctor_run(args, show_fixes=True)
+
+    # Legacy: siftd doctor checks
+    if action == "checks":
+        return _doctor_list(args)
+
+    # Legacy: siftd doctor fixes
+    if action == "fixes":
+        return _doctor_run(args, show_fixes=True)
+
+    # Legacy: siftd doctor <check-name> (single check)
+    if action:
+        return _doctor_run(args, check_names=[action])
+
+    # Default: siftd doctor (run all checks)
+    return _doctor_run(args)
 
 
 def _fmt_ago(seconds: float) -> str:
@@ -1665,18 +1698,25 @@ def main(argv=None) -> int:
         help="Run health checks and maintenance",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  siftd doctor                    # run all checks
-  siftd doctor checks             # list available checks
-  siftd doctor fixes              # show fix commands for issues
-  siftd doctor ingest-pending     # run specific check
-  siftd doctor --json             # output as JSON
-  siftd doctor --strict           # exit 1 on warnings (for CI)
+  siftd doctor                          # run all checks
+  siftd doctor list                     # list available checks
+  siftd doctor run                      # run all checks (explicit)
+  siftd doctor run ingest-pending       # run specific check
+  siftd doctor run check1 check2        # run multiple checks
+  siftd doctor fix                      # show fix commands for issues
+  siftd doctor --json                   # output as JSON
+  siftd doctor --strict                 # exit 1 on warnings (for CI)
+
+legacy (still supported):
+  siftd doctor checks                   # same as 'list'
+  siftd doctor fixes                    # same as 'fix'
+  siftd doctor ingest-pending           # same as 'run ingest-pending'
 
 exit codes:
   0  no errors (or no warnings with --strict)
   1  errors found (or warnings with --strict)""",
     )
-    p_doctor.add_argument("subcommand", nargs="?", help="'checks' to list, 'fixes' to show fixes, or check name")
+    p_doctor.add_argument("subcommand", nargs="*", help="list | run [checks...] | fix | <check-name>")
     p_doctor.add_argument("--json", action="store_true", help="Output as JSON")
     p_doctor.add_argument("--strict", action="store_true", help="Exit 1 on warnings (not just errors). Useful for CI.")
     p_doctor.set_defaults(func=cmd_doctor)
