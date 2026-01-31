@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-01-30
+
+### Added
+
+- **Hard rules enforcement tests** — Automated CI checks for architectural invariants:
+  - `sqlite3.connect()` outside storage/ (AST-based)
+  - stderr hygiene (tips/warnings must use stderr)
+  - Built-in query SQL validation
+  - Built-in adapter compliance
+  - Formatter registration validity
+  - JSON output purity
+- **Privacy warnings** — `--full` and `--refs` flags now print warning to stderr about sensitive content
+
+### Changed
+
+- `--thread --json` now warns and ignores `--thread` (JSON formatter doesn't support thread grouping)
+- FTS5 error handling improved — "no such table" gives "run ingest first" hint, other errors suggest `siftd doctor`
+- Date examples in docs/help now use ISO format (`2024-01-01`) instead of unsupported relative dates
+
+### Removed
+
+- `--latest` flag from `siftd query` — was a no-op (newest-first is the default)
+
+### Fixed
+
+- `--thread` mode no longer trims widened candidate pool to `--limit`
+- `--first` now respects `--threshold` (was hardcoded to 0.65)
+- `--first` now sorts by prompt timestamp, not conversation start time
+- `--json --refs` combination now errors instead of producing invalid JSON
+- All search paths use `open_database(read_only=True)` — no WAL/SHM files on read-only media
+- `first_mention()` docstring: `source_ids` is required, not optional
+- `fts5_recall_conversations()` docstring: mode is "and/or/none", not "prefix/exact/none"
+- Multiple stderr hygiene fixes in CLI (tips/warnings now correctly go to stderr)
+
 ## [0.1.1] - 2026-01-29
 
 ### Added
@@ -91,6 +125,7 @@ Initial public release.
 
 ---
 
-[Unreleased]: https://github.com/anthropics/siftd/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/anthropics/siftd/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/anthropics/siftd/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/anthropics/siftd/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/anthropics/siftd/releases/tag/v0.1.0
