@@ -1105,6 +1105,10 @@ def cmd_doctor(args) -> int:
     if args.json:
         import json
 
+        # Sort same as text mode: severity descending, then check name
+        severity_order = {"error": 0, "warning": 1, "info": 2}
+        findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
+
         error_count = sum(1 for f in findings if f.severity == "error")
         out = {
             "findings": [
