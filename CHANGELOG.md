@@ -29,8 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `fts-stale` — Detects FTS5 index out of sync with content tables
   - `fts-integrity` — Checks FTS5 table integrity for corruption
   - `config-valid` — Validates config file syntax and formatter names
+- `siftd ingest --rebuild-fts` — Rebuild FTS index from existing data without re-ingesting
 
 ### Changed
+
+- `siftd peek` defaults to 10 sessions (was unbounded 2-hour window)
+- `siftd peek --last N` / `-n N` works in list mode as limit
 
 - `--exclude-tag` renamed to `--no-tag` in export command (consistency with other filters)
 - Architectural tests moved to `tests/architecture/` for clearer separation
@@ -39,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **P0**: Session ID mismatch in live tagging — hooks now use namespaced `claude_code::sessionId`
 - **P1**: Active session staleness detection — added `last_seen_at` timestamp
+- `siftd peek` Ctrl+C now exits cleanly (exit code 130) instead of stacktrace
 - Test isolation issues with XDG_CONFIG_HOME in ask tests
 
 ## [0.3.0] - 2026-01-30
