@@ -1641,11 +1641,11 @@ def main(argv=None) -> int:
     p_query.add_argument("sql_name", nargs="?", help="SQL query name (when using 'sql' subcommand)")
     p_query.add_argument("-v", "--verbose", action="store_true", help="Full table with all columns")
     p_query.add_argument("-n", "--count", type=int, default=10, help="Number of conversations to show (0=all, default: 10)")
-    p_query.add_argument("--oldest", action="store_true", help="Sort by oldest first")
+    p_query.add_argument("--oldest", action="store_true", help="Sort by oldest first (default: newest first)")
     p_query.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
     p_query.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
-    p_query.add_argument("--since", metavar="DATE", help="Conversations started after this date (ISO or YYYY-MM-DD)")
-    p_query.add_argument("--before", metavar="DATE", help="Conversations started before this date")
+    p_query.add_argument("--since", metavar="DATE", help="Conversations started after this date (ISO format: YYYY-MM-DD)")
+    p_query.add_argument("--before", metavar="DATE", help="Conversations started before this date (ISO format: YYYY-MM-DD)")
     p_query.add_argument("-s", "--search", metavar="QUERY", help="Full-text search (FTS5 syntax)")
     p_query.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
     p_query.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by conversation tag (repeatable, OR logic)")
@@ -1772,7 +1772,7 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
   siftd export --last                   # export most recent session (prompts)
   siftd export --last 3                 # export last 3 sessions
   siftd export 01HX4G7K                 # export specific session (prefix match)
-  siftd export -w myproject --since yesterday  # filter by workspace and time
+  siftd export -w myproject --since 2024-01-01  # filter by workspace and date
   siftd export -l decision:auth         # export tagged conversations
   siftd export --last --format json     # structured JSON output
   siftd export --last --format exchanges  # include response summaries
@@ -1785,8 +1785,8 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_export.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
     p_export.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by tag (repeatable, OR logic)")
     p_export.add_argument("--exclude-tag", action="append", metavar="NAME", help="Exclude sessions with this tag (repeatable)")
-    p_export.add_argument("--since", metavar="DATE", help="Sessions after this date (ISO or YYYY-MM-DD)")
-    p_export.add_argument("--before", metavar="DATE", help="Sessions before this date")
+    p_export.add_argument("--since", metavar="DATE", help="Sessions after this date (ISO format: YYYY-MM-DD)")
+    p_export.add_argument("--before", metavar="DATE", help="Sessions before this date (ISO format: YYYY-MM-DD)")
     p_export.add_argument("-s", "--search", metavar="QUERY", help="Full-text search filter")
     p_export.add_argument("-f", "--format", choices=["prompts", "exchanges", "json"], default="prompts",
                           help="Output format: prompts (default), exchanges, json")

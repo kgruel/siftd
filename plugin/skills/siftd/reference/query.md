@@ -20,10 +20,9 @@ siftd query -n 20
 siftd query -n 0                               # everything
 ```
 
-**`--latest` / `--oldest`** — sort direction:
+**`--oldest`** — sort direction:
 ```bash
-siftd query --oldest                           # chronological
-siftd query --latest                           # reverse chronological (default)
+siftd query --oldest                           # chronological (default: newest first)
 ```
 
 **`--stats`** — summary totals after list:

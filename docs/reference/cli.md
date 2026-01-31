@@ -86,8 +86,10 @@ options:
   -w, --workspace SUBSTR
                         Filter by workspace path substring
   -m, --model NAME      Filter by model name
-  --since DATE          Conversations started after this date
-  --before DATE         Conversations started before this date
+  --since DATE          Conversations started after this date (ISO format:
+                        YYYY-MM-DD)
+  --before DATE         Conversations started before this date (ISO format:
+                        YYYY-MM-DD)
   --index               Build/update embeddings index
   --rebuild             Rebuild embeddings index from scratch
   --backend NAME        Embedding backend (ollama, fastembed)
@@ -263,13 +265,14 @@ options:
   -h, --help            show this help message and exit
   -v, --verbose         Full table with all columns
   -n, --count COUNT     Number of conversations to show (0=all, default: 10)
-  --oldest              Sort by oldest first
+  --oldest              Sort by oldest first (default: newest first)
   -w, --workspace SUBSTR
                         Filter by workspace path substring
   -m, --model NAME      Filter by model name
-  --since DATE          Conversations started after this date (ISO or YYYY-MM-
-                        DD)
-  --before DATE         Conversations started before this date
+  --since DATE          Conversations started after this date (ISO format:
+                        YYYY-MM-DD)
+  --before DATE         Conversations started before this date (ISO format:
+                        YYYY-MM-DD)
   -s, --search QUERY    Full-text search (FTS5 syntax)
   -t, --tool NAME       Filter by canonical tool name (e.g. shell.execute)
   -l, --tag NAME        Filter by conversation tag (repeatable, OR logic)
@@ -457,8 +460,8 @@ options:
                         Filter by workspace path substring
   -l, --tag NAME        Filter by tag (repeatable, OR logic)
   --exclude-tag NAME    Exclude sessions with this tag (repeatable)
-  --since DATE          Sessions after this date (ISO or YYYY-MM-DD)
-  --before DATE         Sessions before this date
+  --since DATE          Sessions after this date (ISO format: YYYY-MM-DD)
+  --before DATE         Sessions before this date (ISO format: YYYY-MM-DD)
   -s, --search QUERY    Full-text search filter
   -f, --format {prompts,exchanges,json}
                         Output format: prompts (default), exchanges, json
@@ -470,7 +473,7 @@ examples:
   siftd export --last                   # export most recent session (prompts)
   siftd export --last 3                 # export last 3 sessions
   siftd export 01HX4G7K                 # export specific session (prefix match)
-  siftd export -w myproject --since yesterday  # filter by workspace and time
+  siftd export -w myproject --since 2024-01-01  # filter by workspace and date
   siftd export -l decision:auth         # export tagged conversations
   siftd export --last --format json     # structured JSON output
   siftd export --last --format exchanges  # include response summaries

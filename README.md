@@ -26,7 +26,7 @@ siftd query
 
 # Filter by workspace or time
 siftd query -w myproject
-siftd query --since 7d
+siftd query --since 2024-01-01
 
 # Full-text search
 siftd query -s "error handling"
@@ -68,7 +68,7 @@ siftd ask -l research: "authentication"
 Export conversations for PR review or context:
 
 ```bash
-siftd export --last                      # most recent session
+siftd export --last                       # most recent session
 siftd export --last 3 -o context.md      # last 3 to file
 siftd export -l decision:auth            # tagged conversations
 ```
