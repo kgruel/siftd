@@ -523,6 +523,7 @@ class TestIngestTimeShellTagging:
             JOIN tool_calls tc ON tc.id = tct.tool_call_id
         """)
         tags = [row["name"] for row in cur.fetchall()]
+        conn.close()
 
         assert "shell:test" in tags
 
@@ -552,6 +553,7 @@ class TestIngestTimeShellTagging:
 
         cur = conn.execute("SELECT COUNT(*) as cnt FROM tool_call_tags")
         count = cur.fetchone()["cnt"]
+        conn.close()
 
         assert count == 0
 

@@ -120,7 +120,29 @@ def list_conversations(
         raise FileNotFoundError(f"Database not found: {db}")
 
     conn = open_database(db, read_only=True)
+    try:
+        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, tags, all_tags, exclude_tags, tool_tag, limit, oldest_first)
+    finally:
+        conn.close()
 
+
+def _list_conversations_impl(
+    conn,
+    workspace: str | None,
+    model: str | None,
+    since: str | None,
+    before: str | None,
+    search: str | None,
+    tool: str | None,
+    tag: str | None,
+    tags: list[str] | None,
+    all_tags: list[str] | None,
+    exclude_tags: list[str] | None,
+    tool_tag: str | None,
+    limit: int,
+    oldest_first: bool,
+) -> list[ConversationSummary]:
+    """Implementation of list_conversations with connection already open."""
     # Check if pricing table exists
     has_pricing = has_pricing_table(conn)
 
@@ -213,8 +235,6 @@ def list_conversations(
     # Bulk-fetch tags for returned conversations (single query, no N+1)
     conv_ids = [row["conversation_id"] for row in rows]
     tags_by_conv = fetch_tags_for_conversations(conn, conv_ids)
-
-    conn.close()
 
     return [
         ConversationSummary(

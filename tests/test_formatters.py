@@ -51,7 +51,8 @@ def formatter_db(tmp_path):
         started_at="2024-01-15T10:00:00Z",
     )
     conn.commit()
-    return conn, conv_id
+    yield conn, conv_id
+    conn.close()
 
 
 @pytest.fixture

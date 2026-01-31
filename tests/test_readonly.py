@@ -45,6 +45,7 @@ class TestReadOnlyMode:
         # Make file read-only
         os.chmod(db_path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
 
+        conn = None
         try:
             # Should fail with read_only=False (default)
             with pytest.raises(Exception):
@@ -53,6 +54,8 @@ class TestReadOnlyMode:
                 conn.execute("INSERT INTO harnesses (id, name) VALUES ('x', 'x')")
                 conn.commit()
         finally:
+            if conn:
+                conn.close()
             # Restore permissions for cleanup
             os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)
 

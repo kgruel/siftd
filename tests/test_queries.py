@@ -58,7 +58,7 @@ def queries_db(tmp_path):
 
     conn.commit()
 
-    return {
+    yield {
         "db_path": db_path,
         "conn": conn,
         "conv1_id": conv1_id,
@@ -67,6 +67,8 @@ def queries_db(tmp_path):
         "workspace_id": workspace_id,
         "model_id": model_id,
     }
+
+    conn.close()
 
 
 class TestMultiBlockOrdering:

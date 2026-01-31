@@ -91,7 +91,8 @@ class TestTagDerivativeConversation:
             workspace_id=ws_id, started_at="2024-01-01T00:00:00Z",
         )
         conn.commit()
-        return conn
+        yield conn
+        conn.close()
 
     @property
     def conv_id(self):
