@@ -31,6 +31,7 @@ def fetch_exchanges(
     *,
     conversation_id: str | None = None,
     prompt_ids: list[str] | None = None,
+    exclude_conversation_ids: set[str] | None = None,
 ) -> list[ExchangeRow]:
     """Fetch prompt-response exchanges with deterministic ordering.
 
@@ -43,6 +44,7 @@ def fetch_exchanges(
         conn: Database connection.
         conversation_id: Filter to a single conversation.
         prompt_ids: Filter to specific prompt IDs.
+        exclude_conversation_ids: Conversation IDs to exclude from results.
 
     Returns:
         List of ExchangeRow ordered by prompt timestamp.
@@ -50,31 +52,46 @@ def fetch_exchanges(
     if prompt_ids is not None and len(prompt_ids) == 0:
         return []
 
-    # Get prompts (filtered by conversation_id and/or prompt_ids)
-    if prompt_ids is not None and conversation_id is not None:
-        # Both filters: batch the prompt_ids, add conversation filter
+    # Build filter conditions and params dynamically
+    # This allows combining conversation_id, prompt_ids, and exclude_conversation_ids
+    conditions: list[str] = []
+    params: list[str] = []
+
+    if conversation_id is not None:
+        conditions.append("conversation_id = ?")
+        params.append(conversation_id)
+
+    if exclude_conversation_ids:
+        # Batch NOT IN clauses to avoid SQLite variable limits (max ~999)
+        exclude_list = list(exclude_conversation_ids)
+        batch_size = 500
+        not_in_clauses = []
+        for i in range(0, len(exclude_list), batch_size):
+            batch = exclude_list[i : i + batch_size]
+            ph = ",".join("?" * len(batch))
+            not_in_clauses.append(f"conversation_id NOT IN ({ph})")
+            params.extend(batch)
+        # All batches must pass (AND), so combine them
+        conditions.append("(" + " AND ".join(not_in_clauses) + ")")
+
+    # Get prompts (with optional prompt_ids batching)
+    if prompt_ids is not None:
+        # Use batched_in_query for prompt_ids, with other conditions as prefix
+        where_prefix = " AND ".join(conditions) + " AND " if conditions else ""
         prompt_rows = batched_in_query(
             conn,
-            "SELECT conversation_id, id, timestamp FROM prompts "
-            "WHERE conversation_id = ? AND id IN ({placeholders}) "
-            "ORDER BY timestamp",
+            f"SELECT conversation_id, id, timestamp FROM prompts "
+            f"WHERE {where_prefix}id IN ({{placeholders}}) ORDER BY timestamp",
             prompt_ids,
-            prefix_params=(conversation_id,),
+            prefix_params=tuple(params),
         )
-    elif prompt_ids is not None:
-        # Only prompt_ids filter
-        prompt_rows = batched_in_query(
-            conn,
-            "SELECT conversation_id, id, timestamp FROM prompts "
-            "WHERE id IN ({placeholders}) ORDER BY timestamp",
-            prompt_ids,
-        )
-    elif conversation_id is not None:
-        # Only conversation filter (no batching needed)
+    elif conditions:
+        # Only non-batched filters
+        where_clause = "WHERE " + " AND ".join(conditions)
         prompt_rows = conn.execute(
-            "SELECT conversation_id, id, timestamp FROM prompts "
-            "WHERE conversation_id = ? ORDER BY timestamp",
-            (conversation_id,),
+            f"SELECT conversation_id, id, timestamp FROM prompts "
+            f"{where_clause} ORDER BY timestamp",
+            params,
         ).fetchall()
     else:
         # No filters
@@ -199,16 +216,26 @@ def fetch_conversation_exchanges(
     conn: sqlite3.Connection,
     *,
     conversation_id: str | None = None,
+    exclude_conversation_ids: set[str] | None = None,
 ) -> dict[str, list[dict]]:
     """Load prompt/response pairs grouped by conversation, ordered by timestamp.
 
     Each exchange is: {"text": str, "prompt_id": str}
     where text is prompt_text + response_text concatenated.
 
+    Args:
+        conn: Database connection.
+        conversation_id: Filter to a single conversation.
+        exclude_conversation_ids: Conversation IDs to exclude from results.
+
     If conversation_id is given, only loads that conversation's exchanges.
     Otherwise loads all conversations (expensive for large DBs).
     """
-    exchanges = fetch_exchanges(conn, conversation_id=conversation_id)
+    exchanges = fetch_exchanges(
+        conn,
+        conversation_id=conversation_id,
+        exclude_conversation_ids=exclude_conversation_ids,
+    )
 
     result: dict[str, list[dict]] = {}
     for ex in exchanges:

@@ -386,3 +386,137 @@ class TestFetchConversationExchanges:
         # The empty exchange should not appear
         prompt_ids = [ex["prompt_id"] for ex in result[conv1_id]]
         assert prompt_empty_id not in prompt_ids
+
+
+class TestExcludeConversationIds:
+    """Tests for exclude_conversation_ids SQL filtering."""
+
+    def test_exclude_single_conversation(self, queries_db):
+        """Single conversation can be excluded via SQL."""
+        conn = queries_db["conn"]
+        conv1_id = queries_db["conv1_id"]
+        harness_id = queries_db["harness_id"]
+        workspace_id = queries_db["workspace_id"]
+        model_id = queries_db["model_id"]
+
+        # Create second conversation
+        conv2_id = insert_conversation(
+            conn,
+            external_id="conv2-excl",
+            harness_id=harness_id,
+            workspace_id=workspace_id,
+            started_at="2024-01-17T10:00:00Z",
+        )
+        prompt2_id = insert_prompt(conn, conv2_id, "p2-excl", "2024-01-17T10:00:00Z")
+        insert_prompt_content(conn, prompt2_id, 0, "text", json.dumps({"text": "Conv2 text"}))
+        response2_id = insert_response(
+            conn, conv2_id, prompt2_id, model_id, None, "r2-excl", "2024-01-17T10:00:01Z",
+            input_tokens=50, output_tokens=25,
+        )
+        insert_response_content(conn, response2_id, 0, "text", json.dumps({"text": "Conv2 response"}))
+        conn.commit()
+
+        # Exclude conv1, should only get conv2
+        result = fetch_conversation_exchanges(
+            conn, exclude_conversation_ids={conv1_id}
+        )
+
+        assert conv1_id not in result
+        assert conv2_id in result
+
+    def test_exclude_multiple_conversations(self, queries_db):
+        """Multiple conversations can be excluded via SQL."""
+        conn = queries_db["conn"]
+        conv1_id = queries_db["conv1_id"]
+        harness_id = queries_db["harness_id"]
+        workspace_id = queries_db["workspace_id"]
+        model_id = queries_db["model_id"]
+
+        # Create two more conversations
+        conv2_id = insert_conversation(
+            conn, external_id="conv2-multi", harness_id=harness_id,
+            workspace_id=workspace_id, started_at="2024-01-18T10:00:00Z",
+        )
+        prompt2_id = insert_prompt(conn, conv2_id, "p2-multi", "2024-01-18T10:00:00Z")
+        insert_prompt_content(conn, prompt2_id, 0, "text", json.dumps({"text": "Conv2"}))
+        response2_id = insert_response(
+            conn, conv2_id, prompt2_id, model_id, None, "r2-multi", "2024-01-18T10:00:01Z",
+            input_tokens=50, output_tokens=25,
+        )
+        insert_response_content(conn, response2_id, 0, "text", json.dumps({"text": "Resp2"}))
+
+        conv3_id = insert_conversation(
+            conn, external_id="conv3-multi", harness_id=harness_id,
+            workspace_id=workspace_id, started_at="2024-01-19T10:00:00Z",
+        )
+        prompt3_id = insert_prompt(conn, conv3_id, "p3-multi", "2024-01-19T10:00:00Z")
+        insert_prompt_content(conn, prompt3_id, 0, "text", json.dumps({"text": "Conv3"}))
+        response3_id = insert_response(
+            conn, conv3_id, prompt3_id, model_id, None, "r3-multi", "2024-01-19T10:00:01Z",
+            input_tokens=50, output_tokens=25,
+        )
+        insert_response_content(conn, response3_id, 0, "text", json.dumps({"text": "Resp3"}))
+        conn.commit()
+
+        # Exclude conv1 and conv2, should only get conv3
+        result = fetch_conversation_exchanges(
+            conn, exclude_conversation_ids={conv1_id, conv2_id}
+        )
+
+        assert conv1_id not in result
+        assert conv2_id not in result
+        assert conv3_id in result
+
+    def test_exclude_empty_set_returns_all(self, queries_db):
+        """Empty exclude set returns all conversations."""
+        conn = queries_db["conn"]
+        conv1_id = queries_db["conv1_id"]
+
+        result = fetch_conversation_exchanges(
+            conn, exclude_conversation_ids=set()
+        )
+
+        # Should still return conv1
+        assert conv1_id in result
+
+    def test_exclude_none_returns_all(self, queries_db):
+        """None exclude returns all conversations."""
+        conn = queries_db["conn"]
+        conv1_id = queries_db["conv1_id"]
+
+        result = fetch_conversation_exchanges(
+            conn, exclude_conversation_ids=None
+        )
+
+        assert conv1_id in result
+
+    def test_exclude_with_conversation_filter(self, queries_db):
+        """Exclude works alongside conversation_id filter."""
+        conn = queries_db["conn"]
+        conv1_id = queries_db["conv1_id"]
+
+        # Excluding the same conversation we're filtering to returns empty
+        result = fetch_conversation_exchanges(
+            conn,
+            conversation_id=conv1_id,
+            exclude_conversation_ids={conv1_id},
+        )
+
+        assert conv1_id not in result
+
+    def test_exclude_large_list_batched(self, queries_db):
+        """Large exclude lists are handled via batching."""
+        conn = queries_db["conn"]
+        conv1_id = queries_db["conv1_id"]
+
+        # Create a large set of fake IDs to exclude (simulating 1000+ indexed convs)
+        large_exclude = {f"fake-id-{i}" for i in range(1500)}
+        # Don't exclude the real conversation
+        assert conv1_id not in large_exclude
+
+        result = fetch_conversation_exchanges(
+            conn, exclude_conversation_ids=large_exclude
+        )
+
+        # conv1 should still be returned (not in exclude list)
+        assert conv1_id in result

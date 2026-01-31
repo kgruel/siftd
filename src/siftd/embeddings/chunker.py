@@ -205,16 +205,11 @@ def _load_exchanges(
 
     Each exchange is: {"text": str, "prompt_id": str}
     """
-    exchanges = fetch_conversation_exchanges(
-        conn, conversation_id=conversation_id
+    return fetch_conversation_exchanges(
+        conn,
+        conversation_id=conversation_id,
+        exclude_conversation_ids=exclude_ids,
     )
-
-    if exclude_ids:
-        exchanges = {
-            cid: exs for cid, exs in exchanges.items() if cid not in exclude_ids
-        }
-
-    return exchanges
 
 
 def _window_exchanges(
