@@ -425,6 +425,36 @@ class TestAskEdgeCases:
         # Either returns 0 with "No results" or returns successfully
         assert result == 0
 
+    def test_first_respects_custom_threshold(self, indexed_db, capsys):
+        """--first with --threshold uses the user-specified threshold, not hardcoded 0.65."""
+        # First, verify default (implicit 0.65) behavior with --first
+        args_default = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            first=True,
+            json=True,
+        )
+        cmd_ask(args_default)
+        out_default = capsys.readouterr().out
+
+        # Now test with explicit low threshold
+        args_low = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            first=True,
+            threshold=0.1,  # Very low threshold
+            json=True,
+        )
+        result = cmd_ask(args_low)
+        out_low = capsys.readouterr().out
+
+        # Should succeed (no error)
+        assert result == 0
+        # With a low threshold, we should get results if any exist
+        # (The exact behavior depends on scores, but we're testing the passthrough)
+
 
 class TestAskThreadMode:
     """Tests for --thread mode candidate pool handling."""

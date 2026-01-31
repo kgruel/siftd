@@ -10,7 +10,7 @@ from statistics import mean as _mean
 
 # Re-export core search API
 from siftd.search import SearchResult, hybrid_search
-from siftd.storage.queries import fetch_conversation_timestamps
+from siftd.storage.queries import fetch_conversation_timestamps, fetch_prompt_timestamps
 
 __all__ = [
     "SearchResult",
@@ -171,7 +171,7 @@ def first_mention(
 
     Args:
         results: List of SearchResult or raw dicts from search.
-            Dicts must have 'score', 'conversation_id', and optionally 'chunk_id'.
+            Dicts must have 'score', 'conversation_id', and optionally 'source_ids'.
         threshold: Minimum score to consider relevant.
         db_path: Path to database (for timestamp lookup). Uses default if not specified.
 
@@ -191,16 +191,36 @@ def first_mention(
 
     db = db_path or default_db_path()
 
-    # Get timestamps for conversations
     from siftd.storage.sqlite import open_database
 
-    conv_ids = list({_get(r, "conversation_id") for r in above})
     conn = open_database(db, read_only=True)
+
+    # Collect all prompt IDs from source_ids for timestamp lookup
+    all_prompt_ids = []
+    for r in above:
+        source_ids = _get(r, "source_ids") or []
+        all_prompt_ids.extend(source_ids)
+
+    # Get prompt timestamps (preferred) and conversation timestamps (fallback)
+    prompt_times = fetch_prompt_timestamps(conn, all_prompt_ids) if all_prompt_ids else {}
+    conv_ids = list({_get(r, "conversation_id") for r in above})
     conv_times = fetch_conversation_timestamps(conn, conv_ids)
     conn.close()
 
-    # Sort by conversation start time, then by chunk_id (ULID = time-ordered)
-    above.sort(key=lambda r: (conv_times.get(_get(r, "conversation_id"), ""), _get(r, "chunk_id") or ""))
+    def earliest_prompt_time(r):
+        """Get earliest prompt timestamp for a result, fallback to conversation start."""
+        source_ids = _get(r, "source_ids") or []
+        if source_ids:
+            # Get timestamps for this result's prompts
+            times = [prompt_times.get(pid, "") for pid in source_ids]
+            valid_times = [t for t in times if t]
+            if valid_times:
+                return min(valid_times)
+        # Fallback to conversation start time
+        return conv_times.get(_get(r, "conversation_id"), "")
+
+    # Sort by earliest prompt timestamp, then by chunk_id as tiebreaker
+    above.sort(key=lambda r: (earliest_prompt_time(r), _get(r, "chunk_id") or ""))
 
     return above[0]
 

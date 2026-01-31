@@ -272,6 +272,132 @@ class TestFirstMention:
         earliest = first_mention([], threshold=0.65, db_path=test_db)
         assert earliest is None
 
+    def test_respects_custom_threshold(self, test_db):
+        """Test that lower threshold includes results that default 0.65 would exclude."""
+        conversations = list_conversations(db_path=test_db)
+        results = [
+            SearchResult(conversations[0].id, 0.4, "text1", "prompt", "/ws", conversations[0].started_at),
+        ]
+
+        # Default threshold 0.65 would filter this out
+        assert first_mention(results, threshold=0.65, db_path=test_db) is None
+
+        # Custom threshold 0.3 should include it
+        earliest = first_mention(results, threshold=0.3, db_path=test_db)
+        assert earliest is not None
+        assert earliest.conversation_id == conversations[0].id
+
+
+class TestFirstMentionPromptTimestamp:
+    """Test first_mention sorts by prompt timestamp, not conversation start."""
+
+    @pytest.fixture
+    def db_with_prompt_times(self, tmp_path):
+        """Create DB where prompt times differ from conversation start times.
+
+        Scenario: Conv1 started earlier but its prompt came later.
+        """
+        from siftd.storage.sqlite import (
+            create_database,
+            get_or_create_harness,
+            get_or_create_workspace,
+            insert_conversation,
+            insert_prompt,
+        )
+
+        db_path = tmp_path / "prompt_times.db"
+        conn = create_database(db_path)
+
+        harness_id = get_or_create_harness(conn, "test", source="test")
+        workspace_id = get_or_create_workspace(conn, "/test", "2024-01-01T00:00:00Z")
+
+        # Conv1: started early (Jan 10), but prompt came late (Jan 15)
+        conv1_id = insert_conversation(
+            conn, "conv1", harness_id, workspace_id, started_at="2024-01-10T10:00:00Z"
+        )
+        prompt1_id = insert_prompt(conn, conv1_id, "p1", "2024-01-15T10:00:00Z")
+
+        # Conv2: started later (Jan 12), but prompt came early (Jan 12)
+        conv2_id = insert_conversation(
+            conn, "conv2", harness_id, workspace_id, started_at="2024-01-12T10:00:00Z"
+        )
+        prompt2_id = insert_prompt(conn, conv2_id, "p2", "2024-01-12T10:00:00Z")
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "db_path": db_path,
+            "conv1_id": conv1_id,
+            "conv2_id": conv2_id,
+            "prompt1_id": prompt1_id,
+            "prompt2_id": prompt2_id,
+        }
+
+    def test_sorts_by_prompt_timestamp_not_conversation_start(self, db_with_prompt_times):
+        """first_mention should return result with earliest prompt, not earliest conversation."""
+        data = db_with_prompt_times
+
+        # Conv1 started earlier, but prompt2 happened before prompt1
+        # source_ids links chunk to prompt
+        results = [
+            SearchResult(
+                data["conv1_id"], 0.9, "text1", "prompt", "/ws", "2024-01-10T10:00:00Z",
+                source_ids=[data["prompt1_id"]]
+            ),
+            SearchResult(
+                data["conv2_id"], 0.8, "text2", "prompt", "/ws", "2024-01-12T10:00:00Z",
+                source_ids=[data["prompt2_id"]]
+            ),
+        ]
+
+        earliest = first_mention(results, threshold=0.65, db_path=data["db_path"])
+
+        assert earliest is not None
+        # Should return conv2 because prompt2 (Jan 12) is earlier than prompt1 (Jan 15)
+        assert earliest.conversation_id == data["conv2_id"]
+
+    def test_falls_back_to_conversation_time_when_no_source_ids(self, test_db):
+        """When source_ids is empty, falls back to conversation start time."""
+        conversations = list_conversations(db_path=test_db)
+        # Results without source_ids
+        results = [
+            SearchResult(conversations[0].id, 0.9, "text1", "prompt", "/ws", conversations[0].started_at),
+            SearchResult(conversations[1].id, 0.8, "text2", "prompt", "/ws", conversations[1].started_at),
+        ]
+
+        earliest = first_mention(results, threshold=0.65, db_path=test_db)
+
+        assert earliest is not None
+        # Falls back to conversation start time, so earlier conversation wins
+        assert earliest.conversation_id == conversations[1].id
+
+    def test_works_with_dict_results(self, db_with_prompt_times):
+        """first_mention works with dict results (from embeddings search)."""
+        data = db_with_prompt_times
+
+        # Dict format from embeddings search
+        results = [
+            {
+                "conversation_id": data["conv1_id"],
+                "score": 0.9,
+                "text": "text1",
+                "source_ids": [data["prompt1_id"]],
+            },
+            {
+                "conversation_id": data["conv2_id"],
+                "score": 0.8,
+                "text": "text2",
+                "source_ids": [data["prompt2_id"]],
+            },
+        ]
+
+        earliest = first_mention(results, threshold=0.65, db_path=data["db_path"])
+
+        assert earliest is not None
+        # Conv2's prompt (Jan 12) is earlier than conv1's prompt (Jan 15)
+        assert earliest["conversation_id"] == data["conv2_id"]
+
 
 class TestListConversationsToolTag:
     def test_filter_by_tool_tag(self, test_db_with_tool_tags):

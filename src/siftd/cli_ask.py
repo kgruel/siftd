@@ -209,7 +209,8 @@ def cmd_ask(args) -> int:
     # Post-processing: --first (earliest match above threshold)
     if args.first:
         from siftd.api import first_mention
-        earliest = first_mention(results, threshold=0.65, db_path=db)
+        effective_threshold = args.threshold if args.threshold is not None else 0.65
+        earliest = first_mention(results, threshold=effective_threshold, db_path=db)
         if not earliest:
             print(f"No results above relevance threshold for: {query}")
             return 0

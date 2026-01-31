@@ -520,3 +520,22 @@ def fetch_conversation_timestamps(
         conversation_ids,
     ).fetchall()
     return {row["id"]: row["started_at"] or "" for row in rows}
+
+
+def fetch_prompt_timestamps(
+    conn: sqlite3.Connection,
+    prompt_ids: list[str],
+) -> dict[str, str]:
+    """Fetch timestamps for prompts.
+
+    Returns dict mapping prompt_id to timestamp (or empty string).
+    """
+    if not prompt_ids:
+        return {}
+
+    ph = placeholders(len(prompt_ids))
+    rows = conn.execute(
+        f"SELECT id, timestamp FROM prompts WHERE id IN ({ph})",
+        prompt_ids,
+    ).fetchall()
+    return {row["id"]: row["timestamp"] or "" for row in rows}
