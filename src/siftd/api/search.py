@@ -9,7 +9,7 @@ from pathlib import Path
 from statistics import mean as _mean
 
 # Re-export core search API
-from siftd.search import SearchResult, hybrid_search
+from siftd.search import SearchResult, apply_temporal_weight, hybrid_search
 from siftd.storage.queries import fetch_conversation_timestamps, fetch_prompt_timestamps
 
 __all__ = [
@@ -19,6 +19,9 @@ __all__ = [
     "aggregate_by_conversation",
     "first_mention",
     "build_index",
+    # Temporal weighting
+    "apply_temporal_weight",
+    "fetch_conversation_timestamps",
     # Embeddings
     "open_embeddings_db",
     "search_similar",

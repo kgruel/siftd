@@ -130,6 +130,9 @@ def make_args(**kwargs):
         "include_derivative": True,  # Include derivative for tests
         "no_diversity": True,  # Disable MMR for deterministic tests
         "lambda_": 0.7,
+        "recency": False,
+        "recency_half_life": 30.0,
+        "recency_max_boost": 1.15,
         "tag": None,
         "all_tags": None,
         "no_tag": None,

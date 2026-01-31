@@ -1,6 +1,7 @@
 """Public search API for programmatic access by agent harnesses."""
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,68 @@ import numpy as np
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.sql_helpers import batched_in_query
 from siftd.storage.sqlite import open_database
+
+
+def apply_temporal_weight(
+    results: list[dict],
+    timestamps: dict[str, str],
+    *,
+    half_life_days: float = 30.0,
+    max_boost: float = 1.15,
+) -> list[dict]:
+    """Apply temporal weighting to boost recent results.
+
+    Uses a mild exponential decay that:
+    - Boosts recent results (up to max_boost for today's results)
+    - Gently decays older results (half-life controls decay rate)
+    - Never penalizes old results below their original score
+
+    The decay formula: weight = 1 + (max_boost - 1) * exp(-days_ago * ln(2) / half_life)
+
+    At days_ago=0: weight = max_boost (e.g., 1.15 = 15% boost)
+    At days_ago=half_life: weight ≈ 1 + (max_boost-1)/2 (half the boost)
+    As days_ago→∞: weight → 1.0 (no penalty, just no boost)
+
+    Args:
+        results: List of result dicts with 'conversation_id' and 'score'.
+        timestamps: Dict mapping conversation_id to ISO timestamp string.
+        half_life_days: Days until boost decays to half. Default 30.
+        max_boost: Maximum boost multiplier for today's results. Default 1.15.
+
+    Returns:
+        Results with adjusted 'score' values (original list is not modified).
+    """
+    if not results or max_boost <= 1.0:
+        return results
+
+    now = datetime.now(UTC)
+    decay_constant = np.log(2) / half_life_days
+
+    weighted = []
+    for r in results:
+        r_copy = dict(r)
+        conv_id = r["conversation_id"]
+        ts_str = timestamps.get(conv_id, "")
+
+        if ts_str:
+            try:
+                # Parse ISO timestamp (with or without timezone)
+                ts_str_clean = ts_str.replace("Z", "+00:00")
+                if "+" not in ts_str_clean and ts_str_clean.count("-") <= 2:
+                    # No timezone, assume UTC
+                    ts = datetime.fromisoformat(ts_str_clean).replace(tzinfo=UTC)
+                else:
+                    ts = datetime.fromisoformat(ts_str_clean)
+                days_ago = max(0, (now - ts).total_seconds() / 86400)
+                # Exponential decay: starts at max_boost, decays to 1.0
+                weight = 1.0 + (max_boost - 1.0) * np.exp(-decay_constant * days_ago)
+                r_copy["score"] = r["score"] * weight
+            except (ValueError, TypeError):
+                pass  # Keep original score if timestamp parsing fails
+
+        weighted.append(r_copy)
+
+    return weighted
 
 
 @dataclass
@@ -133,6 +196,9 @@ def hybrid_search(
     exclude_active: bool = True,
     rerank: str = "mmr",
     lambda_: float = 0.7,
+    recency: bool = False,
+    recency_half_life: float = 30.0,
+    recency_max_boost: float = 1.15,
 ) -> list[SearchResult]:
     """Run hybrid FTS5+embeddings search, return structured results.
 
@@ -151,6 +217,9 @@ def hybrid_search(
         exclude_active: Auto-exclude conversations from active sessions (default True).
         rerank: Reranking strategy — "mmr" for diversity or "relevance" for pure similarity.
         lambda_: MMR balance between relevance (1.0) and diversity (0.0). Default 0.7.
+        recency: Enable temporal weighting to boost recent results. Default False.
+        recency_half_life: Days until recency boost decays to half. Default 30.
+        recency_max_boost: Maximum boost for today's results (e.g., 1.15 = 15%). Default 1.15.
 
     Returns:
         List of SearchResult ordered by reranking strategy.
@@ -230,6 +299,22 @@ def hybrid_search(
 
     if not raw_results:
         return []
+
+    # Apply temporal weighting if requested (before MMR so it affects reranking)
+    if recency:
+        from siftd.storage.queries import fetch_conversation_timestamps
+
+        conv_ids_for_ts = list({r["conversation_id"] for r in raw_results})
+        main_conn_ts = open_database(db, read_only=True)
+        timestamps = fetch_conversation_timestamps(main_conn_ts, conv_ids_for_ts)
+        main_conn_ts.close()
+
+        raw_results = apply_temporal_weight(
+            raw_results,
+            timestamps,
+            half_life_days=recency_half_life,
+            max_boost=recency_max_boost,
+        )
 
     # Apply MMR reranking if requested
     if use_mmr:

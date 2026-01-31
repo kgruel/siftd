@@ -64,7 +64,9 @@ from siftd.api.search import (
     ConversationScore,
     SearchResult,
     aggregate_by_conversation,
+    apply_temporal_weight,
     build_index,
+    fetch_conversation_timestamps,
     first_mention,
     fts5_recall_conversations,
     hybrid_search,
@@ -157,6 +159,8 @@ __all__ = [
     "open_embeddings_db",
     "search_similar",
     "fts5_recall_conversations",
+    "apply_temporal_weight",
+    "fetch_conversation_timestamps",
     # stats
     "DatabaseStats",
     "TableCounts",

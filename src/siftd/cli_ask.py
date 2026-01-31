@@ -178,6 +178,21 @@ def cmd_ask(args) -> int:
         print(f"No results for: {query}")
         return 0
 
+    # Apply temporal weighting if requested (before MMR so it affects reranking)
+    if args.recency and results:
+        from siftd.api import apply_temporal_weight, fetch_conversation_timestamps
+
+        conv_ids_for_ts = list({r["conversation_id"] for r in results})
+        ts_conn = open_database(db, read_only=True)
+        timestamps = fetch_conversation_timestamps(ts_conn, conv_ids_for_ts)
+        ts_conn.close()
+        results = apply_temporal_weight(
+            results,
+            timestamps,
+            half_life_days=args.recency_half_life,
+            max_boost=args.recency_max_boost,
+        )
+
     # Apply MMR diversity reranking
     if use_mmr and results:
         from siftd.search import mmr_rerank
@@ -359,6 +374,9 @@ examples:
     p_ask.add_argument("--include-derivative", action="store_true", help="Include derivative conversations (siftd ask/query results, excluded by default)")
     p_ask.add_argument("--no-diversity", action="store_true", help="Disable MMR diversity reranking, use pure relevance order")
     p_ask.add_argument("--lambda", type=float, default=0.7, dest="lambda_", metavar="FLOAT", help="MMR lambda: 1.0=pure relevance, 0.0=pure diversity (default: 0.7)")
+    p_ask.add_argument("--recency", action="store_true", help="Boost recent results (exponential decay, mild 15%% boost)")
+    p_ask.add_argument("--recency-half-life", type=float, default=30.0, metavar="DAYS", help="Days until recency boost decays to half (default: 30)")
+    p_ask.add_argument("--recency-max-boost", type=float, default=1.15, metavar="MULT", help="Max boost multiplier for today's results (default: 1.15)")
     p_ask.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by conversation tag (repeatable, OR logic)")
     p_ask.add_argument("--all-tags", action="append", metavar="NAME", help="Require all specified tags (AND logic)")
     p_ask.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude conversations with this tag (NOT logic)")
