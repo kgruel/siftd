@@ -81,9 +81,26 @@ class TestListChecks:
             assert hasattr(check, "name")
             assert hasattr(check, "description")
             assert hasattr(check, "has_fix")
+            assert hasattr(check, "requires_db")
             assert isinstance(check.name, str)
             assert isinstance(check.description, str)
             assert isinstance(check.has_fix, bool)
+            assert isinstance(check.requires_db, bool)
+
+    def test_requires_db_attribute(self):
+        """requires_db in CheckInfo matches expected values."""
+        checks = list_checks()
+        by_name = {c.name: c.requires_db for c in checks}
+        # Checks that need the database
+        assert by_name["ingest-pending"] is True
+        assert by_name["ingest-errors"] is True
+        assert by_name["embeddings-stale"] is True
+        assert by_name["orphaned-chunks"] is True
+        assert by_name["pricing-gaps"] is True
+        assert by_name["freelist"] is True
+        # Checks that don't need the database
+        assert by_name["drop-ins-valid"] is False
+        assert by_name["embeddings-available"] is False
 
 
 class TestRunChecks:
@@ -112,6 +129,21 @@ class TestRunChecks:
         nonexistent = tmp_path / "nonexistent.db"
         with pytest.raises(FileNotFoundError):
             run_checks(db_path=nonexistent)
+
+    def test_drop_ins_valid_without_db(self, tmp_path):
+        """drop-ins-valid check runs without requiring the database to exist."""
+        nonexistent = tmp_path / "nonexistent.db"
+        # This should NOT raise FileNotFoundError since drop-ins-valid doesn't need DB
+        findings = run_checks(checks=["drop-ins-valid"], db_path=nonexistent)
+        assert isinstance(findings, list)
+        for f in findings:
+            assert f.check == "drop-ins-valid"
+
+    def test_db_required_check_without_db_raises(self, tmp_path):
+        """Checks that require DB still fail without it."""
+        nonexistent = tmp_path / "nonexistent.db"
+        with pytest.raises(FileNotFoundError):
+            run_checks(checks=["ingest-pending"], db_path=nonexistent)
 
 
 class TestIngestPendingCheck:

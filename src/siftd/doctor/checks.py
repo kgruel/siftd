@@ -25,6 +25,7 @@ class CheckInfo:
     name: str
     description: str
     has_fix: bool
+    requires_db: bool
 
 
 @dataclass
@@ -81,6 +82,7 @@ class Check(Protocol):
     name: str
     description: str
     has_fix: bool
+    requires_db: bool  # Whether check needs main database to exist
 
     def run(self, ctx: CheckContext) -> list[Finding]: ...
 
@@ -98,6 +100,7 @@ class IngestPendingCheck:
     name = "ingest-pending"
     description = "Files discovered by adapters but not yet ingested"
     has_fix = True
+    requires_db = True
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         from siftd.adapters.registry import load_all_adapters
@@ -157,6 +160,7 @@ class IngestErrorsCheck:
     name = "ingest-errors"
     description = "Files that failed ingestion (recorded with error)"
     has_fix = False
+    requires_db = True
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         findings = []
@@ -211,6 +215,7 @@ class EmbeddingsStaleCheck:
     name = "embeddings-stale"
     description = "Conversations not indexed in embeddings database"
     has_fix = True
+    requires_db = True
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         from siftd.embeddings import embeddings_available
@@ -273,6 +278,7 @@ class PricingGapsCheck:
     name = "pricing-gaps"
     description = "Models used in responses without pricing data"
     has_fix = False
+    requires_db = True
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         findings = []
@@ -330,6 +336,7 @@ class DropInsValidCheck:
     name = "drop-ins-valid"
     description = "Drop-in adapters, formatters, and queries load without errors"
     has_fix = False
+    requires_db = False
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         findings = []
@@ -493,6 +500,7 @@ class OrphanedChunksCheck:
     name = "orphaned-chunks"
     description = "Embedding chunks referencing deleted conversations"
     has_fix = True
+    requires_db = True
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         from siftd.embeddings import embeddings_available
@@ -550,6 +558,7 @@ class EmbeddingsAvailableCheck:
     name = "embeddings-available"
     description = "Embedding support installation status"
     has_fix = False  # Not an error, just informational
+    requires_db = False
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         from siftd.embeddings import embeddings_available
@@ -581,6 +590,7 @@ class FreelistCheck:
     name = "freelist"
     description = "SQLite freelist pages (reclaimable with VACUUM)"
     has_fix = False  # VACUUM is manual, not auto-applied
+    requires_db = True
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         conn = ctx.get_db_conn()

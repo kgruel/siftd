@@ -18,6 +18,7 @@ def list_checks() -> list[CheckInfo]:
             name=check.name,
             description=check.description,
             has_fix=check.has_fix,
+            requires_db=check.requires_db,
         )
         for check in BUILTIN_CHECKS
     ]
@@ -59,12 +60,6 @@ def run_checks(
     actual_db_path = db_path or default_db_path()
     actual_embed_path = embed_db_path or default_embed_path()
 
-    # Check main DB exists
-    if not actual_db_path.exists():
-        raise FileNotFoundError(
-            f"Database not found: {actual_db_path}\nRun 'siftd ingest' to create it."
-        )
-
     # Filter checks if specific ones requested
     checks_to_run = BUILTIN_CHECKS
     if checks:
@@ -73,6 +68,13 @@ def run_checks(
         if unknown:
             raise ValueError(f"Unknown check(s): {', '.join(sorted(unknown))}")
         checks_to_run = [c for c in BUILTIN_CHECKS if c.name in checks]
+
+    # Only require DB if any requested check needs it
+    db_required = any(c.requires_db for c in checks_to_run)
+    if db_required and not actual_db_path.exists():
+        raise FileNotFoundError(
+            f"Database not found: {actual_db_path}\nRun 'siftd ingest' to create it."
+        )
 
     # Create context
     ctx = CheckContext(
