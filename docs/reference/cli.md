@@ -5,7 +5,7 @@ _Auto-generated from `--help` output._
 ## siftd
 
 ```
-usage: siftd [-h] [--db PATH]
+usage: siftd [-h] [--version] [--db PATH]
              {ingest,status,ask,install,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export} ...
 
 Aggregate and query LLM conversation logs
@@ -33,8 +33,9 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
+  --version             show program's version number and exit
   --db PATH             Database path (default:
-                        /Users/kgruel/.local/share/siftd/siftd.db)
+                        /Users/kaygee/.local/share/siftd/siftd.db)
 ```
 
 ## siftd ingest
@@ -52,10 +53,11 @@ options:
 ## siftd status
 
 ```
-usage: siftd status [-h]
+usage: siftd status [-h] [--json]
 
 options:
   -h, --help  show this help message and exit
+  --json      Output as JSON
 ```
 
 ## siftd ask
@@ -228,13 +230,14 @@ examples:
 ## siftd tools
 
 ```
-usage: siftd tools [-h] [--by-workspace] [--prefix PREFIX] [-n LIMIT]
+usage: siftd tools [-h] [--by-workspace] [--prefix PREFIX] [-n LIMIT] [--json]
 
 options:
   -h, --help         show this help message and exit
   --by-workspace     Show breakdown by workspace
   --prefix PREFIX    Tag prefix to filter (default: shell:)
   -n, --limit LIMIT  Max workspaces for --by-workspace (default: 20)
+  --json             Output as JSON
 
 examples:
   siftd tools                    # shell command categories summary
@@ -338,10 +341,11 @@ examples:
 ## siftd adapters
 
 ```
-usage: siftd adapters [-h]
+usage: siftd adapters [-h] [--json]
 
 options:
   -h, --help  show this help message and exit
+  --json      Output as JSON
 ```
 
 ## siftd copy
@@ -367,25 +371,28 @@ examples:
 ## siftd doctor
 
 ```
-usage: siftd doctor [-h] [subcommand]
+usage: siftd doctor [-h] [--json] [subcommand]
 
 positional arguments:
   subcommand  'checks' to list, 'fixes' to show fixes, or check name
 
 options:
   -h, --help  show this help message and exit
+  --json      Output as JSON
 
 examples:
   siftd doctor                    # run all checks
   siftd doctor checks             # list available checks
   siftd doctor fixes              # show fix commands for issues
   siftd doctor ingest-pending     # run specific check
+  siftd doctor --json             # output as JSON
 ```
 
 ## siftd peek
 
 ```
-usage: siftd peek [-h] [-w SUBSTR] [--all] [--last N] [--tail] [--json]
+usage: siftd peek [-h] [-w SUBSTR] [--all] [--limit N] [--last N] [--full]
+                  [--chars N] [--tail] [--tail-lines N] [--json]
                   [session_id]
 
 positional arguments:
@@ -396,17 +403,26 @@ options:
   -w, --workspace SUBSTR
                         Filter by workspace name substring
   --all                 Include inactive sessions (not just last 2 hours)
-  --last N              Number of exchanges to show (default: 5)
-  --tail                Raw JSONL tail (last 20 lines)
+  --limit N             Maximum number of sessions to list
+  --last N              Number of exchanges to show (default: 5, minimum: 1)
+  --full                Show full text (no truncation)
+  --chars N             Truncate text at N characters (default: 200)
+  --tail                Raw JSONL tail (last 20 records)
+  --tail-lines N        Number of records for --tail (default: 20)
   --json                Output as structured JSON
 
 examples:
   siftd peek                    # list active sessions (last 2 hours)
   siftd peek --all              # list all sessions
-  siftd peek -w myproject        # filter by workspace name
+  siftd peek --all --limit 50   # list all, but only first 50
+  siftd peek -w myproject       # filter by workspace name
   siftd peek c520f862           # detail view for session
   siftd peek c520 --last 10     # show last 10 exchanges
+  siftd peek c520 --full        # show full text (no truncation)
   siftd peek c520 --tail        # raw JSONL tail
+  siftd peek c520 --tail --json # tail as JSON array
+
+NOTE: Session content may contain sensitive information (API keys, credentials, etc.).
 ```
 
 ## siftd export
