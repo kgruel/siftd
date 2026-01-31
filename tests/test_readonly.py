@@ -131,25 +131,6 @@ class TestSearchReadOnlyMode:
         assert not wal_path.exists(), "WAL file should not be created by filter_conversations"
         assert not shm_path.exists(), "SHM file should not be created by filter_conversations"
 
-    def test_resolve_role_ids_no_wal(self, tmp_path):
-        """resolve_role_ids() should not create WAL/SHM files."""
-        from siftd.search import resolve_role_ids
-
-        db_path = tmp_path / "test.db"
-
-        # Create DB with schema
-        conn = open_database(db_path)
-        conn.close()
-
-        # Call resolve_role_ids (triggers read-only open)
-        result = resolve_role_ids(db_path, "user", None)
-
-        # WAL and SHM files should not exist
-        wal_path = tmp_path / "test.db-wal"
-        shm_path = tmp_path / "test.db-shm"
-        assert not wal_path.exists(), "WAL file should not be created by resolve_role_ids"
-        assert not shm_path.exists(), "SHM file should not be created by resolve_role_ids"
-
     def test_get_active_conversation_ids_no_wal(self, tmp_path):
         """get_active_conversation_ids() should not create WAL/SHM files."""
         from siftd.search import get_active_conversation_ids
@@ -203,35 +184,3 @@ class TestSearchReadOnlyMode:
         finally:
             os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)
 
-    def test_resolve_role_ids_works_on_readonly_file(self, tmp_path):
-        """resolve_role_ids() works when DB file is chmod read-only."""
-        from siftd.search import resolve_role_ids
-
-        db_path = tmp_path / "test.db"
-
-        # Create DB with schema and some data
-        conn = open_database(db_path)
-        conn.execute(
-            "INSERT INTO harnesses (id, name) VALUES (?, ?)",
-            ("h1", "test_harness"),
-        )
-        conn.execute(
-            "INSERT INTO conversations (id, external_id, harness_id, started_at) VALUES (?, ?, ?, ?)",
-            ("conv1", "ext1", "h1", "2024-01-01T00:00:00Z"),
-        )
-        conn.execute(
-            "INSERT INTO prompts (id, conversation_id, timestamp) VALUES (?, ?, ?)",
-            ("prompt1", "conv1", "2024-01-01T00:00:00Z"),
-        )
-        conn.commit()
-        conn.close()
-
-        # Make file read-only
-        os.chmod(db_path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-
-        try:
-            # Should succeed on read-only file
-            result = resolve_role_ids(db_path, "user", {"conv1"})
-            assert result == {"prompt1"}
-        finally:
-            os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)

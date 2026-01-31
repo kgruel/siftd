@@ -607,7 +607,7 @@ def open_embeddings_db(db_path: Path, *, read_only: bool = ...) -> Connection
 Search for similar chunks in the embeddings database.
 
 ```python
-def search_similar(conn: Connection, query_embedding: list[float], *, limit: int = ..., conversation_ids: set[str] | None = ..., role_source_ids: set[str] | None = ..., include_embeddings: bool = ...) -> list[dict]
+def search_similar(conn: Connection, query_embedding: list[float], *, limit: int = ..., conversation_ids: set[str] | None = ..., include_embeddings: bool = ...) -> list[dict]
 ```
 
 **Parameters:**
@@ -616,7 +616,7 @@ def search_similar(conn: Connection, query_embedding: list[float], *, limit: int
 - `query_embedding`: The query embedding vector.
 - `limit`: Maximum results to return.
 - `conversation_ids`: Optional set of conversation IDs to filter by.
-- `role_source_ids`: Optional set of source IDs to filter by role.
+- `include_embeddings`: If True, include embedding vectors in results.
 
 **Returns:** List of result dicts with score, chunk_id, conversation_id, text, etc.
 

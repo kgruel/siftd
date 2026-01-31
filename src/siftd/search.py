@@ -327,58 +327,6 @@ def filter_conversations(
     return {row["id"] for row in rows}
 
 
-def resolve_role_ids(
-    db: Path,
-    role: str,
-    candidate_ids: set[str] | None = None,
-) -> set[str] | None:
-    """Resolve source IDs for a given role within optional conversation set.
-
-    For 'user': returns prompt IDs (prompts are user messages).
-    For 'assistant': returns prompt IDs whose responses contain assistant content
-    (chunks reference the prompt_id that triggered the response).
-
-    Args:
-        db: Path to the database.
-        role: Either 'user' or 'assistant'.
-        candidate_ids: Optional set of conversation IDs to filter within.
-
-    Returns:
-        Set of prompt IDs for the role, or None if no matches.
-    """
-    if candidate_ids is not None and not candidate_ids:
-        return None
-
-    conn = open_database(db, read_only=True)
-
-    if candidate_ids is not None:
-        # Use batched query for large candidate sets
-        if role == "user":
-            rows = batched_in_query(
-                conn,
-                "SELECT p.id FROM prompts p WHERE p.conversation_id IN ({placeholders})",
-                candidate_ids,
-            )
-        else:
-            rows = batched_in_query(
-                conn,
-                "SELECT DISTINCT r.prompt_id AS id FROM responses r "
-                "JOIN prompts p ON p.id = r.prompt_id "
-                "WHERE p.conversation_id IN ({placeholders})",
-                candidate_ids,
-            )
-    else:
-        if role == "user":
-            rows = conn.execute("SELECT p.id FROM prompts p").fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT DISTINCT r.prompt_id AS id FROM responses r"
-            ).fetchall()
-
-    conn.close()
-    return {row["id"] for row in rows} if rows else None
-
-
 def get_active_conversation_ids(db: Path) -> set[str]:
     """Get conversation IDs that originated from currently-active session files.
 

@@ -152,15 +152,6 @@ def cmd_ask(args) -> int:
         print("No conversations match the given filters.")
         return 0
 
-    # Role filter: resolve allowed source IDs from main DB
-    role_source_ids = None
-    if args.role:
-        from siftd.search import resolve_role_ids
-        role_source_ids = resolve_role_ids(db, args.role, candidate_ids)
-        if not role_source_ids:
-            print(f"No {args.role} content found matching filters.")
-            return 0
-
     # Embed query and search
     use_mmr = not args.no_diversity
     query_embedding = backend.embed_one(query)
@@ -179,7 +170,6 @@ def cmd_ask(args) -> int:
         query_embedding,
         limit=search_limit,
         conversation_ids=candidate_ids,
-        role_source_ids=role_source_ids,
         include_embeddings=use_mmr,
     )
     embed_conn.close()
@@ -316,7 +306,6 @@ examples:
   # refine
   siftd ask "design decision" --thread              # narrative: top conversations expanded
   siftd ask "why we chose X" --context 2            # ±2 surrounding exchanges
-  siftd ask "testing approach" --role user           # just your prompts, not responses
   siftd ask "event sourcing" --conversations        # rank whole conversations, not chunks
   siftd ask "when first discussed Y" --first        # earliest match above threshold
   siftd ask --threshold 0.7 "architecture"          # only high-relevance results
@@ -360,7 +349,6 @@ examples:
     p_ask.add_argument("--thread", action="store_true", help="Two-tier narrative thread output: top conversations expanded, rest as shortlist")
     p_ask.add_argument("--embeddings-only", action="store_true", help="Skip FTS5 recall, use pure embeddings")
     p_ask.add_argument("--recall", type=int, default=80, metavar="N", help="FTS5 conversation recall limit (default: 80)")
-    p_ask.add_argument("--role", choices=["user", "assistant"], help="Filter by source role (user prompts or assistant responses)")
     p_ask.add_argument("--first", action="store_true", help="Return chronologically earliest match above threshold")
     p_ask.add_argument("--conversations", action="store_true", help="Aggregate scores per conversation, return ranked conversations")
     p_ask.add_argument("--refs", nargs="?", const=True, metavar="FILES", help="Show file references; optionally filter by comma-separated basenames")

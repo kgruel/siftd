@@ -106,13 +106,6 @@ siftd ask --threshold 0.7 "event sourcing"
 ```
 Scores: 0.7+ on-topic, 0.6-0.7 tangential, <0.6 noise.
 
-**`--role {user,assistant}`** — filter chunks by source role:
-```bash
-siftd ask --role user "what should we do about"    # just human prompts
-siftd ask --role assistant "recommended approach"   # just LLM responses
-```
-Useful for finding what you asked vs. what was suggested.
-
 **`-n` / `--limit N`** — max results (default 10):
 ```bash
 siftd ask -n 20 "error handling"
@@ -218,6 +211,6 @@ siftd ask -w projectB "caching strategy"
 # Exclude archived conversations, narrative view
 siftd ask --no-tag archived --thread "authentication redesign"
 
-# Role-filtered search within a date range
-siftd ask --role user --since 2025-01 "what should we do about"
+# Date-filtered search
+siftd ask --since 2025-01 "what should we do about"
 ```

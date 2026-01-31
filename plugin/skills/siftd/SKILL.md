@@ -155,7 +155,7 @@ siftd ask -w myproject --since 2025-01 --threshold 0.7 "auth redesign" --thread
 ```
 Workspace + date + threshold + narrative output. Each filter narrows; the output mode controls rendering.
 
-> All filters (`--role`, `--model`, boolean tags, `--tool-tag`): `reference/ask.md` § Filters and `reference/query.md` § Filters.
+> All filters (`--model`, boolean tags, `--tool-tag`): `reference/ask.md` § Filters and `reference/query.md` § Filters.
 
 ## Preserving: the tag-retrieve loop
 

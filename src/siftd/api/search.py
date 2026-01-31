@@ -52,7 +52,6 @@ def search_similar(
     *,
     limit: int = 10,
     conversation_ids: set[str] | None = None,
-    role_source_ids: set[str] | None = None,
     include_embeddings: bool = False,
 ) -> list[dict]:
     """Search for similar chunks in the embeddings database.
@@ -62,7 +61,6 @@ def search_similar(
         query_embedding: The query embedding vector.
         limit: Maximum results to return.
         conversation_ids: Optional set of conversation IDs to filter by.
-        role_source_ids: Optional set of source IDs to filter by role.
         include_embeddings: If True, include embedding vectors in results.
 
     Returns:
@@ -75,7 +73,6 @@ def search_similar(
         query_embedding,
         limit=limit,
         conversation_ids=conversation_ids,
-        role_source_ids=role_source_ids,
         include_embeddings=include_embeddings,
     )
 

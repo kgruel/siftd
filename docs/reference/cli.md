@@ -67,7 +67,7 @@ usage: siftd ask [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
                  [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                  [--index] [--rebuild] [--backend NAME] [--embed-db PATH]
                  [--thread] [--embeddings-only] [--recall N]
-                 [--role {user,assistant}] [--first] [--conversations]
+                 [--first] [--conversations]
                  [--refs [FILES]] [--threshold SCORE] [--json] [--format NAME]
                  [--no-exclude-active] [--include-derivative] [--no-diversity]
                  [--lambda FLOAT] [-l NAME] [--all-tags NAME] [--no-tag NAME]
@@ -98,9 +98,6 @@ options:
                         expanded, rest as shortlist
   --embeddings-only     Skip FTS5 recall, use pure embeddings
   --recall N            FTS5 conversation recall limit (default: 80)
-  --role {user,assistant}
-                        Filter by source role (user prompts or assistant
-                        responses)
   --first               Return chronologically earliest match above threshold
   --conversations       Aggregate scores per conversation, return ranked
                         conversations
@@ -132,7 +129,6 @@ examples:
   # refine
   siftd ask "design decision" --thread              # narrative: top conversations expanded
   siftd ask "why we chose X" --context 2            # ±2 surrounding exchanges
-  siftd ask "testing approach" --role user           # just your prompts, not responses
   siftd ask "event sourcing" --conversations        # rank whole conversations, not chunks
   siftd ask "when first discussed Y" --first        # earliest match above threshold
   siftd ask --threshold 0.7 "architecture"          # only high-relevance results

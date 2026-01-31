@@ -147,14 +147,11 @@ def search_similar(
     query_embedding: list[float],
     limit: int = 10,
     conversation_ids: set[str] | None = None,
-    role_source_ids: set[str] | None = None,
     include_embeddings: bool = False,
 ) -> list[dict]:
     """Find chunks most similar to the query embedding (cosine similarity).
 
     If conversation_ids is provided, only search within those conversations.
-    If role_source_ids is provided, only include chunks whose source_ids
-    overlap with the given set (used for role filtering).
     If include_embeddings is True, each result dict includes an 'embedding' key
     with the decoded float list (used by MMR reranking).
     Returns list of dicts: conversation_id, chunk_type, text, score, source_ids.
@@ -174,25 +171,11 @@ def search_similar(
     if not rows:
         return []
 
-    # Apply role filter and collect valid rows
-    valid_rows = []
-    for row in rows:
-        source_ids_val = json.loads(row["source_ids"]) if row["source_ids"] else []
-
-        if role_source_ids is not None:
-            if not source_ids_val or not set(source_ids_val) & role_source_ids:
-                continue
-
-        valid_rows.append((row, source_ids_val))
-
-    if not valid_rows:
-        return []
-
     # Batch decode embeddings into numpy array
     embedding_dim = len(rows[0]["embedding"]) // 4  # float32 = 4 bytes
-    embeddings_array = np.empty((len(valid_rows), embedding_dim), dtype=np.float32)
+    embeddings_array = np.empty((len(rows), embedding_dim), dtype=np.float32)
 
-    for i, (row, _) in enumerate(valid_rows):
+    for i, row in enumerate(rows):
         embeddings_array[i] = _decode_embedding_numpy(row["embedding"])
 
     # Compute all similarities at once
@@ -201,7 +184,8 @@ def search_similar(
 
     # Build results with scores
     results = []
-    for i, (row, source_ids_val) in enumerate(valid_rows):
+    for i, row in enumerate(rows):
+        source_ids_val = json.loads(row["source_ids"]) if row["source_ids"] else []
         result = {
             "chunk_id": row["id"],
             "conversation_id": row["conversation_id"],
