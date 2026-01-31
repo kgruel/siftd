@@ -5,11 +5,6 @@ from pathlib import Path
 
 import pytest
 
-
-def text_block(text: str) -> str:
-    """Create JSON content for a text block."""
-    return json.dumps({"text": text})
-
 from siftd.domain.models import (
     ContentBlock,
     Conversation,
@@ -36,6 +31,11 @@ from siftd.storage.sqlite import (
 from siftd.storage.tags import apply_tag, get_or_create_tag
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def text_block(text: str) -> str:
+    """Create JSON content for a text block."""
+    return json.dumps({"text": text})
 
 
 def make_conversation(

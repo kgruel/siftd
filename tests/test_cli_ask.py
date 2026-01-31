@@ -270,8 +270,11 @@ class TestAskOutputFormats:
         data = json.loads(captured.out)
         assert isinstance(data, (list, dict))
 
-    def test_verbose_shows_more_text(self, indexed_db, capsys):
+    def test_verbose_shows_more_text(self, indexed_db, capsys, monkeypatch):
         """--verbose shows full chunk text."""
+        # Isolate from user config by setting empty XDG_CONFIG_HOME
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(indexed_db["db_path"].parent / "empty_config"))
+
         # Run without verbose
         args1 = make_args(
             query=["error"],
