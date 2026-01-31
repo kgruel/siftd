@@ -141,3 +141,59 @@ class TestExitCodes:
         assert result.returncode == 0, (
             f"Expected exit code 0 for --version, got {result.returncode}"
         )
+
+
+# =============================================================================
+# 3. Doctor Fix Command Validation
+# =============================================================================
+
+
+class TestDoctorFixCommands:
+    """Doctor fix_command suggestions must reference valid CLI subcommands.
+
+    Rationale: If doctor suggests "siftd foo --bar" to fix an issue,
+    that command must actually exist. This catches the bug where doctor
+    suggested non-existent flags.
+    """
+
+    def test_fix_commands_are_valid_subcommands(self, test_db_path):
+        """All doctor fix_command values must be runnable CLI commands."""
+        # Get doctor findings as JSON
+        cmd = ["uv", "run", "siftd", "--db", str(test_db_path), "doctor", "--json"]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if not result.stdout.strip():
+            pytest.skip("No doctor output")
+
+        data = json.loads(result.stdout)
+        findings = data.get("findings", [])
+
+        invalid_commands = []
+        for finding in findings:
+            fix_cmd = finding.get("fix_command", "")
+            if not fix_cmd or not fix_cmd.startswith("siftd "):
+                continue
+
+            # Extract the subcommand (first word after 'siftd')
+            parts = fix_cmd.split()
+            if len(parts) < 2:
+                continue
+
+            subcommand = parts[1]
+            # Skip if it looks like a flag (--db, etc.)
+            if subcommand.startswith("-"):
+                continue
+
+            # Verify the subcommand exists by checking --help
+            help_result = subprocess.run(
+                ["uv", "run", "siftd", subcommand, "--help"],
+                capture_output=True,
+                text=True,
+            )
+            if help_result.returncode != 0:
+                invalid_commands.append(fix_cmd)
+
+        assert not invalid_commands, (
+            f"Doctor suggested invalid fix commands:\n"
+            + "\n".join(f"  - {cmd}" for cmd in invalid_commands)
+        )

@@ -42,6 +42,9 @@ dev = [
     "pytest>=8.0",
     "pytest-cov",
     "pytest-xdist",
+    "prysk",
+    "pytest-prysk",
+    "syrupy",
     "ruff>=0.4",
     "ty",
 ]
