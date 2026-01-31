@@ -157,6 +157,24 @@ def cmd_ask(args) -> int:
     use_mmr = not args.no_diversity
     query_embedding = backend.embed_one(query)
     embed_conn = open_embeddings_db(embed_db, read_only=True)
+
+    # Validate index compatibility before search
+    from siftd.api import IndexCompatError, validate_index_compat
+    from siftd.embeddings import SCHEMA_VERSION
+
+    try:
+        validate_index_compat(
+            embed_conn,
+            backend_name=backend.name,
+            backend_model=backend.model,
+            backend_dimension=backend.dimension,
+            current_schema_version=SCHEMA_VERSION,
+        )
+    except IndexCompatError as e:
+        embed_conn.close()
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
     # Widen initial search for modes that aggregate or filter post-hoc
     search_limit = args.limit
     if args.thread:
@@ -287,6 +305,7 @@ def cmd_ask(args) -> int:
 def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: str | None, verbose: bool) -> int:
     """Build or incrementally update the embeddings index."""
     from siftd.api import build_index
+    from siftd.embeddings.indexer import IncrementalCompatError
 
     try:
         result = build_index(
@@ -299,6 +318,9 @@ def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: s
     except FileNotFoundError as e:
         print(str(e))
         print("Run 'siftd ingest' to create it.")
+        return 1
+    except IncrementalCompatError as e:
+        print(f"Error: {e}", file=sys.stderr)
         return 1
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)

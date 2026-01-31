@@ -62,6 +62,7 @@ from siftd.api.resources import (
 )
 from siftd.api.search import (
     ConversationScore,
+    IndexCompatError,
     SearchResult,
     aggregate_by_conversation,
     apply_temporal_weight,
@@ -72,6 +73,7 @@ from siftd.api.search import (
     hybrid_search,
     open_embeddings_db,
     search_similar,
+    validate_index_compat,
 )
 from siftd.api.stats import (
     DatabaseStats,
@@ -152,12 +154,14 @@ __all__ = [
     # search
     "SearchResult",
     "ConversationScore",
+    "IndexCompatError",
     "hybrid_search",
     "aggregate_by_conversation",
     "first_mention",
     "build_index",
     "open_embeddings_db",
     "search_similar",
+    "validate_index_compat",
     "fts5_recall_conversations",
     "apply_temporal_weight",
     "fetch_conversation_timestamps",

@@ -1,0 +1,7 @@
+[
+    {"step": "Phase 1: Add metadata storage (model, overlap_tokens, built_at, schema_version)", "done": true},
+    {"step": "Phase 2: Create validate_index_compat() and integrate in cmd_ask()", "done": true},
+    {"step": "Phase 3: Add EmbeddingsCompatCheck to doctor", "done": true},
+    {"step": "Phase 4: Add incremental index guard in build_embeddings_index()", "done": true},
+    {"step": "Run tests", "done": true}
+]

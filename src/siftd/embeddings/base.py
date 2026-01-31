@@ -10,6 +10,7 @@ class EmbeddingBackend(Protocol):
     """Protocol for embedding backends."""
 
     name: str
+    model: str
     dimension: int
 
     def embed(self, texts: list[str]) -> list[list[float]]:

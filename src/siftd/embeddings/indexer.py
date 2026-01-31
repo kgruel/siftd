@@ -3,6 +3,7 @@
 Builds and maintains the embeddings index for semantic search.
 """
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,11 +15,22 @@ from siftd.storage.embeddings import (
     chunk_count,
     clear_all,
     get_indexed_conversation_ids,
+    get_meta,
     open_embeddings_db,
     set_meta,
     store_chunk,
 )
 from siftd.storage.sqlite import open_database
+
+# Bump when index_meta keys or chunks table structure changes incompatibly.
+# Version 1: Initial version with model tracking
+SCHEMA_VERSION = 1
+
+
+class IncrementalCompatError(Exception):
+    """Raised when incremental indexing would mix incompatible backends."""
+
+    pass
 
 
 @dataclass
@@ -68,6 +80,9 @@ def build_embeddings_index(
         if verbose:
             print("Clearing existing index...")
         clear_all(embed_conn)
+    else:
+        # For incremental indexing, validate compatibility with existing index
+        _validate_incremental_compat(embed_conn, backend)
 
     # Determine which conversations need indexing
     already_indexed = get_indexed_conversation_ids(embed_conn)
@@ -128,11 +143,15 @@ def build_embeddings_index(
     embed_conn.commit()
 
     # Record strategy metadata
+    set_meta(embed_conn, "schema_version", str(SCHEMA_VERSION))
     set_meta(embed_conn, "backend", backend.name)
+    set_meta(embed_conn, "model", backend.model)
     set_meta(embed_conn, "dimension", str(backend.dimension))
     set_meta(embed_conn, "strategy", "exchange-window")
     set_meta(embed_conn, "target_tokens", str(target_tokens))
     set_meta(embed_conn, "max_tokens", str(max_tokens))
+    set_meta(embed_conn, "overlap_tokens", str(overlap_tokens))
+    set_meta(embed_conn, "built_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
 
     total = chunk_count(embed_conn)
     chunks_added = len(chunks)
@@ -156,3 +175,48 @@ def _get_tokenizer():
 
     emb = TextEmbedding("BAAI/bge-small-en-v1.5")
     return emb.model.tokenizer
+
+
+def _validate_incremental_compat(conn, backend) -> None:
+    """Validate that incremental indexing is compatible with existing index.
+
+    Args:
+        conn: Embeddings database connection.
+        backend: Current embedding backend instance.
+
+    Raises:
+        IncrementalCompatError: If adding would mix incompatible embeddings.
+
+    Note:
+        Empty indexes (first build) always pass validation.
+    """
+    # Check if index has any chunks
+    total = chunk_count(conn)
+    if total == 0:
+        # First build, no compatibility check needed
+        return
+
+    stored_backend = get_meta(conn, "backend")
+    stored_model = get_meta(conn, "model")
+
+    # Backend mismatch
+    if stored_backend is not None and stored_backend != backend.name:
+        stored_model_display = f" ({stored_model})" if stored_model else ""
+        raise IncrementalCompatError(
+            f"Cannot add to index with different backend.\n\n"
+            f"  Index backend:    {stored_backend}{stored_model_display}\n"
+            f"  Current backend:  {backend.name} ({backend.model})\n\n"
+            f"Options:\n"
+            f"  1. Use matching backend:  siftd ask --index --backend {stored_backend}\n"
+            f"  2. Rebuild from scratch:  siftd ask --rebuild"
+        )
+
+    # Model mismatch (same backend, different model)
+    if stored_model is not None and stored_model != backend.model:
+        raise IncrementalCompatError(
+            f"Cannot add to index with different model.\n\n"
+            f"  Index model:    {stored_model}\n"
+            f"  Current model:  {backend.model}\n\n"
+            f"Rebuild required to switch models:\n"
+            f"  siftd ask --rebuild"
+        )

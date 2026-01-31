@@ -10,6 +10,7 @@ from statistics import mean as _mean
 
 # Re-export core search API
 from siftd.search import SearchResult, apply_temporal_weight, hybrid_search
+from siftd.storage.embeddings import IndexCompatError
 from siftd.storage.queries import fetch_conversation_timestamps, fetch_prompt_timestamps
 
 __all__ = [
@@ -25,6 +26,8 @@ __all__ = [
     # Embeddings
     "open_embeddings_db",
     "search_similar",
+    "validate_index_compat",
+    "IndexCompatError",
     # FTS5
     "fts5_recall_conversations",
 ]
@@ -77,6 +80,40 @@ def search_similar(
         limit=limit,
         conversation_ids=conversation_ids,
         include_embeddings=include_embeddings,
+    )
+
+
+def validate_index_compat(
+    conn: sqlite3.Connection,
+    backend_name: str,
+    backend_model: str,
+    backend_dimension: int,
+    current_schema_version: int,
+) -> None:
+    """Validate that stored index metadata is compatible with the current backend.
+
+    Args:
+        conn: Embeddings database connection.
+        backend_name: Current backend name (e.g., "fastembed", "ollama").
+        backend_model: Current backend model (e.g., "BAAI/bge-small-en-v1.5").
+        backend_dimension: Current embedding dimension.
+        current_schema_version: Current schema version constant.
+
+    Raises:
+        IndexCompatError: If metadata indicates incompatibility with actionable message.
+
+    Note:
+        Missing metadata keys (pre-versioning indexes) are allowed with warning-level
+        degradation — dimension validation still applies via search_similar().
+    """
+    from siftd.storage.embeddings import validate_index_compat as _validate
+
+    return _validate(
+        conn,
+        backend_name,
+        backend_model,
+        backend_dimension,
+        current_schema_version,
     )
 
 

@@ -232,6 +232,92 @@ def _decode_embedding_numpy(blob: bytes) -> np.ndarray:
     return np.frombuffer(blob, dtype=np.float32)
 
 
+class IndexCompatError(Exception):
+    """Raised when index metadata is incompatible with current backend configuration."""
+
+    pass
+
+
+def validate_index_compat(
+    conn: sqlite3.Connection,
+    backend_name: str,
+    backend_model: str,
+    backend_dimension: int,
+    current_schema_version: int,
+) -> None:
+    """Validate that stored index metadata is compatible with the current backend.
+
+    Args:
+        conn: Embeddings database connection.
+        backend_name: Current backend name (e.g., "fastembed", "ollama").
+        backend_model: Current backend model (e.g., "BAAI/bge-small-en-v1.5").
+        backend_dimension: Current embedding dimension.
+        current_schema_version: Current schema version constant.
+
+    Raises:
+        IndexCompatError: If metadata indicates incompatibility with actionable message.
+
+    Note:
+        Missing metadata keys (pre-versioning indexes) are allowed with warning-level
+        degradation — dimension validation still applies via search_similar().
+    """
+    stored_backend = get_meta(conn, "backend")
+    stored_model = get_meta(conn, "model")
+    stored_dimension = get_meta(conn, "dimension")
+    stored_schema = get_meta(conn, "schema_version")
+
+    # Schema version mismatch
+    if stored_schema is not None:
+        stored_ver = int(stored_schema)
+        if stored_ver != current_schema_version:
+            raise IndexCompatError(
+                f"Index schema outdated.\n\n"
+                f"  Index schema version:   {stored_ver}\n"
+                f"  Current schema version: {current_schema_version}\n\n"
+                f"Rebuild required to upgrade index format:\n"
+                f"  siftd ask --rebuild"
+            )
+
+    # Backend mismatch
+    if stored_backend is not None and stored_backend != backend_name:
+        stored_model_display = f" ({stored_model})" if stored_model else ""
+        raise IndexCompatError(
+            f"Embedding backend mismatch.\n\n"
+            f"  Index backend:    {stored_backend}{stored_model_display}\n"
+            f"  Current backend:  {backend_name} ({backend_model})\n\n"
+            f"To search with the existing index:\n"
+            f"  siftd ask --backend {stored_backend} \"<query>\"\n\n"
+            f"To rebuild with the current backend:\n"
+            f"  siftd ask --rebuild"
+        )
+
+    # Model mismatch (same backend, different model)
+    if stored_model is not None and stored_model != backend_model:
+        stored_dim = int(stored_dimension) if stored_dimension else "?"
+        raise IndexCompatError(
+            f"Embedding model mismatch.\n\n"
+            f"  Index model:    {stored_model} ({stored_dim} dims)\n"
+            f"  Current model:  {backend_model} ({backend_dimension} dims)\n\n"
+            f"Rebuild required — different models produce incompatible embeddings:\n"
+            f"  siftd ask --rebuild"
+        )
+
+    # Dimension mismatch (covers cases where model isn't stored but dimensions differ)
+    if stored_dimension is not None:
+        stored_dim = int(stored_dimension)
+        if stored_dim != backend_dimension:
+            stored_backend_display = stored_backend or "unknown"
+            stored_model_display = stored_model or "unknown"
+            raise IndexCompatError(
+                f"Embedding dimension mismatch.\n\n"
+                f"  Index dimension:   {stored_dim} ({stored_backend_display}/{stored_model_display})\n"
+                f"  Current backend:   {backend_dimension} ({backend_name}/{backend_model})\n\n"
+                f"The index was built with a different embedding model. To search:\n"
+                f"  1. Use the same backend:   siftd ask --backend {stored_backend_display} \"<query>\"\n"
+                f"  2. Or rebuild the index:   siftd ask --rebuild"
+            )
+
+
 def prune_orphaned_chunks(
     main_conn: sqlite3.Connection,
     embeddings_conn: sqlite3.Connection,
