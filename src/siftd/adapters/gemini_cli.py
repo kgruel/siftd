@@ -6,10 +6,12 @@ No storage coupling.
 
 import hashlib
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from siftd.adapters._jsonl import now_iso
+from siftd.adapters.sdk import canonicalize_tool_name
 from siftd.domain import (
     ContentBlock,
     Conversation,
@@ -21,11 +23,17 @@ from siftd.domain import (
     Usage,
 )
 
+if TYPE_CHECKING:
+    from siftd.peek.types import PeekExchange, PeekScanResult
+
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
 NAME = "gemini_cli"
 DEFAULT_LOCATIONS = ["~/.gemini/tmp"]
 DEDUP_STRATEGY = "session"  # one conversation per session, latest wins
+
+# Glob pattern for peek discovery (JSON files in chats/ subdirectory)
+PEEK_GLOB_PATTERNS = ["*/chats/*.json"]
 
 # Harness metadata
 HARNESS_SOURCE = "google"
@@ -257,3 +265,123 @@ def _resolve_workspace_from_hash(project_hash: str) -> str | None:
 def hash_path(path: str) -> str:
     """Compute the project hash for a given path (SHA-256)."""
     return hashlib.sha256(path.encode()).hexdigest()
+
+
+# =============================================================================
+# Peek hooks — optional live session inspection
+# =============================================================================
+
+
+def peek_scan(path: Path) -> "PeekScanResult | None":
+    """Extract lightweight metadata for session listing.
+
+    Gemini CLI stores sessions as single JSON files with a messages array.
+    """
+    from siftd.peek.types import PeekScanResult
+
+    try:
+        data = _load_json(path)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+    if not data or "messages" not in data:
+        return None
+
+    session_id = data.get("sessionId", path.stem)
+    project_hash = data.get("projectHash")
+    start_time = data.get("startTime")
+    last_updated = data.get("lastUpdated")
+
+    # Try to resolve workspace path from project hash
+    workspace_path = None
+    if project_hash:
+        workspace_path = _resolve_workspace_from_hash(project_hash)
+
+    # Count user messages as exchanges
+    exchange_count = 0
+    model: str | None = None
+
+    for message in data.get("messages", []):
+        if message.get("type") == "user":
+            exchange_count += 1
+        elif message.get("type") == "gemini":
+            model = model or message.get("model")
+
+    if exchange_count == 0:
+        return None
+
+    return PeekScanResult(
+        session_id=session_id,
+        workspace_path=workspace_path,
+        model=model,
+        exchange_count=exchange_count,
+        started_at=start_time,
+        last_activity_at=last_updated,
+    )
+
+
+def peek_exchanges(path: Path, last_n: int = 5) -> list["PeekExchange"]:
+    """Extract recent exchanges for session detail view."""
+    from siftd.peek.types import PeekExchange
+
+    if last_n < 1:
+        last_n = 1
+
+    try:
+        data = _load_json(path)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return []
+
+    if not data or "messages" not in data:
+        return []
+
+    exchanges: list[PeekExchange] = []
+    current_exchange: PeekExchange | None = None
+
+    for message in data.get("messages", []):
+        msg_type = message.get("type")
+        timestamp = message.get("timestamp", "")
+        content_text = message.get("content", "")
+
+        if msg_type == "user":
+            current_exchange = PeekExchange(
+                timestamp=timestamp,
+                prompt_text=content_text if content_text else None,
+            )
+            exchanges.append(current_exchange)
+
+        elif msg_type == "gemini" and current_exchange is not None:
+            tokens_data = message.get("tokens", {})
+            current_exchange.input_tokens += tokens_data.get("input", 0)
+            current_exchange.output_tokens += tokens_data.get("output", 0)
+            current_exchange.response_text = content_text if content_text else None
+
+            # Collect tool calls
+            tool_calls: dict[str, int] = {}
+            for tool_call_data in message.get("toolCalls", []):
+                tool_name = tool_call_data.get("name", "unknown")
+                tool_name = canonicalize_tool_name(tool_name, TOOL_ALIASES)
+                tool_calls[tool_name] = tool_calls.get(tool_name, 0) + 1
+
+            if tool_calls:
+                current_exchange.tool_calls = list(tool_calls.items())
+
+    return exchanges[-last_n:] if len(exchanges) > last_n else exchanges
+
+
+def peek_tail(path: Path, lines: int = 20) -> Iterator[dict]:
+    """Yield last N messages from the session file.
+
+    Gemini CLI uses a single JSON file, so we return the last N messages
+    from the messages array.
+    """
+    try:
+        data = _load_json(path)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return
+
+    if not data or "messages" not in data:
+        return
+
+    messages = data.get("messages", [])
+    yield from messages[-lines:]

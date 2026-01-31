@@ -10,7 +10,6 @@ from siftd.domain.models import (
     Harness,
     Prompt,
     Response,
-    ToolCall,
     Usage,
 )
 from siftd.domain.source import Source

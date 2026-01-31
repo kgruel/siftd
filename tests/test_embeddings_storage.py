@@ -1,6 +1,5 @@
 """Tests for embeddings storage."""
 
-import math
 import sqlite3
 
 from siftd.storage.embeddings import (

@@ -21,6 +21,14 @@ Optional exports:
     HARNESS_LOG_FORMAT (str): Log format (e.g., "jsonl", "json").
     HARNESS_DISPLAY_NAME (str): Human-readable name.
     TOOL_ALIASES (dict[str, str]): Map raw tool names to canonical names.
+
+Optional peek hooks (for `siftd peek` support):
+    peek_scan(path: Path) -> PeekScanResult | None: Extract lightweight metadata.
+    peek_exchanges(path: Path, last_n: int) -> list[PeekExchange]: Get recent exchanges.
+    peek_tail(path: Path, lines: int) -> Iterator[dict]: Tail raw records.
+
+    Adapters without peek hooks will still work for ingest, but sessions will
+    show "preview unavailable" in peek listings. See docs/writing-adapters.md.
 """
 
 from collections.abc import Iterable
@@ -282,3 +290,49 @@ def _now_iso() -> str:
     from datetime import UTC, datetime
 
     return datetime.now(UTC).isoformat()
+
+
+# ============================================================================
+# Optional: Peek hooks for `siftd peek` support
+# ============================================================================
+#
+# Uncomment and customize if you want `siftd peek` to work with your adapter.
+# Without these, the adapter still works for ingest, but sessions show
+# "preview unavailable" in peek listings.
+#
+# from typing import Iterator
+# from siftd.peek.types import PeekExchange, PeekScanResult
+# from siftd.adapters.sdk import peek_jsonl_scan, peek_jsonl_exchanges, peek_jsonl_tail
+#
+# def peek_scan(path: Path) -> PeekScanResult | None:
+#     """Extract lightweight metadata for session listing."""
+#     return peek_jsonl_scan(
+#         path,
+#         user_type="user",
+#         assistant_type="assistant",
+#         cwd_key="cwd",
+#         session_id_key="session_id",
+#         is_tool_result=lambda r: _has_tool_result(r.get("content", [])),
+#     )
+#
+#
+# def peek_exchanges(path: Path, last_n: int = 5) -> list[PeekExchange]:
+#     """Extract recent exchanges for session detail view."""
+#     return peek_jsonl_exchanges(
+#         path,
+#         last_n,
+#         user_type="user",
+#         assistant_type="assistant",
+#         get_content_blocks=lambda r: r.get("content", []),
+#         get_usage=lambda r: (
+#             r.get("usage", {}).get("input_tokens", 0),
+#             r.get("usage", {}).get("output_tokens", 0),
+#         ),
+#         is_tool_result=lambda r: _has_tool_result(r.get("content", [])),
+#         tool_aliases=TOOL_ALIASES,
+#     )
+#
+#
+# def peek_tail(path: Path, lines: int = 20) -> Iterator[dict]:
+#     """Yield last N raw records from the session file."""
+#     yield from peek_jsonl_tail(path, lines, parse_json=True)

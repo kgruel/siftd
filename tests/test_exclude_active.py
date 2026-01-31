@@ -3,8 +3,6 @@
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from siftd.peek.scanner import SessionInfo
 from siftd.search import get_active_conversation_ids
 

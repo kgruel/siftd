@@ -1,13 +1,11 @@
 """Tests for the doctor module."""
 
-from pathlib import Path
 
 import pytest
 
 from siftd.api import (
     CheckInfo,
     Finding,
-    FixResult,
     list_checks,
     run_checks,
 )

@@ -1,7 +1,6 @@
 """Tests for config module."""
 
 import argparse
-from pathlib import Path
 
 import pytest
 

@@ -14,7 +14,6 @@ from siftd.storage.sqlite import (
     insert_prompt,
     insert_prompt_content,
     insert_response,
-    insert_response_content,
     insert_tool_call,
     open_database,
 )
@@ -23,7 +22,6 @@ from siftd.storage.tags import (
     is_derivative_tool_call,
     tag_derivative_conversation,
 )
-
 
 # ---------------------------------------------------------------------------
 # is_derivative_tool_call — pure detection logic
@@ -155,7 +153,6 @@ class TestBackfillDerivativeTags:
     def db_with_tool_calls(self, tmp_path):
         """DB with 3 conversations: one derivative (siftd ask), one derivative
         (siftd query), one normal."""
-        from siftd.storage.tags import apply_tag, get_or_create_tag
 
         db_path = tmp_path / "backfill.db"
         conn = create_database(db_path)

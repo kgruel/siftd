@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-
 # Layer import rules: module -> forbidden imports
 RULES = {
     "domain": {"forbidden": ["storage", "api", "cli"]},

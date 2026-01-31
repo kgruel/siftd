@@ -1,19 +1,25 @@
 """Peek module: live session inspection bypassing SQLite."""
 
 from siftd.peek.reader import (
-    PeekExchange,
-    SessionDetail,
+    AmbiguousSessionError,
     find_session_file,
     read_session_detail,
     tail_session,
 )
 from siftd.peek.scanner import (
-    SessionInfo,
     list_active_sessions,
+)
+from siftd.peek.types import (
+    PeekExchange,
+    PeekScanResult,
+    SessionDetail,
+    SessionInfo,
 )
 
 __all__ = [
+    "AmbiguousSessionError",
     "PeekExchange",
+    "PeekScanResult",
     "SessionDetail",
     "SessionInfo",
     "find_session_file",

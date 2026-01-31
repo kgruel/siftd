@@ -1,6 +1,5 @@
 """Tests for content-addressable blob storage."""
 
-import pytest
 
 from siftd.storage import (
     compute_content_hash,

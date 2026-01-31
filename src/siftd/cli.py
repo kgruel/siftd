@@ -1192,19 +1192,50 @@ def cmd_peek(args) -> int:
         read_session_detail,
         tail_session,
     )
+    from siftd.peek import AmbiguousSessionError
+
+    # Validate --last
+    if args.last is not None and args.last < 1:
+        print("Error: --last must be at least 1")
+        return 1
+
+    # Determine truncation limit
+    chars_limit = 200
+    if getattr(args, "full", False):
+        chars_limit = 0  # No truncation
+    elif getattr(args, "chars", None) is not None:
+        chars_limit = args.chars
 
     # Detail mode: session ID provided
     if args.session_id:
-        path = find_session_file(args.session_id)
+        try:
+            path = find_session_file(args.session_id)
+        except AmbiguousSessionError as e:
+            print(f"Error: {e}")
+            return 1
+
         if path is None:
             print(f"Session not found: {args.session_id}")
             return 1
 
         # Tail mode
         if args.tail:
-            lines = tail_session(path, lines=20)
-            for line in lines:
-                print(line)
+            tail_lines = getattr(args, "tail_lines", 20)
+            # Use raw=True for line-oriented output (one JSON per line)
+            lines = tail_session(path, lines=tail_lines, raw=True)
+            if args.json:
+                # Wrap in JSON array
+                records = []
+                for line in lines:
+                    try:
+                        records.append(_json.loads(line))
+                    except (ValueError, _json.JSONDecodeError):
+                        records.append(line)
+                print(_json.dumps(records, indent=2))
+            else:
+                # Raw JSONL output (one per line)
+                for line in lines:
+                    print(line)
             return 0
 
         # Detail mode
@@ -1222,6 +1253,7 @@ def cmd_peek(args) -> int:
                 "model": detail.info.model,
                 "started_at": detail.started_at,
                 "exchange_count": detail.info.exchange_count,
+                "adapter": detail.info.adapter_name,
                 "exchanges": [
                     {
                         "timestamp": ex.timestamp,
@@ -1253,6 +1285,8 @@ def cmd_peek(args) -> int:
             parts.append(f"started {started}")
         parts.append(f"{detail.info.exchange_count} exchanges")
         print(" \u00b7 ".join(parts))
+        # Add file path to detail header
+        print(f"file: {detail.info.file_path}")
         print()
 
         # Exchanges
@@ -1265,8 +1299,8 @@ def cmd_peek(args) -> int:
             if ex.prompt_text is not None:
                 print(f"[{ts}] user")
                 text = ex.prompt_text
-                if len(text) > 200:
-                    text = text[:200] + "..."
+                if chars_limit > 0 and len(text) > chars_limit:
+                    text = text[:chars_limit] + "..."
                 for line in text.splitlines():
                     print(f"  {line}")
                 print()
@@ -1277,8 +1311,8 @@ def cmd_peek(args) -> int:
                 print(f"[{ts}] assistant ({token_info})")
                 if ex.response_text:
                     text = ex.response_text
-                    if len(text) > 200:
-                        text = text[:200] + "..."
+                    if chars_limit > 0 and len(text) > chars_limit:
+                        text = text[:chars_limit] + "..."
                     for line in text.splitlines():
                         print(f"  {line}")
                 if ex.tool_calls:
@@ -1294,13 +1328,18 @@ def cmd_peek(args) -> int:
         return 0
 
     # List mode
+    limit = getattr(args, "limit", None)
     sessions = list_active_sessions(
         workspace=args.workspace,
         include_inactive=args.all,
+        limit=limit,
     )
 
     if not sessions:
-        print("No active sessions found.")
+        if args.json:
+            print("[]")
+        else:
+            print("No active sessions found.")
         return 0
 
     if args.json:
@@ -1313,6 +1352,8 @@ def cmd_peek(args) -> int:
                 "model": s.model,
                 "last_activity": s.last_activity,
                 "exchange_count": s.exchange_count,
+                "adapter": s.adapter_name,
+                "preview_available": s.preview_available,
             }
             for s in sessions
         ]
@@ -1324,7 +1365,10 @@ def cmd_peek(args) -> int:
         sid = s.session_id[:8]
         ws = s.workspace_name or ""
         ago = _fmt_ago(now - s.last_activity)
-        exchanges = f"{s.exchange_count} exchanges"
+        if s.preview_available:
+            exchanges = f"{s.exchange_count} exchanges"
+        else:
+            exchanges = "(preview unavailable)"
         model = s.model or ""
         # Shorten model name: strip date suffix if present
         if model and "-" in model:
@@ -1632,16 +1676,25 @@ def main(argv=None) -> int:
         epilog="""examples:
   siftd peek                    # list active sessions (last 2 hours)
   siftd peek --all              # list all sessions
-  siftd peek -w myproject        # filter by workspace name
+  siftd peek --all --limit 50   # list all, but only first 50
+  siftd peek -w myproject       # filter by workspace name
   siftd peek c520f862           # detail view for session
   siftd peek c520 --last 10     # show last 10 exchanges
-  siftd peek c520 --tail        # raw JSONL tail""",
+  siftd peek c520 --full        # show full text (no truncation)
+  siftd peek c520 --tail        # raw JSONL tail
+  siftd peek c520 --tail --json # tail as JSON array
+
+NOTE: Session content may contain sensitive information (API keys, credentials, etc.).""",
     )
     p_peek.add_argument("session_id", nargs="?", help="Session ID prefix for detail view")
     p_peek.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace name substring")
     p_peek.add_argument("--all", action="store_true", help="Include inactive sessions (not just last 2 hours)")
-    p_peek.add_argument("--last", type=int, default=5, metavar="N", help="Number of exchanges to show (default: 5)")
-    p_peek.add_argument("--tail", action="store_true", help="Raw JSONL tail (last 20 lines)")
+    p_peek.add_argument("--limit", type=int, metavar="N", help="Maximum number of sessions to list")
+    p_peek.add_argument("--last", type=int, default=5, metavar="N", help="Number of exchanges to show (default: 5, minimum: 1)")
+    p_peek.add_argument("--full", action="store_true", help="Show full text (no truncation)")
+    p_peek.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: 200)")
+    p_peek.add_argument("--tail", action="store_true", help="Raw JSONL tail (last 20 records)")
+    p_peek.add_argument("--tail-lines", type=int, default=20, metavar="N", dest="tail_lines", help="Number of records for --tail (default: 20)")
     p_peek.add_argument("--json", action="store_true", help="Output as structured JSON")
     p_peek.set_defaults(func=cmd_peek)
 

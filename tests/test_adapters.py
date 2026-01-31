@@ -8,15 +8,13 @@ Each test uses a minimal fixture file to verify:
 
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import MagicMock
 
 import pytest
-
 from conftest import FIXTURES_DIR
 
-from siftd.domain.source import Source
 from siftd.adapters import aider, claude_code, codex_cli, gemini_cli
-from siftd.adapters.registry import _validate_adapter, ADAPTER_INTERFACE_VERSION
+from siftd.adapters.registry import ADAPTER_INTERFACE_VERSION, _validate_adapter
+from siftd.domain.source import Source
 
 
 class TestValidateAdapter:

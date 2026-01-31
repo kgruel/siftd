@@ -8,6 +8,7 @@ Covers:
 
 from conftest import FIXTURES_DIR, make_conversation, make_session_adapter, make_test_adapter
 
+from siftd.adapters import claude_code
 from siftd.ingestion.orchestration import ingest_all
 from siftd.storage.sqlite import (
     check_file_ingested,
@@ -15,7 +16,6 @@ from siftd.storage.sqlite import (
     get_ingested_file_info,
     open_database,
 )
-from siftd.adapters import claude_code
 
 
 def _make_adapter(dest, name="claude_code", dedup="file", parse_fn=None):

@@ -4,10 +4,16 @@ Pure parser: reads JSONL files and yields Conversation domain objects.
 No storage coupling.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from siftd.adapters._jsonl import load_jsonl, now_iso, parse_block
+from siftd.adapters.sdk import (
+    peek_jsonl_exchanges,
+    peek_jsonl_scan,
+    peek_jsonl_tail,
+)
 from siftd.domain import (
     Conversation,
     Harness,
@@ -17,6 +23,9 @@ from siftd.domain import (
     ToolCall,
     Usage,
 )
+
+if TYPE_CHECKING:
+    from siftd.peek.types import PeekExchange, PeekScanResult
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
@@ -256,3 +265,77 @@ def _normalize_content(content) -> list:
     if isinstance(content, list):
         return content
     return []
+
+
+# =============================================================================
+# Peek hooks — optional live session inspection
+# =============================================================================
+
+
+def _is_tool_result(record: dict) -> bool:
+    """Check if a user record is a tool_result (not a real exchange)."""
+    msg = record.get("message") or {}
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(b, dict) and b.get("type") == "tool_result" for b in content
+    )
+
+
+def _get_content_blocks(record: dict) -> list:
+    """Extract content blocks from a Claude Code record."""
+    msg = record.get("message") or {}
+    return _normalize_content(msg.get("content"))
+
+
+def _get_usage(record: dict) -> tuple[int, int]:
+    """Extract (input_tokens, output_tokens) from a Claude Code record."""
+    msg = record.get("message") or {}
+    usage = msg.get("usage") or {}
+    return (usage.get("input_tokens", 0), usage.get("output_tokens", 0))
+
+
+def peek_scan(path: Path) -> "PeekScanResult | None":
+    """Extract lightweight metadata for session listing.
+
+    Called per-file during list_active_sessions().
+    """
+    return peek_jsonl_scan(
+        path,
+        user_type="user",
+        assistant_type="assistant",
+        type_key="type",
+        cwd_key="cwd",
+        session_id_key="sessionId",
+        model_path=("message", "model"),
+        timestamp_key="timestamp",
+        is_tool_result=_is_tool_result,
+    )
+
+
+def peek_exchanges(path: Path, last_n: int = 5) -> list["PeekExchange"]:
+    """Extract recent exchanges for session detail view.
+
+    Called by read_session_detail().
+    """
+    return peek_jsonl_exchanges(
+        path,
+        last_n,
+        user_type="user",
+        assistant_type="assistant",
+        type_key="type",
+        timestamp_key="timestamp",
+        get_content_blocks=_get_content_blocks,
+        get_usage=_get_usage,
+        is_tool_result=_is_tool_result,
+        tool_aliases=TOOL_ALIASES,
+    )
+
+
+def peek_tail(path: Path, lines: int = 20) -> Iterator[dict]:
+    """Yield last N raw records from the session file.
+
+    Called by tail_session().
+    """
+    yield from peek_jsonl_tail(path, lines, parse_json=True)

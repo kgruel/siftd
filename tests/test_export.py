@@ -1,7 +1,6 @@
 """Tests for the export API and CLI."""
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -9,8 +8,8 @@ from siftd.api import (
     ExportedConversation,
     ExportOptions,
     export_conversations,
-    format_export,
     format_exchanges,
+    format_export,
     format_json,
     format_prompts,
     list_conversations,

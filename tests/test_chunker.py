@@ -5,6 +5,7 @@ import pytest
 pytest.importorskip("fastembed")
 
 from fastembed import TextEmbedding
+
 from siftd.embeddings.chunker import chunk_text
 
 

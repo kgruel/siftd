@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -10,14 +9,13 @@ import pytest
 
 from siftd.output import (
     ChunkListFormatter,
-    ConversationFormatter,
     ContextFormatter,
+    ConversationFormatter,
     FormatterContext,
     FullExchangeFormatter,
     JsonFormatter,
     ThreadFormatter,
     VerboseFormatter,
-    get_formatter,
     select_formatter,
 )
 from siftd.output.registry import (
@@ -35,8 +33,8 @@ def formatter_db(tmp_path):
     """
     from siftd.storage.sqlite import (
         create_database,
-        get_or_create_workspace,
         get_or_create_harness,
+        get_or_create_workspace,
         insert_conversation,
     )
 

@@ -1,7 +1,6 @@
 """Tests for storage/queries.py correctness and efficiency."""
 
 import json
-import sqlite3
 
 import pytest
 

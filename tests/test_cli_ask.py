@@ -4,9 +4,6 @@ Tests the query → search → format output flow and key options.
 """
 
 import argparse
-import io
-import sys
-from unittest.mock import patch
 
 import pytest
 

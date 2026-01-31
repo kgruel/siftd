@@ -141,6 +141,99 @@ Common categories:
 
 Tool aliases enable cross-harness analysis (e.g., "all file reads").
 
+## Peek Hooks (Optional)
+
+Peek hooks enable live session inspection via `siftd peek` without ingesting into SQLite. These are **optional** — adapters without peek hooks will still work for ingest, but their sessions will show "preview unavailable" in peek listings.
+
+### Hook Functions
+
+Export these functions to support peek:
+
+```python
+from pathlib import Path
+from typing import Iterator
+from siftd.peek.types import PeekExchange, PeekScanResult
+
+def peek_scan(path: Path) -> PeekScanResult | None:
+    """Extract lightweight metadata for session listing.
+
+    Called per-file during list_active_sessions().
+    Return None if file can't be parsed or has no exchanges.
+    """
+    ...
+
+def peek_exchanges(path: Path, last_n: int = 5) -> list[PeekExchange]:
+    """Extract recent exchanges for session detail view.
+
+    Called by read_session_detail().
+    Should return the last N user→assistant exchanges.
+    """
+    ...
+
+def peek_tail(path: Path, lines: int = 20) -> Iterator[dict]:
+    """Yield last N raw records from the session file.
+
+    Called by tail_session().
+    For JSONL files, should seek from end for efficiency.
+    """
+    ...
+```
+
+### PeekScanResult Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_id` | `str` | Canonical ID (adapter decides: file stem or in-record ID) |
+| `workspace_path` | `str \| None` | Working directory / project path |
+| `model` | `str \| None` | Last model used |
+| `exchange_count` | `int` | Number of user turns (real prompts, not tool_results) |
+| `started_at` | `str \| None` | Earliest timestamp |
+| `last_activity_at` | `str \| None` | Latest timestamp (prefer over mtime) |
+
+### PeekExchange Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timestamp` | `str \| None` | Exchange timestamp |
+| `prompt_text` | `str \| None` | User prompt text |
+| `response_text` | `str \| None` | Assistant response text |
+| `tool_calls` | `list[tuple[str, int]]` | (tool_name, count) pairs |
+| `input_tokens` | `int` | Input token count |
+| `output_tokens` | `int` | Output token count |
+
+### SDK Helpers for Peek
+
+```python
+from siftd.adapters.sdk import (
+    seek_last_lines,        # Efficient tail read
+    peek_jsonl_scan,        # Generic JSONL scanner
+    peek_jsonl_exchanges,   # Generic JSONL exchange extractor
+    peek_jsonl_tail,        # Generic JSONL tail
+    canonicalize_tool_name, # Apply TOOL_ALIASES
+    extract_text_with_placeholders,  # Text + [image]/[tool] markers
+)
+
+# Example: Claude Code-compatible JSONL
+def peek_scan(path: Path) -> PeekScanResult | None:
+    return peek_jsonl_scan(
+        path,
+        user_type="user",
+        assistant_type="assistant",
+        cwd_key="cwd",
+        session_id_key="sessionId",
+        is_tool_result=lambda r: _has_tool_result(r),
+    )
+```
+
+### Graceful Degradation
+
+Adapters without peek hooks are automatically handled:
+- Sessions from these adapters are still discovered (via `DEFAULT_LOCATIONS`)
+- They appear in listings with `preview_available=False`
+- Detail view shows "(preview unavailable)"
+
+This allows partial peek support across a mixed adapter ecosystem.
+
 ## SDK Helpers
 
 Import from `siftd.adapters.sdk`:

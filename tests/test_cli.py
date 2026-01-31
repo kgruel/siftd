@@ -1,9 +1,7 @@
 """CLI smoke tests — verify commands parse and run without import errors."""
 
-from pathlib import Path
 
 import pytest
-
 from conftest import FIXTURES_DIR
 
 from siftd.cli import main

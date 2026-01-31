@@ -1,7 +1,9 @@
 """API for live session inspection."""
 
 from siftd.peek import (
+    AmbiguousSessionError,
     PeekExchange,
+    PeekScanResult,
     SessionDetail,
     SessionInfo,
     find_session_file,
@@ -11,7 +13,9 @@ from siftd.peek import (
 )
 
 __all__ = [
+    "AmbiguousSessionError",
     "PeekExchange",
+    "PeekScanResult",
     "SessionDetail",
     "SessionInfo",
     "find_session_file",
