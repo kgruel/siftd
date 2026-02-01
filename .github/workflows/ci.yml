@@ -49,5 +49,11 @@ jobs:
       - name: Install dependencies with embeddings
         run: uv sync --extra dev --extra embed
 
+      - name: Cache fastembed models
+        uses: actions/cache@v4
+        with:
+          path: /tmp/fastembed_cache
+          key: fastembed-bge-small-en-v1.5-${{ runner.os }}
+
       - name: Run tests with embeddings
         run: uv run pytest tests/ -v --tb=short
