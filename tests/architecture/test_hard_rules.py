@@ -18,7 +18,7 @@ import pytest
 
 @pytest.fixture
 def src_dir():
-    return Path(__file__).parent.parent / "src" / "siftd"
+    return Path(__file__).parent.parent.parent / "src" / "siftd"
 
 
 # =============================================================================
