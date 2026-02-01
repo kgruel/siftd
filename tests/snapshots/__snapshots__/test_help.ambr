@@ -651,12 +651,12 @@
   examples:
     siftd tag 01HX... important              # tag conversation (default)
     siftd tag 01HX... important review       # apply multiple tags at once
-    siftd tag --last important               # tag most recent conversation
+    siftd tag --last 1 important             # tag most recent conversation
     siftd tag --last 3 review                # tag 3 most recent conversations
     siftd tag workspace 01HY... proj         # explicit entity type
     siftd tag tool_call 01HZ... slow         # tag a tool call
     siftd tag --remove 01HX... important     # remove tag from conversation
-    siftd tag --remove --last important      # remove from most recent
+    siftd tag --remove --last 1 important    # remove from most recent
     siftd tag -r workspace 01HY... proj      # remove from workspace
   
   live session tagging:
