@@ -7,6 +7,12 @@
 source "$(dirname "$0")/lib/dev.sh"
 source "$(dirname "$0")/lib/templates.sh"
 
+DEFAULT_FOCUS="1. Does the implementation match the task description?
+2. Are there any architectural violations (check CLAUDE.md)?
+3. Is error handling consistent with existing patterns?
+4. Are tests comprehensive?
+5. Run \`./dev check\` to verify lint and tests pass."
+
 usage() {
     cli_usage <<EOF
 Usage: ./dev review <path> [options]
@@ -20,6 +26,8 @@ Options:
   --agent <cmd>        Agent command (default: codex)
   --prompt <file>      Prompt template (default: scripts/review-prompt.md)
   --context <file>     Context file (default: auto-detect TASK.md)
+  --focus <text>       Review focus instructions (inline)
+  --focus-file <file>  Review focus instructions (from file)
   --base <branch>      Base branch for diff (default: main)
   --background         Launch agent in background
   --dry-run            Show expanded prompt without launching
@@ -29,14 +37,15 @@ Template variables:
   {{branch}}           Current git branch name
   {{diff_stat}}        git diff --stat against base
   {{context}}          Contents of context file
+  {{focus}}            Review focus instructions
   {{dev_commands}}     Dev harness commands (from ./dev help)
 
 Examples:
   ./dev review .                          # Review current directory
   ./dev review ./worktrees/impl-foo       # Review specific worktree
   ./dev review . --agent claude           # Use claude instead of codex
-  ./dev review . --agent "aider --msg"    # Custom agent command
-  ./dev review . --prompt my-review.md    # Custom prompt template
+  ./dev review . --focus "Check error handling in api.py"
+  ./dev review . --focus-file REVIEW_FOCUS.md
   ./dev review . --background             # Launch and return
 EOF
 }
@@ -46,6 +55,8 @@ main() {
     local agent="codex"
     local prompt_file="$DEV_ROOT/scripts/review-prompt.md"
     local context_file=""
+    local focus=""
+    local focus_file=""
     local base_branch="main"
     local background=0
     local dry_run=0
@@ -56,6 +67,8 @@ main() {
             --agent) cli_require_value "$1" "${2:-}" || exit 1; agent="$2"; shift ;;
             --prompt) cli_require_value "$1" "${2:-}" || exit 1; prompt_file="$2"; shift ;;
             --context) cli_require_value "$1" "${2:-}" || exit 1; context_file="$2"; shift ;;
+            --focus) cli_require_value "$1" "${2:-}" || exit 1; focus="$2"; shift ;;
+            --focus-file) cli_require_value "$1" "${2:-}" || exit 1; focus_file="$2"; shift ;;
             --base) cli_require_value "$1" "${2:-}" || exit 1; base_branch="$2"; shift ;;
             --background) background=1 ;;
             --dry-run) dry_run=1 ;;
@@ -109,6 +122,15 @@ main() {
         context="No context file found. Review the code changes directly."
     fi
 
+    # Resolve focus: --focus > --focus-file > default
+    if [ -z "$focus" ]; then
+        if [ -n "$focus_file" ] && [ -f "$focus_file" ]; then
+            focus=$(cat "$focus_file")
+        else
+            focus="$DEFAULT_FOCUS"
+        fi
+    fi
+
     # Get dev commands (if ./dev exists in worktree)
     local dev_commands=""
     if [ -x "$path/dev" ]; then
@@ -125,6 +147,7 @@ main() {
     prompt=$(TPL_branch="$branch" \
              TPL_diff_stat="$diff_stat" \
              TPL_context="$context" \
+             TPL_focus="$focus" \
              TPL_dev_commands="$dev_commands" \
              template_inject_env "$prompt_file")
 
