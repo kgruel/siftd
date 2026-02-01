@@ -139,6 +139,27 @@ def fts5_recall_conversations(
     return _fts5_recall(conn, query, limit=limit)
 
 
+def fts5_search_content(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    limit: int = 20,
+) -> list[dict]:
+    """FTS5 keyword search over content.
+
+    Args:
+        conn: Connection to main database.
+        query: The search query string.
+        limit: Maximum results to return.
+
+    Returns:
+        List of dicts with: conversation_id, side, snippet, rank.
+    """
+    from siftd.storage.fts import search_content as _search_content
+
+    return _search_content(conn, query, limit=limit)
+
+
 @dataclass
 class ConversationScore:
     """Aggregated conversation-level search result."""

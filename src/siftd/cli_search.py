@@ -1,4 +1,10 @@
-"""CLI handler for 'siftd search' — semantic search over conversations."""
+"""CLI handler for 'siftd search' — unified search over conversations.
+
+Supports three modes:
+- Hybrid (default with embeddings): FTS5 recall + semantic reranking
+- FTS5-only (--fts or fallback): keyword search without embeddings
+- Semantic-only (--semantic): pure embeddings without FTS5 recall
+"""
 
 import argparse
 import sys
@@ -30,7 +36,7 @@ def _apply_search_config(args) -> None:
 
 
 def cmd_search(args) -> int:
-    """Semantic search over conversation content using embeddings."""
+    """Unified search over conversations — auto-selects FTS5 or semantic based on availability."""
     from siftd.api import open_database, open_embeddings_db, search_similar
     from siftd.embeddings import embeddings_available
 
@@ -72,21 +78,45 @@ def cmd_search(args) -> int:
     if args.json and args.thread:
         print("Note: --thread is ignored with --json output", file=sys.stderr)
 
-    if not embed_db.exists():
-        print("No embeddings index found.")
-        print("Run 'siftd search --index' to build it.")
+    # Determine search mode: FTS5-only, semantic-only, or hybrid
+    use_fts = getattr(args, "fts", False)
+    use_semantic = getattr(args, "semantic", False)
+
+    # Mutual exclusivity check
+    if use_fts and use_semantic:
+        print("Error: --fts and --semantic are mutually exclusive", file=sys.stderr)
         return 1
 
-    # Check embeddings availability before search
-    if not embeddings_available():
-        print("Semantic search requires the [embed] extra.", file=sys.stderr)
-        print()
-        print("Install with:")
-        print("  siftd install embed")
-        print()
-        print("Or use FTS5 search instead:")
-        print(f'  siftd query -s "{query}"')
-        return 1
+    # --fts mode: pure FTS5, no embeddings required
+    if use_fts:
+        return _search_fts_only(args, db, query)
+
+    # Check embeddings availability for auto-selection
+    has_embeddings = embeddings_available() and embed_db.exists()
+
+    # --semantic mode: force embeddings-only (no FTS5 recall), error if unavailable
+    if use_semantic:
+        if not embeddings_available():
+            print("Semantic search requires the [embed] extra.", file=sys.stderr)
+            print()
+            print("Install with:")
+            print("  siftd install embed")
+            return 1
+        if not embed_db.exists():
+            print("No embeddings index found.")
+            print("Run 'siftd search --index' to build it.")
+            return 1
+        # Force embeddings-only mode (skip FTS5 recall)
+        args.embeddings_only = True
+
+    # Auto-selection: fall back to FTS5 if embeddings not fully available
+    if not has_embeddings and not use_semantic:
+        # Distinguish between "deps not installed" and "index missing"
+        if embeddings_available() and not embed_db.exists():
+            print("[FTS5 mode - embeddings index not built: siftd search --index]", file=sys.stderr)
+        else:
+            print("[FTS5 mode - for semantic search: siftd install embed]", file=sys.stderr)
+        return _search_fts_only(args, db, query)
 
     # Resolve backend for query embedding
     from siftd.embeddings import get_backend
@@ -333,6 +363,147 @@ def cmd_search(args) -> int:
     return 0
 
 
+def _search_fts_only(args, db: Path, query: str) -> int:
+    """FTS5-only search mode — keyword search without embeddings."""
+    import sqlite3
+
+    from siftd.api import DERIVATIVE_TAG, fts5_search_content, open_database
+    from siftd.cli import parse_date
+    from siftd.search import filter_conversations, get_active_conversation_ids
+
+    # Warn about flags that are ignored in FTS5-only mode
+    unsupported_flags = []
+    if args.thread:
+        unsupported_flags.append("--thread")
+    if args.context:
+        unsupported_flags.append("--context")
+    if args.full:
+        unsupported_flags.append("--full")
+    if args.verbose:
+        unsupported_flags.append("--verbose/-v")
+    if args.conversations:
+        unsupported_flags.append("--conversations")
+    if args.first:
+        unsupported_flags.append("--first")
+    if args.refs:
+        unsupported_flags.append("--refs")
+    if args.by_time:
+        unsupported_flags.append("--by-time")
+    if args.format:
+        unsupported_flags.append("--format")
+
+    if unsupported_flags:
+        flags_str = ", ".join(unsupported_flags)
+        print(f"Note: {flags_str} ignored in FTS5 mode (requires embeddings)", file=sys.stderr)
+
+    # Compose filters
+    exclude_tags = list(getattr(args, "no_tag", None) or [])
+    if not args.include_derivative:
+        exclude_tags.append(DERIVATIVE_TAG)
+
+    candidate_ids = filter_conversations(
+        db,
+        workspace=args.workspace,
+        model=args.model,
+        since=parse_date(args.since),
+        before=parse_date(args.before),
+        tags=getattr(args, "tag", None),
+        all_tags=getattr(args, "all_tags", None),
+        exclude_tags=exclude_tags or None,
+    )
+
+    # Exclude active sessions
+    exclude_active_ids = set()
+    if not args.no_exclude_active:
+        exclude_active_ids = get_active_conversation_ids(db)
+        if exclude_active_ids:
+            if candidate_ids is not None:
+                candidate_ids = candidate_ids - exclude_active_ids
+            else:
+                conn_tmp = open_database(db, read_only=True)
+                all_ids = {
+                    row["id"]
+                    for row in conn_tmp.execute("SELECT id FROM conversations").fetchall()
+                }
+                conn_tmp.close()
+                candidate_ids = all_ids - exclude_active_ids
+
+    # Run FTS5 search
+    conn = open_database(db, read_only=True)
+    try:
+        raw_results = fts5_search_content(conn, query, limit=args.limit * 5)  # Overfetch for filtering
+    except sqlite3.OperationalError as e:
+        conn.close()
+        err_msg = str(e).lower()
+        if "no such table" in err_msg and "fts" in err_msg:
+            print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
+        elif "fts5" in err_msg or "syntax" in err_msg:
+            print(f"Invalid search query: {e}", file=sys.stderr)
+            print("Tip: Check your search query for syntax errors.", file=sys.stderr)
+        else:
+            print(f"Database error: {e}", file=sys.stderr)
+        return 1
+
+    # Filter by candidate conversation IDs if filters were applied
+    if candidate_ids is not None:
+        raw_results = [r for r in raw_results if r["conversation_id"] in candidate_ids]
+
+    # Limit results
+    raw_results = raw_results[:args.limit]
+
+    if not raw_results:
+        print(f"No results for: {query}")
+        conn.close()
+        return 0
+
+    # Transform to common result format for formatters
+    results = []
+    for r in raw_results:
+        results.append({
+            "conversation_id": r["conversation_id"],
+            "score": abs(r["rank"]),  # FTS5 rank is negative (lower = better)
+            "text": r["snippet"],
+            "side": r["side"],
+            # Minimal fields needed for display
+            "source_ids": [],
+            "file_refs": [],
+        })
+
+    # JSON output
+    if args.json:
+        import json
+        out = {
+            "query": query,
+            "mode": "fts5",
+            "results": [
+                {
+                    "conversation_id": r["conversation_id"],
+                    "score": r["score"],
+                    "snippet": r["text"],
+                    "side": r["side"],
+                }
+                for r in results
+            ],
+        }
+        print(json.dumps(out, indent=2))
+        conn.close()
+        return 0
+
+    # Default text output — one result per line with snippet
+    for r in results:
+        cid = r["conversation_id"][:12]
+        snippet = r["text"].replace("\n", " ")[:80]
+        print(f"{cid}  {snippet}")
+
+    # Tagging hint
+    if results:
+        first_id = results[0]["conversation_id"][:12]
+        print(f"Tip: Tag useful results: siftd tag {first_id} research:<topic>", file=sys.stderr)
+
+    conn.close()
+    return 0
+
+
 def _search_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: str | None, verbose: bool) -> int:
     """Build or incrementally update the embeddings index."""
     from siftd.api import build_index
@@ -367,15 +538,21 @@ def build_search_parser(subparsers) -> None:
     """Add the 'search' subparser to the CLI."""
     p_search = subparsers.add_parser(
         "search",
-        help="Semantic search over conversations (requires [embed] extra)",
+        help="Search conversations (auto-selects FTS5 or semantic based on what's installed)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""Note: Requires the [embed] extra. Install with: siftd install embed
+        epilog="""Unified search: auto-selects the best available search mechanism.
+- With embeddings installed: hybrid search (FTS5 recall + semantic reranking)
+- Without embeddings: FTS5 keyword search (install embeddings: siftd install embed)
 
 examples:
-  # search
-  siftd search "error handling"                        # basic semantic search
+  # search (auto-selects best available mode)
+  siftd search "error handling"                        # hybrid or FTS5 (auto)
   siftd search -w myproject "auth flow"                # filter by workspace
   siftd search --since 2024-06 "testing"               # filter by date
+
+  # explicit mode selection
+  siftd search --fts "error handling"                  # force FTS5 keyword search
+  siftd search --semantic "auth flow"                  # force semantic search
 
   # refine
   siftd search "design decision" --thread              # narrative: top conversations expanded
@@ -441,6 +618,11 @@ examples:
     mode_group.add_argument("--conversations", action="store_true", help="Aggregate scores per conversation, return ranked conversations")
     mode_group.add_argument("--first", action="store_true", help="Return chronologically earliest match above threshold")
     mode_group.add_argument("--refs", nargs="?", const=True, metavar="FILES", help="Show file references; optionally filter by comma-separated basenames")
+
+    # Search mode selection
+    mode_selection = p_search.add_argument_group("search mode")
+    mode_selection.add_argument("--fts", action="store_true", help="Force FTS5 keyword search (no embeddings)")
+    mode_selection.add_argument("--semantic", action="store_true", help="Force semantic search (requires embeddings)")
 
     # Search tuning
     tuning_group = p_search.add_argument_group("search tuning")

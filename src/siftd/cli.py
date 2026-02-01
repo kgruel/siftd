@@ -909,6 +909,19 @@ def cmd_query(args) -> int:
 
     from siftd.api import list_conversations
 
+    # Deprecation warning for -s/--search
+    if args.search:
+        import warnings
+        warnings.warn(
+            "query -s is deprecated, use 'siftd search --fts' instead",
+            DeprecationWarning,
+            stacklevel=1,
+        )
+        print(
+            f"Warning: -s/--search is deprecated. Use: siftd search --fts \"{args.search}\"",
+            file=sys.stderr,
+        )
+
     db = Path(args.db) if args.db else None
 
     try:
@@ -2042,7 +2055,7 @@ examples:
     filter_group.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
     filter_group.add_argument("--since", metavar="DATE", help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
     filter_group.add_argument("--before", metavar="DATE", help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    filter_group.add_argument("-s", "--search", metavar="QUERY", help="FTS5 keyword search (for semantic search, use: siftd search)")
+    filter_group.add_argument("-s", "--search", metavar="QUERY", help="[DEPRECATED] FTS5 keyword search — use 'siftd search --fts' instead")
     filter_group.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
 
     # Tag filtering options

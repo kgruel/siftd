@@ -70,6 +70,7 @@ from siftd.api.search import (
     fetch_conversation_timestamps,
     first_mention,
     fts5_recall_conversations,
+    fts5_search_content,
     hybrid_search,
     open_embeddings_db,
     search_similar,
@@ -163,6 +164,7 @@ __all__ = [
     "search_similar",
     "validate_index_compat",
     "fts5_recall_conversations",
+    "fts5_search_content",
     "apply_temporal_weight",
     "fetch_conversation_timestamps",
     # stats
