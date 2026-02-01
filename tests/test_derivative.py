@@ -36,6 +36,9 @@ class TestIsDerivativeToolCall:
     def test_shell_siftd_query(self):
         assert is_derivative_tool_call("shell.execute", {"command": "siftd query abc123"})
 
+    def test_shell_siftd_search(self):
+        assert is_derivative_tool_call("shell.execute", {"command": "siftd search 'some query'"})
+
     def test_shell_siftd_ask_with_flags(self):
         assert is_derivative_tool_call("shell.execute", {"command": "siftd ask -w myproject 'query'"})
 

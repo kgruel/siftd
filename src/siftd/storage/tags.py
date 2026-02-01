@@ -221,11 +221,11 @@ DERIVATIVE_TAG = "siftd:derivative"
 def is_derivative_tool_call(tool_name: str, input_data: dict | None) -> bool:
     """Check if a tool call indicates a derivative conversation.
 
-    Derivative conversations invoke `siftd ask` or `siftd query` —
+    Derivative conversations invoke `siftd ask`, `siftd query`, or `siftd search` —
     their content pollutes future searches with repeated search results.
 
     Detects two patterns:
-    - shell.execute with command containing 'siftd ask' or 'siftd query'
+    - shell.execute with command containing 'siftd ask', 'siftd query', or 'siftd search'
     - skill.invoke with skill='siftd' (the siftd CLI skill)
     """
     if not input_data:
@@ -233,7 +233,7 @@ def is_derivative_tool_call(tool_name: str, input_data: dict | None) -> bool:
 
     if tool_name == "shell.execute":
         cmd = input_data.get("command") or input_data.get("cmd") or ""
-        return "siftd ask" in cmd or "siftd query" in cmd
+        return "siftd ask" in cmd or "siftd query" in cmd or "siftd search" in cmd
 
     if tool_name == "skill.invoke":
         skill = input_data.get("skill") or ""
