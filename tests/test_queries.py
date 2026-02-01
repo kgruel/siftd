@@ -9,17 +9,21 @@ from siftd.storage.queries import (
     fetch_conversation_exchanges,
     fetch_exchanges,
     fetch_prompt_response_texts,
+    fetch_top_tools,
+    fetch_top_workspaces,
 )
 from siftd.storage.sqlite import (
     create_database,
     get_or_create_harness,
     get_or_create_model,
+    get_or_create_tool,
     get_or_create_workspace,
     insert_conversation,
     insert_prompt,
     insert_prompt_content,
     insert_response,
     insert_response_content,
+    insert_tool_call,
 )
 
 
@@ -522,3 +526,165 @@ class TestExcludeConversationIds:
 
         # conv1 should still be returned (not in exclude list)
         assert conv1_id in result
+
+
+class TestFetchTopWorkspaces:
+    """Tests for fetch_top_workspaces behavior."""
+
+    def test_excludes_workspaces_with_no_conversations(self, tmp_path):
+        """Workspaces with 0 conversations are NOT included in results.
+
+        This is intentional: a workspace with no activity isn't "top".
+        The query only returns workspaces that have at least one conversation.
+        """
+        db_path = tmp_path / "top_ws_test.db"
+        conn = create_database(db_path)
+
+        harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+
+        # Create workspace with conversations
+        ws_active_id = get_or_create_workspace(conn, "/active/project", "2024-01-01T00:00:00Z")
+        insert_conversation(conn, "c1", harness_id, ws_active_id, "2024-01-01T00:00:00Z")
+        insert_conversation(conn, "c2", harness_id, ws_active_id, "2024-01-02T00:00:00Z")
+
+        # Create workspace WITHOUT conversations
+        get_or_create_workspace(conn, "/empty/project", "2024-01-01T00:00:00Z")
+
+        conn.commit()
+
+        result = fetch_top_workspaces(conn)
+
+        # Only the active workspace should appear
+        paths = [row["path"] for row in result]
+        assert "/active/project" in paths
+        assert "/empty/project" not in paths
+
+        conn.close()
+
+    def test_orders_by_conversation_count_desc(self, tmp_path):
+        """Results are ordered by conversation count, highest first."""
+        db_path = tmp_path / "top_ws_order.db"
+        conn = create_database(db_path)
+
+        harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+
+        # Workspace A: 3 conversations
+        ws_a_id = get_or_create_workspace(conn, "/project-a", "2024-01-01T00:00:00Z")
+        for i in range(3):
+            insert_conversation(conn, f"a-{i}", harness_id, ws_a_id, f"2024-01-0{i+1}T00:00:00Z")
+
+        # Workspace B: 1 conversation
+        ws_b_id = get_or_create_workspace(conn, "/project-b", "2024-01-01T00:00:00Z")
+        insert_conversation(conn, "b-0", harness_id, ws_b_id, "2024-01-01T00:00:00Z")
+
+        conn.commit()
+
+        result = fetch_top_workspaces(conn)
+
+        assert result[0]["path"] == "/project-a"
+        assert result[0]["convs"] == 3
+        assert result[1]["path"] == "/project-b"
+        assert result[1]["convs"] == 1
+
+        conn.close()
+
+    def test_respects_limit(self, tmp_path):
+        """Only returns up to the specified limit."""
+        db_path = tmp_path / "top_ws_limit.db"
+        conn = create_database(db_path)
+
+        harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+
+        # Create 5 workspaces each with 1 conversation
+        for i in range(5):
+            ws_id = get_or_create_workspace(conn, f"/project-{i}", "2024-01-01T00:00:00Z")
+            insert_conversation(conn, f"c-{i}", harness_id, ws_id, "2024-01-01T00:00:00Z")
+
+        conn.commit()
+
+        result = fetch_top_workspaces(conn, limit=3)
+
+        assert len(result) == 3
+
+        conn.close()
+
+
+class TestFetchTopTools:
+    """Tests for fetch_top_tools behavior."""
+
+    def test_excludes_tools_with_no_calls(self, tmp_path):
+        """Tools with 0 calls are NOT included in results.
+
+        This is intentional: a tool that was never called isn't "top".
+        The query only returns tools that have at least one call.
+        """
+        db_path = tmp_path / "top_tools_test.db"
+        conn = create_database(db_path)
+
+        harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+        ws_id = get_or_create_workspace(conn, "/test", "2024-01-01T00:00:00Z")
+        model_id = get_or_create_model(conn, "test-model")
+        conv_id = insert_conversation(conn, "c1", harness_id, ws_id, "2024-01-01T00:00:00Z")
+        prompt_id = insert_prompt(conn, conv_id, "p1", "2024-01-01T00:00:00Z")
+        response_id = insert_response(conn, conv_id, prompt_id, model_id, None, "r1", "2024-01-01T00:00:01Z", 100, 50)
+
+        # Tool with calls
+        tool_used_id = get_or_create_tool(conn, "tool_with_calls")
+        insert_tool_call(conn, response_id, conv_id, tool_used_id, "tc1", "{}", None, "success", "2024-01-01T00:00:02Z")
+
+        # Tool WITHOUT calls
+        get_or_create_tool(conn, "unused_tool")
+
+        conn.commit()
+
+        result = fetch_top_tools(conn)
+
+        names = [row["name"] for row in result]
+        assert "tool_with_calls" in names
+        assert "unused_tool" not in names
+
+        conn.close()
+
+    def test_orders_by_usage_count_desc(self, tmp_path):
+        """Results are ordered by usage count, highest first."""
+        db_path = tmp_path / "top_tools_order.db"
+        conn = create_database(db_path)
+
+        harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+        ws_id = get_or_create_workspace(conn, "/test", "2024-01-01T00:00:00Z")
+        model_id = get_or_create_model(conn, "test-model")
+        conv_id = insert_conversation(conn, "c1", harness_id, ws_id, "2024-01-01T00:00:00Z")
+        prompt_id = insert_prompt(conn, conv_id, "p1", "2024-01-01T00:00:00Z")
+        response_id = insert_response(conn, conv_id, prompt_id, model_id, None, "r1", "2024-01-01T00:00:01Z", 100, 50)
+
+        # Tool A: 5 calls
+        tool_a_id = get_or_create_tool(conn, "tool_a")
+        for i in range(5):
+            insert_tool_call(conn, response_id, conv_id, tool_a_id, f"a-{i}", "{}", None, "success", "2024-01-01T00:00:02Z")
+
+        # Tool B: 2 calls
+        tool_b_id = get_or_create_tool(conn, "tool_b")
+        for i in range(2):
+            insert_tool_call(conn, response_id, conv_id, tool_b_id, f"b-{i}", "{}", None, "success", "2024-01-01T00:00:02Z")
+
+        conn.commit()
+
+        result = fetch_top_tools(conn)
+
+        assert result[0]["name"] == "tool_a"
+        assert result[0]["uses"] == 5
+        assert result[1]["name"] == "tool_b"
+        assert result[1]["uses"] == 2
+
+        conn.close()
+
+    def test_empty_database_returns_empty(self, tmp_path):
+        """Empty database (no tool_calls) returns empty list."""
+        db_path = tmp_path / "top_tools_empty.db"
+        conn = create_database(db_path)
+
+        result = fetch_top_tools(conn)
+
+        assert result == []
+
+        conn.close()

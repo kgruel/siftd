@@ -449,15 +449,23 @@ def fetch_top_workspaces(
     conn: sqlite3.Connection,
     limit: int = 10,
 ) -> list[sqlite3.Row]:
-    """Fetch workspaces with conversation counts, ordered by count desc."""
+    """Fetch workspaces with conversation counts, ordered by count desc.
+
+    Uses subquery pattern: aggregate first on indexed column (workspace_id),
+    then join only the top N rows with the workspaces table for paths.
+    """
     return conn.execute(
         """
-        SELECT w.path, COUNT(c.id) as convs
-        FROM workspaces w
-        LEFT JOIN conversations c ON c.workspace_id = w.id
-        GROUP BY w.id
-        ORDER BY convs DESC
-        LIMIT ?
+        SELECT w.path, counts.convs
+        FROM (
+            SELECT workspace_id, COUNT(*) as convs
+            FROM conversations
+            GROUP BY workspace_id
+            ORDER BY convs DESC
+            LIMIT ?
+        ) counts
+        JOIN workspaces w ON w.id = counts.workspace_id
+        ORDER BY counts.convs DESC
         """,
         (limit,),
     ).fetchall()
@@ -473,15 +481,24 @@ def fetch_top_tools(
     conn: sqlite3.Connection,
     limit: int = 10,
 ) -> list[sqlite3.Row]:
-    """Fetch tools by usage count, ordered by count desc."""
+    """Fetch tools by usage count, ordered by count desc.
+
+    Uses subquery pattern: aggregate first on indexed column (tool_id),
+    then join only the top N rows with the tools table for names.
+    This avoids joining 100k+ rows before aggregating.
+    """
     return conn.execute(
         """
-        SELECT t.name, COUNT(tc.id) as uses
-        FROM tools t
-        JOIN tool_calls tc ON tc.tool_id = t.id
-        GROUP BY t.id
-        ORDER BY uses DESC
-        LIMIT ?
+        SELECT t.name, counts.uses
+        FROM (
+            SELECT tool_id, COUNT(*) as uses
+            FROM tool_calls
+            GROUP BY tool_id
+            ORDER BY uses DESC
+            LIMIT ?
+        ) counts
+        JOIN tools t ON t.id = counts.tool_id
+        ORDER BY counts.uses DESC
         """,
         (limit,),
     ).fetchall()
