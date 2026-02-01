@@ -601,3 +601,105 @@ class TestSearchPrivacyWarning:
 
         assert result == 0
         assert "Showing full content which may contain sensitive information" not in captured.err
+
+
+class TestByTimeWarning:
+    """Tests for --by-time warning when used with incompatible modes."""
+
+    def test_by_time_with_conversations_warns(self, indexed_db, capsys):
+        """--by-time with --conversations prints warning to stderr."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            by_time=True,
+            conversations=True,
+        )
+
+        result = cmd_search(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+        assert "--by-time has no effect in conversation mode" in captured.err
+
+    def test_by_time_with_thread_warns(self, indexed_db, capsys):
+        """--by-time with --thread prints warning to stderr."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            by_time=True,
+            thread=True,
+        )
+
+        result = cmd_search(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+        assert "--by-time has no effect in thread mode" in captured.err
+
+    def test_by_time_with_json_warns(self, indexed_db, capsys):
+        """--by-time with --json prints warning to stderr."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            by_time=True,
+            json=True,
+        )
+
+        result = cmd_search(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+        assert "--by-time has no effect in json mode" in captured.err
+
+    def test_by_time_with_verbose_no_warning(self, indexed_db, capsys):
+        """--by-time with --verbose (compatible mode) has no warning."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            by_time=True,
+            verbose=True,
+        )
+
+        result = cmd_search(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+        assert "--by-time has no effect" not in captured.err
+
+    def test_by_time_with_full_no_warning(self, indexed_db, capsys):
+        """--by-time with --full (compatible mode) has no warning."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            by_time=True,
+            full=True,
+        )
+
+        result = cmd_search(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+        assert "--by-time has no effect" not in captured.err
+
+    def test_by_time_default_mode_no_warning(self, indexed_db, capsys, monkeypatch):
+        """--by-time with default chunk list mode has no warning."""
+        # Isolate from user config
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(indexed_db["db_path"].parent / "empty_config"))
+
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            by_time=True,
+        )
+
+        result = cmd_search(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+        assert "--by-time has no effect" not in captured.err

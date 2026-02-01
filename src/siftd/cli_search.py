@@ -298,6 +298,19 @@ def cmd_search(args) -> int:
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+
+    # Warn if --by-time is used with a mode that ignores it
+    if args.by_time:
+        from siftd.output.formatters import (
+            ConversationFormatter,
+            JsonFormatter,
+            ThreadFormatter,
+        )
+        if isinstance(formatter, (ConversationFormatter, ThreadFormatter, JsonFormatter)):
+            mode = "conversation" if isinstance(formatter, ConversationFormatter) else \
+                   "thread" if isinstance(formatter, ThreadFormatter) else "json"
+            print(f"Note: --by-time has no effect in {mode} mode", file=sys.stderr)
+
     ctx = FormatterContext(query=query, results=results, conn=main_conn, args=args)
     formatter.format(ctx)
 
