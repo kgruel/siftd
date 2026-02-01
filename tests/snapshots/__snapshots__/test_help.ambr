@@ -2,15 +2,15 @@
 # name: TestHelpSnapshots.test_root_help
   '''
   usage: siftd [-h] [--version] [--db PATH]
-               {ingest,status,ask,install,register,session-id,tag,tags,tools,query,backfill,migrate,path,config,adapters,copy,doctor,peek,export} ...
+               {ingest,status,search,install,register,session-id,tag,tags,tools,query,backfill,migrate,path,config,adapters,copy,doctor,peek,export} ...
   
   Aggregate and query LLM conversation logs
   
   positional arguments:
-    {ingest,status,ask,install,register,session-id,tag,tags,tools,query,backfill,migrate,path,config,adapters,copy,doctor,peek,export}
+    {ingest,status,search,install,register,session-id,tag,tags,tools,query,backfill,migrate,path,config,adapters,copy,doctor,peek,export}
       ingest              Ingest logs from all sources
       status              Show database statistics
-      ask                 Semantic search over conversations (requires [embed]
+      search              Semantic search over conversations (requires [embed]
                           extra)
       install             Install optional dependencies
       register            Register an active session for live tagging
@@ -181,7 +181,7 @@
   options:
     -h, --help         show this help message and exit
     --shell-tags       Tag shell.execute calls with shell:* categories
-    --derivative-tags  Tag conversations containing siftd ask/query as
+    --derivative-tags  Tag conversations containing siftd search/query as
                        siftd:derivative
     --filter-binary    Filter binary content (images, base64) from existing
                        blobs
@@ -203,7 +203,7 @@
   
   positional arguments:
     {get,set,path}  Action to perform
-    key             Config key (dotted path, e.g., ask.formatter)
+    key             Config key (dotted path, e.g., search.formatter)
     value           Value to set (for 'set' action)
   
   options:
@@ -212,8 +212,8 @@
   examples:
     siftd config                        # show all config
     siftd config path                   # show config file path
-    siftd config get ask.formatter      # get specific value
-    siftd config set ask.formatter verbose  # set value
+    siftd config get search.formatter      # get specific value
+    siftd config set search.formatter verbose  # set value
   
   '''
 # ---
@@ -474,6 +474,132 @@
   examples:
     siftd register --session abc123 --adapter claude_code
     siftd register --session abc123 --adapter claude_code --workspace /path/to/project
+  
+  '''
+# ---
+# name: TestHelpSnapshots.test_subcommand_help[search]
+  '''
+  usage: siftd search [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
+                      [-l NAME] [--all-tags NAME] [--no-tag NAME] [-n LIMIT]
+                      [-v] [--full] [--context N] [--thread] [--chrono] [--json]
+                      [--format NAME] [--conversations] [--first]
+                      [--refs [FILES]] [--embeddings-only] [--recall N]
+                      [--threshold SCORE] [--no-diversity] [--lambda FLOAT]
+                      [--recency] [--recency-half-life DAYS]
+                      [--recency-max-boost MULT] [--no-exclude-active]
+                      [--include-derivative] [--index] [--rebuild]
+                      [--backend NAME] [--embed-db PATH]
+                      [query ...]
+  
+  positional arguments:
+    query                 Natural language search query
+  
+  options:
+    -h, --help            show this help message and exit
+  
+  filtering:
+    -w, --workspace SUBSTR
+                          Filter by workspace path substring
+    -m, --model NAME      Filter by model name
+    --since DATE          Conversations started after this date (YYYY-MM-DD, 7d,
+                          1w, yesterday, today)
+    --before DATE         Conversations started before this date (YYYY-MM-DD,
+                          7d, 1w, yesterday, today)
+    -l, --tag NAME        Filter by tag (repeatable, OR logic)
+    --all-tags NAME       Require all specified tags (AND logic)
+    --no-tag NAME         Exclude conversations with this tag (NOT logic)
+  
+  output:
+    -n, --limit LIMIT     Max results (default: 10)
+    -v, --verbose         Show full chunk text
+    --full                Show complete prompt+response exchange
+    --context N           Show ±N exchanges around match
+    --thread              Narrative thread: top conversations expanded, rest as
+                          shortlist
+    --chrono              Sort results by time instead of score
+    --json                Output as structured JSON
+    --format NAME         Use named formatter (built-in or drop-in plugin)
+  
+  result modes:
+    --conversations       Aggregate scores per conversation, return ranked
+                          conversations
+    --first               Return chronologically earliest match above threshold
+    --refs [FILES]        Show file references; optionally filter by comma-
+                          separated basenames
+  
+  search tuning:
+    --embeddings-only     Skip FTS5 recall, use pure embeddings
+    --recall N            FTS5 conversation recall limit (default: 80)
+    --threshold SCORE     Filter results below this score (e.g., 0.7)
+  
+  diversity:
+    --no-diversity        Disable MMR reranking for deterministic pure relevance
+                          order
+    --lambda FLOAT        MMR lambda: 1.0=relevance, 0.0=diversity (default:
+                          0.7)
+  
+  recency:
+    --recency             Boost recent results (exponential decay, mild 15%
+                          boost)
+    --recency-half-life DAYS
+                          Days until recency boost decays to half (default: 30)
+    --recency-max-boost MULT
+                          Max boost multiplier for today's results (default:
+                          1.15)
+  
+  scope:
+    --no-exclude-active   Include results from active sessions (excluded by
+                          default)
+    --include-derivative  Include derivative conversations (siftd search/query
+                          results)
+  
+  index management:
+    --index               Build/update embeddings index
+    --rebuild             Rebuild embeddings index from scratch
+    --backend NAME        Embedding backend (ollama, fastembed)
+    --embed-db PATH       Alternate embeddings database path
+  
+  Note: Requires the [embed] extra. Install with: siftd install embed
+  
+  examples:
+    # search
+    siftd search "error handling"                        # basic semantic search
+    siftd search -w myproject "auth flow"                # filter by workspace
+    siftd search --since 2024-06 "testing"               # filter by date
+  
+    # refine
+    siftd search "design decision" --thread              # narrative: top conversations expanded
+    siftd search "why we chose X" --context 2            # ±2 surrounding exchanges
+    siftd search "event sourcing" --conversations        # rank whole conversations, not chunks
+    siftd search "when first discussed Y" --first        # earliest match above threshold
+    siftd search --threshold 0.7 "architecture"          # only high-relevance results
+  
+    # inspect
+    siftd search -v "chunking"                           # full chunk text
+    siftd search --full "chunking"                       # complete prompt+response exchange
+    siftd search --refs "authelia"                       # file references + content
+    siftd search --refs HANDOFF.md "setup"               # filter refs to specific file
+  
+    # filter by tags
+    siftd search -l research:auth "auth flow"            # search within tagged conversations
+    siftd search -l research: -l useful: "pattern"       # OR — any research: or useful: tag
+    siftd search --all-tags important --all-tags reviewed "design"  # AND — must have both
+    siftd search -l research: --no-tag archived "auth"   # combine OR + NOT
+  
+    # save useful results for future retrieval
+    siftd tag 01HX... research:auth                   # bookmark a conversation
+    siftd tag --last research:architecture            # tag most recent conversation
+    siftd query -l research:auth                      # retrieve tagged conversations
+  
+    # tuning
+    siftd search --embeddings-only "chunking"            # skip FTS5, pure embeddings
+    siftd search --recall 200 "error"                    # widen FTS5 candidate pool
+    siftd search --chrono "chunking"                     # sort by time instead of score
+  
+    # diversity vs relevance (MMR reranking)
+    siftd search --no-diversity "chunking"               # pure relevance order (deterministic)
+    siftd search --lambda 0.5 "design"                   # more diverse results (less redundancy)
+    siftd search --json "auth" | jq '.results[0].breakdown'  # score component breakdown
   
   '''
 # ---

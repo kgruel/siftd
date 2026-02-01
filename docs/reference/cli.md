@@ -6,12 +6,12 @@ _Auto-generated from `--help` output._
 
 ```
 usage: siftd [-h] [--version] [--db PATH]
-             {ingest,status,ask,install,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export} ...
+             {ingest,status,search,install,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export} ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {ingest,status,ask,install,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export}
+  {ingest,status,search,install,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export}
     ingest              Ingest logs from all sources
     status              Show database statistics
     ask                 Semantic search over conversations (requires [embed]
@@ -60,10 +60,10 @@ options:
   --json      Output as JSON
 ```
 
-## siftd ask
+## siftd search
 
 ```
-usage: siftd ask [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
+usage: siftd search [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
                  [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                  [--index] [--rebuild] [--backend NAME] [--embed-db PATH]
                  [--thread] [--embeddings-only] [--recall N]
@@ -108,7 +108,7 @@ options:
   --format NAME         Use named formatter (built-in or drop-in plugin)
   --no-exclude-active   Include results from active sessions (excluded by
                         default)
-  --include-derivative  Include derivative conversations (siftd ask/query
+  --include-derivative  Include derivative conversations (siftd search/query
                         results, excluded by default)
   --no-diversity        Disable MMR diversity reranking, use pure relevance
                         order
@@ -122,28 +122,28 @@ Note: Requires the [embed] extra. Install with: siftd install embed
 
 examples:
   # search
-  siftd ask "error handling"                        # basic semantic search
-  siftd ask -w myproject "auth flow"                # filter by workspace
-  siftd ask --since 2024-06 "testing"               # filter by date
+  siftd search "error handling"                        # basic semantic search
+  siftd search -w myproject "auth flow"                # filter by workspace
+  siftd search --since 2024-06 "testing"               # filter by date
 
   # refine
-  siftd ask "design decision" --thread              # narrative: top conversations expanded
-  siftd ask "why we chose X" --context 2            # ±2 surrounding exchanges
-  siftd ask "event sourcing" --conversations        # rank whole conversations, not chunks
-  siftd ask "when first discussed Y" --first        # earliest match above threshold
-  siftd ask --threshold 0.7 "architecture"          # only high-relevance results
+  siftd search "design decision" --thread              # narrative: top conversations expanded
+  siftd search "why we chose X" --context 2            # ±2 surrounding exchanges
+  siftd search "event sourcing" --conversations        # rank whole conversations, not chunks
+  siftd search "when first discussed Y" --first        # earliest match above threshold
+  siftd search --threshold 0.7 "architecture"          # only high-relevance results
 
   # inspect
-  siftd ask -v "chunking"                           # full chunk text
-  siftd ask --full "chunking"                       # complete prompt+response exchange
-  siftd ask --refs "authelia"                       # file references + content
-  siftd ask --refs HANDOFF.md "setup"               # filter refs to specific file
+  siftd search -v "chunking"                           # full chunk text
+  siftd search --full "chunking"                       # complete prompt+response exchange
+  siftd search --refs "authelia"                       # file references + content
+  siftd search --refs HANDOFF.md "setup"               # filter refs to specific file
 
   # filter by tags
-  siftd ask -l research:auth "auth flow"            # search within tagged conversations
-  siftd ask -l research: -l useful: "pattern"       # OR — any research: or useful: tag
-  siftd ask --all-tags important --all-tags reviewed "design"  # AND — must have both
-  siftd ask -l research: --no-tag archived "auth"   # combine OR + NOT
+  siftd search -l research:auth "auth flow"            # search within tagged conversations
+  siftd search -l research: -l useful: "pattern"       # OR — any research: or useful: tag
+  siftd search --all-tags important --all-tags reviewed "design"  # AND — must have both
+  siftd search -l research: --no-tag archived "auth"   # combine OR + NOT
 
   # save useful results for future retrieval
   siftd tag 01HX... research:auth                   # bookmark a conversation
@@ -151,9 +151,9 @@ examples:
   siftd query -l research:auth                      # retrieve tagged conversations
 
   # tuning
-  siftd ask --embeddings-only "chunking"            # skip FTS5, pure embeddings
-  siftd ask --recall 200 "error"                    # widen FTS5 candidate pool
-  siftd ask --chrono "chunking"                     # sort by time instead of score
+  siftd search --embeddings-only "chunking"            # skip FTS5, pure embeddings
+  siftd search --recall 200 "error"                    # widen FTS5 candidate pool
+  siftd search --chrono "chunking"                     # sort by time instead of score
 ```
 
 ## siftd install
@@ -303,7 +303,7 @@ usage: siftd backfill [-h] [--shell-tags] [--derivative-tags]
 options:
   -h, --help         show this help message and exit
   --shell-tags       Tag shell.execute calls with shell:* categories
-  --derivative-tags  Tag conversations containing siftd ask/query as
+  --derivative-tags  Tag conversations containing siftd search/query as
                      siftd:derivative
 ```
 
@@ -323,7 +323,7 @@ usage: siftd config [-h] [{get,set,path}] [key] [value]
 
 positional arguments:
   {get,set,path}  Action to perform
-  key             Config key (dotted path, e.g., ask.formatter)
+  key             Config key (dotted path, e.g., search.formatter)
   value           Value to set (for 'set' action)
 
 options:
@@ -332,8 +332,8 @@ options:
 examples:
   siftd config                        # show all config
   siftd config path                   # show config file path
-  siftd config get ask.formatter      # get specific value
-  siftd config set ask.formatter verbose  # set value
+  siftd config get search.formatter      # get specific value
+  siftd config set search.formatter verbose  # set value
 ```
 
 ## siftd adapters

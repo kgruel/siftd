@@ -31,8 +31,8 @@ from siftd.backfill import (
     backfill_response_attributes,
     backfill_shell_tags,
 )
-from siftd.cli_ask import build_ask_parser
 from siftd.cli_install import build_install_parser
+from siftd.cli_search import build_search_parser
 from siftd.ingestion import IngestStats, ingest_all
 from siftd.paths import data_dir, db_path, ensure_dirs, queries_dir, session_id_file
 from siftd.storage.fts import rebuild_fts_index
@@ -1163,7 +1163,7 @@ def cmd_config(args) -> int:
     if args.action == "get":
         if not args.key:
             print("Usage: siftd config get <key>")
-            print("Example: siftd config get ask.formatter")
+            print("Example: siftd config get search.formatter")
             return 1
         value = get_config(args.key)
         if value is None:
@@ -1176,7 +1176,7 @@ def cmd_config(args) -> int:
     if args.action == "set":
         if not args.key or not args.value:
             print("Usage: siftd config set <key> <value>")
-            print("Example: siftd config set ask.formatter verbose")
+            print("Example: siftd config set search.formatter verbose")
             return 1
         set_config(args.key, args.value)
         print(f"Set {args.key} = {args.value}")
@@ -1876,8 +1876,8 @@ def main(argv=None) -> int:
     p_status.add_argument("--json", action="store_true", help="Output as JSON")
     p_status.set_defaults(func=cmd_status)
 
-    # ask (semantic search) — defined in cli_ask.py
-    build_ask_parser(subparsers)
+    # search (semantic search) — defined in cli_search.py
+    build_search_parser(subparsers)
 
     # install (optional dependencies) — defined in cli_install.py
     build_install_parser(subparsers)
@@ -2041,7 +2041,7 @@ live session tagging:
   siftd backfill --filter-binary --dry-run  # preview what would be filtered""",
     )
     p_backfill.add_argument("--shell-tags", action="store_true", help="Tag shell.execute calls with shell:* categories")
-    p_backfill.add_argument("--derivative-tags", action="store_true", help="Tag conversations containing siftd ask/query as siftd:derivative")
+    p_backfill.add_argument("--derivative-tags", action="store_true", help="Tag conversations containing siftd search/query as siftd:derivative")
     p_backfill.add_argument("--filter-binary", action="store_true", help="Filter binary content (images, base64) from existing blobs")
     p_backfill.add_argument("--dry-run", action="store_true", help="Preview changes without applying (use with --filter-binary)")
     p_backfill.set_defaults(func=cmd_backfill)
@@ -2082,11 +2082,11 @@ live session tagging:
         epilog="""examples:
   siftd config                        # show all config
   siftd config path                   # show config file path
-  siftd config get ask.formatter      # get specific value
-  siftd config set ask.formatter verbose  # set value""",
+  siftd config get search.formatter      # get specific value
+  siftd config set search.formatter verbose  # set value""",
     )
     p_config.add_argument("action", nargs="?", choices=["get", "set", "path"], help="Action to perform")
-    p_config.add_argument("key", nargs="?", help="Config key (dotted path, e.g., ask.formatter)")
+    p_config.add_argument("key", nargs="?", help="Config key (dotted path, e.g., search.formatter)")
     p_config.add_argument("value", nargs="?", help="Value to set (for 'set' action)")
     p_config.set_defaults(func=cmd_config)
 

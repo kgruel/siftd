@@ -3,7 +3,7 @@
 Config file location: ~/.config/siftd/config.toml
 
 Example config:
-    [ask]
+    [search]
     formatter = "verbose"
 """
 
@@ -84,8 +84,8 @@ def set_config(key: str, value: str) -> None:
     path.write_text(tomlkit.dumps(doc))
 
 
-def get_ask_defaults() -> dict:
-    """Get default values for 'siftd ask' command from config.
+def get_search_defaults() -> dict:
+    """Get default values for 'siftd search' command from config.
 
     Returns dict with keys matching argparse attribute names.
     Only includes values that are set in config.
@@ -93,10 +93,10 @@ def get_ask_defaults() -> dict:
     doc = load_config()
     defaults = {}
 
-    ask_config = doc.get("ask", {})
-    if isinstance(ask_config, dict):
-        if "formatter" in ask_config:
-            defaults["format"] = str(ask_config["formatter"])
+    search_config = doc.get("search", {})
+    if isinstance(search_config, dict):
+        if "formatter" in search_config:
+            defaults["format"] = str(search_config["formatter"])
 
     return defaults
 

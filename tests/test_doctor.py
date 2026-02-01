@@ -227,7 +227,7 @@ class TestEmbeddingsStaleCheck:
         assert findings[0].severity == "info"
         assert "not found" in findings[0].message
         assert findings[0].fix_available is True
-        assert findings[0].fix_command == "siftd ask --index"
+        assert findings[0].fix_command == "siftd search --index"
 
     def test_stale_conversations(self, check_context, monkeypatch):
         """Reports stale conversations when embeddings DB exists but is empty."""
@@ -873,7 +873,7 @@ class TestConfigValidCheck:
     def test_valid_config(self, check_context, monkeypatch, tmp_path):
         """Returns no findings for valid config file."""
         config_path = tmp_path / "config.toml"
-        config_path.write_text('[ask]\nformatter = "default"\n')
+        config_path.write_text('[search]\nformatter = "default"\n')
 
         monkeypatch.setattr(
             "siftd.paths.config_file",
@@ -887,7 +887,7 @@ class TestConfigValidCheck:
     def test_invalid_toml_syntax(self, check_context, monkeypatch, tmp_path):
         """Reports error for invalid TOML syntax."""
         config_path = tmp_path / "config.toml"
-        config_path.write_text('[ask\nformatter = "broken')
+        config_path.write_text('[search\nformatter = "broken')
 
         monkeypatch.setattr(
             "siftd.paths.config_file",
@@ -905,7 +905,7 @@ class TestConfigValidCheck:
     def test_unknown_formatter(self, check_context, monkeypatch, tmp_path):
         """Reports warning for unknown formatter name."""
         config_path = tmp_path / "config.toml"
-        config_path.write_text('[ask]\nformatter = "nonexistent_formatter"\n')
+        config_path.write_text('[search]\nformatter = "nonexistent_formatter"\n')
 
         monkeypatch.setattr(
             "siftd.paths.config_file",

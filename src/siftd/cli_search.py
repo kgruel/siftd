@@ -1,4 +1,4 @@
-"""CLI handler for 'siftd ask' — semantic search over conversations."""
+"""CLI handler for 'siftd search' — semantic search over conversations."""
 
 import argparse
 import sys
@@ -8,9 +8,9 @@ from typing import cast
 from siftd.paths import db_path, embeddings_db_path
 
 
-def _apply_ask_config(args) -> None:
+def _apply_search_config(args) -> None:
     """Apply config defaults to args if no formatter flag is explicitly set."""
-    from siftd.config import get_ask_defaults
+    from siftd.config import get_search_defaults
 
     # Check if any formatter-related flag was explicitly set
     formatter_flags = ["format", "json", "verbose", "full", "thread", "context", "conversations"]
@@ -23,19 +23,19 @@ def _apply_ask_config(args) -> None:
         return
 
     # Apply config defaults
-    defaults = get_ask_defaults()
+    defaults = get_search_defaults()
     for key, value in defaults.items():
         if getattr(args, key, None) is None:
             setattr(args, key, value)
 
 
-def cmd_ask(args) -> int:
+def cmd_search(args) -> int:
     """Semantic search over conversation content using embeddings."""
     from siftd.api import open_database, open_embeddings_db, search_similar
     from siftd.embeddings import embeddings_available
 
     # Apply config defaults before processing
-    _apply_ask_config(args)
+    _apply_search_config(args)
 
     db = Path(args.db) if args.db else db_path()
     embed_db = Path(args.embed_db) if args.embed_db else embeddings_db_path()
@@ -53,14 +53,14 @@ def cmd_ask(args) -> int:
             print("Install with:")
             print("  siftd install embed")
             return 1
-        return _ask_build_index(db, embed_db, rebuild=args.rebuild, backend_name=args.backend, verbose=True)
+        return _search_build_index(db, embed_db, rebuild=args.rebuild, backend_name=args.backend, verbose=True)
 
     # Search mode — need a query
     query = " ".join(args.query) if args.query else ""
     if not query:
-        print("Usage: siftd ask <query>")
-        print("       siftd ask --index     (build/update index)")
-        print("       siftd ask --rebuild   (rebuild index from scratch)")
+        print("Usage: siftd search <query>")
+        print("       siftd search --index     (build/update index)")
+        print("       siftd search --rebuild   (rebuild index from scratch)")
         return 1
 
     # --refs with --json is not supported (refs dump would break JSON validity)
@@ -74,7 +74,7 @@ def cmd_ask(args) -> int:
 
     if not embed_db.exists():
         print("No embeddings index found.")
-        print("Run 'siftd ask --index' to build it.")
+        print("Run 'siftd search --index' to build it.")
         return 1
 
     # Check embeddings availability before search
@@ -316,7 +316,7 @@ def cmd_ask(args) -> int:
     return 0
 
 
-def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: str | None, verbose: bool) -> int:
+def _search_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: str | None, verbose: bool) -> int:
     """Build or incrementally update the embeddings index."""
     from siftd.api import build_index
     from siftd.embeddings.indexer import IncrementalCompatError
@@ -346,38 +346,38 @@ def _ask_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: s
     return 0
 
 
-def build_ask_parser(subparsers) -> None:
-    """Add the 'ask' subparser to the CLI."""
-    p_ask = subparsers.add_parser(
-        "ask",
+def build_search_parser(subparsers) -> None:
+    """Add the 'search' subparser to the CLI."""
+    p_search = subparsers.add_parser(
+        "search",
         help="Semantic search over conversations (requires [embed] extra)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Note: Requires the [embed] extra. Install with: siftd install embed
 
 examples:
   # search
-  siftd ask "error handling"                        # basic semantic search
-  siftd ask -w myproject "auth flow"                # filter by workspace
-  siftd ask --since 2024-06 "testing"               # filter by date
+  siftd search "error handling"                        # basic semantic search
+  siftd search -w myproject "auth flow"                # filter by workspace
+  siftd search --since 2024-06 "testing"               # filter by date
 
   # refine
-  siftd ask "design decision" --thread              # narrative: top conversations expanded
-  siftd ask "why we chose X" --context 2            # ±2 surrounding exchanges
-  siftd ask "event sourcing" --conversations        # rank whole conversations, not chunks
-  siftd ask "when first discussed Y" --first        # earliest match above threshold
-  siftd ask --threshold 0.7 "architecture"          # only high-relevance results
+  siftd search "design decision" --thread              # narrative: top conversations expanded
+  siftd search "why we chose X" --context 2            # ±2 surrounding exchanges
+  siftd search "event sourcing" --conversations        # rank whole conversations, not chunks
+  siftd search "when first discussed Y" --first        # earliest match above threshold
+  siftd search --threshold 0.7 "architecture"          # only high-relevance results
 
   # inspect
-  siftd ask -v "chunking"                           # full chunk text
-  siftd ask --full "chunking"                       # complete prompt+response exchange
-  siftd ask --refs "authelia"                       # file references + content
-  siftd ask --refs HANDOFF.md "setup"               # filter refs to specific file
+  siftd search -v "chunking"                           # full chunk text
+  siftd search --full "chunking"                       # complete prompt+response exchange
+  siftd search --refs "authelia"                       # file references + content
+  siftd search --refs HANDOFF.md "setup"               # filter refs to specific file
 
   # filter by tags
-  siftd ask -l research:auth "auth flow"            # search within tagged conversations
-  siftd ask -l research: -l useful: "pattern"       # OR — any research: or useful: tag
-  siftd ask --all-tags important --all-tags reviewed "design"  # AND — must have both
-  siftd ask -l research: --no-tag archived "auth"   # combine OR + NOT
+  siftd search -l research:auth "auth flow"            # search within tagged conversations
+  siftd search -l research: -l useful: "pattern"       # OR — any research: or useful: tag
+  siftd search --all-tags important --all-tags reviewed "design"  # AND — must have both
+  siftd search -l research: --no-tag archived "auth"   # combine OR + NOT
 
   # save useful results for future retrieval
   siftd tag 01HX... research:auth                   # bookmark a conversation
@@ -385,21 +385,21 @@ examples:
   siftd query -l research:auth                      # retrieve tagged conversations
 
   # tuning
-  siftd ask --embeddings-only "chunking"            # skip FTS5, pure embeddings
-  siftd ask --recall 200 "error"                    # widen FTS5 candidate pool
-  siftd ask --chrono "chunking"                     # sort by time instead of score
+  siftd search --embeddings-only "chunking"            # skip FTS5, pure embeddings
+  siftd search --recall 200 "error"                    # widen FTS5 candidate pool
+  siftd search --chrono "chunking"                     # sort by time instead of score
 
   # diversity vs relevance (MMR reranking)
-  siftd ask --no-diversity "chunking"               # pure relevance order (deterministic)
-  siftd ask --lambda 0.5 "design"                   # more diverse results (less redundancy)
-  siftd ask --json "auth" | jq '.results[0].breakdown'  # score component breakdown""",
+  siftd search --no-diversity "chunking"               # pure relevance order (deterministic)
+  siftd search --lambda 0.5 "design"                   # more diverse results (less redundancy)
+  siftd search --json "auth" | jq '.results[0].breakdown'  # score component breakdown""",
     )
 
     # Positional argument
-    p_ask.add_argument("query", nargs="*", help="Natural language search query")
+    p_search.add_argument("query", nargs="*", help="Natural language search query")
 
     # Filtering options (most commonly used)
-    filter_group = p_ask.add_argument_group("filtering")
+    filter_group = p_search.add_argument_group("filtering")
     filter_group.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
     filter_group.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
     filter_group.add_argument("--since", metavar="DATE", help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
@@ -409,7 +409,7 @@ examples:
     filter_group.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude conversations with this tag (NOT logic)")
 
     # Output options
-    output_group = p_ask.add_argument_group("output")
+    output_group = p_search.add_argument_group("output")
     output_group.add_argument("-n", "--limit", type=int, default=10, help="Max results (default: 10)")
     output_group.add_argument("-v", "--verbose", action="store_true", help="Show full chunk text")
     output_group.add_argument("--full", action="store_true", help="Show complete prompt+response exchange")
@@ -420,38 +420,38 @@ examples:
     output_group.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
 
     # Result modes
-    mode_group = p_ask.add_argument_group("result modes")
+    mode_group = p_search.add_argument_group("result modes")
     mode_group.add_argument("--conversations", action="store_true", help="Aggregate scores per conversation, return ranked conversations")
     mode_group.add_argument("--first", action="store_true", help="Return chronologically earliest match above threshold")
     mode_group.add_argument("--refs", nargs="?", const=True, metavar="FILES", help="Show file references; optionally filter by comma-separated basenames")
 
     # Search tuning
-    tuning_group = p_ask.add_argument_group("search tuning")
+    tuning_group = p_search.add_argument_group("search tuning")
     tuning_group.add_argument("--embeddings-only", action="store_true", help="Skip FTS5 recall, use pure embeddings")
     tuning_group.add_argument("--recall", type=int, default=80, metavar="N", help="FTS5 conversation recall limit (default: 80)")
     tuning_group.add_argument("--threshold", type=float, metavar="SCORE", help="Filter results below this score (e.g., 0.7)")
 
     # Diversity (MMR reranking)
-    diversity_group = p_ask.add_argument_group("diversity")
+    diversity_group = p_search.add_argument_group("diversity")
     diversity_group.add_argument("--no-diversity", action="store_true", help="Disable MMR reranking for deterministic pure relevance order")
     diversity_group.add_argument("--lambda", type=float, default=0.7, dest="lambda_", metavar="FLOAT", help="MMR lambda: 1.0=relevance, 0.0=diversity (default: 0.7)")
 
     # Recency boost
-    recency_group = p_ask.add_argument_group("recency")
+    recency_group = p_search.add_argument_group("recency")
     recency_group.add_argument("--recency", action="store_true", help="Boost recent results (exponential decay, mild 15%% boost)")
     recency_group.add_argument("--recency-half-life", type=float, default=30.0, metavar="DAYS", help="Days until recency boost decays to half (default: 30)")
     recency_group.add_argument("--recency-max-boost", type=float, default=1.15, metavar="MULT", help="Max boost multiplier for today's results (default: 1.15)")
 
     # Scope options
-    scope_group = p_ask.add_argument_group("scope")
+    scope_group = p_search.add_argument_group("scope")
     scope_group.add_argument("--no-exclude-active", action="store_true", help="Include results from active sessions (excluded by default)")
-    scope_group.add_argument("--include-derivative", action="store_true", help="Include derivative conversations (siftd ask/query results)")
+    scope_group.add_argument("--include-derivative", action="store_true", help="Include derivative conversations (siftd search/query results)")
 
     # Index management
-    index_group = p_ask.add_argument_group("index management")
+    index_group = p_search.add_argument_group("index management")
     index_group.add_argument("--index", action="store_true", help="Build/update embeddings index")
     index_group.add_argument("--rebuild", action="store_true", help="Rebuild embeddings index from scratch")
     index_group.add_argument("--backend", metavar="NAME", help="Embedding backend (ollama, fastembed)")
     index_group.add_argument("--embed-db", metavar="PATH", help="Alternate embeddings database path")
 
-    p_ask.set_defaults(func=cmd_ask)
+    p_search.set_defaults(func=cmd_search)

@@ -252,7 +252,7 @@ class EmbeddingsStaleCheck:
                     severity="info",
                     message="Embeddings database not found (not yet created)",
                     fix_available=True,
-                    fix_command="siftd ask --index",
+                    fix_command="siftd search --index",
                 )
             ]
 
@@ -280,7 +280,7 @@ class EmbeddingsStaleCheck:
                     severity="info",
                     message=f"{len(stale_ids)} conversation(s) not indexed in embeddings",
                     fix_available=True,
-                    fix_command="siftd ask --index",
+                    fix_command="siftd search --index",
                     context={"count": len(stale_ids)},
                 )
             ]
@@ -565,7 +565,7 @@ class OrphanedChunksCheck:
                 severity="warning",
                 message=f"{count} orphaned chunk(s) from {len(orphaned_ids)} deleted conversation(s)",
                 fix_available=True,
-                fix_command="siftd ask --rebuild",
+                fix_command="siftd search --rebuild",
                 context={"chunk_count": count, "conversation_count": len(orphaned_ids)},
             )
         ]
@@ -943,7 +943,7 @@ class EmbeddingsCompatCheck:
                     severity="info",
                     message=f"Index missing compatibility metadata: {', '.join(missing)}",
                     fix_available=True,
-                    fix_command="siftd ask --rebuild",
+                    fix_command="siftd search --rebuild",
                     context={"missing_keys": missing},
                 )
             )
@@ -969,7 +969,7 @@ class EmbeddingsCompatCheck:
                         severity="info",
                         message=f"Index schema outdated (v{stored_ver} → v{SCHEMA_VERSION})",
                         fix_available=True,
-                        fix_command="siftd ask --rebuild",
+                        fix_command="siftd search --rebuild",
                         context={
                             "stored_version": stored_ver,
                             "current_version": SCHEMA_VERSION,
@@ -985,7 +985,7 @@ class EmbeddingsCompatCheck:
                     severity="warning",
                     message=f"Backend mismatch: index={stored_backend}, current={backend.name}",
                     fix_available=True,
-                    fix_command="siftd ask --rebuild",
+                    fix_command="siftd search --rebuild",
                     context={
                         "stored_backend": stored_backend,
                         "current_backend": backend.name,
@@ -999,7 +999,7 @@ class EmbeddingsCompatCheck:
                     severity="warning",
                     message=f"Model mismatch: index={stored_model}, current={backend.model}",
                     fix_available=True,
-                    fix_command="siftd ask --rebuild",
+                    fix_command="siftd search --rebuild",
                     context={
                         "stored_model": stored_model,
                         "current_model": backend.model,
@@ -1017,7 +1017,7 @@ class EmbeddingsCompatCheck:
                         severity="warning",
                         message=f"Dimension mismatch: index={stored_dim}, current={backend.dimension}",
                         fix_available=True,
-                        fix_command="siftd ask --rebuild",
+                        fix_command="siftd search --rebuild",
                         context={
                             "stored_dimension": stored_dim,
                             "current_dimension": backend.dimension,
@@ -1077,9 +1077,9 @@ class ConfigValidCheck:
             ]
 
         # Validate known keys
-        ask_config = doc.get("ask", {})
-        if isinstance(ask_config, dict):
-            formatter = ask_config.get("formatter")
+        search_config = doc.get("search", {})
+        if isinstance(search_config, dict):
+            formatter = search_config.get("formatter")
             if formatter is not None:
                 # Check if formatter is valid
                 findings.extend(self._validate_formatter(str(formatter)))

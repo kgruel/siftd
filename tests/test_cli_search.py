@@ -1,4 +1,4 @@
-"""Integration tests for 'siftd ask' semantic search CLI.
+"""Integration tests for 'siftd search' semantic search CLI.
 
 Tests the query → search → format output flow and key options.
 """
@@ -11,7 +11,7 @@ pytestmark = pytest.mark.embeddings
 
 pytest.importorskip("fastembed")
 
-from siftd.cli_ask import cmd_ask
+from siftd.cli_search import cmd_search
 from siftd.embeddings.indexer import build_embeddings_index
 from siftd.storage.sqlite import (
     create_database,
@@ -30,7 +30,7 @@ from siftd.storage.sqlite import (
 
 @pytest.fixture
 def populated_db(semantic_search_db):
-    """Alias to shared semantic_search_db fixture for CLI ask tests."""
+    """Alias to shared semantic_search_db fixture for CLI search tests."""
     return semantic_search_db
 
 
@@ -52,7 +52,7 @@ def indexed_db(populated_db, tmp_path):
 
 
 def make_args(**kwargs):
-    """Create argparse.Namespace with defaults for cmd_ask."""
+    """Create argparse.Namespace with defaults for cmd_search."""
     defaults = {
         "query": [],
         "db": None,
@@ -94,7 +94,7 @@ def make_args(**kwargs):
     return argparse.Namespace(**defaults)
 
 
-class TestAskIndexing:
+class TestSearchIndexing:
     """Tests for --index and --rebuild modes."""
 
     def test_index_builds_embeddings(self, populated_db, tmp_path, capsys):
@@ -107,7 +107,7 @@ class TestAskIndexing:
             index=True,
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
@@ -122,7 +122,7 @@ class TestAskIndexing:
             rebuild=True,
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
@@ -136,12 +136,12 @@ class TestAskIndexing:
             index=True,
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
 
         assert result == 1
 
 
-class TestAskSearch:
+class TestSearchSearch:
     """Tests for query → search → format flow."""
 
     def test_basic_search_returns_results(self, indexed_db, capsys):
@@ -152,7 +152,7 @@ class TestAskSearch:
             embed_db=str(indexed_db["embed_db_path"]),
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
@@ -167,7 +167,7 @@ class TestAskSearch:
             embed_db=str(indexed_db["embed_db_path"]),
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 1
@@ -181,7 +181,7 @@ class TestAskSearch:
             embed_db=str(tmp_path / "nonexistent_embed.db"),
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 1
@@ -195,7 +195,7 @@ class TestAskSearch:
             db=str(tmp_path / "nonexistent.db"),
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 1
@@ -203,7 +203,7 @@ class TestAskSearch:
         assert "ingest" in captured.out
 
 
-class TestAskFilters:
+class TestSearchFilters:
     """Tests for workspace and other filters."""
 
     def test_workspace_filter(self, indexed_db, capsys):
@@ -216,7 +216,7 @@ class TestAskFilters:
             json=True,  # JSON output for easier verification
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
@@ -237,7 +237,7 @@ class TestAskFilters:
             json=True,
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
@@ -249,7 +249,7 @@ class TestAskFilters:
                 assert len(data) <= 1
 
 
-class TestAskOutputFormats:
+class TestSearchOutputFormats:
     """Tests for output format options."""
 
     def test_json_output(self, indexed_db, capsys):
@@ -261,7 +261,7 @@ class TestAskOutputFormats:
             json=True,
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
@@ -281,7 +281,7 @@ class TestAskOutputFormats:
             db=str(indexed_db["db_path"]),
             embed_db=str(indexed_db["embed_db_path"]),
         )
-        cmd_ask(args1)
+        cmd_search(args1)
         out1 = capsys.readouterr().out
 
         # Run with verbose
@@ -291,14 +291,14 @@ class TestAskOutputFormats:
             embed_db=str(indexed_db["embed_db_path"]),
             verbose=True,
         )
-        cmd_ask(args2)
+        cmd_search(args2)
         out2 = capsys.readouterr().out
 
         # Verbose output should be longer or equal
         assert len(out2) >= len(out1)
 
 
-class TestAskFlagValidation:
+class TestSearchFlagValidation:
     """Tests for flag combination validation."""
 
     def test_json_with_refs_errors(self, indexed_db, capsys):
@@ -311,7 +311,7 @@ class TestAskFlagValidation:
             refs=True,
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 1
@@ -327,7 +327,7 @@ class TestAskFlagValidation:
             thread=True,
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
@@ -347,7 +347,7 @@ class TestAskFlagValidation:
             refs=None,
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
@@ -365,12 +365,12 @@ class TestAskFlagValidation:
             refs=True,
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         # Should succeed (refs content may or may not be present depending on data)
         assert result == 0
 
 
-class TestAskEdgeCases:
+class TestSearchEdgeCases:
     """Edge case tests."""
 
     def test_no_results_for_unrelated_query(self, indexed_db, capsys):
@@ -382,7 +382,7 @@ class TestAskEdgeCases:
             threshold=0.99,  # Very high threshold to ensure no matches
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         # Should return 0 (no error) but indicate no results
@@ -398,7 +398,7 @@ class TestAskEdgeCases:
             threshold=0.99,  # Very high threshold
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         # Either returns 0 with "No results" or returns successfully
@@ -414,7 +414,7 @@ class TestAskEdgeCases:
             first=True,
             json=True,
         )
-        cmd_ask(args_default)
+        cmd_search(args_default)
         out_default = capsys.readouterr().out
 
         # Now test with explicit low threshold
@@ -426,7 +426,7 @@ class TestAskEdgeCases:
             threshold=0.1,  # Very low threshold
             json=True,
         )
-        result = cmd_ask(args_low)
+        result = cmd_search(args_low)
         out_low = capsys.readouterr().out
 
         # Should succeed (no error)
@@ -435,7 +435,7 @@ class TestAskEdgeCases:
         # (The exact behavior depends on scores, but we're testing the passthrough)
 
 
-class TestAskThreadMode:
+class TestSearchThreadMode:
     """Tests for --thread mode candidate pool handling."""
 
     @pytest.fixture
@@ -501,7 +501,7 @@ class TestAskThreadMode:
             json=True,  # JSON for easy counting
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
@@ -525,7 +525,7 @@ class TestAskThreadMode:
             json=True,
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
@@ -537,7 +537,7 @@ class TestAskThreadMode:
         assert len(results) <= 3, f"Expected <=3 results without --thread, got {len(results)}"
 
 
-class TestAskPrivacyWarning:
+class TestSearchPrivacyWarning:
     """Tests for privacy warning on --full and --refs flags."""
 
     def test_full_flag_prints_privacy_warning(self, indexed_db, capsys):
@@ -549,7 +549,7 @@ class TestAskPrivacyWarning:
             full=True,
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
@@ -564,7 +564,7 @@ class TestAskPrivacyWarning:
             refs=True,
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
@@ -580,7 +580,7 @@ class TestAskPrivacyWarning:
             refs=None,
         )
 
-        result = cmd_ask(args)
+        result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
