@@ -1,122 +1,182 @@
 #!/usr/bin/env bash
-# DESC: Enter subtask worktree and launch review agent
+# DESC: Launch review agent in a worktree
 source "$(dirname "$0")/_lib.sh"
 
 usage() {
     cat <<EOF
-Usage: ./dev review <task> [agent] [--dry-run]
+Usage: ./dev review <path> [options]
 
-Enter a subtask worktree and launch a review agent.
+Launch a review agent in a worktree directory.
 
 Arguments:
-  task       Subtask name (e.g., impl/peek-parent-session)
-  agent      codex (default), claude
+  path                 Path to worktree (or . for current directory)
 
 Options:
-  --dry-run  Show prompt without launching agent
-  --help     Show this message
+  --agent <cmd>        Agent command (default: codex)
+  --prompt <file>      Prompt template (default: scripts/review-prompt.md)
+  --context <file>     Context file (default: auto-detect TASK.md)
+  --base <branch>      Base branch for diff (default: main)
+  --background         Launch agent in background
+  --dry-run            Show expanded prompt without launching
+  --help               Show this message
+
+Template variables:
+  {{branch}}           Current git branch name
+  {{diff_stat}}        git diff --stat against base
+  {{context}}          Contents of context file
+  {{dev_commands}}     Dev harness commands (from ./dev help)
 
 Examples:
-  ./dev review impl/my-feature
-  ./dev review impl/my-feature claude
-  ./dev review impl/my-feature --dry-run
+  ./dev review .                          # Review current directory
+  ./dev review ./worktrees/impl-foo       # Review specific worktree
+  ./dev review . --agent claude           # Use claude instead of codex
+  ./dev review . --agent "aider --msg"    # Custom agent command
+  ./dev review . --prompt my-review.md    # Custom prompt template
+  ./dev review . --background             # Launch and return
 EOF
 }
 
+# Expand template variables in prompt (uses Python for multi-line safety)
+expand_template() {
+    local template_file="$1"
+    local branch="$2"
+    local diff_stat="$3"
+    local context="$4"
+    local dev_commands="$5"
+
+    TPL_BRANCH="$branch" \
+    TPL_DIFF_STAT="$diff_stat" \
+    TPL_CONTEXT="$context" \
+    TPL_DEV_COMMANDS="$dev_commands" \
+    python3 -c "
+import os, sys
+template = open(sys.argv[1]).read()
+replacements = {
+    '{{branch}}': os.environ.get('TPL_BRANCH', ''),
+    '{{diff_stat}}': os.environ.get('TPL_DIFF_STAT', ''),
+    '{{context}}': os.environ.get('TPL_CONTEXT', ''),
+    '{{dev_commands}}': os.environ.get('TPL_DEV_COMMANDS', ''),
+}
+for k, v in replacements.items():
+    template = template.replace(k, v)
+print(template, end='')
+" "$template_file"
+}
+
 main() {
-    local task=""
+    local path=""
     local agent="codex"
+    local prompt_file="$DEV_ROOT/scripts/review-prompt.md"
+    local context_file=""
+    local base_branch="main"
+    local background=0
     local dry_run=0
 
     # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
+            --agent) agent="$2"; shift ;;
+            --prompt) prompt_file="$2"; shift ;;
+            --context) context_file="$2"; shift ;;
+            --base) base_branch="$2"; shift ;;
+            --background) background=1 ;;
             --dry-run) dry_run=1 ;;
             --help|-h) usage; exit 0 ;;
-            codex|claude) agent="$1" ;;
             -*) echo "Unknown option: $1"; exit 1 ;;
-            *) task="$1" ;;
+            *) path="$1" ;;
         esac
         shift
     done
 
-    if [ -z "$task" ]; then
+    if [ -z "$path" ]; then
         usage
         exit 1
     fi
 
-    # Get worktree path
-    local worktree
-    worktree=$(subtask workspace "$task" 2>/dev/null) || {
-        echo -e "${RED}Error: Could not find worktree for task '$task'${NC}"
-        echo "Run 'subtask list' to see available tasks"
+    # Resolve path
+    path=$(cd "$path" 2>/dev/null && pwd) || {
+        echo -e "${RED}Error: Cannot access path '$path'${NC}"
         exit 1
     }
 
-    echo -e "${BOLD}Task:${NC} $task"
-    echo -e "${BOLD}Worktree:${NC} $worktree"
-
-    # Setup if needed
-    if [ ! -d "$worktree/.venv" ]; then
-        echo "Setting up worktree..."
-        (cd "$worktree" && ./dev setup)
+    # Verify it's a git repo
+    if ! git -C "$path" rev-parse --git-dir >/dev/null 2>&1; then
+        echo -e "${RED}Error: '$path' is not a git repository${NC}"
+        exit 1
     fi
 
-    # Get task info for prompt
-    local title changes
-    title=$(subtask show "$task" 2>/dev/null | grep "^Title:" | cut -d: -f2- | xargs)
-    changes=$(subtask show "$task" 2>/dev/null | grep "^Changes:" | cut -d: -f2- | xargs)
+    # Get branch name
+    local branch
+    branch=$(git -C "$path" branch --show-current 2>/dev/null || echo "detached")
 
-    # Build review prompt
+    # Get diff stat
+    local diff_stat
+    diff_stat=$(git -C "$path" diff --stat "$base_branch" 2>/dev/null || echo "No changes from $base_branch")
+
+    # Auto-detect context file if not specified
+    if [ -z "$context_file" ]; then
+        for candidate in "$path/TASK.md" "$path/.claude/context.md" "$path/README.md"; do
+            if [ -f "$candidate" ]; then
+                context_file="$candidate"
+                break
+            fi
+        done
+    fi
+
+    # Read context
+    local context=""
+    if [ -n "$context_file" ] && [ -f "$context_file" ]; then
+        context=$(cat "$context_file")
+    else
+        context="No context file found. Review the code changes directly."
+    fi
+
+    # Get dev commands (if ./dev exists in worktree)
+    local dev_commands=""
+    if [ -x "$path/dev" ]; then
+        dev_commands=$("$path/dev" help 2>/dev/null | grep -A100 "^Commands:" | tail -n +2 | head -20 || echo "")
+    fi
+
+    # Read and expand template
+    if [ ! -f "$prompt_file" ]; then
+        echo -e "${RED}Error: Prompt template not found: $prompt_file${NC}"
+        exit 1
+    fi
+
     local prompt
-    prompt="Review the $task branch: $title
+    prompt=$(expand_template "$prompt_file" "$branch" "$diff_stat" "$context" "$dev_commands")
 
-Changes: $changes
-
-## Dev Commands
-\`\`\`
-./dev check          # Lint + test (quiet)
-./dev check -v       # Lint + test (verbose)
-./dev lint           # Type check + lint only
-./dev test           # Run tests only
-./dev test -v        # Run tests (verbose)
-\`\`\`
-
-## Review Focus
-1. Does the implementation match the task description?
-2. Are there any architectural violations (check CLAUDE.md)?
-3. Is error handling consistent with existing patterns?
-4. Are tests comprehensive?
-5. Run \`./dev check\` to verify lint and tests pass.
-
-Start by reading the task description: \`cat .subtask/tasks/${task//\//--}/TASK.md\`
-Then review the diff: \`git diff main\`"
+    # Output
+    echo -e "${BOLD}Review:${NC} $path"
+    echo -e "${BOLD}Branch:${NC} $branch"
+    echo -e "${BOLD}Agent:${NC} $agent"
+    [ -n "$context_file" ] && echo -e "${BOLD}Context:${NC} $context_file"
 
     if [ $dry_run -eq 1 ]; then
         echo ""
-        echo -e "${BOLD}Review prompt:${NC}"
+        echo -e "${BOLD}Expanded prompt:${NC}"
         echo "----------------------------------------"
         echo "$prompt"
         echo "----------------------------------------"
-        echo ""
-        echo -e "${BOLD}To launch:${NC} cd $worktree && $agent \"<prompt>\""
-    else
-        echo ""
-        echo -e "${BOLD}Launching $agent in worktree...${NC}"
-        echo ""
+        exit 0
+    fi
 
-        case "$agent" in
-            codex)
-                (cd "$worktree" && exec codex "$prompt")
-                ;;
-            claude)
-                (cd "$worktree" && exec claude "$prompt")
-                ;;
-            *)
-                echo "Unknown agent: $agent (use 'codex' or 'claude')"
-                exit 1
-                ;;
-        esac
+    echo ""
+
+    # Ensure worktree has venv if it has ./dev
+    if [ -x "$path/dev" ] && [ ! -d "$path/.venv" ]; then
+        echo "Setting up worktree..."
+        (cd "$path" && ./dev setup)
+    fi
+
+    # Launch agent
+    if [ $background -eq 1 ]; then
+        echo -e "${BOLD}Launching $agent in background...${NC}"
+        (cd "$path" && nohup $agent "$prompt" > .review.log 2>&1 &)
+        echo "Monitor with: siftd peek -w $(basename "$path")"
+    else
+        echo -e "${BOLD}Launching $agent...${NC}"
+        (cd "$path" && exec $agent "$prompt")
     fi
 }
 
