@@ -176,17 +176,24 @@
 # name: TestHelpSnapshots.test_subcommand_help[backfill]
   '''
   usage: siftd backfill [-h] [--shell-tags] [--derivative-tags]
+                        [--filter-binary] [--dry-run]
   
   options:
     -h, --help         show this help message and exit
     --shell-tags       Tag shell.execute calls with shell:* categories
     --derivative-tags  Tag conversations containing siftd ask/query as
                        siftd:derivative
+    --filter-binary    Filter binary content (images, base64) from existing
+                       blobs
+    --dry-run          Preview changes without applying (use with --filter-
+                       binary)
   
   examples:
     siftd backfill                    # backfill response attributes (cache tokens)
     siftd backfill --shell-tags       # categorize shell commands as shell:git, shell:test, etc.
     siftd backfill --derivative-tags  # mark siftd-generated conversations
+    siftd backfill --filter-binary    # filter binary content from existing blobs
+    siftd backfill --filter-binary --dry-run  # preview what would be filtered
   
   '''
 # ---

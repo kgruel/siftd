@@ -120,6 +120,7 @@ def ingest_all(
     adapters: list[AdapterModule],
     *,
     on_file: Callable[[Source, str], None] | None = None,
+    filter_binary: bool | None = None,
 ) -> IngestStats:
     """Discover and ingest all new files from all adapters.
 
@@ -131,10 +132,18 @@ def ingest_all(
         conn: Database connection
         adapters: List of adapter modules
         on_file: Optional callback for progress reporting
+        filter_binary: If True, filter binary content from tool results.
+            If None (default), reads from config (ingestion.filter_binary).
 
     Returns:
         IngestStats with counts
     """
+    # Read filter_binary from config if not explicitly set
+    if filter_binary is None:
+        from siftd.config import get_ingestion_filter_binary
+
+        filter_binary = get_ingestion_filter_binary()
+
     stats = IngestStats()
 
     # Register tool aliases for each adapter (once per harness)
@@ -197,13 +206,13 @@ def ingest_all(
                         clear_ingested_file_error(conn, file_path)
 
                     # Re-ingest and update the record
-                    _reingest_file(conn, source, adapter, file_path, current_hash, stats)
+                    _reingest_file(conn, source, adapter, file_path, current_hash, stats, filter_binary)
                     if on_file:
                         on_file(source, "updated")
                     continue
 
                 # New file - ingest normally
-                _ingest_file(conn, source, adapter, file_path, stats)
+                _ingest_file(conn, source, adapter, file_path, stats, filter_binary)
                 if on_file:
                     on_file(source, "ingested")
 
@@ -238,7 +247,7 @@ def ingest_all(
                     if _compare_timestamps(conversation.ended_at, existing["ended_at"]):
                         # New is newer, replace
                         delete_conversation(conn, existing["id"])
-                        conv_id = store_conversation(conn, conversation)
+                        conv_id = store_conversation(conn, conversation, filter_binary=filter_binary)
 
                         # Record file ingestion
                         location = source.as_path
@@ -270,7 +279,7 @@ def ingest_all(
                             on_file(source, "skipped (older)")
                 else:
                     # New conversation
-                    conv_id = store_conversation(conn, conversation)
+                    conv_id = store_conversation(conn, conversation, filter_binary=filter_binary)
 
                     location = source.as_path
                     file_hash = compute_file_hash(location)
@@ -368,6 +377,7 @@ def _ingest_file(
     adapter: AdapterModule,
     file_path: str,
     stats: IngestStats,
+    filter_binary: bool,
 ) -> None:
     """Ingest a single file (file-based dedup strategy)."""
     harness_name = adapter.NAME
@@ -388,7 +398,7 @@ def _ingest_file(
         stats.files_ingested += 1
         return
 
-    conv_id = store_conversation(conn, conversation)
+    conv_id = store_conversation(conn, conversation, filter_binary=filter_binary)
     _update_stats_for_conversation(stats, harness_name, conversation)
     record_ingested_file(conn, file_path, file_hash, conv_id)
 
@@ -406,6 +416,7 @@ def _reingest_file(
     file_path: str,
     file_hash: str,
     stats: IngestStats,
+    filter_binary: bool,
 ) -> None:
     """Re-ingest a file that has changed (file-based dedup strategy).
 
@@ -432,7 +443,7 @@ def _reingest_file(
         stats.by_harness[harness_name]["replaced"] += 1
         return
 
-    conv_id = store_conversation(conn, conversation)
+    conv_id = store_conversation(conn, conversation, filter_binary=filter_binary)
     _update_stats_for_conversation(stats, harness_name, conversation)
     record_ingested_file(conn, file_path, file_hash, conv_id)
 

@@ -7,6 +7,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from siftd.content.filters import filter_binary_block
 from siftd.domain import ContentBlock
 
 
@@ -25,9 +26,19 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def parse_block(block) -> ContentBlock:
-    """Parse content block into a ContentBlock domain object."""
+def parse_block(block, *, filter_binary: bool = True) -> ContentBlock:
+    """Parse content block into a ContentBlock domain object.
+
+    Args:
+        block: Raw content block (string or dict)
+        filter_binary: If True (default), filter binary content like images
+            and base64 data, replacing with metadata placeholders.
+    """
     if isinstance(block, str):
         return ContentBlock(block_type="text", content={"text": block})
+
+    if filter_binary:
+        block = filter_binary_block(block)
+
     block_type = block.get("type", "unknown")
     return ContentBlock(block_type=block_type, content=block)

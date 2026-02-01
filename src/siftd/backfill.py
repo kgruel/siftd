@@ -283,3 +283,109 @@ def backfill_derivative_tags(conn: sqlite3.Connection) -> int:
 
     conn.commit()
     return len(derivative_conv_ids)
+
+
+def backfill_filter_binary(conn: sqlite3.Connection, *, dry_run: bool = False) -> dict[str, int]:
+    """Filter binary content from existing content_blobs.
+
+    Scans content_blobs for binary content (images, base64 data) and replaces
+    with filtered versions. Since content_blobs uses content-addressable storage,
+    this creates new filtered blobs and updates tool_calls.result_hash to point
+    to them.
+
+    Args:
+        conn: Database connection
+        dry_run: If True, only report what would be filtered without making changes
+
+    Returns:
+        Dict with counts: filtered, skipped, errors
+    """
+    from siftd.content.filters import filter_tool_result_binary
+    from siftd.storage.blobs import compute_content_hash, store_content
+
+    stats = {"filtered": 0, "skipped": 0, "errors": 0}
+
+    # Find all content_blobs that might contain binary data
+    cur = conn.execute("""
+        SELECT hash, content FROM content_blobs
+        WHERE content LIKE '%"type": "base64"%'
+           OR content LIKE '%"type":"base64"%'
+           OR content LIKE '%iVBORw0KGgo%'
+           OR content LIKE '%JVBERi0%'
+           OR content LIKE '%/9j/%'
+    """)
+
+    rows = cur.fetchall()
+    hash_mapping: dict[str, str] = {}  # old_hash -> new_hash
+
+    for row in rows:
+        old_hash = row["hash"]
+        content = row["content"]
+
+        try:
+            data = json.loads(content)
+            filtered_data = filter_tool_result_binary(data)
+
+            # Check if anything changed
+            if filtered_data is data:
+                stats["skipped"] += 1
+                continue
+
+            filtered_json = json.dumps(filtered_data)
+            new_hash = compute_content_hash(filtered_json)
+
+            if new_hash == old_hash:
+                stats["skipped"] += 1
+                continue
+
+            if not dry_run:
+                # Store the filtered content
+                store_content(conn, filtered_json)
+                hash_mapping[old_hash] = new_hash
+
+            stats["filtered"] += 1
+
+        except (json.JSONDecodeError, TypeError):
+            stats["errors"] += 1
+            continue
+
+    # Update tool_calls to point to new hashes, adjusting ref_counts properly
+    if not dry_run and hash_mapping:
+        for old_hash, new_hash in hash_mapping.items():
+            # Count how many tool_calls reference this old hash
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM tool_calls WHERE result_hash = ?",
+                (old_hash,)
+            )
+            ref_count = cur.fetchone()[0]
+
+            if ref_count == 0:
+                continue
+
+            # Update all tool_calls to point to new hash
+            conn.execute(
+                "UPDATE tool_calls SET result_hash = ? WHERE result_hash = ?",
+                (new_hash, old_hash)
+            )
+
+            # Adjust ref_counts: decrement old blob by actual count,
+            # increment new blob by (count - 1) since store_content already added 1
+            conn.execute(
+                "UPDATE content_blobs SET ref_count = ref_count - ? WHERE hash = ?",
+                (ref_count, old_hash)
+            )
+            if ref_count > 1:
+                conn.execute(
+                    "UPDATE content_blobs SET ref_count = ref_count + ? WHERE hash = ?",
+                    (ref_count - 1, new_hash)
+                )
+
+            # Clean up orphaned blobs (ref_count <= 0)
+            conn.execute(
+                "DELETE FROM content_blobs WHERE hash = ? AND ref_count <= 0",
+                (old_hash,)
+            )
+
+        conn.commit()
+
+    return stats

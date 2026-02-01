@@ -99,3 +99,26 @@ def get_ask_defaults() -> dict:
             defaults["format"] = str(ask_config["formatter"])
 
     return defaults
+
+
+def get_ingestion_filter_binary() -> bool:
+    """Get whether to filter binary content during ingestion.
+
+    Reads from config [ingestion] filter_binary, defaults to True.
+
+    Example config:
+        [ingestion]
+        filter_binary = false  # disable binary filtering
+    """
+    doc = load_config()
+    ingestion_config = doc.get("ingestion", {})
+    if isinstance(ingestion_config, dict):
+        value = ingestion_config.get("filter_binary")
+        if value is not None:
+            # Handle boolean or string "true"/"false"
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.lower() not in ("false", "0", "no")
+    # Default: filtering is enabled
+    return True

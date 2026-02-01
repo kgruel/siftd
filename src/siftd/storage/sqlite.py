@@ -711,17 +711,34 @@ def insert_tool_call(
     timestamp: str | None,
     *,
     dedupe_result: bool = True,
+    filter_binary: bool = True,
 ) -> str:
     """Insert tool call, return id (ULID).
 
     Args:
         dedupe_result: If True (default), stores result in content_blobs for
             deduplication. If False, stores inline in result column.
+        filter_binary: If True (default), filter binary content (images, base64)
+            from the result before storage.
     """
+    import json as _json
+
+    from siftd.content.filters import filter_tool_result_binary
     from siftd.storage.blobs import store_content
 
     ulid = _ulid()
     result_hash = None
+
+    # Apply binary filtering if enabled
+    if result_json is not None and filter_binary:
+        try:
+            result_data = _json.loads(result_json)
+            filtered_data = filter_tool_result_binary(result_data)
+            if filtered_data is not result_data:
+                result_json = _json.dumps(filtered_data)
+        except (ValueError, TypeError):
+            # Not valid JSON, leave as-is
+            pass
 
     if result_json is not None and dedupe_result:
         # Store in content_blobs and reference by hash
@@ -748,11 +765,24 @@ def insert_tool_call(
 # =============================================================================
 
 
-def store_conversation(conn: sqlite3.Connection, conversation: Conversation, *, commit: bool = False) -> str:
+def store_conversation(
+    conn: sqlite3.Connection,
+    conversation: Conversation,
+    *,
+    commit: bool = False,
+    filter_binary: bool = True,
+) -> str:
     """Store a complete Conversation domain object.
 
     Walks the nested tree and calls insert_* functions.
     Caller controls commit (default: no commit).
+
+    Args:
+        conn: Database connection
+        conversation: Conversation domain object to store
+        commit: Whether to commit the transaction (default: False)
+        filter_binary: If True (default), filter binary content (images, base64)
+            from tool results before storage.
     """
     # Get or create harness
     harness_kwargs = {}
@@ -859,6 +889,7 @@ def store_conversation(conn: sqlite3.Connection, conversation: Conversation, *, 
                     result_json=json.dumps(tool_call.result) if tool_call.result else None,
                     status=tool_call.status,
                     timestamp=tool_call.timestamp,
+                    filter_binary=filter_binary,
                 )
 
                 # Auto-tag shell commands at ingest time

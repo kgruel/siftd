@@ -25,7 +25,12 @@ from siftd.api.sessions import (
 from siftd.api.sessions import (
     queue_tag as queue_pending_tag,
 )
-from siftd.backfill import backfill_derivative_tags, backfill_response_attributes, backfill_shell_tags
+from siftd.backfill import (
+    backfill_derivative_tags,
+    backfill_filter_binary,
+    backfill_response_attributes,
+    backfill_shell_tags,
+)
 from siftd.cli_ask import build_ask_parser
 from siftd.cli_install import build_install_parser
 from siftd.ingestion import IngestStats, ingest_all
@@ -1048,6 +1053,19 @@ def cmd_backfill(args) -> int:
             print(f"Tagged {count} conversations as siftd:derivative.")
         else:
             print("No untagged derivative conversations found.")
+    elif args.filter_binary:
+        dry_run = getattr(args, "dry_run", False)
+        if dry_run:
+            print("Scanning for binary content (dry run)...")
+        else:
+            print("Filtering binary content from existing blobs...")
+        stats = backfill_filter_binary(conn, dry_run=dry_run)
+        print(f"  Filtered: {stats['filtered']}")
+        print(f"  Skipped (no change): {stats['skipped']}")
+        if stats['errors']:
+            print(f"  Errors: {stats['errors']}")
+        if dry_run and stats['filtered']:
+            print("\nRun without --dry-run to apply changes.")
     else:
         # Default: backfill response attributes (original behavior)
         print("Backfilling response attributes (cache tokens)...")
@@ -2018,10 +2036,14 @@ live session tagging:
         epilog="""examples:
   siftd backfill                    # backfill response attributes (cache tokens)
   siftd backfill --shell-tags       # categorize shell commands as shell:git, shell:test, etc.
-  siftd backfill --derivative-tags  # mark siftd-generated conversations""",
+  siftd backfill --derivative-tags  # mark siftd-generated conversations
+  siftd backfill --filter-binary    # filter binary content from existing blobs
+  siftd backfill --filter-binary --dry-run  # preview what would be filtered""",
     )
     p_backfill.add_argument("--shell-tags", action="store_true", help="Tag shell.execute calls with shell:* categories")
     p_backfill.add_argument("--derivative-tags", action="store_true", help="Tag conversations containing siftd ask/query as siftd:derivative")
+    p_backfill.add_argument("--filter-binary", action="store_true", help="Filter binary content (images, base64) from existing blobs")
+    p_backfill.add_argument("--dry-run", action="store_true", help="Preview changes without applying (use with --filter-binary)")
     p_backfill.set_defaults(func=cmd_backfill)
 
     # migrate
