@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# Unified development harness for siftd
+# Usage: ./dev <command> [options]
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+# Colors (disabled if not a terminal)
+if [ -t 1 ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BOLD='\033[1m'
+    NC='\033[0m'
+else
+    RED='' GREEN='' YELLOW='' BOLD='' NC=''
+fi
+
+usage() {
+    cat <<EOF
+${BOLD}siftd development harness${NC}
+
+${BOLD}Usage:${NC} ./dev <command> [options]
+
+${BOLD}Commands:${NC}
+  setup [--embed]    Setup worktree (venv, deps, optional embeddings)
+  lint               Run ty type checker + ruff linter (with autofix)
+  test               Run tests (excluding embeddings)
+  test-all           Run all tests including embeddings
+  docs [--check]     Generate docs; --check fails if stale
+  check              Run lint + test (CI equivalent)
+  help               Show this message
+
+${BOLD}Examples:${NC}
+  ./dev setup             # Basic worktree setup
+  ./dev setup --embed     # Setup with embeddings (downloads model)
+  ./dev lint              # Type check and lint
+  ./dev check             # Full CI check (lint + test)
+  ./dev docs --check      # Verify docs are up to date
+EOF
+}
+
+cmd_setup() {
+    local with_embed=0
+    for arg in "$@"; do
+        case "$arg" in
+            --embed) with_embed=1 ;;
+            *) echo "Unknown option: $arg"; exit 1 ;;
+        esac
+    done
+
+    # Create venv if missing
+    if [ ! -d ".venv" ]; then
+        echo "Creating venv..."
+        uv venv .venv
+    fi
+
+    # Sync dev dependencies
+    echo "Syncing dependencies..."
+    uv sync --extra dev --quiet
+
+    # Optional: embeddings setup
+    if [ $with_embed -eq 1 ]; then
+        echo "Installing embeddings dependencies..."
+        uv sync --extra dev --extra embed --quiet
+
+        echo "Warming fastembed cache (downloading model)..."
+        uv run python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-en-v1.5')" 2>/dev/null || {
+            echo -e "${YELLOW}Warning: Could not warm fastembed cache${NC}"
+        }
+
+        echo "Running initial ingest..."
+        uv run siftd ingest || {
+            echo -e "${YELLOW}Warning: Ingest had issues (may be first run)${NC}"
+        }
+    fi
+
+    echo -e "${GREEN}Worktree ready.${NC} Run ./dev check to verify."
+}
+
+cmd_lint() {
+    # Auto-setup if venv missing
+    if [ ! -d ".venv" ]; then
+        cmd_setup
+    fi
+
+    local errors=0
+
+    # Type check - show only errors/warnings
+    echo "Running ty..."
+    set +e
+    ty_out=$(uv run ty check src/ 2>&1)
+    ty_status=$?
+    set -e
+
+    if [ $ty_status -ne 0 ]; then
+        echo "$ty_out" | grep -E "^(error|warning)\[" | head -20
+        errors=1
+    fi
+
+    # Lint with autofix
+    echo "Running ruff..."
+    set +e
+    ruff_out=$(uv run ruff check src/ --fix 2>&1)
+    ruff_status=$?
+    set -e
+
+    if [ $ruff_status -ne 0 ]; then
+        echo "$ruff_out" | grep -v "^\[" | head -20
+        errors=1
+    fi
+
+    if [ $errors -eq 0 ]; then
+        echo -e "${GREEN}Lint passed${NC}"
+    else
+        echo -e "${RED}Lint failed${NC}"
+        exit 1
+    fi
+}
+
+cmd_test() {
+    # Auto-setup if venv missing
+    if [ ! -d ".venv" ]; then
+        cmd_setup
+    fi
+
+    echo "Running tests (excluding embeddings)..."
+    uv run pytest tests/ -v --tb=short -m "not embeddings"
+}
+
+cmd_test_all() {
+    # Auto-setup if venv missing
+    if [ ! -d ".venv" ]; then
+        cmd_setup --embed
+    fi
+
+    echo "Running all tests..."
+    uv run pytest tests/ -v --tb=short
+}
+
+cmd_docs() {
+    local check_mode=0
+    for arg in "$@"; do
+        case "$arg" in
+            --check) check_mode=1 ;;
+            *) echo "Unknown option: $arg"; exit 1 ;;
+        esac
+    done
+
+    # Auto-setup if venv missing
+    if [ ! -d ".venv" ]; then
+        cmd_setup
+    fi
+
+    echo "Generating docs..."
+    uv run python scripts/gen_docs.py
+
+    if [ $check_mode -eq 1 ]; then
+        # Check if any docs changed
+        if ! git diff --quiet docs/reference/; then
+            echo -e "${RED}Docs are stale. Run './dev docs' to regenerate.${NC}"
+            git diff --stat docs/reference/
+            exit 1
+        fi
+        echo -e "${GREEN}Docs are up to date${NC}"
+    fi
+}
+
+cmd_check() {
+    echo -e "${BOLD}=== Lint ===${NC}"
+    cmd_lint
+
+    echo ""
+    echo -e "${BOLD}=== Test ===${NC}"
+    cmd_test
+
+    echo ""
+    echo -e "${GREEN}All checks passed${NC}"
+}
+
+# Main dispatch
+case "${1:-help}" in
+    setup)    shift; cmd_setup "$@" ;;
+    lint)     cmd_lint ;;
+    test)     cmd_test ;;
+    test-all) cmd_test_all ;;
+    docs)     shift; cmd_docs "$@" ;;
+    check)    cmd_check ;;
+    help|--help|-h) usage ;;
+    *)
+        echo "Unknown command: $1"
+        echo "Run './dev help' for usage"
+        exit 1
+        ;;
+esac

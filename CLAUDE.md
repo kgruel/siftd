@@ -15,11 +15,17 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools in
 - Codex CLI (`~/.codex/sessions`)
 - Drop-in adapters via `~/.config/siftd/adapters/`
 
-## Setup
+## Development
 
 ```bash
-source .venv/bin/activate
-uv run pytest tests/ -v
+./dev setup        # Setup worktree (venv + deps)
+./dev setup --embed  # Setup with embeddings (downloads model)
+./dev lint         # Run ty + ruff
+./dev test         # Run tests (excluding embeddings)
+./dev test-all     # Run all tests
+./dev docs         # Generate reference docs
+./dev docs --check # Verify docs aren't stale
+./dev check        # Lint + test (CI equivalent)
 ```
 
 ## Structure
@@ -44,7 +50,22 @@ tests/              # Pytest, mirrors src structure
 - Queries: `~/.config/siftd/queries/*.sql` with `$var` or `:var` substitution
 - CLI is thin dispatcher; logic lives in `cli_*.py` submodules or `search.py`/`api.py`
 
+## CLI Quick Reference
+
+```bash
+siftd ingest              # Import conversation logs from all adapters
+siftd search "<query>"    # Semantic search (requires embeddings)
+siftd query               # List recent conversations
+siftd query -w proj -s "error"  # Filter by workspace, FTS5 search
+siftd query <id>          # View conversation detail
+siftd peek                # View live/recent sessions (bypasses DB)
+siftd tag <id> <tag>      # Tag a conversation
+siftd export --last       # Export most recent session
+```
+
+Run `siftd <cmd> --help` for full options.
+
 ## Before you're done
 
-1. Run tests: `uv run pytest tests/ -v`
+1. Run: `./dev check`
 2. Commit all changes including lock files
