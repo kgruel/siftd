@@ -485,8 +485,8 @@
   '''
   usage: siftd search [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                       [-l NAME] [--all-tags NAME] [--no-tag NAME] [-n LIMIT]
-                      [-v] [--full] [--context N] [--thread] [--chrono] [--json]
-                      [--format NAME] [--conversations] [--first]
+                      [-v] [--full] [--context N] [--thread] [--by-time]
+                      [--json] [--format NAME] [--conversations] [--first]
                       [--refs [FILES]] [--embeddings-only] [--recall N]
                       [--threshold SCORE] [--no-diversity] [--lambda FLOAT]
                       [--recency] [--recency-half-life DAYS]
@@ -520,7 +520,7 @@
     --context N           Show ±N exchanges around match
     --thread              Narrative thread: top conversations expanded, rest as
                           shortlist
-    --chrono              Sort results by time instead of score
+    --by-time             Sort results by time instead of score
     --json                Output as structured JSON
     --format NAME         Use named formatter (built-in or drop-in plugin)
   
@@ -598,7 +598,7 @@
     # tuning
     siftd search --embeddings-only "chunking"            # skip FTS5, pure embeddings
     siftd search --recall 200 "error"                    # widen FTS5 candidate pool
-    siftd search --chrono "chunking"                     # sort by time instead of score
+    siftd search --by-time "chunking"                     # sort by time instead of score
   
     # diversity vs relevance (MMR reranking)
     siftd search --no-diversity "chunking"               # pure relevance order (deterministic)
