@@ -182,7 +182,7 @@ def search_similar(
     if len(query_embedding) != embedding_dim:
         raise ValueError(
             f"Query embedding dimension ({len(query_embedding)}) does not match index dimension ({embedding_dim}). "
-            f"Rebuild the index with 'siftd ask --rebuild' using the same embedding backend."
+            f"Rebuild the index with 'siftd search --rebuild' using the same embedding backend."
         )
 
     # Compute all similarities at once
@@ -280,7 +280,7 @@ def validate_index_compat(
                 f"  Index schema version:   {stored_ver}\n"
                 f"  Current schema version: {current_schema_version}\n\n"
                 f"Rebuild required to upgrade index format:\n"
-                f"  siftd ask --rebuild"
+                f"  siftd search --rebuild"
             )
 
     # Backend mismatch
@@ -291,9 +291,9 @@ def validate_index_compat(
             f"  Index backend:    {stored_backend}{stored_model_display}\n"
             f"  Current backend:  {backend_name} ({backend_model})\n\n"
             f"To search with the existing index:\n"
-            f"  siftd ask --backend {stored_backend} \"<query>\"\n\n"
+            f"  siftd search --backend {stored_backend} \"<query>\"\n\n"
             f"To rebuild with the current backend:\n"
-            f"  siftd ask --rebuild"
+            f"  siftd search --rebuild"
         )
 
     # Model mismatch (same backend, different model)
@@ -304,7 +304,7 @@ def validate_index_compat(
             f"  Index model:    {stored_model} ({stored_dim} dims)\n"
             f"  Current model:  {backend_model} ({backend_dimension} dims)\n\n"
             f"Rebuild required — different models produce incompatible embeddings:\n"
-            f"  siftd ask --rebuild"
+            f"  siftd search --rebuild"
         )
 
     # Dimension mismatch (covers cases where model isn't stored but dimensions differ)
@@ -318,8 +318,8 @@ def validate_index_compat(
                 f"  Index dimension:   {stored_dim} ({stored_backend_display}/{stored_model_display})\n"
                 f"  Current backend:   {backend_dimension} ({backend_name}/{backend_model})\n\n"
                 f"The index was built with a different embedding model. To search:\n"
-                f"  1. Use the same backend:   siftd ask --backend {stored_backend_display} \"<query>\"\n"
-                f"  2. Or rebuild the index:   siftd ask --rebuild"
+                f"  1. Use the same backend:   siftd search --backend {stored_backend_display} \"<query>\"\n"
+                f"  2. Or rebuild the index:   siftd search --rebuild"
             )
 
 

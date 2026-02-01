@@ -207,8 +207,8 @@ def _validate_incremental_compat(conn, backend) -> None:
             f"  Index backend:    {stored_backend}{stored_model_display}\n"
             f"  Current backend:  {backend.name} ({backend.model})\n\n"
             f"Options:\n"
-            f"  1. Use matching backend:  siftd ask --index --backend {stored_backend}\n"
-            f"  2. Rebuild from scratch:  siftd ask --rebuild"
+            f"  1. Use matching backend:  siftd search --index --backend {stored_backend}\n"
+            f"  2. Rebuild from scratch:  siftd search --rebuild"
         )
 
     # Model mismatch (same backend, different model)
@@ -218,5 +218,5 @@ def _validate_incremental_compat(conn, backend) -> None:
             f"  Index model:    {stored_model}\n"
             f"  Current model:  {backend.model}\n\n"
             f"Rebuild required to switch models:\n"
-            f"  siftd ask --rebuild"
+            f"  siftd search --rebuild"
         )
