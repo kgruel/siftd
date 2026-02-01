@@ -18,15 +18,18 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools in
 ## Development
 
 ```bash
-./dev setup        # Setup worktree (venv + deps)
+./dev setup          # Setup worktree (venv + deps)
 ./dev setup --embed  # Setup with embeddings (downloads model)
-./dev lint         # Run ty + ruff
-./dev test         # Run tests (excluding embeddings)
-./dev test-all     # Run all tests
-./dev docs         # Generate reference docs
-./dev docs --check # Verify docs aren't stale
-./dev check        # Lint + test (CI equivalent)
+./dev lint           # Run ty + ruff (with autofix)
+./dev test           # Run tests (excluding embeddings)
+./dev test-all       # Run all tests including embeddings
+./dev docs           # Generate reference docs
+./dev docs --check   # Verify docs aren't stale
+./dev check          # Lint + test (CI equivalent, quiet by default)
+./dev review <task>  # Enter subtask worktree and launch review agent
 ```
+
+Commands are discovered from `scripts/*.sh`. Add a command by creating `scripts/<name>.sh` with `# DESC: description` at the top.
 
 ## Structure
 
