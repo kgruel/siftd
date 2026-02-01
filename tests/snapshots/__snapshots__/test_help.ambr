@@ -49,16 +49,15 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[ask]
   '''
-  usage: siftd ask [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
-                   [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
-                   [--index] [--rebuild] [--backend NAME] [--embed-db PATH]
-                   [--thread] [--embeddings-only] [--recall N] [--first]
-                   [--conversations] [--refs [FILES]] [--threshold SCORE]
-                   [--json] [--format NAME] [--no-exclude-active]
-                   [--include-derivative] [--no-diversity] [--lambda FLOAT]
-                   [--recency] [--recency-half-life DAYS]
-                   [--recency-max-boost MULT] [-l NAME] [--all-tags NAME]
-                   [--no-tag NAME]
+  usage: siftd ask [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
+                   [-l NAME] [--all-tags NAME] [--no-tag NAME] [-n LIMIT] [-v]
+                   [--full] [--context N] [--thread] [--chrono] [--json]
+                   [--format NAME] [--conversations] [--first] [--refs [FILES]]
+                   [--embeddings-only] [--recall N] [--threshold SCORE]
+                   [--no-diversity] [--lambda FLOAT] [--recency]
+                   [--recency-half-life DAYS] [--recency-max-boost MULT]
+                   [--no-exclude-active] [--include-derivative] [--index]
+                   [--rebuild] [--backend NAME] [--embed-db PATH]
                    [query ...]
   
   positional arguments:
@@ -66,11 +65,8 @@
   
   options:
     -h, --help            show this help message and exit
-    -n, --limit LIMIT     Max results (default: 10)
-    -v, --verbose         Show full chunk text
-    --full                Show complete prompt+response exchange
-    --context N           Show ±N exchanges around match
-    --chrono              Sort results by time instead of score
+  
+  filtering:
     -w, --workspace SUBSTR
                           Filter by workspace path substring
     -m, --model NAME      Filter by model name
@@ -78,32 +74,40 @@
                           1w, yesterday, today)
     --before DATE         Conversations started before this date (YYYY-MM-DD,
                           7d, 1w, yesterday, today)
-    --index               Build/update embeddings index
-    --rebuild             Rebuild embeddings index from scratch
-    --backend NAME        Embedding backend (ollama, fastembed)
-    --embed-db PATH       Alternate embeddings database path
-    --thread              Two-tier narrative thread output: top conversations
-                          expanded, rest as shortlist
-    --embeddings-only     Skip FTS5 recall, use pure embeddings
-    --recall N            FTS5 conversation recall limit (default: 80)
-    --first               Return chronologically earliest match above threshold
-    --conversations       Aggregate scores per conversation, return ranked
-                          conversations
-    --refs [FILES]        Show file references; optionally filter by comma-
-                          separated basenames
-    --threshold SCORE     Filter results below this relevance score (e.g., 0.7)
+    -l, --tag NAME        Filter by tag (repeatable, OR logic)
+    --all-tags NAME       Require all specified tags (AND logic)
+    --no-tag NAME         Exclude conversations with this tag (NOT logic)
+  
+  output:
+    -n, --limit LIMIT     Max results (default: 10)
+    -v, --verbose         Show full chunk text
+    --full                Show complete prompt+response exchange
+    --context N           Show ±N exchanges around match
+    --thread              Narrative thread: top conversations expanded, rest as
+                          shortlist
+    --chrono              Sort results by time instead of score
     --json                Output as structured JSON
     --format NAME         Use named formatter (built-in or drop-in plugin)
-    --no-exclude-active   Include results from active sessions (excluded by
-                          default)
-    --include-derivative  Include derivative conversations (siftd ask/query
-                          results, excluded by default)
-    --no-diversity        Disable MMR diversity reranking for deterministic pure
-                          relevance order
-    --lambda FLOAT        MMR lambda: 1.0=pure relevance, 0.0=pure diversity
-                          (default: 0.7). MMR reranks results to balance
-                          relevance with diversity, reducing redundant results
-                          from the same conversation.
+  
+  result modes:
+    --conversations       Aggregate scores per conversation, return ranked
+                          conversations
+    --first               Return chronologically earliest match above threshold
+    --refs [FILES]        Show file references; optionally filter by comma-
+                          separated basenames
+  
+  search tuning:
+    --embeddings-only     Skip FTS5 recall, use pure embeddings
+    --recall N            FTS5 conversation recall limit (default: 80)
+    --threshold SCORE     Filter results below this score (e.g., 0.7)
+  
+  diversity:
+    --no-diversity        Disable MMR reranking for deterministic pure relevance
+                          order
+    --lambda FLOAT        MMR lambda: 1.0=relevance, 0.0=diversity (default:
+                          0.7)
+  
+  recency:
     --recency             Boost recent results (exponential decay, mild 15%
                           boost)
     --recency-half-life DAYS
@@ -111,9 +115,18 @@
     --recency-max-boost MULT
                           Max boost multiplier for today's results (default:
                           1.15)
-    -l, --tag NAME        Filter by conversation tag (repeatable, OR logic)
-    --all-tags NAME       Require all specified tags (AND logic)
-    --no-tag NAME         Exclude conversations with this tag (NOT logic)
+  
+  scope:
+    --no-exclude-active   Include results from active sessions (excluded by
+                          default)
+    --include-derivative  Include derivative conversations (siftd ask/query
+                          results)
+  
+  index management:
+    --index               Build/update embeddings index
+    --rebuild             Rebuild embeddings index from scratch
+    --backend NAME        Embedding backend (ollama, fastembed)
+    --embed-db PATH       Alternate embeddings database path
   
   Note: Requires the [embed] extra. Install with: siftd install embed
   
@@ -383,10 +396,10 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[query]
   '''
-  usage: siftd query [-h] [-v] [-n COUNT] [--oldest] [-w SUBSTR] [-m NAME]
-                     [--since DATE] [--before DATE] [-s QUERY] [-t NAME]
-                     [-l NAME] [--all-tags NAME] [--no-tag NAME]
-                     [--tool-tag NAME] [--json] [--stats] [--var KEY=VALUE]
+  usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
+                     [-s QUERY] [-t NAME] [-l NAME] [--all-tags NAME]
+                     [--no-tag NAME] [--tool-tag NAME] [-n COUNT] [-v]
+                     [--oldest] [--json] [--stats] [--var KEY=VALUE]
                      [conversation_id] [sql_name]
   
   positional arguments:
@@ -396,9 +409,8 @@
   
   options:
     -h, --help            show this help message and exit
-    -v, --verbose         Full table with all columns
-    -n, --count COUNT     Number of conversations to show (0=all, default: 10)
-    --oldest              Sort by oldest first (default: newest first)
+  
+  filtering:
     -w, --workspace SUBSTR
                           Filter by workspace path substring
     -m, --model NAME      Filter by model name
@@ -408,14 +420,22 @@
                           7d, 1w, yesterday, today)
     -s, --search QUERY    Full-text search (FTS5 syntax)
     -t, --tool NAME       Filter by canonical tool name (e.g. shell.execute)
-    -l, --tag NAME        Filter by conversation tag (repeatable, OR logic)
+  
+  tag filtering:
+    -l, --tag NAME        Filter by tag (repeatable, OR logic)
     --all-tags NAME       Require all specified tags (AND logic)
     --no-tag NAME         Exclude conversations with this tag (NOT logic)
     --tool-tag NAME       Filter by tool call tag (e.g. shell:test)
+  
+  output:
+    -n, --count COUNT     Number of conversations to show (0=all, default: 10)
+    -v, --verbose         Full table with all columns
+    --oldest              Sort by oldest first (default: newest first)
     --json                Output as JSON array
     --stats               Show summary totals after list
-    --var KEY=VALUE       Substitute $KEY with VALUE in SQL (for 'sql'
-                          subcommand)
+  
+  sql queries:
+    --var KEY=VALUE       Substitute $KEY with VALUE in SQL
   
   examples:
     siftd query                         # list recent conversations

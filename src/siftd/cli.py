@@ -1902,24 +1902,39 @@ live session tagging:
   siftd query sql cost                # run the 'cost' query
   siftd query sql cost --var ws=proj  # run with variable substitution""",
     )
+
+    # Positional arguments
     p_query.add_argument("conversation_id", nargs="?", help="Conversation ID for detail view, or 'sql' for SQL query mode")
     p_query.add_argument("sql_name", nargs="?", help="SQL query name (when using 'sql' subcommand)")
-    p_query.add_argument("-v", "--verbose", action="store_true", help="Full table with all columns")
-    p_query.add_argument("-n", "--count", type=int, default=10, help="Number of conversations to show (0=all, default: 10)")
-    p_query.add_argument("--oldest", action="store_true", help="Sort by oldest first (default: newest first)")
-    p_query.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
-    p_query.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
-    p_query.add_argument("--since", metavar="DATE", help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    p_query.add_argument("--before", metavar="DATE", help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    p_query.add_argument("-s", "--search", metavar="QUERY", help="Full-text search (FTS5 syntax)")
-    p_query.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
-    p_query.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by conversation tag (repeatable, OR logic)")
-    p_query.add_argument("--all-tags", action="append", metavar="NAME", help="Require all specified tags (AND logic)")
-    p_query.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude conversations with this tag (NOT logic)")
-    p_query.add_argument("--tool-tag", metavar="NAME", help="Filter by tool call tag (e.g. shell:test)")
-    p_query.add_argument("--json", action="store_true", help="Output as JSON array")
-    p_query.add_argument("--stats", action="store_true", help="Show summary totals after list")
-    p_query.add_argument("--var", action="append", metavar="KEY=VALUE", help="Substitute $KEY with VALUE in SQL (for 'sql' subcommand)")
+
+    # Filtering options
+    filter_group = p_query.add_argument_group("filtering")
+    filter_group.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
+    filter_group.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
+    filter_group.add_argument("--since", metavar="DATE", help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    filter_group.add_argument("--before", metavar="DATE", help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    filter_group.add_argument("-s", "--search", metavar="QUERY", help="Full-text search (FTS5 syntax)")
+    filter_group.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
+
+    # Tag filtering options
+    tag_group = p_query.add_argument_group("tag filtering")
+    tag_group.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by tag (repeatable, OR logic)")
+    tag_group.add_argument("--all-tags", action="append", metavar="NAME", help="Require all specified tags (AND logic)")
+    tag_group.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude conversations with this tag (NOT logic)")
+    tag_group.add_argument("--tool-tag", metavar="NAME", help="Filter by tool call tag (e.g. shell:test)")
+
+    # Output options
+    output_group = p_query.add_argument_group("output")
+    output_group.add_argument("-n", "--count", type=int, default=10, help="Number of conversations to show (0=all, default: 10)")
+    output_group.add_argument("-v", "--verbose", action="store_true", help="Full table with all columns")
+    output_group.add_argument("--oldest", action="store_true", help="Sort by oldest first (default: newest first)")
+    output_group.add_argument("--json", action="store_true", help="Output as JSON array")
+    output_group.add_argument("--stats", action="store_true", help="Show summary totals after list")
+
+    # SQL query options
+    sql_group = p_query.add_argument_group("sql queries")
+    sql_group.add_argument("--var", action="append", metavar="KEY=VALUE", help="Substitute $KEY with VALUE in SQL")
+
     p_query.set_defaults(func=cmd_query)
 
     # backfill

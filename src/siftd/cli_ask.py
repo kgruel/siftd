@@ -394,37 +394,64 @@ examples:
   siftd ask --lambda 0.5 "design"                   # more diverse results (less redundancy)
   siftd ask --json "auth" | jq '.results[0].breakdown'  # score component breakdown""",
     )
+
+    # Positional argument
     p_ask.add_argument("query", nargs="*", help="Natural language search query")
-    p_ask.add_argument("-n", "--limit", type=int, default=10, help="Max results (default: 10)")
-    p_ask.add_argument("-v", "--verbose", action="store_true", help="Show full chunk text")
-    p_ask.add_argument("--full", action="store_true", help="Show complete prompt+response exchange")
-    p_ask.add_argument("--context", type=int, metavar="N", help="Show ±N exchanges around match")
-    p_ask.add_argument("--chrono", action="store_true", help="Sort results by time instead of score")
-    p_ask.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
-    p_ask.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
-    p_ask.add_argument("--since", metavar="DATE", help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    p_ask.add_argument("--before", metavar="DATE", help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    p_ask.add_argument("--index", action="store_true", help="Build/update embeddings index")
-    p_ask.add_argument("--rebuild", action="store_true", help="Rebuild embeddings index from scratch")
-    p_ask.add_argument("--backend", metavar="NAME", help="Embedding backend (ollama, fastembed)")
-    p_ask.add_argument("--embed-db", metavar="PATH", help="Alternate embeddings database path")
-    p_ask.add_argument("--thread", action="store_true", help="Two-tier narrative thread output: top conversations expanded, rest as shortlist")
-    p_ask.add_argument("--embeddings-only", action="store_true", help="Skip FTS5 recall, use pure embeddings")
-    p_ask.add_argument("--recall", type=int, default=80, metavar="N", help="FTS5 conversation recall limit (default: 80)")
-    p_ask.add_argument("--first", action="store_true", help="Return chronologically earliest match above threshold")
-    p_ask.add_argument("--conversations", action="store_true", help="Aggregate scores per conversation, return ranked conversations")
-    p_ask.add_argument("--refs", nargs="?", const=True, metavar="FILES", help="Show file references; optionally filter by comma-separated basenames")
-    p_ask.add_argument("--threshold", type=float, metavar="SCORE", help="Filter results below this relevance score (e.g., 0.7)")
-    p_ask.add_argument("--json", action="store_true", help="Output as structured JSON")
-    p_ask.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
-    p_ask.add_argument("--no-exclude-active", action="store_true", help="Include results from active sessions (excluded by default)")
-    p_ask.add_argument("--include-derivative", action="store_true", help="Include derivative conversations (siftd ask/query results, excluded by default)")
-    p_ask.add_argument("--no-diversity", action="store_true", help="Disable MMR diversity reranking for deterministic pure relevance order")
-    p_ask.add_argument("--lambda", type=float, default=0.7, dest="lambda_", metavar="FLOAT", help="MMR lambda: 1.0=pure relevance, 0.0=pure diversity (default: 0.7). MMR reranks results to balance relevance with diversity, reducing redundant results from the same conversation.")
-    p_ask.add_argument("--recency", action="store_true", help="Boost recent results (exponential decay, mild 15%% boost)")
-    p_ask.add_argument("--recency-half-life", type=float, default=30.0, metavar="DAYS", help="Days until recency boost decays to half (default: 30)")
-    p_ask.add_argument("--recency-max-boost", type=float, default=1.15, metavar="MULT", help="Max boost multiplier for today's results (default: 1.15)")
-    p_ask.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by conversation tag (repeatable, OR logic)")
-    p_ask.add_argument("--all-tags", action="append", metavar="NAME", help="Require all specified tags (AND logic)")
-    p_ask.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude conversations with this tag (NOT logic)")
+
+    # Filtering options (most commonly used)
+    filter_group = p_ask.add_argument_group("filtering")
+    filter_group.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
+    filter_group.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
+    filter_group.add_argument("--since", metavar="DATE", help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    filter_group.add_argument("--before", metavar="DATE", help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    filter_group.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by tag (repeatable, OR logic)")
+    filter_group.add_argument("--all-tags", action="append", metavar="NAME", help="Require all specified tags (AND logic)")
+    filter_group.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude conversations with this tag (NOT logic)")
+
+    # Output options
+    output_group = p_ask.add_argument_group("output")
+    output_group.add_argument("-n", "--limit", type=int, default=10, help="Max results (default: 10)")
+    output_group.add_argument("-v", "--verbose", action="store_true", help="Show full chunk text")
+    output_group.add_argument("--full", action="store_true", help="Show complete prompt+response exchange")
+    output_group.add_argument("--context", type=int, metavar="N", help="Show ±N exchanges around match")
+    output_group.add_argument("--thread", action="store_true", help="Narrative thread: top conversations expanded, rest as shortlist")
+    output_group.add_argument("--chrono", action="store_true", help="Sort results by time instead of score")
+    output_group.add_argument("--json", action="store_true", help="Output as structured JSON")
+    output_group.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
+
+    # Result modes
+    mode_group = p_ask.add_argument_group("result modes")
+    mode_group.add_argument("--conversations", action="store_true", help="Aggregate scores per conversation, return ranked conversations")
+    mode_group.add_argument("--first", action="store_true", help="Return chronologically earliest match above threshold")
+    mode_group.add_argument("--refs", nargs="?", const=True, metavar="FILES", help="Show file references; optionally filter by comma-separated basenames")
+
+    # Search tuning
+    tuning_group = p_ask.add_argument_group("search tuning")
+    tuning_group.add_argument("--embeddings-only", action="store_true", help="Skip FTS5 recall, use pure embeddings")
+    tuning_group.add_argument("--recall", type=int, default=80, metavar="N", help="FTS5 conversation recall limit (default: 80)")
+    tuning_group.add_argument("--threshold", type=float, metavar="SCORE", help="Filter results below this score (e.g., 0.7)")
+
+    # Diversity (MMR reranking)
+    diversity_group = p_ask.add_argument_group("diversity")
+    diversity_group.add_argument("--no-diversity", action="store_true", help="Disable MMR reranking for deterministic pure relevance order")
+    diversity_group.add_argument("--lambda", type=float, default=0.7, dest="lambda_", metavar="FLOAT", help="MMR lambda: 1.0=relevance, 0.0=diversity (default: 0.7)")
+
+    # Recency boost
+    recency_group = p_ask.add_argument_group("recency")
+    recency_group.add_argument("--recency", action="store_true", help="Boost recent results (exponential decay, mild 15%% boost)")
+    recency_group.add_argument("--recency-half-life", type=float, default=30.0, metavar="DAYS", help="Days until recency boost decays to half (default: 30)")
+    recency_group.add_argument("--recency-max-boost", type=float, default=1.15, metavar="MULT", help="Max boost multiplier for today's results (default: 1.15)")
+
+    # Scope options
+    scope_group = p_ask.add_argument_group("scope")
+    scope_group.add_argument("--no-exclude-active", action="store_true", help="Include results from active sessions (excluded by default)")
+    scope_group.add_argument("--include-derivative", action="store_true", help="Include derivative conversations (siftd ask/query results)")
+
+    # Index management
+    index_group = p_ask.add_argument_group("index management")
+    index_group.add_argument("--index", action="store_true", help="Build/update embeddings index")
+    index_group.add_argument("--rebuild", action="store_true", help="Rebuild embeddings index from scratch")
+    index_group.add_argument("--backend", metavar="NAME", help="Embedding backend (ollama, fastembed)")
+    index_group.add_argument("--embed-db", metavar="PATH", help="Alternate embeddings database path")
+
     p_ask.set_defaults(func=cmd_ask)
