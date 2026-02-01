@@ -948,6 +948,11 @@ def cmd_query(args) -> int:
             print("[]")
         else:
             print("No conversations found.")
+            if args.search:
+                print(
+                    f'\nTip: For semantic search, try: siftd search "{args.search}"',
+                    file=sys.stderr,
+                )
         return 0
 
     # JSON output
