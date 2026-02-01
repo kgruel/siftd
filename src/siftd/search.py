@@ -1,5 +1,6 @@
 """Public search API for programmatic access by agent harnesses."""
 
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,6 +10,10 @@ import numpy as np
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.sql_helpers import batched_in_query
 from siftd.storage.sqlite import open_database
+
+# Hard cap on MMR candidates to prevent unbounded memory usage.
+# 1000 vectors * 1536 dims * 4 bytes = ~6MB — safe for all systems.
+MAX_MMR_CANDIDATES = 1000
 
 
 @dataclass
@@ -407,6 +412,15 @@ def hybrid_search(
 
     # Apply MMR reranking if requested
     if use_mmr:
+        # Cap candidates to prevent unbounded memory in np.vstack
+        if len(raw_results) > MAX_MMR_CANDIDATES:
+            print(
+                f"Warning: Capping MMR candidates from {len(raw_results)} to {MAX_MMR_CANDIDATES}",
+                file=sys.stderr,
+            )
+            # Keep top candidates by score
+            raw_results = sorted(raw_results, key=lambda r: -r["score"])[:MAX_MMR_CANDIDATES]
+
         raw_results = mmr_rerank(
             raw_results,
             query_embedding,
