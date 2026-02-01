@@ -31,7 +31,7 @@ jobs:
         run: uv run ruff check src/
 
       - name: Run tests
-        run: uv run pytest tests/ -v --tb=short
+        run: uv run pytest tests/ -v --tb=short --ignore=tests/test_embeddings.py -m "not embeddings"
 
   test-with-embeddings:
     runs-on: ubuntu-latest
@@ -55,5 +55,5 @@ jobs:
           path: /tmp/fastembed_cache
           key: fastembed-bge-small-en-v1.5-${{ runner.os }}
 
-      - name: Run tests with embeddings
-        run: uv run pytest tests/ -v --tb=short
+      - name: Run embedding tests
+        run: uv run pytest tests/ -v --tb=short -m embeddings
