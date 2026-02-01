@@ -144,7 +144,122 @@ class TestExitCodes:
 
 
 # =============================================================================
-# 3. Doctor Fix Command Validation
+# 3. Command Reference Validation
+# =============================================================================
+
+
+class TestCommandReferences:
+    """All 'siftd <subcommand>' references in source code must be valid.
+
+    Rationale: User-facing messages and documentation reference CLI commands.
+    Invalid references (typos, renamed commands) confuse users and break
+    copy-paste workflows.
+
+    Rule: Any string containing 'siftd <word>' that looks like a command
+    invocation must have <word> be a valid subcommand, unless it's in the
+    allowlist for backward-compat patterns.
+    """
+
+    # Allowlist for intentional backward-compat patterns.
+    # Format: (file_suffix, pattern) — pattern must appear in the string
+    ALLOWLIST = [
+        # storage/tags.py checks for 'siftd ask' to detect historical tool calls
+        # in conversation logs (the old command name before rename to 'search')
+        ("storage/tags.py", "siftd ask"),
+    ]
+
+    # Words that look like commands but are actually prose
+    # These follow "siftd" in descriptive text, not command examples
+    PROSE_WORDS = {
+        "is", "was", "will", "can", "should", "must", "may", "has", "have",
+        "CLI", "cli", "tool", "adapter", "adapters", "functionality", "storage",
+        "data", "database", "generated", "installed", "project", "skill",
+    }
+
+    def test_command_references_are_valid(self):
+        """All 'siftd <subcommand>' references must be valid CLI commands."""
+        import re
+        from pathlib import Path
+
+        # Get valid subcommands by parsing --help output
+        result = subprocess.run(
+            ["uv", "run", "siftd", "--help"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"Failed to get help: {result.stderr}"
+
+        # Extract subcommands from help output
+        # Help format shows commands like: "  ingest    Ingest logs..."
+        valid_subcommands = set()
+        in_commands_section = False
+        for line in result.stdout.splitlines():
+            # Look for the commands section
+            if "positional arguments:" in line.lower() or "{" in line:
+                in_commands_section = True
+                continue
+            if in_commands_section:
+                # Commands are indented with 2 spaces, format: "  cmd  description"
+                match = re.match(r"^\s{2,4}(\w[\w-]*)\s", line)
+                if match:
+                    valid_subcommands.add(match.group(1))
+                # Stop at next section
+                if line.strip() and not line.startswith(" "):
+                    in_commands_section = False
+
+        # Also extract from the {cmd1,cmd2,...} pattern if present
+        brace_match = re.search(r"\{([^}]+)\}", result.stdout)
+        if brace_match:
+            for cmd in brace_match.group(1).split(","):
+                valid_subcommands.add(cmd.strip())
+
+        assert valid_subcommands, "Failed to parse subcommands from help output"
+
+        # Scan source files for 'siftd <subcommand>' patterns
+        src_dir = Path(__file__).parent.parent.parent / "src" / "siftd"
+        # Match 'siftd <word>' - lowercase word suggests a command
+        pattern = re.compile(r"siftd\s+([a-z][\w-]*)")
+
+        invalid_references = []
+
+        for py_file in src_dir.rglob("*.py"):
+            content = py_file.read_text()
+            rel_path = str(py_file.relative_to(src_dir.parent.parent))
+
+            for match in pattern.finditer(content):
+                subcommand = match.group(1)
+                full_match = match.group(0)
+
+                # Skip if subcommand is valid
+                if subcommand in valid_subcommands:
+                    continue
+
+                # Skip prose words (descriptive text, not commands)
+                if subcommand in self.PROSE_WORDS:
+                    continue
+
+                # Check allowlist
+                allowed = False
+                for file_suffix, allowed_pattern in self.ALLOWLIST:
+                    if rel_path.endswith(file_suffix) and allowed_pattern in full_match:
+                        allowed = True
+                        break
+
+                if not allowed:
+                    # Get line number for better error message
+                    line_num = content[:match.start()].count("\n") + 1
+                    invalid_references.append(
+                        f"{rel_path}:{line_num}: '{full_match}' ('{subcommand}' is not a valid subcommand)"
+                    )
+
+        assert not invalid_references, (
+            f"Found {len(invalid_references)} invalid 'siftd <subcommand>' reference(s):\n"
+            + "\n".join(f"  - {ref}" for ref in invalid_references)
+        )
+
+
+# =============================================================================
+# 4. Doctor Fix Command Validation
 # =============================================================================
 
 
