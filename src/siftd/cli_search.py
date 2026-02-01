@@ -387,7 +387,7 @@ examples:
   # tuning
   siftd search --embeddings-only "chunking"            # skip FTS5, pure embeddings
   siftd search --recall 200 "error"                    # widen FTS5 candidate pool
-  siftd search --chrono "chunking"                     # sort by time instead of score
+  siftd search --by-time "chunking"                     # sort by time instead of score
 
   # diversity vs relevance (MMR reranking)
   siftd search --no-diversity "chunking"               # pure relevance order (deterministic)
@@ -415,7 +415,7 @@ examples:
     output_group.add_argument("--full", action="store_true", help="Show complete prompt+response exchange")
     output_group.add_argument("--context", type=int, metavar="N", help="Show ±N exchanges around match")
     output_group.add_argument("--thread", action="store_true", help="Narrative thread: top conversations expanded, rest as shortlist")
-    output_group.add_argument("--chrono", action="store_true", help="Sort results by time instead of score")
+    output_group.add_argument("--by-time", action="store_true", help="Sort results by time instead of score")
     output_group.add_argument("--json", action="store_true", help="Output as structured JSON")
     output_group.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
 

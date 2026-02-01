@@ -135,8 +135,8 @@ class ChunkListFormatter:
         )
 
         results = ctx.results
-        chrono = getattr(ctx.args, "chrono", False)
-        if chrono:
+        by_time = getattr(ctx.args, "by_time", False)
+        if by_time:
             results = sorted(
                 results,
                 key=lambda r: (
@@ -181,8 +181,8 @@ class VerboseFormatter:
         )
 
         results = ctx.results
-        chrono = getattr(ctx.args, "chrono", False)
-        if chrono:
+        by_time = getattr(ctx.args, "by_time", False)
+        if by_time:
             results = sorted(
                 results,
                 key=lambda r: (
@@ -225,8 +225,8 @@ class FullExchangeFormatter:
         )
 
         results = ctx.results
-        chrono = getattr(ctx.args, "chrono", False)
-        if chrono:
+        by_time = getattr(ctx.args, "by_time", False)
+        if by_time:
             results = sorted(
                 results,
                 key=lambda r: (
@@ -292,8 +292,8 @@ class ContextFormatter:
         )
 
         results = ctx.results
-        chrono = getattr(ctx.args, "chrono", False)
-        if chrono:
+        by_time = getattr(ctx.args, "by_time", False)
+        if by_time:
             results = sorted(
                 results,
                 key=lambda r: (

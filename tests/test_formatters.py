@@ -345,7 +345,7 @@ class TestVerboseFormatter:
 
     def test_outputs_full_chunk_text(self, mock_conn, sample_results, capsys):
         """VerboseFormatter shows full chunk text without truncation."""
-        args = argparse.Namespace(chrono=False)
+        args = argparse.Namespace(by_time=False)
         ctx = FormatterContext(
             query="caching",
             results=sample_results,
@@ -363,7 +363,7 @@ class TestVerboseFormatter:
 
     def test_includes_score_and_metadata(self, mock_conn, sample_results, capsys):
         """VerboseFormatter includes score, chunk type, and workspace."""
-        args = argparse.Namespace(chrono=False)
+        args = argparse.Namespace(by_time=False)
         ctx = FormatterContext(
             query="caching",
             results=sample_results,
@@ -385,7 +385,7 @@ class TestVerboseFormatter:
 
     def test_shows_query_header(self, mock_conn, sample_results, capsys):
         """VerboseFormatter shows query header."""
-        args = argparse.Namespace(chrono=False)
+        args = argparse.Namespace(by_time=False)
         ctx = FormatterContext(
             query="caching",
             results=sample_results,
@@ -399,8 +399,8 @@ class TestVerboseFormatter:
         captured = capsys.readouterr()
         assert "Results for: caching" in captured.out
 
-    def test_chrono_mode_sorts_by_time(self, mock_conn, capsys):
-        """VerboseFormatter with chrono=True sorts by timestamp."""
+    def test_by_time_mode_sorts_by_time(self, mock_conn, capsys):
+        """VerboseFormatter with by_time=True sorts by timestamp."""
         from siftd.storage.sqlite import (
             get_or_create_harness,
             get_or_create_workspace,
@@ -431,14 +431,14 @@ class TestVerboseFormatter:
              "chunk_type": "prompt", "text": "Earlier conversation", "source_ids": []},
         ]
 
-        args = argparse.Namespace(chrono=True)
+        args = argparse.Namespace(by_time=True)
         ctx = FormatterContext(query="test", results=results, conn=mock_conn, args=args)
 
         formatter = VerboseFormatter()
         formatter.format(ctx)
 
         captured = capsys.readouterr()
-        # Earlier conversation should appear first in chrono mode
+        # Earlier conversation should appear first in by_time mode
         earlier_pos = captured.out.find("Earlier conversation")
         later_pos = captured.out.find("Later conversation")
         assert earlier_pos < later_pos
@@ -593,7 +593,7 @@ class TestFormatterEdgeCases:
 
     def test_empty_results(self, mock_conn, capsys):
         """Formatters handle empty results gracefully."""
-        args = argparse.Namespace(chrono=False)
+        args = argparse.Namespace(by_time=False)
         ctx = FormatterContext(query="nothing", results=[], conn=mock_conn, args=args)
 
         formatter = ChunkListFormatter()
@@ -604,7 +604,7 @@ class TestFormatterEdgeCases:
 
     def test_single_result(self, mock_conn, sample_results, capsys):
         """Formatters handle single result."""
-        args = argparse.Namespace(chrono=False)
+        args = argparse.Namespace(by_time=False)
         ctx = FormatterContext(
             query="caching",
             results=[sample_results[0]],
@@ -638,7 +638,7 @@ class TestFormatterEdgeCases:
              "chunk_type": "prompt", "text": "No workspace", "source_ids": []}
         ]
 
-        args = argparse.Namespace(chrono=False)
+        args = argparse.Namespace(by_time=False)
         ctx = FormatterContext(query="test", results=results, conn=mock_conn, args=args)
 
         formatter = ChunkListFormatter()
@@ -670,7 +670,7 @@ class TestFormatterEdgeCases:
              "chunk_type": "prompt", "text": multiline_text, "source_ids": []}
         ]
 
-        args = argparse.Namespace(chrono=False)
+        args = argparse.Namespace(by_time=False)
         ctx = FormatterContext(query="test", results=results, conn=mock_conn, args=args)
 
         formatter = VerboseFormatter()

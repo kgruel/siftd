@@ -43,10 +43,10 @@ siftd search --refs HANDOFF.md,schema.sql "setup" # comma-separated file filter
 ```
 Shows files as they were when the LLM read/wrote them — point-in-time snapshots, no git needed.
 
-**`--chrono`** — sort by time instead of relevance score:
+**`--by-time`** — sort by time instead of relevance score:
 ```bash
-siftd search --chrono "state management"
-siftd search --chrono --since 2024-06 "state management"
+siftd search --by-time "state management"
+siftd search --by-time --since 2024-06 "state management"
 ```
 Traces how a concept evolved across sessions.
 
@@ -193,7 +193,7 @@ Filters, modes, and search options compose freely:
 siftd search -w myproject --thread "why we chose JWT"
 
 # Trace evolution of an idea over time in one workspace
-siftd search -w myproject --chrono --since 2024-06 "state management"
+siftd search -w myproject --by-time --since 2024-06 "state management"
 
 # High-relevance results only, with file references
 siftd search --threshold 0.7 --refs "schema migration"

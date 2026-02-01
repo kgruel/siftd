@@ -52,7 +52,7 @@
   '''
   usage: siftd ask [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                    [-l NAME] [--all-tags NAME] [--no-tag NAME] [-n LIMIT] [-v]
-                   [--full] [--context N] [--thread] [--chrono] [--json]
+                   [--full] [--context N] [--thread] [--by-time] [--json]
                    [--format NAME] [--conversations] [--first] [--refs [FILES]]
                    [--embeddings-only] [--recall N] [--threshold SCORE]
                    [--no-diversity] [--lambda FLOAT] [--recency]
@@ -86,7 +86,7 @@
     --context N           Show ±N exchanges around match
     --thread              Narrative thread: top conversations expanded, rest as
                           shortlist
-    --chrono              Sort results by time instead of score
+    --by-time             Sort results by time instead of score
     --json                Output as structured JSON
     --format NAME         Use named formatter (built-in or drop-in plugin)
   
@@ -164,7 +164,7 @@
     # tuning
     siftd ask --embeddings-only "chunking"            # skip FTS5, pure embeddings
     siftd ask --recall 200 "error"                    # widen FTS5 candidate pool
-    siftd ask --chrono "chunking"                     # sort by time instead of score
+    siftd ask --by-time "chunking"                    # sort by time instead of score
   
     # diversity vs relevance (MMR reranking)
     siftd ask --no-diversity "chunking"               # pure relevance order (deterministic)

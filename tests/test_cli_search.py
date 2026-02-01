@@ -61,7 +61,7 @@ def make_args(**kwargs):
         "verbose": False,
         "full": False,
         "context": None,
-        "chrono": False,
+        "by_time": False,
         "workspace": None,
         "model": None,
         "since": None,

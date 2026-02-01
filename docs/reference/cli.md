@@ -63,7 +63,7 @@ options:
 ## siftd search
 
 ```
-usage: siftd search [-h] [-n LIMIT] [-v] [--full] [--context N] [--chrono]
+usage: siftd search [-h] [-n LIMIT] [-v] [--full] [--context N] [--by-time]
                  [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                  [--index] [--rebuild] [--backend NAME] [--embed-db PATH]
                  [--thread] [--embeddings-only] [--recall N]
@@ -82,7 +82,7 @@ options:
   -v, --verbose         Show full chunk text
   --full                Show complete prompt+response exchange
   --context N           Show ±N exchanges around match
-  --chrono              Sort results by time instead of score
+  --by-time              Sort results by time instead of score
   -w, --workspace SUBSTR
                         Filter by workspace path substring
   -m, --model NAME      Filter by model name
@@ -153,7 +153,7 @@ examples:
   # tuning
   siftd search --embeddings-only "chunking"            # skip FTS5, pure embeddings
   siftd search --recall 200 "error"                    # widen FTS5 candidate pool
-  siftd search --chrono "chunking"                     # sort by time instead of score
+  siftd search --by-time "chunking"                     # sort by time instead of score
 ```
 
 ## siftd install

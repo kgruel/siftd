@@ -25,7 +25,7 @@ Parse the arguments to determine mode:
 | `/siftd -w proj "query"` | Workspace search | `siftd search -w proj "query" --thread` |
 | `/siftd --recent` | Recent | `siftd query -n 5` |
 | `/siftd --recent -w proj` | Recent (scoped) | `siftd query -n 5 -w proj` |
-| `/siftd --genesis "concept"` | First mention | `siftd search --first --chrono "concept"` |
+| `/siftd --genesis "concept"` | First mention | `siftd search --first --by-time "concept"` |
 
 **Default mode**: If arguments don't match a flag pattern, treat as semantic search query.
 
@@ -53,7 +53,7 @@ User: `/siftd --recent`
 → Show 5 most recent conversations
 
 User: `/siftd --genesis "chunking strategy"`
-→ Run: `siftd search --first --chrono "chunking strategy"`
+→ Run: `siftd search --first --by-time "chunking strategy"`
 → Show earliest conversation mentioning this concept
 
 ---
@@ -147,9 +147,9 @@ siftd search --threshold 0.7 -w myproject "event sourcing"  # threshold + worksp
 
 **Temporal trace — how an idea evolved:**
 ```bash
-siftd search "state management" --chrono --since 2024-06
+siftd search "state management" --by-time --since 2024-06
 ```
-`--chrono` sorts by time instead of score. Combined with `--since`, this traces how a concept evolved across sessions.
+`--by-time` sorts by time instead of score. Combined with `--since`, this traces how a concept evolved across sessions.
 
 **Full composition example:**
 ```bash
@@ -251,7 +251,7 @@ Reconstruct how a decision evolved:
 siftd query -l handoff:update --since 2025-01
 
 # Search within HANDOFF sessions
-siftd search -l handoff:update "topic" --chrono
+siftd search -l handoff:update "topic" --by-time
 
 # Find when something was first discussed
 siftd search --first "concept name"
