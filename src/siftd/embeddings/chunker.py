@@ -3,7 +3,7 @@
 Provides:
 - chunk_text(): splits a single text into token-bounded chunks with overlap
 - extract_exchange_window_chunks(): groups prompt+response exchanges into
-  token-bounded windows, the primary chunking strategy for siftd ask --index
+  token-bounded windows, the primary chunking strategy for siftd search --index
 """
 
 from __future__ import annotations

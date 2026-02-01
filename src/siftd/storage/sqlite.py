@@ -34,7 +34,7 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
     Args:
         db_path: Path to the database file.
         read_only: If True, open without running migrations/ensures that write.
-            This enables read-only operations (status/query/ask) against a DB that
+            This enables read-only operations (status/query/search) against a DB that
             lives on read-only media or in restricted environments.
     """
     is_new = not db_path.exists()
@@ -898,7 +898,7 @@ def store_conversation(
                 ).fetchone()["name"]
                 tag_shell_command(conn, tool_call_id, canonical_name, tool_call.input)
 
-                # Auto-tag derivative conversations (contain siftd ask/query)
+                # Auto-tag derivative conversations (contain siftd search/query)
                 tag_derivative_conversation(
                     conn, conversation_id, canonical_name, tool_call.input
                 )

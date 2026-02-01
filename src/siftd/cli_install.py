@@ -95,8 +95,8 @@ def cmd_install(args) -> int:
         print("Embed dependencies already installed.")
         print()
         print("Semantic search is ready:")
-        print("  siftd ask --index    # build embeddings index")
-        print('  siftd ask "query"    # search')
+        print("  siftd search --index    # build embeddings index")
+        print('  siftd search "query"    # search')
         return 0
 
     # Detect installation method
@@ -185,8 +185,8 @@ def cmd_install(args) -> int:
         print("Embed dependencies installed successfully.")
         print()
         print("Next steps:")
-        print("  siftd ask --index    # build embeddings index")
-        print('  siftd ask "query"    # search')
+        print("  siftd search --index    # build embeddings index")
+        print('  siftd search "query"    # search')
     else:
         print("Warning: Installation completed but embed dependencies not detected.", file=sys.stderr)
         print("You may need to restart your shell or check for errors above.", file=sys.stderr)

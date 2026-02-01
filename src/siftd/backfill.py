@@ -221,9 +221,9 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
 
 
 def backfill_derivative_tags(conn: sqlite3.Connection) -> int:
-    """Backfill siftd:derivative tags on conversations with siftd ask/query tool calls.
+    """Backfill siftd:derivative tags on conversations with siftd search/query tool calls.
 
-    Scans all tool calls for shell.execute commands containing 'siftd ask' or
+    Scans all tool calls for shell.execute commands containing 'siftd search' or
     'siftd query', and skill.invoke calls for the 'siftd' skill. Tags the
     parent conversation. Skips conversations already tagged.
 
