@@ -31,7 +31,7 @@ class WhereBuilder:
 
     def workspace(self, value: str | None) -> None:
         if value:
-            self.add("w.path LIKE ?", f"%{value}%")
+            self.add("(w.path LIKE ? OR w.git_remote LIKE ?)", f"%{value}%", f"%{value}%")
 
     def model(self, value: str | None) -> None:
         if value:

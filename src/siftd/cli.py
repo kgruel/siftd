@@ -1058,6 +1058,79 @@ def cmd_backfill(args) -> int:
     return 0
 
 
+def cmd_migrate(args) -> int:
+    """Run data migrations."""
+    from siftd.storage.migrate_workspaces import (
+        backfill_git_remotes,
+        merge_duplicate_workspaces,
+        verify_workspace_identity,
+    )
+
+    db = Path(args.db) if args.db else db_path()
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'siftd ingest' to create it.")
+        return 1
+
+    conn = open_database(db)
+
+    if args.merge_workspaces:
+        # Step 1: Backfill git remotes
+        print("Step 1: Backfilling git remote URLs for existing workspaces...")
+
+        def on_backfill_progress(msg):
+            if args.verbose:
+                print(msg)
+
+        stats = backfill_git_remotes(conn, on_progress=on_backfill_progress, dry_run=args.dry_run)
+        print(f"  Checked: {stats['checked']}")
+        print(f"  Updated: {stats['updated']}")
+        print(f"  Skipped (path missing): {stats['skipped_missing']}")
+        print(f"  Skipped (no git remote): {stats['skipped_no_git']}")
+
+        # Step 2: Find and optionally merge duplicates
+        print("\nStep 2: Finding duplicate workspaces...")
+        status = verify_workspace_identity(conn)
+
+        if status["duplicate_groups"] == 0:
+            print("  No duplicate workspaces found.")
+            conn.close()
+            return 0
+
+        print(f"  Found {status['duplicate_groups']} groups with {status['duplicate_workspaces']} workspaces sharing git remotes.")
+
+        if args.dry_run:
+            print("\n[Dry run] Would merge the following workspaces:")
+
+        def on_merge_progress(msg):
+            print(msg)
+
+        merge_stats = merge_duplicate_workspaces(
+            conn, on_progress=on_merge_progress, dry_run=args.dry_run
+        )
+
+        if args.dry_run:
+            print(f"\n[Dry run] Would merge {merge_stats['workspaces_merged']} workspaces.")
+            print("Run without --dry-run to apply changes.")
+        else:
+            print(f"\nMerged {merge_stats['workspaces_merged']} workspaces.")
+            print(f"Moved {merge_stats['conversations_moved']} conversations.")
+    else:
+        # Show current status
+        status = verify_workspace_identity(conn)
+        print("Workspace identity status:")
+        print(f"  Total workspaces: {status['total']}")
+        print(f"  With git remote: {status['with_remote']}")
+        print(f"  Without git remote: {status['without_remote']}")
+        if status["duplicate_groups"] > 0:
+            print(f"  Duplicate groups: {status['duplicate_groups']} ({status['duplicate_workspaces']} workspaces)")
+            print("\nRun 'siftd migrate --merge-workspaces' to merge duplicates.")
+
+    conn.close()
+    return 0
+
+
 def cmd_config(args) -> int:
     """View or modify config settings."""
     from siftd.config import get_config, set_config
@@ -1950,6 +2023,30 @@ live session tagging:
     p_backfill.add_argument("--shell-tags", action="store_true", help="Tag shell.execute calls with shell:* categories")
     p_backfill.add_argument("--derivative-tags", action="store_true", help="Tag conversations containing siftd ask/query as siftd:derivative")
     p_backfill.set_defaults(func=cmd_backfill)
+
+    # migrate
+    p_migrate = subparsers.add_parser(
+        "migrate",
+        help="Run data migrations",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  siftd migrate                              # show workspace identity status
+  siftd migrate --merge-workspaces           # backfill git remotes and merge duplicates
+  siftd migrate --merge-workspaces --dry-run # preview what would be merged
+  siftd migrate --merge-workspaces -v        # verbose output""",
+    )
+    p_migrate.add_argument(
+        "--merge-workspaces",
+        action="store_true",
+        help="Backfill git remote URLs and merge duplicate workspaces"
+    )
+    p_migrate.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without making changes"
+    )
+    p_migrate.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
+    p_migrate.set_defaults(func=cmd_migrate)
 
     # path
     p_path = subparsers.add_parser("path", help="Show XDG paths")

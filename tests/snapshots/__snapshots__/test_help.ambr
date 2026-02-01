@@ -2,12 +2,12 @@
 # name: TestHelpSnapshots.test_root_help
   '''
   usage: siftd [-h] [--version] [--db PATH]
-               {ingest,status,ask,install,register,session-id,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export} ...
+               {ingest,status,ask,install,register,session-id,tag,tags,tools,query,backfill,migrate,path,config,adapters,copy,doctor,peek,export} ...
   
   Aggregate and query LLM conversation logs
   
   positional arguments:
-    {ingest,status,ask,install,register,session-id,tag,tags,tools,query,backfill,path,config,adapters,copy,doctor,peek,export}
+    {ingest,status,ask,install,register,session-id,tag,tags,tools,query,backfill,migrate,path,config,adapters,copy,doctor,peek,export}
       ingest              Ingest logs from all sources
       status              Show database statistics
       ask                 Semantic search over conversations (requires [embed]
@@ -21,6 +21,7 @@
       tools               Summarize tool usage by category
       query               List conversations with filters, or run SQL queries
       backfill            Backfill derived data from existing records
+      migrate             Run data migrations
       path                Show XDG paths
       config              View or modify config settings
       adapters            List discovered adapters

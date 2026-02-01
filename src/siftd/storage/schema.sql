@@ -259,6 +259,8 @@ CREATE INDEX idx_conversations_workspace ON conversations(workspace_id);
 CREATE INDEX idx_conversations_started ON conversations(started_at);
 CREATE INDEX idx_conversations_ended ON conversations(ended_at);
 
+CREATE INDEX idx_workspaces_git_remote ON workspaces(git_remote);
+
 CREATE INDEX idx_prompts_conversation ON prompts(conversation_id);
 CREATE INDEX idx_prompts_timestamp ON prompts(timestamp);
 

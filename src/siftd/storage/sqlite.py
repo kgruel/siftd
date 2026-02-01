@@ -67,6 +67,7 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         ensure_content_blobs_table(conn)
         ensure_session_tables(conn)
         ensure_prompt_tags_table(conn)
+        _ensure_git_remote_index(conn)
     return conn
 
 
@@ -371,6 +372,13 @@ def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _ensure_git_remote_index(conn: sqlite3.Connection) -> None:
+    """Create index on workspaces.git_remote if it doesn't exist. Idempotent."""
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_workspaces_git_remote ON workspaces(git_remote)"
+    )
+
+
 # Alias for backwards compatibility
 create_database = open_database
 
@@ -397,16 +405,46 @@ def get_or_create_harness(conn: sqlite3.Connection, name: str, **kwargs) -> str:
 
 
 def get_or_create_workspace(conn: sqlite3.Connection, path: str, discovered_at: str) -> str:
-    """Get or create workspace, return id (ULID)."""
-    cur = conn.execute("SELECT id FROM workspaces WHERE path = ?", (path,))
+    """Get or create workspace, return id (ULID).
+
+    Uses git remote URL as the primary identity when available, falling back
+    to normalized filesystem path. This allows the same repository to be
+    recognized across different machines or path locations.
+
+    The path is normalized (resolved to absolute) before lookup/storage to
+    ensure consistent matching regardless of how the path was specified.
+    """
+    from siftd.git import get_canonical_workspace_identity
+
+    git_remote, normalized_path = get_canonical_workspace_identity(path)
+
+    # If git remote exists, check if we already have this repo by remote
+    if git_remote:
+        cur = conn.execute(
+            "SELECT id, git_remote FROM workspaces WHERE git_remote = ?",
+            (git_remote,)
+        )
+        row = cur.fetchone()
+        if row:
+            return row["id"]
+
+    # Fallback: check by normalized path
+    cur = conn.execute("SELECT id, git_remote FROM workspaces WHERE path = ?", (normalized_path,))
     row = cur.fetchone()
     if row:
+        # Update git_remote if we now know it and it wasn't set before
+        if git_remote and not row["git_remote"]:
+            conn.execute(
+                "UPDATE workspaces SET git_remote = ? WHERE id = ?",
+                (git_remote, row["id"])
+            )
         return row["id"]
 
+    # Create new workspace with normalized path
     ulid = _ulid()
     conn.execute(
-        "INSERT INTO workspaces (id, path, discovered_at) VALUES (?, ?, ?)",
-        (ulid, path, discovered_at)
+        "INSERT INTO workspaces (id, path, git_remote, discovered_at) VALUES (?, ?, ?, ?)",
+        (ulid, normalized_path, git_remote, discovered_at)
     )
     return ulid
 
