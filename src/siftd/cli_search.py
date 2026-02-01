@@ -293,7 +293,11 @@ def cmd_search(args) -> int:
 
     # Select and run formatter
     from siftd.output import FormatterContext, print_refs_content, select_formatter
-    formatter = select_formatter(args)
+    try:
+        formatter = select_formatter(args)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
     ctx = FormatterContext(query=query, results=results, conn=main_conn, args=args)
     formatter.format(ctx)
 

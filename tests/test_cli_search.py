@@ -369,6 +369,22 @@ class TestSearchFlagValidation:
         # Should succeed (refs content may or may not be present depending on data)
         assert result == 0
 
+    def test_unknown_format_shows_clean_error(self, indexed_db, capsys):
+        """--format with unknown name shows clean error listing valid formats."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            format="nonexistent_format",
+        )
+
+        result = cmd_search(args)
+        captured = capsys.readouterr()
+
+        assert result == 1
+        assert "Unknown format 'nonexistent_format'" in captured.err
+        assert "Available:" in captured.err
+
 
 class TestSearchEdgeCases:
     """Edge case tests."""
