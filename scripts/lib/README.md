@@ -2,28 +2,45 @@
 
 Common patterns for the ./dev harness scripts.
 
-## Usage
+## Quick Start
 
-Source the files you need:
+For dev scripts, source `lib/dev.sh` - it pulls in everything:
 
 ```bash
-source "$(dirname "$0")/lib/log.sh"
-source "$(dirname "$0")/lib/cli.sh"
+#!/usr/bin/env bash
+# my-script.sh
+# DESC: Does something useful
+source "$(dirname "$0")/lib/dev.sh"
 
-log_info "Starting..."
-cli_require_value "--config" "$config_value" || exit 1
+main() {
+    ensure_venv
+    log_info "Starting..."
+}
+
+main "$@"
 ```
 
 ## Modules
 
 | File | Purpose | Dependencies |
 |------|---------|--------------|
+| dev.sh | **Entry point** - sources all libs, adds project helpers | none |
 | log.sh | Colored logging helpers | none |
 | cli.sh | Argument parsing + usage helpers | none |
 | paths.sh | Script + XDG path helpers | none |
 | templates.sh | Template loading + placeholder injection | python3 (for template_inject_env) |
 
 ## Function Reference
+
+### dev.sh (project-specific)
+
+| Function | Usage | Description |
+|----------|-------|-------------|
+| `ensure_venv` | `ensure_venv [--embed]` | Auto-setup venv if missing |
+| `run_uv` | `run_uv sync` | Run uv in project root |
+| `require_command` | `require_command jq "brew install jq"` | Check command exists |
+
+Also sets `DEV_ROOT` to the project root directory.
 
 ### log.sh
 
@@ -81,6 +98,6 @@ All scripts should include a header block:
 
 1. Create `scripts/<name>.sh`
 2. Add header with `# DESC:` line (required for ./dev discovery)
-3. Source needed libs: `source "$(dirname "$0")/lib/log.sh"`
+3. Source dev.sh: `source "$(dirname "$0")/lib/dev.sh"`
 4. Implement `usage()` and `main()` functions
 5. End with `main "$@"`

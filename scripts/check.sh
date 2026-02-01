@@ -4,7 +4,7 @@
 # Usage: ./dev check [-v]
 # Dependencies: uv, ty, ruff, pytest
 # Idempotent: Yes
-source "$(dirname "$0")/_lib.sh"
+source "$(dirname "$0")/lib/dev.sh"
 
 usage() {
     cli_usage <<EOF

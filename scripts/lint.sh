@@ -4,7 +4,7 @@
 # Usage: ./dev lint
 # Dependencies: uv, ty, ruff
 # Idempotent: Yes
-source "$(dirname "$0")/_lib.sh"
+source "$(dirname "$0")/lib/dev.sh"
 
 usage() {
     cli_usage <<EOF

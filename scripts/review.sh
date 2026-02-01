@@ -4,7 +4,7 @@
 # Usage: ./dev review <path> [options]
 # Dependencies: git, python3, codex|claude (agent)
 # Idempotent: No (launches external process)
-source "$(dirname "$0")/_lib.sh"
+source "$(dirname "$0")/lib/dev.sh"
 source "$(dirname "$0")/lib/templates.sh"
 
 usage() {
