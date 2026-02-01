@@ -509,7 +509,7 @@ Aggregated conversation-level search result.
 Run hybrid FTS5+embeddings search, return structured results.
 
 ```python
-def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., limit: int = ..., recall: int = ..., embeddings_only: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., backend: str | None = ..., exclude_active: bool = ..., rerank: str = ..., lambda_: float = ...) -> list[SearchResult]
+def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., limit: int = ..., recall: int = ..., embeddings_only: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., backend: str | None = ..., exclude_active: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ...) -> list[SearchResult]
 ```
 
 **Parameters:**
@@ -527,6 +527,9 @@ def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embe
 - `backend`: Preferred embedding backend name (ollama, fastembed).
 - `exclude_active`: Auto-exclude conversations from active sessions (default True).
 - `rerank`: Reranking strategy — "mmr" for diversity or "relevance" for pure similarity.
+- `lambda_`: MMR balance between relevance (1.0) and diversity (0.0). Default 0.7.
+- `recency`: Enable temporal weighting to boost recent results. Default False.
+- `recency_half_life`: Days until recency boost decays to half. Default 30.
 
 **Returns:** List of SearchResult ordered by reranking strategy.
 
@@ -616,9 +619,28 @@ def search_similar(conn: Connection, query_embedding: list[float], *, limit: int
 - `query_embedding`: The query embedding vector.
 - `limit`: Maximum results to return.
 - `conversation_ids`: Optional set of conversation IDs to filter by.
-- `include_embeddings`: If True, include embedding vectors in results.
 
 **Returns:** List of result dicts with score, chunk_id, conversation_id, text, etc.
+
+### validate_index_compat
+
+Validate that stored index metadata is compatible with the current backend.
+
+```python
+def validate_index_compat(conn: Connection, backend_name: str, backend_model: str, backend_dimension: int, current_schema_version: int) -> None
+```
+
+**Parameters:**
+
+- `conn`: Embeddings database connection.
+- `backend_name`: Current backend name (e.g., "fastembed", "ollama").
+- `backend_model`: Current backend model (e.g., "BAAI/bge-small-en-v1.5").
+- `backend_dimension`: Current embedding dimension.
+
+**Raises:**
+
+- `IndexCompatError`: If metadata indicates incompatibility with actionable message.
+- `Note`: Missing metadata keys (pre-versioning indexes) are allowed with warning-level degradation — dimension validation still applies via search_similar().
 
 ### fts5_recall_conversations
 
@@ -634,6 +656,22 @@ def fts5_recall_conversations(conn: Connection, query: str, *, limit: int = ...)
 - `query`: The search query string.
 
 **Returns:** Tuple of (conversation_id set, mode string). Mode is "and", "or", or "none".
+
+### apply_temporal_weight
+
+Apply temporal weighting to boost recent results.
+
+```python
+def apply_temporal_weight(results: list[dict], timestamps: dict[str, str], *, half_life_days: float = ..., max_boost: float = ...) -> list[dict]
+```
+
+**Parameters:**
+
+- `results`: List of result dicts with 'conversation_id' and 'score'. If results have 'breakdown' (ScoreBreakdown), it will be updated.
+- `timestamps`: Dict mapping conversation_id to ISO timestamp string.
+- `half_life_days`: Days until boost decays to half. Default 30.
+
+**Returns:** Results with adjusted 'score' values (original list is not modified). ScoreBreakdown.recency_boost is updated if present.
 
 ## Stats
 
@@ -906,6 +944,12 @@ Tag with usage counts.
 | `workspace_count` | `int` |  |
 | `tool_call_count` | `int` |  |
 
+### Exceptions
+
+#### IndexCompatError
+
+Raised when index metadata is incompatible with current backend configuration.
+
 ### Functions
 
 ### create_database
@@ -1033,3 +1077,11 @@ def rename_tag(conn: Connection, old_name: str, new_name: str, *, commit: bool =
 **Raises:**
 
 - `ValueError`: If new_name already exists.
+
+### fetch_conversation_timestamps
+
+Fetch started_at timestamps for conversations.
+
+```python
+def fetch_conversation_timestamps(conn: Connection, conversation_ids: list[str]) -> dict[str, str]
+```

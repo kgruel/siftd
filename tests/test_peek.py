@@ -439,6 +439,41 @@ class TestFindSessionFile:
 
         assert len(exc_info.value.matches) == 2
 
+    def test_prefers_parent_over_subagents(self, session_dir, monkeypatch):
+        """When parent and subagents match, returns parent (not ambiguous)."""
+        # Create parent session
+        parent_id = "abc12345-parent-session"
+        parent_path = session_dir / f"{parent_id}.jsonl"
+        _write_session(parent_path, [
+            _make_user_record("parent prompt", session_id=parent_id),
+            _make_assistant_record("response"),
+        ])
+
+        # Create subagent files (sessionId = parent's ID, agentId = unique)
+        subagent_dir = session_dir / parent_id / "subagents"
+        subagent_dir.mkdir(parents=True)
+        for i, agent_id in enumerate(["agent1", "agent2", "agent3"]):
+            sub_path = subagent_dir / f"agent-{agent_id}.jsonl"
+            _write_session(sub_path, [
+                _make_user_record(
+                    f"subagent {i} prompt",
+                    session_id=parent_id,  # Claude Code sets sessionId to parent's ID
+                    agent_id=agent_id,
+                ),
+                _make_assistant_record("response"),
+            ])
+
+        plugin = _make_fake_plugin("test", [str(session_dir.parent)])
+        monkeypatch.setattr(
+            "siftd.peek.scanner.load_all_adapters",
+            lambda: [plugin],
+        )
+
+        # Should return parent, not raise AmbiguousSessionError
+        result = find_session_file("abc12345")
+        assert result is not None
+        assert result == parent_path
+
 
 class TestListActiveSessions:
     """Tests for list_active_sessions."""

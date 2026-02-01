@@ -136,7 +136,7 @@ def find_session_file(session_id_prefix: str) -> Path | None:
     """Find a session file by ID prefix match.
 
     Searches adapter DEFAULT_LOCATIONS for files whose session_id starts
-    with the given prefix.
+    with the given prefix. Prefers main sessions over subagents when both match.
 
     Args:
         session_id_prefix: Prefix of the session ID to match.
@@ -147,8 +147,11 @@ def find_session_file(session_id_prefix: str) -> Path | None:
     Raises:
         AmbiguousSessionError: If multiple files match the prefix.
     """
+    from siftd.peek.types import PeekScanResult
+
     prefix_lower = session_id_prefix.lower()
-    matches: list[Path] = []
+    # Track matches with their scan results for parent filtering
+    matches: list[tuple[Path, PeekScanResult | None]] = []
 
     # Use discovery to find all session files
     discovered = _discover_files(
@@ -157,19 +160,27 @@ def find_session_file(session_id_prefix: str) -> Path | None:
     )
 
     for file_info in discovered:
+        peek_scan = getattr(file_info.adapter_module, "peek_scan", None)
+        scan_result: PeekScanResult | None = None
+
         # Check if session_id starts with prefix
         # First try the file stem
         if file_info.path.stem.lower().startswith(prefix_lower):
-            matches.append(file_info.path)
+            # Get scan result for parent_session_id
+            if peek_scan:
+                try:
+                    scan_result = peek_scan(file_info.path)
+                except Exception:
+                    pass
+            matches.append((file_info.path, scan_result))
             continue
 
         # Then try scanning for the real session_id
         try:
-            peek_scan = getattr(file_info.adapter_module, "peek_scan", None)
             if peek_scan:
-                result = peek_scan(file_info.path)
-                if result and result.session_id.lower().startswith(prefix_lower):
-                    matches.append(file_info.path)
+                scan_result = peek_scan(file_info.path)
+                if scan_result and scan_result.session_id.lower().startswith(prefix_lower):
+                    matches.append((file_info.path, scan_result))
         except Exception:
             continue
 
@@ -177,9 +188,30 @@ def find_session_file(session_id_prefix: str) -> Path | None:
         return None
 
     if len(matches) == 1:
-        return matches[0]
+        return matches[0][0]
 
-    raise AmbiguousSessionError(session_id_prefix, matches)
+    # Multiple matches: prefer main sessions over subagents
+    # A subagent's parent_session_id matches another result's session_id
+    matched_session_ids = set()
+    for path, result in matches:
+        if result:
+            matched_session_ids.add(result.session_id.lower())
+
+    # Filter to main sessions (no parent, or parent not in our match set)
+    main_sessions = [
+        (path, result)
+        for path, result in matches
+        if result is None
+        or result.parent_session_id is None
+        or result.parent_session_id.lower() not in matched_session_ids
+    ]
+
+    if len(main_sessions) == 1:
+        return main_sessions[0][0]
+
+    # Still ambiguous - use filtered list if it reduced matches, otherwise original
+    final_matches = main_sessions if main_sessions else matches
+    raise AmbiguousSessionError(session_id_prefix, [p for p, _ in final_matches])
 
 
 def _find_adapter_for_file(path: Path) -> object | None:
