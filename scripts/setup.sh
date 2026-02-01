@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
+# setup.sh
 # DESC: Setup worktree (venv, deps, optional embeddings)
+# Usage: ./dev setup [--embed]
+# Dependencies: uv, python3
+# Idempotent: Yes
 source "$(dirname "$0")/_lib.sh"
 
 usage() {
-    cat <<EOF
+    cli_usage <<EOF
 Usage: ./dev setup [--embed]
 
 Setup the development environment.
@@ -21,7 +25,7 @@ main() {
         case "$arg" in
             --embed) with_embed=1 ;;
             --help|-h) usage; exit 0 ;;
-            *) echo "Unknown option: $arg"; exit 1 ;;
+            *) cli_unknown_flag "$arg"; exit 1 ;;
         esac
     done
 
@@ -29,31 +33,31 @@ main() {
 
     # Create venv if missing
     if [ ! -d ".venv" ]; then
-        echo "Creating venv..."
+        log_info "Creating venv..."
         uv venv .venv
     fi
 
     # Sync dev dependencies
-    echo "Syncing dependencies..."
+    log_info "Syncing dependencies..."
     uv sync --extra dev --quiet
 
     # Optional: embeddings setup
     if [ $with_embed -eq 1 ]; then
-        echo "Installing embeddings dependencies..."
+        log_info "Installing embeddings dependencies..."
         uv sync --extra dev --extra embed --quiet
 
-        echo "Warming fastembed cache (downloading model)..."
+        log_info "Warming fastembed cache (downloading model)..."
         uv run python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-en-v1.5')" 2>/dev/null || {
-            echo -e "${YELLOW}Warning: Could not warm fastembed cache${NC}"
+            log_warn "Could not warm fastembed cache"
         }
 
-        echo "Running initial ingest..."
+        log_info "Running initial ingest..."
         uv run siftd ingest || {
-            echo -e "${YELLOW}Warning: Ingest had issues (may be first run)${NC}"
+            log_warn "Ingest had issues (may be first run)"
         }
     fi
 
-    echo -e "${GREEN}Worktree ready.${NC} Run ./dev check to verify."
+    log_success "Worktree ready. Run ./dev check to verify."
 }
 
 main "$@"

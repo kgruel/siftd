@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
+# test-all.sh
 # DESC: Run all tests including embeddings
+# Usage: ./dev test-all [-v]
+# Dependencies: uv, pytest, fastembed
+# Idempotent: Yes
 source "$(dirname "$0")/_lib.sh"
 
 usage() {
-    cat <<EOF
+    cli_usage <<EOF
 Usage: ./dev test-all [-v]
 
 Run all pytest tests including embedding tests.
@@ -21,7 +25,7 @@ main() {
         case "$arg" in
             -v|--verbose) verbose=1 ;;
             --help|-h) usage; exit 0 ;;
-            *) echo "Unknown option: $arg"; exit 1 ;;
+            *) cli_unknown_flag "$arg"; exit 1 ;;
         esac
     done
 
@@ -31,7 +35,7 @@ main() {
     if [ $verbose -eq 1 ]; then
         uv run pytest tests/ -v --tb=short
     else
-        echo "Running all tests..."
+        log_info "Running all tests..."
         set +e
         output=$(uv run pytest tests/ -q --tb=line 2>&1)
         status=$?

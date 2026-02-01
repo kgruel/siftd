@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
+# review.sh
 # DESC: Launch review agent in a worktree
+# Usage: ./dev review <path> [options]
+# Dependencies: git, python3, codex|claude (agent)
+# Idempotent: No (launches external process)
 source "$(dirname "$0")/_lib.sh"
+source "$(dirname "$0")/lib/templates.sh"
 
 usage() {
-    cat <<EOF
+    cli_usage <<EOF
 Usage: ./dev review <path> [options]
 
 Launch a review agent in a worktree directory.
@@ -36,33 +41,6 @@ Examples:
 EOF
 }
 
-# Expand template variables in prompt (uses Python for multi-line safety)
-expand_template() {
-    local template_file="$1"
-    local branch="$2"
-    local diff_stat="$3"
-    local context="$4"
-    local dev_commands="$5"
-
-    TPL_BRANCH="$branch" \
-    TPL_DIFF_STAT="$diff_stat" \
-    TPL_CONTEXT="$context" \
-    TPL_DEV_COMMANDS="$dev_commands" \
-    python3 -c "
-import os, sys
-template = open(sys.argv[1]).read()
-replacements = {
-    '{{branch}}': os.environ.get('TPL_BRANCH', ''),
-    '{{diff_stat}}': os.environ.get('TPL_DIFF_STAT', ''),
-    '{{context}}': os.environ.get('TPL_CONTEXT', ''),
-    '{{dev_commands}}': os.environ.get('TPL_DEV_COMMANDS', ''),
-}
-for k, v in replacements.items():
-    template = template.replace(k, v)
-print(template, end='')
-" "$template_file"
-}
-
 main() {
     local path=""
     local agent="codex"
@@ -75,14 +53,14 @@ main() {
     # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
-            --agent) agent="$2"; shift ;;
-            --prompt) prompt_file="$2"; shift ;;
-            --context) context_file="$2"; shift ;;
-            --base) base_branch="$2"; shift ;;
+            --agent) cli_require_value "$1" "${2:-}" || exit 1; agent="$2"; shift ;;
+            --prompt) cli_require_value "$1" "${2:-}" || exit 1; prompt_file="$2"; shift ;;
+            --context) cli_require_value "$1" "${2:-}" || exit 1; context_file="$2"; shift ;;
+            --base) cli_require_value "$1" "${2:-}" || exit 1; base_branch="$2"; shift ;;
             --background) background=1 ;;
             --dry-run) dry_run=1 ;;
             --help|-h) usage; exit 0 ;;
-            -*) echo "Unknown option: $1"; exit 1 ;;
+            -*) cli_unknown_flag "$1"; exit 1 ;;
             *) path="$1" ;;
         esac
         shift
@@ -95,13 +73,13 @@ main() {
 
     # Resolve path
     path=$(cd "$path" 2>/dev/null && pwd) || {
-        echo -e "${RED}Error: Cannot access path '$path'${NC}"
+        log_error "Cannot access path '$path'"
         exit 1
     }
 
     # Verify it's a git repo
     if ! git -C "$path" rev-parse --git-dir >/dev/null 2>&1; then
-        echo -e "${RED}Error: '$path' is not a git repository${NC}"
+        log_error "'$path' is not a git repository"
         exit 1
     fi
 
@@ -139,12 +117,16 @@ main() {
 
     # Read and expand template
     if [ ! -f "$prompt_file" ]; then
-        echo -e "${RED}Error: Prompt template not found: $prompt_file${NC}"
+        log_error "Prompt template not found: $prompt_file"
         exit 1
     fi
 
     local prompt
-    prompt=$(expand_template "$prompt_file" "$branch" "$diff_stat" "$context" "$dev_commands")
+    prompt=$(TPL_branch="$branch" \
+             TPL_diff_stat="$diff_stat" \
+             TPL_context="$context" \
+             TPL_dev_commands="$dev_commands" \
+             template_inject_env "$prompt_file")
 
     # Output
     echo -e "${BOLD}Review:${NC} $path"
@@ -165,17 +147,17 @@ main() {
 
     # Ensure worktree has venv if it has ./dev
     if [ -x "$path/dev" ] && [ ! -d "$path/.venv" ]; then
-        echo "Setting up worktree..."
+        log_info "Setting up worktree..."
         (cd "$path" && ./dev setup)
     fi
 
     # Launch agent
     if [ $background -eq 1 ]; then
-        echo -e "${BOLD}Launching $agent in background...${NC}"
+        log_info "Launching $agent in background..."
         (cd "$path" && nohup $agent "$prompt" > .review.log 2>&1 &)
         echo "Monitor with: siftd peek -w $(basename "$path")"
     else
-        echo -e "${BOLD}Launching $agent...${NC}"
+        log_info "Launching $agent..."
         (cd "$path" && exec $agent "$prompt")
     fi
 }

@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
+# check.sh
 # DESC: Run lint + test (CI equivalent, quiet by default)
+# Usage: ./dev check [-v]
+# Dependencies: uv, ty, ruff, pytest
+# Idempotent: Yes
 source "$(dirname "$0")/_lib.sh"
 
 usage() {
-    cat <<EOF
+    cli_usage <<EOF
 Usage: ./dev check [-v]
 
 Run lint and test (CI equivalent).
@@ -21,7 +25,7 @@ main() {
         case "$arg" in
             -v|--verbose) verbose=1 ;;
             --help|-h) usage; exit 0 ;;
-            *) echo "Unknown option: $arg"; exit 1 ;;
+            *) cli_unknown_flag "$arg"; exit 1 ;;
         esac
     done
 
@@ -41,7 +45,7 @@ main() {
         ./dev test > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; ./dev test; exit 1; }
     fi
 
-    echo -e "${GREEN}All checks passed${NC}"
+    log_success "All checks passed"
 }
 
 main "$@"

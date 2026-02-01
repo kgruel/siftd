@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
+# test.sh
 # DESC: Run tests (excluding embeddings)
+# Usage: ./dev test [-v]
+# Dependencies: uv, pytest
+# Idempotent: Yes
 source "$(dirname "$0")/_lib.sh"
 
 usage() {
-    cat <<EOF
+    cli_usage <<EOF
 Usage: ./dev test [-v]
 
 Run pytest excluding embedding tests.
@@ -21,7 +25,7 @@ main() {
         case "$arg" in
             -v|--verbose) verbose=1 ;;
             --help|-h) usage; exit 0 ;;
-            *) echo "Unknown option: $arg"; exit 1 ;;
+            *) cli_unknown_flag "$arg"; exit 1 ;;
         esac
     done
 
@@ -32,7 +36,7 @@ main() {
         uv run pytest tests/ -v --tb=short -m "not embeddings"
     else
         # Quiet mode: minimal output, details only on failure
-        echo "Running tests (excluding embeddings)..."
+        log_info "Running tests (excluding embeddings)..."
         set +e
         output=$(uv run pytest tests/ -q --tb=line -m "not embeddings" 2>&1)
         status=$?

@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
+# docs.sh
 # DESC: Generate docs; --check fails if stale
+# Usage: ./dev docs [--check]
+# Dependencies: uv, python3, git
+# Idempotent: Yes
 source "$(dirname "$0")/_lib.sh"
 
 usage() {
-    cat <<EOF
+    cli_usage <<EOF
 Usage: ./dev docs [--check]
 
 Generate reference documentation.
@@ -21,24 +25,24 @@ main() {
         case "$arg" in
             --check) check_mode=1 ;;
             --help|-h) usage; exit 0 ;;
-            *) echo "Unknown option: $arg"; exit 1 ;;
+            *) cli_unknown_flag "$arg"; exit 1 ;;
         esac
     done
 
     ensure_venv
     cd "$DEV_ROOT"
 
-    echo "Generating docs..."
+    log_info "Generating docs..."
     uv run python scripts/gen_docs.py
 
     if [ $check_mode -eq 1 ]; then
         # Check if any docs changed
         if ! git diff --quiet docs/reference/; then
-            echo -e "${RED}Docs are stale. Run './dev docs' to regenerate.${NC}"
+            log_error "Docs are stale. Run './dev docs' to regenerate."
             git diff --stat docs/reference/
             exit 1
         fi
-        echo -e "${GREEN}Docs are up to date${NC}"
+        log_success "Docs are up to date"
     fi
 }
 

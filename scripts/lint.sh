@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
+# lint.sh
 # DESC: Run ty type checker + ruff linter (with autofix)
+# Usage: ./dev lint
+# Dependencies: uv, ty, ruff
+# Idempotent: Yes
 source "$(dirname "$0")/_lib.sh"
 
 usage() {
-    cat <<EOF
+    cli_usage <<EOF
 Usage: ./dev lint
 
 Run type checking (ty) and linting (ruff) with autofix.
@@ -14,7 +18,7 @@ main() {
     for arg in "$@"; do
         case "$arg" in
             --help|-h) usage; exit 0 ;;
-            *) echo "Unknown option: $arg"; exit 1 ;;
+            *) cli_unknown_flag "$arg"; exit 1 ;;
         esac
     done
 
@@ -24,7 +28,7 @@ main() {
     local errors=0
 
     # Type check - show only errors/warnings
-    echo "Running ty..."
+    log_info "Running ty..."
     set +e
     ty_out=$(uv run ty check src/ 2>&1)
     ty_status=$?
@@ -36,7 +40,7 @@ main() {
     fi
 
     # Lint with autofix
-    echo "Running ruff..."
+    log_info "Running ruff..."
     set +e
     ruff_out=$(uv run ruff check src/ --fix 2>&1)
     ruff_status=$?
@@ -48,9 +52,9 @@ main() {
     fi
 
     if [ $errors -eq 0 ]; then
-        echo -e "${GREEN}Lint passed${NC}"
+        log_success "Lint passed"
     else
-        echo -e "${RED}Lint failed${NC}"
+        log_error "Lint failed"
         exit 1
     fi
 }
