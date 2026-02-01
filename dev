@@ -25,18 +25,20 @@ ${BOLD}Usage:${NC} ./dev <command> [options]
 ${BOLD}Commands:${NC}
   setup [--embed]    Setup worktree (venv, deps, optional embeddings)
   lint               Run ty type checker + ruff linter (with autofix)
-  test               Run tests (excluding embeddings)
-  test-all           Run all tests including embeddings
+  test [-v]          Run tests (excluding embeddings)
+  test-all [-v]      Run all tests including embeddings
   docs [--check]     Generate docs; --check fails if stale
-  check              Run lint + test (CI equivalent)
+  check [-v]         Run lint + test (CI equivalent, quiet by default)
+  review <task>      Enter subtask worktree and launch review agent
   help               Show this message
 
 ${BOLD}Examples:${NC}
-  ./dev setup             # Basic worktree setup
-  ./dev setup --embed     # Setup with embeddings (downloads model)
-  ./dev lint              # Type check and lint
-  ./dev check             # Full CI check (lint + test)
-  ./dev docs --check      # Verify docs are up to date
+  ./dev setup                        # Basic worktree setup
+  ./dev setup --embed                # Setup with embeddings
+  ./dev check                        # Quick CI check (minimal output)
+  ./dev check -v                     # Verbose CI check
+  ./dev review impl/my-feature       # Review subtask with codex
+  ./dev review impl/my-feature claude  # Review with claude instead
 EOF
 }
 
@@ -124,8 +126,29 @@ cmd_test() {
         cmd_setup
     fi
 
-    echo "Running tests (excluding embeddings)..."
-    uv run pytest tests/ -v --tb=short -m "not embeddings"
+    local verbose=0
+    for arg in "$@"; do
+        case "$arg" in
+            -v|--verbose) verbose=1 ;;
+        esac
+    done
+
+    if [ $verbose -eq 1 ]; then
+        uv run pytest tests/ -v --tb=short -m "not embeddings"
+    else
+        # Quiet mode: minimal output, details only on failure
+        echo "Running tests (excluding embeddings)..."
+        set +e
+        output=$(uv run pytest tests/ -q --tb=line -m "not embeddings" 2>&1)
+        status=$?
+        set -e
+        if [ $status -ne 0 ]; then
+            echo "$output"
+            exit 1
+        fi
+        # Show just the summary line
+        echo "$output" | tail -1
+    fi
 }
 
 cmd_test_all() {
@@ -134,8 +157,27 @@ cmd_test_all() {
         cmd_setup --embed
     fi
 
-    echo "Running all tests..."
-    uv run pytest tests/ -v --tb=short
+    local verbose=0
+    for arg in "$@"; do
+        case "$arg" in
+            -v|--verbose) verbose=1 ;;
+        esac
+    done
+
+    if [ $verbose -eq 1 ]; then
+        uv run pytest tests/ -v --tb=short
+    else
+        echo "Running all tests..."
+        set +e
+        output=$(uv run pytest tests/ -q --tb=line 2>&1)
+        status=$?
+        set -e
+        if [ $status -ne 0 ]; then
+            echo "$output"
+            exit 1
+        fi
+        echo "$output" | tail -1
+    fi
 }
 
 cmd_docs() {
@@ -167,25 +209,138 @@ cmd_docs() {
 }
 
 cmd_check() {
-    echo -e "${BOLD}=== Lint ===${NC}"
-    cmd_lint
+    local verbose=0
+    for arg in "$@"; do
+        case "$arg" in
+            -v|--verbose) verbose=1 ;;
+        esac
+    done
 
-    echo ""
-    echo -e "${BOLD}=== Test ===${NC}"
-    cmd_test
+    if [ $verbose -eq 1 ]; then
+        echo -e "${BOLD}=== Lint ===${NC}"
+        cmd_lint
+        echo ""
+        echo -e "${BOLD}=== Test ===${NC}"
+        cmd_test -v
+    else
+        # Quiet mode: single line per step
+        printf "Lint... "
+        cmd_lint > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; cmd_lint; exit 1; }
+        printf "Test... "
+        cmd_test > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; cmd_test; exit 1; }
+    fi
 
-    echo ""
     echo -e "${GREEN}All checks passed${NC}"
+}
+
+cmd_review() {
+    local task=""
+    local agent="codex"
+    local dry_run=0
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dry-run) dry_run=1 ;;
+            codex|claude) agent="$1" ;;
+            -*) echo "Unknown option: $1"; exit 1 ;;
+            *) task="$1" ;;
+        esac
+        shift
+    done
+
+    if [ -z "$task" ]; then
+        echo "Usage: ./dev review <task> [agent] [--dry-run]"
+        echo "  task:     subtask name (e.g., impl/peek-parent-session)"
+        echo "  agent:    codex (default), claude"
+        echo "  --dry-run show prompt without launching agent"
+        exit 1
+    fi
+
+    # Get worktree path
+    local worktree
+    worktree=$(subtask workspace "$task" 2>/dev/null) || {
+        echo -e "${RED}Error: Could not find worktree for task '$task'${NC}"
+        echo "Run 'subtask list' to see available tasks"
+        exit 1
+    }
+
+    echo -e "${BOLD}Task:${NC} $task"
+    echo -e "${BOLD}Worktree:${NC} $worktree"
+
+    # Setup if needed
+    if [ ! -d "$worktree/.venv" ]; then
+        echo "Setting up worktree..."
+        (cd "$worktree" && ./dev setup)
+    fi
+
+    # Get task info for prompt
+    local title changes
+    title=$(subtask show "$task" 2>/dev/null | grep "^Title:" | cut -d: -f2- | xargs)
+    changes=$(subtask show "$task" 2>/dev/null | grep "^Changes:" | cut -d: -f2- | xargs)
+
+    # Build review prompt
+    local prompt
+    prompt="Review the $task branch: $title
+
+Changes: $changes
+
+## Dev Commands
+\`\`\`
+./dev check          # Lint + test (quiet)
+./dev check -v       # Lint + test (verbose)
+./dev lint           # Type check + lint only
+./dev test           # Run tests only
+./dev test -v        # Run tests (verbose)
+\`\`\`
+
+## Review Focus
+1. Does the implementation match the task description?
+2. Are there any architectural violations (check CLAUDE.md)?
+3. Is error handling consistent with existing patterns?
+4. Are tests comprehensive?
+5. Run \`./dev check\` to verify lint and tests pass.
+
+Start by reading the task description: \`cat .subtask/tasks/${task//\//--}/TASK.md\`
+Then review the diff: \`git diff main\`"
+
+    if [ $dry_run -eq 1 ]; then
+        echo ""
+        echo -e "${BOLD}Review prompt:${NC}"
+        echo "----------------------------------------"
+        echo "$prompt"
+        echo "----------------------------------------"
+        echo ""
+        echo -e "${BOLD}To launch:${NC} cd $worktree && $agent \"<prompt>\""
+    else
+        echo ""
+        echo -e "${BOLD}Launching $agent in worktree...${NC}"
+        echo ""
+
+        case "$agent" in
+            codex)
+                (cd "$worktree" && exec codex "$prompt")
+                ;;
+            claude)
+                (cd "$worktree" && exec claude "$prompt")
+                ;;
+            *)
+                echo "Unknown agent: $agent (use 'codex' or 'claude')"
+                exit 1
+                ;;
+        esac
+    fi
 }
 
 # Main dispatch
 case "${1:-help}" in
     setup)    shift; cmd_setup "$@" ;;
     lint)     cmd_lint ;;
-    test)     cmd_test ;;
-    test-all) cmd_test_all ;;
+    test)     shift; cmd_test "$@" ;;
+    test-all) shift; cmd_test_all "$@" ;;
     docs)     shift; cmd_docs "$@" ;;
-    check)    cmd_check ;;
+    check)    shift; cmd_check "$@" ;;
+    review)   shift; cmd_review "$@" ;;
     help|--help|-h) usage ;;
     *)
         echo "Unknown command: $1"
