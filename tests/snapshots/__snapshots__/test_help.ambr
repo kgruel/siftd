@@ -19,7 +19,7 @@
                           entity)
       tags                List, inspect, rename, or delete tags
       tools               Summarize tool usage by category
-      query               List conversations with filters, or run SQL queries
+      query               List and filter conversations by metadata
       backfill            Backfill derived data from existing records
       migrate             Run data migrations
       path                Show XDG paths
@@ -426,7 +426,8 @@
                           1w, yesterday, today)
     --before DATE         Conversations started before this date (YYYY-MM-DD,
                           7d, 1w, yesterday, today)
-    -s, --search QUERY    Full-text search (FTS5 syntax)
+    -s, --search QUERY    FTS5 keyword search (for semantic search, use: siftd
+                          search)
     -t, --tool NAME       Filter by canonical tool name (e.g. shell.execute)
   
   tag filtering:
@@ -444,6 +445,9 @@
   
   sql queries:
     --var KEY=VALUE       Substitute $KEY with VALUE in SQL
+  
+  List and filter conversations by metadata (workspace, model, date, tags).
+  For semantic content search, use: siftd search <query>
   
   examples:
     siftd query                         # list recent conversations

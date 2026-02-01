@@ -1982,9 +1982,12 @@ live session tagging:
     # query
     p_query = subparsers.add_parser(
         "query",
-        help="List conversations with filters, or run SQL queries",
+        help="List and filter conversations by metadata",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""examples:
+        epilog="""List and filter conversations by metadata (workspace, model, date, tags).
+For semantic content search, use: siftd search <query>
+
+examples:
   siftd query                         # list recent conversations
   siftd query -w myproject            # filter by workspace
   siftd query -s "error handling"     # FTS5 search
@@ -2009,7 +2012,7 @@ live session tagging:
     filter_group.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
     filter_group.add_argument("--since", metavar="DATE", help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
     filter_group.add_argument("--before", metavar="DATE", help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    filter_group.add_argument("-s", "--search", metavar="QUERY", help="Full-text search (FTS5 syntax)")
+    filter_group.add_argument("-s", "--search", metavar="QUERY", help="FTS5 keyword search (for semantic search, use: siftd search)")
     filter_group.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
 
     # Tag filtering options
