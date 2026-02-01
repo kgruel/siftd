@@ -961,9 +961,27 @@ def cmd_query(args) -> int:
             print("[]")
         else:
             print("No conversations found.")
+            # Provide helpful hints based on filters used
+            has_filters = any([
+                args.workspace, args.model, args.since, args.before,
+                args.search, args.tool, args.tag,
+                getattr(args, "all_tags", None),
+                getattr(args, "no_tag", None),
+                getattr(args, "tool_tag", None),
+            ])
             if args.search:
                 print(
                     f'\nTip: For semantic search, try: siftd search "{args.search}"',
+                    file=sys.stderr,
+                )
+            elif args.workspace:
+                print(
+                    "\nTip: Try 'siftd peek' for active sessions not yet ingested.",
+                    file=sys.stderr,
+                )
+            elif has_filters:
+                print(
+                    "\nTip: Run 'siftd ingest' to import recent sessions.",
                     file=sys.stderr,
                 )
         return 0
