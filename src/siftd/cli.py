@@ -1605,6 +1605,7 @@ def cmd_peek(args) -> int:
                 "started_at": detail.started_at,
                 "exchange_count": detail.info.exchange_count,
                 "adapter": detail.info.adapter_name,
+                "parent_session_id": detail.info.parent_session_id,
                 "exchanges": [
                     {
                         "timestamp": ex.timestamp,
@@ -1693,6 +1694,15 @@ def cmd_peek(args) -> int:
         limit=limit,
     )
 
+    # Apply --main-only filter
+    if getattr(args, "main_only", False):
+        sessions = [s for s in sessions if s.parent_session_id is None]
+
+    # Apply --children filter (show only children of specified parent)
+    children_filter = getattr(args, "children", None)
+    if children_filter:
+        sessions = [s for s in sessions if s.parent_session_id and s.parent_session_id.startswith(children_filter)]
+
     if not sessions:
         if args.json:
             print("[]")
@@ -1712,14 +1722,29 @@ def cmd_peek(args) -> int:
                 "exchange_count": s.exchange_count,
                 "adapter": s.adapter_name,
                 "preview_available": s.preview_available,
+                "parent_session_id": s.parent_session_id,
             }
             for s in sessions
         ]
         print(_json.dumps(out, indent=2))
         return 0
 
+    # Build parent->children mapping for grouping display
+    children_by_parent: dict[str, list] = {}
+    for s in sessions:
+        if s.parent_session_id:
+            children_by_parent.setdefault(s.parent_session_id, []).append(s)
+
+    # Track which parent session IDs are actually in our result set
+    session_ids_in_results = {s.session_id for s in sessions}
+
     now = time.time()
     for s in sessions:
+        # Skip children only if their parent is visible in results
+        # (orphaned children whose parent is filtered out should still show)
+        if s.parent_session_id and s.parent_session_id in session_ids_in_results:
+            continue
+
         sid = s.session_id[:8]
         ws = s.workspace_name or ""
         ago = _fmt_ago(now - s.last_activity)
@@ -1734,7 +1759,12 @@ def cmd_peek(args) -> int:
             parts = model.rsplit("-", 1)
             if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 8:
                 model = parts[0]
-        print(f"  {sid}  {ws:<16s} {ago:<12s} {exchanges:<16s} {model}")
+
+        # Add child count suffix if this session has children in results
+        child_count = len(children_by_parent.get(s.session_id, []))
+        suffix = f" (+{child_count} agents)" if child_count > 0 else ""
+
+        print(f"  {sid}  {ws:<16s} {ago:<12s} {exchanges:<16s} {model}{suffix}")
 
     return 0
 
@@ -2166,6 +2196,8 @@ exit codes:
   siftd peek c520 --full        # show full text (no truncation)
   siftd peek c520 --tail        # raw JSONL tail
   siftd peek c520 --tail --json # tail as JSON array
+  siftd peek --main-only        # exclude subagent sessions
+  siftd peek --children abc123  # show children of parent session
 
 NOTE: Session content may contain sensitive information (API keys, credentials, etc.).""",
     )
@@ -2179,6 +2211,8 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_peek.add_argument("--tail", action="store_true", help="Raw JSONL tail (last 20 records)")
     p_peek.add_argument("--tail-lines", type=int, default=20, metavar="N", dest="tail_lines", help="Number of records for --tail (default: 20)")
     p_peek.add_argument("--json", action="store_true", help="Output as structured JSON")
+    p_peek.add_argument("--main-only", action="store_true", help="Only show main sessions (exclude subagents)")
+    p_peek.add_argument("--children", metavar="ID", help="Show only children of the specified parent session")
     p_peek.set_defaults(func=cmd_peek)
 
     # export

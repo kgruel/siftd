@@ -21,6 +21,7 @@ class PeekScanResult:
     exchange_count: int = 0  # Number of user turns (real prompts, not tool_results)
     started_at: str | None = None  # Earliest timestamp
     last_activity_at: str | None = None  # Latest timestamp (prefer over mtime)
+    parent_session_id: str | None = None  # If spawned by another session
 
 
 @dataclass
@@ -54,6 +55,7 @@ class SessionInfo:
     exchange_count: int = 0
     preview_available: bool = True  # False if adapter doesn't support peek
     adapter_name: str | None = None  # Which adapter owns this session
+    parent_session_id: str | None = None  # If spawned by another session
 
 
 @dataclass

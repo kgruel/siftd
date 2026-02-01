@@ -45,8 +45,13 @@ def _write_session(path: Path, records: list[dict]) -> None:
             f.write(json.dumps(record) + "\n")
 
 
-def _make_user_record(text: str, *, cwd: str = "/test/project", session_id: str = "test-session", timestamp: str = "2025-01-20T10:00:00Z") -> dict:
-    return {
+def _make_user_record(text: str, *, cwd: str = "/test/project", session_id: str = "test-session", timestamp: str = "2025-01-20T10:00:00Z", agent_id: str | None = None) -> dict:
+    """Create a user record.
+
+    For subagent records, set agent_id. The session_id in subagent records
+    is the parent's session ID (that's how Claude Code works).
+    """
+    record = {
         "type": "user",
         "sessionId": session_id,
         "cwd": cwd,
@@ -56,6 +61,9 @@ def _make_user_record(text: str, *, cwd: str = "/test/project", session_id: str 
             "content": [{"type": "text", "text": text}],
         },
     }
+    if agent_id is not None:
+        record["agentId"] = agent_id
+    return record
 
 
 def _make_assistant_record(text: str, *, model: str = "claude-opus-4-5-20251101", timestamp: str = "2025-01-20T10:01:00Z", input_tokens: int = 100, output_tokens: int = 50, tool_uses: list[dict] | None = None) -> dict:
@@ -185,6 +193,38 @@ class TestPeekScan:
         result = peek_scan(path)
         assert result is not None
         assert result.session_id == "file-uuid-1234"
+
+    def test_peek_scan_detects_subagent_via_agent_id(self, session_dir):
+        """peek_scan detects subagents via agentId field.
+
+        For subagents:
+        - sessionId in the file is the PARENT's ID
+        - agentId identifies this specific subagent
+        - session_id is synthesized as "{sessionId}:{agentId}"
+        - parent_session_id is the sessionId from records
+        """
+        from siftd.adapters.claude_code import peek_scan
+
+        path = session_dir / "subagent-session.jsonl"
+        records = [
+            _make_user_record("Hello", session_id="parent-session-123", agent_id="agent-abc"),
+            _make_assistant_record("Hi there!"),
+        ]
+        _write_session(path, records)
+        result = peek_scan(path)
+        assert result is not None
+        # Session ID should be synthesized from sessionId:agentId
+        assert result.session_id == "parent-session-123:agent-abc"
+        # Parent session ID should be the sessionId from records
+        assert result.parent_session_id == "parent-session-123"
+
+    def test_peek_scan_parent_session_id_none_for_main_session(self, sample_session):
+        """Main sessions have parent_session_id = None."""
+        from siftd.adapters.claude_code import peek_scan
+
+        result = peek_scan(sample_session)
+        assert result is not None
+        assert result.parent_session_id is None
 
 
 class TestReadSessionDetail:
@@ -568,3 +608,180 @@ class TestSessionInfoFields:
         sessions = list_active_sessions()
         assert len(sessions) == 1
         assert sessions[0].adapter_name == "my_adapter"
+
+    def test_parent_session_id_propagated_to_session_info(self, session_dir, monkeypatch):
+        """parent_session_id is propagated from PeekScanResult to SessionInfo.
+
+        For Claude Code subagents:
+        - agentId field marks it as a subagent
+        - sessionId in the record is the parent's ID
+        - synthesized session_id is "{sessionId}:{agentId}"
+        """
+        # Create parent and child sessions
+        parent_path = session_dir / "parent.jsonl"
+        child_path = session_dir / "child.jsonl"
+        _write_session(parent_path, [
+            _make_user_record("Main task", session_id="parent-123"),
+            _make_assistant_record("Working on it"),
+        ])
+        # Subagent file: sessionId is parent's ID, agentId identifies the subagent
+        _write_session(child_path, [
+            _make_user_record("Subtask", session_id="parent-123", agent_id="agent-xyz"),
+            _make_assistant_record("Done"),
+        ])
+
+        plugin = _make_fake_plugin("test", [str(session_dir.parent)])
+        monkeypatch.setattr(
+            "siftd.peek.scanner.load_all_adapters",
+            lambda: [plugin],
+        )
+        sessions = list_active_sessions()
+        assert len(sessions) == 2
+
+        # Find parent and child by their session IDs
+        parent = next((s for s in sessions if s.session_id == "parent-123"), None)
+        child = next((s for s in sessions if s.session_id == "parent-123:agent-xyz"), None)
+        assert parent is not None
+        assert child is not None
+
+        assert parent.parent_session_id is None
+        assert child.parent_session_id == "parent-123"
+
+
+class TestSubagentFiltering:
+    """Tests for --main-only and --children filtering."""
+
+    def test_main_only_excludes_subagents(self, session_dir, monkeypatch, capsys):
+        """--main-only flag filters out sessions with parent_session_id."""
+        from types import SimpleNamespace
+
+        from siftd.cli import cmd_peek
+
+        # Create parent and child sessions
+        parent_path = session_dir / "parent.jsonl"
+        child_path = session_dir / "child.jsonl"
+        _write_session(parent_path, [
+            _make_user_record("Main task", session_id="parent-123"),
+            _make_assistant_record("Working on it"),
+        ])
+        _write_session(child_path, [
+            _make_user_record("Subtask", session_id="parent-123", agent_id="agent-xyz"),
+            _make_assistant_record("Done"),
+        ])
+
+        from siftd.plugin_discovery import PluginInfo
+        from siftd.adapters import claude_code
+        fake_module = SimpleNamespace(
+            NAME="test",
+            DEFAULT_LOCATIONS=[str(session_dir.parent)],
+            ADAPTER_INTERFACE_VERSION=1,
+            HARNESS_LOG_FORMAT="jsonl",
+            peek_scan=claude_code.peek_scan,
+            peek_exchanges=claude_code.peek_exchanges,
+            peek_tail=claude_code.peek_tail,
+        )
+        plugin = PluginInfo(name="test", origin="builtin", module=fake_module)
+
+        monkeypatch.setattr(
+            "siftd.peek.scanner.load_all_adapters",
+            lambda: [plugin],
+        )
+
+        # Run with --main-only --json
+        args = SimpleNamespace(
+            session_id=None,
+            workspace=None,
+            all=True,
+            limit=None,
+            last=None,
+            full=False,
+            chars=None,
+            tail=False,
+            tail_lines=20,
+            json=True,
+            main_only=True,
+            children=None,
+        )
+        result = cmd_peek(args)
+        assert result == 0
+
+        import json
+        captured = capsys.readouterr()
+        sessions = json.loads(captured.out)
+
+        # Should only have parent, not child
+        assert len(sessions) == 1
+        assert sessions[0]["session_id"] == "parent-123"
+        assert sessions[0]["parent_session_id"] is None
+
+    def test_children_filter_shows_only_children(self, session_dir, monkeypatch, capsys):
+        """--children flag filters to show only children of specified parent."""
+        from types import SimpleNamespace
+
+        from siftd.cli import cmd_peek
+
+        # Create parent and two children
+        parent_path = session_dir / "parent.jsonl"
+        child1_path = session_dir / "child1.jsonl"
+        child2_path = session_dir / "child2.jsonl"
+        _write_session(parent_path, [
+            _make_user_record("Main task", session_id="parent-123"),
+            _make_assistant_record("Working on it"),
+        ])
+        _write_session(child1_path, [
+            _make_user_record("Subtask 1", session_id="parent-123", agent_id="agent-a"),
+            _make_assistant_record("Done 1"),
+        ])
+        _write_session(child2_path, [
+            _make_user_record("Subtask 2", session_id="parent-123", agent_id="agent-b"),
+            _make_assistant_record("Done 2"),
+        ])
+
+        from siftd.plugin_discovery import PluginInfo
+        from siftd.adapters import claude_code
+        fake_module = SimpleNamespace(
+            NAME="test",
+            DEFAULT_LOCATIONS=[str(session_dir.parent)],
+            ADAPTER_INTERFACE_VERSION=1,
+            HARNESS_LOG_FORMAT="jsonl",
+            peek_scan=claude_code.peek_scan,
+            peek_exchanges=claude_code.peek_exchanges,
+            peek_tail=claude_code.peek_tail,
+        )
+        plugin = PluginInfo(name="test", origin="builtin", module=fake_module)
+
+        monkeypatch.setattr(
+            "siftd.peek.scanner.load_all_adapters",
+            lambda: [plugin],
+        )
+
+        # Run with --children parent-123 --json
+        args = SimpleNamespace(
+            session_id=None,
+            workspace=None,
+            all=True,
+            limit=None,
+            last=None,
+            full=False,
+            chars=None,
+            tail=False,
+            tail_lines=20,
+            json=True,
+            main_only=False,
+            children="parent-123",
+        )
+        result = cmd_peek(args)
+        assert result == 0
+
+        import json
+        captured = capsys.readouterr()
+        sessions = json.loads(captured.out)
+
+        # Should only have children, not parent
+        assert len(sessions) == 2
+        session_ids = {s["session_id"] for s in sessions}
+        assert "parent-123:agent-a" in session_ids
+        assert "parent-123:agent-b" in session_ids
+        # All should have parent-123 as parent
+        for s in sessions:
+            assert s["parent_session_id"] == "parent-123"

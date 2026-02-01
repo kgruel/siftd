@@ -196,6 +196,7 @@ def _scan_session_file(file_info: DiscoveredFile) -> SessionInfo | None:
         exchange_count=result.exchange_count,
         preview_available=True,
         adapter_name=file_info.adapter_name,
+        parent_session_id=result.parent_session_id,
     )
 
 

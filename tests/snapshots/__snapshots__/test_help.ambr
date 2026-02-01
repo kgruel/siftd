@@ -366,7 +366,8 @@
 # name: TestHelpSnapshots.test_subcommand_help[peek]
   '''
   usage: siftd peek [-h] [-w SUBSTR] [--all] [--limit N] [-n N] [--full]
-                    [--chars N] [--tail] [--tail-lines N] [--json]
+                    [--chars N] [--tail] [--tail-lines N] [--json] [--main-only]
+                    [--children ID]
                     [session_id]
   
   positional arguments:
@@ -385,6 +386,8 @@
     --tail                Raw JSONL tail (last 20 records)
     --tail-lines N        Number of records for --tail (default: 20)
     --json                Output as structured JSON
+    --main-only           Only show main sessions (exclude subagents)
+    --children ID         Show only children of the specified parent session
   
   examples:
     siftd peek                    # list latest 10 sessions
@@ -397,6 +400,8 @@
     siftd peek c520 --full        # show full text (no truncation)
     siftd peek c520 --tail        # raw JSONL tail
     siftd peek c520 --tail --json # tail as JSON array
+    siftd peek --main-only        # exclude subagent sessions
+    siftd peek --children abc123  # show children of parent session
   
   NOTE: Session content may contain sensitive information (API keys, credentials, etc.).
   

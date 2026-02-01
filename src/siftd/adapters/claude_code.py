@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 from siftd.adapters._jsonl import load_jsonl, now_iso, parse_block
 from siftd.adapters.sdk import (
     peek_jsonl_exchanges,
-    peek_jsonl_scan,
     peek_jsonl_tail,
 )
 from siftd.domain import (
@@ -301,17 +300,99 @@ def peek_scan(path: Path) -> "PeekScanResult | None":
     """Extract lightweight metadata for session listing.
 
     Called per-file during list_active_sessions().
+
+    For subagents (detected via agentId field or /subagents/ path):
+    - session_id is synthesized as "{sessionId}:{agentId}" for uniqueness
+    - parent_session_id is the sessionId from records (which is parent's ID)
+
+    For main sessions:
+    - session_id is the sessionId from records
+    - parent_session_id is None
     """
-    return peek_jsonl_scan(
-        path,
-        user_type="user",
-        assistant_type="assistant",
-        type_key="type",
-        cwd_key="cwd",
-        session_id_key="sessionId",
-        model_path=("message", "model"),
-        timestamp_key="timestamp",
-        is_tool_result=_is_tool_result,
+    import json
+
+    from siftd.peek.types import PeekScanResult
+
+    session_id = path.stem
+    workspace_path: str | None = None
+    model: str | None = None
+    exchange_count = 0
+    started_at: str | None = None
+    last_activity_at: str | None = None
+    agent_id: str | None = None
+    session_id_from_record: str | None = None
+
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+                record_type = record.get("type")
+                ts = record.get("timestamp")
+
+                # Track timestamp bounds
+                if ts:
+                    if started_at is None or ts < started_at:
+                        started_at = ts
+                    if last_activity_at is None or ts > last_activity_at:
+                        last_activity_at = ts
+
+                if record_type == "user":
+                    # Check if it's a tool_result (not a real exchange)
+                    if _is_tool_result(record):
+                        continue
+
+                    exchange_count += 1
+
+                    # Extract metadata from first user record
+                    if workspace_path is None:
+                        workspace_path = record.get("cwd")
+                        session_id_from_record = record.get("sessionId")
+                        agent_id = record.get("agentId")
+
+                elif record_type == "assistant":
+                    # Extract model
+                    msg = record.get("message") or {}
+                    if isinstance(msg, dict):
+                        m = msg.get("model")
+                        if m and isinstance(m, str):
+                            model = m
+
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    if exchange_count == 0:
+        return None
+
+    # Determine if this is a subagent
+    is_subagent = agent_id is not None or "/subagents/" in str(path)
+
+    if is_subagent and agent_id:
+        # Subagent: synthesize unique ID, use sessionId as parent
+        session_id = f"{session_id_from_record or path.stem}:{agent_id}"
+        parent_session_id = session_id_from_record
+    elif session_id_from_record:
+        # Main session: use sessionId from record
+        session_id = session_id_from_record
+        parent_session_id = None
+    else:
+        # Fallback: use filename stem
+        parent_session_id = None
+
+    return PeekScanResult(
+        session_id=session_id,
+        workspace_path=workspace_path,
+        model=model,
+        exchange_count=exchange_count,
+        started_at=started_at,
+        last_activity_at=last_activity_at,
+        parent_session_id=parent_session_id,
     )
 
 

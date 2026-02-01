@@ -374,6 +374,9 @@ def peek_jsonl_scan(
     Scans a JSONL file to extract lightweight session metadata.
     Configurable to handle different schemas (Claude Code, Codex, etc).
 
+    Note: For adapters with subagent/parent relationships (like Claude Code),
+    implement a custom peek_scan that handles the specific detection logic.
+
     Args:
         path: Path to JSONL file.
         user_type: Value of type_key for user records.
