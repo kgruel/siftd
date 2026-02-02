@@ -26,7 +26,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools in
 ./dev docs           # Generate reference docs
 ./dev docs --check   # Verify docs aren't stale
 ./dev check          # Lint + test (CI equivalent, quiet by default)
-./dev review <task>  # Enter subtask worktree and launch review agent
+./dev agent <template> <path>  # Launch agent with prompt template
 ```
 
 Commands are discovered from `scripts/*.sh`. Add a command by creating `scripts/<name>.sh` with `# DESC: description` at the top.

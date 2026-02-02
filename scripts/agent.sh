@@ -1,59 +1,91 @@
 #!/usr/bin/env bash
-# review.sh
-# DESC: Launch review agent in a worktree
-# Usage: ./dev review <path> [options]
+# agent.sh
+# DESC: Launch agent in a worktree with prompt template
+# Usage: ./dev agent <template> <path> [options]
 # Dependencies: git, python3, codex|claude (agent)
 # Idempotent: No (launches external process)
 source "$(dirname "$0")/lib/dev.sh"
 source "$(dirname "$0")/lib/templates.sh"
 
-DEFAULT_FOCUS="1. Does the implementation match the task description?
+PROMPTS_DIR="$DEV_ROOT/scripts/prompts"
+
+# Template-specific default focus
+get_default_focus() {
+    case "$1" in
+        review)
+            echo "1. Does the implementation match the task description?
 2. Are there any architectural violations (check CLAUDE.md)?
 3. Is error handling consistent with existing patterns?
 4. Are tests comprehensive?
 5. Run \`./dev check\` to verify lint and tests pass."
+            ;;
+        implement)
+            echo "Implement the task as described. Follow existing patterns."
+            ;;
+        plan)
+            echo "Design an implementation approach. Consider trade-offs."
+            ;;
+        research)
+            echo "Explore and document. No code changes."
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
 
 usage() {
-    cli_usage <<EOF
-Usage: ./dev review <path> [options]
+    # List available templates
+    local templates=""
+    for f in "$PROMPTS_DIR"/*.md; do
+        [ -f "$f" ] || continue
+        local name=$(basename "$f" .md)
+        templates="$templates $name"
+    done
 
-Launch a review agent in a worktree directory.
+    cli_usage <<EOF
+Usage: ./dev agent <template> <path> [options]
+
+Launch an agent in a worktree with a prompt template.
 
 Arguments:
-  path                 Path to worktree (or . for current directory)
+  template             Prompt template:$templates
+  path                 Path, branch name, or new branch to create
+                       - Directory path: use directly
+                       - Existing branch: resolve to its worktree
+                       - New branch: create branch + worktree from --base
 
 Options:
-  --agent <cmd>        Agent command (default: codex)
-  --prompt <file>      Prompt template (default: scripts/review-prompt.md)
+  --agent <cmd>        Agent command (default: claude)
   --context <file>     Context file (default: auto-detect TASK.md)
-  --focus <text>       Review focus instructions (inline)
-  --focus-file <file>  Review focus instructions (from file)
+  --focus <text>       Instructions (inline)
+  --focus-file <file>  Instructions (from file)
   --base <branch>      Base branch for diff (default: main)
-  --background         Launch agent in background
+  --background         Launch agent in background (tmux)
   --dry-run            Show expanded prompt without launching
   --help               Show this message
 
 Template variables:
   {{branch}}           Current git branch name
+  {{base}}             Base branch name
   {{diff_stat}}        git diff --stat against base
   {{context}}          Contents of context file
-  {{focus}}            Review focus instructions
+  {{focus}}            Instructions
   {{dev_commands}}     Dev harness commands (from ./dev help)
 
 Examples:
-  ./dev review .                          # Review current directory
-  ./dev review ./worktrees/impl-foo       # Review specific worktree
-  ./dev review . --agent claude           # Use claude instead of codex
-  ./dev review . --focus "Check error handling in api.py"
-  ./dev review . --focus-file REVIEW_FOCUS.md
-  ./dev review . --background             # Launch and return
+  ./dev agent review .                      # Review current directory
+  ./dev agent implement impl/foo            # Implement (resolve existing worktree)
+  ./dev agent plan impl/new-feature         # Plan (creates branch + worktree)
+  ./dev agent research . --focus "How does search work?"
+  ./dev agent review . --background         # Launch in tmux background
 EOF
 }
 
 main() {
+    local template=""
     local path=""
-    local agent="codex"
-    local prompt_file="$DEV_ROOT/scripts/review-prompt.md"
+    local agent="claude"
     local context_file=""
     local focus=""
     local focus_file=""
@@ -65,7 +97,6 @@ main() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --agent) cli_require_value "$1" "${2:-}" || exit 1; agent="$2"; shift ;;
-            --prompt) cli_require_value "$1" "${2:-}" || exit 1; prompt_file="$2"; shift ;;
             --context) cli_require_value "$1" "${2:-}" || exit 1; context_file="$2"; shift ;;
             --focus) cli_require_value "$1" "${2:-}" || exit 1; focus="$2"; shift ;;
             --focus-file) cli_require_value "$1" "${2:-}" || exit 1; focus_file="$2"; shift ;;
@@ -74,17 +105,43 @@ main() {
             --dry-run) dry_run=1 ;;
             --help|-h) usage; exit 0 ;;
             -*) cli_unknown_flag "$1"; exit 1 ;;
-            *) path="$1" ;;
+            *)
+                if [ -z "$template" ]; then
+                    template="$1"
+                elif [ -z "$path" ]; then
+                    path="$1"
+                else
+                    log_error "Unexpected argument: $1"
+                    exit 1
+                fi
+                ;;
         esac
         shift
     done
+
+    # Validate template
+    if [ -z "$template" ]; then
+        usage
+        exit 1
+    fi
+
+    local prompt_file="$PROMPTS_DIR/$template.md"
+    if [ ! -f "$prompt_file" ]; then
+        log_error "Unknown template: $template"
+        log_info "Available templates:"
+        for f in "$PROMPTS_DIR"/*.md; do
+            [ -f "$f" ] || continue
+            echo "  $(basename "$f" .md)"
+        done
+        exit 1
+    fi
 
     if [ -z "$path" ]; then
         usage
         exit 1
     fi
 
-    # Resolve path: directory or branch name
+    # Resolve path: directory, branch name, or create new worktree
     if [ -d "$path" ]; then
         path=$(cd "$path" && pwd)
     else
@@ -94,10 +151,22 @@ main() {
         if [ -n "$worktree_path" ] && [ -d "$worktree_path" ]; then
             path="$worktree_path"
         else
-            log_error "Cannot find directory or worktree for '$path'"
-            log_info "Available worktrees:"
-            git worktree list | grep -v "$(pwd)" | sed 's/^/  /'
-            exit 1
+            # Create new branch and worktree
+            local branch_name="$path"
+            local repo_name=$(basename "$(git rev-parse --show-toplevel)")
+            local sanitized=$(echo "$branch_name" | tr '/' '-')
+            local worktree_dir="$(dirname "$(git rev-parse --show-toplevel)")/${repo_name}-${sanitized}"
+
+            log_info "Creating worktree for branch '$branch_name'..."
+
+            # Create branch if it doesn't exist
+            if ! git show-ref --verify --quiet "refs/heads/$branch_name"; then
+                git branch "$branch_name" "$base_branch"
+            fi
+
+            # Create worktree
+            git worktree add "$worktree_dir" "$branch_name"
+            path="$worktree_dir"
         fi
     fi
 
@@ -117,7 +186,7 @@ main() {
 
     # Auto-detect context file if not specified
     if [ -z "$context_file" ]; then
-        for candidate in "$path/TASK.md" "$path/.claude/context.md" "$path/README.md"; do
+        for candidate in "$path/TASK.md" "$path/PLAN.md" "$path/.claude/context.md" "$path/README.md"; do
             if [ -f "$candidate" ]; then
                 context_file="$candidate"
                 break
@@ -130,15 +199,15 @@ main() {
     if [ -n "$context_file" ] && [ -f "$context_file" ]; then
         context=$(cat "$context_file")
     else
-        context="No context file found. Review the code changes directly."
+        context="No context file found."
     fi
 
-    # Resolve focus: --focus > --focus-file > default
+    # Resolve focus: --focus > --focus-file > template default
     if [ -z "$focus" ]; then
         if [ -n "$focus_file" ] && [ -f "$focus_file" ]; then
             focus=$(cat "$focus_file")
         else
-            focus="$DEFAULT_FOCUS"
+            focus=$(get_default_focus "$template")
         fi
     fi
 
@@ -147,15 +216,14 @@ main() {
     if [ -x "$path/dev" ]; then
         dev_commands=$("$path/dev" help 2>/dev/null | grep -A100 "^Commands:" | tail -n +2 | head -20 || echo "")
     fi
-
-    # Read and expand template
-    if [ ! -f "$prompt_file" ]; then
-        log_error "Prompt template not found: $prompt_file"
-        exit 1
+    if [ -z "$dev_commands" ]; then
+        dev_commands="./dev check    # Lint + test"
     fi
 
+    # Read and expand template
     local prompt
     prompt=$(TPL_branch="$branch" \
+             TPL_base="$base_branch" \
              TPL_diff_stat="$diff_stat" \
              TPL_context="$context" \
              TPL_focus="$focus" \
@@ -163,7 +231,8 @@ main() {
              template_inject_env "$prompt_file")
 
     # Output
-    echo -e "${BOLD}Review:${NC} $path"
+    echo -e "${BOLD}Template:${NC} $template"
+    echo -e "${BOLD}Path:${NC} $path"
     echo -e "${BOLD}Branch:${NC} $branch"
     echo -e "${BOLD}Agent:${NC} $agent"
     [ -n "$context_file" ] && echo -e "${BOLD}Context:${NC} $context_file"
@@ -191,9 +260,15 @@ main() {
             log_error "tmux required for --background"
             exit 1
         fi
-        local session_name="review-${branch//\//-}"
+        local session_name="agent-${template}-${branch//\//-}"
+
+        # Write prompt to temp file (avoids quoting issues with tmux)
+        local prompt_file=$(mktemp)
+        printf '%s' "$prompt" > "$prompt_file"
+
         log_info "Launching $agent in tmux session: $session_name"
-        tmux new-session -d -s "$session_name" -c "$path" "$agent '$prompt'"
+        tmux new-session -d -s "$session_name" -c "$path" \
+            "$agent \"\$(cat '$prompt_file')\" ; rm '$prompt_file'"
         echo "Attach with: tmux attach -t $session_name"
         echo "Monitor with: siftd peek -w $(basename "$path")"
     else
