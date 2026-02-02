@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from siftd.adapters.registry import load_all_adapters
+from siftd.git import get_canonical_workspace_path
 from siftd.peek.types import PeekScanResult, SessionInfo
 
 logger = logging.getLogger(__name__)
@@ -182,14 +183,17 @@ def _scan_session_file(file_info: DiscoveredFile) -> SessionInfo | None:
         except (ValueError, TypeError):
             pass
 
-    workspace_name = None
-    if result.workspace_path:
-        workspace_name = Path(result.workspace_path).name
+    # Resolve worktree paths to main repository
+    workspace_path = result.workspace_path
+    if workspace_path:
+        workspace_path = get_canonical_workspace_path(workspace_path)
+
+    workspace_name = Path(workspace_path).name if workspace_path else None
 
     return SessionInfo(
         session_id=result.session_id,
         file_path=file_info.path,
-        workspace_path=result.workspace_path,
+        workspace_path=workspace_path,
         workspace_name=workspace_name,
         model=result.model,
         last_activity=last_activity,
