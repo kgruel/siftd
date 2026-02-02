@@ -43,18 +43,8 @@ def _is_worktree_gitdir(gitdir_path: Path) -> bool:
     return False
 
 
-def resolve_worktree_to_main(path: str | Path) -> Path | None:
-    """If path is inside a git worktree, return the main repository path.
-
-    Git worktrees have a `.git` file (not directory) containing a gitdir
-    reference like: "gitdir: /path/to/main/.git/worktrees/<name>"
-
-    Returns None if:
-    - Path is not inside a git worktree (regular repo or not a repo)
-    - Unable to determine main repository
-    - Path is inside a submodule (gitdir has .git/modules pattern)
-    - The resolved main repository path doesn't exist
-    """
+def _get_worktree_gitdir(path: str | Path) -> Path | None:
+    """Return gitdir path for a worktree, or None if not in a worktree."""
     path = Path(path)
 
     # Find the .git file/directory for this path
@@ -103,6 +93,25 @@ def resolve_worktree_to_main(path: str | Path) -> Path | None:
     if not _is_worktree_gitdir(gitdir_path):
         return None
 
+    return gitdir_path
+
+
+def resolve_worktree_to_main(path: str | Path) -> Path | None:
+    """If path is inside a git worktree, return the main repository path.
+
+    Git worktrees have a `.git` file (not directory) containing a gitdir
+    reference like: "gitdir: /path/to/main/.git/worktrees/<name>"
+
+    Returns None if:
+    - Path is not inside a git worktree (regular repo or not a repo)
+    - Unable to determine main repository
+    - Path is inside a submodule (gitdir has .git/modules pattern)
+    - The resolved main repository path doesn't exist
+    """
+    gitdir_path = _get_worktree_gitdir(path)
+    if gitdir_path is None:
+        return None
+
     # gitdir is like /main/.git/worktrees/<name>
     # Main repo root is the parent of the .git directory
     # Find the .git directory by looking for worktrees in the path
@@ -117,6 +126,34 @@ def resolve_worktree_to_main(path: str | Path) -> Path | None:
                 return None
 
             return main_repo
+
+    return None
+
+
+def get_worktree_branch(path: str | Path) -> str | None:
+    """Return the worktree branch name for the given path, if applicable."""
+    gitdir_path = _get_worktree_gitdir(path)
+    if gitdir_path is None:
+        return None
+
+    head_path = gitdir_path / "HEAD"
+    try:
+        head = head_path.read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    if not head:
+        return None
+
+    head_line = head.splitlines()[0].strip()
+    if not head_line.startswith("ref:"):
+        # Detached HEAD or unexpected format
+        return None
+
+    ref = head_line.split(":", 1)[1].strip()
+    prefix = "refs/heads/"
+    if ref.startswith(prefix):
+        return ref[len(prefix):]
 
     return None
 

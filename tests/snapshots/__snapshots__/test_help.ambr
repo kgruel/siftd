@@ -365,9 +365,10 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[peek]
   '''
-  usage: siftd peek [-h] [-w SUBSTR] [--all] [-n N] [--exchanges N] [--full]
-                    [--chars N] [--tail] [--tail-lines N] [--json] [--main-only]
-                    [--children ID] [--last-response] [--last-prompt]
+  usage: siftd peek [-h] [-w SUBSTR] [--branch SUBSTR] [--all] [-n N]
+                    [--exchanges N] [--full] [--chars N] [--tail]
+                    [--tail-lines N] [--json] [--main-only] [--children ID]
+                    [--last-response] [--last-prompt]
                     [session_id]
   
   positional arguments:
@@ -377,6 +378,7 @@
     -h, --help            show this help message and exit
     -w, --workspace SUBSTR
                           Filter by workspace name substring
+    --branch SUBSTR       Filter by worktree branch substring
     --all                 Include inactive sessions (not just last 2 hours)
     -n, --limit N         Maximum number of sessions to list (default: 10)
     --exchanges N         Detail mode: number of exchanges to show (default: 5)

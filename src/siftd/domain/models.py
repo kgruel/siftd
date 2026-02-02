@@ -74,4 +74,5 @@ class Conversation:
     started_at: str
     prompts: list[Prompt] = field(default_factory=list)
     workspace_path: str | None = None
+    branch: str | None = None
     ended_at: str | None = None

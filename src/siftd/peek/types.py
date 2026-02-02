@@ -50,6 +50,7 @@ class SessionInfo:
     file_path: Path
     workspace_path: str | None = None  # Full cwd path
     workspace_name: str | None = None  # Display name (may be disambiguated)
+    branch: str | None = None  # Worktree branch (if applicable)
     model: str | None = None
     last_activity: float = 0.0  # Epoch seconds (from in-file timestamp or mtime)
     exchange_count: int = 0

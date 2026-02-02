@@ -131,6 +131,12 @@ def parse(source: Source) -> Iterable[Conversation]:
     else:
         external_id = f"{NAME}::{session_id or path.stem}"
 
+    branch = None
+    if session_cwd:
+        from siftd.git import get_worktree_branch
+
+        branch = get_worktree_branch(session_cwd)
+
     # Create conversation (will be populated with prompts)
     conversation = Conversation(
         external_id=external_id,
@@ -138,6 +144,7 @@ def parse(source: Source) -> Iterable[Conversation]:
         started_at=started_at or now_iso(),
         ended_at=ended_at,
         workspace_path=session_cwd,
+        branch=branch,
     )
 
     # Process messages

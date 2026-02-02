@@ -59,6 +59,7 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
     if not read_only:
         _migrate_labels_to_tags(conn)
         _migrate_add_error_column(conn)
+        _migrate_add_branch_column(conn)
         _migrate_add_cascade_deletes(conn)
         ensure_fts_table(conn)
         ensure_pricing_table(conn)
@@ -111,6 +112,15 @@ def _migrate_add_error_column(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in cur.fetchall()}
     if "error" not in columns:
         conn.execute("ALTER TABLE ingested_files ADD COLUMN error TEXT")
+        conn.commit()
+
+
+def _migrate_add_branch_column(conn: sqlite3.Connection) -> None:
+    """Add branch column to conversations if it doesn't exist."""
+    cur = conn.execute("PRAGMA table_info(conversations)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "branch" not in columns:
+        conn.execute("ALTER TABLE conversations ADD COLUMN branch TEXT")
         conn.commit()
 
 
@@ -600,14 +610,15 @@ def insert_conversation(
     harness_id: str,
     workspace_id: str | None,
     started_at: str,
+    branch: str | None = None,
     ended_at: str | None = None,
 ) -> str:
     """Insert conversation, return id (ULID)."""
     ulid = _ulid()
     conn.execute(
-        """INSERT INTO conversations (id, external_id, harness_id, workspace_id, started_at, ended_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (ulid, external_id, harness_id, workspace_id, started_at, ended_at)
+        """INSERT INTO conversations (id, external_id, harness_id, workspace_id, branch, started_at, ended_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (ulid, external_id, harness_id, workspace_id, branch, started_at, ended_at)
     )
     return ulid
 
@@ -802,6 +813,12 @@ def store_conversation(
 
     # Get or create workspace
     workspace_id = None
+    branch = conversation.branch
+    if branch is None and conversation.workspace_path:
+        from siftd.git import get_worktree_branch
+
+        branch = get_worktree_branch(conversation.workspace_path)
+
     if conversation.workspace_path:
         workspace_id = get_or_create_workspace(
             conn, conversation.workspace_path, conversation.started_at
@@ -813,6 +830,7 @@ def store_conversation(
         external_id=conversation.external_id,
         harness_id=harness_id,
         workspace_id=workspace_id,
+        branch=branch,
         started_at=conversation.started_at,
         ended_at=conversation.ended_at,
     )

@@ -1649,7 +1649,10 @@ def cmd_peek(args) -> int:
                 return 1
         else:
             # Default to most recent active session
-            sessions = list_active_sessions(limit=1)
+            sessions = list_active_sessions(
+                limit=1,
+                branch=getattr(args, "branch", None),
+            )
             if not sessions:
                 print("No active sessions found.", file=sys.stderr)
                 return 1
@@ -1727,6 +1730,7 @@ def cmd_peek(args) -> int:
                 "file_path": str(detail.info.file_path),
                 "workspace_path": detail.info.workspace_path,
                 "workspace_name": detail.info.workspace_name,
+                "branch": detail.info.branch,
                 "model": detail.info.model,
                 "started_at": detail.started_at,
                 "exchange_count": detail.info.exchange_count,
@@ -1800,6 +1804,7 @@ def cmd_peek(args) -> int:
     limit = args.limit if args.limit is not None else 10
     sessions = list_active_sessions(
         workspace=args.workspace,
+        branch=getattr(args, "branch", None),
         include_inactive=args.all,
         limit=limit,
     )
@@ -1827,6 +1832,7 @@ def cmd_peek(args) -> int:
                 "file_path": str(s.file_path),
                 "workspace_path": s.workspace_path,
                 "workspace_name": s.workspace_name,
+                "branch": s.branch,
                 "model": s.model,
                 "last_activity": s.last_activity,
                 "exchange_count": s.exchange_count,
@@ -1857,6 +1863,8 @@ def cmd_peek(args) -> int:
 
         sid = s.session_id[:8]
         ws = s.workspace_name or ""
+        if s.branch:
+            ws = f"{ws} [{s.branch}]" if ws else f"[{s.branch}]"
         ago = fmt_ago(now - s.last_activity)
         if s.preview_available:
             exchanges = f"{s.exchange_count} exchanges"
@@ -2323,6 +2331,7 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     )
     p_peek.add_argument("session_id", nargs="?", help="Session ID prefix for detail view")
     p_peek.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace name substring")
+    p_peek.add_argument("--branch", metavar="SUBSTR", help="Filter by worktree branch substring")
     p_peek.add_argument("--all", action="store_true", help="Include inactive sessions (not just last 2 hours)")
     p_peek.add_argument("-n", "--limit", type=int, metavar="N", help="Maximum number of sessions to list (default: 10)")
     p_peek.add_argument("--last", type=int, metavar="N", dest="limit", help=argparse.SUPPRESS)  # deprecated alias for --limit

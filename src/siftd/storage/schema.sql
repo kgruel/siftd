@@ -90,6 +90,7 @@ CREATE TABLE conversations (
     external_id     TEXT NOT NULL,              -- harness's identifier
     harness_id      TEXT NOT NULL REFERENCES harnesses(id) ON DELETE CASCADE,
     workspace_id    TEXT REFERENCES workspaces(id) ON DELETE SET NULL,
+    branch          TEXT,                       -- worktree branch (if applicable)
     started_at      TEXT NOT NULL,              -- ISO timestamp
     ended_at        TEXT,                       -- ISO timestamp, NULL if unknown/abandoned
     UNIQUE (harness_id, external_id)

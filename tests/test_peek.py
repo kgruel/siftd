@@ -503,6 +503,35 @@ class TestListActiveSessions:
         sessions = list_active_sessions(workspace="nonexistent")
         assert len(sessions) == 0
 
+    def test_filters_by_branch(self, session_dir, monkeypatch):
+        """branch filter matches worktree branches by substring."""
+        path1 = session_dir / "session1.jsonl"
+        path2 = session_dir / "session2.jsonl"
+        _write_session(path1, [_make_user_record("one", cwd="/repo/wt-one")])
+        _write_session(path2, [_make_user_record("two", cwd="/repo/wt-two")])
+
+        plugin = _make_fake_plugin("test", [str(session_dir.parent)])
+        monkeypatch.setattr(
+            "siftd.peek.scanner.load_all_adapters",
+            lambda: [plugin],
+        )
+
+        def fake_get_worktree_branch(path):
+            if path and "wt-one" in path:
+                return "feature/one"
+            if path and "wt-two" in path:
+                return "bugfix/two"
+            return None
+
+        monkeypatch.setattr(
+            "siftd.peek.scanner.get_worktree_branch",
+            fake_get_worktree_branch,
+        )
+
+        sessions = list_active_sessions(branch="feature")
+        assert len(sessions) == 1
+        assert sessions[0].branch == "feature/one"
+
     def test_excludes_old_by_default(self, session_dir, monkeypatch):
         """Sessions older than threshold are excluded by default."""
         import os

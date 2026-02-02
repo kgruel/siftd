@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from siftd.adapters.registry import load_all_adapters
-from siftd.git import get_canonical_workspace_path
+from siftd.git import get_canonical_workspace_path, get_worktree_branch
 from siftd.peek.types import PeekScanResult, SessionInfo
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ class DiscoveredFile:
 def list_active_sessions(
     *,
     workspace: str | None = None,
+    branch: str | None = None,
     threshold_seconds: int = 7200,
     include_inactive: bool = False,
     limit: int | None = None,
@@ -35,6 +36,7 @@ def list_active_sessions(
 
     Args:
         workspace: Filter by workspace name substring.
+        branch: Filter by worktree branch substring.
         threshold_seconds: Only include files modified within this many seconds.
             Default is 7200 (2 hours).
         include_inactive: If True, include all sessions regardless of mtime.
@@ -53,6 +55,8 @@ def list_active_sessions(
                 continue
 
             if workspace and not _matches_workspace(info, workspace):
+                continue
+            if branch and not _matches_branch(info, branch):
                 continue
 
             sessions.append(info)
@@ -183,8 +187,11 @@ def _scan_session_file(file_info: DiscoveredFile) -> SessionInfo | None:
         except (ValueError, TypeError):
             pass
 
-    # Resolve worktree paths to main repository
-    workspace_path = result.workspace_path
+    # Resolve worktree paths to main repository (keep raw for branch detection)
+    raw_workspace_path = result.workspace_path
+    branch = get_worktree_branch(raw_workspace_path) if raw_workspace_path else None
+
+    workspace_path = raw_workspace_path
     if workspace_path:
         workspace_path = get_canonical_workspace_path(workspace_path)
 
@@ -195,6 +202,7 @@ def _scan_session_file(file_info: DiscoveredFile) -> SessionInfo | None:
         file_path=file_info.path,
         workspace_path=workspace_path,
         workspace_name=workspace_name,
+        branch=branch,
         model=result.model,
         last_activity=last_activity,
         exchange_count=result.exchange_count,
@@ -212,6 +220,13 @@ def _matches_workspace(info: SessionInfo, substr: str) -> bool:
     if info.workspace_path and substr_lower in info.workspace_path.lower():
         return True
     return False
+
+
+def _matches_branch(info: SessionInfo, substr: str) -> bool:
+    """Check if session matches branch filter (case-insensitive substring)."""
+    if not info.branch:
+        return False
+    return substr.lower() in info.branch.lower()
 
 
 def _disambiguate_workspace_names(sessions: list[SessionInfo]) -> None:
