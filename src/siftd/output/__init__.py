@@ -1,5 +1,14 @@
 """Output formatters for search results."""
 
+from siftd.output.common import (
+    fmt_ago,
+    fmt_model,
+    fmt_timestamp,
+    fmt_tokens,
+    fmt_workspace,
+    print_indented,
+    truncate_text,
+)
 from siftd.output.formatters import (
     ChunkListFormatter,
     ContextFormatter,
@@ -39,7 +48,15 @@ __all__ = [
     "FormatterRegistry",
     "get_formatter",
     "get_registry",
-    # Utilities
+    # Utilities (search-specific)
     "format_refs_annotation",
     "print_refs_content",
+    # Utilities (common formatting)
+    "fmt_tokens",
+    "fmt_workspace",
+    "fmt_ago",
+    "fmt_timestamp",
+    "fmt_model",
+    "truncate_text",
+    "print_indented",
 ]

@@ -365,7 +365,7 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[peek]
   '''
-  usage: siftd peek [-h] [-w SUBSTR] [--all] [--limit N] [-n N] [--full]
+  usage: siftd peek [-h] [-w SUBSTR] [--all] [-n N] [--exchanges N] [--full]
                     [--chars N] [--tail] [--tail-lines N] [--json] [--main-only]
                     [--children ID]
                     [session_id]
@@ -378,9 +378,8 @@
     -w, --workspace SUBSTR
                           Filter by workspace name substring
     --all                 Include inactive sessions (not just last 2 hours)
-    --limit N             Maximum number of sessions to list (default: 10)
-    -n, --last N          List mode: number of sessions (default: 10). Detail
-                          mode: number of exchanges (default: 5)
+    -n, --limit N         Maximum number of sessions to list (default: 10)
+    --exchanges N         Detail mode: number of exchanges to show (default: 5)
     --full                Show full text (no truncation)
     --chars N             Truncate text at N characters (default: 200)
     --tail                Raw JSONL tail (last 20 records)
@@ -391,12 +390,12 @@
   
   examples:
     siftd peek                    # list latest 10 sessions
-    siftd peek --last 5           # list latest 5 sessions
+    siftd peek -n 5               # list latest 5 sessions
     siftd peek --all              # list all sessions (no time limit)
-    siftd peek --all --limit 50   # list all, but only first 50
+    siftd peek --all -n 50        # list all, but only first 50
     siftd peek -w myproject       # filter by workspace name
     siftd peek c520f862           # detail view for session (last 5 exchanges)
-    siftd peek c520 --last 10     # show last 10 exchanges
+    siftd peek c520 --exchanges 10  # show last 10 exchanges
     siftd peek c520 --full        # show full text (no truncation)
     siftd peek c520 --tail        # raw JSONL tail
     siftd peek c520 --tail --json # tail as JSON array
@@ -411,8 +410,9 @@
   '''
   usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                      [-s QUERY] [-t NAME] [-l NAME] [--all-tags NAME]
-                     [--no-tag NAME] [--tool-tag NAME] [-n COUNT] [-v]
-                     [--oldest] [--json] [--stats] [--var KEY=VALUE]
+                     [--no-tag NAME] [--tool-tag NAME] [-n LIMIT] [-v]
+                     [--oldest] [--json] [--stats] [--exchanges N] [--brief]
+                     [--summary] [--full] [--chars N] [--var KEY=VALUE]
                      [conversation_id] [sql_name]
   
   positional arguments:
@@ -442,11 +442,18 @@
     --tool-tag NAME       Filter by tool call tag (e.g. shell:test)
   
   output:
-    -n, --count COUNT     Number of conversations to show (0=all, default: 10)
+    -n, --limit LIMIT     Number of conversations to show (0=all, default: 10)
     -v, --verbose         Full table with all columns
     --oldest              Sort by oldest first (default: newest first)
     --json                Output as JSON array
     --stats               Show summary totals after list
+  
+  detail view:
+    --exchanges N         Number of exchanges to show (default: all)
+    --brief               Brief output (80 char truncation)
+    --summary             Summary only (metadata, no exchanges)
+    --full                Full text (no truncation)
+    --chars N             Truncate text at N characters (default: 200)
   
   sql queries:
     --var KEY=VALUE       Substitute $KEY with VALUE in SQL
@@ -456,14 +463,18 @@
   
   examples:
     siftd query                         # list recent conversations
+    siftd query -n 20                   # list 20 conversations
     siftd query -w myproject            # filter by workspace
-    siftd query -s "error handling"     # FTS5 search
     siftd query -l research:auth        # conversations tagged research:auth
     siftd query -l research: -l useful: # OR — any research: or useful: tag
     siftd query --all-tags important --all-tags reviewed  # AND — must have both
     siftd query -l research: --no-tag archived            # combine OR + NOT
     siftd query --tool-tag shell:test   # conversations with test commands
     siftd query <id>                    # show conversation detail
+    siftd query <id> --summary          # metadata only, no exchanges
+    siftd query <id> --exchanges 5      # last 5 exchanges
+    siftd query <id> --brief            # brief output (80 char truncation)
+    siftd query <id> --full             # full text, no truncation
     siftd query sql                     # list available .sql files
     siftd query sql cost                # run the 'cost' query
     siftd query sql cost --var ws=proj  # run with variable substitution

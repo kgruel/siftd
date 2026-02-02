@@ -359,7 +359,7 @@ class TestQueryDeprecation:
             all_tags=None,
             no_tag=None,
             tool_tag=None,
-            count=10,
+            limit=10,
             oldest=False,
             json=False,
             verbose=False,

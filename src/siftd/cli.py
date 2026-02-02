@@ -588,13 +588,15 @@ def cmd_tags(args) -> int:
             print(f"No conversations found for tag: {tag_name}")
             return 0
 
+        from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace
+
         print(f"Conversations tagged '{tag_name}' (showing {len(conversations)}):")
         for c in conversations:
             cid = c.id[:12] if c.id else ""
-            ws = _fmt_workspace(c.workspace_path)
+            ws = fmt_workspace(c.workspace_path)
             model = c.model or ""
-            started = c.started_at[:16].replace("T", " ") if c.started_at else ""
-            tokens = _fmt_tokens(c.total_tokens)
+            started = fmt_timestamp(c.started_at)
+            tokens = fmt_tokens(c.total_tokens)
             tag_str = f"  [{', '.join(c.tags)}]" if c.tags else ""
             print(f"{cid}  {started}  {ws}  {model}  {c.prompt_count}p/{c.response_count}r  {tokens} tok{tag_str}")
 
@@ -746,24 +748,16 @@ def cmd_tools(args) -> int:
     return 0
 
 
-def _fmt_tokens(n: int) -> str:
-    """Format token count: 1234 -> '1.2k', 12345 -> '12.3k'."""
-    if n >= 1000:
-        return f"{n / 1000:.1f}k"
-    return str(n)
-
-
-def _fmt_workspace(path: str | None) -> str:
-    """Format workspace path for display. Shows (root) for root/empty paths."""
-    if path is None:
-        return ""
-    if path == "/" or path == "":
-        return "(root)"
-    return Path(path).name
-
 def _query_detail(args) -> int:
     """Show conversation detail timeline."""
     from siftd.api import get_conversation
+    from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
+
+    # Validate --exchanges
+    exchanges_n = getattr(args, "exchanges", None)
+    if exchanges_n is not None and exchanges_n < 1:
+        print("Error: --exchanges must be at least 1")
+        return 1
 
     db = Path(args.db) if args.db else None
 
@@ -778,9 +772,18 @@ def _query_detail(args) -> int:
         print(f"Conversation not found: {args.conversation_id}")
         return 1
 
+    # Determine truncation limit
+    chars_limit = 200  # default
+    if getattr(args, "brief", False):
+        chars_limit = 80
+    elif getattr(args, "full", False):
+        chars_limit = 0  # no truncation
+    elif getattr(args, "chars", None) is not None:
+        chars_limit = args.chars
+
     # Header
-    ws_name = Path(detail.workspace_path).name if detail.workspace_path else ""
-    started = detail.started_at[:16].replace("T", " ") if detail.started_at else ""
+    ws_name = fmt_workspace(detail.workspace_path)
+    started = fmt_timestamp(detail.started_at)
     total_tokens = detail.total_input_tokens + detail.total_output_tokens
 
     print(f"Conversation: {detail.id}")
@@ -788,31 +791,39 @@ def _query_detail(args) -> int:
         print(f"Workspace: {ws_name}")
     print(f"Started: {started}")
     print(f"Model: {detail.model or 'unknown'}")
-    print(f"Tokens: {_fmt_tokens(total_tokens)} (input: {_fmt_tokens(detail.total_input_tokens)} / output: {_fmt_tokens(detail.total_output_tokens)})")
+    print(f"Tokens: {fmt_tokens(total_tokens)} (input: {fmt_tokens(detail.total_input_tokens)} / output: {fmt_tokens(detail.total_output_tokens)})")
     if detail.tags:
         print(f"Tags: {', '.join(detail.tags)}")
+
+    # Summary mode: just metadata, no exchanges
+    if getattr(args, "summary", False):
+        print(f"Exchanges: {len(detail.exchanges)}")
+        return 0
+
     print()
 
+    # Determine which exchanges to show
+    exchanges = detail.exchanges
+    if exchanges_n is not None:
+        # Show last N exchanges
+        exchanges = exchanges[-exchanges_n:] if exchanges_n < len(exchanges) else exchanges
+
     # Timeline
-    for ex in detail.exchanges:
-        ts = ex.timestamp[11:16] if ex.timestamp and len(ex.timestamp) >= 16 else ""
+    for ex in exchanges:
+        ts = fmt_timestamp(ex.timestamp, time_only=True)
 
         # Prompt
         if ex.prompt_text:
-            text = ex.prompt_text
-            if len(text) > 200:
-                text = text[:200] + "..."
+            text = truncate_text(ex.prompt_text, chars_limit)
             print(f"[prompt] {ts}")
             print(f"  {text}")
             print()
 
         # Response
         if ex.response_text is not None or ex.tool_calls:
-            print(f"[response] {ts} ({_fmt_tokens(ex.input_tokens)} in / {_fmt_tokens(ex.output_tokens)} out)")
+            print(f"[response] {ts} ({fmt_tokens(ex.input_tokens)} in / {fmt_tokens(ex.output_tokens)} out)")
             if ex.response_text:
-                text = ex.response_text
-                if len(text) > 200:
-                    text = text[:200] + "..."
+                text = truncate_text(ex.response_text, chars_limit)
                 print(f"  {text}")
             for tc in ex.tool_calls:
                 if tc.count > 1:
@@ -909,6 +920,14 @@ def cmd_query(args) -> int:
 
     from siftd.api import list_conversations
 
+    # Deprecation warning for --count (now --limit)
+    # Check if --count was explicitly used (handles --count, --count=N forms)
+    if any(arg.startswith("--count") for arg in sys.argv):
+        print(
+            "Warning: --count is deprecated. Use -n/--limit instead.",
+            file=sys.stderr,
+        )
+
     # Deprecation warning for -s/--search
     if args.search:
         import warnings
@@ -937,7 +956,7 @@ def cmd_query(args) -> int:
             all_tags=getattr(args, "all_tags", None),
             exclude_tags=getattr(args, "no_tag", None),
             tool_tag=getattr(args, "tool_tag", None),
-            limit=args.count,
+            limit=args.limit,
             oldest_first=args.oldest,
         )
     except FileNotFoundError as e:
@@ -1006,15 +1025,17 @@ def cmd_query(args) -> int:
         print(json.dumps(out, indent=2))
         return 0
 
+    from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace
+
     # Verbose mode: full table with all columns
     if args.verbose:
         columns = ["id", "workspace", "model", "started_at", "prompts", "responses", "tokens", "cost", "tags"]
         str_rows = []
         for c in conversations:
             cid = c.id[:12] if c.id else ""
-            ws = _fmt_workspace(c.workspace_path)
+            ws = fmt_workspace(c.workspace_path)
             model = c.model or ""
-            started = c.started_at[:16].replace("T", " ") if c.started_at else ""
+            started = fmt_timestamp(c.started_at)
             prompts = str(c.prompt_count)
             responses = str(c.response_count)
             tokens = str(c.total_tokens)
@@ -1038,10 +1059,10 @@ def cmd_query(args) -> int:
     # Default: short mode — one dense line per conversation with truncated ID
     for c in conversations:
         cid = c.id[:12] if c.id else ""
-        ws = _fmt_workspace(c.workspace_path)
+        ws = fmt_workspace(c.workspace_path)
         model = c.model or ""
-        started = c.started_at[:16].replace("T", " ") if c.started_at else ""
-        tokens = _fmt_tokens(c.total_tokens)
+        started = fmt_timestamp(c.started_at)
+        tokens = fmt_tokens(c.total_tokens)
         tag_str = f"  [{', '.join(c.tags)}]" if c.tags else ""
         print(f"{cid}  {started}  {ws}  {model}  {c.prompt_count}p/{c.response_count}r  {tokens} tok{tag_str}")
 
@@ -1056,7 +1077,7 @@ def cmd_query(args) -> int:
         print(f"Conversations: {total_convs}")
         print(f"Total prompts: {total_prompts}")
         print(f"Total responses: {total_responses}")
-        print(f"Total tokens: {_fmt_tokens(total_tokens)}")
+        print(f"Total tokens: {fmt_tokens(total_tokens)}")
 
     return 0
 
@@ -1547,20 +1568,6 @@ def cmd_doctor(args) -> int:
     return _doctor_run(args)
 
 
-def _fmt_ago(seconds: float) -> str:
-    """Format seconds as a human-readable 'ago' string."""
-    minutes = int(seconds / 60)
-    if minutes < 1:
-        return "just now"
-    if minutes < 60:
-        return f"{minutes}m ago"
-    hours = minutes // 60
-    remaining = minutes % 60
-    if remaining:
-        return f"{hours}h {remaining}m ago"
-    return f"{hours}h ago"
-
-
 def cmd_peek(args) -> int:
     """Inspect live sessions directly from disk."""
     import json as _json
@@ -1572,11 +1579,33 @@ def cmd_peek(args) -> int:
         read_session_detail,
         tail_session,
     )
+    from siftd.output import fmt_ago, fmt_model, fmt_timestamp, fmt_tokens, print_indented, truncate_text
     from siftd.peek import AmbiguousSessionError
 
-    # Validate --last
-    if args.last is not None and args.last < 1:
-        print("Error: --last must be at least 1")
+    # Detect if --last was used (handles --last, --last=N, --last N forms)
+    last_used = any(arg.startswith("--last") for arg in sys.argv)
+
+    # Deprecation warning for --last (now --limit for list mode, --exchanges for detail)
+    if last_used:
+        print(
+            "Warning: --last is deprecated. Use -n/--limit (list mode) or --exchanges (detail mode).",
+            file=sys.stderr,
+        )
+
+    # Validate --limit
+    if args.limit is not None and args.limit < 1:
+        print("Error: --limit must be at least 1")
+        return 1
+
+    # Validate --exchanges
+    exchanges_n = getattr(args, "exchanges", None)
+
+    # During deprecation: in detail mode, map --last to --exchanges
+    if args.session_id and last_used and exchanges_n is None and args.limit is not None:
+        exchanges_n = args.limit
+
+    if exchanges_n is not None and exchanges_n < 1:
+        print("Error: --exchanges must be at least 1")
         return 1
 
     # Determine truncation limit
@@ -1619,8 +1648,8 @@ def cmd_peek(args) -> int:
             return 0
 
         # Detail mode
-        # Default to 5 exchanges if --last not specified
-        last_n = args.last if args.last is not None else 5
+        # Use --exchanges if provided, otherwise default to 5
+        last_n = exchanges_n if exchanges_n is not None else 5
         detail = read_session_detail(path, last_n=last_n)
         if detail is None:
             print(f"Could not read session: {path}")
@@ -1655,9 +1684,7 @@ def cmd_peek(args) -> int:
         # Header
         ws = detail.info.workspace_name or ""
         model = detail.info.model or "unknown"
-        started = ""
-        if detail.started_at:
-            started = detail.started_at[11:16] if len(detail.started_at) >= 16 else detail.started_at
+        started = fmt_timestamp(detail.started_at, time_only=True)
 
         print(detail.info.session_id)
         parts = []
@@ -1674,30 +1701,22 @@ def cmd_peek(args) -> int:
 
         # Exchanges
         for ex in detail.exchanges:
-            ts = ""
-            if ex.timestamp and len(ex.timestamp) >= 16:
-                ts = ex.timestamp[11:16]
+            ts = fmt_timestamp(ex.timestamp, time_only=True)
 
             # Prompt
             if ex.prompt_text is not None:
                 print(f"[{ts}] user")
-                text = ex.prompt_text
-                if chars_limit > 0 and len(text) > chars_limit:
-                    text = text[:chars_limit] + "..."
-                for line in text.splitlines():
-                    print(f"  {line}")
+                text = truncate_text(ex.prompt_text, chars_limit)
+                print_indented(text)
                 print()
 
             # Response
             if ex.response_text is not None or ex.tool_calls:
-                token_info = f"{_fmt_tokens(ex.input_tokens)} in / {_fmt_tokens(ex.output_tokens)} out"
+                token_info = f"{fmt_tokens(ex.input_tokens)} in / {fmt_tokens(ex.output_tokens)} out"
                 print(f"[{ts}] assistant ({token_info})")
                 if ex.response_text:
-                    text = ex.response_text
-                    if chars_limit > 0 and len(text) > chars_limit:
-                        text = text[:chars_limit] + "..."
-                    for line in text.splitlines():
-                        print(f"  {line}")
+                    text = truncate_text(ex.response_text, chars_limit)
+                    print_indented(text)
                 if ex.tool_calls:
                     tool_parts = []
                     for name, count in ex.tool_calls:
@@ -1711,14 +1730,8 @@ def cmd_peek(args) -> int:
         return 0
 
     # List mode
-    # Determine limit: --limit takes precedence, then --last, then default 10
-    limit = getattr(args, "limit", None)
-    if limit is None and args.last is not None:
-        # --last N in list mode acts as --limit N
-        limit = args.last
-    if limit is None:
-        # Default to 10 sessions (like siftd query -n 10)
-        limit = 10
+    # Use --limit if provided, otherwise default to 10
+    limit = args.limit if args.limit is not None else 10
     sessions = list_active_sessions(
         workspace=args.workspace,
         include_inactive=args.all,
@@ -1778,18 +1791,12 @@ def cmd_peek(args) -> int:
 
         sid = s.session_id[:8]
         ws = s.workspace_name or ""
-        ago = _fmt_ago(now - s.last_activity)
+        ago = fmt_ago(now - s.last_activity)
         if s.preview_available:
             exchanges = f"{s.exchange_count} exchanges"
         else:
             exchanges = "(preview unavailable)"
-        model = s.model or ""
-        # Shorten model name: strip date suffix if present
-        if model and "-" in model:
-            # e.g. "claude-opus-4-5-20251101" -> "claude-opus-4-5"
-            parts = model.rsplit("-", 1)
-            if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 8:
-                model = parts[0]
+        model = fmt_model(s.model)
 
         # Add child count suffix if this session has children in results
         child_count = len(children_by_parent.get(s.session_id, []))
@@ -2050,14 +2057,18 @@ For semantic content search, use: siftd search <query>
 
 examples:
   siftd query                         # list recent conversations
+  siftd query -n 20                   # list 20 conversations
   siftd query -w myproject            # filter by workspace
-  siftd query -s "error handling"     # FTS5 search
   siftd query -l research:auth        # conversations tagged research:auth
   siftd query -l research: -l useful: # OR — any research: or useful: tag
   siftd query --all-tags important --all-tags reviewed  # AND — must have both
   siftd query -l research: --no-tag archived            # combine OR + NOT
   siftd query --tool-tag shell:test   # conversations with test commands
   siftd query <id>                    # show conversation detail
+  siftd query <id> --summary          # metadata only, no exchanges
+  siftd query <id> --exchanges 5      # last 5 exchanges
+  siftd query <id> --brief            # brief output (80 char truncation)
+  siftd query <id> --full             # full text, no truncation
   siftd query sql                     # list available .sql files
   siftd query sql cost                # run the 'cost' query
   siftd query sql cost --var ws=proj  # run with variable substitution""",
@@ -2085,11 +2096,20 @@ examples:
 
     # Output options
     output_group = p_query.add_argument_group("output")
-    output_group.add_argument("-n", "--count", type=int, default=10, help="Number of conversations to show (0=all, default: 10)")
+    output_group.add_argument("-n", "--limit", type=int, default=10, help="Number of conversations to show (0=all, default: 10)")
+    output_group.add_argument("--count", type=int, dest="limit", help=argparse.SUPPRESS)  # deprecated alias
     output_group.add_argument("-v", "--verbose", action="store_true", help="Full table with all columns")
     output_group.add_argument("--oldest", action="store_true", help="Sort by oldest first (default: newest first)")
     output_group.add_argument("--json", action="store_true", help="Output as JSON array")
     output_group.add_argument("--stats", action="store_true", help="Show summary totals after list")
+
+    # Detail view options (when conversation_id is provided)
+    detail_group = p_query.add_argument_group("detail view")
+    detail_group.add_argument("--exchanges", type=int, metavar="N", help="Number of exchanges to show (default: all)")
+    detail_group.add_argument("--brief", action="store_true", help="Brief output (80 char truncation)")
+    detail_group.add_argument("--summary", action="store_true", help="Summary only (metadata, no exchanges)")
+    detail_group.add_argument("--full", action="store_true", help="Full text (no truncation)")
+    detail_group.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: 200)")
 
     # SQL query options
     sql_group = p_query.add_argument_group("sql queries")
@@ -2218,12 +2238,12 @@ exit codes:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   siftd peek                    # list latest 10 sessions
-  siftd peek --last 5           # list latest 5 sessions
+  siftd peek -n 5               # list latest 5 sessions
   siftd peek --all              # list all sessions (no time limit)
-  siftd peek --all --limit 50   # list all, but only first 50
+  siftd peek --all -n 50        # list all, but only first 50
   siftd peek -w myproject       # filter by workspace name
   siftd peek c520f862           # detail view for session (last 5 exchanges)
-  siftd peek c520 --last 10     # show last 10 exchanges
+  siftd peek c520 --exchanges 10  # show last 10 exchanges
   siftd peek c520 --full        # show full text (no truncation)
   siftd peek c520 --tail        # raw JSONL tail
   siftd peek c520 --tail --json # tail as JSON array
@@ -2235,8 +2255,9 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_peek.add_argument("session_id", nargs="?", help="Session ID prefix for detail view")
     p_peek.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace name substring")
     p_peek.add_argument("--all", action="store_true", help="Include inactive sessions (not just last 2 hours)")
-    p_peek.add_argument("--limit", type=int, metavar="N", help="Maximum number of sessions to list (default: 10)")
-    p_peek.add_argument("-n", "--last", type=int, metavar="N", help="List mode: number of sessions (default: 10). Detail mode: number of exchanges (default: 5)")
+    p_peek.add_argument("-n", "--limit", type=int, metavar="N", help="Maximum number of sessions to list (default: 10)")
+    p_peek.add_argument("--last", type=int, metavar="N", dest="limit", help=argparse.SUPPRESS)  # deprecated alias for --limit
+    p_peek.add_argument("--exchanges", type=int, metavar="N", help="Detail mode: number of exchanges to show (default: 5)")
     p_peek.add_argument("--full", action="store_true", help="Show full text (no truncation)")
     p_peek.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: 200)")
     p_peek.add_argument("--tail", action="store_true", help="Raw JSONL tail (last 20 records)")
