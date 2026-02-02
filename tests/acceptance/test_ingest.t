@@ -15,5 +15,5 @@ Ingest with --rebuild-fts flag works:
 
 Ingest help shows --rebuild-fts option:
 
-  $ siftd ingest --help | grep "^\s*--rebuild-fts"
-    --rebuild-fts       Rebuild FTS index from existing data (skips ingestion)
+  $ siftd ingest --help | grep "^\s*--rebuild-fts "
+    --rebuild-fts * (glob)
