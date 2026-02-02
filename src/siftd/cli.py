@@ -1583,7 +1583,11 @@ def cmd_peek(args) -> int:
     from siftd.peek import AmbiguousSessionError
 
     # Detect if --last was used (handles --last, --last=N, --last N forms)
-    last_used = any(arg.startswith("--last") for arg in sys.argv)
+    # Exclude --last-response and --last-prompt from this detection
+    last_used = any(
+        arg.startswith("--last") and not arg.startswith("--last-response") and not arg.startswith("--last-prompt")
+        for arg in sys.argv
+    )
 
     # Deprecation warning for --last (now --limit for list mode, --exchanges for detail)
     if last_used:
@@ -1591,6 +1595,22 @@ def cmd_peek(args) -> int:
             "Warning: --last is deprecated. Use -n/--limit (list mode) or --exchanges (detail mode).",
             file=sys.stderr,
         )
+
+    # Extract --last-response and --last-prompt flags
+    last_response = getattr(args, "last_response", False)
+    last_prompt = getattr(args, "last_prompt", False)
+
+    # Validate mutual exclusivity
+    if last_response and last_prompt:
+        print("Error: --last-response and --last-prompt are mutually exclusive")
+        return 1
+
+    # --last-response/--last-prompt are mutually exclusive with formatting flags
+    if (last_response or last_prompt) and (args.json or getattr(args, "tail", False)):
+        conflicting = "--json" if args.json else "--tail"
+        flag = "--last-response" if last_response else "--last-prompt"
+        print(f"Error: {flag} is mutually exclusive with {conflicting}")
+        return 1
 
     # Validate --limit
     if args.limit is not None and args.limit < 1:
@@ -1614,6 +1634,52 @@ def cmd_peek(args) -> int:
         chars_limit = 0  # No truncation
     elif getattr(args, "chars", None) is not None:
         chars_limit = args.chars
+
+    # --last-response / --last-prompt mode: extract single text, output raw
+    if last_response or last_prompt:
+        # Resolve session: use provided ID or default to most recent active
+        if args.session_id:
+            try:
+                path = find_session_file(args.session_id)
+            except AmbiguousSessionError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 1
+            if path is None:
+                print(f"Session not found: {args.session_id}", file=sys.stderr)
+                return 1
+        else:
+            # Default to most recent active session
+            sessions = list_active_sessions(limit=1)
+            if not sessions:
+                print("No active sessions found.", file=sys.stderr)
+                return 1
+            path = sessions[0].file_path
+
+        # Read just the last exchange
+        detail = read_session_detail(path, last_n=1)
+        if detail is None:
+            print(f"Could not read session: {path}", file=sys.stderr)
+            return 1
+
+        if not detail.exchanges:
+            print("No exchanges found in session.", file=sys.stderr)
+            return 1
+
+        last_exchange = detail.exchanges[-1]
+        if last_response:
+            text = last_exchange.response_text
+            if not text:
+                print("No response text found in last exchange.", file=sys.stderr)
+                return 1
+        else:  # last_prompt
+            text = last_exchange.prompt_text
+            if not text:
+                print("No prompt text found in last exchange.", file=sys.stderr)
+                return 1
+
+        # Output raw text (no formatting, suitable for piping)
+        print(text)
+        return 0
 
     # Detail mode: session ID provided
     if args.session_id:
@@ -2249,6 +2315,9 @@ exit codes:
   siftd peek c520 --tail --json # tail as JSON array
   siftd peek --main-only        # exclude subagent sessions
   siftd peek --children abc123  # show children of parent session
+  siftd peek --last-response    # output last assistant response (raw text)
+  siftd peek --last-prompt      # output last user prompt (raw text)
+  siftd peek c520 --last-response  # last response from specific session
 
 NOTE: Session content may contain sensitive information (API keys, credentials, etc.).""",
     )
@@ -2265,6 +2334,8 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_peek.add_argument("--json", action="store_true", help="Output as structured JSON")
     p_peek.add_argument("--main-only", action="store_true", help="Only show main sessions (exclude subagents)")
     p_peek.add_argument("--children", metavar="ID", help="Show only children of the specified parent session")
+    p_peek.add_argument("--last-response", action="store_true", help="Output only the last assistant response (raw text, no formatting)")
+    p_peek.add_argument("--last-prompt", action="store_true", help="Output only the last user prompt (raw text, no formatting)")
     p_peek.set_defaults(func=cmd_peek)
 
     # export

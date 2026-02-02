@@ -367,7 +367,7 @@
   '''
   usage: siftd peek [-h] [-w SUBSTR] [--all] [-n N] [--exchanges N] [--full]
                     [--chars N] [--tail] [--tail-lines N] [--json] [--main-only]
-                    [--children ID]
+                    [--children ID] [--last-response] [--last-prompt]
                     [session_id]
   
   positional arguments:
@@ -387,6 +387,10 @@
     --json                Output as structured JSON
     --main-only           Only show main sessions (exclude subagents)
     --children ID         Show only children of the specified parent session
+    --last-response       Output only the last assistant response (raw text, no
+                          formatting)
+    --last-prompt         Output only the last user prompt (raw text, no
+                          formatting)
   
   examples:
     siftd peek                    # list latest 10 sessions
@@ -401,6 +405,9 @@
     siftd peek c520 --tail --json # tail as JSON array
     siftd peek --main-only        # exclude subagent sessions
     siftd peek --children abc123  # show children of parent session
+    siftd peek --last-response    # output last assistant response (raw text)
+    siftd peek --last-prompt      # output last user prompt (raw text)
+    siftd peek c520 --last-response  # last response from specific session
   
   NOTE: Session content may contain sensitive information (API keys, credentials, etc.).
   
