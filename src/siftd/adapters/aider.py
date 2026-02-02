@@ -76,11 +76,20 @@ def can_handle(source: Source) -> bool:
     if source.kind != "file":
         return False
     path = Path(source.location)
+    # Aider chat history files have a specific name pattern
     if path.name == ".aider.chat.history.md":
         return True
-    # Analytics JSONL under ~/.aider
-    if path.name == "analytics.jsonl" and "aider" in str(path).lower():
-        return True
+    # Analytics JSONL must be under aider's default locations or have "aider" in path
+    if path.name == "analytics.jsonl":
+        path_str = str(path).lower()
+        # Check actual location
+        for loc in DEFAULT_LOCATIONS:
+            loc_expanded = str(Path(loc).expanduser())
+            if loc_expanded in path_str:
+                return True
+        # Also accept if "aider" appears in the path (for tests)
+        if "aider" in path_str:
+            return True
     return False
 
 

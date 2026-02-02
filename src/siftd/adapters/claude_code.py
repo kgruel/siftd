@@ -74,7 +74,17 @@ def can_handle(source: Source) -> bool:
     if source.kind != "file":
         return False
     path = Path(source.location)
-    return path.suffix == ".jsonl"
+    if path.suffix != ".jsonl":
+        return False
+    path_str = str(path)
+    # Reject files that are clearly under other adapters' locations
+    # This prevents Claude Code from claiming Codex CLI files
+    other_adapter_markers = [".codex/sessions", ".codex\\sessions"]
+    for marker in other_adapter_markers:
+        if marker in path_str:
+            return False
+    # Accept .jsonl files that aren't under other adapters
+    return True
 
 
 def parse(source: Source) -> Iterable[Conversation]:

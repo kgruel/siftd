@@ -175,6 +175,13 @@ def find_session_file(session_id_prefix: str) -> Path | None:
             matches.append((file_info.path, scan_result))
             continue
 
+        # Fast path: skip files where prefix can't appear in path
+        # This handles subagent files where session ID is in parent directory
+        # (e.g., .../a344e65f-0fe4-4be0-a472-06cf15cbef21/subagents/...)
+        path_str = str(file_info.path).lower()
+        if prefix_lower not in path_str:
+            continue
+
         # Then try scanning for the real session_id
         try:
             if peek_scan:

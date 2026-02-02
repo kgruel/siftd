@@ -67,8 +67,19 @@ def can_handle(source: Source) -> bool:
     if source.kind != "file":
         return False
     path = Path(source.location)
-    # Gemini session files are JSON in a chats/ subdirectory
-    return path.suffix == ".json" and path.parent.name == "chats"
+    if path.suffix != ".json":
+        return False
+    # Check if file is under Gemini CLI's tmp directory or in a chats/ subdirectory
+    path_str = str(path)
+    # Check actual location
+    for loc in DEFAULT_LOCATIONS:
+        loc_expanded = str(Path(loc).expanduser())
+        if loc_expanded in path_str:
+            return True
+    # Also accept if in a chats/ directory (for tests/mock paths)
+    if path.parent.name == "chats":
+        return True
+    return False
 
 
 def parse(source: Source) -> Iterable[Conversation]:

@@ -65,8 +65,20 @@ def can_handle(source: Source) -> bool:
     if source.kind != "file":
         return False
     path = Path(source.location)
-    # Must be a .jsonl file under a codex sessions directory
-    return path.suffix == ".jsonl" and "sessions" in path.parts
+    if path.suffix != ".jsonl":
+        return False
+    # Check if file is under Codex CLI's sessions directory
+    # Accept paths like ~/.codex/sessions/... or any path with "sessions" component
+    path_str = str(path)
+    # Check actual location
+    for loc in DEFAULT_LOCATIONS:
+        loc_expanded = str(Path(loc).expanduser())
+        if loc_expanded in path_str:
+            return True
+    # Also accept if "sessions" is a path component (for tests/mock paths)
+    if "sessions" in path.parts:
+        return True
+    return False
 
 
 def parse(source: Source) -> Iterable[Conversation]:
