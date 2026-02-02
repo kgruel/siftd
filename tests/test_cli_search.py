@@ -174,11 +174,12 @@ class TestSearchSearch:
         assert "Usage" in captured.out
 
     def test_missing_embed_db_shows_hint(self, populated_db, tmp_path, capsys):
-        """Missing embeddings database shows helpful message."""
+        """Missing embeddings database shows helpful message when --semantic used."""
         args = make_args(
             query=["test"],
             db=str(populated_db["db_path"]),
             embed_db=str(tmp_path / "nonexistent_embed.db"),
+            semantic=True,  # Explicitly request semantic mode to trigger error
         )
 
         result = cmd_search(args)
