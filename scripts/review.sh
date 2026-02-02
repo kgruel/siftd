@@ -84,11 +84,22 @@ main() {
         exit 1
     fi
 
-    # Resolve path
-    path=$(cd "$path" 2>/dev/null && pwd) || {
-        log_error "Cannot access path '$path'"
-        exit 1
-    }
+    # Resolve path: directory or branch name
+    if [ -d "$path" ]; then
+        path=$(cd "$path" && pwd)
+    else
+        # Try to find worktree by branch name
+        local worktree_path
+        worktree_path=$(git worktree list | grep -E "\[$path\]$" | awk '{print $1}' || true)
+        if [ -n "$worktree_path" ] && [ -d "$worktree_path" ]; then
+            path="$worktree_path"
+        else
+            log_error "Cannot find directory or worktree for '$path'"
+            log_info "Available worktrees:"
+            git worktree list | grep -v "$(pwd)" | sed 's/^/  /'
+            exit 1
+        fi
+    fi
 
     # Verify it's a git repo
     if ! git -C "$path" rev-parse --git-dir >/dev/null 2>&1; then
@@ -176,8 +187,14 @@ main() {
 
     # Launch agent
     if [ $background -eq 1 ]; then
-        log_info "Launching $agent in background..."
-        (cd "$path" && nohup $agent "$prompt" > .review.log 2>&1 &)
+        if ! command -v tmux &>/dev/null; then
+            log_error "tmux required for --background"
+            exit 1
+        fi
+        local session_name="review-${branch//\//-}"
+        log_info "Launching $agent in tmux session: $session_name"
+        tmux new-session -d -s "$session_name" -c "$path" "$agent '$prompt'"
+        echo "Attach with: tmux attach -t $session_name"
         echo "Monitor with: siftd peek -w $(basename "$path")"
     else
         log_info "Launching $agent..."
