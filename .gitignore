@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .coverage
 .subtask/
+.agents/
 bench/runs/
 .pytest_cache/
 .ruff_cache/

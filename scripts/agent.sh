@@ -8,6 +8,49 @@ source "$(dirname "$0")/lib/dev.sh"
 source "$(dirname "$0")/lib/templates.sh"
 
 PROMPTS_DIR="$DEV_ROOT/scripts/prompts"
+AGENTS_DIR="$DEV_ROOT/.agents"
+
+# Write agent metadata to .agents/<branch>/
+write_agent_metadata() {
+    local branch="$1"
+    local worktree_path="$2"
+    local sanitized=$(echo "$branch" | tr '/' '-')
+    local agent_dir="$AGENTS_DIR/$sanitized"
+
+    mkdir -p "$agent_dir"
+    echo "$worktree_path" > "$agent_dir/worktree"
+    date -u +"%Y-%m-%dT%H:%M:%SZ" > "$agent_dir/started"
+}
+
+# Write session ID after discovery
+write_session_id() {
+    local branch="$1"
+    local session_id="$2"
+    local sanitized=$(echo "$branch" | tr '/' '-')
+    local agent_dir="$AGENTS_DIR/$sanitized"
+
+    mkdir -p "$agent_dir"
+    echo "$session_id" > "$agent_dir/session"
+}
+
+# Discover session ID for a workspace (most recent matching agent)
+discover_session_id() {
+    local workspace="$1"
+    local agent="$2"
+    # Map agent command to model pattern
+    local pattern=""
+    case "$agent" in
+        codex) pattern="codex" ;;
+        claude) pattern="claude" ;;
+        *) pattern="" ;;
+    esac
+    # Use siftd to find the most recent session in this workspace
+    if [ -n "$pattern" ]; then
+        .venv/bin/siftd peek -w "$workspace" --limit 10 2>/dev/null | grep -i "$pattern" | head -1 | awk '{print $1}'
+    else
+        .venv/bin/siftd peek -w "$workspace" --limit 1 2>/dev/null | awk 'NR==1 {print $1}'
+    fi
+}
 
 # Template-specific default focus
 get_default_focus() {
@@ -180,6 +223,9 @@ main() {
     local branch
     branch=$(git -C "$path" branch --show-current 2>/dev/null || echo "detached")
 
+    # Write agent metadata (worktree path + timestamp)
+    write_agent_metadata "$branch" "$path"
+
     # Get diff stat
     local diff_stat
     diff_stat=$(git -C "$path" diff --stat "$base_branch" 2>/dev/null || echo "No changes from $base_branch")
@@ -269,8 +315,20 @@ main() {
         log_info "Launching $agent in tmux session: $session_name"
         tmux new-session -d -s "$session_name" -c "$path" \
             "$agent \"\$(cat '$prompt_file')\" ; rm '$prompt_file'"
+
+        # Wait briefly for session to start, then discover and record session ID
+        local workspace=$(basename "$path")
+        (
+            sleep 2
+            local session_id=$(discover_session_id "$workspace" "$agent")
+            if [ -n "$session_id" ]; then
+                write_session_id "$branch" "$session_id"
+            fi
+        ) &
+
         echo "Attach with: tmux attach -t $session_name"
-        echo "Monitor with: siftd peek -w $(basename "$path")"
+        echo "Monitor with: siftd peek -w $workspace"
+        echo "Session will be recorded to: .agents/${branch//\//-}/session"
     else
         log_info "Launching $agent..."
         (cd "$path" && exec $agent "$prompt")
