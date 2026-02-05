@@ -151,7 +151,10 @@ def list_tags(conn: sqlite3.Connection) -> list[dict]:
             (SELECT COUNT(*) FROM conversation_tags ct WHERE ct.tag_id = t.id) as conversation_count,
             (SELECT COUNT(*) FROM workspace_tags wt WHERE wt.tag_id = t.id) as workspace_count,
             (SELECT COUNT(*) FROM tool_call_tags tt WHERE tt.tag_id = t.id) as tool_call_count,
-            (SELECT COUNT(*) FROM prompt_tags pt WHERE pt.tag_id = t.id) as prompt_count
+            CASE WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags')
+                THEN (SELECT COUNT(*) FROM prompt_tags pt WHERE pt.tag_id = t.id)
+                ELSE 0
+            END as prompt_count
         FROM tags t
         ORDER BY t.name
     """)

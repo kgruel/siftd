@@ -360,8 +360,15 @@ def cmd_tag(args) -> int:
     """Apply or remove a tag on a conversation, workspace, or tool_call."""
     db = Path(args.db) if args.db else db_path()
 
-    # Handle --session mode (queue pending tags)
+    # Warn about silently ignored flag combinations
     session_id = getattr(args, "session", None)
+    exchange_index = getattr(args, "exchange", None)
+    if exchange_index is not None and not session_id:
+        print("Note: --exchange ignored without --session", file=sys.stderr)
+    if args.last is not None and session_id:
+        print("Note: --last ignored with --session", file=sys.stderr)
+
+    # Handle --session mode (queue pending tags)
     if session_id:
         return _tag_session(args, db, session_id)
 
@@ -542,6 +549,7 @@ def cmd_tags(args) -> int:
             tag_info.conversation_count
             + tag_info.workspace_count
             + tag_info.tool_call_count
+            + tag_info.prompt_count
         )
 
         if total_associations > 0 and not args.force:
@@ -552,6 +560,8 @@ def cmd_tags(args) -> int:
                 parts.append(f"{tag_info.workspace_count} workspaces")
             if tag_info.tool_call_count:
                 parts.append(f"{tag_info.tool_call_count} tool_calls")
+            if tag_info.prompt_count:
+                parts.append(f"{tag_info.prompt_count} prompts")
             print(f"Tag '{tag_name}' is applied to {', '.join(parts)}. Use --force to delete.")
             conn.close()
             return 1
@@ -564,6 +574,8 @@ def cmd_tags(args) -> int:
             parts.append(f"{tag_info.workspace_count} workspaces")
         if tag_info.tool_call_count:
             parts.append(f"{tag_info.tool_call_count} tool_calls")
+        if tag_info.prompt_count:
+            parts.append(f"{tag_info.prompt_count} prompts")
         if parts:
             print(f"Deleted tag '{tag_name}' (was applied to {', '.join(parts)})")
         else:
@@ -1086,6 +1098,10 @@ def cmd_backfill(args) -> int:
     """Backfill derived data from existing records."""
     db = Path(args.db) if args.db else db_path()
 
+    # Warn about --dry-run without --filter-binary
+    if getattr(args, "dry_run", False) and not getattr(args, "filter_binary", False):
+        print("Note: --dry-run ignored without --filter-binary", file=sys.stderr)
+
     if not db.exists():
         print(f"Database not found: {db}")
         print("Run 'siftd ingest' to create it.")
@@ -1536,6 +1552,10 @@ def cmd_doctor(args) -> int:
     subcommand_args = args.subcommand or []
     action = subcommand_args[0] if subcommand_args else None
 
+    # Warn about --pending-tags without fix subcommand
+    if getattr(args, "pending_tags", False) and action != "fix":
+        print("Note: --pending-tags ignored without 'fix' subcommand", file=sys.stderr)
+
     # New subcommands: list, run, fix
     if action == "list":
         return _doctor_list(args)
@@ -1800,6 +1820,17 @@ def cmd_peek(args) -> int:
         return 0
 
     # List mode
+    # Warn about detail-only flags that are silently ignored in list mode
+    ignored = []
+    if getattr(args, "tail", False):
+        ignored.append("--tail")
+    if getattr(args, "tail_lines", 20) != 20:
+        ignored.append("--tail-lines")
+    if exchanges_n is not None:
+        ignored.append("--exchanges")
+    if ignored:
+        print(f"Note: {', '.join(ignored)} ignored in list mode (requires session ID)", file=sys.stderr)
+
     # Use --limit if provided, otherwise default to 10
     limit = args.limit if args.limit is not None else 10
     sessions = list_active_sessions(

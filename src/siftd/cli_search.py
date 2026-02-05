@@ -326,40 +326,43 @@ def cmd_search(args) -> int:
     try:
         formatter = select_formatter(args)
     except ValueError as e:
+        main_conn.close()
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    # Warn if --by-time is used with a mode that ignores it
-    if args.by_time:
-        from siftd.output.formatters import (
-            ConversationFormatter,
-            JsonFormatter,
-            ThreadFormatter,
-        )
-        if isinstance(formatter, (ConversationFormatter, ThreadFormatter, JsonFormatter)):
-            mode = "conversation" if isinstance(formatter, ConversationFormatter) else \
-                   "thread" if isinstance(formatter, ThreadFormatter) else "json"
-            print(f"Note: --by-time has no effect in {mode} mode", file=sys.stderr)
+    try:
+        # Warn if --by-time is used with a mode that ignores it
+        if args.by_time:
+            from siftd.output.formatters import (
+                ConversationFormatter,
+                JsonFormatter,
+                ThreadFormatter,
+            )
+            if isinstance(formatter, (ConversationFormatter, ThreadFormatter, JsonFormatter)):
+                mode = "conversation" if isinstance(formatter, ConversationFormatter) else \
+                       "thread" if isinstance(formatter, ThreadFormatter) else "json"
+                print(f"Note: --by-time has no effect in {mode} mode", file=sys.stderr)
 
-    ctx = FormatterContext(query=query, results=results, conn=main_conn, args=args)
-    formatter.format(ctx)
+        ctx = FormatterContext(query=query, results=results, conn=main_conn, args=args)
+        formatter.format(ctx)
 
-    # --refs content dump (post-processor, not part of formatter)
-    if args.refs and not args.conversations:
-        all_refs = []
-        for r in results:
-            all_refs.extend(r.get("file_refs") or [])
-        filter_basenames = None
-        if isinstance(args.refs, str):
-            filter_basenames = [b.strip() for b in args.refs.split(",") if b.strip()]
-        print_refs_content(all_refs, filter_basenames)
+        # --refs content dump (post-processor, not part of formatter)
+        if args.refs and not args.conversations:
+            all_refs = []
+            for r in results:
+                all_refs.extend(r.get("file_refs") or [])
+            filter_basenames = None
+            if isinstance(args.refs, str):
+                filter_basenames = [b.strip() for b in args.refs.split(",") if b.strip()]
+            print_refs_content(all_refs, filter_basenames)
 
-    # Tagging hint (skip for JSON output)
-    if not args.json and results:
-        first_id = results[0]["conversation_id"][:12]
-        print(f"Tip: Tag useful results for future retrieval: siftd tag {first_id} research:<topic>", file=sys.stderr)
+        # Tagging hint (skip for JSON output)
+        if not args.json and results:
+            first_id = results[0]["conversation_id"][:12]
+            print(f"Tip: Tag useful results for future retrieval: siftd tag {first_id} research:<topic>", file=sys.stderr)
+    finally:
+        main_conn.close()
 
-    main_conn.close()
     return 0
 
 

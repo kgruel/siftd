@@ -51,6 +51,7 @@ class TagInfo:
     conversation_count: int
     workspace_count: int
     tool_call_count: int
+    prompt_count: int
 
 
 def list_tags(
@@ -82,6 +83,7 @@ def list_tags(
                 conversation_count=r["conversation_count"],
                 workspace_count=r["workspace_count"],
                 tool_call_count=r["tool_call_count"],
+                prompt_count=r["prompt_count"],
             )
             for r in rows
         ]

@@ -51,10 +51,10 @@ class ScoreBreakdown:
         return {
             "embedding_sim": round(self.embedding_sim, 4),
             "recency_boost": round(self.recency_boost, 4),
-            "pre_mmr_score": round(self.pre_mmr_score, 4) if self.pre_mmr_score else None,
+            "pre_mmr_score": round(self.pre_mmr_score, 4) if self.pre_mmr_score is not None else None,
             "mmr_penalty": round(self.mmr_penalty, 4) if self.mmr_penalty is not None else None,
             "mmr_rank": self.mmr_rank,
-            "final_score": round(self.final_score, 4) if self.final_score else None,
+            "final_score": round(self.final_score, 4) if self.final_score is not None else None,
             "fts5_matched": self.fts5_matched,
             "fts5_mode": self.fts5_mode,
         }

@@ -387,6 +387,7 @@ def _ensure_git_remote_index(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_workspaces_git_remote ON workspaces(git_remote)"
     )
+    conn.commit()
 
 
 # Alias for backwards compatibility
