@@ -386,7 +386,7 @@ class TestFTS5ErrorHandling:
     """Tests for FTS5 query syntax error handling."""
 
     def test_query_no_fts_table_gives_helpful_error(self, test_db, capsys):
-        """siftd query -s on DB without FTS table gives 'run ingest' hint."""
+        """siftd export -s on DB without FTS table gives 'run ingest' hint."""
         # Drop the FTS table from the existing test database
         import sqlite3
         conn = sqlite3.connect(test_db)
@@ -394,7 +394,7 @@ class TestFTS5ErrorHandling:
         conn.commit()
         conn.close()
 
-        rc = main(["--db", str(test_db), "query", "-s", "test"])
+        rc = main(["--db", str(test_db), "export", "-s", "test"])
 
         assert rc == 1
         captured = capsys.readouterr()
@@ -416,36 +416,6 @@ class TestFTS5ErrorHandling:
         captured = capsys.readouterr()
         assert "FTS index not found" in captured.err
         assert "ingest" in captured.err.lower()
-
-    def test_query_malformed_fts5_incomplete_or(self, test_db, capsys):
-        """siftd query -s 'foo OR' returns friendly error, exits 1."""
-        rc = main(["--db", str(test_db), "query", "-s", "foo OR"])
-
-        assert rc == 1
-        captured = capsys.readouterr()
-        assert "Invalid search query" in captured.err
-        assert "syntax" in captured.err.lower()
-
-    def test_query_malformed_fts5_incomplete_and(self, test_db, capsys):
-        """siftd query -s 'foo AND' returns friendly error, exits 1."""
-        rc = main(["--db", str(test_db), "query", "-s", "foo AND"])
-
-        assert rc == 1
-        captured = capsys.readouterr()
-        assert "Invalid search query" in captured.err
-
-    def test_query_malformed_fts5_unbalanced_parens(self, test_db, capsys):
-        """siftd query -s 'foo (' returns friendly error, exits 1."""
-        rc = main(["--db", str(test_db), "query", "-s", "foo ("])
-
-        assert rc == 1
-        captured = capsys.readouterr()
-        assert "Invalid search query" in captured.err
-
-    def test_query_valid_fts5_still_works(self, test_db):
-        """siftd query -s with valid FTS5 query still works."""
-        rc = main(["--db", str(test_db), "query", "-s", "hello"])
-        assert rc == 0
 
     def test_export_malformed_fts5_incomplete_or(self, test_db, capsys):
         """siftd export -s 'foo OR' returns friendly error, exits 1."""

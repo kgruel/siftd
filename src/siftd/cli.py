@@ -46,6 +46,9 @@ def parse_date(value: str | None) -> str | None:
     - Relative days: 7d, 3d (subtract N days from today)
     - Relative weeks: 1w, 2w (subtract N weeks from today)
     - Keywords: yesterday, today
+
+    Raises argparse.ArgumentTypeError for unrecognized formats,
+    so this can be used as type= on argparse arguments.
     """
     if not value:
         return None
@@ -72,8 +75,9 @@ def parse_date(value: str | None) -> str | None:
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
         return value
 
-    # Invalid format - return as-is, let downstream handle
-    return value
+    raise argparse.ArgumentTypeError(
+        f"invalid date format: '{value}' (expected YYYY-MM-DD, Nd, Nw, today, or yesterday)"
+    )
 
 
 def cmd_ingest(args) -> int:
@@ -932,27 +936,6 @@ def cmd_query(args) -> int:
 
     from siftd.api import list_conversations
 
-    # Deprecation warning for --count (now --limit)
-    # Check if --count was explicitly used (handles --count, --count=N forms)
-    if any(arg.startswith("--count") for arg in sys.argv):
-        print(
-            "Warning: --count is deprecated. Use -n/--limit instead.",
-            file=sys.stderr,
-        )
-
-    # Deprecation warning for -s/--search
-    if args.search:
-        import warnings
-        warnings.warn(
-            "query -s is deprecated, use 'siftd search --fts' instead",
-            DeprecationWarning,
-            stacklevel=1,
-        )
-        print(
-            f"Warning: -s/--search is deprecated. Use: siftd search --fts \"{args.search}\"",
-            file=sys.stderr,
-        )
-
     db = Path(args.db) if args.db else None
 
     try:
@@ -962,7 +945,6 @@ def cmd_query(args) -> int:
             model=args.model,
             since=parse_date(args.since),
             before=parse_date(args.before),
-            search=args.search,
             tool=args.tool,
             tags=args.tag,
             all_tags=getattr(args, "all_tags", None),
@@ -995,22 +977,22 @@ def cmd_query(args) -> int:
             # Provide helpful hints based on filters used
             has_filters = any([
                 args.workspace, args.model, args.since, args.before,
-                args.search, args.tool, args.tag,
+                args.tool, args.tag,
                 getattr(args, "all_tags", None),
                 getattr(args, "no_tag", None),
                 getattr(args, "tool_tag", None),
             ])
-            if args.search:
-                print(
-                    f'\nTip: For semantic search, try: siftd search "{args.search}"',
-                    file=sys.stderr,
-                )
-            elif args.workspace:
+            if args.workspace:
                 print(
                     "\nTip: Try 'siftd peek' for active sessions not yet ingested.",
                     file=sys.stderr,
                 )
             elif has_filters:
+                print(
+                    "\nTip: No matches for current filters. Try broadening your search or run 'siftd query' without filters.",
+                    file=sys.stderr,
+                )
+            else:
                 print(
                     "\nTip: Run 'siftd ingest' to import recent sessions.",
                     file=sys.stderr,
@@ -1602,20 +1584,6 @@ def cmd_peek(args) -> int:
     from siftd.output import fmt_ago, fmt_model, fmt_timestamp, fmt_tokens, print_indented, truncate_text
     from siftd.peek import AmbiguousSessionError
 
-    # Detect if --last was used (handles --last, --last=N, --last N forms)
-    # Exclude --last-response and --last-prompt from this detection
-    last_used = any(
-        arg.startswith("--last") and not arg.startswith("--last-response") and not arg.startswith("--last-prompt")
-        for arg in sys.argv
-    )
-
-    # Deprecation warning for --last (now --limit for list mode, --exchanges for detail)
-    if last_used:
-        print(
-            "Warning: --last is deprecated. Use -n/--limit (list mode) or --exchanges (detail mode).",
-            file=sys.stderr,
-        )
-
     # Extract --last-response and --last-prompt flags
     last_response = getattr(args, "last_response", False)
     last_prompt = getattr(args, "last_prompt", False)
@@ -1639,10 +1607,6 @@ def cmd_peek(args) -> int:
 
     # Validate --exchanges
     exchanges_n = getattr(args, "exchanges", None)
-
-    # During deprecation: in detail mode, map --last to --exchanges
-    if args.session_id and last_used and exchanges_n is None and args.limit is not None:
-        exchanges_n = args.limit
 
     if exchanges_n is not None and exchanges_n < 1:
         print("Error: --exchanges must be at least 1")
@@ -2029,7 +1993,7 @@ def main(argv=None) -> int:
         help=f"Database path (default: {db_path()})",
     )
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command")
 
     # ingest
     p_ingest = subparsers.add_parser(
@@ -2187,9 +2151,8 @@ examples:
     filter_group = p_query.add_argument_group("filtering")
     filter_group.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
     filter_group.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
-    filter_group.add_argument("--since", metavar="DATE", help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    filter_group.add_argument("--before", metavar="DATE", help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    filter_group.add_argument("-s", "--search", metavar="QUERY", help="[DEPRECATED] FTS5 keyword search — use 'siftd search --fts' instead")
+    filter_group.add_argument("--since", metavar="DATE", type=parse_date, help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    filter_group.add_argument("--before", metavar="DATE", type=parse_date, help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
     filter_group.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
 
     # Tag filtering options
@@ -2202,7 +2165,6 @@ examples:
     # Output options
     output_group = p_query.add_argument_group("output")
     output_group.add_argument("-n", "--limit", type=int, default=10, help="Number of conversations to show (0=all, default: 10)")
-    output_group.add_argument("--count", type=int, dest="limit", help=argparse.SUPPRESS)  # deprecated alias
     output_group.add_argument("-v", "--verbose", action="store_true", help="Full table with all columns")
     output_group.add_argument("--oldest", action="store_true", help="Sort by oldest first (default: newest first)")
     output_group.add_argument("--json", action="store_true", help="Output as JSON array")
@@ -2365,7 +2327,6 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_peek.add_argument("--branch", metavar="SUBSTR", help="Filter by worktree branch substring")
     p_peek.add_argument("--all", action="store_true", help="Include inactive sessions (not just last 2 hours)")
     p_peek.add_argument("-n", "--limit", type=int, metavar="N", help="Maximum number of sessions to list (default: 10)")
-    p_peek.add_argument("--last", type=int, metavar="N", dest="limit", help=argparse.SUPPRESS)  # deprecated alias for --limit
     p_peek.add_argument("--exchanges", type=int, metavar="N", help="Detail mode: number of exchanges to show (default: 5)")
     p_peek.add_argument("--full", action="store_true", help="Show full text (no truncation)")
     p_peek.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: 200)")
@@ -2400,8 +2361,8 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_export.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
     p_export.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by tag (repeatable, OR logic)")
     p_export.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude sessions with this tag (repeatable)")
-    p_export.add_argument("--since", metavar="DATE", help="Sessions after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    p_export.add_argument("--before", metavar="DATE", help="Sessions before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    p_export.add_argument("--since", metavar="DATE", type=parse_date, help="Sessions after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    p_export.add_argument("--before", metavar="DATE", type=parse_date, help="Sessions before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
     p_export.add_argument("-s", "--search", metavar="QUERY", help="Full-text search filter")
     p_export.add_argument("-f", "--format", choices=["prompts", "exchanges", "json"], default="prompts",
                           help="Output format: prompts (default), exchanges, json")
@@ -2411,6 +2372,9 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_export.set_defaults(func=cmd_export)
 
     args = parser.parse_args(argv)
+    if not hasattr(args, "func") or args.func is None:
+        parser.print_help()
+        return 0
     try:
         return args.func(args)
     except KeyboardInterrupt:

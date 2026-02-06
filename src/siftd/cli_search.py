@@ -37,7 +37,8 @@ def _apply_search_config(args) -> None:
 
 def cmd_search(args) -> int:
     """Unified search over conversations — auto-selects FTS5 or semantic based on availability."""
-    from siftd.api import open_database, open_embeddings_db, search_similar
+    from siftd.api import open_database
+    from siftd.api.search import open_embeddings_db, search_similar
     from siftd.embeddings import embeddings_available
 
     # Apply config defaults before processing
@@ -166,7 +167,7 @@ def cmd_search(args) -> int:
     fts5_ids: set[str] | None = None
     fts5_mode: str | None = None
     if not args.embeddings_only:
-        from siftd.api import fts5_recall_conversations
+        from siftd.api.search import fts5_recall_conversations
 
         main_conn = open_database(db, read_only=True)
         fts5_ids, fts5_mode = fts5_recall_conversations(main_conn, query, limit=args.recall)
@@ -191,7 +192,7 @@ def cmd_search(args) -> int:
     embed_conn = open_embeddings_db(embed_db, read_only=True)
 
     # Validate index compatibility before search
-    from siftd.api import IndexCompatError, validate_index_compat
+    from siftd.api.search import IndexCompatError, validate_index_compat
     from siftd.embeddings import SCHEMA_VERSION
 
     try:
@@ -248,7 +249,7 @@ def cmd_search(args) -> int:
 
     # Apply temporal weighting if requested (before MMR so it affects reranking)
     if args.recency and results:
-        from siftd.api import apply_temporal_weight, fetch_conversation_timestamps
+        from siftd.api.search import apply_temporal_weight, fetch_conversation_timestamps
 
         conv_ids_for_ts = list({r["conversation_id"] for r in results})
         ts_conn = open_database(db, read_only=True)
@@ -370,7 +371,8 @@ def _search_fts_only(args, db: Path, query: str) -> int:
     """FTS5-only search mode — keyword search without embeddings."""
     import sqlite3
 
-    from siftd.api import DERIVATIVE_TAG, fts5_search_content, open_database
+    from siftd.api import DERIVATIVE_TAG, open_database
+    from siftd.api.search import fts5_search_content
     from siftd.cli import parse_date
     from siftd.search import filter_conversations, get_active_conversation_ids
 
@@ -599,8 +601,10 @@ examples:
     filter_group = p_search.add_argument_group("filtering")
     filter_group.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
     filter_group.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
-    filter_group.add_argument("--since", metavar="DATE", help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    filter_group.add_argument("--before", metavar="DATE", help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    from siftd.cli import parse_date
+
+    filter_group.add_argument("--since", metavar="DATE", type=parse_date, help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    filter_group.add_argument("--before", metavar="DATE", type=parse_date, help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
     filter_group.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by tag (repeatable, OR logic)")
     filter_group.add_argument("--all-tags", action="append", metavar="NAME", help="Require all specified tags (AND logic)")
     filter_group.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude conversations with this tag (NOT logic)")

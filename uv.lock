@@ -904,12 +904,8 @@ name = "siftd"
 version = "0.4.0"
 source = { editable = "." }
 dependencies = [
-    { name = "httpx" },
-    { name = "loguru" },
     { name = "numpy" },
-    { name = "pyyaml" },
     { name = "tomlkit" },
-    { name = "tqdm" },
 ]
 
 [package.optional-dependencies]
@@ -934,9 +930,7 @@ embed = [
 [package.metadata]
 requires-dist = [
     { name = "fastembed", marker = "extra == 'embed'" },
-    { name = "httpx" },
     { name = "huggingface-hub", marker = "extra == 'embed'" },
-    { name = "loguru" },
     { name = "numpy" },
     { name = "numpy", marker = "extra == 'embed'" },
     { name = "onnxruntime", marker = "extra == 'embed'" },
@@ -945,12 +939,10 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "pytest-prysk", marker = "extra == 'dev'" },
     { name = "pytest-xdist", marker = "extra == 'dev'" },
-    { name = "pyyaml" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "syrupy", marker = "extra == 'dev'" },
     { name = "tokenizers", marker = "extra == 'embed'" },
     { name = "tomlkit" },
-    { name = "tqdm" },
     { name = "ty", marker = "extra == 'dev'" },
 ]
 provides-extras = ["embed", "dev"]

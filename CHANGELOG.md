@@ -7,15 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-01-31
+## [0.4.0] - 2026-02-05
 
 ### Added
 
+- **Unified `search` command** — Replaces `siftd ask` with auto-selection:
+  - Semantic search when embeddings available, FTS5 fallback when not
+  - `--semantic` flag to force semantic mode (errors if embeddings missing)
+  - `--by-time` flag for chronological ordering
 - **Live session tagging** — Tag active sessions before they're ingested:
   - `/siftd:tag` Claude Code skill for tagging from within sessions
   - `active_sessions` and `pending_tags` tables for deferred tag application
   - Tags applied automatically at next ingest
   - `siftd doctor fix --pending-tags` to clean up orphaned/stale pending tags
+- **Binary content filtering** — Binary blobs filtered during ingest; metadata placeholder preserves type/size info
+- **Workspace identity** — Git remote URL as primary identifier, resolved path fallback for non-git dirs
+- **Git worktree resolution** — Worktrees resolve to main repo workspace; branch tracked separately
+- **Peek improvements**:
+  - Subagent detection and grouping
+  - Worktree branch identity: `[branch]` suffix in display, `--branch` filter
+  - `--last-response` / `--last-prompt` flags for quick extraction
+- **Unified output formatting** — `--brief` / `--summary` modes for `query`; `--exchanges N` for `peek`
 - **Skill interface versioning** — `skill-interface-version: 1` in skill frontmatter for stability promises
 - **Index compatibility validation** — Embedding index now tracks schema version, backend, model, and dimension:
   - Actionable error messages when backend/model mismatch detected
@@ -29,21 +41,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `fts-stale` — Detects FTS5 index out of sync with content tables
   - `fts-integrity` — Checks FTS5 table integrity for corruption
   - `config-valid` — Validates config file syntax and formatter names
+- CLI help argument groups for organized `--help` output
+- Helpful hints when `query` returns empty results
+- MMR safety cap to prevent unbounded memory on large result sets
 - `siftd ingest --rebuild-fts` — Rebuild FTS index from existing data without re-ingesting
 
 ### Changed
 
-- `siftd peek` defaults to 10 sessions (was unbounded 2-hour window)
-- `siftd peek --last N` / `-n N` works in list mode as limit
-
+- **Breaking:** `siftd ask` renamed to `siftd search`
+- **Breaking:** Removed deprecated `query -s/--search` flag — use `siftd search --fts` instead
+- **Breaking:** Removed deprecated `query --count` flag — use `-n/--limit` instead
+- **Breaking:** Removed deprecated `peek --last` flag — use `-n/--limit` instead
+- `siftd peek` defaults to 10 sessions (was unbounded 2-hour window); use `-n/--limit` to control
+- `siftd status` query performance optimized
 - `--exclude-tag` renamed to `--no-tag` in export command (consistency with other filters)
+- Narrowed `siftd.api` public exports — internal search primitives moved to `siftd.api.search`
+- Removed phantom dependencies: `httpx`, `tqdm`, `pyyaml`, `loguru`
 - Architectural tests moved to `tests/architecture/` for clearer separation
 
 ### Fixed
 
+- Schema version tracking via `PRAGMA user_version` — prevents older siftd from opening newer databases
+- `siftd query --since invalid` now shows clear error instead of silently returning empty results
+- `siftd` with no args now shows help instead of terse argparse error
+- Empty-filter query tip now suggests broadening filters instead of re-running ingest
+- Connection leak safety: all `search.py` database connections wrapped in try/finally
+
 - **P0**: Session ID mismatch in live tagging — hooks now use namespaced `claude_code::sessionId`
 - **P1**: Active session staleness detection — added `last_seen_at` timestamp
+- Peek session lookup: O(n) scan → O(1) path-based filtering
+- Workspace resolution for git worktrees (worktrees assigned to correct workspace)
+- Peek session resolution prefers parent session over subagents
 - `siftd peek` Ctrl+C now exits cleanly (exit code 130) instead of stacktrace
+- `--by-time` warns when it has no effect (no temporal data)
 - Test isolation issues with XDG_CONFIG_HOME in ask tests
 
 ## [0.3.0] - 2026-01-30

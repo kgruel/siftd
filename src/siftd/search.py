@@ -349,18 +349,22 @@ def hybrid_search(
             else:
                 # Need to get all conversation IDs minus excluded
                 conn_tmp = open_database(db, read_only=True)
-                all_ids = {
-                    row["id"]
-                    for row in conn_tmp.execute("SELECT id FROM conversations").fetchall()
-                }
-                conn_tmp.close()
+                try:
+                    all_ids = {
+                        row["id"]
+                        for row in conn_tmp.execute("SELECT id FROM conversations").fetchall()
+                    }
+                finally:
+                    conn_tmp.close()
                 candidate_ids = all_ids - excluded
 
     # Hybrid recall: FTS5 narrows candidates, embeddings rerank
     if not embeddings_only:
         main_conn = open_database(db, read_only=True)
-        fts5_ids, _fts5_mode = fts5_recall_conversations(main_conn, query, limit=recall)
-        main_conn.close()
+        try:
+            fts5_ids, _fts5_mode = fts5_recall_conversations(main_conn, query, limit=recall)
+        finally:
+            main_conn.close()
 
         if fts5_ids:
             if candidate_ids is not None:
@@ -378,14 +382,16 @@ def hybrid_search(
     search_limit = limit * 3 if use_mmr else limit
 
     embed_conn = open_embeddings_db(embed_db, read_only=True)
-    raw_results = search_similar(
-        embed_conn,
-        query_embedding,
-        limit=search_limit,
-        conversation_ids=candidate_ids,
-        include_embeddings=use_mmr,
-    )
-    embed_conn.close()
+    try:
+        raw_results = search_similar(
+            embed_conn,
+            query_embedding,
+            limit=search_limit,
+            conversation_ids=candidate_ids,
+            include_embeddings=use_mmr,
+        )
+    finally:
+        embed_conn.close()
 
     if not raw_results:
         return []
@@ -396,8 +402,10 @@ def hybrid_search(
 
         conv_ids_for_ts = list({r["conversation_id"] for r in raw_results})
         main_conn_ts = open_database(db, read_only=True)
-        timestamps = fetch_conversation_timestamps(main_conn_ts, conv_ids_for_ts)
-        main_conn_ts.close()
+        try:
+            timestamps = fetch_conversation_timestamps(main_conn_ts, conv_ids_for_ts)
+        finally:
+            main_conn_ts.close()
 
         raw_results = apply_temporal_weight(
             raw_results,
@@ -430,15 +438,17 @@ def hybrid_search(
 
     # Enrich with metadata from main DB
     main_conn = open_database(db, read_only=True)
-    conv_ids = list({r["conversation_id"] for r in raw_results})
-    meta_rows = batched_in_query(
-        main_conn,
-        "SELECT c.id, c.started_at, w.path AS workspace FROM conversations c "
-        "LEFT JOIN workspaces w ON w.id = c.workspace_id "
-        "WHERE c.id IN ({placeholders})",
-        conv_ids,
-    )
-    main_conn.close()
+    try:
+        conv_ids = list({r["conversation_id"] for r in raw_results})
+        meta_rows = batched_in_query(
+            main_conn,
+            "SELECT c.id, c.started_at, w.path AS workspace FROM conversations c "
+            "LEFT JOIN workspaces w ON w.id = c.workspace_id "
+            "WHERE c.id IN ({placeholders})",
+            conv_ids,
+        )
+    finally:
+        main_conn.close()
     meta = {row["id"]: dict(row) for row in meta_rows}
 
     results = []
@@ -500,18 +510,19 @@ def filter_conversations(
     wb.tags_none(exclude_tags)
 
     conn = open_database(db, read_only=True)
+    try:
+        sql = f"""
+            SELECT DISTINCT c.id
+            FROM conversations c
+            LEFT JOIN workspaces w ON w.id = c.workspace_id
+            LEFT JOIN responses r ON r.conversation_id = c.id
+            LEFT JOIN models m ON m.id = r.model_id
+            {wb.where_sql()}
+        """
 
-    sql = f"""
-        SELECT DISTINCT c.id
-        FROM conversations c
-        LEFT JOIN workspaces w ON w.id = c.workspace_id
-        LEFT JOIN responses r ON r.conversation_id = c.id
-        LEFT JOIN models m ON m.id = r.model_id
-        {wb.where_sql()}
-    """
-
-    rows = conn.execute(sql, wb.params).fetchall()
-    conn.close()
+        rows = conn.execute(sql, wb.params).fetchall()
+    finally:
+        conn.close()
     return {row["id"] for row in rows}
 
 
@@ -544,11 +555,13 @@ def get_active_conversation_ids(db: Path) -> set[str]:
     file_paths = [str(s.file_path) for s in sessions]
 
     conn = open_database(db, read_only=True)
-    rows = batched_in_query(
-        conn,
-        "SELECT conversation_id FROM ingested_files WHERE path IN ({placeholders}) AND conversation_id IS NOT NULL",
-        file_paths,
-    )
-    conn.close()
+    try:
+        rows = batched_in_query(
+            conn,
+            "SELECT conversation_id FROM ingested_files WHERE path IN ({placeholders}) AND conversation_id IS NOT NULL",
+            file_paths,
+        )
+    finally:
+        conn.close()
 
     return {row["conversation_id"] for row in rows}

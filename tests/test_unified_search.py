@@ -339,39 +339,15 @@ class TestFtsOnlyMode:
             assert r["conversation_id"]  # Just verify we have results
 
 
-class TestQueryDeprecation:
-    """Tests for deprecated query -s flag."""
+class TestQuerySearchRemoved:
+    """Tests that query -s flag has been removed."""
 
-    def test_query_search_shows_deprecation_warning(self, fts_db, capsys):
-        """query -s shows deprecation warning."""
-        from siftd.cli import cmd_query
+    def test_query_s_flag_no_longer_accepted(self, fts_db):
+        """query -s is no longer a valid flag (removed, not deprecated)."""
+        from siftd.cli import main
 
-        args = argparse.Namespace(
-            conversation_id=None,
-            db=str(fts_db["db_path"]),
-            workspace=None,
-            model=None,
-            since=None,
-            before=None,
-            search="error",
-            tool=None,
-            tag=None,
-            all_tags=None,
-            no_tag=None,
-            tool_tag=None,
-            limit=10,
-            oldest=False,
-            json=False,
-            verbose=False,
-            stats=False,
-        )
-
-        result = cmd_query(args)
-        captured = capsys.readouterr()
-
-        # Should show deprecation warning
-        assert "deprecated" in captured.err.lower()
-        assert "siftd search --fts" in captured.err
+        with pytest.raises(SystemExit, match="2"):
+            main(["--db", str(fts_db["db_path"]), "query", "-s", "error"])
 
 
 # Tests that require embeddings are marked separately
@@ -497,24 +473,14 @@ class TestHelpText:
         assert "--fts" in help_text
         assert "--semantic" in help_text
 
-    def test_query_search_help_shows_deprecation(self):
-        """Query -s help shows deprecation notice."""
-        # Directly inspect the argument definition
-        import argparse
-        from siftd.cli import main
-
-        # Build parser like main() does but stop before parse_args
-        parser = argparse.ArgumentParser(prog="siftd")
-        subparsers = parser.add_subparsers(dest="command")
-
-        # This recreates how query parser is built inside main()
-        # Check the help string directly in the source
+    def test_query_search_flag_removed(self):
+        """Query no longer has a -s/--search flag."""
         from siftd import cli
         import inspect
         source = inspect.getsource(cli)
 
-        # The help string should contain DEPRECATED
-        assert "DEPRECATED" in source and "--search" in source
+        # The deprecated --search flag should no longer appear in query definitions
+        assert "DEPRECATED" not in source or "--search" not in source
 
 
 class TestAutoSelectionHints:

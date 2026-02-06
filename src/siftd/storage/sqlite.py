@@ -21,6 +21,7 @@ from siftd.storage.sessions import ensure_prompt_tags_table, ensure_session_tabl
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
+SCHEMA_VERSION = 1
 
 
 # =============================================================================
@@ -57,6 +58,16 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         conn.commit()
 
     if not read_only:
+        # Check schema version on existing databases
+        if not is_new:
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version > SCHEMA_VERSION:
+                conn.close()
+                raise RuntimeError(
+                    f"Database schema version {version} is from a newer version of siftd "
+                    f"(expected {SCHEMA_VERSION}). Please upgrade siftd."
+                )
+
         _migrate_labels_to_tags(conn)
         _migrate_add_error_column(conn)
         _migrate_add_branch_column(conn)
@@ -69,6 +80,11 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         ensure_session_tables(conn)
         ensure_prompt_tags_table(conn)
         _ensure_git_remote_index(conn)
+
+        # Stamp schema version after successful migrations
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.commit()
+
     return conn
 
 

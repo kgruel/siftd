@@ -19,10 +19,6 @@ classifiers = [
     "Topic :: Software Development :: Documentation",
 ]
 dependencies = [
-    "httpx",
-    "tqdm",
-    "pyyaml",
-    "loguru",
     "tomlkit",
     "numpy",
 ]

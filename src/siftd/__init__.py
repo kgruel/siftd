@@ -15,7 +15,6 @@ from siftd.api import (
     ToolCallSummary,
     ToolStats,
     WorkspaceStats,
-    aggregate_by_conversation,
     build_index,
     first_mention,
     get_conversation,
@@ -23,6 +22,7 @@ from siftd.api import (
     hybrid_search,
     list_conversations,
 )
+from siftd.api.search import aggregate_by_conversation
 from siftd.storage.tags import apply_tag, get_or_create_tag, list_tags
 
 __all__ = [
