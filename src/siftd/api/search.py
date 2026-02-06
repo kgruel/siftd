@@ -1,17 +1,43 @@
 """Search API extensions.
 
 Re-exports core search functionality and adds post-processing functions.
+
+Heavy dependencies (numpy via siftd.search, siftd.storage.embeddings) are
+lazy-imported so that non-search CLI commands don't pull in numpy.
 """
+
+from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean as _mean
+from typing import TYPE_CHECKING
 
-# Re-export core search API
-from siftd.search import SearchResult, apply_temporal_weight, hybrid_search
-from siftd.storage.embeddings import IndexCompatError
 from siftd.storage.queries import fetch_conversation_timestamps, fetch_prompt_timestamps
+
+if TYPE_CHECKING:
+    from siftd.search import SearchResult, apply_temporal_weight, hybrid_search
+    from siftd.storage.embeddings import IndexCompatError
+
+# Lazy re-exports — resolved on first access to avoid eager numpy import.
+_LAZY_IMPORTS = {
+    "SearchResult": "siftd.search",
+    "apply_temporal_weight": "siftd.search",
+    "hybrid_search": "siftd.search",
+    "IndexCompatError": "siftd.storage.embeddings",
+}
+
+
+def __getattr__(name: str):
+    if name in _LAZY_IMPORTS:
+        import importlib
+
+        mod = importlib.import_module(_LAZY_IMPORTS[name])
+        val = getattr(mod, name)
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "SearchResult",

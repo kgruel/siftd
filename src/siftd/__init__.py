@@ -5,25 +5,39 @@ Public API re-exports for programmatic access.
 
 from siftd.api import (
     ConversationDetail,
-    ConversationScore,
     ConversationSummary,
     DatabaseStats,
     Exchange,
     HarnessInfo,
-    SearchResult,
     TableCounts,
     ToolCallSummary,
     ToolStats,
     WorkspaceStats,
-    build_index,
-    first_mention,
     get_conversation,
     get_stats,
-    hybrid_search,
     list_conversations,
 )
-from siftd.api.search import aggregate_by_conversation
 from siftd.storage.tags import apply_tag, get_or_create_tag, list_tags
+
+# Search-related symbols are lazy to avoid pulling numpy into non-search commands.
+_LAZY_SEARCH_NAMES = {
+    "ConversationScore",
+    "SearchResult",
+    "aggregate_by_conversation",
+    "build_index",
+    "first_mention",
+    "hybrid_search",
+}
+
+
+def __getattr__(name: str):
+    if name in _LAZY_SEARCH_NAMES:
+        from siftd.api import search as _search_mod
+
+        val = getattr(_search_mod, name)
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     # conversations

@@ -60,14 +60,6 @@ from siftd.api.resources import (
     copy_query,
     list_builtin_queries,
 )
-from siftd.api.search import (
-    ConversationScore,
-    IndexCompatError,
-    SearchResult,
-    build_index,
-    first_mention,
-    hybrid_search,
-)
 from siftd.api.stats import (
     DatabaseStats,
     HarnessInfo,
@@ -92,6 +84,28 @@ from siftd.api.tools import (
     get_tool_tag_summary,
     get_tool_tags_by_workspace,
 )
+
+# Search symbols are lazy-imported to avoid pulling numpy into non-search commands.
+# Access via siftd.api.SearchResult etc. triggers __getattr__ below.
+_LAZY_SEARCH_NAMES = {
+    "ConversationScore",
+    "IndexCompatError",
+    "SearchResult",
+    "build_index",
+    "first_mention",
+    "hybrid_search",
+}
+
+
+def __getattr__(name: str):
+    if name in _LAZY_SEARCH_NAMES:
+        from siftd.api import search as _search_mod
+
+        val = getattr(_search_mod, name)
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # adapters
