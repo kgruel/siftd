@@ -30,6 +30,8 @@ def detect_install_method() -> str:
         return "uv_tool"
     if "/pipx/venvs/" in venv_path or "\\pipx\\venvs\\" in venv_path:
         return "pipx"
+    if "/Cellar/" in venv_path or "/homebrew/" in venv_path.lower():
+        return "brew"
 
     # Regular venv vs user install
     if sys.prefix != sys.base_prefix:
@@ -66,6 +68,7 @@ def embed_installed() -> bool:
 INSTALL_COMMANDS: dict[str, list[str]] = {
     "uv_tool": ["uv", "tool", "install", "siftd[embed]", "--force"],
     "pipx": ["pipx", "install", "siftd[embed]", "--force"],
+    "brew": [sys.prefix + "/bin/python", "-m", "pip", "install", "siftd[embed]"],
     "pip_venv": ["pip", "install", "siftd[embed]"],
     "pip_user": ["pip", "install", "--user", "siftd[embed]"],
     "editable": ["pip", "install", "-e", ".[embed]"],
@@ -75,6 +78,7 @@ INSTALL_COMMANDS: dict[str, list[str]] = {
 METHOD_LABELS: dict[str, str] = {
     "uv_tool": "uv tool",
     "pipx": "pipx",
+    "brew": "Homebrew",
     "pip_venv": "pip (venv)",
     "pip_user": "pip (user)",
     "editable": "editable install",
@@ -109,16 +113,16 @@ def cmd_install(args) -> int:
         print("Try one of these commands:")
         print()
         print("  # If installed via uv tool:")
-        print("  uv tool install siftd[embed] --force")
+        print("  uv tool install 'siftd[embed]' --force")
         print()
         print("  # If installed via pipx:")
-        print("  pipx install siftd[embed] --force")
+        print("  pipx install 'siftd[embed]' --force")
         print()
         print("  # If installed via pip in a venv:")
-        print("  pip install siftd[embed]")
+        print("  pip install 'siftd[embed]'")
         print()
         print("  # If installed via pip --user:")
-        print("  pip install --user siftd[embed]")
+        print("  pip install --user 'siftd[embed]'")
         return 1
 
     cmd = INSTALL_COMMANDS[method]
@@ -145,7 +149,12 @@ def cmd_install(args) -> int:
             print("  pip install -e '.[embed]'")
             return 1
 
-    cmd_str = " ".join(cmd)
+    if method == "brew":
+        cmd_str = "$(brew --prefix siftd)/libexec/bin/python -m pip install 'siftd[embed]'"
+    else:
+        cmd_str = " ".join(
+            f"'{c}'" if "[" in c else c for c in cmd
+        )
 
     if args.dry_run:
         print(f"Detected: {method_label}")
