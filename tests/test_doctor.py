@@ -212,6 +212,7 @@ class TestIngestPendingCheck:
             assert f.severity in ("info", "warning", "error")
 
 
+@pytest.mark.embeddings
 class TestEmbeddingsStaleCheck:
     """Tests for the embeddings-stale check."""
 
@@ -448,6 +449,7 @@ class TestCheckContext:
         ctx.close()
 
 
+@pytest.mark.embeddings
 class TestOrphanedChunksCheck:
     """Tests for the orphaned-chunks check."""
 

@@ -1,7 +1,11 @@
 """Shared math utilities."""
 
-import numpy as np
-from numpy.typing import NDArray
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 
 def cosine_similarity(a: list[float] | NDArray, b: list[float] | NDArray) -> float:
@@ -9,6 +13,8 @@ def cosine_similarity(a: list[float] | NDArray, b: list[float] | NDArray) -> flo
 
     Accepts Python lists or numpy arrays. Returns float in [-1, 1].
     """
+    import numpy as np
+
     a_arr = np.asarray(a, dtype=np.float32)
     b_arr = np.asarray(b, dtype=np.float32)
 
@@ -33,6 +39,8 @@ def cosine_similarity_batch(
     Returns:
         1D array of shape (n,) with similarity scores.
     """
+    import numpy as np
+
     # Normalize query
     query_norm = np.linalg.norm(query)
     if query_norm == 0:

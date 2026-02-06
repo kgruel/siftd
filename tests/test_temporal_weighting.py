@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+pytestmark = pytest.mark.embeddings
+
 from siftd.search import apply_temporal_weight
 
 

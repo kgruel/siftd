@@ -5,8 +5,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-import numpy as np
-
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.sql_helpers import batched_in_query
 from siftd.storage.sqlite import open_database
@@ -94,6 +92,8 @@ def apply_temporal_weight(
     if not results or max_boost <= 1.0:
         return results
 
+    import numpy as np
+
     now = datetime.now(UTC)
     decay_constant = np.log(2) / half_life_days
 
@@ -174,6 +174,8 @@ def mmr_rerank(
     """
     if not results:
         return []
+
+    import numpy as np
 
     n = len(results)
 

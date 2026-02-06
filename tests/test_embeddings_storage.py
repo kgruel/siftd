@@ -2,6 +2,10 @@
 
 import sqlite3
 
+import pytest
+
+pytestmark = pytest.mark.embeddings
+
 from siftd.storage.embeddings import (
     open_embeddings_db,
     prune_orphaned_chunks,

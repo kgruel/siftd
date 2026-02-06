@@ -2,6 +2,8 @@
 
 import pytest
 
+pytestmark = pytest.mark.embeddings
+
 from siftd.search import mmr_rerank
 
 # ---------------------------------------------------------------------------
