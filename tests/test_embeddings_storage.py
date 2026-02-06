@@ -4,6 +4,7 @@ import sqlite3
 
 import pytest
 
+np = pytest.importorskip("numpy")
 pytestmark = pytest.mark.embeddings
 
 from siftd.storage.embeddings import (
