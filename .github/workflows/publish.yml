@@ -42,28 +42,23 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Wait for PyPI availability
+      - name: Install poet
+        run: pip install homebrew-pypi-poet
+
+      - name: Wait for PyPI and generate formula
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "Waiting for siftd $VERSION on PyPI..."
           for i in {1..30}; do
-            if pip index versions siftd 2>/dev/null | grep -q "$VERSION"; then
-              echo "Found siftd $VERSION on PyPI"
-              break
-            fi
-            echo "Attempt $i: not yet available, waiting 10s..."
+            pip install "siftd==$VERSION" 2>/dev/null && \
+              poet -f siftd > siftd.rb 2>/dev/null && \
+              grep -q "siftd-${VERSION}" siftd.rb && \
+              echo "Formula generated for siftd $VERSION" && break
+            echo "Attempt $i: not yet resolvable, waiting 10s..."
+            pip uninstall -y siftd 2>/dev/null || true
             sleep 10
           done
-
-      - name: Install siftd and poet
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          pip install "siftd==$VERSION" homebrew-pypi-poet
-
-      - name: Generate formula
-        run: |
-          poet -f siftd > siftd.rb
-          # Fix desc and test block
+          grep -q "siftd-${VERSION}" siftd.rb || { echo "ERROR: formula does not contain version $VERSION"; cat siftd.rb; exit 1; }
           sed -i 's/desc ".*"/desc "Personal LLM usage analytics for CLI coding tools"/' siftd.rb
           cat siftd.rb
 
