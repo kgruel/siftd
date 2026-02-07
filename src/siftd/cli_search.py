@@ -399,7 +399,7 @@ def _search_fts_only(args, db: Path, query: str) -> int:
 
     if unsupported_flags:
         flags_str = ", ".join(unsupported_flags)
-        print(f"Note: {flags_str} ignored in FTS5 mode (requires embeddings)", file=sys.stderr)
+        print(f"WARNING: {flags_str} ignored in FTS5 mode (requires embeddings)", file=sys.stderr)
 
     # Compose filters
     exclude_tags = list(getattr(args, "no_tag", None) or [])
@@ -490,6 +490,11 @@ def _search_fts_only(args, db: Path, query: str) -> int:
                 for r in results
             ],
         }
+        if unsupported_flags:
+            out["warnings"] = [
+                f"{flag} ignored in FTS5 mode (requires embeddings)"
+                for flag in unsupported_flags
+            ]
         print(json.dumps(out, indent=2))
         conn.close()
         return 0

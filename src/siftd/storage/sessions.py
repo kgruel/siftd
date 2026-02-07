@@ -221,6 +221,29 @@ def consume_pending_tags(
     return tags
 
 
+def find_active_session(
+    conn: sqlite3.Connection,
+    workspace_path: str,
+) -> str | None:
+    """Find most recent active session for a workspace path.
+
+    Fallback for when file-based session ID lookup fails (e.g.,
+    spawned agents with different CWD or symlink resolution).
+    """
+    cur = conn.execute(
+        """
+        SELECT harness_session_id
+        FROM active_sessions
+        WHERE workspace_path = ?
+        ORDER BY last_seen_at DESC
+        LIMIT 1
+        """,
+        (workspace_path,),
+    )
+    row = cur.fetchone()
+    return row["harness_session_id"] if row else None
+
+
 def is_session_registered(
     conn: sqlite3.Connection,
     harness_session_id: str,

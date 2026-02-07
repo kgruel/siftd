@@ -2,14 +2,15 @@
 # name: TestHelpSnapshots.test_root_help
   '''
   usage: siftd [-h] [--version] [--db PATH]
-               {ingest,status,search,install,register,session-id,tag,tags,tools,query,backfill,migrate,path,config,adapters,copy,doctor,peek,export} ...
+               {ingest,status,workspaces,search,install,register,session-id,tag,tags,tools,query,backfill,migrate,path,config,adapters,copy,doctor,peek,export} ...
   
   Aggregate and query LLM conversation logs
   
   positional arguments:
-    {ingest,status,search,install,register,session-id,tag,tags,tools,query,backfill,migrate,path,config,adapters,copy,doctor,peek,export}
+    {ingest,status,workspaces,search,install,register,session-id,tag,tags,tools,query,backfill,migrate,path,config,adapters,copy,doctor,peek,export}
       ingest              Ingest logs from all sources
       status              Show database statistics
+      workspaces          List workspaces with conversation counts
       search              Search conversations (auto-selects FTS5 or semantic
                           based on what's installed)
       install             Install optional dependencies
@@ -740,6 +741,17 @@
     siftd tools                    # shell command categories summary
     siftd tools --by-workspace     # breakdown by workspace
     siftd tools --prefix shell:    # filter by tag prefix
+  
+  '''
+# ---
+# name: TestHelpSnapshots.test_subcommand_help[workspaces]
+  '''
+  usage: siftd workspaces [-h] [--json] [-n LIMIT]
+  
+  options:
+    -h, --help         show this help message and exit
+    --json             Output as JSON
+    -n, --limit LIMIT  Max workspaces (0 = all)
   
   '''
 # ---
