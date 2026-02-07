@@ -1,5 +1,22 @@
 [
-    {"step": "Extract cli_common utilities (parse_date, _get_version)", "done": true},
-    {"step": "Update imports/re-exports in cli.py and cli_search.py", "done": true},
-    {"step": "Run ./dev check and validate no cli import remains", "done": true}
+  {
+    "step": "Create cli_meta.py with moved meta commands",
+    "done": true
+  },
+  {
+    "step": "Wire build_meta_parser into cli.py and clean imports",
+    "done": true
+  },
+  {
+    "step": "Update help snapshots if order changes",
+    "done": true
+  },
+  {
+    "step": "Run ./dev check",
+    "done": true
+  },
+  {
+    "step": "Commit changes",
+    "done": true
+  }
 ]

@@ -24,6 +24,7 @@ RULES = {
 # Format: (filename, imported_layer)
 KNOWN_VIOLATIONS = {
     ("cli.py", "storage"),  # rebuild_fts_index - needs api layer wrapper
+    ("cli_meta.py", "storage"),  # workspaces query - needs api layer wrapper
 }
 
 

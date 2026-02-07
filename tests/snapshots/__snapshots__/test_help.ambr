@@ -2,15 +2,18 @@
 # name: TestHelpSnapshots.test_root_help
   '''
   usage: siftd [-h] [--version] [--db PATH]
-               {ingest,status,workspaces,search,install,register,session-id,tag,tags,tools,query,backfill,migrate,path,config,adapters,copy,doctor,peek,export} ...
+               {ingest,status,workspaces,path,config,adapters,search,install,register,session-id,tag,tags,tools,query,backfill,migrate,copy,doctor,peek,export} ...
   
   Aggregate and query LLM conversation logs
   
   positional arguments:
-    {ingest,status,workspaces,search,install,register,session-id,tag,tags,tools,query,backfill,migrate,path,config,adapters,copy,doctor,peek,export}
+    {ingest,status,workspaces,path,config,adapters,search,install,register,session-id,tag,tags,tools,query,backfill,migrate,copy,doctor,peek,export}
       ingest              Ingest logs from all sources
       status              Show database statistics
       workspaces          List workspaces with conversation counts
+      path                Show XDG paths
+      config              View or modify config settings
+      adapters            List discovered adapters
       search              Search conversations (auto-selects FTS5 or semantic
                           based on what's installed)
       install             Install optional dependencies
@@ -23,9 +26,6 @@
       query               List and filter conversations by metadata
       backfill            Backfill derived data from existing records
       migrate             Run data migrations
-      path                Show XDG paths
-      config              View or modify config settings
-      adapters            List discovered adapters
       copy                Copy built-in resources for customization
       doctor              Run health checks and maintenance
       peek                Inspect live sessions from disk (bypasses SQLite)
