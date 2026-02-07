@@ -1,14 +1,14 @@
 [
   {
-    "step": "Create cli_meta.py with moved meta commands",
+    "step": "Rebase branch on main",
     "done": true
   },
   {
-    "step": "Wire build_meta_parser into cli.py and clean imports",
+    "step": "Extract tag commands into cli_tags.py",
     "done": true
   },
   {
-    "step": "Update help snapshots if order changes",
+    "step": "Wire build_tags_parser into cli.py and clean imports",
     "done": true
   },
   {
