@@ -14,7 +14,7 @@ class TestParseDate:
     @pytest.fixture
     def fixed_today(self):
         """Patch date.today to return 2024-06-15 for all tests."""
-        with patch("siftd.cli.date") as mock_date:
+        with patch("siftd.cli_common.date") as mock_date:
             mock_date.today.return_value = date(2024, 6, 15)
             yield
 

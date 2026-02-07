@@ -129,7 +129,7 @@ def cmd_search(args) -> int:
 
     # Compose filters: get candidate conversation IDs from main DB
     from siftd.api import DERIVATIVE_TAG
-    from siftd.cli import parse_date
+    from siftd.cli_common import parse_date
     from siftd.search import filter_conversations, get_active_conversation_ids
 
     exclude_tags = list(getattr(args, "no_tag", None) or [])
@@ -373,7 +373,7 @@ def _search_fts_only(args, db: Path, query: str) -> int:
 
     from siftd.api import DERIVATIVE_TAG, open_database
     from siftd.api.search import fts5_search_content
-    from siftd.cli import parse_date
+    from siftd.cli_common import parse_date
     from siftd.search import filter_conversations, get_active_conversation_ids
 
     # Warn about flags that are ignored in FTS5-only mode
@@ -606,7 +606,7 @@ examples:
     filter_group = p_search.add_argument_group("filtering")
     filter_group.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
     filter_group.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
-    from siftd.cli import parse_date
+    from siftd.cli_common import parse_date
 
     filter_group.add_argument("--since", metavar="DATE", type=parse_date, help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
     filter_group.add_argument("--before", metavar="DATE", type=parse_date, help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
