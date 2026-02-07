@@ -225,6 +225,45 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_workspaces(args) -> int:
+    """List workspaces with conversation counts."""
+    import json as json_mod
+
+    from siftd.storage.queries import fetch_top_workspaces
+
+    db = Path(args.db) if args.db else db_path()
+
+    if not db.exists():
+        if args.json:
+            print("[]")
+            return 0
+        print(f"Database not found: {db}")
+        print("Run 'siftd ingest' to create it.")
+        return 1
+
+    conn = open_database(db, read_only=True)
+    limit = args.limit if args.limit > 0 else 10000
+    rows = fetch_top_workspaces(conn, limit=limit)
+    conn.close()
+
+    if args.json:
+        out = [
+            {"path": row["path"], "conversations": row["convs"]}
+            for row in rows
+        ]
+        print(json_mod.dumps(out, indent=2))
+        return 0
+
+    if not rows:
+        print("No workspaces found.")
+        return 0
+
+    for row in rows:
+        print(f"{row['path']}  ({row['convs']} conversations)")
+
+    return 0
+
+
 def cmd_path(args) -> int:
     """Show XDG paths."""
     from siftd.paths import cache_dir, config_dir, db_path
@@ -293,16 +332,28 @@ def cmd_session_id(args) -> int:
     workspace_path = str(Path(workspace_path).resolve())
 
     sid_file = session_id_file(workspace_path)
-    if not sid_file.exists():
-        # Exit silently with non-zero for scripting
-        return 1
+    if sid_file.exists():
+        session_id = sid_file.read_text().strip()
+        if session_id:
+            print(session_id)
+            return 0
 
-    session_id = sid_file.read_text().strip()
-    if not session_id:
-        return 1
+    # Fallback: query active_sessions table
+    db = Path(args.db) if args.db else db_path()
+    if db.exists():
+        from siftd.storage.sessions import find_active_session
 
-    print(session_id)
-    return 0
+        conn = open_database(db, read_only=True)
+        try:
+            session_id = find_active_session(conn, workspace_path)
+            if session_id:
+                print(session_id)
+                return 0
+        finally:
+            conn.close()
+
+    # Exit silently with non-zero for scripting
+    return 1
 
 
 def _tag_session(args, db: Path, session_id: str) -> int:
@@ -2017,6 +2068,17 @@ def main(argv=None) -> int:
     p_status = subparsers.add_parser("status", help="Show database statistics")
     p_status.add_argument("--json", action="store_true", help="Output as JSON")
     p_status.set_defaults(func=cmd_status)
+
+    # workspaces
+    p_workspaces = subparsers.add_parser(
+        "workspaces",
+        help="List workspaces with conversation counts",
+    )
+    p_workspaces.add_argument("--json", action="store_true", help="Output as JSON")
+    p_workspaces.add_argument(
+        "-n", "--limit", type=int, default=0, help="Max workspaces (0 = all)"
+    )
+    p_workspaces.set_defaults(func=cmd_workspaces)
 
     # search (semantic search) — defined in cli_search.py
     build_search_parser(subparsers)

@@ -42,6 +42,7 @@ def run_siftd(*args: str) -> str:
 SUBCOMMANDS = [
     "ingest",
     "status",
+    "workspaces",
     "search",
     "install",
     "register",
