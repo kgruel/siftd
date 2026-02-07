@@ -1,7 +1,6 @@
 [
-  {"step": "Rebase branch on main", "done": true},
-  {"step": "Create cli_query.py and move query/tools helpers", "done": true},
-  {"step": "Wire build_query_parser into cli.py", "done": true},
-  {"step": "Run ./dev check", "done": true},
-  {"step": "Commit changes", "done": true}
+    {"step": "Clean up cli.py imports and main() wiring", "done": true},
+    {"step": "Update help snapshots if ordering changed", "done": true},
+    {"step": "Run required checks and verify line count", "done": true},
+    {"step": "Commit changes", "done": true}
 ]

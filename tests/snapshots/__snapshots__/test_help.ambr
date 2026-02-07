@@ -2,32 +2,32 @@
 # name: TestHelpSnapshots.test_root_help
   '''
   usage: siftd [-h] [--version] [--db PATH]
-               {ingest,status,workspaces,path,config,adapters,search,install,register,session-id,tag,tags,tools,query,backfill,migrate,copy,doctor,peek,export} ...
+               {register,session-id,status,workspaces,path,config,adapters,tag,tags,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export} ...
   
   Aggregate and query LLM conversation logs
   
   positional arguments:
-    {ingest,status,workspaces,path,config,adapters,search,install,register,session-id,tag,tags,tools,query,backfill,migrate,copy,doctor,peek,export}
-      ingest              Ingest logs from all sources
+    {register,session-id,status,workspaces,path,config,adapters,tag,tags,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export}
+      register            Register an active session for live tagging
+      session-id          Print the session ID for the current workspace
       status              Show database statistics
       workspaces          List workspaces with conversation counts
       path                Show XDG paths
       config              View or modify config settings
       adapters            List discovered adapters
-      search              Search conversations (auto-selects FTS5 or semantic
-                          based on what's installed)
-      install             Install optional dependencies
-      register            Register an active session for live tagging
-      session-id          Print the session ID for the current workspace
       tag                 Apply or remove a tag on a conversation (or other
                           entity)
       tags                List, inspect, rename, or delete tags
       tools               Summarize tool usage by category
       query               List and filter conversations by metadata
+      ingest              Ingest logs from all sources
       backfill            Backfill derived data from existing records
       migrate             Run data migrations
       copy                Copy built-in resources for customization
       doctor              Run health checks and maintenance
+      search              Search conversations (auto-selects FTS5 or semantic
+                          based on what's installed)
+      install             Install optional dependencies
       peek                Inspect live sessions from disk (bypasses SQLite)
       export              Export conversations for PR review workflows
   
