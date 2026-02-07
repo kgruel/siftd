@@ -56,6 +56,7 @@ __all__ = [
     "IndexCompatError",
     # FTS5
     "fts5_recall_conversations",
+    "rebuild_fts_index",
 ]
 
 
@@ -163,6 +164,13 @@ def fts5_recall_conversations(
     from siftd.storage.fts import fts5_recall_conversations as _fts5_recall
 
     return _fts5_recall(conn, query, limit=limit)
+
+
+def rebuild_fts_index(conn: sqlite3.Connection) -> None:
+    """Rebuild the FTS5 index for the main database."""
+    from siftd.storage.fts import rebuild_fts_index as _rebuild_fts_index
+
+    _rebuild_fts_index(conn)
 
 
 def fts5_search_content(
