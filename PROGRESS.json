@@ -1,22 +1,7 @@
 [
-  {
-    "step": "Rebase branch on main",
-    "done": true
-  },
-  {
-    "step": "Extract tag commands into cli_tags.py",
-    "done": true
-  },
-  {
-    "step": "Wire build_tags_parser into cli.py and clean imports",
-    "done": true
-  },
-  {
-    "step": "Run ./dev check",
-    "done": true
-  },
-  {
-    "step": "Commit changes",
-    "done": true
-  }
+  {"step": "Rebase branch on main", "done": true},
+  {"step": "Create cli_query.py and move query/tools helpers", "done": true},
+  {"step": "Wire build_query_parser into cli.py", "done": true},
+  {"step": "Run ./dev check", "done": true},
+  {"step": "Commit changes", "done": true}
 ]
