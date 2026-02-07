@@ -9,6 +9,9 @@ from siftd.storage.sessions import (
     cleanup_stale_sessions as _cleanup_stale_sessions,
 )
 from siftd.storage.sessions import (
+    find_active_session as _find_active_session,
+)
+from siftd.storage.sessions import (
     is_session_registered as _is_session_registered,
 )
 from siftd.storage.sessions import (
@@ -20,6 +23,7 @@ from siftd.storage.sessions import (
 
 __all__ = [
     "cleanup_stale_sessions",
+    "find_active_session",
     "is_session_registered",
     "queue_tag",
     "register_session",
@@ -56,6 +60,14 @@ def queue_tag(
         exchange_index=exchange_index,
         commit=commit,
     )
+
+
+def find_active_session(
+    conn: sqlite3.Connection,
+    workspace_path: str,
+) -> str | None:
+    """Find most recent active session for a workspace path."""
+    return _find_active_session(conn, workspace_path)
 
 
 def is_session_registered(
