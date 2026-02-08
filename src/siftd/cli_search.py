@@ -11,7 +11,8 @@ import sys
 from pathlib import Path
 from typing import cast
 
-from siftd.paths import db_path, embeddings_db_path
+from siftd.cli_common import resolve_db
+from siftd.paths import embeddings_db_path
 
 
 def _apply_search_config(args) -> None:
@@ -44,7 +45,7 @@ def cmd_search(args) -> int:
     # Apply config defaults before processing
     _apply_search_config(args)
 
-    db = Path(args.db) if args.db else db_path()
+    db = resolve_db(args)
     embed_db = Path(args.embed_db) if args.embed_db else embeddings_db_path()
 
     if not db.exists():
@@ -436,82 +437,81 @@ def _search_fts_only(args, db: Path, query: str) -> int:
     # Run FTS5 search
     conn = open_database(db, read_only=True)
     try:
-        raw_results = fts5_search_content(conn, query, limit=args.limit * 5)  # Overfetch for filtering
-    except sqlite3.OperationalError as e:
-        conn.close()
-        err_msg = str(e).lower()
-        if "no such table" in err_msg and "fts" in err_msg:
-            print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
-        elif "fts5" in err_msg or "syntax" in err_msg:
-            print(f"Invalid search query: {e}", file=sys.stderr)
-            print("Tip: Check your search query for syntax errors.", file=sys.stderr)
-        else:
-            print(f"Database error: {e}", file=sys.stderr)
-        return 1
+        try:
+            raw_results = fts5_search_content(conn, query, limit=args.limit * 5)  # Overfetch for filtering
+        except sqlite3.OperationalError as e:
+            err_msg = str(e).lower()
+            if "no such table" in err_msg and "fts" in err_msg:
+                print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
+            elif "fts5" in err_msg or "syntax" in err_msg:
+                print(f"Invalid search query: {e}", file=sys.stderr)
+                print("Tip: Check your search query for syntax errors.", file=sys.stderr)
+            else:
+                print(f"Database error: {e}", file=sys.stderr)
+            return 1
 
-    # Filter by candidate conversation IDs if filters were applied
-    if candidate_ids is not None:
-        raw_results = [r for r in raw_results if r["conversation_id"] in candidate_ids]
+        # Filter by candidate conversation IDs if filters were applied
+        if candidate_ids is not None:
+            raw_results = [r for r in raw_results if r["conversation_id"] in candidate_ids]
 
-    # Limit results
-    raw_results = raw_results[:args.limit]
+        # Limit results
+        raw_results = raw_results[:args.limit]
 
-    if not raw_results:
-        print(f"No results for: {query}")
-        conn.close()
+        if not raw_results:
+            print(f"No results for: {query}")
+            return 0
+
+        # Transform to common result format for formatters
+        results = []
+        for r in raw_results:
+            results.append({
+                "conversation_id": r["conversation_id"],
+                "score": abs(r["rank"]),  # FTS5 rank is negative (lower = better)
+                "text": r["snippet"],
+                "side": r["side"],
+                # Minimal fields needed for display
+                "source_ids": [],
+                "file_refs": [],
+            })
+
+        # JSON output
+        if args.json:
+            import json
+            out = {
+                "query": query,
+                "mode": "fts5",
+                "results": [
+                    {
+                        "conversation_id": r["conversation_id"],
+                        "score": r["score"],
+                        "snippet": r["text"],
+                        "side": r["side"],
+                    }
+                    for r in results
+                ],
+            }
+            if unsupported_flags:
+                out["warnings"] = [
+                    f"{flag} ignored in FTS5 mode (requires embeddings)"
+                    for flag in unsupported_flags
+                ]
+            print(json.dumps(out, indent=2))
+            return 0
+
+        # Default text output — one result per line with snippet
+        for r in results:
+            cid = r["conversation_id"][:12]
+            snippet = r["text"].replace("\n", " ")[:80]
+            print(f"{cid}  {snippet}")
+
+        # Tagging hint
+        if results:
+            first_id = results[0]["conversation_id"][:12]
+            print(f"Tip: Tag useful results: siftd tag {first_id} research:<topic>", file=sys.stderr)
+
         return 0
-
-    # Transform to common result format for formatters
-    results = []
-    for r in raw_results:
-        results.append({
-            "conversation_id": r["conversation_id"],
-            "score": abs(r["rank"]),  # FTS5 rank is negative (lower = better)
-            "text": r["snippet"],
-            "side": r["side"],
-            # Minimal fields needed for display
-            "source_ids": [],
-            "file_refs": [],
-        })
-
-    # JSON output
-    if args.json:
-        import json
-        out = {
-            "query": query,
-            "mode": "fts5",
-            "results": [
-                {
-                    "conversation_id": r["conversation_id"],
-                    "score": r["score"],
-                    "snippet": r["text"],
-                    "side": r["side"],
-                }
-                for r in results
-            ],
-        }
-        if unsupported_flags:
-            out["warnings"] = [
-                f"{flag} ignored in FTS5 mode (requires embeddings)"
-                for flag in unsupported_flags
-            ]
-        print(json.dumps(out, indent=2))
+    finally:
         conn.close()
-        return 0
-
-    # Default text output — one result per line with snippet
-    for r in results:
-        cid = r["conversation_id"][:12]
-        snippet = r["text"].replace("\n", " ")[:80]
-        print(f"{cid}  {snippet}")
-
-    # Tagging hint
-    if results:
-        first_id = results[0]["conversation_id"][:12]
-        print(f"Tip: Tag useful results: siftd tag {first_id} research:<topic>", file=sys.stderr)
-
-    conn.close()
-    return 0
 
 
 def _search_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: str | None, verbose: bool) -> int:

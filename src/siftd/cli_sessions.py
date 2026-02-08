@@ -6,12 +6,13 @@ from pathlib import Path
 
 from siftd.api import create_database, open_database
 from siftd.api.sessions import find_active_session, register_session
-from siftd.paths import db_path, ensure_dirs, session_id_file
+from siftd.cli_common import resolve_db
+from siftd.paths import ensure_dirs, session_id_file
 
 
 def cmd_register(args) -> int:
     """Register an active session for live tagging."""
-    db = Path(args.db) if args.db else db_path()
+    db = resolve_db(args)
     ensure_dirs()
 
     # Create database if it doesn't exist
@@ -50,7 +51,7 @@ def cmd_session_id(args) -> int:
             return 0
 
     # Fallback: query active_sessions table
-    db = Path(args.db) if args.db else db_path()
+    db = resolve_db(args)
     if db.exists():
         conn = open_database(db, read_only=True)
         try:

@@ -4,9 +4,9 @@ import argparse
 import json
 from pathlib import Path
 
-from siftd.api import open_database
+from siftd.api import list_workspaces, open_database
+from siftd.cli_common import resolve_db
 from siftd.paths import cache_dir, config_dir, config_file, data_dir, db_path
-from siftd.storage.queries import fetch_top_workspaces
 
 
 def cmd_status(args) -> int:
@@ -104,7 +104,7 @@ def cmd_status(args) -> int:
 
 def cmd_workspaces(args) -> int:
     """List workspaces with conversation counts."""
-    db = Path(args.db) if args.db else db_path()
+    db = resolve_db(args)
 
     if not db.exists():
         if args.json:
@@ -116,7 +116,7 @@ def cmd_workspaces(args) -> int:
 
     conn = open_database(db, read_only=True)
     limit = args.limit if args.limit > 0 else 10000
-    rows = fetch_top_workspaces(conn, limit=limit)
+    rows = list_workspaces(conn, limit=limit)
     conn.close()
 
     if args.json:

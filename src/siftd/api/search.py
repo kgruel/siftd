@@ -283,7 +283,7 @@ def first_mention(
 
     db = db_path or default_db_path()
 
-    from siftd.storage.sqlite import open_database
+    from siftd.api.database import open_database
 
     conn = open_database(db, read_only=True)
 

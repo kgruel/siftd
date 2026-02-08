@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from siftd.cli import parse_date
+from siftd.cli_common import parse_date
 
 
 class TestParseDate:

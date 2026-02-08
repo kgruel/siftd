@@ -719,7 +719,7 @@ class TestSubagentFiltering:
         """--main-only flag filters out sessions with parent_session_id."""
         from types import SimpleNamespace
 
-        from siftd.cli import cmd_peek
+        from siftd.cli_peek import cmd_peek
 
         # Create parent and child sessions
         parent_path = session_dir / "parent.jsonl"
@@ -782,7 +782,7 @@ class TestSubagentFiltering:
         """--children flag filters to show only children of specified parent."""
         from types import SimpleNamespace
 
-        from siftd.cli import cmd_peek
+        from siftd.cli_peek import cmd_peek
 
         # Create parent and two children
         parent_path = session_dir / "parent.jsonl"
