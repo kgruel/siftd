@@ -1,6 +1,7 @@
 """Conversation listing and detail API."""
 
 import json
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -605,3 +606,52 @@ def run_query_file(
         raise QueryError(f"SQL error: {e}") from e
     finally:
         conn.close()
+
+
+def get_recent_conversation_ids(
+    conn: sqlite3.Connection,
+    limit: int,
+) -> list[str]:
+    """Get IDs of the most recent conversations.
+
+    Args:
+        conn: Database connection.
+        limit: Number of conversations to return.
+
+    Returns:
+        List of conversation IDs, most recent first.
+    """
+    rows = conn.execute(
+        "SELECT id FROM conversations ORDER BY started_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [row["id"] for row in rows]
+
+
+def resolve_entity_id(
+    conn: sqlite3.Connection,
+    entity_type: str,
+    entity_id: str,
+) -> str | None:
+    """Resolve an entity ID, supporting prefix match for conversations.
+
+    Args:
+        conn: Database connection.
+        entity_type: One of 'conversation', 'workspace', 'tool_call'.
+        entity_id: Full or prefix ID to look up.
+
+    Returns:
+        Resolved full ID, or None if not found.
+    """
+    if entity_type == "conversation":
+        row = conn.execute(
+            "SELECT id FROM conversations WHERE id = ? OR id LIKE ?",
+            (entity_id, f"{entity_id}%"),
+        ).fetchone()
+    elif entity_type == "workspace":
+        row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
+    elif entity_type == "tool_call":
+        row = conn.execute("SELECT id FROM tool_calls WHERE id = ?", (entity_id,)).fetchone()
+    else:
+        return None
+    return row["id"] if row else None

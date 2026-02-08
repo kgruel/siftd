@@ -22,10 +22,7 @@ RULES = {
 
 # Known violations pending refactor (tracked for v0.5.0)
 # Format: (filename, imported_layer)
-KNOWN_VIOLATIONS = {
-    ("cli.py", "storage"),  # rebuild_fts_index - needs api layer wrapper
-    ("cli_meta.py", "storage"),  # workspaces query - needs api layer wrapper
-}
+KNOWN_VIOLATIONS = set()
 
 
 def get_siftd_imports(file_path: Path) -> list[tuple[int, str]]:

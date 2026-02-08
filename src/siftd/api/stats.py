@@ -1,5 +1,6 @@
 """Database statistics API."""
 
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -65,6 +66,22 @@ class DatabaseStats:
     top_workspaces: list[WorkspaceStats]
     models: list[str]
     top_tools: list[ToolStats]
+
+
+def list_workspaces(
+    conn: sqlite3.Connection,
+    limit: int = 10,
+) -> list[sqlite3.Row]:
+    """List workspaces with conversation counts.
+
+    Args:
+        conn: Database connection.
+        limit: Maximum workspaces to return.
+
+    Returns:
+        Rows with 'path' and 'convs' keys.
+    """
+    return fetch_top_workspaces(conn, limit=limit)
 
 
 def get_stats(*, db_path: Path | None = None) -> DatabaseStats:

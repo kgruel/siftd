@@ -9,14 +9,17 @@ from siftd.api import (
     create_database,
     delete_tag,
     get_or_create_tag,
+    get_recent_conversation_ids,
     list_tags,
     open_database,
     remove_tag,
     rename_tag,
+    resolve_entity_id,
 )
 from siftd.api.sessions import is_session_registered
 from siftd.api.sessions import queue_tag as queue_pending_tag
-from siftd.paths import db_path, ensure_dirs
+from siftd.cli_common import resolve_db
+from siftd.paths import ensure_dirs
 
 
 def _parse_tag_args(positional: list[str]) -> tuple[str, str, list[str]] | None:
@@ -95,7 +98,7 @@ def _tag_session(args, db: Path, session_id: str) -> int:
 
 def cmd_tag(args) -> int:
     """Apply or remove a tag on a conversation, workspace, or tool_call."""
-    db = Path(args.db) if args.db else db_path()
+    db = resolve_db(args)
 
     # Warn about silently ignored flag combinations
     session_id = getattr(args, "session", None)
@@ -132,12 +135,9 @@ def cmd_tag(args) -> int:
             return 1
 
         # Get N most recent conversations
-        rows = conn.execute(
-            "SELECT id FROM conversations ORDER BY started_at DESC LIMIT ?",
-            (n,),
-        ).fetchall()
+        ids = get_recent_conversation_ids(conn, n)
 
-        if not rows:
+        if not ids:
             print("No conversations found.")
             conn.close()
             return 1
@@ -152,27 +152,27 @@ def cmd_tag(args) -> int:
             tag_id = tag_row["id"]
 
             removed = 0
-            for row in rows:
-                if remove_tag(conn, "conversation", row["id"], tag_id, commit=False):
+            for cid in ids:
+                if remove_tag(conn, "conversation", cid, tag_id, commit=False):
                     removed += 1
             conn.commit()
 
             if removed:
                 print(f"Removed tag '{tag_name}' from {removed} conversation(s)")
             else:
-                print(f"Tag '{tag_name}' not applied to any of {len(rows)} conversation(s)")
+                print(f"Tag '{tag_name}' not applied to any of {len(ids)} conversation(s)")
         else:
             tag_id = get_or_create_tag(conn, tag_name)
             tagged = 0
-            for row in rows:
-                if apply_tag(conn, "conversation", row["id"], tag_id, commit=False):
+            for cid in ids:
+                if apply_tag(conn, "conversation", cid, tag_id, commit=False):
                     tagged += 1
             conn.commit()
 
             if tagged:
                 print(f"Applied tag '{tag_name}' to {tagged} conversation(s)")
             else:
-                print(f"Tag '{tag_name}' already applied to all {len(rows)} conversation(s)")
+                print(f"Tag '{tag_name}' already applied to all {len(ids)} conversation(s)")
 
         conn.close()
         return 0
@@ -191,28 +191,11 @@ def cmd_tag(args) -> int:
     entity_type, entity_id, tag_names = parsed
 
     # Validate entity exists (support prefix match for conversations)
-    if entity_type == "conversation":
-        row = conn.execute(
-            "SELECT id FROM conversations WHERE id = ? OR id LIKE ?",
-            (entity_id, f"{entity_id}%"),
-        ).fetchone()
-    elif entity_type == "workspace":
-        row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
-    elif entity_type == "tool_call":
-        row = conn.execute("SELECT id FROM tool_calls WHERE id = ?", (entity_id,)).fetchone()
-    else:
-        print(f"Unsupported entity type: {entity_type}")
-        print("Supported: conversation, workspace, tool_call")
-        conn.close()
-        return 1
-
-    if not row:
+    resolved_id = resolve_entity_id(conn, entity_type, entity_id)
+    if resolved_id is None:
         print(f"{entity_type} not found: {entity_id}")
         conn.close()
         return 1
-
-    # Use resolved ID (for prefix match)
-    resolved_id = row["id"]
 
     if removing:
         removed = 0
@@ -244,7 +227,7 @@ def cmd_tag(args) -> int:
 
 def cmd_tags(args) -> int:
     """List, rename, or delete tags."""
-    db = Path(args.db) if args.db else db_path()
+    db = resolve_db(args)
 
     if not db.exists():
         print(f"Database not found: {db}")

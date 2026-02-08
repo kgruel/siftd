@@ -18,8 +18,10 @@ from siftd.api.conversations import (
     QueryResult,
     ToolCallSummary,
     get_conversation,
+    get_recent_conversation_ids,
     list_conversations,
     list_query_files,
+    resolve_entity_id,
     run_query_file,
 )
 from siftd.api.database import (
@@ -67,6 +69,7 @@ from siftd.api.stats import (
     ToolStats,
     WorkspaceStats,
     get_stats,
+    list_workspaces,
 )
 from siftd.api.tags import (
     DERIVATIVE_TAG,
@@ -142,8 +145,10 @@ __all__ = [
     "ConversationDetail",
     "Exchange",
     "ToolCallSummary",
+    "get_recent_conversation_ids",
     "list_conversations",
     "get_conversation",
+    "resolve_entity_id",
     # query files
     "QueryFile",
     "QueryResult",
@@ -172,6 +177,7 @@ __all__ = [
     "WorkspaceStats",
     "ToolStats",
     "get_stats",
+    "list_workspaces",
     # tools
     "TagUsage",
     "WorkspaceTagUsage",
