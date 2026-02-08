@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import re
 from datetime import date, timedelta
+from pathlib import Path
 
 
 def parse_date(value: str | None) -> str | None:
@@ -47,6 +48,13 @@ def parse_date(value: str | None) -> str | None:
     raise argparse.ArgumentTypeError(
         f"invalid date format: '{value}' (expected YYYY-MM-DD, Nd, Nw, today, or yesterday)"
     )
+
+
+def resolve_db(args) -> Path:
+    """Resolve database path from args."""
+    from siftd.paths import db_path
+
+    return Path(args.db) if args.db else db_path()
 
 
 def _get_version() -> str:

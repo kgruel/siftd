@@ -1,27 +1,29 @@
 """CLI handlers for data operations (ingest, backfill, migrate, doctor, copy)."""
 
+from __future__ import annotations
+
 import argparse
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from siftd.adapters.registry import load_all_adapters, wrap_adapter_paths
 from siftd.api import create_database, open_database
 from siftd.api.search import rebuild_fts_index
-from siftd.backfill import (
-    backfill_derivative_tags,
-    backfill_filter_binary,
-    backfill_response_attributes,
-    backfill_shell_tags,
-)
-from siftd.ingestion import IngestStats, ingest_all
-from siftd.paths import db_path, ensure_dirs
+from siftd.cli_common import resolve_db
+from siftd.paths import ensure_dirs
+
+if TYPE_CHECKING:
+    from siftd.ingestion import IngestStats
 
 
 def cmd_ingest(args) -> int:
     """Run ingestion from all adapters."""
+    from siftd.adapters.registry import load_all_adapters, wrap_adapter_paths
+    from siftd.ingestion import ingest_all
+
     ensure_dirs()
 
-    db = Path(args.db) if args.db else db_path()
+    db = resolve_db(args)
     is_new = not db.exists()
 
     if is_new:
@@ -69,7 +71,14 @@ def cmd_ingest(args) -> int:
 
 def cmd_backfill(args) -> int:
     """Backfill derived data from existing records."""
-    db = Path(args.db) if args.db else db_path()
+    from siftd.backfill import (
+        backfill_derivative_tags,
+        backfill_filter_binary,
+        backfill_response_attributes,
+        backfill_shell_tags,
+    )
+
+    db = resolve_db(args)
 
     # Warn about --dry-run without --filter-binary
     if getattr(args, "dry_run", False) and not getattr(args, "filter_binary", False):
@@ -130,7 +139,7 @@ def cmd_migrate(args) -> int:
         verify_workspace_identity,
     )
 
-    db = Path(args.db) if args.db else db_path()
+    db = resolve_db(args)
 
     if not db.exists():
         print(f"Database not found: {db}")
@@ -299,7 +308,7 @@ def _doctor_fix_pending_tags(args) -> int:
     """Clean up stale sessions and orphaned pending tags."""
     from siftd.api.sessions import cleanup_stale_sessions
 
-    db = Path(args.db) if args.db else db_path()
+    db = resolve_db(args)
 
     if not db.exists():
         print(f"Database not found: {db}")

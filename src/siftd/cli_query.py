@@ -5,16 +5,16 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from siftd.cli_common import parse_date
+from siftd.cli_common import parse_date, resolve_db
 from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
-from siftd.paths import db_path, queries_dir
+from siftd.paths import queries_dir
 
 
 def cmd_tools(args) -> int:
     """Show tool usage summary by category."""
     from siftd.api import get_tool_tag_summary, get_tool_tags_by_workspace
 
-    db = Path(args.db) if args.db else db_path()
+    db = resolve_db(args)
 
     if not db.exists():
         if args.json:
