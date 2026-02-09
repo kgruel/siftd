@@ -35,14 +35,19 @@ main() {
         echo -e "${BOLD}=== Lint ===${NC}"
         ./dev lint
         echo ""
+        echo -e "${BOLD}=== Spec ===${NC}"
+        uv run pytest tests/architecture/ -v --tb=short
+        echo ""
         echo -e "${BOLD}=== Test ===${NC}"
-        ./dev test -v
+        uv run pytest tests/ -v --tb=short -m "not embeddings" --ignore=tests/architecture/
     else
-        # Quiet mode: single line per step
+        # Quiet mode: single line per step, fail-fast
         printf "Lint... "
         ./dev lint > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; ./dev lint; exit 1; }
+        printf "Spec... "
+        uv run pytest tests/architecture/ -q --tb=line > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; uv run pytest tests/architecture/ -v --tb=short; exit 1; }
         printf "Test... "
-        ./dev test > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; ./dev test; exit 1; }
+        uv run pytest tests/ -q --tb=line -m "not embeddings" --ignore=tests/architecture/ > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; uv run pytest tests/ -q --tb=short -m "not embeddings" --ignore=tests/architecture/; exit 1; }
     fi
 
     log_success "All checks passed"

@@ -202,6 +202,16 @@ def test_import_rules():
         pytest.fail("\n\n".join(parts))
 
 
+def test_known_violations_ratchet():
+    """Known violations must not increase. Ratchet down, never up."""
+    max_allowed = 11
+    actual = len(KNOWN_VIOLATIONS)
+    assert actual <= max_allowed, (
+        f"KNOWN_VIOLATIONS grew from {max_allowed} to {actual}. "
+        f"Fix the new violation instead of adding it to the allowlist."
+    )
+
+
 def find_sqlite3_connect_calls(file_path: Path) -> list[tuple[int, str]]:
     """Find sqlite3.connect() calls in a Python file.
 
