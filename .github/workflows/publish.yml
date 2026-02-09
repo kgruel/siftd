@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v0.4.3)'
+        required: true
 
 jobs:
   ci:
@@ -48,6 +53,8 @@ jobs:
       - name: Wait for PyPI and generate formula
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
+          # workflow_dispatch: use input tag instead
+          if [ -n "${{ inputs.tag }}" ]; then VERSION="${{ inputs.tag }}"; VERSION=${VERSION#v}; fi
           echo "Waiting for siftd $VERSION on PyPI..."
           for i in {1..30}; do
             pip install "siftd==$VERSION" 2>/dev/null && \
@@ -72,5 +79,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/siftd.rb
-          git diff --cached --quiet || git commit -m "Update siftd to ${GITHUB_REF#refs/tags/}"
+          TAG=${GITHUB_REF#refs/tags/}
+          if [ -n "${{ inputs.tag }}" ]; then TAG="${{ inputs.tag }}"; fi
+          git diff --cached --quiet || git commit -m "Update siftd to ${TAG}"
           git push
