@@ -377,8 +377,27 @@ def fetch_response_text_content(
 def fetch_tool_calls_for_conversation(
     conn: sqlite3.Connection,
     conversation_id: str,
+    *,
+    include_content: bool = False,
 ) -> list[sqlite3.Row]:
-    """Fetch tool calls for a conversation with tool names."""
+    """Fetch tool calls for a conversation with tool names.
+
+    Args:
+        conn: Database connection.
+        conversation_id: Conversation ULID.
+        include_content: If True, join content_blobs for tool input/result.
+    """
+    if include_content:
+        return conn.execute(
+            "SELECT tc.response_id, t.name AS tool_name, tc.status, "
+            "tc.input, COALESCE(cb.content, tc.result) AS result "
+            "FROM tool_calls tc "
+            "LEFT JOIN tools t ON t.id = tc.tool_id "
+            "LEFT JOIN content_blobs cb ON cb.hash = tc.result_hash "
+            "WHERE tc.conversation_id = ? "
+            "ORDER BY tc.timestamp",
+            (conversation_id,),
+        ).fetchall()
     return conn.execute(
         "SELECT tc.response_id, t.name AS tool_name, tc.status "
         "FROM tool_calls tc "
@@ -387,6 +406,33 @@ def fetch_tool_calls_for_conversation(
         "ORDER BY tc.timestamp",
         (conversation_id,),
     ).fetchall()
+
+
+def fetch_response_content_blocks(
+    conn: sqlite3.Connection,
+    response_ids: list[str],
+) -> dict[str, list[sqlite3.Row]]:
+    """Fetch all content blocks for responses, ordered by block_index.
+
+    Returns dict mapping response_id to list of rows with
+    block_type, content, and block_index.
+    """
+    if not response_ids:
+        return {}
+
+    rows = batched_in_query(
+        conn,
+        "SELECT response_id, block_type, content, block_index "
+        "FROM response_content "
+        "WHERE response_id IN ({placeholders}) "
+        "ORDER BY response_id, block_index",
+        response_ids,
+    )
+
+    result: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        result.setdefault(row["response_id"], []).append(row)
+    return result
 
 
 def fetch_conversation_tags(

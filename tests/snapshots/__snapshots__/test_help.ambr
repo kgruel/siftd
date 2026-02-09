@@ -422,7 +422,8 @@
                      [-t NAME] [-l NAME] [--all-tags NAME] [--no-tag NAME]
                      [--tool-tag NAME] [-n LIMIT] [-v] [--oldest] [--json]
                      [--stats] [--exchanges N] [--brief] [--summary] [--full]
-                     [--chars N] [--var KEY=VALUE]
+                     [--chars N] [--thinking] [--tools [FILTER]]
+                     [--tool-chars N] [--var KEY=VALUE]
                      [conversation_id] [sql_name]
   
   positional arguments:
@@ -457,11 +458,16 @@
     --stats               Show summary totals after list
   
   detail view:
-    --exchanges N         Number of exchanges to show (default: all)
+    --exchanges N         Number of turns to show (default: all)
     --brief               Brief output (80 char truncation)
-    --summary             Summary only (metadata, no exchanges)
+    --summary             Summary only (metadata, no turns)
     --full                Full text (no truncation)
     --chars N             Truncate text at N characters (default: 200)
+    --thinking            Show model thinking/reasoning blocks
+    --tools [FILTER]      Show tool inputs/results (optional filter: tool name
+                          prefix or 'errors')
+    --tool-chars N        Truncate tool input/result at N characters (default:
+                          120)
   
   sql queries:
     --var KEY=VALUE       Substitute $KEY with VALUE in SQL

@@ -15,6 +15,7 @@ from siftd.storage.queries import (
     fetch_conversation_token_totals,
     fetch_prompt_text_content,
     fetch_prompts_for_conversation,
+    fetch_response_content_blocks,
     fetch_response_text_content,
     fetch_responses_for_conversation,
     fetch_tags_for_conversations,
@@ -31,6 +32,37 @@ class ToolCallSummary:
     tool_name: str
     status: str
     count: int = 1
+
+
+@dataclass
+class ToolCallDetail:
+    """Tool call with optional input/result for --tools mode."""
+
+    tool_name: str
+    status: str
+    count: int = 1
+    input: str | None = None
+    result: str | None = None
+
+
+@dataclass
+class NarrativeBlock:
+    """A single block in the response narrative."""
+
+    block_type: str  # "text", "thinking", "tool_calls"
+    content: str | None = None
+    tool_calls: list[ToolCallDetail] = field(default_factory=list)
+
+
+@dataclass
+class Turn:
+    """A prompt and its full response narrative."""
+
+    timestamp: str | None
+    prompt_text: str | None
+    total_input_tokens: int
+    total_output_tokens: int
+    narrative: list[NarrativeBlock] = field(default_factory=list)
 
 
 @dataclass
@@ -71,6 +103,7 @@ class ConversationDetail:
     total_input_tokens: int
     total_output_tokens: int
     exchanges: list[Exchange]
+    turns: list[Turn] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
 
 
@@ -268,6 +301,9 @@ def get_conversation(
     conversation_id: str,
     *,
     db_path: Path | None = None,
+    include_thinking: bool = False,
+    include_tool_content: bool = False,
+    tool_filter: str | None = None,
 ) -> ConversationDetail | None:
     """Get full conversation detail by ID.
 
@@ -276,6 +312,10 @@ def get_conversation(
     Args:
         conversation_id: Full or prefix of conversation ULID.
         db_path: Path to database. Uses default if not specified.
+        include_thinking: Include thinking/reasoning blocks in turns.
+        include_tool_content: Include tool input/result in turns.
+        tool_filter: Filter tool calls — 'errors' for failed only,
+            or a tool name prefix (e.g. 'shell', 'file.read').
 
     Returns:
         ConversationDetail with timeline, or None if not found.
@@ -310,8 +350,14 @@ def get_conversation(
         parts = [_extract_text(b["content"]) for b in blocks]
         prompt_texts[p["id"]] = " ".join(parts).strip()
 
-    # Fetch responses and their text content
+    # Fetch responses
     responses = fetch_responses_for_conversation(conn, conv_id)
+    response_ids = [r["id"] for r in responses]
+
+    # Fetch all content blocks for all responses (for turns)
+    all_content_blocks = fetch_response_content_blocks(conn, response_ids)
+
+    # Fetch response text content (for backward-compat exchanges)
     response_texts: dict[str, str] = {}
     for r in responses:
         blocks = fetch_response_text_content(conn, r["id"])
@@ -319,24 +365,27 @@ def get_conversation(
         response_texts[r["id"]] = " ".join(parts).strip()
 
     # Fetch tool calls grouped by response
-    tool_calls = fetch_tool_calls_for_conversation(conn, conv_id)
+    tool_calls = fetch_tool_calls_for_conversation(
+        conn, conv_id, include_content=include_tool_content,
+    )
     tc_by_response: dict[str, list] = {}
     for tc in tool_calls:
         tc_by_response.setdefault(tc["response_id"], []).append(tc)
 
-    # Build exchanges: pair prompts with their responses
     # Group responses by prompt_id
     responses_by_prompt: dict[str, list] = {}
     for r in responses:
         if r["prompt_id"]:
             responses_by_prompt.setdefault(r["prompt_id"], []).append(r)
 
+    # Build exchanges (backward compat) and turns
     exchanges = []
+    turns = []
+
     for p in prompts:
         prompt_id = p["id"]
         prompt_text = prompt_texts.get(prompt_id, "")
 
-        # Get responses for this prompt
         prompt_responses = responses_by_prompt.get(prompt_id, [])
         if not prompt_responses:
             # Prompt with no response yet
@@ -350,13 +399,19 @@ def get_conversation(
                     tool_calls=[],
                 )
             )
+            turns.append(
+                Turn(
+                    timestamp=p["timestamp"],
+                    prompt_text=prompt_text or None,
+                    total_input_tokens=0,
+                    total_output_tokens=0,
+                )
+            )
             continue
 
-        # Usually one response per prompt, but handle multiple
+        # --- Backward-compat exchanges (one per response) ---
         for r in prompt_responses:
             response_text = response_texts.get(r["id"], "")
-
-            # Collapse consecutive same tool+status calls
             tcs = tc_by_response.get(r["id"], [])
             collapsed_tools = _collapse_tool_calls(tcs)
 
@@ -371,6 +426,29 @@ def get_conversation(
                 )
             )
 
+        # --- Turn: one per prompt, flattened narrative ---
+        turn_input = sum(r["input_tokens"] or 0 for r in prompt_responses)
+        turn_output = sum(r["output_tokens"] or 0 for r in prompt_responses)
+
+        narrative = _build_narrative(
+            prompt_responses,
+            all_content_blocks,
+            tc_by_response,
+            include_thinking=include_thinking,
+            include_tool_content=include_tool_content,
+            tool_filter=tool_filter,
+        )
+
+        turns.append(
+            Turn(
+                timestamp=p["timestamp"],
+                prompt_text=prompt_text or None,
+                total_input_tokens=turn_input,
+                total_output_tokens=turn_output,
+                narrative=narrative,
+            )
+        )
+
     # Fetch tags
     tags = fetch_conversation_tags(conn, conv_id)
 
@@ -384,8 +462,156 @@ def get_conversation(
         total_input_tokens=total_input,
         total_output_tokens=total_output,
         exchanges=exchanges,
+        turns=turns,
         tags=tags,
     )
+
+
+def _matches_tool_filter(tool_name: str, status: str, tool_filter: str | None) -> bool:
+    """Check if a tool call matches the given filter."""
+    if tool_filter is None:
+        return True
+    if tool_filter == "errors":
+        return status == "error"
+    name = tool_name or ""
+    return name == tool_filter or name.startswith(tool_filter + ".")
+
+
+def _build_narrative(
+    prompt_responses: list,
+    all_content_blocks: dict[str, list],
+    tc_by_response: dict[str, list],
+    *,
+    include_thinking: bool,
+    include_tool_content: bool,
+    tool_filter: str | None,
+) -> list[NarrativeBlock]:
+    """Build interleaved narrative blocks from response content.
+
+    Walks all response content blocks in order (across all responses for
+    a prompt), building text/thinking/tool_calls NarrativeBlocks.
+    """
+    narrative: list[NarrativeBlock] = []
+
+    for r in prompt_responses:
+        resp_id = r["id"]
+        content_blocks = all_content_blocks.get(resp_id, [])
+        resp_tool_calls = tc_by_response.get(resp_id, [])
+
+        # Index into tool_calls list: tool_use blocks appear in content
+        # in the same order as tool_calls rows for this response
+        tc_idx = 0
+        # Accumulate consecutive tool calls for collapsing
+        pending_tools: list[ToolCallDetail] = []
+
+        for block in content_blocks:
+            block_type = block["block_type"]
+
+            if block_type == "text":
+                # Flush any pending tool calls before text
+                if pending_tools:
+                    narrative.append(NarrativeBlock(
+                        block_type="tool_calls",
+                        tool_calls=_collapse_tool_details(pending_tools),
+                    ))
+                    pending_tools = []
+
+                text = _extract_text(block["content"])
+                if text.strip():
+                    narrative.append(NarrativeBlock(
+                        block_type="text",
+                        content=text,
+                    ))
+
+            elif block_type == "thinking":
+                if include_thinking:
+                    # Flush pending tool calls
+                    if pending_tools:
+                        narrative.append(NarrativeBlock(
+                            block_type="tool_calls",
+                            tool_calls=_collapse_tool_details(pending_tools),
+                        ))
+                        pending_tools = []
+
+                    text = _extract_thinking(block["content"])
+                    if text.strip():
+                        narrative.append(NarrativeBlock(
+                            block_type="thinking",
+                            content=text,
+                        ))
+
+            elif block_type == "tool_use":
+                # Match to the corresponding tool_call row
+                if tc_idx < len(resp_tool_calls):
+                    tc = resp_tool_calls[tc_idx]
+                    tc_idx += 1
+
+                    name = tc["tool_name"] or "unknown"
+                    status = tc["status"] or "unknown"
+
+                    if _matches_tool_filter(name, status, tool_filter):
+                        detail = ToolCallDetail(
+                            tool_name=name,
+                            status=status,
+                            input=tc["input"] if include_tool_content else None,
+                            result=tc["result"] if include_tool_content else None,
+                        )
+                        pending_tools.append(detail)
+                else:
+                    tc_idx += 1
+
+        # Flush remaining tool calls
+        if pending_tools:
+            narrative.append(NarrativeBlock(
+                block_type="tool_calls",
+                tool_calls=_collapse_tool_details(pending_tools),
+            ))
+
+    return narrative
+
+
+def _extract_thinking(raw: str) -> str:
+    """Extract thinking text from a content block."""
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            return obj.get("thinking", obj.get("text", ""))
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return raw
+
+
+def _collapse_tool_details(tools: list[ToolCallDetail]) -> list[ToolCallDetail]:
+    """Collapse consecutive tool calls with same name+status."""
+    if not tools:
+        return []
+
+    collapsed: list[ToolCallDetail] = []
+    prev = tools[0]
+    count = 1
+
+    for tc in tools[1:]:
+        if tc.tool_name == prev.tool_name and tc.status == prev.status:
+            count += 1
+        else:
+            collapsed.append(ToolCallDetail(
+                tool_name=prev.tool_name,
+                status=prev.status,
+                count=count,
+                input=prev.input,
+                result=prev.result,
+            ))
+            prev = tc
+            count = 1
+
+    collapsed.append(ToolCallDetail(
+        tool_name=prev.tool_name,
+        status=prev.status,
+        count=count,
+        input=prev.input,
+        result=prev.result,
+    ))
+    return collapsed
 
 
 def _collapse_tool_calls(tool_calls: list) -> list[ToolCallSummary]:

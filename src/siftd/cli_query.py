@@ -1,6 +1,7 @@
 """CLI handlers for query commands (query, tools)."""
 
 import argparse
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -122,6 +123,24 @@ def cmd_tools(args) -> int:
     return 0
 
 
+def _format_tool_input(raw_input: str | None) -> str:
+    """Extract most useful field from tool input JSON for display."""
+    if not raw_input:
+        return ""
+    try:
+        obj = json.loads(raw_input)
+        if isinstance(obj, dict):
+            # Prioritized field extraction
+            for key in ("command", "file_path", "path", "pattern", "query", "url"):
+                if key in obj:
+                    return f"{key}: {obj[key]}"
+            # Fallback: truncated raw JSON
+            return raw_input
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return raw_input
+
+
 def _query_detail(args) -> int:
     """Show conversation detail timeline."""
     from siftd.api import get_conversation
@@ -134,8 +153,22 @@ def _query_detail(args) -> int:
 
     db = Path(args.db) if args.db else None
 
+    # Resolve flags
+    include_thinking = getattr(args, "thinking", False)
+    tools_flag = getattr(args, "tools", None)
+    include_tool_content = tools_flag is not None
+    tool_filter = None
+    if tools_flag is not None and tools_flag != "all":
+        tool_filter = tools_flag
+
     try:
-        detail = get_conversation(args.conversation_id, db_path=db)
+        detail = get_conversation(
+            args.conversation_id,
+            db_path=db,
+            include_thinking=include_thinking,
+            include_tool_content=include_tool_content,
+            tool_filter=tool_filter,
+        )
     except FileNotFoundError as e:
         print(str(e))
         print("Run 'siftd ingest' to create it.")
@@ -154,6 +187,8 @@ def _query_detail(args) -> int:
     elif getattr(args, "chars", None) is not None:
         chars_limit = args.chars
 
+    tool_chars = getattr(args, "tool_chars", 120)
+
     # Header
     ws_name = fmt_workspace(detail.workspace_path)
     started = fmt_timestamp(detail.started_at)
@@ -170,39 +205,49 @@ def _query_detail(args) -> int:
 
     # Summary mode: just metadata, no exchanges
     if getattr(args, "summary", False):
-        print(f"Exchanges: {len(detail.exchanges)}")
+        print(f"Turns: {len(detail.turns)}")
         return 0
 
     print()
 
-    # Determine which exchanges to show
-    exchanges = detail.exchanges
+    # Determine which turns to show
+    show_turns = detail.turns
     if exchanges_n is not None:
-        # Show last N exchanges
-        exchanges = exchanges[-exchanges_n:] if exchanges_n < len(exchanges) else exchanges
+        show_turns = show_turns[-exchanges_n:] if exchanges_n < len(show_turns) else show_turns
 
-    # Timeline
-    for ex in exchanges:
-        ts = fmt_timestamp(ex.timestamp, time_only=True)
+    # Timeline using turns (narrative-aware)
+    for turn in show_turns:
+        ts = fmt_timestamp(turn.timestamp, time_only=True)
 
-        # Prompt
-        if ex.prompt_text:
-            text = truncate_text(ex.prompt_text, chars_limit)
+        # Prompt (shown once per turn)
+        if turn.prompt_text:
+            text = truncate_text(turn.prompt_text, chars_limit)
             print(f"[prompt] {ts}")
             print(f"  {text}")
             print()
 
-        # Response
-        if ex.response_text is not None or ex.tool_calls:
-            print(f"[response] {ts} ({fmt_tokens(ex.input_tokens)} in / {fmt_tokens(ex.output_tokens)} out)")
-            if ex.response_text:
-                text = truncate_text(ex.response_text, chars_limit)
-                print(f"  {text}")
-            for tc in ex.tool_calls:
-                if tc.count > 1:
-                    print(f"  → {tc.tool_name} ×{tc.count} ({tc.status})")
-                else:
-                    print(f"  → {tc.tool_name} ({tc.status})")
+        # Response narrative
+        if turn.narrative:
+            tok = turn.total_input_tokens + turn.total_output_tokens
+            print(f"[response] {ts} ({fmt_tokens(tok)} tok)")
+            for block in turn.narrative:
+                if block.block_type == "text":
+                    text = truncate_text(block.content or "", chars_limit)
+                    print(f"  {text}")
+                elif block.block_type == "thinking":
+                    text = truncate_text(block.content or "", chars_limit)
+                    print(f"  [thinking] {text}")
+                elif block.block_type == "tool_calls":
+                    for tc in block.tool_calls:
+                        if tc.count > 1:
+                            line = f"    \u2192 {tc.tool_name} \u00d7{tc.count} ({tc.status})"
+                        else:
+                            line = f"    \u2192 {tc.tool_name} ({tc.status})"
+                        if tc.input is not None:
+                            line += f"  {truncate_text(_format_tool_input(tc.input), tool_chars)}"
+                        print(line)
+                        if tc.result is not None:
+                            print(f"      \u2190 {truncate_text(tc.result, tool_chars)}")
             print()
 
     return 0
@@ -502,11 +547,16 @@ examples:
 
     # Detail view options (when conversation_id is provided)
     detail_group = p_query.add_argument_group("detail view")
-    detail_group.add_argument("--exchanges", type=int, metavar="N", help="Number of exchanges to show (default: all)")
+    detail_group.add_argument("--exchanges", type=int, metavar="N", help="Number of turns to show (default: all)")
     detail_group.add_argument("--brief", action="store_true", help="Brief output (80 char truncation)")
-    detail_group.add_argument("--summary", action="store_true", help="Summary only (metadata, no exchanges)")
+    detail_group.add_argument("--summary", action="store_true", help="Summary only (metadata, no turns)")
     detail_group.add_argument("--full", action="store_true", help="Full text (no truncation)")
     detail_group.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: 200)")
+    detail_group.add_argument("--thinking", action="store_true", help="Show model thinking/reasoning blocks")
+    detail_group.add_argument("--tools", nargs="?", const="all", metavar="FILTER",
+        help="Show tool inputs/results (optional filter: tool name prefix or 'errors')")
+    detail_group.add_argument("--tool-chars", type=int, metavar="N", default=120,
+        help="Truncate tool input/result at N characters (default: 120)")
 
     # SQL query options
     sql_group = p_query.add_argument_group("sql queries")
