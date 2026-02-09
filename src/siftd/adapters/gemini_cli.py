@@ -24,7 +24,7 @@ from siftd.domain import (
 )
 
 if TYPE_CHECKING:
-    from siftd.peek.types import PeekExchange, PeekScanResult
+    from siftd.domain.peek import PeekExchange, PeekScanResult
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
@@ -288,7 +288,7 @@ def peek_scan(path: Path) -> "PeekScanResult | None":
 
     Gemini CLI stores sessions as single JSON files with a messages array.
     """
-    from siftd.peek.types import PeekScanResult
+    from siftd.domain.peek import PeekScanResult
 
     try:
         data = _load_json(path)
@@ -333,7 +333,7 @@ def peek_scan(path: Path) -> "PeekScanResult | None":
 
 def peek_exchanges(path: Path, last_n: int = 5) -> list["PeekExchange"]:
     """Extract recent exchanges for session detail view."""
-    from siftd.peek.types import PeekExchange
+    from siftd.domain.peek import PeekExchange
 
     if last_n < 1:
         last_n = 1

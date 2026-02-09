@@ -24,7 +24,7 @@ from siftd.domain import (
 )
 
 if TYPE_CHECKING:
-    from siftd.peek.types import PeekExchange, PeekScanResult
+    from siftd.domain.peek import PeekExchange, PeekScanResult
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
@@ -328,7 +328,7 @@ def peek_scan(path: Path) -> "PeekScanResult | None":
     """
     import json
 
-    from siftd.peek.types import PeekScanResult
+    from siftd.domain.peek import PeekScanResult
 
     session_id = path.stem
     workspace_path: str | None = None

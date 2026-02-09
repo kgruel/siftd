@@ -680,6 +680,12 @@ def fetch_tool_tags_by_workspace(
     ).fetchall()
 
 
+def fetch_all_conversation_ids(conn: sqlite3.Connection) -> list[str]:
+    """Fetch all conversation IDs."""
+    rows = conn.execute("SELECT id FROM conversations").fetchall()
+    return [row["id"] for row in rows]
+
+
 # =============================================================================
 # Search queries
 # =============================================================================

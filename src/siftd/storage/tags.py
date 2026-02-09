@@ -21,6 +21,13 @@ def get_or_create_tag(conn: sqlite3.Connection, name: str, description: str | No
     return ulid
 
 
+def get_tag_id(conn: sqlite3.Connection, name: str) -> str | None:
+    """Return tag id for name, or None if not found."""
+    cur = conn.execute("SELECT id FROM tags WHERE name = ?", (name,))
+    row = cur.fetchone()
+    return row["id"] if row else None
+
+
 def apply_tag(
     conn: sqlite3.Connection,
     entity_type: str,

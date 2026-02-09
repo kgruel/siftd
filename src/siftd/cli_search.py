@@ -170,11 +170,10 @@ def cmd_search(args) -> int:
             if candidate_ids is not None:
                 candidate_ids = candidate_ids - exclude_active_ids
             else:
+                from siftd.api.search import list_conversation_ids
+
                 conn_tmp = open_database(db, read_only=True)
-                all_ids = {
-                    row["id"]
-                    for row in conn_tmp.execute("SELECT id FROM conversations").fetchall()
-                }
+                all_ids = list_conversation_ids(conn_tmp)
                 conn_tmp.close()
                 candidate_ids = all_ids - exclude_active_ids
 
@@ -452,11 +451,10 @@ def _search_fts_only(args, db: Path, query: str) -> int:
             if candidate_ids is not None:
                 candidate_ids = candidate_ids - exclude_active_ids
             else:
+                from siftd.api.search import list_conversation_ids
+
                 conn_tmp = open_database(db, read_only=True)
-                all_ids = {
-                    row["id"]
-                    for row in conn_tmp.execute("SELECT id FROM conversations").fetchall()
-                }
+                all_ids = list_conversation_ids(conn_tmp)
                 conn_tmp.close()
                 candidate_ids = all_ids - exclude_active_ids
 

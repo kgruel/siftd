@@ -20,6 +20,9 @@ from siftd.storage.tags import (
     get_or_create_tag as _get_or_create_tag,
 )
 from siftd.storage.tags import (
+    get_tag_id as _get_tag_id,
+)
+from siftd.storage.tags import (
     list_tags as _list_tags,
 )
 from siftd.storage.tags import (
@@ -34,6 +37,7 @@ __all__ = [
     "TagInfo",
     "apply_tag",
     "delete_tag",
+    "get_tag_id",
     "get_or_create_tag",
     "list_tags",
     "remove_tag",
@@ -108,6 +112,14 @@ def get_or_create_tag(
         Tag ID (ULID).
     """
     return _get_or_create_tag(conn, name, description)
+
+
+def get_tag_id(
+    conn: sqlite3.Connection,
+    name: str,
+) -> str | None:
+    """Return tag id for name, or None if not found."""
+    return _get_tag_id(conn, name)
 
 
 def apply_tag(

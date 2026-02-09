@@ -221,3 +221,81 @@ class TestFormatterRegistry:
         # Registry returns None for unknown formats, which select_formatter
         # handles by falling through to built-in selection
         assert result is None
+
+
+# =============================================================================
+# 5. Raw SQL in CLI Modules
+# =============================================================================
+
+
+_SQL_KEYWORDS = (
+    "SELECT",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "PRAGMA",
+    "WITH",
+    "CREATE",
+    "DROP",
+    "ALTER",
+)
+
+
+def _extract_sql_literal(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        parts = []
+        for value in node.values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                parts.append(value.value)
+        return "".join(parts) if parts else None
+    return None
+
+
+def find_sql_execute_calls(file_path: Path) -> list[tuple[int, str]]:
+    """Find conn.execute(...) calls with SQL literals in a Python file."""
+    import re
+
+    source = file_path.read_text()
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    sql_re = re.compile(rf"\\b({'|'.join(_SQL_KEYWORDS)})\\b", re.IGNORECASE)
+    lines = source.splitlines()
+    results = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr not in {"execute", "executemany", "executescript"}:
+                continue
+            if not node.args:
+                continue
+            sql_literal = _extract_sql_literal(node.args[0])
+            if not sql_literal or not sql_re.search(sql_literal):
+                continue
+            line = node.lineno
+            if 0 < line <= len(lines) and "arch: allow-sql" in lines[line - 1]:
+                continue
+            snippet = sql_literal.strip().splitlines()[0][:80]
+            results.append((line, snippet))
+    return results
+
+
+def test_no_raw_sql_in_cli_modules(src_dir):
+    """CLI modules should not execute raw SQL directly."""
+    violations = []
+
+    for py_file in src_dir.rglob("cli*.py"):
+        for line_num, snippet in find_sql_execute_calls(py_file):
+            rel_path = py_file.relative_to(src_dir.parent.parent)
+            violations.append(f"{rel_path}:{line_num}: execute({snippet!r})")
+
+    if violations:
+        pytest.fail(
+            "Raw SQL execution found in CLI modules. "
+            "Use API/storage helpers instead:\n"
+            + "\n".join(violations)
+        )

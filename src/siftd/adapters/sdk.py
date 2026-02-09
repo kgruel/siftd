@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from siftd.domain import Harness, Source
 
 if TYPE_CHECKING:
-    from siftd.peek.types import PeekExchange, PeekScanResult
+    from siftd.domain.peek import PeekExchange, PeekScanResult
 
 
 def discover_files(
@@ -392,7 +392,7 @@ def peek_jsonl_scan(
     Returns:
         PeekScanResult or None if file can't be parsed.
     """
-    from siftd.peek.types import PeekScanResult
+    from siftd.domain.peek import PeekScanResult
 
     session_id = path.stem
     workspace_path: str | None = None
@@ -494,7 +494,7 @@ def peek_jsonl_exchanges(
     Returns:
         List of PeekExchange objects.
     """
-    from siftd.peek.types import PeekExchange
+    from siftd.domain.peek import PeekExchange
 
     # Enforce minimum
     if last_n < 1:

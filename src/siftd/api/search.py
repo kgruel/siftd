@@ -14,7 +14,11 @@ from pathlib import Path
 from statistics import mean as _mean
 from typing import TYPE_CHECKING
 
-from siftd.storage.queries import fetch_conversation_timestamps, fetch_prompt_timestamps
+from siftd.storage.queries import (
+    fetch_all_conversation_ids,
+    fetch_conversation_timestamps,
+    fetch_prompt_timestamps,
+)
 
 if TYPE_CHECKING:
     from siftd.search import SearchResult, apply_temporal_weight, hybrid_search
@@ -49,6 +53,7 @@ __all__ = [
     # Temporal weighting
     "apply_temporal_weight",
     "fetch_conversation_timestamps",
+    "list_conversation_ids",
     # Embeddings
     "open_embeddings_db",
     "search_similar",
@@ -192,6 +197,11 @@ def fts5_search_content(
     from siftd.storage.fts import search_content as _search_content
 
     return _search_content(conn, query, limit=limit)
+
+
+def list_conversation_ids(conn: sqlite3.Connection) -> set[str]:
+    """Return all conversation IDs."""
+    return set(fetch_all_conversation_ids(conn))
 
 
 @dataclass

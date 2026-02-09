@@ -10,6 +10,7 @@ from siftd.api import (
     delete_tag,
     get_or_create_tag,
     get_recent_conversation_ids,
+    get_tag_id,
     list_tags,
     open_database,
     remove_tag,
@@ -144,12 +145,11 @@ def cmd_tag(args) -> int:
 
         if removing:
             # Look up existing tag (don't create on remove)
-            tag_row = conn.execute("SELECT id FROM tags WHERE name = ?", (tag_name,)).fetchone()
-            if not tag_row:
+            tag_id = get_tag_id(conn, tag_name)
+            if not tag_id:
                 print(f"Tag '{tag_name}' not found")
                 conn.close()
                 return 1
-            tag_id = tag_row["id"]
 
             removed = 0
             for cid in ids:
@@ -202,11 +202,11 @@ def cmd_tag(args) -> int:
     if removing:
         removed = 0
         for tag_name in tag_names:
-            tag_row = conn.execute("SELECT id FROM tags WHERE name = ?", (tag_name,)).fetchone()
-            if not tag_row:
+            tag_id = get_tag_id(conn, tag_name)
+            if not tag_id:
                 print(f"Tag '{tag_name}' not found")
                 continue
-            if remove_tag(conn, entity_type, resolved_id, tag_row["id"], commit=False):
+            if remove_tag(conn, entity_type, resolved_id, tag_id, commit=False):
                 print(f"Removed tag '{tag_name}' from {entity_type} {resolved_id[:12]}")
                 removed += 1
             else:

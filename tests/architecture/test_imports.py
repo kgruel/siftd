@@ -80,10 +80,6 @@ MODULE_GROUPS: dict[str, str] = {
 # Known violations pending refactor.
 # Format: (relative_path_from_src_siftd, imported_group)
 KNOWN_VIOLATIONS = {
-    ("adapters/claude_code.py", "peek"),  # TYPE_CHECKING on peek types
-    ("adapters/codex_cli.py", "peek"),  # TYPE_CHECKING on peek types
-    ("adapters/gemini_cli.py", "peek"),  # TYPE_CHECKING on peek types
-    ("adapters/sdk.py", "peek"),  # TYPE_CHECKING on peek types
     ("cli_data.py", "adapters"),  # CLI entrypoint loads adapters directly
     ("cli_data.py", "ingestion"),  # CLI entrypoint calls ingestion/backfill
     ("cli_meta.py", "embeddings"),  # CLI entrypoint reads embeddings status
@@ -105,17 +101,45 @@ def get_siftd_imports(file_path: Path) -> list[str]:
     except SyntaxError:
         return []
 
-    imports: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
+    def is_type_checking_test(node: ast.AST) -> bool:
+        if isinstance(node, ast.Name) and node.id == "TYPE_CHECKING":
+            return True
+        if isinstance(node, ast.Attribute) and node.attr == "TYPE_CHECKING":
+            return True
+        return False
+
+    class SiftdImportCollector(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.imports: list[str] = []
+            self._type_checking_depth = 0
+
+        def visit_If(self, node: ast.If) -> None:
+            if is_type_checking_test(node.test):
+                self._type_checking_depth += 1
+                for child in node.body:
+                    self.visit(child)
+                self._type_checking_depth -= 1
+                for child in node.orelse:
+                    self.visit(child)
+                return
+            self.generic_visit(node)
+
+        def visit_Import(self, node: ast.Import) -> None:
+            if self._type_checking_depth:
+                return
             for alias in node.names:
                 if alias.name.startswith("siftd."):
-                    imports.append(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.module and node.module.startswith("siftd."):
-                imports.append(node.module)
+                    self.imports.append(alias.name)
 
-    return imports
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            if self._type_checking_depth:
+                return
+            if node.module and node.module.startswith("siftd."):
+                self.imports.append(node.module)
+
+    collector = SiftdImportCollector()
+    collector.visit(tree)
+    return collector.imports
 
 
 def module_name_from_path(file_path: Path, src_dir: Path) -> str:
@@ -204,7 +228,7 @@ def test_import_rules():
 
 def test_known_violations_ratchet():
     """Known violations must not increase. Ratchet down, never up."""
-    max_allowed = 11
+    max_allowed = 7
     actual = len(KNOWN_VIOLATIONS)
     assert actual <= max_allowed, (
         f"KNOWN_VIOLATIONS grew from {max_allowed} to {actual}. "
