@@ -12,6 +12,7 @@ from siftd.paths import cache_dir, config_dir, config_file, data_dir, db_path
 def cmd_status(args) -> int:
     """Show database status and statistics."""
     from siftd.api import get_stats
+    from siftd.output import fmt_timestamp
 
     db = Path(args.db) if args.db else None
 
@@ -44,8 +45,16 @@ def cmd_status(args) -> int:
                 {"name": h.name, "source": h.source, "log_format": h.log_format}
                 for h in stats.harnesses
             ],
+            "harness_counts": [
+                {"name": hc.name, "conversations": hc.conversation_count}
+                for hc in stats.harness_counts
+            ],
             "top_workspaces": [
-                {"path": w.path, "conversation_count": w.conversation_count}
+                {
+                    "path": w.path,
+                    "conversation_count": w.conversation_count,
+                    "last_activity": w.last_activity,
+                }
                 for w in stats.top_workspaces
             ],
             "models": stats.models,
@@ -53,6 +62,14 @@ def cmd_status(args) -> int:
                 {"name": t.name, "usage_count": t.usage_count}
                 for t in stats.top_tools
             ],
+            "top_tags": [
+                {"name": t.name, "count": t.count} for t in stats.top_tags
+            ],
+            "activity_window": {
+                "earliest": stats.activity_window[0],
+                "latest": stats.activity_window[1],
+            },
+            "last_ingest_at": stats.last_ingest_at,
             "features": {
                 "embeddings": embeddings_available(),
             },
@@ -80,7 +97,9 @@ def cmd_status(args) -> int:
 
     print("\n--- Workspaces (top 10) ---")
     for w in stats.top_workspaces:
-        print(f"  {w.path}: {w.conversation_count} conversations")
+        last_activity = fmt_timestamp(w.last_activity)
+        last_str = f" (last {last_activity})" if last_activity else ""
+        print(f"  {w.path}: {w.conversation_count} conversations{last_str}")
 
     print("\n--- Models ---")
     for model in stats.models:
@@ -89,6 +108,33 @@ def cmd_status(args) -> int:
     print("\n--- Tools (top 10 by usage) ---")
     for t in stats.top_tools:
         print(f"  {t.name}: {t.usage_count}")
+
+    # Activity window + ingest recency
+    earliest, latest = stats.activity_window
+    if earliest or latest:
+        earliest_fmt = fmt_timestamp(earliest)
+        latest_fmt = fmt_timestamp(latest)
+        print("\n--- Activity window ---")
+        if earliest_fmt and latest_fmt:
+            print(f"  Conversations: {earliest_fmt} -> {latest_fmt}")
+        elif earliest_fmt:
+            print(f"  Conversations: {earliest_fmt} -> (unknown)")
+        elif latest_fmt:
+            print(f"  Conversations: (unknown) -> {latest_fmt}")
+
+    if stats.harness_counts:
+        print("\n--- Harness activity ---")
+        for hc in stats.harness_counts:
+            print(f"  {hc.name}: {hc.conversation_count}")
+
+    if stats.top_tags:
+        print("\n--- Tags (top 5) ---")
+        for tag in stats.top_tags:
+            print(f"  {tag.name}: {tag.count}")
+
+    if stats.last_ingest_at:
+        print("\n--- Ingest ---")
+        print(f"  Last ingest: {fmt_timestamp(stats.last_ingest_at)}")
 
     # Features status
     from siftd.embeddings import embeddings_available
@@ -105,6 +151,7 @@ def cmd_status(args) -> int:
 def cmd_workspaces(args) -> int:
     """List workspaces with conversation counts."""
     db = resolve_db(args)
+    from siftd.output import fmt_timestamp
 
     if not db.exists():
         if args.json:
@@ -121,7 +168,11 @@ def cmd_workspaces(args) -> int:
 
     if args.json:
         out = [
-            {"path": row["path"], "conversations": row["convs"]}
+            {
+                "path": row["path"],
+                "conversations": row["convs"],
+                "last_activity": row["last_activity"],
+            }
             for row in rows
         ]
         print(json.dumps(out, indent=2))
@@ -132,7 +183,10 @@ def cmd_workspaces(args) -> int:
         return 0
 
     for row in rows:
-        print(f"{row['path']}  ({row['convs']} conversations)")
+        name = Path(row["path"]).name if row["path"] else ""
+        last_activity = fmt_timestamp(row["last_activity"])
+        last_str = f"  last {last_activity}" if last_activity else ""
+        print(f"{name}  {row['convs']} conversations{last_str}")
 
     return 0
 

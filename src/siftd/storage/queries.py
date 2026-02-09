@@ -495,16 +495,19 @@ def fetch_top_workspaces(
     conn: sqlite3.Connection,
     limit: int = 10,
 ) -> list[sqlite3.Row]:
-    """Fetch workspaces with conversation counts, ordered by count desc.
+    """Fetch workspaces with conversation counts and last activity.
 
     Uses subquery pattern: aggregate first on indexed column (workspace_id),
     then join only the top N rows with the workspaces table for paths.
     """
     return conn.execute(
         """
-        SELECT w.path, counts.convs
+        SELECT w.path, counts.convs, counts.last_activity
         FROM (
-            SELECT workspace_id, COUNT(*) as convs
+            SELECT
+                workspace_id,
+                COUNT(*) as convs,
+                MAX(COALESCE(ended_at, started_at)) as last_activity
             FROM conversations
             GROUP BY workspace_id
             ORDER BY convs DESC
@@ -515,6 +518,57 @@ def fetch_top_workspaces(
         """,
         (limit,),
     ).fetchall()
+
+
+def fetch_conversation_time_window(conn: sqlite3.Connection) -> tuple[str | None, str | None]:
+    """Fetch earliest and latest conversation start times."""
+    row = conn.execute(
+        "SELECT MIN(started_at) AS earliest, MAX(started_at) AS latest FROM conversations"
+    ).fetchone()
+    if not row:
+        return None, None
+    return row["earliest"], row["latest"]
+
+
+def fetch_harness_conversation_counts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Fetch conversation counts per harness."""
+    return conn.execute(
+        """
+        SELECT h.name, COUNT(c.id) AS conversations
+        FROM harnesses h
+        LEFT JOIN conversations c ON c.harness_id = h.id
+        GROUP BY h.id
+        ORDER BY conversations DESC, h.name
+        """
+    ).fetchall()
+
+
+def fetch_top_conversation_tags(
+    conn: sqlite3.Connection,
+    limit: int = 5,
+) -> list[sqlite3.Row]:
+    """Fetch top conversation tags by usage."""
+    return conn.execute(
+        """
+        SELECT t.name, COUNT(ct.id) AS count
+        FROM tags t
+        JOIN conversation_tags ct ON ct.tag_id = t.id
+        GROUP BY t.id
+        ORDER BY count DESC, t.name
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+
+def fetch_last_ingest_time(conn: sqlite3.Connection) -> str | None:
+    """Fetch the most recent ingest timestamp."""
+    row = conn.execute(
+        "SELECT MAX(ingested_at) AS last_ingest FROM ingested_files"
+    ).fetchone()
+    if not row:
+        return None
+    return row["last_ingest"]
 
 
 def fetch_model_names(conn: sqlite3.Connection) -> list[str]:

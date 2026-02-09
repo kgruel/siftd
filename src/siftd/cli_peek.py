@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+from datetime import datetime
 
 
 def cmd_peek(args) -> int:
@@ -173,15 +174,24 @@ def cmd_peek(args) -> int:
         # Header
         ws = detail.info.workspace_name or ""
         model = detail.info.model or "unknown"
+        adapter = detail.info.adapter_name or "unknown"
         started = fmt_timestamp(detail.started_at, time_only=True)
+        last_activity = ""
+        if detail.info.last_activity:
+            last_activity = datetime.fromtimestamp(
+                detail.info.last_activity
+            ).strftime("%H:%M")
 
         print(detail.info.session_id)
         parts = []
         if ws:
             parts.append(ws)
         parts.append(model)
+        parts.append(adapter)
         if started:
             parts.append(f"started {started}")
+        if last_activity:
+            parts.append(f"last {last_activity}")
         parts.append(f"{detail.info.exchange_count} exchanges")
         print(" \u00b7 ".join(parts))
         # Add file path to detail header
@@ -302,12 +312,13 @@ def cmd_peek(args) -> int:
         else:
             exchanges = "(preview unavailable)"
         model = fmt_model(s.model)
+        adapter = s.adapter_name or ""
 
         # Add child count suffix if this session has children in results
         child_count = len(children_by_parent.get(s.session_id, []))
         suffix = f" (+{child_count} agents)" if child_count > 0 else ""
 
-        print(f"  {sid}  {ws:<16s} {ago:<12s} {exchanges:<16s} {model}{suffix}")
+        print(f"  {sid}  {ws:<16s} {ago:<12s} {exchanges:<16s} {model} {adapter}{suffix}")
 
     return 0
 

@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from siftd.cli_common import parse_date, resolve_db
-from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
+from siftd.output import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
 from siftd.paths import queries_dir
 
 
@@ -451,11 +451,12 @@ def cmd_query(args) -> int:
     for c in conversations:
         cid = c.id[:12] if c.id else ""
         ws = fmt_workspace(c.workspace_path)
-        model = c.model or ""
+        model = fmt_model(c.model) if c.model else ""
         started = fmt_timestamp(c.started_at)
         tokens = fmt_tokens(c.total_tokens)
+        cost = f"${c.cost:.4f}" if c.cost else "$0.0000"
         tag_str = f"  [{', '.join(c.tags)}]" if c.tags else ""
-        print(f"{cid}  {started}  {ws}  {model}  {c.prompt_count}p/{c.response_count}r  {tokens} tok{tag_str}")
+        print(f"{cid}  {started}  {ws}  {model}  {c.prompt_count}p/{c.response_count}r  {tokens} tok  {cost}{tag_str}")
 
     # Stats summary (shown after list when --stats flag is set)
     if args.stats:

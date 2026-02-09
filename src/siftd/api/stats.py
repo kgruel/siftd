@@ -6,9 +6,13 @@ from pathlib import Path
 
 from siftd.paths import db_path as default_db_path
 from siftd.storage.queries import (
+    fetch_conversation_time_window,
+    fetch_harness_conversation_counts,
     fetch_harnesses,
+    fetch_last_ingest_time,
     fetch_model_names,
     fetch_table_count,
+    fetch_top_conversation_tags,
     fetch_top_tools,
     fetch_top_workspaces,
 )
@@ -45,6 +49,7 @@ class WorkspaceStats:
 
     path: str
     conversation_count: int
+    last_activity: str | None
 
 
 @dataclass
@@ -56,6 +61,22 @@ class ToolStats:
 
 
 @dataclass
+class HarnessCount:
+    """Conversation count by harness."""
+
+    name: str
+    conversation_count: int
+
+
+@dataclass
+class TagStats:
+    """Tag usage count."""
+
+    name: str
+    count: int
+
+
+@dataclass
 class DatabaseStats:
     """Complete database statistics."""
 
@@ -63,9 +84,13 @@ class DatabaseStats:
     db_size_bytes: int
     counts: TableCounts
     harnesses: list[HarnessInfo]
+    harness_counts: list[HarnessCount]
     top_workspaces: list[WorkspaceStats]
     models: list[str]
     top_tools: list[ToolStats]
+    top_tags: list[TagStats]
+    activity_window: tuple[str | None, str | None]
+    last_ingest_at: str | None
 
 
 def list_workspaces(
@@ -132,7 +157,11 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
     # Top workspaces
     workspace_rows = fetch_top_workspaces(conn, limit=10)
     top_workspaces = [
-        WorkspaceStats(path=row["path"], conversation_count=row["convs"])
+        WorkspaceStats(
+            path=row["path"],
+            conversation_count=row["convs"],
+            last_activity=row["last_activity"],
+        )
         for row in workspace_rows
     ]
 
@@ -145,6 +174,21 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
         ToolStats(name=row["name"], usage_count=row["uses"]) for row in tool_rows
     ]
 
+    # Harness conversation counts
+    harness_count_rows = fetch_harness_conversation_counts(conn)
+    harness_counts = [
+        HarnessCount(name=row["name"], conversation_count=row["conversations"])
+        for row in harness_count_rows
+    ]
+
+    # Top conversation tags
+    tag_rows = fetch_top_conversation_tags(conn, limit=5)
+    top_tags = [TagStats(name=row["name"], count=row["count"]) for row in tag_rows]
+
+    # Activity window and ingest recency
+    activity_window = fetch_conversation_time_window(conn)
+    last_ingest_at = fetch_last_ingest_time(conn)
+
     conn.close()
 
     return DatabaseStats(
@@ -152,7 +196,11 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
         db_size_bytes=db.stat().st_size,
         counts=counts,
         harnesses=harnesses,
+        harness_counts=harness_counts,
         top_workspaces=top_workspaces,
         models=models,
         top_tools=top_tools,
+        top_tags=top_tags,
+        activity_window=activity_window,
+        last_ingest_at=last_ingest_at,
     )
