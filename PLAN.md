@@ -1,0 +1,14 @@
+# Review Findings (research/review-latest)
+
+## P0 (must fix)
+- None found.
+
+## P1 (should fix)
+- Cache-aware cost/tokens can be inflated when `response_attributes` contains multiple `cache_read_input_tokens` rows with different scopes (e.g., adapter + backfill). The `LEFT JOIN response_attributes` in `list_conversations` duplicates response rows, inflating `SUM(r.input_tokens)`, `SUM(r.output_tokens)`, and cost totals. The same join exists in the `cost.sql` query. Locations: `src/siftd/api/conversations.py:259-307`, `src/siftd/builtin_queries/cost.sql:27-29`. Suggested fix: join to a subquery that returns a single cache_read value per response (e.g., `SELECT response_id, MAX(CAST(value AS INTEGER)) AS cache_read_input_tokens FROM response_attributes WHERE key='cache_read_input_tokens' GROUP BY response_id`), or add a scope predicate/priority and ensure aggregates are computed on de-duplicated response rows.
+- Codex CLI token usage can be attached to the wrong response when `event_msg` token_count records interleave with multiple response items. `pending_usage_response` is a single pointer that is overwritten by later response_item/tool_use events and then cleared on the next token_count, so late token_count events can attribute usage to the wrong response or drop it. Location: `src/siftd/adapters/codex_cli.py:141-206`. Suggested fix: track a queue of responses awaiting token_count (or associate token_count with a response id/timestamp if available), and only clear the specific response when its usage is applied.
+
+## P2 (nice to have)
+- Tool matching can double-count tool calls if repeated `tool_use` blocks share the same id. The direct-ID path does not check `used_ids` before appending, so duplicate `tool_use` ids produce duplicate entries. Location: `src/siftd/api/conversations.py:603-612`. Suggested fix: if `tool_use_id` is already in `used_ids`, skip or treat as already consumed.
+- `builtin_queries/cost.sql` filters with `WHERE r.input_tokens IS NOT NULL`, which omits responses that only have output tokens recorded. Location: `src/siftd/builtin_queries/cost.sql:29`. Suggested fix: relax to `WHERE r.input_tokens IS NOT NULL OR r.output_tokens IS NOT NULL` or drop the filter and rely on `COALESCE`.
+- Top-tag stats query may be slow on large DBs because `conversation_tags.tag_id` is not indexed; the join/group-by requires a scan. Location: `src/siftd/storage/queries.py:546-558` (schema lacks an index). Suggested fix: add an index on `conversation_tags(tag_id)` or aggregate in a subquery on `conversation_tags` then join tags for names.
+- Test gaps: no coverage for cache-aware cost (including scope conflicts), token coverage stats, tool_result narrative rendering/ID matching, or codex token_count interleaving behavior. Add targeted tests in storage/query and adapter/narrative suites.

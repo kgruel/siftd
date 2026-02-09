@@ -257,15 +257,19 @@ def _list_conversations_impl(
     limit_clause = f"LIMIT {limit}" if limit > 0 else ""
 
     cache_join = (
-        "LEFT JOIN response_attributes ra_cache_read "
-        "ON ra_cache_read.response_id = r.id "
-        "AND ra_cache_read.key = 'cache_read_input_tokens'"
+        "LEFT JOIN ("
+        "SELECT response_id, MAX(CAST(value AS INTEGER)) AS cache_read "
+        "FROM response_attributes "
+        "WHERE key = 'cache_read_input_tokens' "
+        "GROUP BY response_id"
+        ") ra_cache_read "
+        "ON ra_cache_read.response_id = r.id"
     )
     billable_input_expr = (
         "CASE "
-        "WHEN COALESCE(r.input_tokens, 0) - COALESCE(CAST(ra_cache_read.value AS INTEGER), 0) < 0 "
+        "WHEN COALESCE(r.input_tokens, 0) - COALESCE(ra_cache_read.cache_read, 0) < 0 "
         "THEN 0 "
-        "ELSE COALESCE(r.input_tokens, 0) - COALESCE(CAST(ra_cache_read.value AS INTEGER), 0) "
+        "ELSE COALESCE(r.input_tokens, 0) - COALESCE(ra_cache_read.cache_read, 0) "
         "END"
     )
     cost_expr = (
