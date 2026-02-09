@@ -73,6 +73,7 @@ def cmd_peek(args) -> int:
             )
             if not sessions:
                 print("No active sessions found.", file=sys.stderr)
+                print("Tip: Use 'siftd query' to search ingested conversations.", file=sys.stderr)
                 return 1
             path = sessions[0].file_path
 
@@ -252,6 +253,7 @@ def cmd_peek(args) -> int:
             print("[]")
         else:
             print("No active sessions found.")
+            print("Tip: Use 'siftd query' to search ingested conversations.", file=sys.stderr)
         return 0
 
     if args.json:

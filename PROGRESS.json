@@ -1,6 +1,5 @@
 [
-    {"step": "Clean up cli.py imports and main() wiring", "done": true},
-    {"step": "Update help snapshots if ordering changed", "done": true},
-    {"step": "Run required checks and verify line count", "done": true},
-    {"step": "Commit changes", "done": true}
+    {"step": "Review tag/peek/query CLI behaviors and adjust help/UX messaging", "done": true},
+    {"step": "Add agent-close script and update progress tracking", "done": true},
+    {"step": "Run ./dev check and commit changes", "done": true}
 ]

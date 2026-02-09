@@ -123,7 +123,7 @@ def cmd_tag(args) -> int:
     # Handle --last mode
     if args.last is not None:
         if not args.positional or len(args.positional) != 1:
-            print("Usage: siftd tag --last N <tag>")
+            print("Usage: siftd tag --last [N] <tag>")
             conn.close()
             return 1
 
@@ -182,8 +182,10 @@ def cmd_tag(args) -> int:
     if not parsed:
         print("Usage: siftd tag <id> <tag> [tag2 ...]")
         print("       siftd tag <entity_type> <id> <tag> [tag2 ...]")
-        print("       siftd tag --last <tag>")
+        print("       siftd tag --last [N] <tag>")
+        print("       siftd tag --session <id> <tag> [tag2 ...]")
         print("       siftd tag --remove <id> <tag> [tag2 ...]")
+        print("\nTip: Use --session to queue tags for live sessions before ingest.", file=sys.stderr)
         print("\nEntity types: conversation (default), workspace, tool_call")
         conn.close()
         return 1
@@ -374,11 +376,12 @@ def build_tags_parser(subparsers) -> None:
     p_tag = subparsers.add_parser(
         "tag",
         help="Apply or remove a tag on a conversation (or other entity)",
+        description="Apply or remove tags. For live sessions, use --session to queue tags before ingest.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   siftd tag 01HX... important              # tag conversation (default)
   siftd tag 01HX... important review       # apply multiple tags at once
-  siftd tag --last 1 important             # tag most recent conversation
+  siftd tag --last important               # tag most recent conversation
   siftd tag --last 3 review                # tag 3 most recent conversations
   siftd tag workspace 01HY... proj         # explicit entity type
   siftd tag tool_call 01HZ... slow         # tag a tool call
@@ -391,7 +394,15 @@ live session tagging:
   siftd tag --session abc123 --exchange 5 key    # queue tag for exchange 5""",
     )
     p_tag.add_argument("positional", nargs="*", help="[entity_type] entity_id tag [tag2 ...]")
-    p_tag.add_argument("-n", "--last", type=int, metavar="N", help="Tag N most recent conversations")
+    p_tag.add_argument(
+        "-n",
+        "--last",
+        type=int,
+        nargs="?",
+        const=1,
+        metavar="N",
+        help="Tag N most recent conversations (default: 1 if flag used without N)",
+    )
     p_tag.add_argument("-r", "--remove", action="store_true", help="Remove tag instead of applying")
     p_tag.add_argument("--session", metavar="ID", help="Queue tag for a live session (applied at ingest)")
     p_tag.add_argument("--exchange", type=int, metavar="INDEX", help="Tag specific exchange (0-based, requires --session)")

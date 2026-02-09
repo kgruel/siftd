@@ -669,15 +669,18 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[tag]
   '''
-  usage: siftd tag [-h] [-n N] [-r] [--session ID] [--exchange INDEX]
+  usage: siftd tag [-h] [-n [N]] [-r] [--session ID] [--exchange INDEX]
                    [positional ...]
+  
+  Apply or remove tags. For live sessions, use --session to queue tags before ingest.
   
   positional arguments:
     positional        [entity_type] entity_id tag [tag2 ...]
   
   options:
     -h, --help        show this help message and exit
-    -n, --last N      Tag N most recent conversations
+    -n, --last [N]    Tag N most recent conversations (default: 1 if flag used
+                      without N)
     -r, --remove      Remove tag instead of applying
     --session ID      Queue tag for a live session (applied at ingest)
     --exchange INDEX  Tag specific exchange (0-based, requires --session)
@@ -685,7 +688,7 @@
   examples:
     siftd tag 01HX... important              # tag conversation (default)
     siftd tag 01HX... important review       # apply multiple tags at once
-    siftd tag --last 1 important             # tag most recent conversation
+    siftd tag --last important               # tag most recent conversation
     siftd tag --last 3 review                # tag 3 most recent conversations
     siftd tag workspace 01HY... proj         # explicit entity type
     siftd tag tool_call 01HZ... slow         # tag a tool call

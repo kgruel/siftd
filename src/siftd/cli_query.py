@@ -340,10 +340,7 @@ def cmd_query(args) -> int:
                 getattr(args, "tool_tag", None),
             ])
             if args.workspace:
-                print(
-                    "\nTip: Try 'siftd peek' for active sessions not yet ingested.",
-                    file=sys.stderr,
-                )
+                print("\nTip: Try 'siftd peek' for active sessions not yet ingested.", file=sys.stderr)
             elif has_filters:
                 print(
                     "\nTip: No matches for current filters. Try broadening your search or run 'siftd query' without filters.",
@@ -351,7 +348,7 @@ def cmd_query(args) -> int:
                 )
             else:
                 print(
-                    "\nTip: Run 'siftd ingest' to import recent sessions.",
+                    "\nTip: Run 'siftd ingest' to import recent sessions, or 'siftd peek' to check live sessions.",
                     file=sys.stderr,
                 )
         return 0
