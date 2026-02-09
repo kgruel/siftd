@@ -48,7 +48,7 @@ class ToolCallDetail:
 class NarrativeBlock:
     """A single block in the response narrative."""
 
-    block_type: str  # "text", "thinking", "tool_calls"
+    block_type: str  # "text", "thinking", "tool_calls", "tool_result", "tool_output"
     content: str | None = None
     tool_calls: list[ToolCallDetail] = field(default_factory=list)
 
@@ -546,9 +546,15 @@ def _build_narrative(
         content_blocks = all_content_blocks.get(resp_id, [])
         resp_tool_calls = tc_by_response.get(resp_id, [])
 
-        # Index into tool_calls list: tool_use blocks appear in content
-        # in the same order as tool_calls rows for this response
+        # Index into tool_calls list for fallback order; tool_use blocks
+        # are best matched by external_id when available.
         tc_idx = 0
+        tc_by_id = {}
+        for tc in resp_tool_calls:
+            tc_id = tc["external_id"]
+            if tc_id:
+                tc_by_id[tc_id] = tc
+        used_ids: set[str] = set()
         # Accumulate consecutive tool calls for collapsing
         pending_tools: list[ToolCallDetail] = []
 
@@ -560,7 +566,10 @@ def _build_narrative(
                 if pending_tools:
                     narrative.append(NarrativeBlock(
                         block_type="tool_calls",
-                        tool_calls=_collapse_tool_details(pending_tools),
+                        tool_calls=_collapse_tool_details(
+                            pending_tools,
+                            collapse=not include_tool_content,
+                        ),
                     ))
                     pending_tools = []
 
@@ -577,7 +586,10 @@ def _build_narrative(
                     if pending_tools:
                         narrative.append(NarrativeBlock(
                             block_type="tool_calls",
-                            tool_calls=_collapse_tool_details(pending_tools),
+                            tool_calls=_collapse_tool_details(
+                                pending_tools,
+                                collapse=not include_tool_content,
+                            ),
                         ))
                         pending_tools = []
 
@@ -589,11 +601,27 @@ def _build_narrative(
                         ))
 
             elif block_type == "tool_use":
-                # Match to the corresponding tool_call row
-                if tc_idx < len(resp_tool_calls):
-                    tc = resp_tool_calls[tc_idx]
-                    tc_idx += 1
+                # Match to corresponding tool_call row by external_id (preferred),
+                # fallback to order when missing or unmatched.
+                tc = None
+                tool_use_id = _extract_tool_use_id(block["content"])
+                if tool_use_id:
+                    tc = tc_by_id.get(tool_use_id)
+                    if tc:
+                        used_ids.add(tool_use_id)
+                if tc is None:
+                    while tc_idx < len(resp_tool_calls):
+                        candidate = resp_tool_calls[tc_idx]
+                        tc_idx += 1
+                        candidate_id = candidate["external_id"]
+                        if candidate_id and candidate_id in used_ids:
+                            continue
+                        tc = candidate
+                        if candidate_id:
+                            used_ids.add(candidate_id)
+                        break
 
+                if tc:
                     name = tc["tool_name"] or "unknown"
                     status = tc["status"] or "unknown"
 
@@ -605,14 +633,34 @@ def _build_narrative(
                             result=tc["result"] if include_tool_content else None,
                         )
                         pending_tools.append(detail)
-                else:
-                    tc_idx += 1
+
+            elif block_type in ("tool_result", "tool_output"):
+                # Flush any pending tool calls before tool output
+                if pending_tools:
+                    narrative.append(NarrativeBlock(
+                        block_type="tool_calls",
+                        tool_calls=_collapse_tool_details(
+                            pending_tools,
+                            collapse=not include_tool_content,
+                        ),
+                    ))
+                    pending_tools = []
+
+                text = _extract_tool_result(block["content"])
+                if text.strip():
+                    narrative.append(NarrativeBlock(
+                        block_type=block_type,
+                        content=text,
+                    ))
 
         # Flush remaining tool calls
         if pending_tools:
             narrative.append(NarrativeBlock(
                 block_type="tool_calls",
-                tool_calls=_collapse_tool_details(pending_tools),
+                tool_calls=_collapse_tool_details(
+                    pending_tools,
+                    collapse=not include_tool_content,
+                ),
             ))
 
     return narrative
@@ -621,18 +669,86 @@ def _build_narrative(
 def _extract_thinking(raw: str) -> str:
     """Extract thinking text from a content block."""
     try:
-        obj = json.loads(raw)
+        if isinstance(raw, dict):
+            obj = raw
+        else:
+            obj = json.loads(raw)
         if isinstance(obj, dict):
-            return obj.get("thinking", obj.get("text", ""))
+            if "thinking" in obj:
+                return obj.get("thinking", "")
+            if "text" in obj:
+                return obj.get("text", "")
+            if "description" in obj or "subject" in obj:
+                subject = obj.get("subject")
+                description = obj.get("description")
+                if subject and description:
+                    return f"{subject}: {description}"
+                return description or subject or ""
     except (json.JSONDecodeError, TypeError):
         pass
     return raw
 
 
-def _collapse_tool_details(tools: list[ToolCallDetail]) -> list[ToolCallDetail]:
+def _extract_tool_use_id(raw: str) -> str | None:
+    """Extract tool_use id from a content block."""
+    try:
+        if isinstance(raw, dict):
+            return raw.get("id") or raw.get("tool_use_id") or raw.get("call_id")
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            return obj.get("id") or obj.get("tool_use_id") or obj.get("call_id")
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return None
+
+
+def _extract_tool_result(raw: str) -> str:
+    """Extract display text from a tool_result/tool_output block."""
+    try:
+        if isinstance(raw, dict):
+            for key in ("text", "content", "output", "result"):
+                if key in raw:
+                    val = raw[key]
+                    if isinstance(val, str):
+                        return val
+                    return json.dumps(val)
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            for key in ("text", "content", "output", "result"):
+                if key in obj:
+                    val = obj[key]
+                    if isinstance(val, str):
+                        return val
+                    if isinstance(val, dict):
+                        if "text" in val and isinstance(val["text"], str):
+                            return val["text"]
+                        return json.dumps(val)
+                    if isinstance(val, list):
+                        parts = []
+                        for item in val:
+                            if isinstance(item, str):
+                                parts.append(item)
+                            elif isinstance(item, dict) and "text" in item:
+                                parts.append(str(item["text"]))
+                            else:
+                                parts.append(json.dumps(item))
+                        return "\n".join(parts)
+                    return str(val)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return raw
+
+
+def _collapse_tool_details(
+    tools: list[ToolCallDetail],
+    *,
+    collapse: bool,
+) -> list[ToolCallDetail]:
     """Collapse consecutive tool calls with same name+status."""
     if not tools:
         return []
+    if not collapse:
+        return tools
 
     collapsed: list[ToolCallDetail] = []
     prev = tools[0]

@@ -389,7 +389,7 @@ def fetch_tool_calls_for_conversation(
     """
     if include_content:
         return conn.execute(
-            "SELECT tc.response_id, t.name AS tool_name, tc.status, "
+            "SELECT tc.response_id, tc.external_id, t.name AS tool_name, tc.status, "
             "tc.input, COALESCE(cb.content, tc.result) AS result "
             "FROM tool_calls tc "
             "LEFT JOIN tools t ON t.id = tc.tool_id "
@@ -399,7 +399,7 @@ def fetch_tool_calls_for_conversation(
             (conversation_id,),
         ).fetchall()
     return conn.execute(
-        "SELECT tc.response_id, t.name AS tool_name, tc.status "
+        "SELECT tc.response_id, tc.external_id, t.name AS tool_name, tc.status "
         "FROM tool_calls tc "
         "LEFT JOIN tools t ON t.id = tc.tool_id "
         "WHERE tc.conversation_id = ? "

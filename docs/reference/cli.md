@@ -343,6 +343,16 @@ output:
 sql queries:
   --var KEY=VALUE       Substitute $KEY with VALUE in SQL
 
+detail view (requires conversation_id):
+  --exchanges N         Number of turns to show (default: all). Legacy flag name.
+  --summary             Summary only (metadata, no turns)
+  --brief               Brief output (80 char truncation)
+  --full                Full text (no truncation)
+  --chars N             Truncate text at N characters (default: 200)
+  --thinking            Show model thinking/reasoning blocks
+  --tools [FILTER]      Show tool inputs/results (optional filter: tool name prefix or 'errors')
+  --tool-chars N        Truncate tool input/result at N characters (default: 120)
+
 List and filter conversations by metadata (workspace, model, date, tags).
 For semantic content search, use: siftd search <query>
 

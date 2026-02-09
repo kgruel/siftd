@@ -226,8 +226,10 @@ def _query_detail(args) -> int:
             print(f"  {text}")
             print()
 
-        # Response narrative
-        if turn.narrative:
+        # Response narrative (or summary if narrative is empty)
+        tool_summaries = turn.tool_call_summaries
+        has_response = bool(turn.narrative) or turn.total_input_tokens or turn.total_output_tokens or tool_summaries
+        if has_response:
             tok = turn.total_input_tokens + turn.total_output_tokens
             print(f"[response] {ts} ({fmt_tokens(tok)} tok)")
             for block in turn.narrative:
@@ -237,6 +239,9 @@ def _query_detail(args) -> int:
                 elif block.block_type == "thinking":
                     text = truncate_text(block.content or "", chars_limit)
                     print(f"  [thinking] {text}")
+                elif block.block_type in ("tool_result", "tool_output"):
+                    text = truncate_text(block.content or "", tool_chars)
+                    print(f"  [{block.block_type}] {text}")
                 elif block.block_type == "tool_calls":
                     for tc in block.tool_calls:
                         if tc.count > 1:
@@ -248,6 +253,12 @@ def _query_detail(args) -> int:
                         print(line)
                         if tc.result is not None:
                             print(f"      \u2190 {truncate_text(tc.result, tool_chars)}")
+            if not turn.narrative and tool_summaries:
+                for tc in tool_summaries:
+                    if tc.count > 1:
+                        print(f"    \u2192 {tc.tool_name} \u00d7{tc.count} ({tc.status})")
+                    else:
+                        print(f"    \u2192 {tc.tool_name} ({tc.status})")
             print()
 
     return 0

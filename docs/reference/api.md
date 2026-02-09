@@ -245,8 +245,43 @@ Full conversation with timeline.
 | `started_at` | `str \| None` |  |
 | `total_input_tokens` | `int` |  |
 | `total_output_tokens` | `int` |  |
-| `exchanges` | `list[Exchange]` |  |
+| `turns` | `list[Turn]` | Primary timeline, one per prompt. |
+| `exchanges` | `list[Exchange]` | Derived/back-compat view (one per turn). |
 | `tags` | `list[str]` |  |
+
+### Turn
+
+A prompt and its full response narrative.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timestamp` | `str \| None` |  |
+| `prompt_text` | `str \| None` |  |
+| `total_input_tokens` | `int` |  |
+| `total_output_tokens` | `int` |  |
+| `narrative` | `list[NarrativeBlock]` | Interleaved response blocks. |
+
+### NarrativeBlock
+
+A single block in the response narrative.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `block_type` | `str` | One of `text`, `thinking`, `tool_calls`, `tool_result`, `tool_output`. |
+| `content` | `str \| None` | Block text (if applicable). |
+| `tool_calls` | `list[ToolCallDetail]` | Populated for `tool_calls` blocks. |
+
+### ToolCallDetail
+
+Tool call with optional input/result for `--tools` mode.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool_name` | `str` |  |
+| `status` | `str` |  |
+| `count` | `int` |  |
+| `input` | `str \| None` |  |
+| `result` | `str \| None` |  |
 
 ### Exchange
 
@@ -308,12 +343,16 @@ def list_conversations(*, db_path: pathlib._local.Path | None = ..., workspace: 
 Get full conversation detail by ID.
 
 ```python
-def get_conversation(conversation_id: str, *, db_path: pathlib._local.Path | None = ...) -> siftd.api.conversations.ConversationDetail | None
+def get_conversation(conversation_id: str, *, db_path: pathlib._local.Path | None = ..., include_thinking: bool = ..., include_tool_content: bool = ..., tool_filter: str | None = ...) -> siftd.api.conversations.ConversationDetail | None
 ```
 
 **Parameters:**
 
 - `conversation_id`: Full or prefix of conversation ULID.
+- `db_path`: Path to database. Uses default if not specified.
+- `include_thinking`: Include thinking/reasoning blocks in turns.
+- `include_tool_content`: Include tool input/result in turns.
+- `tool_filter`: Filter tool calls — `errors` for failed only, or a tool name prefix (e.g. `shell`, `file.read`).
 
 **Returns:** ConversationDetail with timeline, or None if not found.
 
