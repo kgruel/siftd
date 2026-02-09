@@ -7,17 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-02-09
+
 ### Added
 
 - **Narrative detail view** — `siftd query <id>` renders response content as interleaved narrative blocks (text, tool calls, thinking) instead of flat prompt/response pairs:
   - `--thinking` flag to include model reasoning blocks
   - `--tools [FILTER]` to show tool inputs/results (optional filter: tool name prefix or `errors`)
   - `--tool-chars N` to control tool content truncation
+- API wrappers: `list_workspaces`, `resolve_entity_id`, `get_recent_conversation_ids`
+- `resolve_db` helper — centralizes database path resolution across CLI modules
+- Declarative dependency manifest for architecture enforcement with violation ratchet
 
 ### Changed
 
 - **`Turn` is now the primary conversation detail structure** — `ConversationDetail.turns` is the source of truth; `.exchanges` is a backward-compatible derived property (one per prompt, not per response). Consumers using `.exchanges` continue to work unchanged.
 - Detail view summary line says `Turns:` instead of `Exchanges:`
+- CLI fully decomposed — `cli.py` is now a 59-line dispatcher; logic extracted to `cli_common`, `cli_meta`, `cli_sessions`, `cli_tags`, `cli_query`, `cli_data`, `cli_peek`, `cli_export`
+- `tag --last` defaults to 1 when count omitted
+- Lazy imports in `cli_data.py` for adapters, backfill, and ingestion modules
+
+### Fixed
+
+- `search --json` no longer errors on empty result sets
+- Connection leak in `_search_fts_only` (try/finally)
+- `open_database` import consistency in `api/search.py`
 
 ## [0.4.0] - 2026-02-05
 
@@ -225,7 +239,8 @@ Initial public release.
 
 ---
 
-[Unreleased]: https://github.com/anthropics/siftd/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/anthropics/siftd/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/anthropics/siftd/compare/v0.4.2...v0.4.3
 [0.4.0]: https://github.com/anthropics/siftd/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/anthropics/siftd/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/anthropics/siftd/compare/v0.1.1...v0.2.0
