@@ -36,6 +36,20 @@ def _apply_search_config(args) -> None:
             setattr(args, key, value)
 
 
+def _print_empty_json_results(args, query: str, db: Path) -> None:
+    """Emit empty JSON results for --json output modes."""
+    from siftd.api import open_database
+    from siftd.output import FormatterContext
+    from siftd.output.formatters import JsonFormatter
+
+    conn = open_database(db, read_only=True)
+    try:
+        ctx = FormatterContext(query=query, results=[], conn=conn, args=args)
+        JsonFormatter().format(ctx)
+    finally:
+        conn.close()
+
+
 def cmd_search(args) -> int:
     """Unified search over conversations — auto-selects FTS5 or semantic based on availability."""
     from siftd.api import open_database
@@ -184,7 +198,10 @@ def cmd_search(args) -> int:
             print("FTS5 found no matches, falling back to pure embeddings.", file=sys.stderr)
 
     if candidate_ids is not None and not candidate_ids:
-        print("No conversations match the given filters.")
+        if args.json:
+            _print_empty_json_results(args, query, db)
+        else:
+            print("No conversations match the given filters.")
         return 0
 
     # Embed query and search
@@ -233,7 +250,10 @@ def cmd_search(args) -> int:
     embed_conn.close()
 
     if not results:
-        print(f"No results for: {query}")
+        if args.json:
+            _print_empty_json_results(args, query, db)
+        else:
+            print(f"No results for: {query}")
         return 0
 
     # Update breakdown with FTS5 recall info
@@ -282,7 +302,10 @@ def cmd_search(args) -> int:
     if args.threshold is not None:
         results = [r for r in results if r["score"] >= args.threshold]
         if not results:
-            print(f"No results above threshold {args.threshold} for: {query}")
+            if args.json:
+                _print_empty_json_results(args, query, db)
+            else:
+                print(f"No results above threshold {args.threshold} for: {query}")
             return 0
 
     # Post-processing: --first (earliest match above threshold)
@@ -291,7 +314,10 @@ def cmd_search(args) -> int:
         effective_threshold = args.threshold if args.threshold is not None else 0.65
         earliest = first_mention(results, threshold=effective_threshold, db_path=db)
         if not earliest:
-            print(f"No results above relevance threshold for: {query}")
+            if args.json:
+                _print_empty_json_results(args, query, db)
+            else:
+                print(f"No results above relevance threshold for: {query}")
             return 0
         results = [cast(dict, earliest)]
 
@@ -458,6 +484,21 @@ def _search_fts_only(args, db: Path, query: str) -> int:
         raw_results = raw_results[:args.limit]
 
         if not raw_results:
+            if args.json:
+                import json
+
+                out = {
+                    "query": query,
+                    "mode": "fts5",
+                    "results": [],
+                }
+                if unsupported_flags:
+                    out["warnings"] = [
+                        f"{flag} ignored in FTS5 mode (requires embeddings)"
+                        for flag in unsupported_flags
+                    ]
+                print(json.dumps(out, indent=2))
+                return 0
             print(f"No results for: {query}")
             return 0
 

@@ -56,6 +56,10 @@ class TestJsonPurity:
         (["adapters", "--json"], False),
         (["doctor", "--json"], False),
         (["tools", "--json"], True),  # May return empty if no tool calls
+        (["workspaces", "--json"], True),
+        (["query", "--json"], True),
+        (["search", "--json", "test"], True),
+        (["peek", "--json"], True),
     ]
 
     @pytest.mark.parametrize("cmd_suffix,requires_data", COMMANDS_WITH_JSON)

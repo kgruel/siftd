@@ -1,5 +1,5 @@
 [
-    {"step": "Review tag/peek/query CLI behaviors and adjust help/UX messaging", "done": true},
-    {"step": "Add agent-close script and update progress tracking", "done": true},
-    {"step": "Run ./dev check and commit changes", "done": true}
+  {"step": "Review JSON purity test and CLI command registry", "done": true},
+  {"step": "Identify commands needing --json and implement support", "done": true},
+  {"step": "Update contract tests, run ./dev check, commit", "done": true}
 ]
