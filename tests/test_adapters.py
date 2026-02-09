@@ -196,6 +196,16 @@ class TestCodexCliAdapter:
         assert tool_call.status == "success"
         assert "README.md" in str(tool_call.result)
 
+    def test_parse_extracts_usage(self, codex_source):
+        """Parse extracts token usage when token_count events are present."""
+        conv = list(codex_cli.parse(codex_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        assert response.usage is not None
+        assert response.usage.input_tokens == 120
+        assert response.usage.output_tokens == 45
+        assert response.attributes.get("cache_read_input_tokens") == "10"
+
 
 class TestGeminiCliAdapter:
     """Tests for the Gemini CLI adapter."""

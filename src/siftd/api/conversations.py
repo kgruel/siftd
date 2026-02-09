@@ -256,9 +256,21 @@ def _list_conversations_impl(
     order = "ASC" if oldest_first else "DESC"
     limit_clause = f"LIMIT {limit}" if limit > 0 else ""
 
+    cache_join = (
+        "LEFT JOIN response_attributes ra_cache_read "
+        "ON ra_cache_read.response_id = r.id "
+        "AND ra_cache_read.key = 'cache_read_input_tokens'"
+    )
+    billable_input_expr = (
+        "CASE "
+        "WHEN COALESCE(r.input_tokens, 0) - COALESCE(CAST(ra_cache_read.value AS INTEGER), 0) < 0 "
+        "THEN 0 "
+        "ELSE COALESCE(r.input_tokens, 0) - COALESCE(CAST(ra_cache_read.value AS INTEGER), 0) "
+        "END"
+    )
     cost_expr = (
-        """ROUND(SUM(
-            COALESCE(r.input_tokens, 0) * COALESCE(pr.input_per_mtok, 0)
+        f"""ROUND(SUM(
+            {billable_input_expr} * COALESCE(pr.input_per_mtok, 0)
             + COALESCE(r.output_tokens, 0) * COALESCE(pr.output_per_mtok, 0)
         ) / 1000000.0, 4)"""
         if has_pricing
@@ -291,6 +303,7 @@ def _list_conversations_impl(
         LEFT JOIN models m ON m.id = r.model_id
         LEFT JOIN providers pv ON pv.id = r.provider_id
         {pricing_join}
+        {cache_join}
         {where}
         GROUP BY c.id
         ORDER BY c.started_at {order}

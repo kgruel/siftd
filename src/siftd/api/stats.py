@@ -11,7 +11,9 @@ from siftd.storage.queries import (
     fetch_harnesses,
     fetch_last_ingest_time,
     fetch_model_names,
+    fetch_response_token_coverage,
     fetch_table_count,
+    fetch_token_coverage_by_harness,
     fetch_top_conversation_tags,
     fetch_top_tools,
     fetch_top_workspaces,
@@ -77,6 +79,26 @@ class TagStats:
 
 
 @dataclass
+class TokenCoverageByHarness:
+    """Token coverage summary for a harness."""
+
+    name: str
+    responses: int
+    with_tokens: int
+    pct_with_tokens: float
+
+
+@dataclass
+class TokenCoverage:
+    """Overall token coverage summary."""
+
+    responses: int
+    with_tokens: int
+    pct_with_tokens: float
+    by_harness: list[TokenCoverageByHarness]
+
+
+@dataclass
 class DatabaseStats:
     """Complete database statistics."""
 
@@ -89,6 +111,7 @@ class DatabaseStats:
     models: list[str]
     top_tools: list[ToolStats]
     top_tags: list[TagStats]
+    token_coverage: TokenCoverage
     activity_window: tuple[str | None, str | None]
     last_ingest_at: str | None
 
@@ -185,6 +208,28 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
     tag_rows = fetch_top_conversation_tags(conn, limit=5)
     top_tags = [TagStats(name=row["name"], count=row["count"]) for row in tag_rows]
 
+    # Token coverage
+    total_responses, responses_with_tokens = fetch_response_token_coverage(conn)
+    pct_with_tokens = (
+        round((responses_with_tokens / total_responses) * 100, 2)
+        if total_responses
+        else 0.0
+    )
+    harness_rows = fetch_token_coverage_by_harness(conn)
+    token_by_harness = []
+    for row in harness_rows:
+        responses = row["responses"]
+        with_tokens = row["with_tokens"] if row["with_tokens"] is not None else 0
+        pct = round((with_tokens / responses) * 100, 2) if responses else 0.0
+        token_by_harness.append(
+            TokenCoverageByHarness(
+                name=row["harness"],
+                responses=responses,
+                with_tokens=with_tokens,
+                pct_with_tokens=pct,
+            )
+        )
+
     # Activity window and ingest recency
     activity_window = fetch_conversation_time_window(conn)
     last_ingest_at = fetch_last_ingest_time(conn)
@@ -201,6 +246,12 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
         models=models,
         top_tools=top_tools,
         top_tags=top_tags,
+        token_coverage=TokenCoverage(
+            responses=total_responses,
+            with_tokens=responses_with_tokens,
+            pct_with_tokens=pct_with_tokens,
+            by_harness=token_by_harness,
+        ),
         activity_window=activity_window,
         last_ingest_at=last_ingest_at,
     )

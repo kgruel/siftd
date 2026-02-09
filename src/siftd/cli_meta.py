@@ -62,6 +62,20 @@ def cmd_status(args) -> int:
                 {"name": t.name, "usage_count": t.usage_count}
                 for t in stats.top_tools
             ],
+            "token_coverage": {
+                "responses": stats.token_coverage.responses,
+                "with_tokens": stats.token_coverage.with_tokens,
+                "pct_with_tokens": stats.token_coverage.pct_with_tokens,
+                "by_harness": [
+                    {
+                        "name": h.name,
+                        "responses": h.responses,
+                        "with_tokens": h.with_tokens,
+                        "pct_with_tokens": h.pct_with_tokens,
+                    }
+                    for h in stats.token_coverage.by_harness
+                ],
+            },
             "top_tags": [
                 {"name": t.name, "count": t.count} for t in stats.top_tags
             ],
@@ -108,6 +122,14 @@ def cmd_status(args) -> int:
     print("\n--- Tools (top 10 by usage) ---")
     for t in stats.top_tools:
         print(f"  {t.name}: {t.usage_count}")
+
+    print("\n--- Token Coverage ---")
+    total = stats.token_coverage.responses
+    with_tokens = stats.token_coverage.with_tokens
+    pct = stats.token_coverage.pct_with_tokens
+    print(f"  Responses with tokens: {with_tokens}/{total} ({pct:.2f}%)")
+    for h in stats.token_coverage.by_harness:
+        print(f"  {h.name}: {h.with_tokens}/{h.responses} ({h.pct_with_tokens:.2f}%)")
 
     # Activity window + ingest recency
     earliest, latest = stats.activity_window

@@ -604,6 +604,35 @@ def fetch_top_tools(
     ).fetchall()
 
 
+def fetch_response_token_coverage(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Fetch total responses and count with any token usage."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS total, "
+        "SUM(CASE WHEN input_tokens IS NOT NULL OR output_tokens IS NOT NULL THEN 1 ELSE 0 END) "
+        "AS with_tokens FROM responses"
+    ).fetchone()
+    total = row["total"] if row else 0
+    with_tokens = row["with_tokens"] if row and row["with_tokens"] is not None else 0
+    return total, with_tokens
+
+
+def fetch_token_coverage_by_harness(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Fetch response token coverage grouped by harness."""
+    return conn.execute(
+        """
+        SELECT h.name AS harness,
+               COUNT(r.id) AS responses,
+               SUM(CASE WHEN r.input_tokens IS NOT NULL OR r.output_tokens IS NOT NULL THEN 1 ELSE 0 END)
+                   AS with_tokens
+        FROM responses r
+        JOIN conversations c ON c.id = r.conversation_id
+        JOIN harnesses h ON h.id = c.harness_id
+        GROUP BY h.name
+        ORDER BY responses DESC
+        """
+    ).fetchall()
+
+
 # =============================================================================
 # Tool tag queries
 # =============================================================================

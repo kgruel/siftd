@@ -22,6 +22,7 @@ from siftd.domain import (
     Response,
     Source,
     ToolCall,
+    Usage,
 )
 
 if TYPE_CHECKING:
@@ -142,9 +143,39 @@ def parse(source: Source) -> Iterable[Conversation]:
     # key: call_id, value: (response, tool_name, input_data)
     pending_calls: dict[str, tuple[Response, str, dict | str]] = {}
     current_prompt: Prompt | None = None
+    pending_usage_response: Response | None = None
 
     for record in records:
         record_type = record.get("type")
+        if record_type == "event_msg":
+            payload = record.get("payload") or {}
+            if payload.get("type") == "token_count":
+                info = payload.get("info") or {}
+                last_usage = info.get("last_token_usage") or {}
+                if pending_usage_response and last_usage:
+                    input_tokens = last_usage.get("input_tokens")
+                    output_tokens = last_usage.get("output_tokens")
+                    if input_tokens is not None or output_tokens is not None:
+                        pending_usage_response.usage = Usage(
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                        )
+                    cached_input = last_usage.get("cached_input_tokens")
+                    if cached_input is not None:
+                        pending_usage_response.attributes.setdefault(
+                            "cached_input_tokens", str(cached_input)
+                        )
+                        pending_usage_response.attributes.setdefault(
+                            "cache_read_input_tokens", str(cached_input)
+                        )
+                    reasoning_output = last_usage.get("reasoning_output_tokens")
+                    if reasoning_output is not None:
+                        pending_usage_response.attributes.setdefault(
+                            "reasoning_output_tokens", str(reasoning_output)
+                        )
+                    pending_usage_response = None
+            continue
+
         if record_type != "response_item":
             continue
 
@@ -171,6 +202,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                     response.content.append(_parse_block(block))
                 if current_prompt is not None:
                     current_prompt.responses.append(response)
+                pending_usage_response = response
 
         elif item_type == "function_call":
             tool_name = payload.get("name", "unknown")
@@ -188,6 +220,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 block_type="tool_use",
                 content={"id": call_id, "name": tool_name, "input": input_data},
             ))
+            pending_usage_response = response
 
             if call_id:
                 pending_calls[call_id] = (response, tool_name, input_data)
@@ -219,6 +252,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 block_type="tool_use",
                 content={"id": call_id, "name": tool_name, "input": input_data},
             ))
+            pending_usage_response = response
 
             if call_id:
                 pending_calls[call_id] = (response, tool_name, input_data)
@@ -370,6 +404,7 @@ def peek_exchanges(path: Path, last_n: int = 5) -> list["PeekExchange"]:
     exchanges: list[PeekExchange] = []
     current_exchange: PeekExchange | None = None
     model: str | None = None
+    pending_usage = False
 
     try:
         with path.open("r", encoding="utf-8") as f:
@@ -389,6 +424,21 @@ def peek_exchanges(path: Path, last_n: int = 5) -> list["PeekExchange"]:
                     payload = record.get("payload", {})
                     model = model or payload.get("model")
 
+                elif record_type == "event_msg":
+                    payload = record.get("payload", {})
+                    if payload.get("type") == "token_count" and pending_usage:
+                        if current_exchange is None:
+                            continue
+                        info = payload.get("info") or {}
+                        last_usage = info.get("last_token_usage") or {}
+                        input_tokens = last_usage.get("input_tokens")
+                        output_tokens = last_usage.get("output_tokens")
+                        if input_tokens is not None:
+                            current_exchange.input_tokens += input_tokens
+                        if output_tokens is not None:
+                            current_exchange.output_tokens += output_tokens
+                        pending_usage = False
+
                 elif record_type == "response_item":
                     payload = record.get("payload", {})
                     item_type = payload.get("type")
@@ -403,11 +453,13 @@ def peek_exchanges(path: Path, last_n: int = 5) -> list["PeekExchange"]:
                                 prompt_text=_extract_codex_text(content_blocks),
                             )
                             exchanges.append(current_exchange)
+                            pending_usage = False
 
                         elif role == "assistant" and current_exchange is not None:
                             current_exchange.response_text = _extract_codex_text(
                                 content_blocks
                             )
+                            pending_usage = True
 
                     elif item_type in ("function_call", "custom_tool_call"):
                         if current_exchange is not None:
@@ -417,6 +469,7 @@ def peek_exchanges(path: Path, last_n: int = 5) -> list["PeekExchange"]:
                             existing = dict(current_exchange.tool_calls)
                             existing[tool_name] = existing.get(tool_name, 0) + 1
                             current_exchange.tool_calls = list(existing.items())
+                            pending_usage = True
 
     except (OSError, UnicodeDecodeError):
         return []
