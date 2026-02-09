@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Narrative detail view** — `siftd query <id>` renders response content as interleaved narrative blocks (text, tool calls, thinking) instead of flat prompt/response pairs:
+  - `--thinking` flag to include model reasoning blocks
+  - `--tools [FILTER]` to show tool inputs/results (optional filter: tool name prefix or `errors`)
+  - `--tool-chars N` to control tool content truncation
+
+### Changed
+
+- **`Turn` is now the primary conversation detail structure** — `ConversationDetail.turns` is the source of truth; `.exchanges` is a backward-compatible derived property (one per prompt, not per response). Consumers using `.exchanges` continue to work unchanged.
+- Detail view summary line says `Turns:` instead of `Exchanges:`
+
 ## [0.4.0] - 2026-02-05
 
 ### Added
