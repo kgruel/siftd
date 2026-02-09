@@ -16,7 +16,6 @@ from siftd.storage.queries import (
     fetch_prompt_text_content,
     fetch_prompts_for_conversation,
     fetch_response_content_blocks,
-    fetch_response_text_content,
     fetch_responses_for_conversation,
     fetch_tags_for_conversations,
     fetch_tool_calls_for_conversation,
@@ -63,6 +62,21 @@ class Turn:
     total_input_tokens: int
     total_output_tokens: int
     narrative: list[NarrativeBlock] = field(default_factory=list)
+    _tool_call_summaries: list[ToolCallSummary] = field(
+        default_factory=list, repr=False,
+    )
+
+    @property
+    def response_text(self) -> str | None:
+        """Concatenated text blocks (excludes thinking/tool_calls)."""
+        parts = [b.content for b in self.narrative
+                 if b.block_type == "text" and b.content]
+        return " ".join(parts) if parts else None
+
+    @property
+    def tool_call_summaries(self) -> list[ToolCallSummary]:
+        """Collapsed tool calls for this turn."""
+        return self._tool_call_summaries
 
 
 @dataclass
@@ -102,9 +116,28 @@ class ConversationDetail:
     started_at: str | None
     total_input_tokens: int
     total_output_tokens: int
-    exchanges: list[Exchange]
-    turns: list[Turn] = field(default_factory=list)
+    turns: list[Turn]
     tags: list[str] = field(default_factory=list)
+
+    @property
+    def exchanges(self) -> list[Exchange]:
+        """Backward-compat: derive per-turn exchanges from turns."""
+        return _turns_to_exchanges(self.turns)
+
+
+def _turns_to_exchanges(turns: list[Turn]) -> list[Exchange]:
+    """Convert turns to backward-compat exchanges (one per turn)."""
+    return [
+        Exchange(
+            timestamp=t.timestamp,
+            prompt_text=t.prompt_text,
+            response_text=t.response_text,
+            input_tokens=t.total_input_tokens,
+            output_tokens=t.total_output_tokens,
+            tool_calls=t.tool_call_summaries,
+        )
+        for t in turns
+    ]
 
 
 def list_conversations(
@@ -354,15 +387,8 @@ def get_conversation(
     responses = fetch_responses_for_conversation(conn, conv_id)
     response_ids = [r["id"] for r in responses]
 
-    # Fetch all content blocks for all responses (for turns)
+    # Fetch all content blocks for all responses
     all_content_blocks = fetch_response_content_blocks(conn, response_ids)
-
-    # Fetch response text content (for backward-compat exchanges)
-    response_texts: dict[str, str] = {}
-    for r in responses:
-        blocks = fetch_response_text_content(conn, r["id"])
-        parts = [_extract_text(b["content"]) for b in blocks]
-        response_texts[r["id"]] = " ".join(parts).strip()
 
     # Fetch tool calls grouped by response
     tool_calls = fetch_tool_calls_for_conversation(
@@ -378,8 +404,7 @@ def get_conversation(
         if r["prompt_id"]:
             responses_by_prompt.setdefault(r["prompt_id"], []).append(r)
 
-    # Build exchanges (backward compat) and turns
-    exchanges = []
+    # Build turns (exchanges are derived via property)
     turns = []
 
     for p in prompts:
@@ -389,16 +414,6 @@ def get_conversation(
         prompt_responses = responses_by_prompt.get(prompt_id, [])
         if not prompt_responses:
             # Prompt with no response yet
-            exchanges.append(
-                Exchange(
-                    timestamp=p["timestamp"],
-                    prompt_text=prompt_text or None,
-                    response_text=None,
-                    input_tokens=0,
-                    output_tokens=0,
-                    tool_calls=[],
-                )
-            )
             turns.append(
                 Turn(
                     timestamp=p["timestamp"],
@@ -409,24 +424,6 @@ def get_conversation(
             )
             continue
 
-        # --- Backward-compat exchanges (one per response) ---
-        for r in prompt_responses:
-            response_text = response_texts.get(r["id"], "")
-            tcs = tc_by_response.get(r["id"], [])
-            collapsed_tools = _collapse_tool_calls(tcs)
-
-            exchanges.append(
-                Exchange(
-                    timestamp=r["timestamp"] or p["timestamp"],
-                    prompt_text=prompt_text or None,
-                    response_text=response_text or None,
-                    input_tokens=r["input_tokens"] or 0,
-                    output_tokens=r["output_tokens"] or 0,
-                    tool_calls=collapsed_tools,
-                )
-            )
-
-        # --- Turn: one per prompt, flattened narrative ---
         turn_input = sum(r["input_tokens"] or 0 for r in prompt_responses)
         turn_output = sum(r["output_tokens"] or 0 for r in prompt_responses)
 
@@ -439,6 +436,12 @@ def get_conversation(
             tool_filter=tool_filter,
         )
 
+        # Build tool call summaries from DB data (independent of narrative)
+        all_tcs = []
+        for r in prompt_responses:
+            all_tcs.extend(tc_by_response.get(r["id"], []))
+        tool_summaries = _collapse_tool_call_rows(all_tcs)
+
         turns.append(
             Turn(
                 timestamp=p["timestamp"],
@@ -446,6 +449,7 @@ def get_conversation(
                 total_input_tokens=turn_input,
                 total_output_tokens=turn_output,
                 narrative=narrative,
+                _tool_call_summaries=tool_summaries,
             )
         )
 
@@ -461,7 +465,6 @@ def get_conversation(
         started_at=conv["started_at"],
         total_input_tokens=total_input,
         total_output_tokens=total_output,
-        exchanges=exchanges,
         turns=turns,
         tags=tags,
     )
@@ -475,6 +478,38 @@ def _matches_tool_filter(tool_name: str, status: str, tool_filter: str | None) -
         return status == "error"
     name = tool_name or ""
     return name == tool_filter or name.startswith(tool_filter + ".")
+
+
+def _collapse_tool_call_rows(tool_calls: list) -> list[ToolCallSummary]:
+    """Collapse consecutive tool call DB rows with same name+status."""
+    if not tool_calls:
+        return []
+
+    collapsed = []
+    prev_key = None
+    count = 0
+
+    for tc in tool_calls:
+        name = tc["tool_name"] or "unknown"
+        status = tc["status"] or "unknown"
+        key = (name, status)
+
+        if key == prev_key:
+            count += 1
+        else:
+            if prev_key is not None:
+                collapsed.append(
+                    ToolCallSummary(tool_name=prev_key[0], status=prev_key[1], count=count)
+                )
+            prev_key = key
+            count = 1
+
+    if prev_key is not None:
+        collapsed.append(
+            ToolCallSummary(tool_name=prev_key[0], status=prev_key[1], count=count)
+        )
+
+    return collapsed
 
 
 def _build_narrative(
@@ -611,38 +646,6 @@ def _collapse_tool_details(tools: list[ToolCallDetail]) -> list[ToolCallDetail]:
         input=prev.input,
         result=prev.result,
     ))
-    return collapsed
-
-
-def _collapse_tool_calls(tool_calls: list) -> list[ToolCallSummary]:
-    """Collapse consecutive tool calls with same name+status."""
-    if not tool_calls:
-        return []
-
-    collapsed = []
-    prev_key = None
-    count = 0
-
-    for tc in tool_calls:
-        name = tc["tool_name"] or "unknown"
-        status = tc["status"] or "unknown"
-        key = (name, status)
-
-        if key == prev_key:
-            count += 1
-        else:
-            if prev_key is not None:
-                collapsed.append(
-                    ToolCallSummary(tool_name=prev_key[0], status=prev_key[1], count=count)
-                )
-            prev_key = key
-            count = 1
-
-    if prev_key is not None:
-        collapsed.append(
-            ToolCallSummary(tool_name=prev_key[0], status=prev_key[1], count=count)
-        )
-
     return collapsed
 
 
