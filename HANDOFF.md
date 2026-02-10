@@ -4,7 +4,14 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ## Current Focus
 
-**v0.4.4 published and patched.** All CI green, Homebrew tap updated.
+**v0.4.5 ready to ship.** Committed on main, not yet pushed/tagged. `./dev check` green.
+
+Pending release:
+- `peek --follow` mode (real-time session tailing with tool hints)
+- Tool accumulation fix (multi-turn exchanges now show all tools)
+- Follow loop hardened (inode-aware reopening, truncation recovery)
+
+To release: `git push origin main && git tag v0.4.5 && git push origin v0.4.5`
 
 Next:
 - [ ] **`db merge`** — multi-device merge (design understood, `db slice` now validated and working)
@@ -13,6 +20,7 @@ Next:
 - [ ] **NULL workspace_path asymmetry** in `find_active_session` — document as intentional
 
 Previous sessions:
+- [x] v0.4.5: `peek --follow` mode, tool accumulation fix, follow loop hardening (inode, truncation, placeholder suppression)
 - [x] Post-0.4.4: `db slice` FK fix (ALTER TABLE column order), tags filter pipeline, Homebrew formula generation rewrite
 - [x] `siftd db` namespace, shared filter pipeline, slice export, deprecation wrappers
 - [x] CLI quality cleanup: connection leaks, API wrappers, architecture violations, module extraction
@@ -30,6 +38,8 @@ Discovered via "siftd monitoring siftd" pattern — using siftd to observe agent
 | ~~Peek session ID ambiguity (same prefix, multiple files)~~ | Bug | Fixed (working as designed) |
 | ~~Peek read failures (CLI fails, Python adapter works)~~ | Bug | Fixed (`can_handle()` location-aware) |
 | ~~Peek slow (12s) for session lookup~~ | Perf | Fixed (path-based filtering) |
+| ~~Multi-turn exchanges only show last tool call~~ | Bug | Fixed (tool accumulation, 0.4.5) |
+| ~~No way to watch a live session in real time~~ | UX | Fixed (`peek --follow`, 0.4.5) |
 | ~~Workspace resolution assigns wrong workspace (worktree)~~ | Bug | Fixed |
 | ~~`query <id>` output too verbose~~ | UX | Fixed (`--brief`/`--summary`) |
 | ~~`--limit` not aliased to `-n`~~ | UX | Fixed |
