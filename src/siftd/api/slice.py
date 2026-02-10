@@ -204,18 +204,19 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
                                   WHERE r.conversation_id IN (SELECT id FROM _slice_conv_ids))
     """)
 
+    # Content blobs referenced by tool_calls (must precede tool_calls for FK)
+    conn.execute("""
+        INSERT OR IGNORE INTO slice.content_blobs
+        SELECT cb.* FROM content_blobs cb
+        WHERE cb.hash IN (SELECT tc.result_hash FROM tool_calls tc
+                          WHERE tc.conversation_id IN (SELECT id FROM _slice_conv_ids)
+                          AND tc.result_hash IS NOT NULL)
+    """)
+
     conn.execute("""
         INSERT OR IGNORE INTO slice.tool_calls
         SELECT * FROM tool_calls
         WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
-    """)
-
-    # Content blobs referenced by copied tool_calls
-    conn.execute("""
-        INSERT OR IGNORE INTO slice.content_blobs
-        SELECT cb.* FROM content_blobs cb
-        WHERE cb.hash IN (SELECT tc.result_hash FROM slice.tool_calls tc
-                          WHERE tc.result_hash IS NOT NULL)
     """)
 
     # --- Attribute tables ---
@@ -299,17 +300,19 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
                 UNIQUE (prompt_id, tag_id)
             )
         """)
+        # Copy tags referenced by prompt_tags before inserting junction rows (FK)
+        conn.execute("""
+            INSERT OR IGNORE INTO slice.tags
+            SELECT t.* FROM tags t
+            WHERE t.id IN (SELECT pt.tag_id FROM prompt_tags pt
+                            WHERE pt.prompt_id IN (SELECT p.id FROM prompts p
+                                WHERE p.conversation_id IN (SELECT id FROM _slice_conv_ids)))
+        """)
         conn.execute("""
             INSERT OR IGNORE INTO slice.prompt_tags
             SELECT pt.* FROM prompt_tags pt
             WHERE pt.prompt_id IN (SELECT p.id FROM prompts p
                                     WHERE p.conversation_id IN (SELECT id FROM _slice_conv_ids))
-        """)
-        # Also copy any tags referenced only by prompt_tags
-        conn.execute("""
-            INSERT OR IGNORE INTO slice.tags
-            SELECT t.* FROM tags t
-            WHERE t.id IN (SELECT pt.tag_id FROM slice.prompt_tags pt)
         """)
 
     # Skip ephemeral: ingested_files, active_sessions, pending_tags

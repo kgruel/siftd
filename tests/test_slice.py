@@ -168,6 +168,21 @@ def test_slice_cli_refuses_overwrite(test_db, tmp_path, capsys):
     assert "already exists" in capsys.readouterr().err
 
 
+def test_slice_with_content_blobs_fk(test_db_with_tool_tags, tmp_path):
+    """Slice copies content_blobs before tool_calls (FK ordering)."""
+    target = tmp_path / "sliced.db"
+    result = slice_database(test_db_with_tool_tags, target)
+
+    assert result["conversations"] == 3
+
+    # Verify FK integrity with foreign_keys enforcement
+    conn = sqlite3.connect(str(target))
+    conn.execute("PRAGMA foreign_keys = ON")
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    conn.close()
+    assert violations == []
+
+
 def test_slice_by_tags(test_db, tmp_path):
     """Slice by tags filters correctly."""
     from siftd.storage.sqlite import open_database

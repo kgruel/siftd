@@ -307,14 +307,13 @@ def cmd_adapters(args) -> int:
     return 0
 
 
-def _deprecated(new_cmd: str, original_func):
+def _deprecated(old_cmd: str, new_cmd: str, original_func):
     """Wrap a command function with a deprecation warning."""
     import functools
     import sys
 
     @functools.wraps(original_func)
     def wrapper(args):
-        old_cmd = new_cmd.replace("db ", "")
         print(
             f"Warning: 'siftd {old_cmd}' is deprecated. Use 'siftd {new_cmd}'.",
             file=sys.stderr,
@@ -329,7 +328,7 @@ def build_meta_parser(subparsers) -> None:
     # status (deprecated — use 'siftd db stats')
     p_status = subparsers.add_parser("status", help="Show database statistics (use 'siftd db stats')")
     p_status.add_argument("--json", action="store_true", help="Output as JSON")
-    p_status.set_defaults(func=_deprecated("db stats", cmd_status))
+    p_status.set_defaults(func=_deprecated("status", "db stats", cmd_status))
 
     # workspaces (deprecated — use 'siftd db workspaces')
     p_workspaces = subparsers.add_parser(
@@ -340,11 +339,11 @@ def build_meta_parser(subparsers) -> None:
     p_workspaces.add_argument(
         "-n", "--limit", type=int, default=0, help="Max workspaces (0 = all)"
     )
-    p_workspaces.set_defaults(func=_deprecated("db workspaces", cmd_workspaces))
+    p_workspaces.set_defaults(func=_deprecated("workspaces", "db workspaces", cmd_workspaces))
 
     # path (deprecated — use 'siftd db path')
     p_path = subparsers.add_parser("path", help="Show XDG paths (use 'siftd db path')")
-    p_path.set_defaults(func=_deprecated("db path", cmd_path))
+    p_path.set_defaults(func=_deprecated("path", "db path", cmd_path))
 
     # config
     p_config = subparsers.add_parser(
