@@ -2,19 +2,21 @@
 # name: TestHelpSnapshots.test_root_help
   '''
   usage: siftd [-h] [--version] [--db PATH]
-               {register,session-id,status,workspaces,path,config,adapters,tag,tags,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export} ...
+               {register,session-id,status,workspaces,path,config,adapters,db,tag,tags,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export} ...
   
   Aggregate and query LLM conversation logs
   
   positional arguments:
-    {register,session-id,status,workspaces,path,config,adapters,tag,tags,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export}
+    {register,session-id,status,workspaces,path,config,adapters,db,tag,tags,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export}
       register            Register an active session for live tagging
       session-id          Print the session ID for the current workspace
-      status              Show database statistics
-      workspaces          List workspaces with conversation counts
-      path                Show XDG paths
+      status              Show database statistics (use 'siftd db stats')
+      workspaces          List workspaces (use 'siftd db workspaces')
+      path                Show XDG paths (use 'siftd db path')
       config              View or modify config settings
       adapters            List discovered adapters
+      db                  Database container operations (info, backup, restore,
+                          vacuum, slice)
       tag                 Apply or remove a tag on a conversation (or other
                           entity)
       tags                List, inspect, rename, or delete tags
@@ -276,8 +278,8 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[export]
   '''
-  usage: siftd export [-h] [-n [N]] [-w SUBSTR] [-l NAME] [--no-tag NAME]
-                      [--since DATE] [--before DATE] [-s QUERY]
+  usage: siftd export [-h] [-n [N]] [-w SUBSTR] [--since DATE] [--before DATE]
+                      [-l NAME] [--no-tag NAME] [-s QUERY]
                       [-f {prompts,exchanges,json}] [--prompts-only]
                       [--no-header] [-o FILE]
                       [conversation_id]
@@ -289,20 +291,24 @@
     -h, --help            show this help message and exit
     -n, --last [N]        Export N most recent sessions (default: 1 if no ID
                           given)
-    -w, --workspace SUBSTR
-                          Filter by workspace path substring
-    -l, --tag NAME        Filter by tag (repeatable, OR logic)
-    --no-tag NAME         Exclude sessions with this tag (repeatable)
-    --since DATE          Sessions after this date (YYYY-MM-DD, 7d, 1w,
-                          yesterday, today)
-    --before DATE         Sessions before this date (YYYY-MM-DD, 7d, 1w,
-                          yesterday, today)
-    -s, --search QUERY    Full-text search filter
     -f, --format {prompts,exchanges,json}
                           Output format: prompts (default), exchanges, json
     --prompts-only        Omit response text and tool calls
     --no-header           Omit session metadata header
     -o, --output FILE     Write to file instead of stdout
+  
+  filtering:
+    -w, --workspace SUBSTR
+                          Filter by workspace path substring
+    --since DATE          Conversations started after this date (YYYY-MM-DD, 7d,
+                          1w, yesterday, today)
+    --before DATE         Conversations started before this date (YYYY-MM-DD,
+                          7d, 1w, yesterday, today)
+    -s, --search QUERY    Full-text search filter
+  
+  tag filtering:
+    -l, --tag NAME        Filter by tag (repeatable, OR logic)
+    --no-tag NAME         Exclude conversations with this tag (NOT logic)
   
   examples:
     siftd export --last                   # export most recent session (prompts)
@@ -419,7 +425,7 @@
 # name: TestHelpSnapshots.test_subcommand_help[query]
   '''
   usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
-                     [-t NAME] [-l NAME] [--all-tags NAME] [--no-tag NAME]
+                     [-l NAME] [--all-tags NAME] [--no-tag NAME] [-t NAME]
                      [--tool-tag NAME] [-n LIMIT] [-v] [--oldest] [--json]
                      [--stats] [--exchanges N] [--brief] [--summary] [--full]
                      [--chars N] [--thinking] [--tools [FILTER]]
@@ -539,6 +545,8 @@
                           1w, yesterday, today)
     --before DATE         Conversations started before this date (YYYY-MM-DD,
                           7d, 1w, yesterday, today)
+  
+  tag filtering:
     -l, --tag NAME        Filter by tag (repeatable, OR logic)
     --all-tags NAME       Require all specified tags (AND logic)
     --no-tag NAME         Exclude conversations with this tag (NOT logic)

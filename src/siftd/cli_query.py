@@ -6,7 +6,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from siftd.cli_common import parse_date, resolve_db
+from siftd.cli_common import resolve_db
 from siftd.output import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
 from siftd.paths import queries_dir
 
@@ -356,8 +356,8 @@ def cmd_query(args) -> int:
             db_path=db,
             workspace=args.workspace,
             model=args.model,
-            since=parse_date(args.since),
-            before=parse_date(args.before),
+            since=args.since,
+            before=args.before,
             tool=args.tool,
             tags=args.tag,
             all_tags=getattr(args, "all_tags", None),
@@ -535,19 +535,9 @@ examples:
     p_query.add_argument("sql_name", nargs="?", help="SQL query name (when using 'sql' subcommand)")
 
     # Filtering options
-    filter_group = p_query.add_argument_group("filtering")
-    filter_group.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
-    filter_group.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
-    filter_group.add_argument("--since", metavar="DATE", type=parse_date, help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    filter_group.add_argument("--before", metavar="DATE", type=parse_date, help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    filter_group.add_argument("-t", "--tool", metavar="NAME", help="Filter by canonical tool name (e.g. shell.execute)")
+    from siftd.cli_filters import add_filter_args
 
-    # Tag filtering options
-    tag_group = p_query.add_argument_group("tag filtering")
-    tag_group.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by tag (repeatable, OR logic)")
-    tag_group.add_argument("--all-tags", action="append", metavar="NAME", help="Require all specified tags (AND logic)")
-    tag_group.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude conversations with this tag (NOT logic)")
-    tag_group.add_argument("--tool-tag", metavar="NAME", help="Filter by tool call tag (e.g. shell:test)")
+    add_filter_args(p_query, include_tool=True, include_tool_tag=True)
 
     # Output options
     output_group = p_query.add_argument_group("output")

@@ -5,7 +5,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from siftd.cli_common import parse_date, resolve_db
+from siftd.cli_common import resolve_db
 
 
 def cmd_export(args) -> int:
@@ -34,8 +34,8 @@ def cmd_export(args) -> int:
             workspace=args.workspace,
             tags=args.tag,
             exclude_tags=getattr(args, "no_tag", None),
-            since=parse_date(args.since),
-            before=parse_date(args.before),
+            since=args.since,
+            before=args.before,
             search=args.search,
             db_path=db,
         )
@@ -98,12 +98,10 @@ def build_export_parser(subparsers) -> None:
     )
     p_export.add_argument("conversation_id", nargs="?", help="Conversation ID to export (prefix match)")
     p_export.add_argument("-n", "--last", type=int, nargs="?", const=1, metavar="N", help="Export N most recent sessions (default: 1 if no ID given)")
-    p_export.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
-    p_export.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by tag (repeatable, OR logic)")
-    p_export.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude sessions with this tag (repeatable)")
-    p_export.add_argument("--since", metavar="DATE", type=parse_date, help="Sessions after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    p_export.add_argument("--before", metavar="DATE", type=parse_date, help="Sessions before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    p_export.add_argument("-s", "--search", metavar="QUERY", help="Full-text search filter")
+
+    from siftd.cli_filters import add_filter_args
+
+    add_filter_args(p_export, include_model=False, include_search=True, include_all_tags=False)
     p_export.add_argument(
         "-f",
         "--format",

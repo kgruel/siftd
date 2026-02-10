@@ -13,13 +13,13 @@ Version exits with code 0:
   $ siftd --version
   siftd * (glob)
 
-Status works with fresh database (use empty path to avoid discovering real files):
+Stats works with fresh database (use empty path to avoid discovering real files):
 
   $ HOME=$PRYSK_TEMP XDG_DATA_HOME=$PRYSK_TEMP/data XDG_CONFIG_HOME=$PRYSK_TEMP/config siftd --db $PRYSK_TEMP/test.db ingest > /dev/null 2>&1
-  $ siftd --db $PRYSK_TEMP/test.db status | grep "Database:"
+  $ siftd --db $PRYSK_TEMP/test.db db stats | grep "Database:"
   Database: */test.db (glob)
 
-  $ siftd --db $PRYSK_TEMP/test.db status | grep "Conversations:"
+  $ siftd --db $PRYSK_TEMP/test.db db stats | grep "Conversations:"
   *Conversations:* (glob)
 
 Doctor runs without error on fresh isolated database:

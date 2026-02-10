@@ -144,7 +144,6 @@ def cmd_search(args) -> int:
 
     # Compose filters: get candidate conversation IDs from main DB
     from siftd.api import DERIVATIVE_TAG
-    from siftd.cli_common import parse_date
     from siftd.search import filter_conversations, get_active_conversation_ids
 
     exclude_tags = list(getattr(args, "no_tag", None) or [])
@@ -155,8 +154,8 @@ def cmd_search(args) -> int:
         db,
         workspace=args.workspace,
         model=args.model,
-        since=parse_date(args.since),
-        before=parse_date(args.before),
+        since=args.since,
+        before=args.before,
         tags=getattr(args, "tag", None),
         all_tags=getattr(args, "all_tags", None),
         exclude_tags=exclude_tags or None,
@@ -399,7 +398,6 @@ def _search_fts_only(args, db: Path, query: str) -> int:
 
     from siftd.api import DERIVATIVE_TAG, open_database
     from siftd.api.search import fts5_search_content
-    from siftd.cli_common import parse_date
     from siftd.search import filter_conversations, get_active_conversation_ids
 
     # Warn about flags that are ignored in FTS5-only mode
@@ -436,8 +434,8 @@ def _search_fts_only(args, db: Path, query: str) -> int:
         db,
         workspace=args.workspace,
         model=args.model,
-        since=parse_date(args.since),
-        before=parse_date(args.before),
+        since=args.since,
+        before=args.before,
         tags=getattr(args, "tag", None),
         all_tags=getattr(args, "all_tags", None),
         exclude_tags=exclude_tags or None,
@@ -642,16 +640,9 @@ examples:
     p_search.add_argument("query", nargs="*", help="Natural language search query")
 
     # Filtering options (most commonly used)
-    filter_group = p_search.add_argument_group("filtering")
-    filter_group.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace path substring")
-    filter_group.add_argument("-m", "--model", metavar="NAME", help="Filter by model name")
-    from siftd.cli_common import parse_date
+    from siftd.cli_filters import add_filter_args
 
-    filter_group.add_argument("--since", metavar="DATE", type=parse_date, help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    filter_group.add_argument("--before", metavar="DATE", type=parse_date, help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
-    filter_group.add_argument("-l", "--tag", action="append", metavar="NAME", help="Filter by tag (repeatable, OR logic)")
-    filter_group.add_argument("--all-tags", action="append", metavar="NAME", help="Require all specified tags (AND logic)")
-    filter_group.add_argument("--no-tag", action="append", metavar="NAME", help="Exclude conversations with this tag (NOT logic)")
+    add_filter_args(p_search)
 
     # Output options
     output_group = p_search.add_argument_group("output")
