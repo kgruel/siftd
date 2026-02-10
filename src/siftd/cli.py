@@ -5,6 +5,7 @@ import sys
 
 from siftd.cli_common import _get_version
 from siftd.cli_data import build_data_parser
+from siftd.cli_db import build_db_parser
 from siftd.cli_export import build_export_parser
 from siftd.cli_install import build_install_parser
 from siftd.cli_meta import build_meta_parser
@@ -36,6 +37,7 @@ def main(argv=None) -> int:
 
     build_sessions_parser(subparsers)
     build_meta_parser(subparsers)
+    build_db_parser(subparsers)
     build_tags_parser(subparsers)
     build_query_parser(subparsers)
     build_data_parser(subparsers)

@@ -28,6 +28,7 @@ from siftd.api.conversations import (
     run_query_file,
 )
 from siftd.api.database import (
+    backup_database,
     create_database,
     open_database,
 )
@@ -64,6 +65,9 @@ from siftd.api.resources import (
     copy_adapter,
     copy_query,
     list_builtin_queries,
+)
+from siftd.api.slice import (
+    slice_database,
 )
 from siftd.api.stats import (
     DatabaseStats,
@@ -120,6 +124,7 @@ __all__ = [
     "list_adapters",
     "list_builtin_adapters",
     # database
+    "backup_database",
     "create_database",
     "open_database",
     # tags
@@ -186,6 +191,8 @@ __all__ = [
     "ToolStats",
     "get_stats",
     "list_workspaces",
+    # slice
+    "slice_database",
     # tools
     "TagUsage",
     "WorkspaceTagUsage",

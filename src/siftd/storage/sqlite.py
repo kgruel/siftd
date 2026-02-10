@@ -80,12 +80,52 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         ensure_session_tables(conn)
         ensure_prompt_tags_table(conn)
         _ensure_git_remote_index(conn)
+        _ensure_tag_indexes(conn)
 
         # Stamp schema version after successful migrations
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.commit()
 
     return conn
+
+
+def create_empty_database(db_path: Path) -> None:
+    """Create a new database with the base schema only (no migrations).
+
+    Used for slice targets that need a clean schema without
+    the session/prompt_tags/etc. ensure tables.
+    """
+    conn = sqlite3.connect(str(db_path))
+    try:
+        schema = SCHEMA_PATH.read_text()
+        conn.executescript(schema)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def backup_database(source_path: Path, target_path: Path) -> None:
+    """Create a consistent online backup using sqlite3.Connection.backup().
+
+    Args:
+        source_path: Path to the source database.
+        target_path: Path to write the backup. Parent directory is created if needed.
+
+    Raises:
+        FileNotFoundError: If source database does not exist.
+    """
+    if not source_path.exists():
+        raise FileNotFoundError(f"Database not found: {source_path}")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    source_conn = open_database(source_path, read_only=True)
+    try:
+        dest_conn = sqlite3.connect(str(target_path))
+        try:
+            source_conn.backup(dest_conn)
+        finally:
+            dest_conn.close()
+    finally:
+        source_conn.close()
 
 
 def _migrate_labels_to_tags(conn: sqlite3.Connection) -> None:
@@ -402,6 +442,23 @@ def _ensure_git_remote_index(conn: sqlite3.Connection) -> None:
     """Create index on workspaces.git_remote if it doesn't exist. Idempotent."""
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_workspaces_git_remote ON workspaces(git_remote)"
+    )
+    conn.commit()
+
+
+def _ensure_tag_indexes(conn: sqlite3.Connection) -> None:
+    """Create tag_id indexes on tag junction tables. Idempotent.
+
+    Speeds up delete_tag() and list_tags() COUNT subqueries.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_workspace_tags_tag ON workspace_tags(tag_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_conversation_tags_tag ON conversation_tags(tag_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_call_tags_tag ON tool_call_tags(tag_id)"
     )
     conn.commit()
 

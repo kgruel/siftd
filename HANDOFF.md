@@ -4,33 +4,24 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ## Current Focus
 
-**CLI Quality** — Post-decomposition cleanup from code review.
+**`siftd db` namespace + shared filter pipeline** — branch `feat/db-namespace-filters`, pending review.
 
-Next: deferred review items (branch `review-fixes` or new branch):
+Branch introduces:
+- [x] `cli_filters.py` — shared filter args extracted from query/search/export (was 3 copy-pasted blocks)
+- [x] `cli_db.py` — `siftd db` namespace: info, stats, workspaces, path, vacuum, backup, restore, slice
+- [x] `api/slice.py` — filtered DB export via ATTACH DATABASE + cross-DB INSERT...SELECT
+- [x] Deprecation wrappers for `siftd status/workspaces/path` → `siftd db stats/workspaces/path`
+- [x] `storage/sqlite.py` — `backup_database()`, `create_empty_database()` (architecture-compliant)
+
+Next: merge after review, then:
 - [ ] **NULL workspace_path asymmetry** in `find_active_session` — document as intentional
-- [ ] **Double `parse_date` calls** — argparse `type=` + manual call. Idempotent but redundant
 - [ ] **Break down `cmd_search()`** — 367 lines, works but long
-- [ ] **Architecture test gaps** — doesn't detect raw SQL in CLI modules or imports outside 4 declared layers
+- [ ] **`db merge`** — multi-device merge (design understood, deferred until slice is validated)
 
-Done this session:
-- [x] Fixed connection leak in `_search_fts_only` (try/finally)
-- [x] Fixed `open_database` import consistency in `api/search.py`
-- [x] Added API wrappers: `list_workspaces`, `resolve_entity_id`, `get_recent_conversation_ids`
-- [x] Eliminated all KNOWN_VIOLATIONS (cli→storage layer breaches)
-- [x] Extracted `cli_peek.py` and `cli_export.py` — cli.py now 59 lines (pure dispatcher)
-- [x] Added `resolve_db(args)` helper, replaced 12 occurrences across 7 modules
-- [x] Lazy imports in `cli_data.py` for adapters, backfill, ingestion
-
-Previous session:
-- [x] CLI decomposition: extracted cli_meta, cli_tags, cli_query, cli_data, cli_sessions, cli_common
-- [x] Agent ergonomics: session-id fallback, FTS5 warnings, workspaces cmd
-
-Previous session:
-- [x] Merged `impl/worktree-identity` — branch display in peek, `--branch` filter
-- [x] Agent monitoring patterns, config philosophy research
-
-Previous session:
-- [x] Fixed CI failures (broken since Feb 1 when git worktree tests were added)
+Previous sessions:
+- [x] CLI quality cleanup: connection leaks, API wrappers, architecture violations, module extraction
+- [x] CLI decomposition: cli_meta, cli_tags, cli_query, cli_data, cli_sessions, cli_common
+- [x] Worktree identity, agent monitoring patterns, CI fixes
 
 ## Friction Log
 
