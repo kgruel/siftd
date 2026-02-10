@@ -37,6 +37,8 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
 
   update-homebrew:
     runs-on: ubuntu-latest
@@ -73,63 +75,66 @@ jobs:
 
           [ "$HTTP_CODE" = "200" ] || { echo "ERROR: siftd $VERSION not found on PyPI after 5 minutes"; exit 1; }
 
-          # Generate formula directly from PyPI JSON API (no poet dependency)
-          python3 -c "
+          # Generate formula directly from PyPI JSON API (no poet/pkg_resources dependency)
+          # Unquoted heredoc so shell expands ${VERSION} before Python runs
+          python3 << PYEOF > siftd.rb
           import json, urllib.request
 
-          with urllib.request.urlopen('https://pypi.org/pypi/siftd/${VERSION}/json') as r:
+          VERSION = "${VERSION}"
+
+          with urllib.request.urlopen(f"https://pypi.org/pypi/siftd/{VERSION}/json") as r:
               pkg = json.loads(r.read())
 
-          # Find sdist
-          sdist = next(f for f in pkg['urls'] if f['packagetype'] == 'sdist')
+          sdist = next(f for f in pkg["urls"] if f["packagetype"] == "sdist")
 
-          # Resolve all install_requires
-          requires = pkg['info'].get('requires_dist') or []
-          # Filter to unconditional deps (no extras or markers)
-          deps = [r.split()[0].rstrip(';') for r in requires if ';' not in r and 'extra ==' not in r]
+          requires = pkg["info"].get("requires_dist") or []
+          deps = [r.split()[0].rstrip(";") for r in requires if ";" not in r and "extra ==" not in r]
 
           resources = []
           for dep in deps:
-              with urllib.request.urlopen(f'https://pypi.org/pypi/{dep}/json') as dr:
+              with urllib.request.urlopen(f"https://pypi.org/pypi/{dep}/json") as dr:
                   dp = json.loads(dr.read())
-              ds = next((f for f in dp['urls'] if f['packagetype'] == 'sdist'), None)
+              ds = next((f for f in dp["urls"] if f["packagetype"] == "sdist"), None)
               if ds:
-                  resources.append((dep, ds['url'], ds['digests']['sha256']))
+                  resources.append((dep, ds["url"], ds["digests"]["sha256"]))
 
-          formula = '''class Siftd < Formula
-            include Language::Python::Virtualenv
-
-            desc \"Personal LLM usage analytics for CLI coding tools\"
-            homepage \"https://github.com/kgruel/siftd\"
-            url \"{url}\"
-            sha256 \"{sha256}\"
-            license \"MIT\"
-
-            depends_on \"python@3.12\"
-
-          '''.format(url=sdist['url'], sha256=sdist['digests']['sha256'])
+          lines = [
+              'class Siftd < Formula',
+              '  include Language::Python::Virtualenv',
+              '',
+              '  desc "Personal LLM usage analytics for CLI coding tools"',
+              '  homepage "https://github.com/kgruel/siftd"',
+              f'  url "{sdist["url"]}"',
+              f'  sha256 "{sdist["digests"]["sha256"]}"',
+              '  license "MIT"',
+              '',
+              '  depends_on "python@3.12"',
+              '',
+          ]
 
           for name, url, sha in resources:
-              formula += '''  resource \"{name}\" do
-              url \"{url}\"
-              sha256 \"{sha}\"
-            end
+              lines += [
+                  f'  resource "{name}" do',
+                  f'    url "{url}"',
+                  f'    sha256 "{sha}"',
+                  '  end',
+                  '',
+              ]
 
-          '''.format(name=name, url=url, sha=sha)
+          lines += [
+              '  def install',
+              '    virtualenv_create(libexec, "python3.12")',
+              '    virtualenv_install_with_resources',
+              '  end',
+              '',
+              '  test do',
+              '    assert_match "usage", shell_output("siftd --help", 0)',
+              '  end',
+              'end',
+          ]
 
-          formula += '''  def install
-              virtualenv_create(libexec, \"python3.12\")
-              virtualenv_install_with_resources
-            end
-
-            test do
-              assert_match \"usage\", shell_output(\"{name} --help\", 0)
-            end
-          end
-          '''.format(name='siftd')
-
-          print(formula)
-          " > siftd.rb
+          print("\n".join(lines))
+          PYEOF
 
           echo "Generated formula:"
           cat siftd.rb
