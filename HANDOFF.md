@@ -4,14 +4,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ## Current Focus
 
-**v0.4.5 ready to ship.** Committed on main, not yet pushed/tagged. `./dev check` green.
-
-Pending release:
-- `peek --follow` mode (real-time session tailing with tool hints)
-- Tool accumulation fix (multi-turn exchanges now show all tools)
-- Follow loop hardened (inode-aware reopening, truncation recovery)
-
-To release: `git push origin main && git tag v0.4.5 && git push origin v0.4.5`
+**v0.4.5 published.** All CI green, PyPI + Homebrew tap updated.
 
 Next:
 - [ ] **`db merge`** — multi-device merge (design understood, `db slice` now validated and working)
@@ -60,6 +53,7 @@ Discovered via "siftd monitoring siftd" pattern — using siftd to observe agent
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.4.5 | 2026-02-10 | `peek --follow` mode, tool hints, tool accumulation fix, follow loop hardening |
 | v0.4.4 | 2026-02-10 | `siftd db` namespace, shared filter pipeline, slice export, Codex tokens, cache-aware cost |
 | v0.4.3 | 2026-02-09 | Narrative detail view, Turn model, CLI decomposition, architecture enforcement |
 | v0.4.0 | 2026-02-05 | Live session tagging, binary filtering, workspace identity, status perf, CLI help groups, score explainability, doctor checks |

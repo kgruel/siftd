@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-02-10
+
+### Added
+
+- **`peek --follow` mode** — Real-time session tailing for monitoring live agents:
+  - Streams turns as they arrive with text and tool call summaries
+  - Tool hints: file paths, commands, search patterns extracted from tool inputs
+  - `--json` output produces NDJSON for piping to jq
+  - `--exchanges N` controls initial context window (default 3)
+  - Auto-selects most recent active session when no ID given
+  - Respects `--workspace` and `--branch` filters for session auto-selection
+- **Tool hint extraction** — `extract_tool_hint()` summarizes tool_use inputs (file paths truncated to last 2 components, commands, patterns, queries)
+- **`TOOL_HINT_KEYS`** — Adapter-specific mapping for hint extraction from Claude Code tool schemas
+- **`db slice` filter args for tags drill-down** — `siftd tags` now accepts filter pipeline args
+
+### Fixed
+
+- **Tool accumulation in peek exchanges** — Multi-turn assistant exchanges now show all tools used across turns, not just the last turn's tools
+- **Placeholder-only response text** — Assistant turns containing only `[tool: X]` placeholders no longer latch as the exchange response text
+- **Assistant-first exchanges** — Sessions starting with an assistant turn (no preceding user record) now create a proper exchange instead of being silently dropped
+- **Follow loop robustness** — Inode-aware file reopening for log rotation, truncation recovery seeks to start of file, proper file handle cleanup in finally block
+- **`db slice` column order** — ALTER TABLE column ordering bug in slice export
+
+### Changed
+
+- Homebrew formula generation uses PyPI JSON API directly (replaces `homebrew-pypi-poet` dependency)
+
 ## [0.4.4] - 2026-02-10
 
 ### Added
@@ -272,7 +299,9 @@ Initial public release.
 
 ---
 
-[Unreleased]: https://github.com/anthropics/siftd/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/anthropics/siftd/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/anthropics/siftd/compare/v0.4.4...v0.4.5
+[0.4.4]: https://github.com/anthropics/siftd/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/anthropics/siftd/compare/v0.4.2...v0.4.3
 [0.4.0]: https://github.com/anthropics/siftd/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/anthropics/siftd/compare/v0.2.0...v0.3.0
