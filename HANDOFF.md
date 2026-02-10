@@ -54,7 +54,9 @@ Discovered via "siftd monitoring siftd" pattern — using siftd to observe agent
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| v0.4.0 | pending | Live session tagging, binary filtering, workspace identity, status perf, CLI help groups, score explainability, doctor checks |
+| v0.4.4 | 2026-02-10 | `siftd db` namespace, shared filter pipeline, slice export, Codex tokens, cache-aware cost |
+| v0.4.3 | 2026-02-09 | Narrative detail view, Turn model, CLI decomposition, architecture enforcement |
+| v0.4.0 | 2026-02-05 | Live session tagging, binary filtering, workspace identity, status perf, CLI help groups, score explainability, doctor checks |
 | v0.3.0 | 2026-01-30 | Relative dates, temporal weighting, numpy perf, incremental indexing |
 | v0.2.0 | 2026-01-30 | Hard rules tests, privacy warnings, FTS5 error hints |
 | v0.1.0 | 2026-01-28 | Initial release |

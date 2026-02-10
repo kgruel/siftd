@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-02-10
+
+### Added
+
+- **`siftd db` namespace** — Container-level database operations:
+  - `db info` — file metadata, page size, journal mode, schema version, FTS5 status
+  - `db stats` — database statistics (absorbs `siftd status`)
+  - `db workspaces` — list workspaces (absorbs `siftd workspaces`)
+  - `db path` — show XDG paths (absorbs `siftd path`)
+  - `db vacuum` — compact database and optimize indexes, reports size savings
+  - `db backup <file>` — consistent online backup via `sqlite3.Connection.backup()`
+  - `db restore <file>` — restore from backup with SQLite magic-byte validation
+  - `db slice <file>` — export filtered conversation subset into standalone SQLite database
+- **`db slice` filter pipeline** — Full filter vocabulary available: `-w`, `-m`, `--since`, `--before`, `-l`, `--exclude-tag`, `--tool`, `--tool-tag`, `-s`
+- **Shared filter args** — `cli_filters.py` with `FilterArgs` dataclass, `add_filter_args()`, `extract_filter_args()` replacing 3 copy-pasted filter blocks
+- **Codex CLI token extraction** — Token usage parsing from Codex CLI sessions
+- **Token coverage metrics** — Track token extraction completeness across adapters
+- **Cache-aware cost calculation** — Cost queries account for cache read tokens
+- **CLI display ergonomics** — Status enrichment, query cost display, peek adapter info
+
+### Changed
+
+- `siftd status`, `siftd workspaces`, `siftd path` are deprecated with stderr warnings; use `siftd db stats`, `siftd db workspaces`, `siftd db path`
+- Shared filter pipeline reduces CLI argument duplication across query, search, export, slice
+- Architecture tests hardened: CLI SQL hygiene checks, `TYPE_CHECKING` import handling, peek types moved to domain
+
+### Fixed
+
+- Cache JOIN duplication in cost queries producing inflated token counts
+- Turn narrative: ID-based tool matching, `tool_result` rendering, Gemini thinking block handling
+- Token filter relaxed to avoid dropping valid zero-token responses
+- `workflow_dispatch` added to publish workflow for manual re-trigger
+
 ## [0.4.3] - 2026-02-09
 
 ### Added
