@@ -4,15 +4,23 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ## Current Focus
 
-**v0.4.5 published.** All CI green, PyPI + Homebrew tap updated.
+**Docs hardened. Ready to explore remote DB hosting.**
 
-Next:
+Docs pass: accuracy fixes (wrong flags, phantom categories, stale tool names), output examples updated to match actual CLI formats, docs reorganized (`docs/index.md` entry point, `docs/guides/` for how-tos, `docs/research/` gitignored).
+
+Next session:
+- [ ] **Remote DB hosting** — siftd is local-only SQLite; explore what "remote" means for the use case (sync vs hosted, read vs write, single-user vs team)
 - [ ] **`db merge`** — multi-device merge (design understood, `db slice` now validated and working)
+
+Deferred (still valid):
 - [ ] **Break down `cmd_search()`** — 367 lines, works but long
 - [ ] **`siftd tags` list view temporal filtering** — needs new storage query (conversation time vs applied-at semantics TBD)
 - [ ] **NULL workspace_path asymmetry** in `find_active_session` — document as intentional
+- [ ] **Add `-s`/`--search` to `query`** — one-line change in `cli_query.py:540`, the flag `export` already has via `include_search=True`
 
 Previous sessions:
+- [x] Docs accuracy + output format updates, docs reorganization (index, guides/, untrack research/)
+- [x] Concept docs + README rewrite
 - [x] v0.4.5: `peek --follow` mode, tool accumulation fix, follow loop hardening (inode, truncation, placeholder suppression)
 - [x] Post-0.4.4: `db slice` FK fix (ALTER TABLE column order), tags filter pipeline, Homebrew formula generation rewrite
 - [x] `siftd db` namespace, shared filter pipeline, slice export, deprecation wrappers
