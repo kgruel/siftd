@@ -4,21 +4,17 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ## Current Focus
 
-**Post-0.4.4 fixes and polish** — merged to main, published.
-
-This session:
-- [x] Fixed `db slice` FK integrity error on migrated databases (column order mismatch from ALTER TABLE migrations)
-- [x] Added `siftd tags <name>` filter support (`--since`, `--before`, `-w`, `-m`, etc. via shared filter pipeline)
-- [x] Replaced broken `homebrew-pypi-poet` with direct PyPI JSON API formula generation (setuptools 81 removed `pkg_resources`)
-- [x] Added `skip-existing` to PyPI publish for idempotent workflow re-runs
+**v0.4.4 published and patched.** All CI green, Homebrew tap updated.
 
 Next:
-- [ ] **NULL workspace_path asymmetry** in `find_active_session` — document as intentional
+- [ ] **`db merge`** — multi-device merge (design understood, `db slice` now validated and working)
 - [ ] **Break down `cmd_search()`** — 367 lines, works but long
-- [ ] **`db merge`** — multi-device merge (design understood, deferred until slice is validated)
 - [ ] **`siftd tags` list view temporal filtering** — needs new storage query (conversation time vs applied-at semantics TBD)
+- [ ] **NULL workspace_path asymmetry** in `find_active_session` — document as intentional
 
 Previous sessions:
+- [x] Post-0.4.4: `db slice` FK fix (ALTER TABLE column order), tags filter pipeline, Homebrew formula generation rewrite
+- [x] `siftd db` namespace, shared filter pipeline, slice export, deprecation wrappers
 - [x] CLI quality cleanup: connection leaks, API wrappers, architecture violations, module extraction
 - [x] CLI decomposition: cli_meta, cli_tags, cli_query, cli_data, cli_sessions, cli_common
 - [x] Worktree identity, agent monitoring patterns, CI fixes
