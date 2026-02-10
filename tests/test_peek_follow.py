@@ -1,12 +1,17 @@
 """Tests for peek follow mode: parsing, rendering, and hint extraction."""
 
+import io
 import json
+import threading
+import time
+import sys
 
 from siftd.adapters.claude_code import TOOL_ALIASES, TOOL_HINT_KEYS
 from siftd.adapters.sdk import extract_tool_hint
 from siftd.peek.follow import (
     FollowEvent,
     event_to_json,
+    follow_session,
     parse_record,
     render_tool_line,
 )
@@ -297,3 +302,108 @@ class TestEventToJson:
         )
         # Should not raise
         json.dumps(event_to_json(event))
+
+
+def _wait_for_events(events: list, count: int, timeout: float = 1.0) -> bool:
+    start = time.time()
+    while time.time() - start < timeout:
+        if len(events) >= count:
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_follow_session_partial_lines(tmp_path):
+    path = tmp_path / "session.jsonl"
+    path.write_text("")
+    events: list[FollowEvent] = []
+
+    thread = threading.Thread(
+        target=follow_session,
+        args=(path,),
+        kwargs={"poll_interval": 0.01, "on_turn": events.append},
+        daemon=True,
+    )
+    thread.start()
+    time.sleep(0.05)
+
+    record = {
+        "type": "user",
+        "timestamp": "2025-01-20T10:00:00Z",
+        "message": {"role": "user", "content": [{"type": "text", "text": "Hi"}]},
+    }
+    line = json.dumps(record)
+    first_half = line[: len(line) // 2]
+    second_half = line[len(line) // 2 :]
+
+    with path.open("a", encoding="utf-8") as f:
+        f.write(first_half)
+        f.flush()
+
+    time.sleep(0.05)
+    assert events == []
+
+    with path.open("a", encoding="utf-8") as f:
+        f.write(second_half + "\n")
+        f.flush()
+
+    assert _wait_for_events(events, 1)
+    assert events[0].is_user
+
+    path.unlink()
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+
+
+def test_follow_session_deletion_stops(tmp_path):
+    path = tmp_path / "session.jsonl"
+    path.write_text("")
+
+    thread = threading.Thread(
+        target=follow_session,
+        args=(path,),
+        kwargs={"poll_interval": 0.01},
+        daemon=True,
+    )
+    thread.start()
+
+    time.sleep(0.05)
+    path.unlink()
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+
+
+def test_follow_session_json_output(tmp_path, monkeypatch):
+    path = tmp_path / "session.jsonl"
+    path.write_text("")
+    buf = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", buf)
+
+    thread = threading.Thread(
+        target=follow_session,
+        args=(path,),
+        kwargs={"poll_interval": 0.01, "json_mode": True},
+        daemon=True,
+    )
+    thread.start()
+    time.sleep(0.05)
+
+    record = {
+        "type": "user",
+        "timestamp": "2025-01-20T10:00:00Z",
+        "message": {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
+    }
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+        f.flush()
+
+    time.sleep(0.05)
+    path.unlink()
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+
+    lines = [line for line in buf.getvalue().splitlines() if line.strip()]
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["role"] == "user"
+    assert payload["text"] == "Hello"

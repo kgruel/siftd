@@ -355,6 +355,62 @@ class TestReadSessionDetail:
         assert "shell.execute" in tool_names
         assert sum(c for _, c in ex.tool_calls) == 3
 
+    def test_assistant_first_exchange(self, session_dir, monkeypatch):
+        """Assistant-first sessions still produce exchanges."""
+        path = session_dir / "assistant-first.jsonl"
+        records = [
+            _make_assistant_record("System preface", timestamp="2025-01-20T10:00:00Z"),
+            _make_user_record("Hello", timestamp="2025-01-20T10:01:00Z"),
+            _make_assistant_record("Hi there", timestamp="2025-01-20T10:01:05Z"),
+        ]
+        _write_session(path, records)
+
+        plugin = _make_fake_plugin("test", [str(session_dir.parent)])
+        monkeypatch.setattr(
+            "siftd.peek.reader.load_all_adapters",
+            lambda: [plugin],
+        )
+        detail = read_session_detail(path, last_n=10)
+        assert detail is not None
+        assert len(detail.exchanges) == 2
+        assert detail.exchanges[0].prompt_text is None
+        assert detail.exchanges[0].response_text == "System preface"
+        assert detail.exchanges[1].prompt_text == "Hello"
+        assert detail.info.exchange_count == 2
+
+    def test_tool_only_first_turn_skips_placeholder_response(self, session_dir, monkeypatch):
+        """Tool-only first assistant turns shouldn't latch onto placeholders."""
+        path = session_dir / "tool-only-first.jsonl"
+        records = [
+            _make_user_record("Do the thing", timestamp="2025-01-20T10:00:00Z"),
+            _make_assistant_record(
+                "",
+                timestamp="2025-01-20T10:00:05Z",
+                tool_uses=[
+                    {"type": "tool_use", "id": "tu1", "name": "Read", "input": {"file_path": "/a.py"}},
+                ],
+            ),
+            _make_tool_result_record("tu1", "ok", timestamp="2025-01-20T10:00:10Z"),
+            _make_assistant_record(
+                "Done",
+                timestamp="2025-01-20T10:00:15Z",
+            ),
+        ]
+        _write_session(path, records)
+
+        plugin = _make_fake_plugin("test", [str(session_dir.parent)])
+        monkeypatch.setattr(
+            "siftd.peek.reader.load_all_adapters",
+            lambda: [plugin],
+        )
+        detail = read_session_detail(path, last_n=10)
+        assert detail is not None
+        assert len(detail.exchanges) == 1
+        ex = detail.exchanges[0]
+        assert ex.response_text == "Done"
+        tool_names = {name for name, _ in ex.tool_calls}
+        assert "file.read" in tool_names
+
     def test_nonexistent_file_returns_none(self, session_dir, monkeypatch):
         """Non-existent file returns None (not an exception)."""
         plugin = _make_fake_plugin("test", [str(session_dir.parent)])

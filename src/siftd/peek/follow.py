@@ -197,70 +197,86 @@ def follow_session(
     # Resolve adapter for tool_aliases and hint_keys
     tool_aliases, hint_keys = _resolve_adapter_config(path)
 
-    # Open file and seek to end
+    f = None
     try:
-        with path.open("r", encoding="utf-8") as f:
-            f.seek(0, 2)  # Seek to end
-            last_size = path.stat().st_size
-            buf = ""
+        f = path.open("r", encoding="utf-8")
+        stat = path.stat()
+        last_inode = stat.st_ino
+        last_dev = stat.st_dev
+        f.seek(0, 2)  # Seek to end
+        last_size = stat.st_size
+        buf = ""
 
-            while True:
+        while True:
+            try:
+                time.sleep(poll_interval)
+            except KeyboardInterrupt:
+                break
+
+            try:
+                stat = path.stat()
+                current_size = stat.st_size
+            except OSError:
+                break
+
+            if stat.st_ino != last_inode or stat.st_dev != last_dev:
+                if f:
+                    f.close()
+                f = path.open("r", encoding="utf-8")
+                last_inode = stat.st_ino
+                last_dev = stat.st_dev
+                last_size = 0
+                buf = ""
+                f.seek(0)
+
+            # Handle file truncation
+            if current_size < last_size:
+                f.seek(0)
+                last_size = 0
+                buf = ""
+
+            if current_size == last_size:
+                continue
+
+            last_size = current_size
+            chunk = f.read()
+            if not chunk:
+                continue
+
+            buf += chunk
+            while "\n" in buf:
+                line, buf = buf.split("\n", 1)
+                line = line.strip()
+                if not line:
+                    continue
+
                 try:
-                    time.sleep(poll_interval)
-                except KeyboardInterrupt:
-                    break
-
-                try:
-                    current_size = path.stat().st_size
-                except OSError:
-                    break
-
-                # Handle file truncation
-                if current_size < last_size:
-                    f.seek(0, 2)
-                    last_size = current_size
-                    buf = ""
+                    record = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
                     continue
 
-                if current_size == last_size:
+                event = parse_record(
+                    record,
+                    tool_aliases=tool_aliases,
+                    hint_keys=hint_keys,
+                )
+                if event is None:
                     continue
 
-                last_size = current_size
-                chunk = f.read()
-                if not chunk:
-                    continue
+                if on_turn:
+                    on_turn(event)
 
-                buf += chunk
-                while "\n" in buf:
-                    line, buf = buf.split("\n", 1)
-                    line = line.strip()
-                    if not line:
-                        continue
-
-                    try:
-                        record = json.loads(line)
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-
-                    event = parse_record(
-                        record,
-                        tool_aliases=tool_aliases,
-                        hint_keys=hint_keys,
-                    )
-                    if event is None:
-                        continue
-
-                    if on_turn:
-                        on_turn(event)
-
-                    if json_mode:
-                        print(json.dumps(event_to_json(event), separators=(",", ":")))
-                        sys.stdout.flush()
-                    elif render:
-                        render(event)
+                if json_mode:
+                    print(json.dumps(event_to_json(event), separators=(",", ":")))
+                    sys.stdout.flush()
+                elif render:
+                    render(event)
 
     except KeyboardInterrupt:
         pass
+    finally:
+        if f:
+            f.close()
 
     if not json_mode:
         print("\n(follow stopped)", file=sys.stderr)

@@ -41,9 +41,9 @@ HARNESS_DISPLAY_NAME = "Claude Code"
 # Canonical tool name → input keys to try for hint extraction (priority order)
 TOOL_HINT_KEYS: dict[str, list[str]] = {
     "shell.execute": ["description", "command"],
-    "file.read": ["file_path"],
-    "file.write": ["file_path"],
-    "file.edit": ["file_path"],
+    "file.read": ["file_path", "path"],
+    "file.write": ["file_path", "path"],
+    "file.edit": ["file_path", "path"],
     "file.glob": ["pattern"],
     "search.grep": ["pattern"],
     "search.web": ["query"],
@@ -353,6 +353,7 @@ def peek_scan(path: Path) -> "PeekScanResult | None":
     last_activity_at: str | None = None
     agent_id: str | None = None
     session_id_from_record: str | None = None
+    saw_user = False
 
     try:
         with path.open("r", encoding="utf-8") as f:
@@ -381,6 +382,7 @@ def peek_scan(path: Path) -> "PeekScanResult | None":
                         continue
 
                     exchange_count += 1
+                    saw_user = True
 
                     # Extract metadata from first user record
                     if workspace_path is None:
@@ -389,6 +391,8 @@ def peek_scan(path: Path) -> "PeekScanResult | None":
                         agent_id = record.get("agentId")
 
                 elif record_type == "assistant":
+                    if exchange_count == 0 and not saw_user:
+                        exchange_count = 1
                     # Extract model
                     msg = record.get("message") or {}
                     if isinstance(msg, dict):
@@ -399,7 +403,7 @@ def peek_scan(path: Path) -> "PeekScanResult | None":
     except (OSError, UnicodeDecodeError):
         return None
 
-    if exchange_count == 0:
+    if exchange_count == 0 or not saw_user:
         return None
 
     # Determine if this is a subagent

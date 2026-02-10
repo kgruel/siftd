@@ -357,6 +357,14 @@ def extract_text_with_placeholders(blocks: list) -> str | None:
     return "\n".join(parts) if parts else None
 
 
+def _is_tool_placeholder_only(text: str) -> bool:
+    """Return True if text is composed only of tool placeholders."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return False
+    return all(line.startswith("[tool: ") and line.endswith("]") for line in lines)
+
+
 def extract_tool_hint(
     raw_name: str,
     input_dict: dict,
@@ -449,6 +457,7 @@ def peek_jsonl_scan(
     workspace_path: str | None = None
     model: str | None = None
     exchange_count = 0
+    saw_user = False
     started_at: str | None = None
     last_activity_at: str | None = None
 
@@ -479,6 +488,7 @@ def peek_jsonl_scan(
                         continue
 
                     exchange_count += 1
+                    saw_user = True
 
                     # Extract metadata from first user record
                     if workspace_path is None:
@@ -488,6 +498,8 @@ def peek_jsonl_scan(
                             session_id = session_id_from_record
 
                 elif record_type == assistant_type:
+                    if exchange_count == 0 and not saw_user:
+                        exchange_count = 1
                     # Extract model from path
                     obj = record
                     for key in model_path:
@@ -502,7 +514,7 @@ def peek_jsonl_scan(
     except (OSError, UnicodeDecodeError):
         return None
 
-    if exchange_count == 0:
+    if exchange_count == 0 or not saw_user:
         return None
 
     return PeekScanResult(
@@ -581,7 +593,15 @@ def peek_jsonl_exchanges(
                     # Reset per-exchange accumulator for tool calls
                     tool_counter = Counter()
 
-                elif record_type == assistant_type and current_exchange is not None:
+                elif record_type == assistant_type:
+                    if current_exchange is None:
+                        current_exchange = PeekExchange(
+                            timestamp=record.get(timestamp_key),
+                            prompt_text=None,
+                        )
+                        exchanges.append(current_exchange)
+                        tool_counter = Counter()
+
                     if get_usage:
                         input_tokens, output_tokens = get_usage(record)
                         current_exchange.input_tokens += input_tokens
@@ -589,6 +609,9 @@ def peek_jsonl_exchanges(
 
                     # Keep first non-empty response_text (shows reasoning/intent)
                     text = extract_text_with_placeholders(content_blocks)
+                    if text and not current_exchange.response_text:
+                        if _is_tool_placeholder_only(text):
+                            text = None
                     if text and not current_exchange.response_text:
                         current_exchange.response_text = text
 

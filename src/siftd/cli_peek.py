@@ -83,6 +83,7 @@ def cmd_peek(args) -> int:
             # Default to most recent active session
             sessions = list_active_sessions(
                 limit=1,
+                workspace=args.workspace,
                 branch=getattr(args, "branch", None),
             )
             if not sessions:
