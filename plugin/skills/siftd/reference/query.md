@@ -62,7 +62,7 @@ siftd query --since 2025-01 --before 2025-06
 siftd query -s "error handling"
 siftd query -s "error handling" -w myproject    # FTS5 + workspace
 ```
-Uses SQLite FTS5 syntax. Different from `siftd ask` which uses semantic/embedding search.
+Uses SQLite FTS5 syntax. Different from `siftd search` which uses semantic/embedding search.
 
 **`-l` / `--tag NAME`** — filter by conversation tag (OR, repeatable):
 ```bash

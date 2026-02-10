@@ -50,23 +50,23 @@ siftd tags --delete unused-tag --force       # skip confirmation
 
 ## Filtering by tags
 
-Tags are used as filters on `siftd ask` and `siftd query`. Three boolean modes:
+Tags are used as filters on `siftd search` and `siftd query`. Three boolean modes:
 
 **OR** (`-l` / `--tag`, repeatable) — match any:
 ```bash
-siftd ask -l research:auth -l research:security "tokens"
+siftd search -l research:auth -l research:security "tokens"
 siftd query -l research:auth -l useful:pattern
 ```
 
 **AND** (`--all-tags`, repeatable) — require all:
 ```bash
-siftd ask --all-tags research:auth --all-tags review "token rotation"
+siftd search --all-tags research:auth --all-tags review "token rotation"
 siftd query --all-tags research:auth --all-tags review
 ```
 
 **NOT** (`--no-tag`, repeatable) — exclude:
 ```bash
-siftd ask --no-tag archived "error handling"
+siftd search --no-tag archived "error handling"
 siftd query --no-tag archived -l review
 ```
 
@@ -76,7 +76,7 @@ Boolean modes compose:
 siftd query -l research:auth --no-tag archived
 
 # Semantic search over (research:auth OR research:security) AND NOT archived
-siftd ask -l research:auth -l research:security --no-tag archived "token rotation"
+siftd search -l research:auth -l research:security --no-tag archived "token rotation"
 ```
 
 ## Tag conventions
@@ -85,8 +85,11 @@ Prefixed tags create namespaces:
 
 | Prefix | Use | Examples |
 |--------|-----|----------|
+| `decision:*` | Key architectural/design decisions | `decision:auth`, `decision:schema` |
 | `research:*` | Investigation findings worth preserving | `research:auth`, `research:migration` |
 | `useful:*` | General bookmarks — patterns, examples | `useful:pattern`, `useful:example` |
+| `rationale:*` | Why we chose X over Y | `rationale:jwt`, `rationale:queueing` |
+| `genesis:*` | First discussion of a concept | `genesis:indexing`, `genesis:auth-flow` |
 
 These conventions are shared with the project's CLAUDE.md. Consistent across all agents and sessions.
 

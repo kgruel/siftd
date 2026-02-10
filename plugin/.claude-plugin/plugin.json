@@ -11,5 +11,6 @@
   "license": "MIT",
   "keywords": ["conversations", "search", "research", "history", "analytics"],
   "hooks": "./hooks/hooks.json",
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "commands": "./commands/"
 }

@@ -9,6 +9,19 @@ argument-hint: "[query] or [--recent] or [--genesis query]"
 
 siftd searches your past coding conversations (Claude Code, Codex, Gemini CLI) to find decisions, trace how ideas evolved, and retrieve context.
 
+## Auto-trigger guidance (research intent)
+
+When this skill is auto-loaded by research-intent detection (user did not type `/siftd`):
+
+1. Run a best-guess search with `--thread --context 2` (add `-w <workspace>` if implied).
+   Use default text output — the inline hints guide the next step. Reserve `--json` for scripting pipelines, not interactive research.
+2. Summarize findings in natural language — do not dump raw output.
+3. Offer next steps: drill into a conversation (`siftd query <id>`), refine the search, and tag useful results (`siftd tag <id> research:<topic>` or `/siftd:tag ...`).
+
+When the user explicitly invokes `/siftd`, follow the parsing rules below and present the command output directly.
+
+If the user invokes `/siftd:tag`, skip search and follow the live tagging flow in Preserving Findings.
+
 ## Quick Search: `/siftd`
 
 When the user invokes `/siftd`, parse their arguments and run the appropriate command:
@@ -159,7 +172,25 @@ Workspace + date + threshold + narrative output. Each filter narrows; the output
 
 > All filters (`--model`, boolean tags, `--tool-tag`): `reference/search.md` § Filters and `reference/query.md` § Filters.
 
-## Preserving: the tag-retrieve loop
+## Preserving Findings
+
+Tagging turns one-off research into reusable memory. Tags are queued immediately and applied when `siftd ingest` runs.
+
+### Live tagging in the current session (`/siftd:tag`)
+
+```bash
+/siftd:tag decision:auth research:caching
+/siftd:tag --exchange key-insight
+```
+
+**How it works:**
+1. SessionStart hook registers the session (`claude_code::<sessionId>`).
+2. `/siftd:tag` resolves the session via `siftd session-id`; `--exchange` uses `siftd peek` to find the latest exchange.
+3. Tags are queued with `siftd tag --session ...` and applied at ingest.
+
+If no session ID is found, ask the user to confirm the session-start hook is installed.
+
+### Tag → retrieve loop
 
 Tagging is investment; retrieval is the payoff. The loop:
 
@@ -187,8 +218,14 @@ siftd tag --last 3 review                            # tag your last 3 conversat
 ```
 
 **Tag conventions:**
-- `research:*` — investigation findings (`research:auth`, `research:migration`)
-- `useful:*` — patterns and examples (`useful:pattern`, `useful:example`)
+
+| Prefix | Usage |
+|--------|-------|
+| `decision:*` | Key architectural/design decisions |
+| `research:*` | Investigation findings worth preserving |
+| `useful:*` | Reusable patterns/examples |
+| `rationale:*` | Why we chose X over Y |
+| `genesis:*` | First discussion of a concept |
 
 These conventions are shared with the project's CLAUDE.md, so tags are consistent across all agents and sessions.
 
@@ -218,12 +255,11 @@ siftd search -w project "auth approach"  # or search
 
 ### Documentation tags
 
+Use the tag conventions above. Additionally:
+
 | Tag | When to apply |
 |-----|---------------|
-| `decision:*` | Key architectural/design decisions |
 | `handoff:update` | Sessions that modified HANDOFF.md |
-| `rationale:*` | Why we chose X over Y |
-| `genesis:*` | First discussion of a concept |
 
 ### End-of-session workflow
 

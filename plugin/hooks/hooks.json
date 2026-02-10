@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/skill-required.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/post-siftd.sh"
           }
         ]
       }

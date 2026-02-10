@@ -1,6 +1,6 @@
 # siftd plugin for Claude Code
 
-Gives Claude Code agents access to your conversation history. Provides skills for semantic search, query, and tagging, plus hooks that nudge agents toward using the skill workflow.
+Gives Claude Code agents access to your conversation history. Provides a single skill for semantic search, query, and tagging, plus hooks that guide the research workflow.
 
 ## Prerequisites
 
@@ -9,7 +9,7 @@ siftd must be installed and indexed:
 ```bash
 uv pip install /path/to/siftd   # or pip install .
 siftd ingest                     # ingest conversation logs
-siftd ask --index                # build embeddings index
+siftd search --index             # build embeddings index
 ```
 
 ## Install
@@ -46,17 +46,28 @@ claude --plugin-dir /path/to/siftd/plugin/
 
 The `/siftd` skill teaches agents the research workflow: search past conversations, drill down into results, and tag findings for later retrieval.
 
-Reference docs cover `ask`, `query`, and `tags` commands with all flags and composition patterns.
+Reference docs cover `search`, `query`, and `tags` commands with all flags and composition patterns.
+
+### Commands
+
+Direct-execution commands for manual workflows:
+
+| Command | Description |
+|---------|-------------|
+| `/siftd:search "query"` | Run search and see raw output |
+| `/siftd:tag <tag>` | Tag current session or conversation |
+
+Commands run siftd directly and show output without agent interpretation. Use these when you want to drive the workflow yourself.
 
 ### Hooks
 
-Three hooks nudge agents toward the skill:
+Three hooks support the research workflow:
 
 | Hook | Trigger | Behavior |
 |------|---------|----------|
 | `SessionStart` | Session start/resume | Reminds agent that siftd is available |
 | `UserPromptSubmit` | User mentions "siftd" | Suggests loading the skill |
-| `PostToolUse` | Agent runs `siftd` in Bash | Nudges toward using the Skill tool instead |
+| `PostToolUse` | Agent runs `siftd` in Bash | Suggests refinements based on the command run |
 
 ## Structure
 
@@ -69,12 +80,15 @@ plugin/
 ├── scripts/
 │   ├── session-start.sh
 │   ├── skill-reminder.sh
-│   └── skill-required.sh
+│   └── post-siftd.sh
+├── commands/
+│   ├── siftd:search.md
+│   └── siftd:tag.md
 └── skills/
     └── siftd/
         ├── SKILL.md
         └── reference/
-            ├── ask.md
+            ├── search.md
             ├── query.md
             └── tags.md
 ```
