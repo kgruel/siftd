@@ -4,19 +4,19 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ## Current Focus
 
-**`siftd db` namespace + shared filter pipeline** — branch `feat/db-namespace-filters`, pending review.
+**Post-0.4.4 fixes and polish** — merged to main, published.
 
-Branch introduces:
-- [x] `cli_filters.py` — shared filter args extracted from query/search/export (was 3 copy-pasted blocks)
-- [x] `cli_db.py` — `siftd db` namespace: info, stats, workspaces, path, vacuum, backup, restore, slice
-- [x] `api/slice.py` — filtered DB export via ATTACH DATABASE + cross-DB INSERT...SELECT
-- [x] Deprecation wrappers for `siftd status/workspaces/path` → `siftd db stats/workspaces/path`
-- [x] `storage/sqlite.py` — `backup_database()`, `create_empty_database()` (architecture-compliant)
+This session:
+- [x] Fixed `db slice` FK integrity error on migrated databases (column order mismatch from ALTER TABLE migrations)
+- [x] Added `siftd tags <name>` filter support (`--since`, `--before`, `-w`, `-m`, etc. via shared filter pipeline)
+- [x] Replaced broken `homebrew-pypi-poet` with direct PyPI JSON API formula generation (setuptools 81 removed `pkg_resources`)
+- [x] Added `skip-existing` to PyPI publish for idempotent workflow re-runs
 
-Next: merge after review, then:
+Next:
 - [ ] **NULL workspace_path asymmetry** in `find_active_session` — document as intentional
 - [ ] **Break down `cmd_search()`** — 367 lines, works but long
 - [ ] **`db merge`** — multi-device merge (design understood, deferred until slice is validated)
+- [ ] **`siftd tags` list view temporal filtering** — needs new storage query (conversation time vs applied-at semantics TBD)
 
 Previous sessions:
 - [x] CLI quality cleanup: connection leaks, API wrappers, architecture violations, module extraction
@@ -43,7 +43,7 @@ Discovered via "siftd monitoring siftd" pattern — using siftd to observe agent
 | ~~Worktree sessions indistinguishable from main repo by workspace~~ | UX | Fixed (`[branch]` suffix, `--branch` filter) |
 | Tool outputs in conversations hard to extract (agents pivot to git/files) | UX | Open |
 | Can't search within live sessions (peek has no search, query needs ingest) | UX | Open |
-| `siftd tag --last` requires count, should default to 1 | UX | Open |
+| ~~`siftd tag --last` requires count, should default to 1~~ | UX | Fixed (0.4.3) |
 | Live session tagging (`--session`) not discoverable from basic usage | UX | Open |
 | No `./dev agent-close` to cleanup worktrees after merge | DX | Open |
 | `peek` vs `query` confusion — agents try peek for ingested data | UX | Open |

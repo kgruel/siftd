@@ -102,7 +102,18 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
     """Copy matched conversations and all related data into the attached 'slice' DB.
 
     Uses a temp table for conversation IDs to avoid the 999-parameter limit.
+
+    Note: Tables with columns added via ALTER TABLE (conversations.branch,
+    tool_calls.result_hash) have different column order in migrated source DBs
+    vs fresh schema.sql targets. These use explicit column lists to avoid
+    positional mismatch corruption.
     """
+    # Disable FK enforcement during cross-DB copy. Re-enable + validate after.
+    # INSERT OR IGNORE does NOT suppress FK violations (only UNIQUE/NOT NULL/CHECK/PK),
+    # and column ordering differences between migrated source and fresh target can
+    # cause values to land in wrong columns, triggering spurious FK failures.
+    conn.execute("PRAGMA foreign_keys = OFF")
+
     # Create temp table with matched conversation IDs
     conn.execute("CREATE TEMP TABLE _slice_conv_ids (id TEXT PRIMARY KEY)")
     _batch_insert_ids(conn, conv_ids)
@@ -170,9 +181,14 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
 
     # --- Core tables ---
 
+    # Explicit columns: source DBs that went through _migrate_add_branch_column
+    # have 'branch' as the last column (ALTER TABLE), but schema.sql has it at
+    # position 5. SELECT * would silently swap branch/started_at/ended_at.
     conn.execute("""
         INSERT OR IGNORE INTO slice.conversations
-        SELECT * FROM conversations
+            (id, external_id, harness_id, workspace_id, branch, started_at, ended_at)
+        SELECT id, external_id, harness_id, workspace_id, branch, started_at, ended_at
+        FROM conversations
         WHERE id IN (SELECT id FROM _slice_conv_ids)
     """)
 
@@ -213,9 +229,17 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
                           AND tc.result_hash IS NOT NULL)
     """)
 
+    # Explicit columns: source DBs that went through ensure_content_blobs_table
+    # have 'result_hash' as the last column (ALTER TABLE), but schema.sql has it
+    # at position 8. SELECT * would put 'status' into result_hash, triggering
+    # FK violation against content_blobs.
     conn.execute("""
         INSERT OR IGNORE INTO slice.tool_calls
-        SELECT * FROM tool_calls
+            (id, response_id, conversation_id, tool_id, external_id,
+             input, result, result_hash, status, timestamp)
+        SELECT id, response_id, conversation_id, tool_id, external_id,
+               input, result, result_hash, status, timestamp
+        FROM tool_calls
         WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
     """)
 
@@ -318,6 +342,16 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
     # Skip ephemeral: ingested_files, active_sessions, pending_tags
 
     conn.execute("DROP TABLE _slice_conv_ids")
+
+    # Re-enable FK enforcement and validate the slice
+    conn.execute("PRAGMA foreign_keys = ON")
+    violations = conn.execute("PRAGMA slice.foreign_key_check").fetchall()
+    if violations:
+        tables = {v[0] for v in violations}
+        raise RuntimeError(
+            f"Foreign key violations in sliced database (tables: {', '.join(sorted(tables))}). "
+            "This may indicate a schema migration mismatch — please report this bug."
+        )
 
 
 def _batch_insert_ids(conn, ids: list[str], batch_size: int = 500) -> None:

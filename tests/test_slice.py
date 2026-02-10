@@ -183,6 +183,228 @@ def test_slice_with_content_blobs_fk(test_db_with_tool_tags, tmp_path):
     assert violations == []
 
 
+def test_slice_migrated_column_order(tmp_path):
+    """Slice handles source DBs where ALTER TABLE put columns in different order than schema.sql.
+
+    Reproduces the real-world bug: migrated DBs have tool_calls.result_hash as
+    the last column (added via ALTER TABLE), but schema.sql has it at position 8.
+    SELECT * would put 'status' into the result_hash column, triggering FK
+    violation against content_blobs. Same issue with conversations.branch.
+    """
+    from siftd.storage.sqlite import _ulid
+
+    source = tmp_path / "migrated.db"
+    conn = sqlite3.connect(str(source))
+    conn.execute("PRAGMA foreign_keys = ON")
+
+    # Create tables with pre-migration column order (no branch, no result_hash)
+    conn.executescript("""
+        CREATE TABLE harnesses (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+            version TEXT, display_name TEXT, source TEXT, log_format TEXT
+        );
+        CREATE TABLE models (
+            id TEXT PRIMARY KEY, raw_name TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL, creator TEXT, family TEXT, version TEXT,
+            variant TEXT, released TEXT
+        );
+        CREATE TABLE providers (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+            display_name TEXT, billing_model TEXT
+        );
+        CREATE TABLE tools (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+            category TEXT, description TEXT
+        );
+        CREATE TABLE tool_aliases (
+            id TEXT PRIMARY KEY, raw_name TEXT NOT NULL,
+            harness_id TEXT NOT NULL REFERENCES harnesses(id),
+            tool_id TEXT NOT NULL REFERENCES tools(id),
+            UNIQUE (raw_name, harness_id)
+        );
+        CREATE TABLE pricing (
+            id TEXT PRIMARY KEY,
+            model_id TEXT NOT NULL REFERENCES models(id),
+            provider_id TEXT NOT NULL REFERENCES providers(id),
+            input_per_mtok REAL, output_per_mtok REAL,
+            UNIQUE (model_id, provider_id)
+        );
+        CREATE TABLE workspaces (
+            id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE,
+            git_remote TEXT, discovered_at TEXT NOT NULL
+        );
+        CREATE TABLE conversations (
+            id TEXT PRIMARY KEY, external_id TEXT NOT NULL,
+            harness_id TEXT NOT NULL REFERENCES harnesses(id),
+            workspace_id TEXT REFERENCES workspaces(id),
+            started_at TEXT NOT NULL, ended_at TEXT,
+            UNIQUE (harness_id, external_id)
+        );
+        CREATE TABLE prompts (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            external_id TEXT, timestamp TEXT NOT NULL,
+            UNIQUE (conversation_id, external_id)
+        );
+        CREATE TABLE responses (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            prompt_id TEXT REFERENCES prompts(id) ON DELETE CASCADE,
+            model_id TEXT REFERENCES models(id),
+            provider_id TEXT REFERENCES providers(id),
+            external_id TEXT, timestamp TEXT NOT NULL,
+            input_tokens INTEGER, output_tokens INTEGER,
+            UNIQUE (conversation_id, external_id)
+        );
+        CREATE TABLE tool_calls (
+            id TEXT PRIMARY KEY,
+            response_id TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            tool_id TEXT REFERENCES tools(id),
+            external_id TEXT, input TEXT, result TEXT,
+            status TEXT, timestamp TEXT
+        );
+        CREATE TABLE prompt_content (
+            id TEXT PRIMARY KEY,
+            prompt_id TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
+            block_index INTEGER NOT NULL, block_type TEXT NOT NULL,
+            content TEXT NOT NULL, UNIQUE (prompt_id, block_index)
+        );
+        CREATE TABLE response_content (
+            id TEXT PRIMARY KEY,
+            response_id TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+            block_index INTEGER NOT NULL, block_type TEXT NOT NULL,
+            content TEXT NOT NULL, UNIQUE (response_id, block_index)
+        );
+        CREATE TABLE content_blobs (
+            hash TEXT PRIMARY KEY, content TEXT NOT NULL,
+            ref_count INTEGER DEFAULT 1, created_at TEXT NOT NULL
+        );
+        CREATE TABLE conversation_attributes (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            key TEXT NOT NULL, value TEXT NOT NULL, scope TEXT,
+            UNIQUE (conversation_id, key, scope)
+        );
+        CREATE TABLE prompt_attributes (
+            id TEXT PRIMARY KEY,
+            prompt_id TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
+            key TEXT NOT NULL, value TEXT NOT NULL, scope TEXT,
+            UNIQUE (prompt_id, key, scope)
+        );
+        CREATE TABLE response_attributes (
+            id TEXT PRIMARY KEY,
+            response_id TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+            key TEXT NOT NULL, value TEXT NOT NULL, scope TEXT,
+            UNIQUE (response_id, key, scope)
+        );
+        CREATE TABLE tool_call_attributes (
+            id TEXT PRIMARY KEY,
+            tool_call_id TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
+            key TEXT NOT NULL, value TEXT NOT NULL, scope TEXT,
+            UNIQUE (tool_call_id, key, scope)
+        );
+        CREATE TABLE tags (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+            description TEXT, created_at TEXT NOT NULL
+        );
+        CREATE TABLE workspace_tags (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            applied_at TEXT NOT NULL, UNIQUE (workspace_id, tag_id)
+        );
+        CREATE TABLE conversation_tags (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            applied_at TEXT NOT NULL, UNIQUE (conversation_id, tag_id)
+        );
+        CREATE TABLE tool_call_tags (
+            id TEXT PRIMARY KEY,
+            tool_call_id TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
+            tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            applied_at TEXT NOT NULL, UNIQUE (tool_call_id, tag_id)
+        );
+        CREATE TABLE ingested_files (
+            id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE,
+            file_hash TEXT NOT NULL,
+            harness_id TEXT NOT NULL REFERENCES harnesses(id),
+            conversation_id TEXT REFERENCES conversations(id),
+            ingested_at TEXT NOT NULL, error TEXT
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
+            text_content, content_id UNINDEXED,
+            side UNINDEXED, conversation_id UNINDEXED
+        );
+    """)
+
+    # Simulate migrations: ALTER TABLE adds columns at the END
+    conn.execute("ALTER TABLE conversations ADD COLUMN branch TEXT")
+    conn.execute("ALTER TABLE tool_calls ADD COLUMN result_hash TEXT REFERENCES content_blobs(hash)")
+    conn.execute("PRAGMA user_version = 1")
+
+    # Insert test data with tool_calls that have result_hash and status
+    h_id = _ulid()
+    w_id = _ulid()
+    m_id = _ulid()
+    t_id = _ulid()
+    conv_id = _ulid()
+    p_id = _ulid()
+    r_id = _ulid()
+    tc_id = _ulid()
+    blob_hash = "abc123deadbeef"
+
+    conn.execute("INSERT INTO harnesses VALUES (?, 'test', NULL, NULL, NULL, NULL)", (h_id,))
+    conn.execute("INSERT INTO workspaces VALUES (?, '/test', NULL, '2024-01-01')", (w_id,))
+    conn.execute("INSERT INTO models VALUES (?, 'test-model', 'test', NULL, NULL, NULL, NULL, NULL)", (m_id,))
+    conn.execute("INSERT INTO tools VALUES (?, 'shell.execute', 'shell', NULL)", (t_id,))
+    # conversations: migrated order is (id, external_id, harness_id, workspace_id, started_at, ended_at, branch)
+    conn.execute(
+        "INSERT INTO conversations VALUES (?, 'ext1', ?, ?, '2024-01-15T10:00:00Z', NULL, 'main')",
+        (conv_id, h_id, w_id),
+    )
+    conn.execute("INSERT INTO prompts VALUES (?, ?, 'p1', '2024-01-15T10:00:00Z')", (p_id, conv_id))
+    conn.execute(
+        "INSERT INTO prompt_content VALUES (?, ?, 0, 'text', 'Hello')",
+        (_ulid(), p_id),
+    )
+    conn.execute(
+        "INSERT INTO responses VALUES (?, ?, ?, ?, NULL, 'r1', '2024-01-15T10:00:01Z', 100, 50)",
+        (r_id, conv_id, p_id, m_id),
+    )
+    conn.execute("INSERT INTO content_blobs VALUES (?, 'blob content', 1, '2024-01-15')", (blob_hash,))
+    # tool_calls: migrated order is (..., status, timestamp, result_hash)
+    conn.execute(
+        "INSERT INTO tool_calls VALUES (?, ?, ?, ?, NULL, '{}', NULL, 'success', '2024-01-15T10:00:01Z', ?)",
+        (tc_id, r_id, conv_id, t_id, blob_hash),
+    )
+    conn.commit()
+    conn.close()
+
+    # Slice should work despite column order mismatch
+    target = tmp_path / "sliced.db"
+    result = slice_database(source, target, rebuild_fts=False)
+
+    assert result["conversations"] == 1
+
+    # Verify data landed in correct columns
+    tgt = sqlite3.connect(str(target))
+    tgt.row_factory = sqlite3.Row
+
+    conv = tgt.execute("SELECT * FROM conversations").fetchone()
+    assert conv["branch"] == "main"
+    assert conv["started_at"] == "2024-01-15T10:00:00Z"
+
+    tc = tgt.execute("SELECT * FROM tool_calls").fetchone()
+    assert tc["status"] == "success"
+    assert tc["result_hash"] == blob_hash
+
+    violations = tgt.execute("PRAGMA foreign_key_check").fetchall()
+    tgt.close()
+    assert violations == []
+
+
 def test_slice_by_tags(test_db, tmp_path):
     """Slice by tags filters correctly."""
     from siftd.storage.sqlite import open_database

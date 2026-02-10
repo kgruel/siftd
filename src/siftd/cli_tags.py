@@ -307,13 +307,27 @@ def cmd_tags(args) -> int:
 
     # Drill-down: show conversations with a given tag
     if getattr(args, "name", None):
+        from dataclasses import asdict
+
         from siftd.api import list_conversations
+        from siftd.cli_filters import extract_filter_args
 
         tag_name = args.name
         conn.close()
 
+        filters = extract_filter_args(args)
+        # Merge the drill-down tag with any -l tags from filter args
+        filter_tags = filters.tags or []
+        if tag_name not in filter_tags:
+            filter_tags = [tag_name] + filter_tags
+        filters.tags = filter_tags
+
         try:
-            conversations = list_conversations(db_path=db, tags=[tag_name], limit=args.limit)
+            filter_kwargs = asdict(filters)
+            filter_kwargs.pop("tags")  # pass explicitly below
+            conversations = list_conversations(
+                db_path=db, tags=filters.tags, limit=args.limit, **filter_kwargs,
+            )
         except FileNotFoundError as e:
             print(str(e))
             return 1
@@ -427,4 +441,9 @@ live session tagging:
     p_tags.add_argument("--rename", nargs=2, metavar=("OLD", "NEW"), help="Rename a tag")
     p_tags.add_argument("--delete", metavar="NAME", help="Delete a tag and all associations")
     p_tags.add_argument("--force", action="store_true", help="Force delete even if tag has associations")
+
+    from siftd.cli_filters import add_filter_args
+
+    add_filter_args(p_tags, include_model=True)
+
     p_tags.set_defaults(func=cmd_tags)
