@@ -57,12 +57,12 @@ siftd query --since 2025-01
 siftd query --since 2025-01 --before 2025-06
 ```
 
-**`-s` / `--search QUERY`** — FTS5 full-text search:
+**FTS5 full-text search** — use `siftd search --fts` instead:
 ```bash
-siftd query -s "error handling"
-siftd query -s "error handling" -w myproject    # FTS5 + workspace
+siftd search --fts "error handling"
+siftd search --fts "error handling" -w myproject    # FTS5 + workspace
 ```
-Uses SQLite FTS5 syntax. Different from `siftd search` which uses semantic/embedding search.
+Uses SQLite FTS5 syntax. `siftd search` auto-detects mode (FTS-only without embeddings, hybrid with).
 
 **`-l` / `--tag NAME`** — filter by conversation tag (OR, repeatable):
 ```bash
@@ -163,7 +163,7 @@ siftd query -w myproject --tool-tag shell:test --since 2025-01
 siftd query -l research:auth --oldest -n 0
 
 # FTS5 search within a workspace, with stats
-siftd query -s "migration" -w myproject --stats
+siftd search --fts "migration" -w myproject --stats
 
 # Conversations using git commands in the last month
 siftd query --tool-tag shell:vcs --since 2025-01

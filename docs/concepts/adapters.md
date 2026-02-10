@@ -50,7 +50,7 @@ Different tools call things different names. Adapters map these to canonical for
 | `Read`, `read_file`, `file_read` | `file.read` |
 | `Bash`, `run_shell`, `execute` | `shell.execute` |
 | `Write`, `write_file`, `create_file` | `file.write` |
-| `Edit`, `apply_diff`, `str_replace` | `edit.apply` |
+| `Edit`, `apply_diff`, `str_replace` | `file.edit` |
 
 **Timestamps:**
 All converted to ISO 8601 format, sorted correctly regardless of source timezone.
@@ -66,8 +66,8 @@ siftd ships with adapters for:
 
 | Adapter | Tool | Log location | Format |
 |---------|------|--------------|--------|
-| `claude_code` | Claude Code | `~/.claude/projects/` | JSONL |
-| `aider` | Aider | `~/.aider.chat.history.md` | Markdown |
+| `claude_code` | Claude Code | `~/.claude/projects/`, `~/.config/claude/projects/` | JSONL |
+| `aider` | Aider | `~/.aider/` | Markdown |
 | `gemini_cli` | Gemini CLI | `~/.gemini/tmp/` | JSONL |
 | `codex_cli` | Codex CLI | `~/.codex/sessions/` | JSONL |
 
@@ -78,10 +78,10 @@ siftd adapters    # list discovered adapters
 ```
 
 ```
-claude_code   ~/.claude/projects/         built-in
-aider         ~/.aider.chat.history.md    built-in
-gemini_cli    ~/.gemini/tmp/              built-in
-codex_cli     ~/.codex/sessions/          built-in
+claude_code  builtin  ~/.claude/projects, ~/.config/claude/projects
+aider        builtin  ~/.aider
+gemini_cli   builtin  ~/.gemini/tmp
+codex_cli    builtin  ~/.codex/sessions
 ```
 
 ## Custom adapters

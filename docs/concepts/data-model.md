@@ -65,7 +65,7 @@ A tool call is an action the model took: reading a file, running a shell command
 
 | Field | What it means |
 |-------|---------------|
-| `tool_name` | Canonical name (file.read, shell.execute, edit.apply) |
+| `tool_name` | Canonical name (file.read, shell.execute, file.edit) |
 | `input` | Arguments passed to the tool (file path, command, etc.) |
 | `result` | What the tool returned |
 | `status` | success, error, or pending |
@@ -86,7 +86,7 @@ siftd normalizes raw names into canonical forms using vocabulary tables:
 
 **Tools** — actions models can take
 - Raw names vary by harness (Read vs read_file vs file.read)
-- siftd maps them to canonical names: `file.read`, `shell.execute`, `edit.apply`
+- siftd maps them to canonical names: `file.read`, `shell.execute`, `file.edit`
 
 **Providers** — who serves the model and bills you
 - anthropic, openai, google, openrouter, local
@@ -127,8 +127,8 @@ siftd query --tool-tag shell:test     # by tool usage patterns
 
 **Search across all content:**
 ```bash
-siftd query -s "authentication"       # keyword search
-siftd search "how to handle tokens"   # semantic search
+siftd search --fts "authentication"       # FTS5 keyword search
+siftd search "how to handle tokens"       # semantic search (requires embeddings)
 ```
 
 **Aggregate and analyze:**

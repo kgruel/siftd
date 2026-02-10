@@ -11,7 +11,7 @@ siftd follows the XDG Base Directory specification:
 | `~/.local/share/siftd/siftd.db` | Main database (conversations, tags, metadata) |
 | `~/.local/share/siftd/embeddings.db` | Embeddings index (semantic search vectors) |
 | `~/.config/siftd/` | Configuration, custom adapters, queries |
-| `~/.cache/siftd/` | Cache files (embedding models) |
+| `~/.cache/siftd/` | Reserved for cache files (currently unused; embedding backends manage their own caches) |
 
 The main database contains everything except embeddings. You can delete `embeddings.db` and rebuild it with `siftd search --rebuild` — it's derived data.
 
@@ -153,7 +153,7 @@ Database operations are grouped under `siftd db`:
 
 | Command | Purpose |
 |---------|---------|
-| `db info` | Database size, table counts, schema version |
+| `db info` | Database file metadata (size, page count, journal mode, schema version, FTS5 status) |
 | `db path` | Show database and config paths |
 | `db vacuum` | Reclaim unused space |
 | `db backup <path>` | Online backup (safe during concurrent access) |
@@ -248,7 +248,6 @@ siftd config set key value    # set a value
 
 Common settings:
 - `search.formatter` — default output format for search
-- `search.limit` — default result count
 
 ## Custom resources
 

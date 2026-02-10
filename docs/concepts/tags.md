@@ -158,11 +158,14 @@ Every `shell.execute` tool call gets categorized:
 
 | Tag | Commands |
 |-----|----------|
-| `shell:test` | pytest, jest, cargo test, go test |
+| `shell:test` | pytest, jest, vitest, cargo test, go test |
+| `shell:lint` | ruff, eslint, mypy, black, isort |
 | `shell:vcs` | git, gh |
-| `shell:build` | make, npm run build, cargo build |
-| `shell:lint` | ruff, eslint, prettier |
-| `shell:deps` | pip, npm, cargo add |
+| `shell:search` | grep, rg, find |
+| `shell:file` | ls, cat, mv, cp, rm, mkdir, sed, awk |
+| `shell:package` | pip, brew, apt, cargo, uv |
+
+Additional categories include `remote`, `db`, `infra`, `ai`, `python`, `node`, and `shell`. Run `siftd tools` to see the full breakdown.
 
 Query by shell category:
 
@@ -174,7 +177,7 @@ siftd tools --by-workspace            # see patterns per project
 
 ### Derivative conversations
 
-Conversations that run `siftd search` or `siftd query` get tagged `siftd:derivative`. These are excluded from search by default — otherwise your searches would find previous search results.
+Conversations that run `siftd search`, `siftd query`, or `siftd ask` — or invoke the siftd CLI skill — get tagged `siftd:derivative`. These are excluded from search by default — otherwise your searches would find previous search results.
 
 ```bash
 siftd search "topic"                        # excludes derivative

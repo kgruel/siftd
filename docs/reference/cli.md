@@ -359,7 +359,7 @@ For semantic content search, use: siftd search <query>
 examples:
   siftd query                         # list recent conversations
   siftd query -w myproject            # filter by workspace
-  siftd query -s "error handling"     # FTS5 search
+  siftd search --fts "error handling"  # FTS5 search
   siftd query -l research:auth        # conversations tagged research:auth
   siftd query -l research: -l useful: # OR — any research: or useful: tag
   siftd query --all-tags important --all-tags reviewed  # AND — must have both

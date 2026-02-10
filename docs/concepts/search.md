@@ -15,7 +15,7 @@ Most searches benefit from both: keywords narrow the candidates, semantics rank 
 FTS5 is SQLite's full-text search engine. When siftd ingests conversations, it indexes all text content — prompts and responses — into an FTS5 virtual table.
 
 ```bash
-siftd query -s "authentication"
+siftd search --fts "authentication"
 ```
 
 FTS5 search is:
@@ -205,7 +205,7 @@ The `--thread` mode is particularly useful for research — it shows the top con
 
 | Situation | Approach |
 |-----------|----------|
-| Know the exact terms | `siftd query -s "exact phrase"` |
+| Know the exact terms | `siftd search --fts "exact phrase"` |
 | Remember the concept, not the words | `siftd search "concept description"` |
 | Exploring a topic broadly | `siftd search --embeddings-only "topic"` |
 | Finding diverse examples | `siftd search --lambda 0.5 "pattern"` |

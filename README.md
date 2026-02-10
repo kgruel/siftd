@@ -67,10 +67,10 @@ This shows the full exchange: every prompt you typed, every response, every tool
 
 A week ago you solved a tricky auth problem. You don't remember which project or what you called it. You just remember the shape of the problem.
 
-Start with keyword search (works immediately, no setup):
+Search for it:
 
 ```bash
-siftd query -s "token refresh"
+siftd search "token refresh"
 ```
 
 ```
@@ -78,16 +78,16 @@ siftd query -s "token refresh"
 01JFXN2R1K4M  2024-12-03 09:15  auth-service     claude-opus-4-5   8p/19r
 ```
 
-Found two conversations mentioning "token refresh". But maybe you used different words — "session expiry", "credential renewal". Keyword search won't find those.
+Found two conversations mentioning "token refresh". Without embeddings installed, this uses keyword matching (FTS5). But maybe you used different words — "session expiry", "credential renewal". Keyword search won't find those.
 
-For meaning-based search, install the embedding extra:
+Install the embedding extra to upgrade `siftd search` to hybrid mode — same command, better results:
 
 ```bash
 pip install siftd[embed]
 siftd search --index    # build embeddings (runs locally, no API calls)
 ```
 
-Now search by concept:
+Now the same command finds by meaning:
 
 ```bash
 siftd search "handling expired credentials"
@@ -272,7 +272,7 @@ See [Writing Adapters](docs/writing-adapters.md) for the full guide.
 | `doctor` | Health checks and maintenance |
 | `adapters` | List discovered adapters |
 | `config` | View and modify configuration |
-| `install` | Install shell completions and integrations |
+| `install` | Install optional extras (e.g., `siftd install embed`) |
 
 Run `siftd <command> --help` for full options.
 
