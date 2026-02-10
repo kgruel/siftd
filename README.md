@@ -1,112 +1,287 @@
 # siftd
 
-Searchable index for AI coding conversations.
+You've been using Claude Code, Aider, Gemini CLI, or Codex for months. Each session produces a log file — decisions made, problems solved, dead ends explored. When the session ends, that knowledge sits in a directory you'll never open.
 
-siftd aggregates conversation logs from Claude Code, Gemini CLI, Codex, and Aider into a SQLite database with full-text and semantic search. Find decisions, rationale, and solutions from your development history.
-
-> Under active development. Breaking changes may occur.
+siftd makes it searchable.
 
 ## Install
 
 ```bash
-pip install siftd              # core
-pip install siftd[embed]       # with semantic search
+pip install siftd
 ```
 
-## Workflow
+## You have sessions everywhere
 
-### Basic: Ingest and Query
+Run your first ingest to see what's already there:
 
 ```bash
-# Import logs from all supported tools
 siftd ingest
+```
 
-# List recent conversations
+```
+claude_code: 312 new conversations
+aider: 89 new conversations
+gemini_cli: 47 new conversations
+```
+
+siftd found 448 conversations you've had over the past few months. Each one captured prompts, responses, tool calls, file edits, shell commands — structured and queryable.
+
+See what accumulated:
+
+```bash
+siftd status
+```
+
+```
+Conversations: 448
+Prompts: 6,241
+Responses: 7,893
+Tool calls: 52,107
+Workspaces: 23
+```
+
+Browse recent work:
+
+```bash
 siftd query
+```
 
-# Filter by workspace or time
-siftd query -w myproject
-siftd query --since 2024-01-01
+```
+01JGK3M2P4Q5  2025-01-15 14:32  myproject        claude-opus-4-5   12p/34r
+01JGK2N1R3S4  2025-01-15 10:17  auth-service     claude-opus-4-5   8p/21r
+01JGK1P0Q2R3  2025-01-14 16:45  myproject        claude-sonnet-4   5p/12r
+...
+```
 
-# Full-text search
-siftd query -s "error handling"
+Each row is a conversation. The ID prefix is enough to reference it — `01JGK3` will match `01JGK3M2P4Q5`.
 
-# View a conversation
+Look at a specific conversation:
+
+```bash
 siftd query 01JGK3
 ```
 
-### Intermediate: Semantic Search and Tags
+This shows the full exchange: every prompt you typed, every response, every tool call with its inputs and outputs.
 
-Requires `siftd[embed]`. Build the index first:
+## You remember working on something
+
+A week ago you solved a tricky auth problem. You don't remember which project or what you called it. You just remember the shape of the problem.
+
+Start with keyword search (works immediately, no setup):
 
 ```bash
-siftd ask --index
+siftd query -s "token refresh"
 ```
 
-Then search by meaning, not just keywords:
+```
+01JGK3M2P4Q5  2025-01-15 14:32  myproject        claude-opus-4-5   12p/34r
+01JFXN2R1K4M  2024-12-03 09:15  auth-service     claude-opus-4-5   8p/19r
+```
+
+Found two conversations mentioning "token refresh". But maybe you used different words — "session expiry", "credential renewal". Keyword search won't find those.
+
+For meaning-based search, install the embedding extra:
 
 ```bash
-# Find relevant conversations
-siftd ask "how did I handle authentication"
+pip install siftd[embed]
+siftd search --index    # build embeddings (runs locally, no API calls)
+```
 
-# Refine results
-siftd ask -w myproject "auth flow"       # filter by workspace
-siftd ask --context 2 "error handling"   # show surrounding exchanges
-siftd ask --thread "design decision"     # narrative view
+Now search by concept:
 
-# Tag useful findings
+```bash
+siftd search "handling expired credentials"
+```
+
+```
+01JGK3M2P4Q5  0.847  myproject      2025-01-15
+  The token refresh uses a sliding window approach — store the refresh
+  token in httpOnly cookie, check expiry on each request...
+
+01JFXN2R1K4M  0.812  auth-service   2024-12-03
+  For credential renewal, we went with a background refresh 30 seconds
+  before expiry rather than waiting for a 401...
+```
+
+The second result is from a different project, using different words, but siftd found it because the meaning matched.
+
+Narrow results by workspace or time:
+
+```bash
+siftd search -w myproject "auth"           # only myproject
+siftd search --since 2025-01-01 "testing"  # recent conversations
+siftd search -n 20 "error handling"        # more results
+```
+
+See the surrounding context:
+
+```bash
+siftd search --context 2 "token refresh"   # show 2 exchanges before/after
+siftd search --thread "architecture"       # expand top hits into full threads
+```
+
+## This is useful — you'll need it again
+
+You found the auth conversation. It's exactly the pattern you need. Tag it so you can find it instantly next time:
+
+```bash
 siftd tag 01JGK3 decision:auth
-siftd tag --last research:api
-
-# Retrieve by tag
-siftd query -l decision:auth
-siftd ask -l research: "authentication"
 ```
 
-### Advanced: Export and Plugins
-
-Export conversations for PR review or context:
+Tags are freeform. Use prefixes to create namespaces:
 
 ```bash
-siftd export --last                       # most recent session
-siftd export --last 3 -o context.md      # last 3 to file
-siftd export -l decision:auth            # tagged conversations
+siftd tag 01JGK3 decision:auth      # architectural decisions
+siftd tag 01JFXN research:oauth     # research/exploration
+siftd tag 01JGK1 pattern:testing    # reusable patterns
 ```
 
-Write custom adapters for other tools:
+Retrieve tagged conversations:
 
 ```bash
-# Copy template to config dir
-siftd copy adapter template
-
-# Edit ~/.config/siftd/adapters/template.py
-# Set NAME, DEFAULT_LOCATIONS, parse() logic
-
-# Verify discovery
-siftd adapters
-siftd ingest -v
+siftd query -l decision:auth              # exact tag
+siftd query -l decision:                  # all decision:* tags
+siftd search -l research: "authentication" # search within tagged
 ```
 
-See [Writing Adapters](docs/writing-adapters.md) for the full SDK.
+List your tags:
+
+```bash
+siftd tags
+```
+
+```
+decision:auth       3 conversations
+decision:caching    2 conversations
+pattern:testing     5 conversations
+research:oauth      1 conversation
+```
+
+Tag the most recent conversation without looking up the ID:
+
+```bash
+siftd tag -n 1 decision:deployment
+```
+
+## You want to see a session in progress
+
+Ingest runs periodically, but sometimes you want to see what's happening right now. `peek` reads log files directly:
+
+```bash
+siftd peek
+```
+
+```
+c520f862  14:32  active   myproject        claude-opus-4-5
+a3d91bc7  10:17  2h ago   auth-service     claude-opus-4-5
+```
+
+Look at the last few exchanges in a session:
+
+```bash
+siftd peek c520           # last 5 exchanges
+siftd peek c520 -n 10     # last 10 exchanges
+siftd peek c520 --full    # no truncation
+```
+
+This is useful for checking on long-running agent sessions or reviewing work before it's ingested.
+
+## You need to reference this in a PR
+
+You're opening a pull request and want to include the conversation that led to this implementation. Export it:
+
+```bash
+siftd export 01JGK3
+```
+
+```markdown
+# Session 01JGK3M2P4Q5
+**Workspace:** myproject
+**Date:** 2025-01-15 14:32
+**Model:** claude-opus-4-5
+
+## Prompts
+
+1. Can you help me implement token refresh? The current flow requires...
+2. What about handling the race condition when multiple tabs...
+3. Let's add tests for the refresh logic...
+```
+
+Export to a file:
+
+```bash
+siftd export 01JGK3 -o context.md
+```
+
+Export your most recent session:
+
+```bash
+siftd export -n 1
+```
+
+Export multiple sessions or filter by tag:
+
+```bash
+siftd export -n 3                         # last 3 sessions
+siftd export -l decision:auth             # all auth decisions
+siftd export -w myproject --since 7d      # recent work in a project
+```
+
+## You use a tool siftd doesn't support
+
+siftd ships adapters for Claude Code, Aider, Gemini CLI, and Codex. If you use something else, write an adapter.
+
+Start from the template or copy an existing adapter to modify:
+
+```bash
+siftd copy adapter template       # blank template
+siftd copy adapter claude_code    # copy a built-in to customize
+siftd copy adapter --all          # copy all built-ins
+# Creates files in ~/.config/siftd/adapters/
+```
+
+Edit the adapter to parse your tool's log format. An adapter needs three things:
+
+1. `NAME` — identifier for the adapter
+2. `DEFAULT_LOCATIONS` — where to find log files
+3. `parse(path)` — return a `Conversation` from a log file
+
+Verify it works:
+
+```bash
+siftd adapters          # should list your adapter
+siftd ingest -v         # verbose output shows what's parsed
+siftd doctor            # run health checks
+```
+
+See [Writing Adapters](docs/writing-adapters.md) for the full guide.
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `ingest` | Import conversation logs |
-| `query` | List/filter conversations, run SQL queries |
-| `ask` | Semantic search (requires [embed]) |
+| Command | Purpose |
+|---------|---------|
+| `ingest` | Import conversation logs from all adapters |
+| `query` | List conversations, filter by workspace/date/tag, view details |
+| `search` | Semantic search (requires `[embed]` extra) |
 | `tag` | Apply tags to conversations |
-| `peek` | View live sessions (bypasses SQLite) |
-| `export` | Export conversations for review workflows |
-| `doctor` | Run health checks |
+| `tags` | List and manage tags |
+| `export` | Export conversations for PR review or context |
+| `peek` | View live sessions without waiting for ingest |
+| `status` | Show database statistics |
+| `doctor` | Health checks and maintenance |
+| `adapters` | List discovered adapters |
 
-## Documentation
+Run `siftd <command> --help` for full options.
 
-- [CLI Reference](docs/reference/cli.md)
-- [API Reference](docs/reference/api.md)
-- [Schema Reference](docs/reference/schema.md)
-- [Writing Adapters](docs/writing-adapters.md)
+## Going deeper
+
+To understand how siftd works under the hood:
+
+- [Concepts](docs/concepts/index.md) — data model, adapters, search, tags, storage
+- [CLI Reference](docs/reference/cli.md) — all commands and flags
+- [API Reference](docs/reference/api.md) — library usage
+- [Schema Reference](docs/reference/schema.md) — database tables
+- [Writing Adapters](docs/writing-adapters.md) — custom log parsers
 
 ## License
 
