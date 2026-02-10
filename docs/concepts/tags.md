@@ -121,12 +121,12 @@ siftd tags
 ```
 
 ```
-decision:auth       3 conversations
-decision:caching    2 conversations
-pattern:testing     5 conversations
-research:oauth      1 conversation
-shell:test          847 tool calls
-shell:vcs           312 tool calls
+  decision:auth (3 conversations)
+  decision:caching (2 conversations)
+  pattern:testing (5 conversations)
+  research:oauth (1 conversations)
+  shell:test (847 tool_calls)
+  shell:vcs (312 tool_calls)
 ```
 
 Drill into a specific tag:

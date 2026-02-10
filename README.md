@@ -19,9 +19,38 @@ siftd ingest
 ```
 
 ```
-claude_code: 312 new conversations
-aider: 89 new conversations
-gemini_cli: 47 new conversations
+==================================================
+SUMMARY
+==================================================
+Files found:    523
+Files ingested: 448
+Files replaced: 0
+Files skipped:  75
+
+Conversations: 448
+Prompts:       6,241
+Responses:     7,893
+Tool calls:    52,107
+
+--- By Harness ---
+
+claude_code:
+  conversations: 312
+  prompts: 4,102
+  responses: 5,210
+  tool_calls: 41,893
+
+aider:
+  conversations: 89
+  prompts: 1,456
+  responses: 1,834
+  tool_calls: 7,241
+
+gemini_cli:
+  conversations: 47
+  prompts: 683
+  responses: 849
+  tool_calls: 2,973
 ```
 
 siftd found 448 conversations you've had over the past few months. Each one captured prompts, responses, tool calls, file edits, shell commands — structured and queryable.
@@ -33,11 +62,24 @@ siftd db stats
 ```
 
 ```
-Conversations: 448
-Prompts: 6,241
-Responses: 7,893
-Tool calls: 52,107
-Workspaces: 23
+Database: /home/you/.local/share/siftd/siftd.db
+Size: 42380.2 KB
+
+--- Counts ---
+  Conversations: 448
+  Prompts: 6,241
+  Responses: 7,893
+  Tool calls: 52,107
+  Harnesses: 3
+  Workspaces: 23
+  Tools: 18
+  Models: 5
+  Ingested files: 448
+
+--- Workspaces (top 10) ---
+  myproject: 89 conversations (last 2025-01-15 14:32)
+  auth-service: 45 conversations (last 2025-01-14 16:45)
+  ...
 ```
 
 Browse recent work:
@@ -47,9 +89,9 @@ siftd query
 ```
 
 ```
-01JGK3M2P4Q5  2025-01-15 14:32  myproject        claude-opus-4-5   12p/34r
-01JGK2N1R3S4  2025-01-15 10:17  auth-service     claude-opus-4-5   8p/21r
-01JGK1P0Q2R3  2025-01-14 16:45  myproject        claude-sonnet-4   5p/12r
+01JGK3M2P4Q5  2025-01-15 14:32  myproject      claude-opus-4-5   12p/34r  18.2k tok  $0.2847
+01JGK2N1R3S4  2025-01-15 10:17  auth-service   claude-opus-4-5   8p/21r   12.5k tok  $0.1923
+01JGK1P0Q2R3  2025-01-14 16:45  myproject      claude-sonnet-4   5p/12r   6.3k tok   $0.0412
 ...
 ```
 
@@ -94,13 +136,13 @@ siftd search "handling expired credentials"
 ```
 
 ```
-01JGK3M2P4Q5  0.847  myproject      2025-01-15
-  The token refresh uses a sliding window approach — store the refresh
-  token in httpOnly cookie, check expiry on each request...
+Results for: handling expired credentials
 
-01JFXN2R1K4M  0.812  auth-service   2024-12-03
-  For credential renewal, we went with a background refresh 30 seconds
-  before expiry rather than waiting for a 401...
+  01JGK3M2P4Q5  0.847  [RESPONSE]  2025-01-15  myproject
+    The token refresh uses a sliding window approach — store the refresh token in httpOnly cookie, check expiry on each request...
+
+  01JFXN2R1K4M  0.812  [RESPONSE]  2024-12-03  auth-service
+    For credential renewal, we went with a background refresh 30 seconds before expiry rather than waiting for a 401...
 ```
 
 The second result is from a different project, using different words, but siftd found it because the meaning matched.
@@ -151,10 +193,12 @@ siftd tags
 ```
 
 ```
-decision:auth       3 conversations
-decision:caching    2 conversations
-pattern:testing     5 conversations
-research:oauth      1 conversation
+  decision:auth (3 conversations)
+  decision:caching (2 conversations)
+  pattern:testing (5 conversations)
+  research:oauth (1 conversations)
+  shell:test (847 tool_calls)
+  shell:vcs (312 tool_calls)
 ```
 
 Tag the most recent conversation without looking up the ID:
@@ -172,8 +216,8 @@ siftd peek
 ```
 
 ```
-c520f862  14:32  active   myproject        claude-opus-4-5
-a3d91bc7  10:17  2h ago   auth-service     claude-opus-4-5
+  c520f862  myproject        just now      12 exchanges     claude-opus-4-5 claude_code
+  a3d91bc7  auth-service     2h ago        8 exchanges      claude-opus-4-5 claude_code
 ```
 
 Look at the last few exchanges in a session:
@@ -195,15 +239,13 @@ siftd export 01JGK3
 ```
 
 ```markdown
-# Session 01JGK3M2P4Q5
-**Workspace:** myproject
-**Date:** 2025-01-15 14:32
-**Model:** claude-opus-4-5
-
-## Prompts
+## Session 01JGK3M2P4
+*myproject · 2025-01-15 14:32*
 
 1. Can you help me implement token refresh? The current flow requires...
+
 2. What about handling the race condition when multiple tabs...
+
 3. Let's add tests for the refresh logic...
 ```
 
