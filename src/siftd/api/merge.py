@@ -49,6 +49,18 @@ def merge_database(
 
         stats = _merge_attached(conn)
 
+        # Validate FK integrity before committing (so failures are atomic)
+        if not dry_run:
+            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                conn.rollback()
+                conn.execute("PRAGMA foreign_keys = ON")
+                tables = {v[0] for v in violations}
+                raise RuntimeError(
+                    f"Foreign key violations after merge (tables: {', '.join(sorted(tables))}). "
+                    "This may indicate a schema mismatch — please report this bug."
+                )
+
         if dry_run:
             conn.execute("ROLLBACK TO merge_dry_run")
             conn.execute("RELEASE merge_dry_run")
@@ -56,16 +68,6 @@ def merge_database(
             conn.commit()
 
         conn.execute("PRAGMA foreign_keys = ON")
-
-        # Validate FK integrity (only meaningful when not dry_run)
-        if not dry_run:
-            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
-            if violations:
-                tables = {v[0] for v in violations}
-                raise RuntimeError(
-                    f"Foreign key violations after merge (tables: {', '.join(sorted(tables))}). "
-                    "This may indicate a schema mismatch — please report this bug."
-                )
 
         conn.execute("DETACH DATABASE src")
     finally:

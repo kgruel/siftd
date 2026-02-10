@@ -6,7 +6,6 @@ import pytest
 
 from siftd.api.merge import merge_database
 from siftd.cli import main
-from siftd.ids import ulid as _ulid
 from siftd.storage.sqlite import (
     create_database,
     get_or_create_harness,
@@ -387,6 +386,108 @@ def test_cli_dry_run(tmp_path, capsys):
     count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
     conn.close()
     assert count == 1
+
+
+def test_duplicate_children_not_orphaned(tmp_path):
+    """When a conversation is skipped (duplicate), its children don't create orphans.
+
+    Source has same (harness, external_id) but different ULIDs for prompts/responses.
+    INSERT OR IGNORE on child tables should skip them, not create FK violations.
+    """
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Original prompt"}],
+    )
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Different prompt"}],
+    )
+
+    result = merge_database(target, source)
+    assert result["conversations"] == 0
+    assert result["skipped_conversations"] == 1
+
+    # No orphaned children — FK check passes
+    conn = sqlite3.connect(str(target))
+    conn.execute("PRAGMA foreign_keys = ON")
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+
+    # Prompt count should be unchanged (1 from original)
+    prompts = conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0]
+    responses = conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0]
+    conn.close()
+
+    assert violations == []
+    assert prompts == 1
+    assert responses == 1
+
+
+def test_workspace_tag_remapping(tmp_path):
+    """Workspace tags are remapped correctly during merge."""
+    from siftd.storage.sqlite import open_database as _open
+
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-A"}],
+    )
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-B"}],
+    )
+
+    # Add a workspace tag to the source
+    src_conn = _open(source)
+    src_ws_id = src_conn.execute("SELECT id FROM workspaces LIMIT 1").fetchone()["id"]
+    src_tag_id = get_or_create_tag(src_conn, "infra")
+    apply_tag(src_conn, "workspace", src_ws_id, src_tag_id)
+    src_conn.commit()
+    src_conn.close()
+
+    result = merge_database(target, source)
+    assert result["conversations"] == 1
+
+    conn = sqlite3.connect(str(target))
+    conn.row_factory = sqlite3.Row
+    wt_count = conn.execute("SELECT COUNT(*) FROM workspace_tags").fetchone()[0]
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    conn.close()
+
+    assert wt_count >= 1
+    assert violations == []
+
+
+def test_tool_call_tag_remapping(tmp_path):
+    """Tool call tags are remapped correctly during merge."""
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-A", "tool_name": "shell.execute"}],
+    )
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-B", "tool_name": "shell.execute"}],
+    )
+
+    # Add a tool_call tag to the source
+    from siftd.storage.sqlite import open_database as _open
+
+    src_conn = _open(source)
+    tc_id = src_conn.execute("SELECT id FROM tool_calls LIMIT 1").fetchone()["id"]
+    tag_id = get_or_create_tag(src_conn, "shell:test")
+    apply_tag(src_conn, "tool_call", tc_id, tag_id)
+    src_conn.commit()
+    src_conn.close()
+
+    result = merge_database(target, source)
+    assert result["conversations"] == 1
+
+    conn = sqlite3.connect(str(target))
+    conn.row_factory = sqlite3.Row
+    tct_count = conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0]
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    conn.close()
+
+    assert tct_count >= 1
+    assert violations == []
 
 
 def test_cli_invalid_file(tmp_path, capsys):
