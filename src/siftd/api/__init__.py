@@ -51,6 +51,9 @@ from siftd.api.file_refs import (
     FileRef,
     fetch_file_refs,
 )
+from siftd.api.merge import (
+    merge_database,
+)
 from siftd.api.peek import (
     PeekExchange,
     SessionDetail,
@@ -191,6 +194,8 @@ __all__ = [
     "ToolStats",
     "get_stats",
     "list_workspaces",
+    # merge
+    "merge_database",
     # slice
     "slice_database",
     # tools

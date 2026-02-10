@@ -209,11 +209,64 @@ def cmd_db_slice(args) -> int:
     return 0
 
 
+def cmd_db_merge(args) -> int:
+    """Merge an external database (slice) into the main database."""
+    source = Path(args.input)
+
+    if not source.exists():
+        print(f"Source file not found: {source}", file=sys.stderr)
+        return 1
+
+    # Validate SQLite magic bytes
+    with open(source, "rb") as f:
+        header = f.read(16)
+    if not header.startswith(b"SQLite format 3\x00"):
+        print(f"Not a valid SQLite database: {source}", file=sys.stderr)
+        return 1
+
+    db = resolve_db(args)
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'siftd ingest' to create it.")
+        return 1
+
+    from siftd.api.merge import merge_database
+
+    rebuild_fts = not args.no_fts
+    dry_run = args.dry_run
+
+    try:
+        result = merge_database(
+            target_db=db,
+            source_path=source,
+            rebuild_fts=rebuild_fts,
+            dry_run=dry_run,
+        )
+    except RuntimeError as e:
+        print(f"Merge failed: {e}", file=sys.stderr)
+        return 1
+
+    prefix = "[dry run] " if dry_run else ""
+    print(f"{prefix}Merged from: {source}")
+    print(f"  Conversations: {result['conversations']} new, {result['skipped_conversations']} skipped")
+    print(f"  Prompts:       {result['prompts']}")
+    print(f"  Responses:     {result['responses']}")
+    print(f"  Tool calls:    {result['tool_calls']}")
+    print(f"  Content blobs: {result['content_blobs']}")
+    if result["tags"]:
+        print(f"  Tags:          {result['tags']} new")
+    if result["workspaces_matched"]:
+        print(f"  Workspaces:    {result['workspaces_matched']} matched by git remote")
+
+    return 0
+
+
 def build_db_parser(subparsers) -> None:
     """Add the 'db' subparser with nested subcommands."""
     p_db = subparsers.add_parser(
         "db",
-        help="Database container operations (info, backup, restore, vacuum, slice)",
+        help="Database container operations (info, backup, restore, vacuum, slice, merge)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Container-level operations on the siftd database.
 
@@ -225,7 +278,8 @@ examples:
   siftd db vacuum                        # compact database
   siftd db backup /tmp/siftd.db          # online backup
   siftd db restore /tmp/siftd.db         # restore from backup
-  siftd db slice out.db -w project       # export filtered subset""",
+  siftd db slice out.db -w project       # export filtered subset
+  siftd db merge laptop-slice.db          # merge slice into main DB""",
     )
     db_sub = p_db.add_subparsers(dest="db_command")
 
@@ -283,6 +337,21 @@ examples:
 
     add_filter_args(p_slice)
     p_slice.set_defaults(func=cmd_db_slice)
+
+    # merge
+    p_merge = db_sub.add_parser(
+        "merge",
+        help="Merge an external database (slice) into the main database",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  siftd db merge laptop-slice.db              # merge slice into main DB
+  siftd db merge laptop-slice.db --dry-run    # preview what would be merged
+  siftd db merge laptop-slice.db --no-fts     # skip FTS5 rebuild""",
+    )
+    p_merge.add_argument("input", help="Source database path to merge in")
+    p_merge.add_argument("--dry-run", action="store_true", help="Preview merge without modifying database")
+    p_merge.add_argument("--no-fts", action="store_true", help="Skip FTS5 index rebuild")
+    p_merge.set_defaults(func=cmd_db_merge)
 
     # bare 'siftd db' prints help
     p_db.set_defaults(func=lambda args: (p_db.print_help(), 0)[1])

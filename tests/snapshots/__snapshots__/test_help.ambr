@@ -16,7 +16,7 @@
       config              View or modify config settings
       adapters            List discovered adapters
       db                  Database container operations (info, backup, restore,
-                          vacuum, slice)
+                          vacuum, slice, merge)
       tag                 Apply or remove a tag on a conversation (or other
                           entity)
       tags                List, inspect, rename, or delete tags
