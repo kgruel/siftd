@@ -19,13 +19,26 @@ def cmd_peek(args) -> int:
     from siftd.output import fmt_ago, fmt_model, fmt_timestamp, fmt_tokens, print_indented, truncate_text
     from siftd.peek import AmbiguousSessionError
 
-    # Extract --last-response and --last-prompt flags
+    # Extract flags
     last_response = getattr(args, "last_response", False)
     last_prompt = getattr(args, "last_prompt", False)
+    follow = getattr(args, "follow", False)
 
     # Validate mutual exclusivity
     if last_response and last_prompt:
         print("Error: --last-response and --last-prompt are mutually exclusive")
+        return 1
+
+    # --follow is mutually exclusive with --tail, --last-response, --last-prompt
+    if follow and (getattr(args, "tail", False) or last_response or last_prompt):
+        conflicting = []
+        if getattr(args, "tail", False):
+            conflicting.append("--tail")
+        if last_response:
+            conflicting.append("--last-response")
+        if last_prompt:
+            conflicting.append("--last-prompt")
+        print(f"Error: --follow is mutually exclusive with {', '.join(conflicting)}")
         return 1
 
     # --last-response/--last-prompt are mutually exclusive with formatting flags
@@ -102,6 +115,92 @@ def cmd_peek(args) -> int:
 
         # Output raw text (no formatting, suitable for piping)
         print(text)
+        return 0
+
+    # Follow mode
+    if follow:
+        from siftd.peek import follow_session, read_session_detail
+        from siftd.peek.follow import FollowEvent, event_to_json, render_tool_line
+
+        # Resolve session: use provided ID or default to most recent active
+        if args.session_id:
+            try:
+                path = find_session_file(args.session_id)
+            except AmbiguousSessionError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 1
+            if path is None:
+                print(f"Session not found: {args.session_id}", file=sys.stderr)
+                return 1
+        else:
+            sessions = list_active_sessions(
+                limit=1,
+                branch=getattr(args, "branch", None),
+            )
+            if not sessions:
+                print("No active sessions found.", file=sys.stderr)
+                return 1
+            path = sessions[0].file_path
+
+        initial_n = exchanges_n if exchanges_n is not None else 3
+
+        if not args.json:
+            # Print initial context (CLI layer handles rendering)
+            detail = read_session_detail(path, last_n=initial_n)
+            if detail is not None:
+                for ex in detail.exchanges:
+                    ts = fmt_timestamp(ex.timestamp, time_only=True)
+                    if ex.prompt_text:
+                        print(f"[{ts}] user")
+                        print_indented(truncate_text(ex.prompt_text, chars_limit))
+                        print()
+                    if ex.response_text or ex.tool_calls:
+                        token_info = f"{fmt_tokens(ex.input_tokens)} in / {fmt_tokens(ex.output_tokens)} out"
+                        print(f"[{ts}] assistant ({token_info})")
+                        if ex.response_text:
+                            print_indented(truncate_text(ex.response_text, chars_limit))
+                        if ex.tool_calls:
+                            for name, count in ex.tool_calls:
+                                print(render_tool_line(name, count, []))
+                        print()
+
+            print("--- following ---", file=sys.stderr)
+
+            def _render_follow_event(event: FollowEvent) -> None:
+                ts = fmt_timestamp(event.timestamp, time_only=True)
+                if event.is_user:
+                    print(f"\n[{ts}] user")
+                    if event.text:
+                        print_indented(truncate_text(event.text, chars_limit))
+                else:
+                    token_info = f"{fmt_tokens(event.input_tokens)} in / {fmt_tokens(event.output_tokens)} out"
+                    print(f"\n[{ts}] assistant ({token_info})")
+                    if event.text:
+                        print_indented(truncate_text(event.text, chars_limit))
+                    for name, count, hints in event.tool_calls:
+                        print(render_tool_line(name, count, hints))
+                sys.stdout.flush()
+
+            follow_session(path, json_mode=False, render=_render_follow_event)
+        else:
+            # JSON mode: initial context as NDJSON
+            detail = read_session_detail(path, last_n=initial_n)
+            if detail is not None:
+                for ex in detail.exchanges:
+                    if ex.prompt_text:
+                        user_ev = FollowEvent(timestamp=ex.timestamp, text=ex.prompt_text, is_user=True)
+                        print(_json.dumps(event_to_json(user_ev), separators=(",", ":")))
+                    if ex.response_text or ex.tool_calls:
+                        tc = [(n, c, []) for n, c in ex.tool_calls]
+                        asst_ev = FollowEvent(
+                            timestamp=ex.timestamp, text=ex.response_text,
+                            tool_calls=tc, input_tokens=ex.input_tokens,
+                            output_tokens=ex.output_tokens,
+                        )
+                        print(_json.dumps(event_to_json(asst_ev), separators=(",", ":")))
+
+            follow_session(path, json_mode=True)
+
         return 0
 
     # Detail mode: session ID provided
@@ -345,6 +444,9 @@ def build_peek_parser(subparsers) -> None:
   siftd peek --last-response    # output last assistant response (raw text)
   siftd peek --last-prompt      # output last user prompt (raw text)
   siftd peek c520 --last-response  # last response from specific session
+  siftd peek c520 --follow      # follow a live session in real time
+  siftd peek --follow            # follow most recent active session
+  siftd peek --follow --json    # follow as NDJSON (one object per line)
 
 NOTE: Session content may contain sensitive information (API keys, credentials, etc.).""",
     )
@@ -356,6 +458,7 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_peek.add_argument("--exchanges", type=int, metavar="N", help="Detail mode: number of exchanges to show (default: 5)")
     p_peek.add_argument("--full", action="store_true", help="Show full text (no truncation)")
     p_peek.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: 200)")
+    p_peek.add_argument("-f", "--follow", action="store_true", help="Follow a live session in real time (like tail -f)")
     p_peek.add_argument("--tail", action="store_true", help="Raw JSONL tail (last 20 records)")
     p_peek.add_argument("--tail-lines", type=int, default=20, metavar="N", dest="tail_lines", help="Number of records for --tail (default: 20)")
     p_peek.add_argument("--json", action="store_true", help="Output as structured JSON")

@@ -38,6 +38,21 @@ HARNESS_SOURCE = "anthropic"
 HARNESS_LOG_FORMAT = "jsonl"
 HARNESS_DISPLAY_NAME = "Claude Code"
 
+# Canonical tool name → input keys to try for hint extraction (priority order)
+TOOL_HINT_KEYS: dict[str, list[str]] = {
+    "shell.execute": ["description", "command"],
+    "file.read": ["file_path"],
+    "file.write": ["file_path"],
+    "file.edit": ["file_path"],
+    "file.glob": ["pattern"],
+    "search.grep": ["pattern"],
+    "search.web": ["query"],
+    "web.fetch": ["url"],
+    "task.spawn": ["description"],
+    "notebook.edit": ["notebook_path"],
+    "skill.invoke": ["skill"],
+}
+
 # Raw tool name → canonical tool name
 TOOL_ALIASES: dict[str, str] = {
     "Read": "file.read",

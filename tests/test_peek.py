@@ -302,6 +302,59 @@ class TestReadSessionDetail:
         # 3 user prompts, not 6 (3 prompts + 3 tool results)
         assert len(detail.exchanges) == 3
 
+    def test_multi_turn_accumulates_tools(self, session_dir, monkeypatch):
+        """Multiple assistant turns in one exchange accumulate tool calls."""
+        path = session_dir / "multi-turn.jsonl"
+        records = [
+            _make_user_record("Do something complex", timestamp="2025-01-20T10:00:00Z"),
+            _make_assistant_record(
+                "First I'll read the file.",
+                timestamp="2025-01-20T10:00:05Z",
+                input_tokens=100,
+                output_tokens=50,
+                tool_uses=[
+                    {"type": "tool_use", "id": "tu1", "name": "Read", "input": {"file_path": "/a.py"}},
+                ],
+            ),
+            _make_tool_result_record("tu1", "file contents", timestamp="2025-01-20T10:00:10Z"),
+            _make_assistant_record(
+                "Now I'll edit it.",
+                timestamp="2025-01-20T10:00:15Z",
+                input_tokens=200,
+                output_tokens=100,
+                tool_uses=[
+                    {"type": "tool_use", "id": "tu2", "name": "Edit", "input": {"file_path": "/a.py"}},
+                    {"type": "tool_use", "id": "tu3", "name": "Bash", "input": {"command": "pytest"}},
+                ],
+            ),
+            _make_tool_result_record("tu2", "ok", timestamp="2025-01-20T10:00:20Z"),
+            _make_tool_result_record("tu3", "passed", timestamp="2025-01-20T10:00:25Z"),
+        ]
+        _write_session(path, records)
+
+        plugin = _make_fake_plugin("test", [str(session_dir.parent)])
+        monkeypatch.setattr(
+            "siftd.peek.reader.load_all_adapters",
+            lambda: [plugin],
+        )
+        detail = read_session_detail(path, last_n=10)
+        assert detail is not None
+        assert len(detail.exchanges) == 1
+
+        ex = detail.exchanges[0]
+        # Should keep first non-empty response_text (includes tool placeholders)
+        assert ex.response_text is not None
+        assert ex.response_text.startswith("First I'll read the file.")
+        # Should accumulate tokens across turns
+        assert ex.input_tokens == 300
+        assert ex.output_tokens == 150
+        # Should accumulate all tool calls from both assistant turns
+        tool_names = {name for name, _ in ex.tool_calls}
+        assert "file.read" in tool_names
+        assert "file.edit" in tool_names
+        assert "shell.execute" in tool_names
+        assert sum(c for _, c in ex.tool_calls) == 3
+
     def test_nonexistent_file_returns_none(self, session_dir, monkeypatch):
         """Non-existent file returns None (not an exception)."""
         plugin = _make_fake_plugin("test", [str(session_dir.parent)])

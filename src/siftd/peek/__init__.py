@@ -1,5 +1,6 @@
 """Peek module: live session inspection bypassing SQLite."""
 
+from siftd.peek.follow import follow_session
 from siftd.peek.reader import (
     AmbiguousSessionError,
     find_session_file,
@@ -23,6 +24,7 @@ __all__ = [
     "SessionDetail",
     "SessionInfo",
     "find_session_file",
+    "follow_session",
     "list_active_sessions",
     "read_session_detail",
     "tail_session",

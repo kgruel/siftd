@@ -357,6 +357,57 @@ def extract_text_with_placeholders(blocks: list) -> str | None:
     return "\n".join(parts) if parts else None
 
 
+def extract_tool_hint(
+    raw_name: str,
+    input_dict: dict,
+    hint_keys: dict[str, list[str]],
+    *,
+    max_len: int = 60,
+) -> str | None:
+    """Extract a short summary from a tool_use input dict.
+
+    Uses adapter-provided hint_keys mapping: canonical tool name -> list of
+    input keys to try (in priority order). First non-empty value wins.
+
+    Special handling:
+    - File paths: shows last 2 components (e.g., "src/config.py")
+
+    Args:
+        raw_name: Canonical tool name (e.g., "file.read").
+        input_dict: The tool_use input dict.
+        hint_keys: Mapping of canonical name -> list of input keys to try.
+        max_len: Maximum length of the returned hint.
+
+    Returns:
+        Short hint string, or None if no hint available.
+    """
+    keys = hint_keys.get(raw_name)
+    if not keys:
+        return None
+
+    for key in keys:
+        value = input_dict.get(key)
+        if not value or not isinstance(value, str):
+            continue
+
+        hint = value.strip()
+        if not hint:
+            continue
+
+        # File paths: show last 2 components
+        if key in ("file_path", "path", "notebook_path"):
+            parts = Path(hint).parts
+            if len(parts) > 2:
+                hint = str(Path(*parts[-2:]))
+
+        if len(hint) > max_len:
+            hint = hint[: max_len - 3] + "..."
+
+        return hint
+
+    return None
+
+
 def peek_jsonl_scan(
     path: Path,
     *,
@@ -502,6 +553,7 @@ def peek_jsonl_exchanges(
 
     exchanges: list[PeekExchange] = []
     current_exchange: PeekExchange | None = None
+    tool_counter: Counter[str] = Counter()
 
     try:
         with path.open("r", encoding="utf-8") as f:
@@ -526,6 +578,8 @@ def peek_jsonl_exchanges(
                         prompt_text=extract_text_with_placeholders(content_blocks),
                     )
                     exchanges.append(current_exchange)
+                    # Reset per-exchange accumulator for tool calls
+                    tool_counter = Counter()
 
                 elif record_type == assistant_type and current_exchange is not None:
                     if get_usage:
@@ -533,12 +587,12 @@ def peek_jsonl_exchanges(
                         current_exchange.input_tokens += input_tokens
                         current_exchange.output_tokens += output_tokens
 
-                    current_exchange.response_text = extract_text_with_placeholders(
-                        content_blocks
-                    )
+                    # Keep first non-empty response_text (shows reasoning/intent)
+                    text = extract_text_with_placeholders(content_blocks)
+                    if text and not current_exchange.response_text:
+                        current_exchange.response_text = text
 
-                    # Collect tool calls
-                    tool_counter: Counter[str] = Counter()
+                    # Accumulate tool calls across assistant turns
                     for block in content_blocks:
                         if isinstance(block, dict) and block.get("type") == "tool_use":
                             tool_name = block.get("name", "unknown")

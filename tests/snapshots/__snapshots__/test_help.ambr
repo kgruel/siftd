@@ -373,7 +373,7 @@
 # name: TestHelpSnapshots.test_subcommand_help[peek]
   '''
   usage: siftd peek [-h] [-w SUBSTR] [--branch SUBSTR] [--all] [-n N]
-                    [--exchanges N] [--full] [--chars N] [--tail]
+                    [--exchanges N] [--full] [--chars N] [-f] [--tail]
                     [--tail-lines N] [--json] [--main-only] [--children ID]
                     [--last-response] [--last-prompt]
                     [session_id]
@@ -391,6 +391,7 @@
     --exchanges N         Detail mode: number of exchanges to show (default: 5)
     --full                Show full text (no truncation)
     --chars N             Truncate text at N characters (default: 200)
+    -f, --follow          Follow a live session in real time (like tail -f)
     --tail                Raw JSONL tail (last 20 records)
     --tail-lines N        Number of records for --tail (default: 20)
     --json                Output as structured JSON
@@ -417,6 +418,9 @@
     siftd peek --last-response    # output last assistant response (raw text)
     siftd peek --last-prompt      # output last user prompt (raw text)
     siftd peek c520 --last-response  # last response from specific session
+    siftd peek c520 --follow      # follow a live session in real time
+    siftd peek --follow            # follow most recent active session
+    siftd peek --follow --json    # follow as NDJSON (one object per line)
   
   NOTE: Session content may contain sensitive information (API keys, credentials, etc.).
   
