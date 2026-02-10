@@ -47,27 +47,93 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install poet
-        run: pip install homebrew-pypi-poet
-
-      - name: Wait for PyPI and generate formula
+      - name: Generate formula from PyPI API
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          # workflow_dispatch: use input tag instead
           if [ -n "${{ inputs.tag }}" ]; then VERSION="${{ inputs.tag }}"; VERSION=${VERSION#v}; fi
-          echo "Waiting for siftd $VERSION on PyPI..."
+          echo "Generating formula for siftd $VERSION..."
+
+          # Wait for PyPI JSON API to serve the new version
           for i in {1..30}; do
-            pip install "siftd==$VERSION" 2>/dev/null && \
-              poet -f siftd > siftd.rb 2>/dev/null && \
-              grep -q "siftd-${VERSION}" siftd.rb && \
-              echo "Formula generated for siftd $VERSION" && break
-            echo "Attempt $i: not yet resolvable, waiting 10s..."
-            pip uninstall -y siftd 2>/dev/null || true
+            HTTP_CODE=$(python3 -c "
+          import urllib.request, sys
+          try:
+              r = urllib.request.urlopen('https://pypi.org/pypi/siftd/${VERSION}/json')
+              sys.stdout.write(str(r.status))
+          except urllib.error.HTTPError as e:
+              sys.stdout.write(str(e.code))
+          ")
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "PyPI API reports siftd $VERSION available"
+              break
+            fi
+            echo "Attempt $i: PyPI API returned $HTTP_CODE, waiting 10s..."
             sleep 10
           done
-          grep -q "siftd-${VERSION}" siftd.rb || { echo "ERROR: formula does not contain version $VERSION"; cat siftd.rb; exit 1; }
-          sed -i 's/desc ".*"/desc "Personal LLM usage analytics for CLI coding tools"/' siftd.rb
+
+          [ "$HTTP_CODE" = "200" ] || { echo "ERROR: siftd $VERSION not found on PyPI after 5 minutes"; exit 1; }
+
+          # Generate formula directly from PyPI JSON API (no poet dependency)
+          python3 -c "
+          import json, urllib.request
+
+          with urllib.request.urlopen('https://pypi.org/pypi/siftd/${VERSION}/json') as r:
+              pkg = json.loads(r.read())
+
+          # Find sdist
+          sdist = next(f for f in pkg['urls'] if f['packagetype'] == 'sdist')
+
+          # Resolve all install_requires
+          requires = pkg['info'].get('requires_dist') or []
+          # Filter to unconditional deps (no extras or markers)
+          deps = [r.split()[0].rstrip(';') for r in requires if ';' not in r and 'extra ==' not in r]
+
+          resources = []
+          for dep in deps:
+              with urllib.request.urlopen(f'https://pypi.org/pypi/{dep}/json') as dr:
+                  dp = json.loads(dr.read())
+              ds = next((f for f in dp['urls'] if f['packagetype'] == 'sdist'), None)
+              if ds:
+                  resources.append((dep, ds['url'], ds['digests']['sha256']))
+
+          formula = '''class Siftd < Formula
+            include Language::Python::Virtualenv
+
+            desc \"Personal LLM usage analytics for CLI coding tools\"
+            homepage \"https://github.com/kgruel/siftd\"
+            url \"{url}\"
+            sha256 \"{sha256}\"
+            license \"MIT\"
+
+            depends_on \"python@3.12\"
+
+          '''.format(url=sdist['url'], sha256=sdist['digests']['sha256'])
+
+          for name, url, sha in resources:
+              formula += '''  resource \"{name}\" do
+              url \"{url}\"
+              sha256 \"{sha}\"
+            end
+
+          '''.format(name=name, url=url, sha=sha)
+
+          formula += '''  def install
+              virtualenv_create(libexec, \"python3.12\")
+              virtualenv_install_with_resources
+            end
+
+            test do
+              assert_match \"usage\", shell_output(\"{name} --help\", 0)
+            end
+          end
+          '''.format(name='siftd')
+
+          print(formula)
+          " > siftd.rb
+
+          echo "Generated formula:"
           cat siftd.rb
+          grep -q "siftd-${VERSION}" siftd.rb || { echo "ERROR: formula does not contain version $VERSION"; exit 1; }
 
       - name: Push to tap
         env:
