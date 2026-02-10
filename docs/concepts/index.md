@@ -39,4 +39,4 @@ For complete specifications, see:
 - [CLI Reference](../reference/cli.md) — all commands and flags
 - [API Reference](../reference/api.md) — library usage
 - [Schema Reference](../reference/schema.md) — database tables and columns
-- [Writing Adapters](../writing-adapters.md) — full adapter implementation guide
+- [Writing Adapters](../guides/writing-adapters.md) — full adapter implementation guide

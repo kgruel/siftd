@@ -296,7 +296,7 @@ siftd ingest -v         # verbose output shows what's parsed
 siftd doctor            # run health checks
 ```
 
-See [Writing Adapters](docs/writing-adapters.md) for the full guide.
+See [Writing Adapters](docs/guides/writing-adapters.md) for the full guide.
 
 ## Commands
 
@@ -322,11 +322,7 @@ Run `siftd <command> --help` for full options.
 
 To understand how siftd works under the hood:
 
-- [Concepts](docs/concepts/index.md) — data model, adapters, search, tags, storage
-- [CLI Reference](docs/reference/cli.md) — all commands and flags
-- [API Reference](docs/reference/api.md) — library usage
-- [Schema Reference](docs/reference/schema.md) — database tables
-- [Writing Adapters](docs/writing-adapters.md) — custom log parsers
+- [Documentation](docs/index.md) — concepts, guides, and reference
 
 ## License
 

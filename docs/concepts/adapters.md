@@ -101,7 +101,7 @@ This creates a file in `~/.config/siftd/adapters/`. Edit it to:
 
 Drop-in adapters are auto-discovered — just save the file and run `siftd ingest`.
 
-See [Writing Adapters](../writing-adapters.md) for the complete implementation guide.
+See [Writing Adapters](../guides/writing-adapters.md) for the complete implementation guide.
 
 ## Deduplication
 
