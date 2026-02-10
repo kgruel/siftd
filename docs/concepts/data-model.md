@@ -133,7 +133,7 @@ siftd search "how to handle tokens"   # semantic search
 
 **Aggregate and analyze:**
 ```bash
-siftd status                          # totals across everything
+siftd db stats                        # totals across everything
 siftd tools --by-workspace            # tool usage patterns per project
 siftd query sql cost                  # custom SQL queries
 ```

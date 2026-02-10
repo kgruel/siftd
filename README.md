@@ -29,7 +29,7 @@ siftd found 448 conversations you've had over the past few months. Each one capt
 See what accumulated:
 
 ```bash
-siftd status
+siftd db stats
 ```
 
 ```
@@ -267,9 +267,12 @@ See [Writing Adapters](docs/writing-adapters.md) for the full guide.
 | `tags` | List and manage tags |
 | `export` | Export conversations for PR review or context |
 | `peek` | View live sessions without waiting for ingest |
-| `status` | Show database statistics |
+| `db` | Database operations — `stats`, `info`, `backup`, `restore`, `vacuum`, `slice`, `path` |
+| `tools` | Shell command category summary and tool usage patterns |
 | `doctor` | Health checks and maintenance |
 | `adapters` | List discovered adapters |
+| `config` | View and modify configuration |
+| `install` | Install shell completions and integrations |
 
 Run `siftd <command> --help` for full options.
 

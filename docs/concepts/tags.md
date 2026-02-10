@@ -46,11 +46,11 @@ Freeform tags get messy fast. Prefixed namespaces help:
 
 | Prefix | Purpose | Examples |
 |--------|---------|----------|
-| `decision:` | Architectural choices | `decision:auth`, `decision:caching` |
-| `research:` | Exploration, learning | `research:oauth`, `research:testing` |
-| `pattern:` | Reusable approaches | `pattern:error-handling`, `pattern:fixtures` |
-| `review:` | Needs follow-up | `review:security`, `review:perf` |
-| `project:` | Cross-cutting project tags | `project:launch`, `project:migration` |
+| `decision:` | Key architectural/design decisions | `decision:auth`, `decision:caching` |
+| `research:` | Investigation findings worth preserving | `research:oauth`, `research:migration` |
+| `useful:` | General bookmarks — patterns, examples | `useful:pattern`, `useful:example` |
+| `rationale:` | Why we chose X over Y | `rationale:jwt`, `rationale:queueing` |
+| `genesis:` | First discussion of a concept | `genesis:indexing`, `genesis:auth-flow` |
 
 The colon is just convention — siftd treats `decision:auth` as a single string. But the prefix lets you query by namespace:
 

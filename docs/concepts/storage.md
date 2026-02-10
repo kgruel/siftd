@@ -16,7 +16,7 @@ siftd follows the XDG Base Directory specification:
 The main database contains everything except embeddings. You can delete `embeddings.db` and rebuild it with `siftd search --rebuild` — it's derived data.
 
 ```bash
-siftd path    # show all paths
+siftd db path    # show all paths
 ```
 
 ## Why SQLite
@@ -147,24 +147,40 @@ siftd query sql cost         # run the 'cost' query
 
 Drop custom queries in `~/.config/siftd/queries/` as `.sql` files.
 
+## The `siftd db` namespace
+
+Database operations are grouped under `siftd db`:
+
+| Command | Purpose |
+|---------|---------|
+| `db info` | Database size, table counts, schema version |
+| `db path` | Show database and config paths |
+| `db vacuum` | Reclaim unused space |
+| `db backup <path>` | Online backup (safe during concurrent access) |
+| `db restore <path>` | Restore from a backup file |
+| `db slice` | Export a filtered subset of the database |
+| `db stats` | Conversation/prompt/response/tool call totals |
+
 ## Backup and restore
 
 Back up the main database:
 
 ```bash
-cp ~/.local/share/siftd/siftd.db ~/backup/siftd-$(date +%Y%m%d).db
+siftd db backup ~/backup/siftd-$(date +%Y%m%d).db
 ```
 
-Restore by copying back. The embeddings database can be rebuilt:
+`db backup` uses SQLite's online backup API, which is safe for concurrent access — you can back up while siftd is running without risking corruption.
+
+Restore from a backup:
+
+```bash
+siftd db restore ~/backup/siftd-20250115.db
+```
+
+The embeddings database can be rebuilt from the main database:
 
 ```bash
 siftd search --rebuild
-```
-
-For a complete backup including embeddings:
-
-```bash
-cp ~/.local/share/siftd/*.db ~/backup/
 ```
 
 ## Database size
