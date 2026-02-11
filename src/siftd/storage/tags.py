@@ -175,9 +175,9 @@ def list_tags(
             params.append(before)
         time_filter = " AND " + " AND ".join(clauses)
 
-    # When temporal filters are active, conversation_count joins through
-    # to conversations.started_at. Tool call and workspace counts also
-    # scope through conversations so all counts reflect the same window.
+    # When temporal filters are active, conversation_count and tool_call_count
+    # join through to conversations.started_at. Workspace and prompt counts
+    # remain global (workspaces and prompts lack direct temporal scope).
     if time_filter:
         sql = f"""
             SELECT
