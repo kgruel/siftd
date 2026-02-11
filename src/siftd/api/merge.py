@@ -45,6 +45,18 @@ def merge_database(
     conn = open_database(target_db)
     try:
         conn.execute("ATTACH DATABASE ? AS src", (str(source_path),))
+
+        # Reject schema version mismatch — merge is for same-version slices.
+        target_ver = conn.execute("PRAGMA main.user_version").fetchone()[0]
+        source_ver = conn.execute("PRAGMA src.user_version").fetchone()[0]
+        if target_ver != source_ver:
+            conn.execute("DETACH DATABASE src")
+            raise RuntimeError(
+                f"Schema version mismatch: target is v{target_ver}, "
+                f"source is v{source_ver}. Both databases must be the same "
+                f"schema version to merge."
+            )
+
         conn.execute("PRAGMA foreign_keys = OFF")
 
         if dry_run:
@@ -264,21 +276,12 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
 
     # --- Step 4: Tag junction tables (remap tag_id) ---
 
+    # New tags = source rows inserted as-is (identity mapping: source_id kept as target_id).
+    # Existing tags get remapped to target's ULID, so source_id != target_id.
     new_tags = conn.execute("""
         SELECT COUNT(*) FROM _id_map
         WHERE table_name = 'tags' AND source_id = target_id
     """).fetchone()[0]
-    # new_tags = tags that were inserted fresh (source_id == target_id means we kept the source ULID)
-    # Actually, let's count tags that didn't exist before — those where we generated a new ULID
-    # In _map_vocabulary, new rows keep the source ID. Existing rows get the target's ID.
-    # So new tags = those where source_id == target_id.
-    total_mapped_tags = conn.execute(
-        "SELECT COUNT(*) FROM _id_map WHERE table_name = 'tags'"
-    ).fetchone()[0]
-    existing_tags = conn.execute(
-        "SELECT COUNT(*) FROM _id_map WHERE table_name = 'tags' AND source_id != target_id"
-    ).fetchone()[0]
-    new_tags = total_mapped_tags - existing_tags
 
     conn.execute("""
         INSERT OR IGNORE INTO conversation_tags

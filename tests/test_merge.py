@@ -618,6 +618,100 @@ def test_replace_cascades_children(tmp_path):
     assert violations == []
 
 
+def test_replace_cascades_grandchildren(tmp_path):
+    """Replacing a conversation removes grandchild rows: content, attributes, tags, ingested_files."""
+    import time
+
+    from siftd.ids import ulid as _ulid
+    from siftd.storage.sqlite import open_database as _open
+
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{
+            "external_id": "conv-1",
+            "prompt_text": "Old prompt",
+            "tool_name": "shell.execute",
+            "tags": ["review"],
+        }],
+    )
+
+    # Seed grandchild rows in target: prompt_attributes, response_attributes,
+    # tool_call_attributes, tool_call_tags, ingested_files
+    tgt_conn = _open(target)
+    prompt_id = tgt_conn.execute("SELECT id FROM prompts LIMIT 1").fetchone()["id"]
+    response_id = tgt_conn.execute("SELECT id FROM responses LIMIT 1").fetchone()["id"]
+    tc_id = tgt_conn.execute("SELECT id FROM tool_calls LIMIT 1").fetchone()["id"]
+    conv_id = tgt_conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+    harness_id = tgt_conn.execute("SELECT harness_id FROM conversations LIMIT 1").fetchone()[0]
+
+    tgt_conn.execute(
+        "INSERT INTO prompt_attributes (id, prompt_id, key, value) VALUES (?, ?, 'k', 'v')",
+        (_ulid(), prompt_id),
+    )
+    tgt_conn.execute(
+        "INSERT INTO response_attributes (id, response_id, key, value) VALUES (?, ?, 'k', 'v')",
+        (_ulid(), response_id),
+    )
+    tgt_conn.execute(
+        "INSERT INTO tool_call_attributes (id, tool_call_id, key, value) VALUES (?, ?, 'k', 'v')",
+        (_ulid(), tc_id),
+    )
+    tag_id = get_or_create_tag(tgt_conn, "tc-tag")
+    apply_tag(tgt_conn, "tool_call", tc_id, tag_id)
+    tgt_conn.execute(
+        "INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at) "
+        "VALUES (?, '/fake/path', 'abc123', ?, ?, '2024-01-15T10:00:00Z')",
+        (_ulid(), harness_id, conv_id),
+    )
+    tgt_conn.commit()
+
+    # Verify seeded rows exist
+    assert tgt_conn.execute("SELECT COUNT(*) FROM prompt_content").fetchone()[0] == 1
+    assert tgt_conn.execute("SELECT COUNT(*) FROM response_content").fetchone()[0] == 1
+    assert tgt_conn.execute("SELECT COUNT(*) FROM prompt_attributes").fetchone()[0] == 1
+    assert tgt_conn.execute("SELECT COUNT(*) FROM response_attributes").fetchone()[0] == 1
+    assert tgt_conn.execute("SELECT COUNT(*) FROM tool_call_attributes").fetchone()[0] == 1
+    assert tgt_conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 1
+    assert tgt_conn.execute("SELECT COUNT(*) FROM ingested_files").fetchone()[0] == 1
+    tgt_conn.close()
+
+    time.sleep(0.01)
+
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{
+            "external_id": "conv-1",
+            "prompt_text": "New prompt",
+            "tool_name": "file.read",
+            "tags": ["research"],
+        }],
+    )
+
+    result = merge_database(target, source)
+    assert result["replaced_conversations"] == 1
+
+    conn = sqlite3.connect(str(target))
+    conn.row_factory = sqlite3.Row
+
+    # Old grandchildren must be gone; only source's children remain
+    assert conn.execute("SELECT COUNT(*) FROM prompt_content").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM response_content").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM prompt_attributes").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM response_attributes").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM tool_call_attributes").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM ingested_files").fetchone()[0] == 0
+
+    # Content should be from source
+    text = conn.execute("SELECT content FROM prompt_content LIMIT 1").fetchone()[0]
+    assert "New prompt" in text
+
+    # FK integrity
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    conn.close()
+    assert violations == []
+
+
 def test_cli_no_replace(tmp_path, capsys):
     """CLI --no-replace flag is passed through."""
     import time
@@ -640,6 +734,20 @@ def test_cli_no_replace(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "0 new" in out
     assert "1 skipped" in out
+
+
+def test_schema_version_mismatch(tmp_path):
+    """Merge rejects source with different schema version."""
+    target = _make_db(tmp_path / "target.db", conversations=[])
+    source = _make_db(tmp_path / "source.db", conversations=[])
+
+    # Tamper with source schema version
+    conn = sqlite3.connect(str(source))
+    conn.execute("PRAGMA user_version = 9999")
+    conn.close()
+
+    with pytest.raises(RuntimeError, match="Schema version mismatch"):
+        merge_database(target, source)
 
 
 def test_cli_invalid_file(tmp_path, capsys):
