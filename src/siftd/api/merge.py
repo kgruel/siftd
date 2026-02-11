@@ -19,6 +19,7 @@ def merge_database(
     *,
     rebuild_fts: bool = True,
     dry_run: bool = False,
+    replace: bool = True,
 ) -> dict:
     """Merge a source database (slice) into the target database.
 
@@ -27,6 +28,8 @@ def merge_database(
         source_path: Path to the source database to merge in.
         rebuild_fts: Whether to rebuild the FTS5 index after merge.
         dry_run: If True, compute counts but roll back all changes.
+        replace: If True (default), replace stale conversations with newer
+            versions from the source. If False, keep existing versions.
 
     Returns:
         Dict with counts of merged entities.
@@ -47,7 +50,7 @@ def merge_database(
         if dry_run:
             conn.execute("SAVEPOINT merge_dry_run")
 
-        stats = _merge_attached(conn)
+        stats = _merge_attached(conn, replace=replace)
 
         # Validate FK integrity before committing (so failures are atomic)
         if not dry_run:
@@ -86,7 +89,7 @@ def merge_database(
     return stats
 
 
-def _merge_attached(conn) -> dict:
+def _merge_attached(conn, *, replace: bool = True) -> dict:
     """Perform the merge with source attached as 'src'. Returns stats dict."""
 
     # --- Step 1: Vocabulary ID mapping ---
@@ -124,6 +127,11 @@ def _merge_attached(conn) -> dict:
 
     # 8. pricing — match on (remapped model_id, remapped provider_id), remap both FKs
     _map_pricing(conn)
+
+    # --- Step 1b: Replace stale conversations with newer source versions ---
+    replaced_conversations = 0
+    if replace:
+        replaced_conversations = _replace_stale_conversations(conn)
 
     # --- Step 2: Core tables with FK remapping ---
 
@@ -351,6 +359,7 @@ def _merge_attached(conn) -> dict:
 
     return {
         "conversations": new_conversations,
+        "replaced_conversations": replaced_conversations,
         "skipped_conversations": skipped_conversations,
         "prompts": prompt_after - prompt_before,
         "responses": resp_after - resp_before,
@@ -359,6 +368,92 @@ def _merge_attached(conn) -> dict:
         "tags": new_tags,
         "workspaces_matched": workspaces_matched,
     }
+
+
+def _replace_stale_conversations(conn) -> int:
+    """Delete target conversations that have a newer version in source.
+
+    A source conversation is "newer" when it shares the same
+    (harness_id, external_id) but has a later ULID (= later ingest time).
+    This happens when a conversation is re-ingested after growing or after
+    a parser fix.
+
+    Deletes the stale conversation and all its children so the subsequent
+    INSERT OR IGNORE picks up the source version instead of skipping it.
+
+    Returns the number of conversations replaced.
+    """
+    # Find stale target conversations: same natural key, source ULID is newer.
+    # ULIDs are lexicographically time-ordered, so id comparison works.
+    stale_rows = conn.execute("""
+        SELECT m.id AS target_id
+        FROM src.conversations s
+        JOIN main.conversations m
+            ON m.harness_id = COALESCE(
+                (SELECT im.target_id FROM _id_map im
+                 WHERE im.table_name = 'harnesses' AND im.source_id = s.harness_id),
+                s.harness_id)
+            AND m.external_id = s.external_id
+        WHERE s.id > m.id
+    """).fetchall()
+
+    if not stale_rows:
+        return 0
+
+    stale_ids = [r[0] for r in stale_rows]
+
+    # Build a temp table for efficient joins
+    conn.execute("CREATE TEMP TABLE _stale_convs (id TEXT PRIMARY KEY)")
+    conn.executemany("INSERT INTO _stale_convs VALUES (?)", [(cid,) for cid in stale_ids])
+
+    # Delete grandchildren first (tables referencing prompts/responses/tool_calls)
+    conn.execute("""
+        DELETE FROM prompt_content
+        WHERE prompt_id IN (SELECT id FROM prompts WHERE conversation_id IN (SELECT id FROM _stale_convs))
+    """)
+    conn.execute("""
+        DELETE FROM prompt_attributes
+        WHERE prompt_id IN (SELECT id FROM prompts WHERE conversation_id IN (SELECT id FROM _stale_convs))
+    """)
+    # prompt_tags may not exist
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags'").fetchone():
+        conn.execute("""
+            DELETE FROM prompt_tags
+            WHERE prompt_id IN (SELECT id FROM prompts WHERE conversation_id IN (SELECT id FROM _stale_convs))
+        """)
+
+    conn.execute("""
+        DELETE FROM response_content
+        WHERE response_id IN (SELECT id FROM responses WHERE conversation_id IN (SELECT id FROM _stale_convs))
+    """)
+    conn.execute("""
+        DELETE FROM response_attributes
+        WHERE response_id IN (SELECT id FROM responses WHERE conversation_id IN (SELECT id FROM _stale_convs))
+    """)
+
+    conn.execute("""
+        DELETE FROM tool_call_attributes
+        WHERE tool_call_id IN (SELECT id FROM tool_calls WHERE conversation_id IN (SELECT id FROM _stale_convs))
+    """)
+    conn.execute("""
+        DELETE FROM tool_call_tags
+        WHERE tool_call_id IN (SELECT id FROM tool_calls WHERE conversation_id IN (SELECT id FROM _stale_convs))
+    """)
+
+    # Delete children
+    conn.execute("DELETE FROM prompts WHERE conversation_id IN (SELECT id FROM _stale_convs)")
+    conn.execute("DELETE FROM responses WHERE conversation_id IN (SELECT id FROM _stale_convs)")
+    conn.execute("DELETE FROM tool_calls WHERE conversation_id IN (SELECT id FROM _stale_convs)")
+    conn.execute("DELETE FROM conversation_attributes WHERE conversation_id IN (SELECT id FROM _stale_convs)")
+    conn.execute("DELETE FROM conversation_tags WHERE conversation_id IN (SELECT id FROM _stale_convs)")
+    conn.execute("DELETE FROM ingested_files WHERE conversation_id IN (SELECT id FROM _stale_convs)")
+
+    # Delete the stale conversations themselves
+    conn.execute("DELETE FROM conversations WHERE id IN (SELECT id FROM _stale_convs)")
+
+    conn.execute("DROP TABLE _stale_convs")
+
+    return len(stale_ids)
 
 
 def _map_vocabulary(conn, table: str, natural_key: str) -> None:

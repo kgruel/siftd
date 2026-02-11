@@ -235,6 +235,7 @@ def cmd_db_merge(args) -> int:
 
     rebuild_fts = not args.no_fts
     dry_run = args.dry_run
+    replace = not args.no_replace
 
     try:
         result = merge_database(
@@ -242,6 +243,7 @@ def cmd_db_merge(args) -> int:
             source_path=source,
             rebuild_fts=rebuild_fts,
             dry_run=dry_run,
+            replace=replace,
         )
     except RuntimeError as e:
         print(f"Merge failed: {e}", file=sys.stderr)
@@ -249,7 +251,11 @@ def cmd_db_merge(args) -> int:
 
     prefix = "[dry run] " if dry_run else ""
     print(f"{prefix}Merged from: {source}")
-    print(f"  Conversations: {result['conversations']} new, {result['skipped_conversations']} skipped")
+    conv_parts = [f"{result['conversations']} new"]
+    if result["replaced_conversations"]:
+        conv_parts.append(f"{result['replaced_conversations']} replaced")
+    conv_parts.append(f"{result['skipped_conversations']} skipped")
+    print(f"  Conversations: {', '.join(conv_parts)}")
     print(f"  Prompts:       {result['prompts']}")
     print(f"  Responses:     {result['responses']}")
     print(f"  Tool calls:    {result['tool_calls']}")
@@ -351,6 +357,8 @@ examples:
     p_merge.add_argument("input", help="Source database path to merge in")
     p_merge.add_argument("--dry-run", action="store_true", help="Preview merge without modifying database")
     p_merge.add_argument("--no-fts", action="store_true", help="Skip FTS5 index rebuild")
+    p_merge.add_argument("--no-replace", action="store_true",
+                         help="Keep existing conversations instead of replacing with newer versions")
     p_merge.set_defaults(func=cmd_db_merge)
 
     # bare 'siftd db' prints help

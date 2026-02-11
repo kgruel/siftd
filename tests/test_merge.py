@@ -111,7 +111,7 @@ def test_disjoint_merge(tmp_path):
 
 
 def test_duplicate_skip(tmp_path):
-    """Same (harness, external_id) is skipped, child rows not copied."""
+    """Same (harness, external_id) with replace=False is skipped, child rows not copied."""
     target = _make_db(
         tmp_path / "target.db",
         conversations=[{"external_id": "conv-1", "prompt_text": "Original"}],
@@ -121,10 +121,11 @@ def test_duplicate_skip(tmp_path):
         conversations=[{"external_id": "conv-1", "prompt_text": "Duplicate"}],
     )
 
-    result = merge_database(target, source)
+    result = merge_database(target, source, replace=False)
 
     assert result["conversations"] == 0
     assert result["skipped_conversations"] == 1
+    assert result["replaced_conversations"] == 0
 
     # Child rows should not be doubled
     conn = sqlite3.connect(str(target))
@@ -389,7 +390,7 @@ def test_cli_dry_run(tmp_path, capsys):
 
 
 def test_duplicate_children_not_orphaned(tmp_path):
-    """When a conversation is skipped (duplicate), its children don't create orphans.
+    """When a conversation is skipped (no-replace), its children don't create orphans.
 
     Source has same (harness, external_id) but different ULIDs for prompts/responses.
     INSERT OR IGNORE on child tables should skip them, not create FK violations.
@@ -403,7 +404,7 @@ def test_duplicate_children_not_orphaned(tmp_path):
         conversations=[{"external_id": "conv-1", "prompt_text": "Different prompt"}],
     )
 
-    result = merge_database(target, source)
+    result = merge_database(target, source, replace=False)
     assert result["conversations"] == 0
     assert result["skipped_conversations"] == 1
 
@@ -488,6 +489,157 @@ def test_tool_call_tag_remapping(tmp_path):
 
     assert tct_count >= 1
     assert violations == []
+
+
+def test_replace_stale_conversation(tmp_path):
+    """Source with newer ULID for same (harness, external_id) replaces target's version."""
+    import time
+
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Original v1"}],
+    )
+
+    # Small delay so source gets a later ULID
+    time.sleep(0.01)
+
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Updated v2"}],
+    )
+
+    result = merge_database(target, source)
+    assert result["replaced_conversations"] == 1
+    assert result["conversations"] == 1  # the replacement counts as new
+    assert result["skipped_conversations"] == 0
+
+    # Target should have the source's version
+    conn = sqlite3.connect(str(target))
+    conn.row_factory = sqlite3.Row
+    convs = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+    assert convs == 1  # not duplicated
+
+    # Prompt text should be from source
+    text = conn.execute(
+        "SELECT content FROM prompt_content LIMIT 1"
+    ).fetchone()[0]
+    assert "Updated v2" in text
+
+    # FK integrity
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    conn.close()
+    assert violations == []
+
+
+def test_no_replace_keeps_original(tmp_path):
+    """With replace=False, existing conversations are kept even when source is newer."""
+    import time
+
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Original v1"}],
+    )
+
+    time.sleep(0.01)
+
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Updated v2"}],
+    )
+
+    result = merge_database(target, source, replace=False)
+    assert result["replaced_conversations"] == 0
+    assert result["conversations"] == 0
+    assert result["skipped_conversations"] == 1
+
+    # Target should still have original
+    conn = sqlite3.connect(str(target))
+    conn.row_factory = sqlite3.Row
+    text = conn.execute(
+        "SELECT content FROM prompt_content LIMIT 1"
+    ).fetchone()[0]
+    conn.close()
+    assert "Original v1" in text
+
+
+def test_replace_cascades_children(tmp_path):
+    """Replacing a conversation removes old children and brings in new ones."""
+    import time
+
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{
+            "external_id": "conv-1",
+            "prompt_text": "Old prompt",
+            "tool_name": "shell.execute",
+            "tags": ["review"],
+        }],
+    )
+
+    time.sleep(0.01)
+
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{
+            "external_id": "conv-1",
+            "prompt_text": "New prompt",
+            "tool_name": "file.read",
+            "tags": ["research"],
+        }],
+    )
+
+    result = merge_database(target, source)
+    assert result["replaced_conversations"] == 1
+
+    conn = sqlite3.connect(str(target))
+    conn.row_factory = sqlite3.Row
+
+    # Should have exactly 1 of each — old children deleted, new ones inserted
+    assert conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
+
+    # Tool should be the source's
+    tool_name = conn.execute("""
+        SELECT t.name FROM tool_calls tc
+        JOIN tools t ON t.id = tc.tool_id
+    """).fetchone()[0]
+    assert tool_name == "file.read"
+
+    # Tag should be from source
+    tag_name = conn.execute("""
+        SELECT t.name FROM conversation_tags ct
+        JOIN tags t ON t.id = ct.tag_id
+    """).fetchone()[0]
+    assert tag_name == "research"
+
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    conn.close()
+    assert violations == []
+
+
+def test_cli_no_replace(tmp_path, capsys):
+    """CLI --no-replace flag is passed through."""
+    import time
+
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Original"}],
+    )
+
+    time.sleep(0.01)
+
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Newer"}],
+    )
+
+    rc = main(["--db", str(target), "db", "merge", str(source), "--no-replace"])
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    assert "0 new" in out
+    assert "1 skipped" in out
 
 
 def test_cli_invalid_file(tmp_path, capsys):
