@@ -4,24 +4,26 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ## Current Focus
 
-**Multi-device sync implemented. `db merge` + `db push` landed on main.**
+**Tags temporal filtering landed. Multi-device sync (`db merge` + `db push`) on main.**
 
-`db merge` imports slices with vocabulary remapping + dedup. `db push` wraps slice + transport (SSH or local copy/merge) into a single workflow: `siftd db push <remote>`. First push creates remote DB directly (no siftd needed on remote); subsequent pushes require siftd for merge. Remotes configured via `siftd db remote add/list/remove`, stored in `[sync.remotes.<name>]` in siftd.toml.
+`siftd tags --since 7d` now filters conversation and tool_call counts by conversation start time. Workspace/prompt counts remain global (no temporal scope). Zero-count tags hidden when filtering. Leverages existing `--since`/`--before` from `add_filter_args` already on the parser.
 
-Review findings addressed: shell injection (shlex.quote on SSH paths), last_push semantics (only advances when no explicit `--since`), cleanup-rm failure tolerance, error message disambiguation.
+`db merge` imports slices with vocabulary remapping + dedup. `db push` wraps slice + transport (SSH or local copy/merge) into a single workflow: `siftd db push <remote>`. Remotes configured via `siftd db remote add/list/remove`, stored in `[sync.remotes.<name>]` in siftd.toml.
+
+Also: cleaned up 62 stale branches on Forgejo, fixed default branch from `adapter-cline` → `main`.
 
 Next session:
-- [ ] **Release 0.5.0** — cut release with `db merge` + `db push`, update CHANGELOG
+- [ ] **Release 0.5.0** — cut release with `db merge` + `db push` + tags temporal filtering, update CHANGELOG
 - [ ] **End-to-end SSH push test** — manual test against alcove (local push is integration-tested)
 - [ ] **`db pull`** — if the pattern holds, inverse direction; deferred until push proves out
 
 Deferred (still valid):
 - [ ] **Break down `cmd_search()`** — 367 lines, works but long
-- [ ] **`siftd tags` list view temporal filtering** — needs new storage query (conversation time vs applied-at semantics TBD)
 - [ ] **NULL workspace_path asymmetry** in `find_active_session` — document as intentional
 - [ ] **Add `-s`/`--search` to `query`** — one-line change in `cli_query.py:540`, the flag `export` already has via `include_search=True`
 
 Previous sessions:
+- [x] Tags temporal filtering — `siftd tags --since/--before`, reviewed + merged (`4c6eeba`)
 - [x] `db push` — sync push to shared remote DB, SSH + local transport, Subtask review + fixes (`d360269`)
 - [x] `db merge` — multi-device merge with vocabulary remapping, schema version guards (`bbc9908`)
 - [x] Docs accuracy + output format updates, docs reorganization (index, guides/, untrack research/)
