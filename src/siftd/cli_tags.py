@@ -353,12 +353,25 @@ def cmd_tags(args) -> int:
         return 0
 
     # Default: list tags
-    tags = list_tags(conn=conn)
+    since = getattr(args, "since", None)
+    before = getattr(args, "before", None)
+    tags = list_tags(conn=conn, since=since, before=before)
 
     if not tags:
-        print("No tags defined.")
+        if since or before:
+            print("No tags found in the specified time range.")
+        else:
+            print("No tags defined.")
         conn.close()
         return 0
+
+    # When filtering temporally, hide tags with zero counts in the window
+    if since or before:
+        tags = [t for t in tags if t.conversation_count or t.tool_call_count or t.workspace_count]
+        if not tags:
+            print("No tags found in the specified time range.")
+            conn.close()
+            return 0
 
     prefix = getattr(args, "prefix", None)
     if prefix:

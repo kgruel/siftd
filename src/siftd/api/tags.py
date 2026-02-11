@@ -61,12 +61,17 @@ class TagInfo:
 def list_tags(
     db_path: Path | None = None,
     conn: sqlite3.Connection | None = None,
+    *,
+    since: str | None = None,
+    before: str | None = None,
 ) -> list[TagInfo]:
     """List all tags with usage counts.
 
     Args:
         db_path: Path to database. Ignored if conn provided.
         conn: Existing connection to use.
+        since: Only count associations where conversation started after this ISO date.
+        before: Only count associations where conversation started before this ISO date.
 
     Returns:
         List of TagInfo objects sorted by name.
@@ -78,7 +83,7 @@ def list_tags(
         should_close = True
 
     try:
-        rows = _list_tags(conn)
+        rows = _list_tags(conn, since=since, before=before)
         return [
             TagInfo(
                 name=r["name"],

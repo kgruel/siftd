@@ -148,23 +148,79 @@ def delete_tag(conn: sqlite3.Connection, name: str, *, commit: bool = False) -> 
     return removed
 
 
-def list_tags(conn: sqlite3.Connection) -> list[dict]:
-    """List all tags with usage counts."""
-    cur = conn.execute("""
-        SELECT
-            t.name,
-            t.description,
-            t.created_at,
-            (SELECT COUNT(*) FROM conversation_tags ct WHERE ct.tag_id = t.id) as conversation_count,
-            (SELECT COUNT(*) FROM workspace_tags wt WHERE wt.tag_id = t.id) as workspace_count,
-            (SELECT COUNT(*) FROM tool_call_tags tt WHERE tt.tag_id = t.id) as tool_call_count,
-            CASE WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags')
-                THEN (SELECT COUNT(*) FROM prompt_tags pt WHERE pt.tag_id = t.id)
-                ELSE 0
-            END as prompt_count
-        FROM tags t
-        ORDER BY t.name
-    """)
+def list_tags(
+    conn: sqlite3.Connection,
+    *,
+    since: str | None = None,
+    before: str | None = None,
+) -> list[dict]:
+    """List all tags with usage counts.
+
+    Args:
+        conn: Database connection.
+        since: Only count associations where the conversation started after this ISO date.
+        before: Only count associations where the conversation started before this ISO date.
+    """
+    params: list[str] = []
+
+    # Build temporal condition for conversation-based counts
+    time_filter = ""
+    if since or before:
+        clauses = []
+        if since:
+            clauses.append("c.started_at >= ?")
+            params.append(since)
+        if before:
+            clauses.append("c.started_at < ?")
+            params.append(before)
+        time_filter = " AND " + " AND ".join(clauses)
+
+    # When temporal filters are active, conversation_count joins through
+    # to conversations.started_at. Tool call and workspace counts also
+    # scope through conversations so all counts reflect the same window.
+    if time_filter:
+        sql = f"""
+            SELECT
+                t.name,
+                t.description,
+                t.created_at,
+                (SELECT COUNT(*) FROM conversation_tags ct
+                    JOIN conversations c ON c.id = ct.conversation_id
+                    WHERE ct.tag_id = t.id{time_filter}) as conversation_count,
+                (SELECT COUNT(*) FROM workspace_tags wt
+                    WHERE wt.tag_id = t.id) as workspace_count,
+                (SELECT COUNT(*) FROM tool_call_tags tt
+                    JOIN tool_calls tc ON tc.id = tt.tool_call_id
+                    JOIN conversations c ON c.id = tc.conversation_id
+                    WHERE tt.tag_id = t.id{time_filter}) as tool_call_count,
+                CASE WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags')
+                    THEN (SELECT COUNT(*) FROM prompt_tags pt WHERE pt.tag_id = t.id)
+                    ELSE 0
+                END as prompt_count
+            FROM tags t
+            ORDER BY t.name
+        """
+        # params are used twice: once for conversation_count, once for tool_call_count
+        all_params = params + params
+    else:
+        sql = """
+            SELECT
+                t.name,
+                t.description,
+                t.created_at,
+                (SELECT COUNT(*) FROM conversation_tags ct WHERE ct.tag_id = t.id) as conversation_count,
+                (SELECT COUNT(*) FROM workspace_tags wt WHERE wt.tag_id = t.id) as workspace_count,
+                (SELECT COUNT(*) FROM tool_call_tags tt WHERE tt.tag_id = t.id) as tool_call_count,
+                CASE WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags')
+                    THEN (SELECT COUNT(*) FROM prompt_tags pt WHERE pt.tag_id = t.id)
+                    ELSE 0
+                END as prompt_count
+            FROM tags t
+            ORDER BY t.name
+        """
+        all_params = []
+
+    cur = conn.execute(sql, all_params)
     return [
         {
             "name": row["name"],

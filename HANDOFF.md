@@ -4,13 +4,16 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools, s
 
 ## Current Focus
 
-**Docs hardened. Ready to explore remote DB hosting.**
+**Multi-device sync implemented. `db merge` + `db push` landed on main.**
 
-Docs pass: accuracy fixes (wrong flags, phantom categories, stale tool names), output examples updated to match actual CLI formats, docs reorganized (`docs/index.md` entry point, `docs/guides/` for how-tos, `docs/research/` gitignored).
+`db merge` imports slices with vocabulary remapping + dedup. `db push` wraps slice + transport (SSH or local copy/merge) into a single workflow: `siftd db push <remote>`. First push creates remote DB directly (no siftd needed on remote); subsequent pushes require siftd for merge. Remotes configured via `siftd db remote add/list/remove`, stored in `[sync.remotes.<name>]` in siftd.toml.
+
+Review findings addressed: shell injection (shlex.quote on SSH paths), last_push semantics (only advances when no explicit `--since`), cleanup-rm failure tolerance, error message disambiguation.
 
 Next session:
-- [ ] **Remote DB hosting** — siftd is local-only SQLite; explore what "remote" means for the use case (sync vs hosted, read vs write, single-user vs team)
-- [ ] **`db merge`** — multi-device merge (design understood, `db slice` now validated and working)
+- [ ] **Release 0.5.0** — cut release with `db merge` + `db push`, update CHANGELOG
+- [ ] **End-to-end SSH push test** — manual test against alcove (local push is integration-tested)
+- [ ] **`db pull`** — if the pattern holds, inverse direction; deferred until push proves out
 
 Deferred (still valid):
 - [ ] **Break down `cmd_search()`** — 367 lines, works but long
@@ -19,6 +22,8 @@ Deferred (still valid):
 - [ ] **Add `-s`/`--search` to `query`** — one-line change in `cli_query.py:540`, the flag `export` already has via `include_search=True`
 
 Previous sessions:
+- [x] `db push` — sync push to shared remote DB, SSH + local transport, Subtask review + fixes (`d360269`)
+- [x] `db merge` — multi-device merge with vocabulary remapping, schema version guards (`bbc9908`)
 - [x] Docs accuracy + output format updates, docs reorganization (index, guides/, untrack research/)
 - [x] Concept docs + README rewrite
 - [x] v0.4.5: `peek --follow` mode, tool accumulation fix, follow loop hardening (inode, truncation, placeholder suppression)
@@ -84,6 +89,7 @@ Discovered via "siftd monitoring siftd" pattern — using siftd to observe agent
 | Adapter `can_handle()` | Location-aware, not just extension; prevents cross-adapter mismatches |
 | Subtask session tracking | `~/.subtask/projects/{project}/internal/{task}/state.json` has `session_id`, `harness` |
 | Config philosophy | "Defaults-with-escape-hatch": default on, config opt-out, not config-first (`01KGBXCAG8N8`) |
+| Sync push design | Push-only, no user identity, SSH transport via subprocess, first push creates DB directly (`d360269`) |
 
 Full decision log: `siftd query -l decision:`
 
