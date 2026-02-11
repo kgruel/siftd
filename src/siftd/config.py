@@ -101,6 +101,137 @@ def get_search_defaults() -> dict:
     return defaults
 
 
+def get_sync_remotes() -> list[dict]:
+    """Get all configured sync remotes.
+
+    Reads from [sync.remotes.*] sections in config.toml.
+
+    Returns list of dicts with keys: name, host, path, last_push.
+    """
+    doc = load_config()
+    sync_config = doc.get("sync", {})
+    if not isinstance(sync_config, dict):
+        return []
+    remotes_config = sync_config.get("remotes", {})
+    if not isinstance(remotes_config, dict):
+        return []
+
+    remotes = []
+    for name, cfg in remotes_config.items():
+        if not isinstance(cfg, dict):
+            continue
+        remotes.append({
+            "name": name,
+            "host": cfg.get("host"),
+            "path": str(cfg.get("path", "")),
+            "last_push": cfg.get("last_push"),
+        })
+    return remotes
+
+
+def get_sync_remote(name: str) -> dict | None:
+    """Get a single sync remote by name.
+
+    Returns dict with keys: name, host, path, last_push. Or None if not found.
+    """
+    for remote in get_sync_remotes():
+        if remote["name"] == name:
+            return remote
+    return None
+
+
+def set_sync_remote(name: str, host: str | None, path: str) -> None:
+    """Create or update a sync remote in config.
+
+    Example TOML:
+        [sync.remotes.alcove]
+        host = "alcove"
+        path = "/data/siftd/team.db"
+    """
+    cfg_path = config_file()
+
+    if cfg_path.exists():
+        try:
+            doc = tomlkit.parse(cfg_path.read_text())
+        except tomlkit.exceptions.TOMLKitError:
+            doc = tomlkit.document()
+    else:
+        doc = tomlkit.document()
+
+    # Navigate/create sync.remotes.<name>
+    if "sync" not in doc:
+        doc["sync"] = tomlkit.table()
+    sync_tbl = cast(Container, doc["sync"])
+    if "remotes" not in sync_tbl:
+        sync_tbl["remotes"] = tomlkit.table()
+    remotes_tbl = cast(Container, sync_tbl["remotes"])
+    if name not in remotes_tbl:
+        remotes_tbl[name] = tomlkit.table()
+
+    remote_tbl = cast(Container, remotes_tbl[name])
+    if host is not None:
+        remote_tbl["host"] = host
+    elif "host" in remote_tbl:
+        del remote_tbl["host"]
+    remote_tbl["path"] = path
+
+    config_dir().mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(tomlkit.dumps(doc))
+
+
+def remove_sync_remote(name: str) -> bool:
+    """Remove a sync remote from config.
+
+    Returns True if the remote existed and was removed.
+    """
+    cfg_path = config_file()
+    if not cfg_path.exists():
+        return False
+
+    try:
+        doc = tomlkit.parse(cfg_path.read_text())
+    except tomlkit.exceptions.TOMLKitError:
+        return False
+
+    sync_config = doc.get("sync")
+    if not isinstance(sync_config, dict):
+        return False
+    remotes_config = sync_config.get("remotes")
+    if not isinstance(remotes_config, dict):
+        return False
+    if name not in remotes_config:
+        return False
+
+    del remotes_config[name]
+    cfg_path.write_text(tomlkit.dumps(doc))
+    return True
+
+
+def update_last_push(name: str, timestamp: str) -> None:
+    """Write last_push timestamp for a sync remote."""
+    cfg_path = config_file()
+
+    if cfg_path.exists():
+        try:
+            doc = tomlkit.parse(cfg_path.read_text())
+        except tomlkit.exceptions.TOMLKitError:
+            doc = tomlkit.document()
+    else:
+        doc = tomlkit.document()
+
+    sync_config = doc.get("sync")
+    if not isinstance(sync_config, dict):
+        return
+    remotes_config = sync_config.get("remotes")
+    if not isinstance(remotes_config, dict):
+        return
+    if name not in remotes_config:
+        return
+
+    cast(Container, remotes_config[name])["last_push"] = timestamp
+    cfg_path.write_text(tomlkit.dumps(doc))
+
+
 def get_ingestion_filter_binary() -> bool:
     """Get whether to filter binary content during ingestion.
 

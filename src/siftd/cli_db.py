@@ -1,7 +1,8 @@
 """CLI handlers for 'siftd db' namespace — container-level operations.
 
 Commands that operate on the database container itself:
-info, stats, workspaces, path, vacuum, backup, restore, slice.
+info, stats, workspaces, path, vacuum, backup, restore, slice, merge,
+remote (add/list/remove), push.
 
 Distinct from top-level commands (query, search, export, tag, peek)
 which are user workflows selecting conversations.
@@ -11,7 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from siftd.cli_common import resolve_db
+from siftd.cli_common import parse_date, resolve_db
 
 
 def cmd_db_info(args) -> int:
@@ -268,11 +269,117 @@ def cmd_db_merge(args) -> int:
     return 0
 
 
+def cmd_db_remote_add(args) -> int:
+    """Register a sync remote."""
+    from siftd.config import set_sync_remote
+
+    name = args.name
+    target = args.target
+
+    # Parse host:path vs local path
+    # Heuristic: if it contains ':' and the part before ':' doesn't look like
+    # a drive letter (Windows) or start with '/', treat as host:path.
+    if ":" in target and not target.startswith("/"):
+        parts = target.split(":", 1)
+        host = parts[0]
+        path = parts[1]
+    else:
+        host = None
+        path = target
+
+    set_sync_remote(name, host, path)
+
+    if host:
+        print(f"Added remote '{name}': {host}:{path}")
+    else:
+        print(f"Added remote '{name}': {path} (local)")
+    return 0
+
+
+def cmd_db_remote_list(args) -> int:
+    """List sync remotes."""
+    from siftd.config import get_sync_remotes
+
+    remotes = get_sync_remotes()
+    if not remotes:
+        print("No remotes configured.")
+        print("Add one with: siftd db remote add <name> <host:path>")
+        return 0
+
+    for r in remotes:
+        location = f"{r['host']}:{r['path']}" if r["host"] else f"{r['path']} (local)"
+        print(f"{r['name']:20s} {location}")
+        if r["last_push"]:
+            print(f"{'':20s} last push: {r['last_push']}")
+    return 0
+
+
+def cmd_db_remote_remove(args) -> int:
+    """Unregister a sync remote."""
+    from siftd.config import remove_sync_remote
+
+    if remove_sync_remote(args.name):
+        print(f"Removed remote '{args.name}'.")
+        return 0
+    else:
+        print(f"Remote '{args.name}' not found.", file=sys.stderr)
+        return 1
+
+
+def cmd_db_push(args) -> int:
+    """Push conversations to a sync remote."""
+    from siftd.api.sync import SyncError, SyncRemote, sync_push
+    from siftd.config import get_sync_remote
+
+    remote_cfg = get_sync_remote(args.name)
+    if remote_cfg is None:
+        print(f"Remote '{args.name}' not found.", file=sys.stderr)
+        print("Run 'siftd db remote list' to see configured remotes.", file=sys.stderr)
+        return 1
+
+    remote = SyncRemote(**remote_cfg)
+
+    db = resolve_db(args)
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'siftd ingest' to create it.")
+        return 1
+
+    try:
+        result = sync_push(
+            db_path=db,
+            remote=remote,
+            since=getattr(args, "since", None),
+            push_all=getattr(args, "push_all", False),
+            workspace=getattr(args, "workspace", None),
+            dry_run=getattr(args, "dry_run", False),
+        )
+    except SyncError as e:
+        print(f"Push failed: {e}", file=sys.stderr)
+        return 1
+    except FileNotFoundError as e:
+        print(str(e))
+        return 1
+
+    prefix = "[dry run] " if result.dry_run else ""
+
+    if result.conversations == 0:
+        print(f"{prefix}No new conversations to push.")
+        return 0
+
+    location = f"{remote.host}:{remote.path}" if remote.host else remote.path
+    print(f"{prefix}Pushed {result.conversations} conversation(s) to {location} "
+          f"({result.size_bytes / 1024:.1f} KB)")
+    if not result.remote_existed:
+        print("  Created new remote database.")
+    return 0
+
+
 def build_db_parser(subparsers) -> None:
     """Add the 'db' subparser with nested subcommands."""
     p_db = subparsers.add_parser(
         "db",
-        help="Database container operations (info, backup, restore, vacuum, slice, merge)",
+        help="Database operations (info, backup, restore, vacuum, slice, merge, remote, push)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Container-level operations on the siftd database.
 
@@ -285,7 +392,9 @@ examples:
   siftd db backup /tmp/siftd.db          # online backup
   siftd db restore /tmp/siftd.db         # restore from backup
   siftd db slice out.db -w project       # export filtered subset
-  siftd db merge laptop-slice.db          # merge slice into main DB""",
+  siftd db merge laptop-slice.db         # merge slice into main DB
+  siftd db remote add alcove host:path   # register sync remote
+  siftd db push alcove                   # push delta to remote""",
     )
     db_sub = p_db.add_subparsers(dest="db_command")
 
@@ -360,6 +469,56 @@ examples:
     p_merge.add_argument("--no-replace", action="store_true",
                          help="Keep existing conversations instead of replacing with newer versions")
     p_merge.set_defaults(func=cmd_db_merge)
+
+    # remote (sub-namespace)
+    p_remote = db_sub.add_parser(
+        "remote",
+        help="Manage sync remotes (add, list, remove)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  siftd db remote add alcove alcove:/data/team.db   # SSH remote
+  siftd db remote add nas /mnt/nas/siftd/team.db    # local path
+  siftd db remote list                               # show all remotes
+  siftd db remote remove alcove                      # unregister""",
+    )
+    remote_sub = p_remote.add_subparsers(dest="remote_command")
+
+    p_remote_add = remote_sub.add_parser("add", help="Register a sync remote")
+    p_remote_add.add_argument("name", help="Remote name")
+    p_remote_add.add_argument("target", help="host:path (SSH) or /local/path")
+    p_remote_add.set_defaults(func=cmd_db_remote_add)
+
+    p_remote_list = remote_sub.add_parser("list", help="List sync remotes")
+    p_remote_list.set_defaults(func=cmd_db_remote_list)
+
+    p_remote_remove = remote_sub.add_parser("remove", help="Unregister a sync remote")
+    p_remote_remove.add_argument("name", help="Remote name to remove")
+    p_remote_remove.set_defaults(func=cmd_db_remote_remove)
+
+    p_remote.set_defaults(func=lambda args: (p_remote.print_help(), 0)[1])
+
+    # push
+    p_push = db_sub.add_parser(
+        "push",
+        help="Push conversations to a sync remote",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  siftd db push alcove                       # push delta since last push
+  siftd db push alcove --since 7d            # push last 7 days
+  siftd db push alcove --all                 # push everything
+  siftd db push alcove --dry-run             # preview what would push
+  siftd db push alcove -w project            # filter by workspace""",
+    )
+    p_push.add_argument("name", help="Remote name to push to")
+    p_push.add_argument("--since", metavar="DATE", type=parse_date,
+                        help="Push conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    p_push.add_argument("--all", action="store_true", dest="push_all",
+                        help="Push all conversations (ignore last_push)")
+    p_push.add_argument("--dry-run", action="store_true",
+                        help="Preview what would be pushed without transferring")
+    p_push.add_argument("-w", "--workspace", metavar="SUBSTR",
+                        help="Filter by workspace path substring")
+    p_push.set_defaults(func=cmd_db_push)
 
     # bare 'siftd db' prints help
     p_db.set_defaults(func=lambda args: (p_db.print_help(), 0)[1])

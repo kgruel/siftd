@@ -81,6 +81,12 @@ from siftd.api.stats import (
     get_stats,
     list_workspaces,
 )
+from siftd.api.sync import (
+    PushResult,
+    SyncError,
+    SyncRemote,
+    sync_push,
+)
 from siftd.api.tags import (
     DERIVATIVE_TAG,
     TagInfo,
@@ -198,6 +204,11 @@ __all__ = [
     "merge_database",
     # slice
     "slice_database",
+    # sync
+    "PushResult",
+    "SyncError",
+    "SyncRemote",
+    "sync_push",
     # tools
     "TagUsage",
     "WorkspaceTagUsage",

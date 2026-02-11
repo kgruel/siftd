@@ -15,8 +15,8 @@
       path                Show XDG paths (use 'siftd db path')
       config              View or modify config settings
       adapters            List discovered adapters
-      db                  Database container operations (info, backup, restore,
-                          vacuum, slice, merge)
+      db                  Database operations (info, backup, restore, vacuum,
+                          slice, merge, remote, push)
       tag                 Apply or remove a tag on a conversation (or other
                           entity)
       tags                List, inspect, rename, or delete tags

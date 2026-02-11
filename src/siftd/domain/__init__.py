@@ -10,6 +10,10 @@ from .models import (
     Usage,
 )
 from .source import Source
+from .sync import (
+    PushResult,
+    SyncRemote,
+)
 
 __all__ = [
     # Models
@@ -22,4 +26,7 @@ __all__ = [
     "Usage",
     # Source
     "Source",
+    # Sync
+    "PushResult",
+    "SyncRemote",
 ]

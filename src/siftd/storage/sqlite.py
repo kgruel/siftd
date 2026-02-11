@@ -99,6 +99,7 @@ def create_empty_database(db_path: Path) -> None:
     try:
         schema = SCHEMA_PATH.read_text()
         conn.executescript(schema)
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.commit()
     finally:
         conn.close()
