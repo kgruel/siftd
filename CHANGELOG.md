@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`db merge`** — Import an external database (slice) into the main database:
+  - Vocabulary ID remapping — same harness/model/workspace with different ULIDs across machines are matched by natural key
+  - Workspace matching by `git_remote` (priority) with `path` fallback
+  - Replace-by-default — re-ingested conversations (newer ULID, same external_id) replace stale target versions with full cascade
+  - `--no-replace` flag to keep existing versions (first-version-wins)
+  - `--dry-run` previews merge counts without modifying the target
+  - Schema version guard rejects cross-version merges
+  - Content blob dedup via SHA256, ref_count recomputation, FK integrity validation
+
 ## [0.4.5] - 2026-02-10
 
 ### Added
