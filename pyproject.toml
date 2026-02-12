@@ -47,6 +47,9 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/siftd"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"plugin" = "siftd/plugin"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

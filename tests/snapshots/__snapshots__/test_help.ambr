@@ -29,7 +29,7 @@
       doctor              Run health checks and maintenance
       search              Search conversations (auto-selects FTS5 or semantic
                           based on what's installed)
-      install             Install optional dependencies
+      install             Install optional dependencies or bundled components
       peek                Inspect live sessions from disk (bypasses SQLite)
       export              Export conversations for PR review workflows
   
@@ -346,18 +346,24 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[install]
   '''
-  usage: siftd install [-h] [--dry-run] {embed}
+  usage: siftd install [-h] [--dry-run] [--scope {user,project}] {embed,plugin}
   
   positional arguments:
-    {embed}     Optional extra to install
+    {embed,plugin}        Component to install (embed: semantic search deps,
+                          plugin: Claude Code plugin)
   
   options:
-    -h, --help  show this help message and exit
-    --dry-run   Show what would be run without executing
+    -h, --help            show this help message and exit
+    --dry-run             Show what would be run without executing
+    --scope {user,project}
+                          Plugin install scope: user (~/.claude/plugins/) or
+                          project (.claude/plugins/)
   
   examples:
     siftd install embed             # install semantic search dependencies
     siftd install embed --dry-run   # show what would be installed
+    siftd install plugin            # install Claude Code plugin (user scope)
+    siftd install plugin --scope project  # install for current project only
   
   '''
 # ---

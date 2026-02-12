@@ -146,11 +146,13 @@ Session metadata for list display.
 | `file_path` | `Path` |  |
 | `workspace_path` | `str \| None` |  |
 | `workspace_name` | `str \| None` |  |
+| `branch` | `str \| None` |  |
 | `model` | `str \| None` |  |
 | `last_activity` | `float` |  |
 | `exchange_count` | `int` |  |
 | `preview_available` | `bool` |  |
 | `adapter_name` | `str \| None` |  |
+| `parent_session_id` | `str \| None` |  |
 
 ### Functions
 
@@ -173,12 +175,13 @@ def find_session_file(session_id_prefix: str) -> pathlib._local.Path | None
 Discover active session files and extract lightweight metadata.
 
 ```python
-def list_active_sessions(*, workspace: str | None = ..., threshold_seconds: int = ..., include_inactive: bool = ..., limit: int | None = ...) -> list[SessionInfo]
+def list_active_sessions(*, workspace: str | None = ..., branch: str | None = ..., threshold_seconds: int = ..., include_inactive: bool = ..., limit: int | None = ...) -> list[SessionInfo]
 ```
 
 **Parameters:**
 
 - `workspace`: Filter by workspace name substring.
+- `branch`: Filter by worktree branch substring.
 - `threshold_seconds`: Only include files modified within this many seconds. Default is 7200 (2 hours).
 - `include_inactive`: If True, include all sessions regardless of mtime.
 
@@ -189,7 +192,7 @@ def list_active_sessions(*, workspace: str | None = ..., threshold_seconds: int 
 Read session detail from a session file.
 
 ```python
-def read_session_detail(path: Path, *, last_n: int = ...) -> siftd.peek.types.SessionDetail | None
+def read_session_detail(path: Path, *, last_n: int = ...) -> siftd.domain.peek.SessionDetail | None
 ```
 
 **Parameters:**
@@ -245,43 +248,8 @@ Full conversation with timeline.
 | `started_at` | `str \| None` |  |
 | `total_input_tokens` | `int` |  |
 | `total_output_tokens` | `int` |  |
-| `turns` | `list[Turn]` | Primary timeline, one per prompt. |
-| `exchanges` | `list[Exchange]` | Derived/back-compat view (one per turn). |
+| `turns` | `list[Turn]` |  |
 | `tags` | `list[str]` |  |
-
-### Turn
-
-A prompt and its full response narrative.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `timestamp` | `str \| None` |  |
-| `prompt_text` | `str \| None` |  |
-| `total_input_tokens` | `int` |  |
-| `total_output_tokens` | `int` |  |
-| `narrative` | `list[NarrativeBlock]` | Interleaved response blocks. |
-
-### NarrativeBlock
-
-A single block in the response narrative.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `block_type` | `str` | One of `text`, `thinking`, `tool_calls`, `tool_result`, `tool_output`. |
-| `content` | `str \| None` | Block text (if applicable). |
-| `tool_calls` | `list[ToolCallDetail]` | Populated for `tool_calls` blocks. |
-
-### ToolCallDetail
-
-Tool call with optional input/result for `--tools` mode.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `tool_name` | `str` |  |
-| `status` | `str` |  |
-| `count` | `int` |  |
-| `input` | `str \| None` |  |
-| `result` | `str \| None` |  |
 
 ### Exchange
 
@@ -296,6 +264,28 @@ A prompt-response pair in the timeline.
 | `output_tokens` | `int` |  |
 | `tool_calls` | `list[ToolCallSummary]` |  |
 
+### NarrativeBlock
+
+A single block in the response narrative.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `block_type` | `str` |  |
+| `content` | `str \| None` |  |
+| `tool_calls` | `list[ToolCallDetail]` |  |
+
+### ToolCallDetail
+
+Tool call with optional input/result for --tools mode.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool_name` | `str` |  |
+| `status` | `str` |  |
+| `count` | `int` |  |
+| `input` | `str \| None` |  |
+| `result` | `str \| None` |  |
+
 ### ToolCallSummary
 
 Collapsed tool call for timeline display.
@@ -306,7 +296,34 @@ Collapsed tool call for timeline display.
 | `status` | `str` |  |
 | `count` | `int` |  |
 
+### Turn
+
+A prompt and its full response narrative.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timestamp` | `str \| None` |  |
+| `prompt_text` | `str \| None` |  |
+| `total_input_tokens` | `int` |  |
+| `total_output_tokens` | `int` |  |
+| `narrative` | `list[NarrativeBlock]` |  |
+| `_tool_call_summaries` | `list[ToolCallSummary]` |  |
+
 ### Functions
+
+### get_recent_conversation_ids
+
+Get IDs of the most recent conversations.
+
+```python
+def get_recent_conversation_ids(conn: Connection, limit: int) -> list[str]
+```
+
+**Parameters:**
+
+- `conn`: Database connection.
+
+**Returns:** List of conversation IDs, most recent first.
 
 ### list_conversations
 
@@ -352,13 +369,27 @@ def get_conversation(conversation_id: str, *, db_path: pathlib._local.Path | Non
 - `db_path`: Path to database. Uses default if not specified.
 - `include_thinking`: Include thinking/reasoning blocks in turns.
 - `include_tool_content`: Include tool input/result in turns.
-- `tool_filter`: Filter tool calls — `errors` for failed only, or a tool name prefix (e.g. `shell`, `file.read`).
 
 **Returns:** ConversationDetail with timeline, or None if not found.
 
 **Raises:**
 
 - `FileNotFoundError`: If database does not exist.
+
+### resolve_entity_id
+
+Resolve an entity ID, supporting prefix match for conversations.
+
+```python
+def resolve_entity_id(conn: Connection, entity_type: str, entity_id: str) -> str | None
+```
+
+**Parameters:**
+
+- `conn`: Database connection.
+- `entity_type`: One of 'conversation', 'workspace', 'tool_call'.
+
+**Returns:** Resolved full ID, or None if not found.
 
 ### list_query_files
 
@@ -578,20 +609,6 @@ def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embe
 - `RuntimeError`: If no embedding backend is available.
 - `EmbeddingsNotAvailable`: If embedding dependencies are not installed.
 
-### aggregate_by_conversation
-
-Aggregate chunk results to conversation-level scores.
-
-```python
-def aggregate_by_conversation(results: list[SearchResult], *, limit: int = ...) -> list[ConversationScore]
-```
-
-**Parameters:**
-
-- `results`: List of SearchResult from hybrid_search.
-
-**Returns:** List of ConversationScore, sorted by max_score descending.
-
 ### first_mention
 
 Find chronologically earliest result above relevance threshold.
@@ -630,88 +647,6 @@ def build_index(*, db_path: pathlib._local.Path | None = ..., embed_db_path: pat
 - `RuntimeError`: If no embedding backend is available.
 - `EmbeddingsNotAvailable`: If embedding dependencies are not installed.
 
-### open_embeddings_db
-
-Open the embeddings database.
-
-```python
-def open_embeddings_db(db_path: Path, *, read_only: bool = ...) -> Connection
-```
-
-**Parameters:**
-
-- `db_path`: Path to the embeddings database file.
-
-**Returns:** An open sqlite3.Connection.
-
-### search_similar
-
-Search for similar chunks in the embeddings database.
-
-```python
-def search_similar(conn: Connection, query_embedding: list[float], *, limit: int = ..., conversation_ids: set[str] | None = ..., include_embeddings: bool = ...) -> list[dict]
-```
-
-**Parameters:**
-
-- `conn`: Connection to embeddings database.
-- `query_embedding`: The query embedding vector.
-- `limit`: Maximum results to return.
-- `conversation_ids`: Optional set of conversation IDs to filter by.
-
-**Returns:** List of result dicts with score, chunk_id, conversation_id, text, etc.
-
-### validate_index_compat
-
-Validate that stored index metadata is compatible with the current backend.
-
-```python
-def validate_index_compat(conn: Connection, backend_name: str, backend_model: str, backend_dimension: int, current_schema_version: int) -> None
-```
-
-**Parameters:**
-
-- `conn`: Embeddings database connection.
-- `backend_name`: Current backend name (e.g., "fastembed", "ollama").
-- `backend_model`: Current backend model (e.g., "BAAI/bge-small-en-v1.5").
-- `backend_dimension`: Current embedding dimension.
-
-**Raises:**
-
-- `IndexCompatError`: If metadata indicates incompatibility with actionable message.
-- `Note`: Missing metadata keys (pre-versioning indexes) are allowed with warning-level degradation — dimension validation still applies via search_similar().
-
-### fts5_recall_conversations
-
-FTS5 recall to narrow candidate conversations for embedding search.
-
-```python
-def fts5_recall_conversations(conn: Connection, query: str, *, limit: int = ...) -> tuple[set[str], str]
-```
-
-**Parameters:**
-
-- `conn`: Connection to main database.
-- `query`: The search query string.
-
-**Returns:** Tuple of (conversation_id set, mode string). Mode is "and", "or", or "none".
-
-### apply_temporal_weight
-
-Apply temporal weighting to boost recent results.
-
-```python
-def apply_temporal_weight(results: list[dict], timestamps: dict[str, str], *, half_life_days: float = ..., max_boost: float = ...) -> list[dict]
-```
-
-**Parameters:**
-
-- `results`: List of result dicts with 'conversation_id' and 'score'. If results have 'breakdown' (ScoreBreakdown), it will be updated.
-- `timestamps`: Dict mapping conversation_id to ISO timestamp string.
-- `half_life_days`: Days until boost decays to half. Default 30.
-
-**Returns:** Results with adjusted 'score' values (original list is not modified). ScoreBreakdown.recency_boost is updated if present.
-
 ## Stats
 
 ### Data Types
@@ -726,9 +661,14 @@ Complete database statistics.
 | `db_size_bytes` | `int` |  |
 | `counts` | `TableCounts` |  |
 | `harnesses` | `list[HarnessInfo]` |  |
+| `harness_counts` | `list[HarnessCount]` |  |
 | `top_workspaces` | `list[WorkspaceStats]` |  |
 | `models` | `list[str]` |  |
 | `top_tools` | `list[ToolStats]` |  |
+| `top_tags` | `list[TagStats]` |  |
+| `token_coverage` | `TokenCoverage` |  |
+| `activity_window` | `tuple[str \| None, str \| None]` |  |
+| `last_ingest_at` | `str \| None` |  |
 
 ### TableCounts
 
@@ -764,6 +704,7 @@ Workspace with conversation count.
 |-------|------|-------------|
 | `path` | `str` |  |
 | `conversation_count` | `int` |  |
+| `last_activity` | `str \| None` |  |
 
 ### ToolStats
 
@@ -789,6 +730,20 @@ def get_stats(*, db_path: pathlib._local.Path | None = ...) -> DatabaseStats
 **Raises:**
 
 - `FileNotFoundError`: If database does not exist.
+
+### list_workspaces
+
+List workspaces with conversation counts.
+
+```python
+def list_workspaces(conn: Connection, limit: int = ...) -> list[Row]
+```
+
+**Parameters:**
+
+- `conn`: Database connection.
+
+**Returns:** Rows with 'path' and 'convs' keys.
 
 ## Tools
 
@@ -982,6 +937,31 @@ Tag with usage counts.
 | `conversation_count` | `int` |  |
 | `workspace_count` | `int` |  |
 | `tool_call_count` | `int` |  |
+| `prompt_count` | `int` |  |
+
+### PushResult
+
+Result of a push operation.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `conversations` | `int` |  |
+| `size_bytes` | `int` |  |
+| `remote_name` | `str` |  |
+| `remote_existed` | `bool` |  |
+| `dry_run` | `bool` |  |
+| `last_push_updated` | `bool` |  |
+
+### SyncRemote
+
+A registered sync remote.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `str` |  |
+| `host` | `str \| None` |  |
+| `path` | `str` |  |
+| `last_push` | `str \| None` |  |
 
 ### Exceptions
 
@@ -989,7 +969,27 @@ Tag with usage counts.
 
 Raised when index metadata is incompatible with current backend configuration.
 
+#### SyncError
+
+Raised when a sync operation fails.
+
 ### Functions
+
+### backup_database
+
+Create a consistent online backup using sqlite3.Connection.backup().
+
+```python
+def backup_database(source_path: Path, target_path: Path) -> None
+```
+
+**Parameters:**
+
+- `source_path`: Path to the source database.
+
+**Raises:**
+
+- `FileNotFoundError`: If source database does not exist.
 
 ### create_database
 
@@ -1051,6 +1051,14 @@ def delete_tag(conn: Connection, name: str, *, commit: bool = ...) -> int
 
 **Returns:** Count of entity associations removed, or -1 if tag not found.
 
+### get_tag_id
+
+Return tag id for name, or None if not found.
+
+```python
+def get_tag_id(conn: Connection, name: str) -> str | None
+```
+
 ### get_or_create_tag
 
 Get or create a tag by name.
@@ -1071,12 +1079,14 @@ def get_or_create_tag(conn: Connection, name: str, description: str | None = ...
 List all tags with usage counts.
 
 ```python
-def list_tags(db_path: pathlib._local.Path | None = ..., conn: sqlite3.Connection | None = ...) -> list[TagInfo]
+def list_tags(db_path: pathlib._local.Path | None = ..., conn: sqlite3.Connection | None = ..., *, since: str | None = ..., before: str | None = ...) -> list[TagInfo]
 ```
 
 **Parameters:**
 
 - `db_path`: Path to database. Ignored if conn provided.
+- `conn`: Existing connection to use.
+- `since`: Only count associations where conversation started after this ISO date.
 
 **Returns:** List of TagInfo objects sorted by name.
 
@@ -1117,10 +1127,65 @@ def rename_tag(conn: Connection, old_name: str, new_name: str, *, commit: bool =
 
 - `ValueError`: If new_name already exists.
 
-### fetch_conversation_timestamps
+### merge_database
 
-Fetch started_at timestamps for conversations.
+Merge a source database (slice) into the target database.
 
 ```python
-def fetch_conversation_timestamps(conn: Connection, conversation_ids: list[str]) -> dict[str, str]
+def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..., dry_run: bool = ..., replace: bool = ...) -> dict
 ```
+
+**Parameters:**
+
+- `target_db`: Path to the main siftd database.
+- `source_path`: Path to the source database to merge in.
+- `rebuild_fts`: Whether to rebuild the FTS5 index after merge.
+- `dry_run`: If True, compute counts but roll back all changes.
+
+**Returns:** Dict with counts of merged entities.
+
+**Raises:**
+
+- `FileNotFoundError`: If either database does not exist.
+
+### slice_database
+
+Export filtered conversations into a standalone SQLite database.
+
+```python
+def slice_database(source_db: Path, target_path: Path, *, workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tags: list[str] | None = ..., all_tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., tool: str | None = ..., tool_tag: str | None = ..., search: str | None = ..., rebuild_fts: bool = ...) -> dict
+```
+
+**Parameters:**
+
+- `source_db`: Path to the source siftd database.
+- `target_path`: Path to write the sliced database. workspace..search: Standard filter kwargs (same as list_conversations).
+
+**Returns:** Dict with 'conversations' count and 'size_bytes'.
+
+**Raises:**
+
+- `FileNotFoundError`: If source database does not exist.
+
+### sync_push
+
+Push conversations to a remote database.
+
+```python
+def sync_push(db_path: Path, remote: SyncRemote, *, since: str | None = ..., push_all: bool = ..., workspace: str | None = ..., dry_run: bool = ...) -> PushResult
+```
+
+**Parameters:**
+
+- `db_path`: Path to the local siftd database.
+- `remote`: The remote to push to.
+- `since`: Only push conversations started after this date.
+- `push_all`: Push all conversations (ignore last_push).
+- `workspace`: Filter by workspace substring.
+
+**Returns:** PushResult with stats.
+
+**Raises:**
+
+- `SyncError`: On transport or merge failure.
+- `FileNotFoundError`: If local database doesn't exist.

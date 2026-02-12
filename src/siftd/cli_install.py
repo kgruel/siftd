@@ -1,7 +1,9 @@
-"""CLI handler for 'siftd install' — install optional dependencies."""
+"""CLI handler for 'siftd install' — install optional extras and bundled components."""
 
 import argparse
+import importlib.resources
 import json
+import shutil
 import subprocess
 import sys
 from importlib.metadata import distribution
@@ -85,15 +87,8 @@ METHOD_LABELS: dict[str, str] = {
 }
 
 
-def cmd_install(args) -> int:
-    """Install optional dependencies."""
-    extra = args.extra
-
-    if extra != "embed":
-        print(f"Unknown extra: {extra}")
-        print("Available extras: embed")
-        return 1
-
+def _install_embed(args) -> int:
+    """Install embed optional dependencies."""
     # Check if already installed
     if embed_installed():
         print("Embed dependencies already installed.")
@@ -203,24 +198,115 @@ def cmd_install(args) -> int:
     return 0
 
 
+def _find_plugin_source() -> Path | None:
+    """Locate the bundled plugin directory.
+
+    Checks importlib.resources first (wheel installs), then falls back
+    to repo root for editable installs.
+    """
+    ref = importlib.resources.files("siftd").joinpath("plugin")
+    # as_file works for both wheel (returns extracted path) and editable (returns fs path)
+    with importlib.resources.as_file(ref) as path:
+        if path.is_dir():
+            return path
+
+    # Editable install fallback: plugin/ lives at repo root, not src/siftd/plugin/
+    if detect_install_method() == "editable":
+        try:
+            dist = distribution("siftd")
+            direct_url_text = dist.read_text("direct_url.json")
+            if direct_url_text:
+                data = json.loads(direct_url_text)
+                url = data.get("url", "")
+                if url.startswith("file://"):
+                    repo_root = Path(url[7:])
+                    candidate = repo_root / "plugin"
+                    if candidate.is_dir():
+                        return candidate
+        except Exception:
+            pass
+
+    return None
+
+
+def _install_plugin(args) -> int:
+    """Install the bundled Claude Code plugin."""
+    source_path = _find_plugin_source()
+    if source_path is None:
+        print("Error: Bundled plugin files not found in this installation.", file=sys.stderr)
+        return 1
+
+    # Determine target directory
+    scope = getattr(args, "scope", "user")
+    if scope == "project":
+        target = Path.cwd() / ".claude" / "plugins" / "siftd"
+    else:
+        target = Path.home() / ".claude" / "plugins" / "siftd"
+
+    if args.dry_run:
+        print(f"Source: {source_path}")
+        print(f"Target: {target}")
+        print(f"Scope:  {scope}")
+        return 0
+
+    # Clean replace — remove stale files (symlinks from dev-mode --plugin-dir)
+    if target.is_symlink():
+        target.unlink()
+    elif target.exists():
+        shutil.rmtree(target)
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source_path, target)
+
+    # Verify manifest exists
+    manifest = target / ".claude-plugin" / "plugin.json"
+    if not manifest.exists():
+        print("Warning: Plugin copied but plugin.json not found at expected location.", file=sys.stderr)
+        return 1
+
+    print(f"Installed plugin to {target}")
+    print(f"Scope: {scope}")
+    return 0
+
+
+def cmd_install(args) -> int:
+    """Install optional dependencies or bundled components."""
+    if args.extra == "embed":
+        return _install_embed(args)
+    elif args.extra == "plugin":
+        return _install_plugin(args)
+
+    # argparse choices should prevent reaching here
+    print(f"Unknown extra: {args.extra}")
+    return 1
+
+
 def build_install_parser(subparsers) -> None:
     """Add the 'install' subparser to the CLI."""
     p_install = subparsers.add_parser(
         "install",
-        help="Install optional dependencies",
+        help="Install optional dependencies or bundled components",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   siftd install embed             # install semantic search dependencies
-  siftd install embed --dry-run   # show what would be installed""",
+  siftd install embed --dry-run   # show what would be installed
+  siftd install plugin            # install Claude Code plugin (user scope)
+  siftd install plugin --scope project  # install for current project only""",
     )
     p_install.add_argument(
         "extra",
-        choices=["embed"],
-        help="Optional extra to install",
+        choices=["embed", "plugin"],
+        help="Component to install (embed: semantic search deps, plugin: Claude Code plugin)",
     )
     p_install.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be run without executing",
+    )
+    p_install.add_argument(
+        "--scope",
+        choices=["user", "project"],
+        default="user",
+        help="Plugin install scope: user (~/.claude/plugins/) or project (.claude/plugins/)",
     )
     p_install.set_defaults(func=cmd_install)

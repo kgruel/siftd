@@ -12,6 +12,7 @@ How siftd works under the hood.
 
 ## Guides
 
+- [Installation](guides/install.md) — installing siftd and the Claude Code plugin
 - [Writing Adapters](guides/writing-adapters.md) — build a custom log parser
 
 ## Reference
