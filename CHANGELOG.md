@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-02-12
+
 ### Added
 
+- **`siftd install plugin`** — Install the bundled Claude Code plugin to user or project scope:
+  - Bundles plugin into wheel via hatch force-include
+  - `--scope user` (default) installs to `~/.claude/plugins/siftd/`
+  - `--scope project` installs to `.claude/plugins/siftd/`
+  - Symlink-safe cleanup replaces dev-mode symlinks with real directories
+  - `--dry-run` shows source/target without writing
 - **`db merge`** — Import an external database (slice) into the main database:
   - Vocabulary ID remapping — same harness/model/workspace with different ULIDs across machines are matched by natural key
   - Workspace matching by `git_remote` (priority) with `path` fallback
@@ -17,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `--dry-run` previews merge counts without modifying the target
   - Schema version guard rejects cross-version merges
   - Content blob dedup via SHA256, ref_count recomputation, FK integrity validation
+- **`db push`** — Push conversations to a shared remote database
+- **Tags temporal filtering** — `siftd tags` accepts `--since`/`--until` for time-scoped tag views
+- **Installation guide** — New `docs/guides/install.md` covering siftd and plugin setup
+
+### Changed
+
+- Plugin consolidated to single skill with slash commands
+- Concept docs rewritten; example outputs updated to match actual CLI formats
+- CLI help text reorganized by functional group
 
 ## [0.4.5] - 2026-02-10
 
