@@ -15,7 +15,8 @@ pipx install siftd
 pip install siftd
 
 # macOS via Homebrew
-brew install kgruel/tap/siftd
+brew tap kgruel/siftd
+brew install siftd
 ```
 
 ### Optional: embeddings
@@ -81,6 +82,6 @@ siftd search "your query"       # search
 | `uv tool` | `uv tool upgrade siftd` |
 | `pipx` | `pipx upgrade siftd` |
 | `pip` | `pip install --upgrade siftd` |
-| Homebrew | `brew upgrade siftd` |
+| Homebrew | `brew update && brew upgrade siftd` |
 
 After upgrading siftd, re-run `siftd install plugin` to update the bundled plugin files.
