@@ -1,5 +1,0 @@
-[
-  {"step": "Implement follow loop fixes and peek exchange handling", "done": true},
-  {"step": "Update tool hint keys and add tests for new scenarios", "done": true},
-  {"step": "Run ./dev check and commit changes", "done": true}
-]
