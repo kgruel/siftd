@@ -97,6 +97,112 @@ def set_config(key: str, value: str) -> None:
     path.write_text(tomlkit.dumps(doc))
 
 
+def _ensure_parent_table(doc: TOMLDocument, parts: list[str]) -> Container:
+    """Return parent container for a dotted key, creating tables as needed."""
+    current: Container = doc
+    for part in parts[:-1]:
+        if part not in current:
+            current[part] = tomlkit.table()
+        elif not isinstance(current[part], dict):
+            raise ValueError(f"Config path '{'.'.join(parts[:-1])}' is not a table")
+        current = cast(Container, current[part])
+    if not isinstance(current, dict):
+        raise ValueError(f"Config path '{'.'.join(parts[:-1])}' is not a table")
+    return current
+
+
+def _get_parent_table(doc: TOMLDocument, parts: list[str]) -> Container | None:
+    """Return parent container for a dotted key, or None if missing/invalid."""
+    current: Container = doc
+    for part in parts[:-1]:
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = cast(Container, current[part])
+    if not isinstance(current, dict):
+        return None
+    return current
+
+
+def append_config_list(key: str, value: str) -> bool:
+    """Append a value to a list-valued config key.
+
+    Creates intermediate tables and list if missing. Returns True if changed.
+    Raises ValueError if the key exists and is not a list.
+    """
+    path = config_file()
+
+    if path.exists():
+        try:
+            doc = tomlkit.parse(path.read_text())
+        except tomlkit.exceptions.TOMLKitError:
+            doc = tomlkit.document()
+    else:
+        doc = tomlkit.document()
+
+    parts = key.split(".")
+    parent = _ensure_parent_table(doc, parts)
+    leaf = parts[-1]
+
+    existing = parent.get(leaf)
+    if existing is None:
+        arr = tomlkit.array()
+        arr.append(value)
+        parent[leaf] = arr
+        config_dir().mkdir(parents=True, exist_ok=True)
+        path.write_text(tomlkit.dumps(doc))
+        return True
+
+    if not isinstance(existing, list):
+        raise ValueError(f"Config key '{key}' is not a list")
+
+    if value in existing:
+        return False
+
+    existing.append(value)
+    config_dir().mkdir(parents=True, exist_ok=True)
+    path.write_text(tomlkit.dumps(doc))
+    return True
+
+
+def remove_config_list(key: str, value: str) -> bool:
+    """Remove a value from a list-valued config key.
+
+    Returns True if a value was removed, False otherwise.
+    Raises ValueError if the key exists and is not a list.
+    """
+    path = config_file()
+    if not path.exists():
+        return False
+
+    try:
+        doc = tomlkit.parse(path.read_text())
+    except tomlkit.exceptions.TOMLKitError:
+        return False
+
+    parts = key.split(".")
+    parent = _get_parent_table(doc, parts)
+    if parent is None:
+        return False
+    leaf = parts[-1]
+
+    existing = parent.get(leaf)
+    if existing is None:
+        return False
+    if not isinstance(existing, list):
+        raise ValueError(f"Config key '{key}' is not a list")
+
+    changed = False
+    while value in existing:
+        existing.remove(value)
+        changed = True
+
+    if not changed:
+        return False
+
+    path.write_text(tomlkit.dumps(doc))
+    return True
+
+
 def get_search_defaults() -> dict:
     """Get default values for 'siftd search' command from config.
 

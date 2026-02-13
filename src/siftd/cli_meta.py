@@ -224,7 +224,12 @@ def cmd_path(args) -> int:
 
 def cmd_config(args) -> int:
     """View or modify config settings."""
-    from siftd.config import get_config, set_config
+    from siftd.config import (
+        append_config_list,
+        get_config,
+        remove_config_list,
+        set_config,
+    )
 
     # siftd config path
     if args.action == "path":
@@ -254,6 +259,40 @@ def cmd_config(args) -> int:
         # Re-read to show stored value (confirms type coercion)
         stored = get_config(args.key)
         print(f"Set {args.key} = {stored}")
+        return 0
+
+    # siftd config append <key> <value>
+    if args.action == "append":
+        if not args.key or args.value is None:
+            print("Usage: siftd config append <key> <value>")
+            print("Example: siftd config append adapters.claude_code.locations ~/.claude/projects")
+            return 1
+        try:
+            changed = append_config_list(args.key, args.value)
+        except ValueError as exc:
+            print(str(exc))
+            return 1
+        if changed:
+            print(f"Appended {args.value} to {args.key}")
+        else:
+            print(f"Value already present for {args.key}")
+        return 0
+
+    # siftd config remove <key> <value>
+    if args.action == "remove":
+        if not args.key or args.value is None:
+            print("Usage: siftd config remove <key> <value>")
+            print("Example: siftd config remove adapters.claude_code.locations ~/.claude/projects")
+            return 1
+        try:
+            changed = remove_config_list(args.key, args.value)
+        except ValueError as exc:
+            print(str(exc))
+            return 1
+        if not changed:
+            print(f"Value not found for {args.key}: {args.value}")
+            return 1
+        print(f"Removed {args.value} from {args.key}")
         return 0
 
     # siftd config (show all)
@@ -356,11 +395,22 @@ def build_meta_parser(subparsers) -> None:
   siftd config                        # show all config
   siftd config path                   # show config file path
   siftd config get search.formatter      # get specific value
-  siftd config set search.formatter verbose  # set value""",
+  siftd config set search.formatter verbose  # set value
+  siftd config append adapters.claude_code.locations ~/.claude/projects
+  siftd config remove adapters.claude_code.locations ~/.claude/projects""",
     )
-    p_config.add_argument("action", nargs="?", choices=["get", "set", "path"], help="Action to perform")
+    p_config.add_argument(
+        "action",
+        nargs="?",
+        choices=["get", "set", "path", "append", "remove"],
+        help="Action to perform",
+    )
     p_config.add_argument("key", nargs="?", help="Config key (dotted path, e.g., search.formatter)")
-    p_config.add_argument("value", nargs="?", help="Value to set (for 'set' action)")
+    p_config.add_argument(
+        "value",
+        nargs="?",
+        help="Value to use (for 'set', 'append', 'remove')",
+    )
     p_config.set_defaults(func=cmd_config)
 
     # adapters

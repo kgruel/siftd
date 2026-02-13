@@ -103,6 +103,90 @@ class TestSetConfig:
         assert get_config("search.formatter") == "verbose"
 
 
+class TestConfigListOps:
+    def test_append_creates_list(self, config_dir):
+        from siftd.config import append_config_list, load_config
+
+        changed = append_config_list(
+            "adapters.claude_code.locations", "~/.claude/projects"
+        )
+
+        assert changed is True
+        doc = load_config()
+        assert doc["adapters"]["claude_code"]["locations"] == ["~/.claude/projects"]
+
+    def test_append_dedup(self, config_dir):
+        from siftd.config import append_config_list, load_config
+
+        append_config_list("adapters.claude_code.locations", "~/.claude/projects")
+        changed = append_config_list(
+            "adapters.claude_code.locations", "~/.claude/projects"
+        )
+
+        assert changed is False
+        doc = load_config()
+        assert doc["adapters"]["claude_code"]["locations"] == ["~/.claude/projects"]
+
+    def test_append_non_list_raises(self, config_dir):
+        from siftd.config import append_config_list
+
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.toml").write_text('[search]\nformatter = "json"\n')
+
+        with pytest.raises(ValueError):
+            append_config_list("search.formatter", "verbose")
+
+    def test_remove_value(self, config_dir):
+        from siftd.config import load_config, remove_config_list
+
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.toml").write_text(
+            '[adapters.claude_code]\nlocations = ["a", "b", "a"]\n'
+        )
+
+        changed = remove_config_list("adapters.claude_code.locations", "a")
+
+        assert changed is True
+        doc = load_config()
+        assert doc["adapters"]["claude_code"]["locations"] == ["b"]
+
+    def test_remove_leaves_empty_list(self, config_dir):
+        from siftd.config import load_config, remove_config_list
+
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.toml").write_text(
+            '[adapters.claude_code]\nlocations = ["a"]\n'
+        )
+
+        changed = remove_config_list("adapters.claude_code.locations", "a")
+
+        assert changed is True
+        doc = load_config()
+        assert doc["adapters"]["claude_code"]["locations"] == []
+
+    def test_remove_missing_value(self, config_dir):
+        from siftd.config import load_config, remove_config_list
+
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.toml").write_text(
+            '[adapters.claude_code]\nlocations = ["a"]\n'
+        )
+
+        changed = remove_config_list("adapters.claude_code.locations", "b")
+
+        assert changed is False
+        doc = load_config()
+        assert doc["adapters"]["claude_code"]["locations"] == ["a"]
+
+    def test_remove_non_list_raises(self, config_dir):
+        from siftd.config import remove_config_list
+
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.toml").write_text('[search]\nformatter = "json"\n')
+
+        with pytest.raises(ValueError):
+            remove_config_list("search.formatter", "json")
+
 class TestGetSearchDefaults:
     def test_returns_formatter_as_format(self, config_dir):
         from siftd.config import get_search_defaults

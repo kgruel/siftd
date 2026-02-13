@@ -202,21 +202,24 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[config]
   '''
-  usage: siftd config [-h] [{get,set,path}] [key] [value]
+  usage: siftd config [-h] [{get,set,path,append,remove}] [key] [value]
   
   positional arguments:
-    {get,set,path}  Action to perform
-    key             Config key (dotted path, e.g., search.formatter)
-    value           Value to set (for 'set' action)
+    {get,set,path,append,remove}
+                          Action to perform
+    key                   Config key (dotted path, e.g., search.formatter)
+    value                 Value to use (for 'set', 'append', 'remove')
   
   options:
-    -h, --help      show this help message and exit
+    -h, --help            show this help message and exit
   
   examples:
     siftd config                        # show all config
     siftd config path                   # show config file path
     siftd config get search.formatter      # get specific value
     siftd config set search.formatter verbose  # set value
+    siftd config append adapters.claude_code.locations ~/.claude/projects
+    siftd config remove adapters.claude_code.locations ~/.claude/projects
   
   '''
 # ---
