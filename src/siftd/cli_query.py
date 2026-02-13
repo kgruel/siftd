@@ -23,8 +23,18 @@ def _apply_query_config(args) -> None:
             setattr(args, key, defaults.get(key, hardcoded[key]))
 
 
+def _apply_tools_config(args) -> None:
+    """Apply config defaults to tools args where CLI didn't provide a value."""
+    from siftd.config import get_tools_defaults
+
+    defaults = get_tools_defaults()
+    if getattr(args, "limit", None) is None:
+        args.limit = defaults.get("limit", 20)
+
+
 def cmd_tools(args) -> int:
     """Show tool usage summary by category."""
+    _apply_tools_config(args)
     from siftd.api import get_tool_tag_summary, get_tool_tags_by_workspace
 
     db = resolve_db(args)
@@ -511,7 +521,7 @@ def build_query_parser(subparsers) -> None:
     )
     p_tools.add_argument("--by-workspace", action="store_true", help="Show breakdown by workspace")
     p_tools.add_argument("--prefix", metavar="PREFIX", help="Tag prefix to filter (default: shell:)")
-    p_tools.add_argument("-n", "--limit", type=int, default=20, help="Max workspaces for --by-workspace (default: 20)")
+    p_tools.add_argument("-n", "--limit", type=int, default=None, help="Max workspaces for --by-workspace (default: 20)")
     p_tools.add_argument("--json", action="store_true", help="Output as JSON")
     p_tools.set_defaults(func=cmd_tools)
 

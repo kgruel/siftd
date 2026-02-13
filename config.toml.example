@@ -24,6 +24,12 @@
 # chars = 200         # truncate text at N characters in detail view
 # tool_chars = 120    # truncate tool input/result at N characters
 
+# --- Tools ---
+# Default display settings for 'siftd tools'.
+# CLI flag (-n) overrides this.
+[tools]
+# limit = 20          # max workspaces for --by-workspace
+
 # --- Ingestion ---
 # filter_binary: strip large base64 images, PDFs, and similar binary blobs
 # during ingest. Reduces database size with minimal information loss.

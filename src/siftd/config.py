@@ -136,6 +136,27 @@ def get_query_defaults() -> dict:
     return defaults
 
 
+def get_tools_defaults() -> dict:
+    """Get default values for 'siftd tools' command from config.
+
+    Reads [tools] section. Returns dict with int-valued keys only (limit).
+    """
+    doc = load_config()
+    defaults = {}
+
+    tools_config = doc.get("tools", {})
+    if isinstance(tools_config, dict):
+        for key in ("limit",):
+            raw = tools_config.get(key)
+            if raw is not None:
+                try:
+                    defaults[key] = int(raw)
+                except (ValueError, TypeError):
+                    pass
+
+    return defaults
+
+
 def get_adapter_locations(name: str) -> list[str] | None:
     """Get configured discovery locations for an adapter.
 

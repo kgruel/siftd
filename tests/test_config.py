@@ -326,6 +326,61 @@ class TestApplyQueryConfig:
         assert args.tool_chars == 120
 
 
+class TestGetToolsDefaults:
+    def test_configured_limit(self, config_dir):
+        from siftd.config import get_tools_defaults
+
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.toml").write_text("[tools]\nlimit = 50\n")
+
+        assert get_tools_defaults() == {"limit": 50}
+
+    def test_empty_config(self, config_dir):
+        from siftd.config import get_tools_defaults
+
+        assert get_tools_defaults() == {}
+
+    def test_non_int_rejected(self, config_dir):
+        from siftd.config import get_tools_defaults
+
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.toml").write_text('[tools]\nlimit = "all"\n')
+
+        assert get_tools_defaults() == {}
+
+
+class TestApplyToolsConfig:
+    def test_config_applied(self, config_dir):
+        from siftd.cli_query import _apply_tools_config
+
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.toml").write_text("[tools]\nlimit = 50\n")
+
+        args = argparse.Namespace(limit=None)
+        _apply_tools_config(args)
+
+        assert args.limit == 50
+
+    def test_cli_overrides_config(self, config_dir):
+        from siftd.cli_query import _apply_tools_config
+
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.toml").write_text("[tools]\nlimit = 50\n")
+
+        args = argparse.Namespace(limit=10)
+        _apply_tools_config(args)
+
+        assert args.limit == 10
+
+    def test_hardcoded_fallback(self, config_dir):
+        from siftd.cli_query import _apply_tools_config
+
+        args = argparse.Namespace(limit=None)
+        _apply_tools_config(args)
+
+        assert args.limit == 20
+
+
 class TestApplySearchConfig:
     def test_applies_default_formatter(self, config_dir):
         from siftd.cli_search import _apply_search_config
