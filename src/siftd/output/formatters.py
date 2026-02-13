@@ -9,10 +9,10 @@ import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from statistics import mean as _mean
 from typing import Protocol
 
+from siftd.output.common import fmt_workspace, truncate_text
 from siftd.storage.queries import fetch_prompt_response_texts
 
 
@@ -51,13 +51,6 @@ def _get_conversation_metadata(
         conv_ids,
     ).fetchall()
     return {row["id"]: dict(row) for row in meta_rows}
-
-
-def _format_workspace(path: str | None) -> str:
-    """Format workspace path to just the directory name."""
-    if not path:
-        return ""
-    return Path(path).name
 
 
 def format_refs_annotation(refs: list, *, max_shown: int = 5) -> str:
@@ -150,7 +143,7 @@ class ChunkListFormatter:
             conv_id = r["conversation_id"]
             m = meta.get(conv_id, {})
             short_id = conv_id[:12]
-            workspace = _format_workspace(m.get("workspace"))
+            workspace = fmt_workspace(m.get("workspace"))
             started = (m.get("started_at") or "")[:10]
             side = r["chunk_type"].upper()
             score = r["score"]
@@ -158,9 +151,7 @@ class ChunkListFormatter:
             print(f"  {short_id}  {score:.3f}  [{side:8s}]  {started}  {workspace}")
 
             # Default: truncated snippet
-            snippet = r["text"][:200].replace("\n", " ")
-            if len(r["text"]) > 200:
-                snippet += "..."
+            snippet = truncate_text(r["text"], 200).replace("\n", " ")
             print(f"    {snippet}")
 
             # File refs annotation
@@ -196,7 +187,7 @@ class VerboseFormatter:
             conv_id = r["conversation_id"]
             m = meta.get(conv_id, {})
             short_id = conv_id[:12]
-            workspace = _format_workspace(m.get("workspace"))
+            workspace = fmt_workspace(m.get("workspace"))
             started = (m.get("started_at") or "")[:10]
             side = r["chunk_type"].upper()
             score = r["score"]
@@ -240,7 +231,7 @@ class FullExchangeFormatter:
             conv_id = r["conversation_id"]
             m = meta.get(conv_id, {})
             short_id = conv_id[:12]
-            workspace = _format_workspace(m.get("workspace"))
+            workspace = fmt_workspace(m.get("workspace"))
             started = (m.get("started_at") or "")[:10]
             side = r["chunk_type"].upper()
             score = r["score"]
@@ -307,7 +298,7 @@ class ContextFormatter:
             conv_id = r["conversation_id"]
             m = meta.get(conv_id, {})
             short_id = conv_id[:12]
-            workspace = _format_workspace(m.get("workspace"))
+            workspace = fmt_workspace(m.get("workspace"))
             started = (m.get("started_at") or "")[:10]
             side = r["chunk_type"].upper()
             score = r["score"]
@@ -404,7 +395,7 @@ class ThreadFormatter:
         # --- Tier 1: Narrative thread ---
         for cid in tier1_ids:
             m = meta.get(cid, {})
-            workspace = _format_workspace(m.get("workspace"))
+            workspace = fmt_workspace(m.get("workspace"))
             started = (m.get("started_at") or "")[:10]
 
             print(
@@ -421,8 +412,7 @@ class ThreadFormatter:
                 # Fallback: show chunk text with type label
                 side = "[user]" if best["chunk_type"] == "prompt" else "[asst]"
                 text = best["text"].strip()
-                if len(text) > 600:
-                    text = text[:600] + "..."
+                text = truncate_text(text, 600)
                 print(f"  {side} {text}")
 
             # File refs annotation
@@ -440,15 +430,13 @@ class ThreadFormatter:
             for cid in tier2_ids:
                 m = meta.get(cid, {})
                 short_id = cid[:12]
-                workspace = _format_workspace(m.get("workspace"))
+                workspace = fmt_workspace(m.get("workspace"))
                 started = (m.get("started_at") or "")[:10]
                 score = conv_scores[cid]
 
                 # Snippet from best chunk
                 best = max(conv_chunks[cid], key=lambda c: c["score"])
-                snippet = best["text"][:120].replace("\n", " ")
-                if len(best["text"]) > 120:
-                    snippet += "..."
+                snippet = truncate_text(best["text"], 120).replace("\n", " ")
 
                 # File count tag
                 file_refs = best.get("file_refs", [])
@@ -466,13 +454,11 @@ class ThreadFormatter:
         for _pid, prompt_text, response_text in exchanges:
             if prompt_text:
                 # Truncate very long prompts sensibly
-                if len(prompt_text) > 500:
-                    prompt_text = prompt_text[:500] + "..."
+                prompt_text = truncate_text(prompt_text, 500)
                 print(f"  [user] {prompt_text}")
             if response_text:
                 # Truncate very long responses
-                if len(response_text) > 800:
-                    response_text = response_text[:800] + "..."
+                response_text = truncate_text(response_text, 800)
                 print(f"  [asst] {response_text}")
 
         if not exchanges:
@@ -520,7 +506,7 @@ class ConversationFormatter:
             conv_id = c["conversation_id"]
             m = meta.get(conv_id, {})
             short_id = conv_id[:12]
-            workspace = _format_workspace(m.get("workspace"))
+            workspace = fmt_workspace(m.get("workspace"))
             started = (m.get("started_at") or "")[:10]
             max_s = c["max_score"]
             mean_s = c["mean_score"]
@@ -529,9 +515,7 @@ class ConversationFormatter:
             print(
                 f"  {short_id}  max={max_s:.3f}  mean={mean_s:.3f}  [{n_chunks} chunks]  {started}  {workspace}"
             )
-            snippet = c["best_excerpt"][:200].replace("\n", " ")
-            if len(c["best_excerpt"]) > 200:
-                snippet += "..."
+            snippet = truncate_text(c["best_excerpt"], 200).replace("\n", " ")
             print(f"    {snippet}")
             print()
 

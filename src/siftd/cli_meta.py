@@ -173,7 +173,7 @@ def cmd_status(args) -> int:
 def cmd_workspaces(args) -> int:
     """List workspaces with conversation counts."""
     db = resolve_db(args)
-    from siftd.output import fmt_timestamp
+    from siftd.output import fmt_timestamp, fmt_workspace
 
     if not db.exists():
         if args.json:
@@ -205,7 +205,7 @@ def cmd_workspaces(args) -> int:
         return 0
 
     for row in rows:
-        name = Path(row["path"]).name if row["path"] else ""
+        name = fmt_workspace(row["path"])
         last_activity = fmt_timestamp(row["last_activity"])
         last_str = f"  last {last_activity}" if last_activity else ""
         print(f"{name}  {row['convs']} conversations{last_str}")

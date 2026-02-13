@@ -13,6 +13,7 @@ from siftd.api.conversations import (
     get_conversation,
     list_conversations,
 )
+from siftd.output.common import fmt_model, fmt_timestamp, fmt_workspace, truncate_text
 
 
 @dataclass
@@ -140,12 +141,15 @@ def format_prompts(
         if not no_header:
             # Session header
             header_parts = []
-            if conv.workspace_name:
-                header_parts.append(conv.workspace_name)
-            if conv.started_at:
-                # Format: 2026-01-28 10:30
-                date_str = conv.started_at[:16].replace("T", " ")
-                header_parts.append(date_str)
+            ws = fmt_workspace(conv.workspace_path)
+            if ws:
+                header_parts.append(ws)
+            ts = fmt_timestamp(conv.started_at)
+            if ts:
+                header_parts.append(ts)
+            model = fmt_model(conv.model)
+            if model:
+                header_parts.append(model)
 
             lines.append(f"## Session {conv.id[:12]}")
             if header_parts:
@@ -188,11 +192,15 @@ def format_exchanges(
     for conv in conversations:
         if not no_header:
             header_parts = []
-            if conv.workspace_name:
-                header_parts.append(conv.workspace_name)
-            if conv.started_at:
-                date_str = conv.started_at[:16].replace("T", " ")
-                header_parts.append(date_str)
+            ws = fmt_workspace(conv.workspace_path)
+            if ws:
+                header_parts.append(ws)
+            ts = fmt_timestamp(conv.started_at)
+            if ts:
+                header_parts.append(ts)
+            model = fmt_model(conv.model)
+            if model:
+                header_parts.append(model)
 
             lines.append(f"## Session {conv.id[:12]}")
             if header_parts:
@@ -209,9 +217,7 @@ def format_exchanges(
 
                 if not prompts_only and ex.response_text:
                     # Truncate long responses
-                    response = ex.response_text
-                    if len(response) > 500:
-                        response = response[:500] + "..."
+                    response = truncate_text(ex.response_text, 500)
                     lines.append(f"**Assistant:** {response}")
                     lines.append("")
 

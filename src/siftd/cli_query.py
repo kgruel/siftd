@@ -68,7 +68,7 @@ def cmd_tools(args) -> int:
             return 0
 
         for ws_usage in results:
-            ws_display = Path(ws_usage.workspace).name if ws_usage.workspace != "(no workspace)" else ws_usage.workspace
+            ws_display = fmt_workspace(ws_usage.workspace)
             print(f"\n{ws_display} ({ws_usage.total} total)")
             for tag in ws_usage.tags:
                 # Strip prefix for display
