@@ -51,6 +51,19 @@ def get_config(key: str) -> str | None:
     return str(current) if current is not None else None
 
 
+def _coerce_value(value: str) -> str | bool:
+    """Coerce CLI string value to appropriate TOML type.
+
+    Detects "true"/"false" (case-insensitive) as booleans.
+    Everything else passes through as string.
+    """
+    if value.lower() == "true":
+        return True
+    if value.lower() == "false":
+        return False
+    return value
+
+
 def set_config(key: str, value: str) -> None:
     """Set config value by dotted key path (e.g., 'ask.formatter').
 
@@ -76,8 +89,8 @@ def set_config(key: str, value: str) -> None:
             current[part] = tomlkit.table()
         current = current[part]
 
-    # Set the final value
-    cast(Container, current)[parts[-1]] = value
+    # Set the final value (with type coercion)
+    cast(Container, current)[parts[-1]] = _coerce_value(value)
 
     # Ensure config directory exists and write
     config_dir().mkdir(parents=True, exist_ok=True)
@@ -99,6 +112,47 @@ def get_search_defaults() -> dict:
             defaults["format"] = str(search_config["formatter"])
 
     return defaults
+
+
+def get_query_defaults() -> dict:
+    """Get default values for 'siftd query' command from config.
+
+    Reads [query] section. Returns dict with int-valued keys only
+    (limit, chars, tool_chars). Non-int values are silently skipped.
+    """
+    doc = load_config()
+    defaults = {}
+
+    query_config = doc.get("query", {})
+    if isinstance(query_config, dict):
+        for key in ("limit", "chars", "tool_chars"):
+            raw = query_config.get(key)
+            if raw is not None:
+                try:
+                    defaults[key] = int(raw)
+                except (ValueError, TypeError):
+                    pass  # skip non-int values
+
+    return defaults
+
+
+def get_adapter_locations(name: str) -> list[str] | None:
+    """Get configured discovery locations for an adapter.
+
+    Reads [adapters.<name>].locations as a TOML array.
+    Returns None if unconfigured.
+    """
+    doc = load_config()
+    adapters_config = doc.get("adapters", {})
+    if not isinstance(adapters_config, dict):
+        return None
+    adapter_config = adapters_config.get(name, {})
+    if not isinstance(adapter_config, dict):
+        return None
+    locations = adapter_config.get("locations")
+    if isinstance(locations, list):
+        return [str(loc) for loc in locations]
+    return None
 
 
 def get_sync_remotes() -> list[dict]:

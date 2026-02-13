@@ -11,6 +11,18 @@ from siftd.output import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace, tr
 from siftd.paths import queries_dir
 
 
+def _apply_query_config(args) -> None:
+    """Apply config defaults to query args where CLI didn't provide a value."""
+    from siftd.config import get_query_defaults
+
+    defaults = get_query_defaults()
+    hardcoded = {"limit": 10, "chars": 200, "tool_chars": 120}
+
+    for key in ("limit", "chars", "tool_chars"):
+        if getattr(args, key, None) is None:
+            setattr(args, key, defaults.get(key, hardcoded[key]))
+
+
 def cmd_tools(args) -> int:
     """Show tool usage summary by category."""
     from siftd.api import get_tool_tag_summary, get_tool_tags_by_workspace
@@ -178,16 +190,14 @@ def _query_detail(args) -> int:
         print(f"Conversation not found: {args.conversation_id}")
         return 1
 
-    # Determine truncation limit
-    chars_limit = 200  # default
+    # Determine truncation limit (config defaults already applied by cmd_query)
+    chars_limit = args.chars
     if getattr(args, "brief", False):
         chars_limit = 80
     elif getattr(args, "full", False):
         chars_limit = 0  # no truncation
-    elif getattr(args, "chars", None) is not None:
-        chars_limit = args.chars
 
-    tool_chars = getattr(args, "tool_chars", 120)
+    tool_chars = args.tool_chars
 
     # Header
     ws_name = fmt_workspace(detail.workspace_path)
@@ -339,6 +349,8 @@ def _query_sql(args) -> int:
 
 def cmd_query(args) -> int:
     """List conversations with composable filters."""
+    _apply_query_config(args)
+
     # Dispatch to sql subcommand if conversation_id is "sql"
     if args.conversation_id == "sql":
         return _query_sql(args)
@@ -541,7 +553,7 @@ examples:
 
     # Output options
     output_group = p_query.add_argument_group("output")
-    output_group.add_argument("-n", "--limit", type=int, default=10, help="Number of conversations to show (0=all, default: 10)")
+    output_group.add_argument("-n", "--limit", type=int, default=None, help="Number of conversations to show (0=all, default: 10)")
     output_group.add_argument("-v", "--verbose", action="store_true", help="Full table with all columns")
     output_group.add_argument("--oldest", action="store_true", help="Sort by oldest first (default: newest first)")
     output_group.add_argument("--json", action="store_true", help="Output as JSON array")
@@ -557,7 +569,7 @@ examples:
     detail_group.add_argument("--thinking", action="store_true", help="Show model thinking/reasoning blocks")
     detail_group.add_argument("--tools", nargs="?", const="all", metavar="FILTER",
         help="Show tool inputs/results (optional filter: tool name prefix or 'errors')")
-    detail_group.add_argument("--tool-chars", type=int, metavar="N", default=120,
+    detail_group.add_argument("--tool-chars", type=int, metavar="N", default=None,
         help="Truncate tool input/result at N characters (default: 120)")
 
     # SQL query options

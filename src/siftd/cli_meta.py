@@ -251,7 +251,9 @@ def cmd_config(args) -> int:
             print("Example: siftd config set search.formatter verbose")
             return 1
         set_config(args.key, args.value)
-        print(f"Set {args.key} = {args.value}")
+        # Re-read to show stored value (confirms type coercion)
+        stored = get_config(args.key)
+        print(f"Set {args.key} = {stored}")
         return 0
 
     # siftd config (show all)

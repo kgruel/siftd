@@ -1,0 +1,50 @@
+# siftd configuration
+# Copy to ~/.config/siftd/config.toml (or $XDG_CONFIG_HOME/siftd/config.toml)
+#
+# All values shown are the defaults. Uncomment and modify as needed.
+
+# --- Database ---
+# Override the default database path (~/.local/share/siftd/siftd.db).
+# Tilde (~) is expanded. Affects all commands via resolve_db().
+[db]
+# path = "~/.local/share/siftd/siftd.db"
+
+# --- Search ---
+# Default output formatter for 'siftd search'.
+# CLI flags (--verbose, --thread, --json, etc.) override this.
+# Valid values: any registered formatter name (verbose, thread, json, ...)
+[search]
+# formatter = ""
+
+# --- Query ---
+# Default display settings for 'siftd query'.
+# CLI flags (-n, --chars, --tool-chars) override these.
+[query]
+# limit = 10          # conversations to show (0 = all)
+# chars = 200         # truncate text at N characters in detail view
+# tool_chars = 120    # truncate tool input/result at N characters
+
+# --- Ingestion ---
+# filter_binary: strip large base64 images, PDFs, and similar binary blobs
+# during ingest. Reduces database size with minimal information loss.
+[ingestion]
+# filter_binary = true
+
+# --- Adapters ---
+# Override discovery locations for built-in or drop-in adapters.
+# Each adapter can have a 'locations' array of directory paths.
+# Useful when tool data lives in a non-default location (e.g., XDG migration).
+#
+# [adapters.claude_code]
+# locations = ["~/.claude/projects", "/other/path"]
+#
+# [adapters.aider]
+# locations = ["~/.aider"]
+
+# --- Sync ---
+# Remotes for 'siftd db push/pull'. Managed via 'siftd db remote add/remove'
+# but can also be hand-edited here.
+#
+# [sync.remotes.example]
+# host = "myserver"          # SSH hostname (omit for local paths)
+# path = "/data/siftd/team.db"
