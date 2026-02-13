@@ -8,7 +8,8 @@ Example config:
 """
 
 import sys
-from typing import cast
+from collections.abc import Callable, Iterable
+from typing import NamedTuple, cast
 
 import tomlkit
 import tomlkit.exceptions
@@ -18,6 +19,101 @@ from tomlkit.container import Container
 from siftd.paths import config_dir, config_file
 
 
+class _SchemaEntry(NamedTuple):
+    pattern: str
+    expected: str
+    validator: Callable[[object], bool]
+
+
+def _is_str(value: object) -> bool:
+    return isinstance(value, str)
+
+
+def _is_int_like(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, str):
+        try:
+            int(value)
+            return True
+        except ValueError:
+            return False
+    return False
+
+
+def _is_bool_like(value: object) -> bool:
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "false", "0", "1", "yes", "no")
+    return False
+
+
+def _is_str_list(value: object) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+_CONFIG_SCHEMA: list[_SchemaEntry] = [
+    _SchemaEntry("db.path", "string", _is_str),
+    _SchemaEntry("search.formatter", "string", _is_str),
+    _SchemaEntry("tools.limit", "int", _is_int_like),
+    _SchemaEntry("query.limit", "int", _is_int_like),
+    _SchemaEntry("query.chars", "int", _is_int_like),
+    _SchemaEntry("query.tool_chars", "int", _is_int_like),
+    _SchemaEntry("ingestion.filter_binary", "bool", _is_bool_like),
+    _SchemaEntry("adapters.*.locations", "list[string]", _is_str_list),
+    _SchemaEntry("sync.remotes.*.host", "string", _is_str),
+    _SchemaEntry("sync.remotes.*.path", "string", _is_str),
+    _SchemaEntry("sync.remotes.*.last_push", "string", _is_str),
+]
+
+
+def _match_schema(key: str) -> _SchemaEntry | None:
+    parts = key.split(".")
+    for entry in _CONFIG_SCHEMA:
+        pattern_parts = entry.pattern.split(".")
+        if len(pattern_parts) != len(parts):
+            continue
+        if all(p == "*" or p == k for p, k in zip(pattern_parts, parts)):
+            return entry
+    return None
+
+
+def _iter_config_items(obj: object, prefix: str = "") -> Iterable[tuple[str, object]]:
+    if not isinstance(obj, dict):
+        return
+    for key, value in obj.items():
+        key_str = str(key)
+        full_key = f"{prefix}.{key_str}" if prefix else key_str
+        yield full_key, value
+        if isinstance(value, dict):
+            yield from _iter_config_items(value, full_key)
+
+
+def _warn_validation(message: str) -> None:
+    print(f"Warning: {message}", file=sys.stderr)
+
+
+def _validate_config(doc: TOMLDocument) -> None:
+    for key, value in _iter_config_items(doc):
+        entry = _match_schema(key)
+        if entry is None:
+            if not isinstance(value, dict):
+                _warn_validation(f"Unknown config key '{key}'")
+            continue
+        if not entry.validator(value):
+            _warn_validation(
+                f"Config key '{key}' expects {entry.expected} but found {type(value).__name__}"
+            )
+
+
+def _ensure_known_key(key: str) -> None:
+    if _match_schema(key) is None:
+        raise ValueError(f"Unknown config key '{key}'")
+
+
 def load_config() -> TOMLDocument:
     """Load config from file, returning empty document if missing or invalid."""
     path = config_file()
@@ -25,10 +121,11 @@ def load_config() -> TOMLDocument:
         return tomlkit.document()
 
     try:
-        return tomlkit.parse(path.read_text())
+        doc = tomlkit.parse(path.read_text())
     except tomlkit.exceptions.TOMLKitError as e:
         print(f"Warning: Invalid config file {path}: {e}", file=sys.stderr)
         return tomlkit.document()
+    return doc
 
 
 def get_config(key: str) -> str | None:
@@ -68,7 +165,9 @@ def set_config(key: str, value: str) -> None:
     """Set config value by dotted key path (e.g., 'ask.formatter').
 
     Creates intermediate tables as needed. Preserves existing comments and formatting.
+    Raises ValueError for unknown keys.
     """
+    _ensure_known_key(key)
     path = config_file()
 
     # Load existing or create new

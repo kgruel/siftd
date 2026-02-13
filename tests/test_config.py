@@ -84,7 +84,7 @@ class TestSetConfig:
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('# My config\n[search]\nformatter = "json"\n')
 
-        set_config("search.limit", "20")
+        set_config("query.limit", "20")
 
         content = (config_dir / "config.toml").read_text()
         # Original comment and value should be preserved
@@ -101,6 +101,12 @@ class TestSetConfig:
         set_config("search.formatter", "verbose")
 
         assert get_config("search.formatter") == "verbose"
+
+    def test_set_rejects_unknown_key(self, config_dir):
+        from siftd.config import set_config
+
+        with pytest.raises(ValueError, match="Unknown config key"):
+            set_config("search.limit", "20")
 
 
 class TestConfigListOps:

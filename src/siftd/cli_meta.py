@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from siftd.api import list_workspaces, open_database
@@ -225,8 +226,10 @@ def cmd_path(args) -> int:
 def cmd_config(args) -> int:
     """View or modify config settings."""
     from siftd.config import (
+        _validate_config,
         append_config_list,
         get_config,
+        load_config,
         remove_config_list,
         set_config,
     )
@@ -255,7 +258,11 @@ def cmd_config(args) -> int:
             print("Usage: siftd config set <key> <value>")
             print("Example: siftd config set search.formatter verbose")
             return 1
-        set_config(args.key, args.value)
+        try:
+            set_config(args.key, args.value)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
         # Re-read to show stored value (confirms type coercion)
         stored = get_config(args.key)
         print(f"Set {args.key} = {stored}")
@@ -302,6 +309,8 @@ def cmd_config(args) -> int:
         print(f"Create one at: {path}")
         return 0
 
+    doc = load_config()
+    _validate_config(doc)
     print(path.read_text().strip())
     return 0
 
