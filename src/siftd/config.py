@@ -8,7 +8,8 @@ Example config:
 """
 
 import sys
-from typing import cast
+from collections.abc import Callable, Iterable
+from typing import NamedTuple, cast
 
 import tomlkit
 import tomlkit.exceptions
@@ -18,6 +19,101 @@ from tomlkit.container import Container
 from siftd.paths import config_dir, config_file
 
 
+class _SchemaEntry(NamedTuple):
+    pattern: str
+    expected: str
+    validator: Callable[[object], bool]
+
+
+def _is_str(value: object) -> bool:
+    return isinstance(value, str)
+
+
+def _is_int_like(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, str):
+        try:
+            int(value)
+            return True
+        except ValueError:
+            return False
+    return False
+
+
+def _is_bool_like(value: object) -> bool:
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "false", "0", "1", "yes", "no")
+    return False
+
+
+def _is_str_list(value: object) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+_CONFIG_SCHEMA: list[_SchemaEntry] = [
+    _SchemaEntry("db.path", "string", _is_str),
+    _SchemaEntry("search.formatter", "string", _is_str),
+    _SchemaEntry("tools.limit", "int", _is_int_like),
+    _SchemaEntry("query.limit", "int", _is_int_like),
+    _SchemaEntry("query.chars", "int", _is_int_like),
+    _SchemaEntry("query.tool_chars", "int", _is_int_like),
+    _SchemaEntry("ingestion.filter_binary", "bool", _is_bool_like),
+    _SchemaEntry("adapters.*.locations", "list[string]", _is_str_list),
+    _SchemaEntry("sync.remotes.*.host", "string", _is_str),
+    _SchemaEntry("sync.remotes.*.path", "string", _is_str),
+    _SchemaEntry("sync.remotes.*.last_push", "string", _is_str),
+]
+
+
+def _match_schema(key: str) -> _SchemaEntry | None:
+    parts = key.split(".")
+    for entry in _CONFIG_SCHEMA:
+        pattern_parts = entry.pattern.split(".")
+        if len(pattern_parts) != len(parts):
+            continue
+        if all(p == "*" or p == k for p, k in zip(pattern_parts, parts)):
+            return entry
+    return None
+
+
+def _iter_config_items(obj: object, prefix: str = "") -> Iterable[tuple[str, object]]:
+    if not isinstance(obj, dict):
+        return
+    for key, value in obj.items():
+        key_str = str(key)
+        full_key = f"{prefix}.{key_str}" if prefix else key_str
+        yield full_key, value
+        if isinstance(value, dict):
+            yield from _iter_config_items(value, full_key)
+
+
+def _warn_validation(message: str) -> None:
+    print(f"Warning: {message}", file=sys.stderr)
+
+
+def _validate_config(doc: TOMLDocument) -> None:
+    for key, value in _iter_config_items(doc):
+        entry = _match_schema(key)
+        if entry is None:
+            if not isinstance(value, dict):
+                _warn_validation(f"Unknown config key '{key}'")
+            continue
+        if not entry.validator(value):
+            _warn_validation(
+                f"Config key '{key}' expects {entry.expected} but found {type(value).__name__}"
+            )
+
+
+def _ensure_known_key(key: str) -> None:
+    if _match_schema(key) is None:
+        raise ValueError(f"Unknown config key '{key}'")
+
+
 def load_config() -> TOMLDocument:
     """Load config from file, returning empty document if missing or invalid."""
     path = config_file()
@@ -25,10 +121,11 @@ def load_config() -> TOMLDocument:
         return tomlkit.document()
 
     try:
-        return tomlkit.parse(path.read_text())
+        doc = tomlkit.parse(path.read_text())
     except tomlkit.exceptions.TOMLKitError as e:
         print(f"Warning: Invalid config file {path}: {e}", file=sys.stderr)
         return tomlkit.document()
+    return doc
 
 
 def get_config(key: str) -> str | None:
@@ -51,11 +148,26 @@ def get_config(key: str) -> str | None:
     return str(current) if current is not None else None
 
 
+def _coerce_value(value: str) -> str | bool:
+    """Coerce CLI string value to appropriate TOML type.
+
+    Detects "true"/"false" (case-insensitive) as booleans.
+    Everything else passes through as string.
+    """
+    if value.lower() == "true":
+        return True
+    if value.lower() == "false":
+        return False
+    return value
+
+
 def set_config(key: str, value: str) -> None:
     """Set config value by dotted key path (e.g., 'ask.formatter').
 
     Creates intermediate tables as needed. Preserves existing comments and formatting.
+    Raises ValueError for unknown keys.
     """
+    _ensure_known_key(key)
     path = config_file()
 
     # Load existing or create new
@@ -76,12 +188,118 @@ def set_config(key: str, value: str) -> None:
             current[part] = tomlkit.table()
         current = current[part]
 
-    # Set the final value
-    cast(Container, current)[parts[-1]] = value
+    # Set the final value (with type coercion)
+    cast(Container, current)[parts[-1]] = _coerce_value(value)
 
     # Ensure config directory exists and write
     config_dir().mkdir(parents=True, exist_ok=True)
     path.write_text(tomlkit.dumps(doc))
+
+
+def _ensure_parent_table(doc: TOMLDocument, parts: list[str]) -> Container:
+    """Return parent container for a dotted key, creating tables as needed."""
+    current: Container = doc
+    for part in parts[:-1]:
+        if part not in current:
+            current[part] = tomlkit.table()
+        elif not isinstance(current[part], dict):
+            raise ValueError(f"Config path '{'.'.join(parts[:-1])}' is not a table")
+        current = cast(Container, current[part])
+    if not isinstance(current, dict):
+        raise ValueError(f"Config path '{'.'.join(parts[:-1])}' is not a table")
+    return current
+
+
+def _get_parent_table(doc: TOMLDocument, parts: list[str]) -> Container | None:
+    """Return parent container for a dotted key, or None if missing/invalid."""
+    current: Container = doc
+    for part in parts[:-1]:
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = cast(Container, current[part])
+    if not isinstance(current, dict):
+        return None
+    return current
+
+
+def append_config_list(key: str, value: str) -> bool:
+    """Append a value to a list-valued config key.
+
+    Creates intermediate tables and list if missing. Returns True if changed.
+    Raises ValueError if the key exists and is not a list.
+    """
+    path = config_file()
+
+    if path.exists():
+        try:
+            doc = tomlkit.parse(path.read_text())
+        except tomlkit.exceptions.TOMLKitError:
+            doc = tomlkit.document()
+    else:
+        doc = tomlkit.document()
+
+    parts = key.split(".")
+    parent = _ensure_parent_table(doc, parts)
+    leaf = parts[-1]
+
+    existing = parent.get(leaf)
+    if existing is None:
+        arr = tomlkit.array()
+        arr.append(value)
+        parent[leaf] = arr
+        config_dir().mkdir(parents=True, exist_ok=True)
+        path.write_text(tomlkit.dumps(doc))
+        return True
+
+    if not isinstance(existing, list):
+        raise ValueError(f"Config key '{key}' is not a list")
+
+    if value in existing:
+        return False
+
+    existing.append(value)
+    config_dir().mkdir(parents=True, exist_ok=True)
+    path.write_text(tomlkit.dumps(doc))
+    return True
+
+
+def remove_config_list(key: str, value: str) -> bool:
+    """Remove a value from a list-valued config key.
+
+    Returns True if a value was removed, False otherwise.
+    Raises ValueError if the key exists and is not a list.
+    """
+    path = config_file()
+    if not path.exists():
+        return False
+
+    try:
+        doc = tomlkit.parse(path.read_text())
+    except tomlkit.exceptions.TOMLKitError:
+        return False
+
+    parts = key.split(".")
+    parent = _get_parent_table(doc, parts)
+    if parent is None:
+        return False
+    leaf = parts[-1]
+
+    existing = parent.get(leaf)
+    if existing is None:
+        return False
+    if not isinstance(existing, list):
+        raise ValueError(f"Config key '{key}' is not a list")
+
+    changed = False
+    while value in existing:
+        existing.remove(value)
+        changed = True
+
+    if not changed:
+        return False
+
+    path.write_text(tomlkit.dumps(doc))
+    return True
 
 
 def get_search_defaults() -> dict:
@@ -99,6 +317,68 @@ def get_search_defaults() -> dict:
             defaults["format"] = str(search_config["formatter"])
 
     return defaults
+
+
+def get_query_defaults() -> dict:
+    """Get default values for 'siftd query' command from config.
+
+    Reads [query] section. Returns dict with int-valued keys only
+    (limit, chars, tool_chars). Non-int values are silently skipped.
+    """
+    doc = load_config()
+    defaults = {}
+
+    query_config = doc.get("query", {})
+    if isinstance(query_config, dict):
+        for key in ("limit", "chars", "tool_chars"):
+            raw = query_config.get(key)
+            if raw is not None:
+                try:
+                    defaults[key] = int(raw)
+                except (ValueError, TypeError):
+                    pass  # skip non-int values
+
+    return defaults
+
+
+def get_tools_defaults() -> dict:
+    """Get default values for 'siftd tools' command from config.
+
+    Reads [tools] section. Returns dict with int-valued keys only (limit).
+    """
+    doc = load_config()
+    defaults = {}
+
+    tools_config = doc.get("tools", {})
+    if isinstance(tools_config, dict):
+        for key in ("limit",):
+            raw = tools_config.get(key)
+            if raw is not None:
+                try:
+                    defaults[key] = int(raw)
+                except (ValueError, TypeError):
+                    pass
+
+    return defaults
+
+
+def get_adapter_locations(name: str) -> list[str] | None:
+    """Get configured discovery locations for an adapter.
+
+    Reads [adapters.<name>].locations as a TOML array.
+    Returns None if unconfigured.
+    """
+    doc = load_config()
+    adapters_config = doc.get("adapters", {})
+    if not isinstance(adapters_config, dict):
+        return None
+    adapter_config = adapters_config.get(name, {})
+    if not isinstance(adapter_config, dict):
+        return None
+    locations = adapter_config.get("locations")
+    if isinstance(locations, list):
+        return [str(loc) for loc in locations]
+    return None
 
 
 def get_sync_remotes() -> list[dict]:

@@ -74,7 +74,12 @@ def config_file() -> Path:
 
 
 def db_path() -> Path:
-    """Return the default database path."""
+    """Return the database path, checking config override first."""
+    from siftd.config import get_config  # lazy: config imports paths
+
+    override = get_config("db.path")
+    if override:
+        return Path(override).expanduser()
     return data_dir() / "siftd.db"
 
 

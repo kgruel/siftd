@@ -101,4 +101,12 @@ def load_all_adapters(dropin_path: Path | None = None) -> list[PluginInfo]:
             seen_names.add(plugin.name)
             result.append(plugin)
 
+    # Apply config location overrides
+    from siftd.config import get_adapter_locations
+
+    for plugin in result:
+        locations = get_adapter_locations(plugin.name)
+        if locations:
+            plugin.module = wrap_adapter_paths(plugin.module, locations)
+
     return result
