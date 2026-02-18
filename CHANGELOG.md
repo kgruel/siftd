@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-02-18
+
+### Added
+
+- **4 new adapters** — Expanding tool coverage beyond the original 4:
+  - **VSCode Chat** — `~/.config/Code/User/History/chat/` (JSON and JSONL formats)
+  - **Pi Coding Agent** — `~/.pi/agent/sessions/` (JSONL with thinking blocks, tool calls, usage/cost)
+  - **OpenCode** — `~/.local/share/opencode/opencode.db` (SQLite adapter using `open_external_db()`)
+  - **Copilot CLI** — `~/.local/state/.copilot/session-state/` (JSONL with subagent tracking)
+- **Configuration surface** — Expanded `siftd config` with schema validation:
+  - `db.path` — Override default database location
+  - `query.limit`, `query.format`, `query.workspace` — Query defaults
+  - `tools.limit` — Default tool listing limit
+  - `adapter.locations.<name>` — Override adapter search paths
+  - `config set --append` / `--remove` for list-valued keys
+  - Known-keys registry with schema validation on `config set`
+- **Friendlier ingest output** — Progress reporting with per-adapter counts, timing, and `--json` flag for structured output
+- **`session-tools` bundled query** — Per-tool-call character counts for a session (`:session` named parameter)
+- **`open_external_db()`** — SDK helper for adapters that read external SQLite databases (read-only URI mode)
+
+### Changed
+
+- Unified display formatting with shared output helpers across CLI modules
+- Adapter exclusion markers prevent cross-adapter file mismatches (Pi Agent, Copilot CLI paths excluded from Claude Code adapter)
+
+### Fixed
+
+- SQL validation in architecture tests now handles `:var` named parameters (was only normalizing `$var`)
+- Prysk acceptance tests use `python3` instead of bare `python` (macOS compatibility)
+- Homebrew tap name and upgrade instructions corrected
+
 ## [0.4.6] - 2026-02-12
 
 ### Added
@@ -327,12 +358,14 @@ Initial public release.
 
 ---
 
-[Unreleased]: https://github.com/anthropics/siftd/compare/v0.4.5...HEAD
-[0.4.5]: https://github.com/anthropics/siftd/compare/v0.4.4...v0.4.5
-[0.4.4]: https://github.com/anthropics/siftd/compare/v0.4.3...v0.4.4
-[0.4.3]: https://github.com/anthropics/siftd/compare/v0.4.2...v0.4.3
-[0.4.0]: https://github.com/anthropics/siftd/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/anthropics/siftd/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/anthropics/siftd/compare/v0.1.1...v0.2.0
-[0.1.1]: https://github.com/anthropics/siftd/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/anthropics/siftd/releases/tag/v0.1.0
+[Unreleased]: https://github.com/kgruel/siftd/compare/v0.4.7...HEAD
+[0.4.7]: https://github.com/kgruel/siftd/compare/v0.4.6...v0.4.7
+[0.4.6]: https://github.com/kgruel/siftd/compare/v0.4.5...v0.4.6
+[0.4.5]: https://github.com/kgruel/siftd/compare/v0.4.4...v0.4.5
+[0.4.4]: https://github.com/kgruel/siftd/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/kgruel/siftd/compare/v0.4.2...v0.4.3
+[0.4.0]: https://github.com/kgruel/siftd/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/kgruel/siftd/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/kgruel/siftd/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/kgruel/siftd/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/kgruel/siftd/releases/tag/v0.1.0

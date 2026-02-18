@@ -13,6 +13,10 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools in
 - Aider (`~/.aider`)
 - Gemini CLI (`~/.gemini/tmp`)
 - Codex CLI (`~/.codex/sessions`)
+- VSCode Chat (`~/.config/Code/User/History/chat/`)
+- Pi Coding Agent (`~/.pi/agent/sessions`)
+- OpenCode (`~/.local/share/opencode/opencode.db`)
+- Copilot CLI (`~/.local/state/.copilot/session-state`)
 - Drop-in adapters via `~/.config/siftd/adapters/`
 
 ## Development
