@@ -12,7 +12,7 @@ from types import ModuleType
 import pytest
 from conftest import FIXTURES_DIR
 
-from siftd.adapters import aider, claude_code, codex_cli, gemini_cli
+from siftd.adapters import aider, claude_code, codex_cli, gemini_cli, vscode
 from siftd.adapters.validation import ADAPTER_INTERFACE_VERSION, validate_adapter
 from siftd.domain.source import Source
 
@@ -432,3 +432,285 @@ class TestAiderAdapter:
     def test_parse_token_count_helper(self, raw, expected):
         """Token count parser handles k/m suffixes."""
         assert aider._parse_token_count(raw) == expected
+
+
+class TestVscodeAdapter:
+    """Tests for the VSCode adapter."""
+
+    @pytest.fixture
+    def vscode_dir(self, tmp_path):
+        """Set up VSCode workspace directory structure with fixture."""
+        import json
+        import shutil
+
+        hash_dir = tmp_path / "abc123hash"
+        chat_dir = hash_dir / "chatSessions"
+        chat_dir.mkdir(parents=True)
+
+        shutil.copy(FIXTURES_DIR / "vscode_minimal.json", chat_dir / "a1b2c3d4.json")
+
+        workspace_json = hash_dir / "workspace.json"
+        workspace_json.write_text(json.dumps({"folder": "file:///test/workspace"}))
+
+        return Source(kind="file", location=chat_dir / "a1b2c3d4.json")
+
+    def test_can_handle_json_in_chat_sessions(self):
+        """Adapter handles .json files in chatSessions directory."""
+        source = Source(kind="file", location=Path("/mock/chatSessions/test.json"))
+        assert vscode.can_handle(source)
+
+    def test_can_handle_rejects_non_chat_sessions(self):
+        """Adapter rejects json not in chatSessions directory."""
+        source = Source(kind="file", location=FIXTURES_DIR / "vscode_minimal.json")
+        assert not vscode.can_handle(source)
+
+    def test_can_handle_rejects_non_json(self):
+        """Adapter rejects non-json files."""
+        source = Source(kind="file", location=Path("/mock/chatSessions/test.txt"))
+        assert not vscode.can_handle(source)
+
+    def test_can_handle_rejects_non_file(self):
+        """Adapter rejects non-file sources."""
+        source = Source(kind="directory", location=Path("/mock/chatSessions"))
+        assert not vscode.can_handle(source)
+
+    def test_parse_extracts_conversation(self, vscode_dir):
+        """Parse yields a conversation with correct metadata."""
+        convos = list(vscode.parse(vscode_dir))
+        assert len(convos) == 1
+        conv = convos[0]
+
+        assert conv.external_id == "vscode::a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        assert conv.workspace_path == "/test/workspace"
+        assert conv.harness.name == "vscode"
+        assert conv.harness.source == "multi"
+
+    def test_parse_extracts_timestamps(self, vscode_dir):
+        """Parse converts unix ms timestamps to ISO."""
+        conv = list(vscode.parse(vscode_dir))[0]
+        assert conv.started_at is not None
+        assert "2024-02-15" in conv.started_at
+        assert conv.ended_at is not None
+
+    def test_parse_extracts_prompts_and_responses(self, vscode_dir):
+        """Parse extracts prompts with their responses."""
+        conv = list(vscode.parse(vscode_dir))[0]
+        assert len(conv.prompts) == 2
+
+        p0 = conv.prompts[0]
+        assert "read a file" in p0.content[0].content["text"]
+        assert len(p0.responses) == 1
+        assert p0.responses[0].model == "gpt-4o"
+
+        p1 = conv.prompts[1]
+        assert "List the files" in p1.content[0].content["text"]
+        assert len(p1.responses) == 1
+        assert p1.responses[0].model == "claude-3.5-sonnet"
+
+    def test_parse_extracts_markdown_content(self, vscode_dir):
+        """Parse converts markdownContent parts to text blocks."""
+        conv = list(vscode.parse(vscode_dir))[0]
+        response = conv.prompts[0].responses[0]
+        text_blocks = [b for b in response.content if b.block_type == "text"]
+        assert len(text_blocks) == 1
+        assert "open()" in text_blocks[0].content["text"]
+
+    def test_parse_extracts_tool_calls(self, vscode_dir):
+        """Parse extracts tool calls from toolInvocationSerialized parts."""
+        conv = list(vscode.parse(vscode_dir))[0]
+        response = conv.prompts[1].responses[0]
+        assert len(response.tool_calls) == 1
+
+        tc = response.tool_calls[0]
+        assert tc.tool_name == "listFiles"
+        assert tc.input == {"path": "."}
+        assert tc.result == {"files": ["README.md", "src/", "tests/"]}
+        assert tc.status == "success"
+
+    def test_parse_extracts_text_edit_blocks(self, vscode_dir):
+        """Parse preserves textEditGroup as content blocks."""
+        conv = list(vscode.parse(vscode_dir))[0]
+        response = conv.prompts[1].responses[0]
+        edit_blocks = [b for b in response.content if b.block_type == "text_edit"]
+        assert len(edit_blocks) == 1
+
+    def test_parse_no_usage(self, vscode_dir):
+        """Parse sets usage to None (not available in VSCode format)."""
+        conv = list(vscode.parse(vscode_dir))[0]
+        for prompt in conv.prompts:
+            for response in prompt.responses:
+                assert response.usage is None
+
+    def test_parse_workspace_missing_workspace_json(self, tmp_path):
+        """Parse sets workspace_path=None when workspace.json missing."""
+        import shutil
+
+        hash_dir = tmp_path / "nohash"
+        chat_dir = hash_dir / "chatSessions"
+        chat_dir.mkdir(parents=True)
+        shutil.copy(FIXTURES_DIR / "vscode_minimal.json", chat_dir / "test.json")
+
+        source = Source(kind="file", location=chat_dir / "test.json")
+        conv = list(vscode.parse(source))[0]
+        assert conv.workspace_path is None
+
+    def test_parse_empty_requests(self, tmp_path):
+        """Parse yields nothing for session with no requests."""
+        import json
+
+        hash_dir = tmp_path / "empty"
+        chat_dir = hash_dir / "chatSessions"
+        chat_dir.mkdir(parents=True)
+
+        session = {"version": 3, "sessionId": "empty-1", "creationDate": 1708012345678, "requests": []}
+        (chat_dir / "empty.json").write_text(json.dumps(session))
+
+        source = Source(kind="file", location=chat_dir / "empty.json")
+        assert list(vscode.parse(source)) == []
+
+    def test_parse_structured_message(self, tmp_path):
+        """Parse handles structured message objects (IParsedChatRequest)."""
+        import json
+
+        hash_dir = tmp_path / "structured"
+        chat_dir = hash_dir / "chatSessions"
+        chat_dir.mkdir(parents=True)
+
+        session = {
+            "version": 3,
+            "sessionId": "struct-1",
+            "creationDate": 1708012345678,
+            "requests": [{
+                "requestId": "r1",
+                "message": {"text": "Hello from structured"},
+                "variableData": {},
+                "timestamp": 1708012345678,
+                "modelId": "gpt-4o",
+                "response": [{"kind": "markdownContent", "content": {"value": "Hi"}}],
+                "responseId": "resp-1",
+            }],
+        }
+        (chat_dir / "struct.json").write_text(json.dumps(session))
+
+        source = Source(kind="file", location=chat_dir / "struct.json")
+        conv = list(vscode.parse(source))[0]
+        assert "Hello from structured" in conv.prompts[0].content[0].content["text"]
+
+
+class TestVscodeAdapterJsonl:
+    """Tests for VSCode adapter JSONL (patch-based) format."""
+
+    @pytest.fixture
+    def vscode_jsonl_dir(self, tmp_path):
+        """Set up VSCode workspace directory structure with JSONL fixture."""
+        import json
+        import shutil
+
+        hash_dir = tmp_path / "abc123hash"
+        chat_dir = hash_dir / "chatSessions"
+        chat_dir.mkdir(parents=True)
+
+        shutil.copy(FIXTURES_DIR / "vscode_minimal.jsonl", chat_dir / "session.jsonl")
+
+        workspace_json = hash_dir / "workspace.json"
+        workspace_json.write_text(json.dumps({"folder": "file:///test/workspace"}))
+
+        return Source(kind="file", location=chat_dir / "session.jsonl")
+
+    def test_can_handle_jsonl_in_chat_sessions(self):
+        """Adapter handles .jsonl files in chatSessions directory."""
+        source = Source(kind="file", location=Path("/mock/chatSessions/test.jsonl"))
+        assert vscode.can_handle(source)
+
+    def test_can_handle_rejects_jsonl_outside_chat_sessions(self):
+        """Adapter rejects .jsonl not in chatSessions directory."""
+        source = Source(kind="file", location=FIXTURES_DIR / "vscode_minimal.jsonl")
+        assert not vscode.can_handle(source)
+
+    def test_parse_jsonl_extracts_conversation(self, vscode_jsonl_dir):
+        """Parse reconstructs conversation from JSONL patches."""
+        convos = list(vscode.parse(vscode_jsonl_dir))
+        assert len(convos) == 1
+        conv = convos[0]
+
+        assert conv.external_id == "vscode::jsonl-session-1234"
+        assert conv.workspace_path == "/test/workspace"
+        assert conv.harness.name == "vscode"
+
+    def test_parse_jsonl_extracts_timestamps(self, vscode_jsonl_dir):
+        """JSONL parse converts unix ms timestamps to ISO."""
+        conv = list(vscode.parse(vscode_jsonl_dir))[0]
+        assert conv.started_at is not None
+        assert "2024-02-15" in conv.started_at
+        assert conv.ended_at is not None
+
+    def test_parse_jsonl_extracts_prompts(self, vscode_jsonl_dir):
+        """JSONL parse reconstructs prompts from appended requests."""
+        conv = list(vscode.parse(vscode_jsonl_dir))[0]
+        assert len(conv.prompts) == 2
+
+        p0 = conv.prompts[0]
+        assert "read a file" in p0.content[0].content["text"]
+        assert p0.responses[0].model == "gpt-4o"
+
+        p1 = conv.prompts[1]
+        assert "List the files" in p1.content[0].content["text"]
+        assert p1.responses[0].model == "claude-3.5-sonnet"
+
+    def test_parse_jsonl_appends_response_parts(self, vscode_jsonl_dir):
+        """JSONL parse accumulates response parts from multiple patches."""
+        conv = list(vscode.parse(vscode_jsonl_dir))[0]
+
+        # First request: initial mcpServersStarting + appended markdownContent
+        r0 = conv.prompts[0].responses[0]
+        text_blocks = [b for b in r0.content if b.block_type == "text"]
+        assert len(text_blocks) == 1
+        assert "open()" in text_blocks[0].content["text"]
+
+    def test_parse_jsonl_extracts_tool_calls(self, vscode_jsonl_dir):
+        """JSONL parse extracts tool calls from appended response parts."""
+        conv = list(vscode.parse(vscode_jsonl_dir))[0]
+        r1 = conv.prompts[1].responses[0]
+        assert len(r1.tool_calls) == 1
+
+        tc = r1.tool_calls[0]
+        assert tc.tool_name == "listFiles"
+        assert tc.input == {"path": "."}
+        assert tc.result == {"files": ["README.md", "src/"]}
+
+    def test_parse_jsonl_empty_session(self, tmp_path):
+        """JSONL with no requests yields nothing."""
+        hash_dir = tmp_path / "empty"
+        chat_dir = hash_dir / "chatSessions"
+        chat_dir.mkdir(parents=True)
+
+        content = '{"kind":0,"v":{"version":3,"sessionId":"empty","creationDate":1708012345678,"requests":[]}}\n'
+        (chat_dir / "empty.jsonl").write_text(content)
+
+        source = Source(kind="file", location=chat_dir / "empty.jsonl")
+        assert list(vscode.parse(source)) == []
+
+    def test_replay_set_at_path(self):
+        """_set_at_path sets nested values correctly."""
+        obj = {"requests": [{"response": [], "result": None}]}
+        vscode._set_at_path(obj, ["requests", 0, "result"], {"ok": True})
+        assert obj["requests"][0]["result"] == {"ok": True}
+
+    def test_replay_append_at_path(self):
+        """_append_at_path extends arrays correctly."""
+        obj = {"requests": [{"response": []}]}
+        vscode._append_at_path(obj, ["requests", 0, "response"], [{"kind": "text"}])
+        assert len(obj["requests"][0]["response"]) == 1
+
+    def test_replay_append_to_root_array(self):
+        """_append_at_path works for top-level arrays like requests."""
+        obj = {"requests": []}
+        vscode._append_at_path(obj, ["requests"], [{"requestId": "r1"}])
+        assert len(obj["requests"]) == 1
+        assert obj["requests"][0]["requestId"] == "r1"
+
+    def test_replay_set_invalid_path_is_noop(self):
+        """_set_at_path silently ignores invalid paths."""
+        obj = {"requests": []}
+        vscode._set_at_path(obj, ["requests", 99, "result"], "value")
+        assert obj == {"requests": []}

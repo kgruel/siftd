@@ -1,0 +1,10 @@
+{"kind":0,"v":{"version":3,"creationDate":1708012345678,"customTitle":"Test JSONL session","initialLocation":"panel","responderUsername":"GitHub Copilot","sessionId":"jsonl-session-1234","hasPendingEdits":false,"requests":[]}}
+{"kind":2,"k":["requests"],"v":[{"requestId":"req-j01","timestamp":1708012345678,"agent":{"id":"github.copilot.default"},"modelId":"gpt-4o","responseId":"resp-j01","modelState":{},"contentReferences":[],"response":[{"kind":"mcpServersStarting","didStartServerIds":[]}],"message":{"text":"How do I read a file in Python?","parts":[]},"variableData":{}}]}
+{"kind":2,"k":["requests",0,"response"],"v":[{"kind":"markdownContent","content":{"value":"You can use the built-in `open()` function."}}]}
+{"kind":1,"k":["requests",0,"result"],"v":{"timings":{"firstProgress":500,"totalElapsed":1200}}}
+{"kind":1,"k":["requests",0,"modelState"],"v":{"value":1,"completedAt":1708012347000}}
+{"kind":2,"k":["requests"],"v":[{"requestId":"req-j02","timestamp":1708012400000,"agent":{"id":"github.copilot.default"},"modelId":"claude-3.5-sonnet","responseId":"resp-j02","modelState":{},"contentReferences":[],"response":[],"message":"List the files in the current directory","variableData":{}}]}
+{"kind":2,"k":["requests",1,"response"],"v":[{"kind":"markdownContent","content":{"value":"Here are the files:"}}]}
+{"kind":2,"k":["requests",1,"response"],"v":[{"kind":"toolInvocationSerialized","toolCallId":"tool-j01","toolName":"listFiles","input":{"path":"."},"result":{"files":["README.md","src/"]},"isConfirmed":true}]}
+{"kind":1,"k":["requests",1,"result"],"v":{"timings":{"firstProgress":300,"totalElapsed":800}}}
+{"kind":1,"k":["requests",1,"modelState"],"v":{"value":1,"completedAt":1708012401000}}

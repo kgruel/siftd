@@ -1,0 +1,58 @@
+{
+  "version": 3,
+  "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "creationDate": 1708012345678,
+  "customTitle": "Test session",
+  "responderUsername": "GitHub Copilot",
+  "initialLocation": "panel",
+  "requests": [
+    {
+      "requestId": "req-001",
+      "message": "How do I read a file in Python?",
+      "variableData": {},
+      "timestamp": 1708012345678,
+      "modelId": "gpt-4o",
+      "agent": {"id": "github.copilot.default"},
+      "response": [
+        {
+          "kind": "markdownContent",
+          "content": {"value": "You can use the built-in `open()` function to read files in Python."}
+        }
+      ],
+      "responseId": "resp-001",
+      "result": {},
+      "contentReferences": [],
+      "followups": []
+    },
+    {
+      "requestId": "req-002",
+      "message": "List the files in the current directory",
+      "variableData": {},
+      "timestamp": 1708012400000,
+      "modelId": "claude-3.5-sonnet",
+      "agent": {"id": "github.copilot.default"},
+      "response": [
+        {
+          "kind": "markdownContent",
+          "content": {"value": "Here are the files in the current directory:"}
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "toolCallId": "tool-001",
+          "toolName": "listFiles",
+          "input": {"path": "."},
+          "result": {"files": ["README.md", "src/", "tests/"]},
+          "isConfirmed": true
+        },
+        {
+          "kind": "textEditGroup",
+          "uri": "file:///test/workspace/hello.py",
+          "edits": [[{"range": {}, "newText": "print('hello')"}]]
+        }
+      ],
+      "responseId": "resp-002",
+      "result": {},
+      "contentReferences": []
+    }
+  ]
+}
