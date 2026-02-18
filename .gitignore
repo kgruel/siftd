@@ -10,6 +10,8 @@ bench/runs/
 .venv/
 dist/
 .claude/
+.DS_Store
+.worktrees/
 HANDOFF.md
 ROADMAP.md
 BACKLOG.md
