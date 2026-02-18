@@ -277,9 +277,15 @@ def test_no_sqlite3_connect_outside_storage():
     violations = []
     storage_dir = src_dir / "storage"
 
+    # adapters/sdk.py provides open_external_db() for reading third-party databases
+    adapter_sdk = src_dir / "adapters" / "sdk.py"
+
     for py_file in src_dir.rglob("*.py"):
         # Allow sqlite3.connect() inside storage/
         if storage_dir in py_file.parents or py_file.parent == storage_dir:
+            continue
+        # Allow sqlite3.connect() in adapter SDK (external DB helper)
+        if py_file == adapter_sdk:
             continue
 
         for line_num, call_text in find_sqlite3_connect_calls(py_file):

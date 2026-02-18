@@ -94,7 +94,11 @@ def can_handle(source: Source) -> bool:
     path_str = str(path)
     # Reject files that are clearly under other adapters' locations
     # This prevents Claude Code from claiming Codex CLI files
-    other_adapter_markers = [".codex/sessions", ".codex\\sessions"]
+    other_adapter_markers = [
+        ".codex/sessions", ".codex\\sessions",
+        ".pi/agent/sessions", ".pi\\agent\\sessions",
+        ".copilot/session-state", ".copilot\\session-state",
+    ]
     for marker in other_adapter_markers:
         if marker in path_str:
             return False

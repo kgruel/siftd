@@ -12,7 +12,7 @@ from types import ModuleType
 import pytest
 from conftest import FIXTURES_DIR
 
-from siftd.adapters import aider, claude_code, codex_cli, gemini_cli, vscode
+from siftd.adapters import aider, claude_code, codex_cli, copilot_cli, gemini_cli, opencode, pi_agent, vscode
 from siftd.adapters.validation import ADAPTER_INTERFACE_VERSION, validate_adapter
 from siftd.domain.source import Source
 
@@ -714,3 +714,443 @@ class TestVscodeAdapterJsonl:
         obj = {"requests": []}
         vscode._set_at_path(obj, ["requests", 99, "result"], "value")
         assert obj == {"requests": []}
+
+
+class TestPiAgentAdapter:
+    """Tests for the Pi Coding Agent adapter."""
+
+    @pytest.fixture
+    def pi_source(self, tmp_path):
+        """Copy Pi Agent fixture to a path with .pi/agent/sessions in it."""
+        sessions_dir = tmp_path / ".pi" / "agent" / "sessions" / "--test--"
+        sessions_dir.mkdir(parents=True)
+        dest = sessions_dir / "20240310_test.jsonl"
+        dest.write_text((FIXTURES_DIR / "pi_agent_minimal.jsonl").read_text())
+        return Source(kind="file", location=dest)
+
+    def test_can_handle_jsonl_in_pi_sessions(self):
+        """Adapter handles .jsonl files in .pi/agent/sessions path."""
+        source = Source(kind="file", location=Path("/mock/.pi/agent/sessions/test.jsonl"))
+        assert pi_agent.can_handle(source)
+
+    def test_can_handle_rejects_non_pi_path(self):
+        """Adapter rejects jsonl not in .pi/agent/sessions path."""
+        source = Source(kind="file", location=FIXTURES_DIR / "pi_agent_minimal.jsonl")
+        assert not pi_agent.can_handle(source)
+
+    def test_can_handle_rejects_non_jsonl(self):
+        """Adapter rejects non-jsonl files."""
+        source = Source(kind="file", location=Path("/mock/.pi/agent/sessions/test.json"))
+        assert not pi_agent.can_handle(source)
+
+    def test_can_handle_rejects_non_file(self):
+        """Adapter rejects non-file sources."""
+        source = Source(kind="directory", location=Path("/mock/.pi/agent/sessions"))
+        assert not pi_agent.can_handle(source)
+
+    def test_parse_extracts_conversation(self, pi_source):
+        """Parse yields a conversation with correct metadata."""
+        convos = list(pi_agent.parse(pi_source))
+
+        assert len(convos) == 1
+        conv = convos[0]
+
+        assert conv.external_id == "pi_agent::pi-session-001"
+        assert conv.workspace_path == "/test/workspace"
+        assert conv.harness.name == "pi_agent"
+        assert conv.harness.source == "multi"
+
+    def test_parse_extracts_prompts_and_responses(self, pi_source):
+        """Parse extracts prompts with their responses."""
+        conv = list(pi_agent.parse(pi_source))[0]
+
+        assert len(conv.prompts) == 1
+
+        prompt = conv.prompts[0]
+        assert len(prompt.content) == 1
+        assert "Read the README" in prompt.content[0].content.get("text", "")
+
+        # Should have 2 responses (one with tool call, one final)
+        assert len(prompt.responses) == 2
+
+    def test_parse_extracts_tool_calls(self, pi_source):
+        """Parse extracts tool calls with results."""
+        conv = list(pi_agent.parse(pi_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        assert len(response.tool_calls) == 1
+
+        tool_call = response.tool_calls[0]
+        assert tool_call.tool_name == "Read"
+        assert tool_call.input.get("file_path") == "/test/workspace/README.md"
+        assert tool_call.status == "success"
+        assert "Test Project" in str(tool_call.result)
+
+    def test_parse_extracts_usage(self, pi_source):
+        """Parse extracts token usage."""
+        conv = list(pi_agent.parse(pi_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        assert response.usage is not None
+        assert response.usage.input_tokens == 500
+        assert response.usage.output_tokens == 120
+
+    def test_parse_extracts_cache_tokens(self, pi_source):
+        """Parse extracts cache token attributes."""
+        conv = list(pi_agent.parse(pi_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        assert response.attributes.get("cache_read_input_tokens") == "50"
+        assert response.attributes.get("cache_creation_input_tokens") == "10"
+
+    def test_parse_extracts_cost(self, pi_source):
+        """Parse extracts cost as attribute."""
+        conv = list(pi_agent.parse(pi_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        assert response.attributes.get("cost") == "0.0111"
+
+    def test_parse_extracts_thinking(self, pi_source):
+        """Parse extracts thinking blocks."""
+        conv = list(pi_agent.parse(pi_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        thinking_blocks = [b for b in response.content if b.block_type == "thinking"]
+        assert len(thinking_blocks) == 1
+        assert "README" in thinking_blocks[0].content.get("text", "")
+
+    def test_parse_extracts_model(self, pi_source):
+        """Parse extracts model from model_change event."""
+        conv = list(pi_agent.parse(pi_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        assert response.model == "claude-opus-4-6"
+
+    def test_parse_empty_file(self, tmp_path):
+        """Parse yields nothing for an empty file."""
+        sessions_dir = tmp_path / ".pi" / "agent" / "sessions"
+        sessions_dir.mkdir(parents=True)
+        empty = sessions_dir / "empty.jsonl"
+        empty.write_text("")
+        source = Source(kind="file", location=empty)
+        assert list(pi_agent.parse(source)) == []
+
+
+class TestOpenCodeAdapter:
+    """Tests for the OpenCode adapter."""
+
+    @pytest.fixture
+    def opencode_source(self, tmp_path):
+        """Create a minimal OpenCode SQLite database for testing."""
+        import json
+        import sqlite3
+
+        db_path = tmp_path / "opencode.db"
+        conn = sqlite3.connect(str(db_path))
+
+        conn.execute("""CREATE TABLE session (
+            id TEXT PRIMARY KEY,
+            project_id TEXT,
+            directory TEXT,
+            title TEXT,
+            version INTEGER,
+            time_created INTEGER,
+            time_updated INTEGER
+        )""")
+        conn.execute("""CREATE TABLE message (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            time_created INTEGER,
+            time_updated INTEGER,
+            data TEXT
+        )""")
+        conn.execute("""CREATE TABLE part (
+            id TEXT PRIMARY KEY,
+            message_id TEXT,
+            session_id TEXT,
+            time_created INTEGER,
+            time_updated INTEGER,
+            data TEXT
+        )""")
+
+        # Insert session
+        conn.execute(
+            "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("ses_001", "proj_001", "/test/workspace", "Test Session", 1, 1710079200000, 1710079260000),
+        )
+
+        # Insert user message
+        user_data = json.dumps({
+            "role": "user",
+            "time": {"created": 1710079210000},
+            "summary": {"title": "Run the tests"},
+        })
+        conn.execute(
+            "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
+            ("msg_001", "ses_001", 1710079210000, 1710079210000, user_data),
+        )
+
+        # Insert user part (text)
+        user_part_data = json.dumps({"type": "text", "text": "Run the tests please"})
+        conn.execute(
+            "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)",
+            ("part_001", "msg_001", "ses_001", 1710079210000, 1710079210000, user_part_data),
+        )
+
+        # Insert assistant message
+        assistant_data = json.dumps({
+            "role": "assistant",
+            "time": {"created": 1710079220000, "completed": 1710079230000},
+            "modelID": "claude-3-opus-20240229",
+            "providerID": "anthropic",
+            "cost": 0.025,
+            "tokens": {"total": 680, "input": 500, "output": 120, "reasoning": 60,
+                       "cache": {"read": 50, "write": 10}},
+            "finish": "tool-calls",
+        })
+        conn.execute(
+            "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
+            ("msg_002", "ses_001", 1710079220000, 1710079230000, assistant_data),
+        )
+
+        # Insert assistant text part
+        text_part_data = json.dumps({"type": "text", "text": "I'll run the tests for you."})
+        conn.execute(
+            "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)",
+            ("part_002", "msg_002", "ses_001", 1710079220000, 1710079220000, text_part_data),
+        )
+
+        # Insert assistant tool part
+        tool_part_data = json.dumps({
+            "type": "tool",
+            "callID": "call-001",
+            "tool": "bash",
+            "state": {
+                "status": "completed",
+                "input": {"command": "pytest", "description": "Run tests"},
+                "output": "5 passed, 0 failed",
+                "title": "Run tests",
+                "time": {"start": 1710079225000, "end": 1710079228000},
+            },
+        })
+        conn.execute(
+            "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)",
+            ("part_003", "msg_002", "ses_001", 1710079225000, 1710079228000, tool_part_data),
+        )
+
+        conn.commit()
+        conn.close()
+
+        return Source(kind="sqlite", location=db_path)
+
+    def test_can_handle_sqlite(self):
+        """Adapter handles opencode.db SQLite sources."""
+        source = Source(kind="sqlite", location=Path("/mock/opencode.db"))
+        assert opencode.can_handle(source)
+
+    def test_can_handle_rejects_other_db(self):
+        """Adapter rejects non-opencode SQLite databases."""
+        source = Source(kind="sqlite", location=Path("/mock/other.db"))
+        assert not opencode.can_handle(source)
+
+    def test_can_handle_rejects_non_sqlite(self):
+        """Adapter rejects non-sqlite sources."""
+        source = Source(kind="file", location=Path("/mock/opencode.db"))
+        assert not opencode.can_handle(source)
+
+    def test_parse_extracts_conversation(self, opencode_source):
+        """Parse yields a conversation with correct metadata."""
+        convos = list(opencode.parse(opencode_source))
+
+        assert len(convos) == 1
+        conv = convos[0]
+
+        assert conv.external_id == "opencode::ses_001"
+        assert conv.workspace_path == "/test/workspace"
+        assert conv.harness.name == "opencode"
+        assert conv.harness.source == "multi"
+
+    def test_parse_extracts_timestamps(self, opencode_source):
+        """Parse converts epoch ms to ISO timestamps."""
+        conv = list(opencode.parse(opencode_source))[0]
+        assert conv.started_at is not None
+        assert "2024-03-10" in conv.started_at
+
+    def test_parse_extracts_prompts_and_responses(self, opencode_source):
+        """Parse extracts prompts with their responses."""
+        conv = list(opencode.parse(opencode_source))[0]
+
+        assert len(conv.prompts) == 1
+
+        prompt = conv.prompts[0]
+        assert len(prompt.content) == 1
+        assert "Run the tests" in prompt.content[0].content.get("text", "")
+
+        assert len(prompt.responses) == 1
+
+    def test_parse_extracts_tool_calls(self, opencode_source):
+        """Parse extracts tool calls from tool parts."""
+        conv = list(opencode.parse(opencode_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        assert len(response.tool_calls) == 1
+
+        tool_call = response.tool_calls[0]
+        assert tool_call.tool_name == "bash"
+        assert tool_call.input.get("command") == "pytest"
+        assert tool_call.status == "success"
+        assert "5 passed" in str(tool_call.result)
+
+    def test_parse_extracts_usage(self, opencode_source):
+        """Parse extracts token usage."""
+        conv = list(opencode.parse(opencode_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        assert response.usage is not None
+        assert response.usage.input_tokens == 500
+        assert response.usage.output_tokens == 120
+
+    def test_parse_extracts_cache_tokens(self, opencode_source):
+        """Parse extracts cache token attributes."""
+        conv = list(opencode.parse(opencode_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        assert response.attributes.get("cache_read_input_tokens") == "50"
+        assert response.attributes.get("cache_creation_input_tokens") == "10"
+
+    def test_parse_extracts_cost(self, opencode_source):
+        """Parse extracts cost as attribute."""
+        conv = list(opencode.parse(opencode_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        assert response.attributes.get("cost") == "0.025"
+
+    def test_parse_extracts_model(self, opencode_source):
+        """Parse extracts model from message data."""
+        conv = list(opencode.parse(opencode_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        assert response.model == "claude-3-opus-20240229"
+
+    def test_parse_empty_db(self, tmp_path):
+        """Parse yields nothing for an empty database."""
+        import sqlite3
+
+        db_path = tmp_path / "opencode.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT, version INTEGER, time_created INTEGER, time_updated INTEGER)")
+        conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)")
+        conn.execute("CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)")
+        conn.commit()
+        conn.close()
+
+        source = Source(kind="sqlite", location=db_path)
+        assert list(opencode.parse(source)) == []
+
+
+class TestCopilotCliAdapter:
+    """Tests for the Copilot CLI adapter."""
+
+    @pytest.fixture
+    def copilot_source(self, tmp_path):
+        """Copy Copilot CLI fixture to a path with .copilot/session-state in it."""
+        session_dir = tmp_path / ".copilot" / "session-state" / "test-uuid"
+        session_dir.mkdir(parents=True)
+        dest = session_dir / "events.jsonl"
+        dest.write_text((FIXTURES_DIR / "copilot_cli_minimal.jsonl").read_text())
+        return Source(kind="file", location=dest)
+
+    def test_can_handle_events_jsonl_in_session_state(self):
+        """Adapter handles events.jsonl files in .copilot/session-state path."""
+        source = Source(kind="file", location=Path("/mock/.copilot/session-state/uuid/events.jsonl"))
+        assert copilot_cli.can_handle(source)
+
+    def test_can_handle_rejects_non_copilot_path(self):
+        """Adapter rejects events.jsonl not in .copilot/session-state path."""
+        source = Source(kind="file", location=FIXTURES_DIR / "copilot_cli_minimal.jsonl")
+        assert not copilot_cli.can_handle(source)
+
+    def test_can_handle_rejects_non_events_file(self):
+        """Adapter rejects non-events.jsonl files even in correct path."""
+        source = Source(kind="file", location=Path("/mock/.copilot/session-state/uuid/other.jsonl"))
+        assert not copilot_cli.can_handle(source)
+
+    def test_can_handle_rejects_non_file(self):
+        """Adapter rejects non-file sources."""
+        source = Source(kind="directory", location=Path("/mock/.copilot/session-state"))
+        assert not copilot_cli.can_handle(source)
+
+    def test_parse_extracts_conversation(self, copilot_source):
+        """Parse yields a conversation with correct metadata."""
+        convos = list(copilot_cli.parse(copilot_source))
+
+        assert len(convos) == 1
+        conv = convos[0]
+
+        assert conv.external_id == "copilot_cli::copilot-session-001"
+        assert conv.workspace_path == "/test/workspace"
+        assert conv.harness.name == "copilot_cli"
+        assert conv.harness.source == "multi"
+
+    def test_parse_extracts_branch(self, copilot_source):
+        """Parse extracts branch from session.start context."""
+        conv = list(copilot_cli.parse(copilot_source))[0]
+        assert conv.branch == "main"
+
+    def test_parse_extracts_prompts_and_responses(self, copilot_source):
+        """Parse extracts prompts with their responses."""
+        conv = list(copilot_cli.parse(copilot_source))[0]
+
+        assert len(conv.prompts) == 1
+
+        prompt = conv.prompts[0]
+        assert len(prompt.content) == 1
+        assert "List the files" in prompt.content[0].content.get("text", "")
+
+        # Should have 2 responses (one with tool call, one final)
+        assert len(prompt.responses) == 2
+
+    def test_parse_extracts_tool_calls(self, copilot_source):
+        """Parse extracts tool calls with results."""
+        conv = list(copilot_cli.parse(copilot_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        assert len(response.tool_calls) == 1
+
+        tool_call = response.tool_calls[0]
+        assert tool_call.tool_name == "bash"
+        assert tool_call.input.get("command") == "ls -la"
+        assert tool_call.status == "success"
+        assert "README.md" in str(tool_call.result)
+
+    def test_parse_extracts_reasoning(self, copilot_source):
+        """Parse extracts reasoning text as thinking blocks."""
+        conv = list(copilot_cli.parse(copilot_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        thinking_blocks = [b for b in response.content if b.block_type == "thinking"]
+        assert len(thinking_blocks) == 1
+        assert "files" in thinking_blocks[0].content.get("text", "").lower()
+
+    def test_parse_extracts_model(self, copilot_source):
+        """Parse extracts model from session.model_change event."""
+        conv = list(copilot_cli.parse(copilot_source))[0]
+
+        response = conv.prompts[0].responses[0]
+        assert response.model == "claude-haiku-4.5"
+
+    def test_parse_no_usage(self, copilot_source):
+        """Parse sets usage to None (not available in Copilot CLI format)."""
+        conv = list(copilot_cli.parse(copilot_source))[0]
+        for prompt in conv.prompts:
+            for response in prompt.responses:
+                assert response.usage is None
+
+    def test_parse_empty_file(self, tmp_path):
+        """Parse yields nothing for an empty file."""
+        session_dir = tmp_path / ".copilot" / "session-state" / "uuid"
+        session_dir.mkdir(parents=True)
+        empty = session_dir / "events.jsonl"
+        empty.write_text("")
+        source = Source(kind="file", location=empty)
+        assert list(copilot_cli.parse(source)) == []

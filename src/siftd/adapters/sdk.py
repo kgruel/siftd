@@ -6,6 +6,7 @@ Helpers that reduce boilerplate in adapter implementations.
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
@@ -16,6 +17,26 @@ from siftd.domain import Harness, Source
 
 if TYPE_CHECKING:
     from siftd.domain.peek import PeekExchange, PeekScanResult
+
+
+def open_external_db(path: Path) -> sqlite3.Connection:
+    """Open an external SQLite database in read-only mode.
+
+    For adapters that need to read third-party tool databases.
+    Uses URI mode to ensure no WAL/SHM files are created.
+
+    Args:
+        path: Path to the SQLite database file.
+
+    Returns:
+        Read-only sqlite3.Connection with row_factory set.
+
+    Raises:
+        sqlite3.Error: If the database cannot be opened.
+    """
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def discover_files(
