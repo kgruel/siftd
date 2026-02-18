@@ -156,7 +156,7 @@ class TestIngestCommand:
 
         assert rc == 0
         captured = capsys.readouterr()
-        assert "[skipped]" in captured.out
+        assert "unchanged" in captured.out
 
     def test_ingest_unknown_adapter(self, tmp_path, capsys):
         """siftd ingest with unknown adapter returns error."""

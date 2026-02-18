@@ -329,18 +329,19 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[ingest]
   '''
-  usage: siftd ingest [-h] [-v] [-p DIR] [-a NAME] [--rebuild-fts]
+  usage: siftd ingest [-h] [-v] [-p DIR] [-a NAME] [--json] [--rebuild-fts]
   
   options:
     -h, --help          show this help message and exit
-    -v, --verbose       Show all files including skipped
+    -v, --verbose       Show per-adapter skip breakdowns
     -p, --path DIR      Additional directories to scan (can be repeated)
     -a, --adapter NAME  Only run specific adapter(s) (can be repeated)
+    --json              Output newline-delimited JSON events
     --rebuild-fts       Rebuild FTS index from existing data (skips ingestion)
   
   examples:
     siftd ingest                      # ingest from all adapters
-    siftd ingest -v                   # show all files including skipped
+    siftd ingest -v                   # show per-adapter skip breakdowns
     siftd ingest -a claude_code       # only run claude_code adapter
     siftd ingest -p ~/logs -p /tmp    # scan additional directories
     siftd ingest --rebuild-fts        # rebuild FTS index from scratch

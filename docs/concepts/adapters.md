@@ -127,17 +127,14 @@ When you run `siftd ingest`:
 6. Storage layer writes to SQLite, normalizes tool names, builds FTS index
 
 ```bash
-siftd ingest -v    # verbose output shows each step
+siftd ingest -v    # verbose output shows per-adapter skip breakdowns
 ```
 
 ```
-claude_code: scanning ~/.claude/projects/
-  found 312 files, 3 new
-  parsing session-a1b2c3.jsonl... 12 prompts, 34 responses, 89 tool calls
-  parsing session-d4e5f6.jsonl... 5 prompts, 12 responses, 23 tool calls
-  ...
-aider: scanning ~/.aider.chat.history.md
-  found 1 file, 0 new (already ingested)
+claude_code (312 files)
+  1/312  new     myapp  Fix ingest output...        8x  claude-opus-4-5  session-a1b2c3.jsonl
+  2/312  updated myapp  Add tests...                3x  claude-opus-4-5  session-d4e5f6.jsonl
+  totals: new 2, updated 1, skipped 309, error 0 (unchanged 309)
 ```
 
 ## When adapters can't parse a file

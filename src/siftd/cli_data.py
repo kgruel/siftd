@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -10,10 +11,213 @@ from typing import TYPE_CHECKING
 from siftd.api import create_database, open_database
 from siftd.api.search import rebuild_fts_index
 from siftd.cli_common import resolve_db
+from siftd.output import fmt_model, fmt_workspace
 from siftd.paths import ensure_dirs
 
 if TYPE_CHECKING:
-    from siftd.ingestion import IngestStats
+    from siftd.ingestion import IngestEvent, IngestStats
+
+
+class _AdapterCounts:
+    def __init__(self, total: int | None = None) -> None:
+        self.total = total or 0
+        self.processed = 0
+        self.new = 0
+        self.updated = 0
+        self.replaced = 0
+        self.skipped = 0
+        self.error = 0
+        self.skip_reasons: dict[str, int] = {}
+
+    def add(self, status: str, reason: str | None) -> None:
+        self.processed += 1
+        if status == "ingested":
+            self.new += 1
+        elif status == "updated":
+            self.updated += 1
+        elif status == "replaced":
+            self.replaced += 1
+        elif status == "skipped":
+            self.skipped += 1
+            if reason:
+                self.skip_reasons[reason] = self.skip_reasons.get(reason, 0) + 1
+        elif status == "error":
+            self.error += 1
+
+    @property
+    def updated_total(self) -> int:
+        return self.updated + self.replaced
+
+
+class _IngestTextRenderer:
+    SUMMARY_WIDTH = 40
+    WORKSPACE_WIDTH = 12
+    MODEL_WIDTH = 16
+    STATUS_WIDTH = 7
+    PROGRESS_WIDTH = 7
+
+    def __init__(self, *, verbose: bool) -> None:
+        self.verbose = verbose
+        self._counts: dict[str, _AdapterCounts] = {}
+        self._started: set[str] = set()
+
+    def handle_event(self, event: IngestEvent) -> None:
+        counts = self._counts.setdefault(event.adapter, _AdapterCounts(event.total))
+        if event.total and counts.total != event.total:
+            counts.total = event.total
+        counts.add(event.status, event.reason)
+
+        if event.adapter not in self._started:
+            total = counts.total or event.total or 0
+            print(f"{event.adapter} ({total} files)")
+            self._started.add(event.adapter)
+
+        if event.status != "skipped":
+            print(self._format_line(event))
+
+        if counts.processed == counts.total:
+            self._print_summary(event.adapter, counts)
+
+    def _print_summary(self, adapter: str, counts: _AdapterCounts) -> None:
+        parts = [
+            f"new {counts.new}",
+            f"updated {counts.updated_total}",
+            f"skipped {counts.skipped}",
+            f"error {counts.error}",
+        ]
+        summary = ", ".join(parts)
+        if self.verbose and counts.skip_reasons:
+            reasons = ", ".join(
+                f"{reason} {count}"
+                for reason, count in sorted(counts.skip_reasons.items())
+            )
+            summary += f" ({reasons})"
+        print(f"  totals: {summary}")
+
+    def _format_line(self, event: IngestEvent) -> str:
+        progress = (
+            f"{event.index}/{event.total}"
+            if event.index is not None and event.total is not None
+            else "--/--"
+        )
+        status = self._status_label(event.status)
+        workspace = fmt_workspace(event.workspace_path) or "--"
+        if event.status == "error":
+            summary_text = event.error or "error"
+        else:
+            summary_text = event.summary or "(no summary)"
+        summary_text = " ".join(summary_text.split())
+        summary_text = self._fit(summary_text, self.SUMMARY_WIDTH)
+        model = fmt_model(event.model) if event.model else "--"
+        model = self._fit(model, self.MODEL_WIDTH)
+        exchanges = f"{event.exchange_count}x" if event.exchange_count is not None else "--"
+        filename = Path(event.path).name
+
+        return (
+            f"  {progress:<{self.PROGRESS_WIDTH}}  "
+            f"{status:<{self.STATUS_WIDTH}}  "
+            f"{self._fit(workspace, self.WORKSPACE_WIDTH)}  "
+            f"{summary_text}  "
+            f"{exchanges:>3}  "
+            f"{model}  "
+            f"{filename}"
+        )
+
+    @staticmethod
+    def _status_label(status: str) -> str:
+        if status == "ingested":
+            return "new"
+        if status == "replaced":
+            return "updated"
+        return status
+
+    @staticmethod
+    def _fit(text: str, width: int) -> str:
+        if len(text) > width:
+            if width <= 3:
+                text = text[:width]
+            else:
+                text = text[: width - 3] + "..."
+        return text.ljust(width)
+
+
+class _IngestJsonRenderer:
+    def __init__(self) -> None:
+        self._counts: dict[str, _AdapterCounts] = {}
+        self._started: set[str] = set()
+
+    def handle_db(self, *, db: Path, is_new: bool) -> None:
+        self._emit({
+            "type": "db",
+            "path": str(db),
+            "state": "created" if is_new else "existing",
+        })
+
+    def handle_event(self, event: IngestEvent) -> None:
+        counts = self._counts.setdefault(event.adapter, _AdapterCounts(event.total))
+        if event.total and counts.total != event.total:
+            counts.total = event.total
+        counts.add(event.status, event.reason)
+
+        if event.adapter not in self._started:
+            self._emit({
+                "type": "adapter_start",
+                "adapter": event.adapter,
+                "total": counts.total,
+            })
+            self._started.add(event.adapter)
+
+        payload = {
+            "type": "file",
+            "adapter": event.adapter,
+            "status": event.status,
+            "reason": event.reason,
+            "path": event.path,
+            "basename": Path(event.path).name,
+            "index": event.index,
+            "total": event.total,
+        }
+        if event.status != "skipped":
+            payload.update({
+                "workspace": event.workspace_path,
+                "summary": event.summary,
+                "exchanges": event.exchange_count,
+                "model": event.model,
+                "error": event.error,
+            })
+        self._emit(payload)
+
+        if counts.processed == counts.total:
+            self._emit({
+                "type": "adapter_summary",
+                "adapter": event.adapter,
+                "total": counts.total,
+                "new": counts.new,
+                "updated": counts.updated_total,
+                "skipped": counts.skipped,
+                "error": counts.error,
+            })
+
+    def handle_summary(self, stats: IngestStats) -> None:
+        self._emit({
+            "type": "summary",
+            "files": {
+                "found": stats.files_found,
+                "ingested": stats.files_ingested,
+                "replaced": stats.files_replaced,
+                "skipped": stats.files_skipped,
+                "errored": stats.files_errored,
+            },
+            "conversations": stats.conversations,
+            "prompts": stats.prompts,
+            "responses": stats.responses,
+            "tool_calls": stats.tool_calls,
+            "by_harness": stats.by_harness,
+        })
+
+    @staticmethod
+    def _emit(payload: dict) -> None:
+        print(json.dumps(payload))
 
 
 def cmd_ingest(args) -> int:
@@ -25,46 +229,65 @@ def cmd_ingest(args) -> int:
 
     db = resolve_db(args)
     is_new = not db.exists()
+    json_mode = getattr(args, "json", False)
 
-    if is_new:
-        print(f"Creating database: {db}")
+    if json_mode:
+        renderer: _IngestJsonRenderer | _IngestTextRenderer = _IngestJsonRenderer()
+        renderer.handle_db(db=db, is_new=is_new)
     else:
-        print(f"Using database: {db}")
+        renderer = _IngestTextRenderer(verbose=args.verbose)
+        if is_new:
+            print(f"Creating database: {db}")
+        else:
+            print(f"Using database: {db}")
 
     conn = create_database(db)
 
     # Handle --rebuild-fts flag
     if args.rebuild_fts:
-        print("Rebuilding FTS index...")
-        rebuild_fts_index(conn)
-        print("FTS index rebuilt.")
+        if json_mode:
+            renderer._emit({"type": "fts_rebuild", "status": "start"})
+            rebuild_fts_index(conn)
+            renderer._emit({"type": "fts_rebuild", "status": "done"})
+        else:
+            print("Rebuilding FTS index...")
+            rebuild_fts_index(conn)
+            print("FTS index rebuilt.")
         conn.close()
         return 0
-
-    def on_file(source, status):
-        if args.verbose or status not in ("skipped", "skipped (older)"):
-            name = Path(source.location).name
-            print(f"  [{status}] {name}")
 
     plugins = load_all_adapters()
     if args.adapter:
         names = set(args.adapter)
         plugins = [p for p in plugins if p.name in names]
         if not plugins:
-            print(f"No adapters matched: {', '.join(args.adapter)}")
+            message = f"No adapters matched: {', '.join(args.adapter)}"
+            if json_mode:
+                renderer._emit({"type": "error", "message": message})
+            else:
+                print(message)
             return 1
 
     # Extract modules for ingestion (wrap with path overrides if needed)
     if args.path:
         adapters = [wrap_adapter_paths(p.module, args.path) for p in plugins]
-        print(f"Scanning: {', '.join(args.path)}")
+        if json_mode:
+            renderer._emit({"type": "scan_paths", "paths": args.path})
+        else:
+            print(f"Scanning: {', '.join(args.path)}")
     else:
         adapters = [p.module for p in plugins]
 
-    print("\nIngesting...")
-    stats = ingest_all(conn, adapters, on_file=on_file)
+    if not json_mode:
+        if not sys.stdout.isatty():
+            print("Tip: use --json for newline-delimited JSON output.", file=sys.stderr)
+        print("\nIngesting...")
+    stats = ingest_all(conn, adapters, on_event=renderer.handle_event)
 
-    _print_stats(stats)
+    if json_mode:
+        renderer.handle_summary(stats)
+    else:
+        _print_stats(stats)
     conn.close()
     return 0
 
@@ -517,14 +740,20 @@ def build_data_parser(subparsers) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   siftd ingest                      # ingest from all adapters
-  siftd ingest -v                   # show all files including skipped
+  siftd ingest -v                   # show per-adapter skip breakdowns
   siftd ingest -a claude_code       # only run claude_code adapter
   siftd ingest -p ~/logs -p /tmp    # scan additional directories
   siftd ingest --rebuild-fts        # rebuild FTS index from scratch""",
     )
-    p_ingest.add_argument("-v", "--verbose", action="store_true", help="Show all files including skipped")
+    p_ingest.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Show per-adapter skip breakdowns",
+    )
     p_ingest.add_argument("-p", "--path", action="append", metavar="DIR", help="Additional directories to scan (can be repeated)")
     p_ingest.add_argument("-a", "--adapter", action="append", metavar="NAME", help="Only run specific adapter(s) (can be repeated)")
+    p_ingest.add_argument("--json", action="store_true", help="Output newline-delimited JSON events")
     p_ingest.add_argument("--rebuild-fts", action="store_true", help="Rebuild FTS index from existing data (skips ingestion)")
     p_ingest.set_defaults(func=cmd_ingest)
 
