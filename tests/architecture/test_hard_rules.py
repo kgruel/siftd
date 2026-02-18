@@ -127,8 +127,9 @@ class TestBundledQueries:
         for sql_file in queries_dir.glob("*.sql"):
             sql_content = sql_file.read_text()
 
-            # Replace $var placeholders with NULL for syntax check
+            # Replace $var and :var placeholders with NULL for syntax check
             normalized = re.sub(r"\$\w+", "NULL", sql_content)
+            normalized = re.sub(r":\w+", "NULL", normalized)
 
             # Split into individual statements and validate each
             statements = [s.strip() for s in normalized.split(";") if s.strip()]

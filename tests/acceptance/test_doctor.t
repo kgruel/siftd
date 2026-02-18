@@ -19,13 +19,13 @@ Doctor runs without error on isolated DB (exit code 0):
 
 Doctor JSON output is valid:
 
-  $ HF_HUB_DISABLE_PROGRESS_BARS=1 siftd --db $PRYSK_TEMP/test.db doctor --json 2>/dev/null | python -m json.tool > /dev/null; echo "valid json: $?"
+  $ HF_HUB_DISABLE_PROGRESS_BARS=1 siftd --db $PRYSK_TEMP/test.db doctor --json 2>/dev/null | python3 -m json.tool > /dev/null; echo "valid json: $?"
   valid json: 0
 
 Doctor fix commands reference real subcommands (verified via Python):
 
   $ HF_HUB_DISABLE_PROGRESS_BARS=1 siftd --db $PRYSK_TEMP/test.db doctor --json 2>/dev/null | \
-  > python -c "
+  > python3 -c "
   > import json, sys, subprocess
   > data = json.load(sys.stdin)
   > for finding in data.get('findings', []):
