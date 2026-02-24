@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`db pull`** — Pull conversations from a remote database (inverse of `db push`):
+  - SSH transport streams from `siftd db send` on remote, merges locally
+  - Local-path transport slices remote DB directly
+  - `--since`, `--all`, `--dry-run`, `-w` filters mirror push
+  - `last_pull` delta tracking — repeated pulls transfer only new conversations
+- **`db send`** — Slice database to stdout as binary SQLite (inverse of `db receive`):
+  - JSON metadata (conversation count, size) written to stderr
+  - Designed for SSH pipe usage: `ssh host siftd db send > slice.db`
+  - `--since`, `-w`, `--no-fts` filter flags
+- **Sync concept doc** — `docs/concepts/sync.md` covering remotes, push/pull, delta tracking, transport, and pipe primitives
+
 ## [0.4.7] - 2026-02-18
 
 ### Added

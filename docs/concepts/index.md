@@ -14,6 +14,8 @@ These docs explain how siftd works under the hood. Understanding these concepts 
 
 5. **[Storage](storage.md)** — Where data lives, why SQLite, content deduplication, backup/restore, and direct SQL access.
 
+6. **[Sync](sync.md)** — Moving conversations between machines. Remotes, push/pull, delta tracking, SSH transport, and the send/receive pipe primitives.
+
 ## The flow
 
 ```
@@ -26,8 +28,8 @@ Adapters parse → Conversations (data model)
 Storage writes → SQLite (siftd.db)
     │
     ├─► FTS5 index (keyword search)
-    │
-    └─► Embeddings (semantic search, optional)
+    ├─► Embeddings (semantic search, optional)
+    └─► Sync (push/pull to remote databases)
 
 Tags annotate conversations for retrieval
 ```
