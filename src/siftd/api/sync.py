@@ -1,9 +1,10 @@
-"""Push local conversations to a remote siftd database.
+"""Sync local conversations with a remote siftd database.
 
-Wraps slice_database + transport (ssh pipe or local copy/merge)
-into a single workflow. SSH pushes stream the slice DB over stdin
-to ``siftd db receive`` on the remote — a single connection instead
-of 5 separate SSH/SCP invocations.
+Push wraps slice_database + transport (ssh pipe or local copy/merge).
+Pull wraps remote send + local receive (the inverse).
+
+SSH pushes stream the slice DB over stdin to ``siftd db receive``
+on the remote. SSH pulls stream from ``siftd db send`` on the remote.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from siftd.domain.sync import PushResult, SyncRemote
+from siftd.domain.sync import PullResult, PushResult, SyncRemote
 
 
 class SyncError(Exception):
@@ -255,3 +256,225 @@ def _push_local(remote: SyncRemote, slice_path: Path, db_path: Path) -> bool:
         raise SyncError(f"Local merge failed: {e}") from e
 
     return True
+
+
+# ---------------------------------------------------------------------------
+# Pull
+# ---------------------------------------------------------------------------
+
+
+def sync_pull(
+    db_path: Path,
+    remote: SyncRemote,
+    *,
+    since: str | None = None,
+    pull_all: bool = False,
+    workspace: str | None = None,
+    dry_run: bool = False,
+) -> PullResult:
+    """Pull conversations from a remote database.
+
+    Args:
+        db_path: Path to the local siftd database.
+        remote: The remote to pull from.
+        since: Only pull conversations started after this date.
+        pull_all: Pull all conversations (ignore last_pull).
+        workspace: Filter by workspace substring.
+        dry_run: If True, query remote but don't merge locally.
+
+    Returns:
+        PullResult with stats.
+
+    Raises:
+        SyncError: On transport or merge failure.
+    """
+    effective_since = _resolve_pull_since(since, pull_all, remote)
+    should_update_last_pull = since is None
+
+    if remote.host:
+        conversations, size_bytes = _pull_ssh(
+            remote, db_path, effective_since, workspace, dry_run,
+        )
+    else:
+        conversations, size_bytes = _pull_local(
+            remote, db_path, effective_since, workspace, dry_run,
+        )
+
+    if conversations == 0:
+        return PullResult(
+            conversations=0,
+            size_bytes=0,
+            remote_name=remote.name,
+            dry_run=dry_run,
+            last_pull_updated=False,
+        )
+
+    last_pull_updated = False
+    if should_update_last_pull and not dry_run:
+        from siftd.config import update_last_pull
+
+        now = datetime.now(UTC).isoformat()
+        update_last_pull(remote.name, now)
+        last_pull_updated = True
+
+    return PullResult(
+        conversations=conversations,
+        size_bytes=size_bytes,
+        remote_name=remote.name,
+        dry_run=dry_run,
+        last_pull_updated=last_pull_updated,
+    )
+
+
+def _resolve_pull_since(
+    explicit: str | None,
+    pull_all: bool,
+    remote: SyncRemote,
+) -> str | None:
+    """Determine the effective --since value for pull.
+
+    Priority: explicit flag > pull_all (None) > last_pull > None (all).
+    """
+    if explicit is not None:
+        return explicit
+    if pull_all:
+        return None
+    return remote.last_pull
+
+
+def _pull_ssh(
+    remote: SyncRemote,
+    local_db: Path,
+    since: str | None,
+    workspace: str | None,
+    dry_run: bool,
+) -> tuple[int, int]:
+    """Pull via SSH by running ``siftd db send`` on the remote.
+
+    Streams the remote slice DB over stdout:
+        ssh [opts] host "siftd --db <path> db send --no-fts [--since ...]"
+
+    Returns (conversations, size_bytes).
+    """
+    assert remote.host is not None
+
+    remote_db = shlex.quote(remote.path)
+    send_cmd = f"siftd --db {remote_db} db send --no-fts"
+    if since is not None:
+        send_cmd += f" --since {shlex.quote(since)}"
+    if workspace is not None:
+        send_cmd += f" -w {shlex.quote(workspace)}"
+
+    ssh_opts = _build_ssh_options(remote)
+    cmd = ["ssh"] + ssh_opts + [remote.host, send_cmd]
+
+    from siftd.config import get_config
+
+    timeout_raw = get_config("sync.ssh.connect_timeout_s")
+    timeout = 300
+    if timeout_raw is not None:
+        try:
+            timeout = int(timeout_raw)
+        except (ValueError, TypeError):
+            pass
+
+    with tempfile.NamedTemporaryFile(
+        prefix="siftd-pull-", suffix=".db", delete=False,
+    ) as tmp:
+        tmp_path = Path(tmp.name)
+
+    try:
+        with open(tmp_path, "wb") as out_f:
+            try:
+                result = subprocess.run(
+                    cmd,
+                    stdout=out_f,
+                    stderr=subprocess.PIPE,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired as e:
+                raise SyncError(
+                    f"Pull from {remote.host} timed out after {timeout}s. "
+                    "The remote may be slow or unreachable."
+                ) from e
+            except OSError as e:
+                raise SyncError(_friendly_os_error(remote.host, str(e))) from e
+
+        if result.returncode != 0:
+            stderr = result.stderr.decode().strip()
+            raise SyncError(_friendly_remote_error(remote.host, remote.path, stderr))
+
+        # Parse metadata from stderr (JSON line from db send)
+        stderr_text = result.stderr.decode().strip()
+        meta = _parse_send_metadata(stderr_text)
+        conversations = meta.get("conversations", 0)
+
+        if conversations == 0:
+            return 0, 0
+
+        size_bytes = tmp_path.stat().st_size
+
+        if dry_run:
+            return conversations, size_bytes
+
+        # Merge into local DB
+        from siftd.api.receive import receive_database
+
+        receive_database(tmp_path, local_db, rebuild_fts=True)
+        return conversations, size_bytes
+
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def _pull_local(
+    remote: SyncRemote,
+    local_db: Path,
+    since: str | None,
+    workspace: str | None,
+    dry_run: bool,
+) -> tuple[int, int]:
+    """Pull from a local-path remote. Returns (conversations, size_bytes)."""
+    source = Path(remote.path)
+    if not source.exists():
+        raise SyncError(f"Remote database not found: {source}")
+
+    from siftd.api.slice import slice_database
+
+    with tempfile.TemporaryDirectory(prefix="siftd-pull-") as tmp:
+        slice_path = Path(tmp) / "pull-slice.db"
+        result = slice_database(
+            source_db=source,
+            target_path=slice_path,
+            since=since,
+            workspace=workspace,
+            rebuild_fts=False,
+        )
+
+        conversations = result["conversations"]
+        size_bytes = result["size_bytes"]
+
+        if conversations == 0:
+            return 0, 0
+
+        if dry_run:
+            return conversations, size_bytes
+
+        from siftd.api.receive import receive_database
+
+        receive_database(slice_path, local_db, rebuild_fts=True)
+        return conversations, size_bytes
+
+
+def _parse_send_metadata(stderr_text: str) -> dict:
+    """Parse the JSON metadata line from ``siftd db send`` stderr."""
+    # db send writes a single JSON line to stderr
+    for line in reversed(stderr_text.splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                return json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+    return {}

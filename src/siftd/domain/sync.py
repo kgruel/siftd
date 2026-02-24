@@ -13,6 +13,7 @@ class SyncRemote:
     host: str | None  # None for local-path remotes
     path: str
     last_push: str | None = None  # ISO 8601 timestamp
+    last_pull: str | None = None  # ISO 8601 timestamp
 
 
 @dataclass
@@ -25,3 +26,14 @@ class PushResult:
     remote_existed: bool
     dry_run: bool
     last_push_updated: bool = False
+
+
+@dataclass
+class PullResult:
+    """Result of a pull operation."""
+
+    conversations: int
+    size_bytes: int
+    remote_name: str
+    dry_run: bool
+    last_pull_updated: bool = False

@@ -329,6 +329,118 @@ def cmd_db_receive(args) -> int:
             tmp_path.unlink()
 
 
+def cmd_db_send(args) -> int:
+    """Slice the local database and write binary SQLite to stdout.
+
+    Metadata (conversation count, size) goes to stderr as JSON.
+    Designed for SSH pipe usage — the inverse of ``db receive``.
+    """
+    from siftd.api.slice import slice_database
+
+    db = resolve_db(args)
+    if not db.exists():
+        print(
+            json.dumps({"error": f"Database not found: {db}"}),
+            file=sys.stderr,
+        )
+        return 1
+
+    if sys.stdout.isatty():
+        print(
+            json.dumps({"error": "stdout is a terminal. Pipe to a file or command."}),
+            file=sys.stderr,
+        )
+        return 1
+
+    rebuild_fts = not args.no_fts
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="siftd-send-", suffix=".db", delete=False,
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+
+        result = slice_database(
+            source_db=db,
+            target_path=tmp_path,
+            since=getattr(args, "since", None),
+            workspace=getattr(args, "workspace", None),
+            rebuild_fts=rebuild_fts,
+        )
+
+        conversations = result["conversations"]
+        if conversations == 0:
+            print(
+                json.dumps({"conversations": 0, "size_bytes": 0}),
+                file=sys.stderr,
+            )
+            return 0
+
+        size_bytes = tmp_path.stat().st_size
+        with open(tmp_path, "rb") as f:
+            shutil.copyfileobj(f, sys.stdout.buffer)
+
+        print(
+            json.dumps({"conversations": conversations, "size_bytes": size_bytes}),
+            file=sys.stderr,
+        )
+        return 0
+
+    except FileNotFoundError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        return 1
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            tmp_path.unlink()
+
+
+def cmd_db_pull(args) -> int:
+    """Pull conversations from a sync remote."""
+    from siftd.api.sync import SyncError, SyncRemote, sync_pull
+    from siftd.config import get_sync_remote
+
+    remote_cfg = get_sync_remote(args.name)
+    if remote_cfg is None:
+        print(f"Remote '{args.name}' not found.", file=sys.stderr)
+        print("Run 'siftd db remote list' to see configured remotes.", file=sys.stderr)
+        return 1
+
+    remote = SyncRemote(**remote_cfg)
+
+    db = resolve_db(args)
+
+    dry_run = getattr(args, "dry_run", False)
+    location = f"{remote.host}:{remote.path}" if remote.host else remote.path
+
+    if not dry_run:
+        print(f"Pulling from {args.name} ({location})...", file=sys.stderr)
+
+    try:
+        result = sync_pull(
+            db_path=db,
+            remote=remote,
+            since=getattr(args, "since", None),
+            pull_all=getattr(args, "pull_all", False),
+            workspace=getattr(args, "workspace", None),
+            dry_run=dry_run,
+        )
+    except SyncError as e:
+        print(f"Pull failed: {e}", file=sys.stderr)
+        return 1
+
+    if result.conversations == 0:
+        print(f"Nothing new to pull from {args.name}.")
+        return 0
+
+    size_kb = result.size_bytes / 1024
+
+    if result.dry_run:
+        print(f"Would pull {result.conversations} conversations from {args.name} ({size_kb:.1f} KB)")
+    else:
+        print(f"Pulled {result.conversations} conversations ({size_kb:.1f} KB)")
+    return 0
+
+
 def cmd_db_remote_add(args) -> int:
     """Register a sync remote."""
     from siftd.config import set_sync_remote
@@ -371,6 +483,8 @@ def cmd_db_remote_list(args) -> int:
         print(f"{r['name']:20s} {location}")
         if r["last_push"]:
             print(f"{'':20s} last push: {r['last_push']}")
+        if r.get("last_pull"):
+            print(f"{'':20s} last pull: {r['last_pull']}")
     return 0
 
 
@@ -445,7 +559,7 @@ def build_db_parser(subparsers) -> None:
     """Add the 'db' subparser with nested subcommands."""
     p_db = subparsers.add_parser(
         "db",
-        help="Database operations (info, backup, restore, vacuum, slice, merge, receive, remote, push)",
+        help="Database operations (info, backup, restore, vacuum, slice, merge, send, receive, remote, push, pull)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Container-level operations on the siftd database.
 
@@ -459,9 +573,11 @@ examples:
   siftd db restore /tmp/siftd.db         # restore from backup
   siftd db slice out.db -w project       # export filtered subset
   siftd db merge laptop-slice.db         # merge slice into main DB
+  siftd db send > slice.db               # send via stdout (SSH pipe)
   siftd db receive < slice.db            # receive via stdin (SSH pipe)
   siftd db remote add alcove host:path   # register sync remote
-  siftd db push alcove                   # push delta to remote""",
+  siftd db push alcove                   # push delta to remote
+  siftd db pull alcove                   # pull delta from remote""",
     )
     db_sub = p_db.add_subparsers(dest="db_command")
 
@@ -552,6 +668,28 @@ examples:
     p_receive.add_argument("--no-fts", action="store_true", help="Skip FTS5 index rebuild")
     p_receive.set_defaults(func=cmd_db_receive)
 
+    # send
+    p_send = db_sub.add_parser(
+        "send",
+        help="Slice the database and write binary SQLite to stdout",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Designed for SSH pipe usage — the inverse of ``db receive``.
+Writes a slice DB to stdout and metadata JSON to stderr.
+
+examples:
+  siftd db send > slice.db                           # send all conversations
+  siftd db send --since 7d > slice.db                # send last 7 days
+  siftd db send -w project > slice.db                # filter by workspace
+  ssh host siftd --db /path db send --no-fts > /tmp/pull.db""",
+    )
+    p_send.add_argument("--since", metavar="DATE", type=parse_date,
+                        help="Send conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    p_send.add_argument("-w", "--workspace", metavar="SUBSTR",
+                        help="Filter by workspace path substring")
+    p_send.add_argument("--no-fts", action="store_true", default=True,
+                        help="Skip FTS5 index rebuild (default: skip)")
+    p_send.set_defaults(func=cmd_db_send)
+
     # remote (sub-namespace)
     p_remote = db_sub.add_parser(
         "remote",
@@ -601,6 +739,29 @@ examples:
     p_push.add_argument("-w", "--workspace", metavar="SUBSTR",
                         help="Filter by workspace path substring")
     p_push.set_defaults(func=cmd_db_push)
+
+    # pull
+    p_pull = db_sub.add_parser(
+        "pull",
+        help="Pull conversations from a sync remote",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  siftd db pull alcove                       # pull delta since last pull
+  siftd db pull alcove --since 7d            # pull last 7 days
+  siftd db pull alcove --all                 # pull everything
+  siftd db pull alcove --dry-run             # preview what would pull
+  siftd db pull alcove -w project            # filter by workspace""",
+    )
+    p_pull.add_argument("name", help="Remote name to pull from")
+    p_pull.add_argument("--since", metavar="DATE", type=parse_date,
+                        help="Pull conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    p_pull.add_argument("--all", action="store_true", dest="pull_all",
+                        help="Pull all conversations (ignore last_pull)")
+    p_pull.add_argument("--dry-run", action="store_true",
+                        help="Preview what would be pulled without merging")
+    p_pull.add_argument("-w", "--workspace", metavar="SUBSTR",
+                        help="Filter by workspace path substring")
+    p_pull.set_defaults(func=cmd_db_pull)
 
     # bare 'siftd db' prints help
     p_db.set_defaults(func=lambda args: (p_db.print_help(), 0)[1])

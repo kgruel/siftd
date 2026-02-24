@@ -69,6 +69,7 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     _SchemaEntry("sync.remotes.*.host", "string", _is_str),
     _SchemaEntry("sync.remotes.*.path", "string", _is_str),
     _SchemaEntry("sync.remotes.*.last_push", "string", _is_str),
+    _SchemaEntry("sync.remotes.*.last_pull", "string", _is_str),
     _SchemaEntry("sync.remotes.*.ssh.options", "list[string]", _is_str_list),
 ]
 
@@ -408,6 +409,7 @@ def get_sync_remotes() -> list[dict]:
             "host": cfg.get("host"),
             "path": str(cfg.get("path", "")),
             "last_push": cfg.get("last_push"),
+            "last_pull": cfg.get("last_pull"),
         })
     return remotes
 
@@ -512,6 +514,31 @@ def update_last_push(name: str, timestamp: str) -> None:
         return
 
     cast(Container, remotes_config[name])["last_push"] = timestamp
+    cfg_path.write_text(tomlkit.dumps(doc))
+
+
+def update_last_pull(name: str, timestamp: str) -> None:
+    """Write last_pull timestamp for a sync remote."""
+    cfg_path = config_file()
+
+    if cfg_path.exists():
+        try:
+            doc = tomlkit.parse(cfg_path.read_text())
+        except tomlkit.exceptions.TOMLKitError:
+            doc = tomlkit.document()
+    else:
+        doc = tomlkit.document()
+
+    sync_config = doc.get("sync")
+    if not isinstance(sync_config, dict):
+        return
+    remotes_config = sync_config.get("remotes")
+    if not isinstance(remotes_config, dict):
+        return
+    if name not in remotes_config:
+        return
+
+    cast(Container, remotes_config[name])["last_pull"] = timestamp
     cfg_path.write_text(tomlkit.dumps(doc))
 
 

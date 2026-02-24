@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from siftd.api.sync import SyncError, SyncRemote, sync_push
+from siftd.api.sync import SyncError, SyncRemote, sync_pull, sync_push
 from siftd.cli import main
 from siftd.config import (
     get_ssh_options,
@@ -16,6 +16,7 @@ from siftd.config import (
     get_sync_remotes,
     remove_sync_remote,
     set_sync_remote,
+    update_last_pull,
     update_last_push,
 )
 from siftd.storage.sqlite import (
@@ -972,3 +973,488 @@ class TestSSHOptions:
 
         opts = get_ssh_options("nonexistent")
         assert opts == ["-v"]
+
+
+# --- Config last_pull tests ---
+
+
+class TestConfigLastPull:
+    def test_update_last_pull(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        set_sync_remote("alcove", "alcove", "/data/team.db")
+        update_last_pull("alcove", "2026-02-20T10:30:00+00:00")
+
+        remote = get_sync_remote("alcove")
+        assert remote is not None
+        assert remote["last_pull"] == "2026-02-20T10:30:00+00:00"
+
+    def test_last_pull_initially_none(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        set_sync_remote("alcove", "alcove", "/data/team.db")
+        remote = get_sync_remote("alcove")
+        assert remote["last_pull"] is None
+
+
+# --- Local pull tests ---
+
+
+class TestLocalPull:
+    def test_pull_from_local_remote(self, tmp_path, monkeypatch):
+        """Pull from a local-path remote merges into local DB."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        (tmp_path / "remote").mkdir()
+        remote_db = _make_db(
+            tmp_path / "remote" / "team.db",
+            conversations=[{"external_id": "conv-A"}, {"external_id": "conv-B"}],
+        )
+        local_db = tmp_path / "local.db"
+
+        remote = SyncRemote(name="test", host=None, path=str(remote_db))
+        result = sync_pull(local_db, remote)
+
+        assert result.conversations == 2
+        assert result.size_bytes > 0
+        assert not result.dry_run
+        assert local_db.exists()
+
+        conn = sqlite3.connect(str(local_db))
+        count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+        conn.close()
+        assert count == 2
+
+    def test_pull_empty_result(self, tmp_path, monkeypatch):
+        """Pull with no matching conversations returns 0."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        (tmp_path / "remote").mkdir(exist_ok=True)
+        remote_db = _make_db(tmp_path / "remote" / "team.db", conversations=[])
+        local_db = tmp_path / "local.db"
+
+        remote = SyncRemote(name="test", host=None, path=str(remote_db))
+        result = sync_pull(local_db, remote)
+
+        assert result.conversations == 0
+
+    def test_pull_dry_run(self, tmp_path, monkeypatch):
+        """Dry run reports counts but doesn't create local DB."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        (tmp_path / "remote").mkdir(exist_ok=True)
+        remote_db = _make_db(
+            tmp_path / "remote" / "team.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        local_db = tmp_path / "local.db"
+
+        remote = SyncRemote(name="test", host=None, path=str(remote_db))
+        result = sync_pull(local_db, remote, dry_run=True)
+
+        assert result.conversations == 1
+        assert result.dry_run
+        assert not local_db.exists()
+
+    def test_pull_updates_last_pull(self, tmp_path, monkeypatch):
+        """Successful pull updates last_pull in config."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        (tmp_path / "remote").mkdir(exist_ok=True)
+        remote_db = _make_db(
+            tmp_path / "remote" / "team.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        local_db = tmp_path / "local.db"
+
+        set_sync_remote("test", None, str(remote_db))
+        remote_cfg = get_sync_remote("test")
+        remote = SyncRemote(**remote_cfg)
+
+        sync_pull(local_db, remote)
+
+        updated = get_sync_remote("test")
+        assert updated["last_pull"] is not None
+
+    def test_explicit_since_does_not_update_last_pull(self, tmp_path, monkeypatch):
+        """Explicit --since should not advance last_pull."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        (tmp_path / "remote").mkdir(exist_ok=True)
+        remote_db = _make_db(
+            tmp_path / "remote" / "team.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        local_db = tmp_path / "local.db"
+
+        set_sync_remote("test", None, str(remote_db))
+        update_last_pull("test", "2025-01-01T00:00:00+00:00")
+        remote_cfg = get_sync_remote("test")
+        remote = SyncRemote(**remote_cfg)
+
+        result = sync_pull(local_db, remote, since="2024-01-01")
+
+        updated = get_sync_remote("test")
+        assert updated["last_pull"] == "2025-01-01T00:00:00+00:00"
+        assert result.last_pull_updated is False
+
+    def test_pull_since_from_last_pull(self, tmp_path, monkeypatch):
+        """Pull uses last_pull as since when no explicit --since given."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        (tmp_path / "remote").mkdir(exist_ok=True)
+        remote_db = _make_db(
+            tmp_path / "remote" / "team.db",
+            conversations=[
+                {"external_id": "conv-old", "started_at": "2024-01-01T10:00:00Z"},
+                {"external_id": "conv-new", "started_at": "2026-02-01T10:00:00Z"},
+            ],
+        )
+        local_db = tmp_path / "local.db"
+
+        remote = SyncRemote(
+            name="test", host=None, path=str(remote_db),
+            last_pull="2025-01-01",
+        )
+        result = sync_pull(local_db, remote)
+
+        assert result.conversations == 1
+
+        conn = sqlite3.connect(str(local_db))
+        ext_ids = [r[0] for r in conn.execute("SELECT external_id FROM conversations").fetchall()]
+        conn.close()
+        assert "conv-new" in ext_ids
+        assert "conv-old" not in ext_ids
+
+    def test_pull_workspace_filter(self, tmp_path, monkeypatch):
+        """Pull with workspace filter only pulls matching conversations."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        (tmp_path / "remote").mkdir(exist_ok=True)
+        remote_db = _make_db(
+            tmp_path / "remote" / "team.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        local_db = tmp_path / "local.db"
+
+        remote = SyncRemote(name="test", host=None, path=str(remote_db))
+        result = sync_pull(local_db, remote, workspace="nonexistent")
+
+        assert result.conversations == 0
+
+    def test_pull_remote_not_found(self, tmp_path, monkeypatch):
+        """Pull from nonexistent local path raises SyncError."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        local_db = tmp_path / "local.db"
+        remote = SyncRemote(name="test", host=None, path=str(tmp_path / "nope.db"))
+
+        with pytest.raises(SyncError, match="Remote database not found"):
+            sync_pull(local_db, remote)
+
+    def test_pull_idempotent(self, tmp_path, monkeypatch):
+        """Pulling the same data twice doesn't duplicate conversations."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        (tmp_path / "remote").mkdir(exist_ok=True)
+        remote_db = _make_db(
+            tmp_path / "remote" / "team.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        local_db = tmp_path / "local.db"
+
+        remote = SyncRemote(name="test", host=None, path=str(remote_db))
+        sync_pull(local_db, remote)
+        sync_pull(local_db, remote, pull_all=True)
+
+        conn = sqlite3.connect(str(local_db))
+        count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+        conn.close()
+        assert count == 1
+
+
+# --- SSH pull tests (mocked) ---
+
+
+class TestSSHPull:
+    def _make_send_response(self, tmp_path, conversations=1):
+        """Create a slice DB and return (db_bytes, stderr_json)."""
+        source = _make_db(
+            tmp_path / "ssh-source.db",
+            conversations=[{"external_id": f"conv-{i}"} for i in range(conversations)],
+        )
+        db_bytes = source.read_bytes()
+        stderr_json = json.dumps({"conversations": conversations, "size_bytes": len(db_bytes)})
+        return db_bytes, stderr_json
+
+    def test_single_ssh_command(self, tmp_path, monkeypatch):
+        """Verify a single ssh command with db send is used."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        db_bytes, stderr_json = self._make_send_response(tmp_path)
+        local_db = tmp_path / "local.db"
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+        calls = []
+
+        def mock_run(cmd, **kwargs):
+            calls.append(cmd)
+            # Write db bytes to the stdout file
+            stdout_file = kwargs.get("stdout")
+            if stdout_file and hasattr(stdout_file, "write"):
+                stdout_file.write(db_bytes)
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = stderr_json.encode()
+            return result
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            result = sync_pull(local_db, remote)
+
+        assert result.conversations == 1
+        assert len(calls) == 1
+        assert calls[0][0] == "ssh"
+        assert "alcove" in calls[0]
+        assert "db send" in calls[0][-1]
+
+    def test_send_command_construction(self, tmp_path, monkeypatch):
+        """Verify the ssh command includes --db, --no-fts, and filters."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        db_bytes, stderr_json = self._make_send_response(tmp_path)
+        local_db = tmp_path / "local.db"
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+        calls = []
+
+        def mock_run(cmd, **kwargs):
+            calls.append(cmd)
+            stdout_file = kwargs.get("stdout")
+            if stdout_file and hasattr(stdout_file, "write"):
+                stdout_file.write(db_bytes)
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = stderr_json.encode()
+            return result
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            sync_pull(local_db, remote, since="2025-01-01", workspace="proj")
+
+        send_cmd = calls[0][-1]
+        assert "siftd --db" in send_cmd
+        assert "db send --no-fts" in send_cmd
+        assert "--since 2025-01-01" in send_cmd
+        assert "-w proj" in send_cmd
+
+    def test_ssh_empty_result(self, tmp_path, monkeypatch):
+        """Remote returning 0 conversations exits cleanly."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        local_db = tmp_path / "local.db"
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+
+        def mock_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = json.dumps({"conversations": 0, "size_bytes": 0}).encode()
+            return result
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            result = sync_pull(local_db, remote)
+
+        assert result.conversations == 0
+        assert not local_db.exists()
+
+    def test_ssh_timeout_raises_syncerror(self, tmp_path, monkeypatch):
+        """SSH timeout surfaces as SyncError with friendly message."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        local_db = tmp_path / "local.db"
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+
+        def mock_run(cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", None))
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            with pytest.raises(SyncError, match="timed out.*slow or unreachable"):
+                sync_pull(local_db, remote)
+
+    def test_ssh_connection_refused(self, tmp_path, monkeypatch):
+        """Connection refused gets friendly message."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        local_db = tmp_path / "local.db"
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+
+        def mock_run(cmd, **kwargs):
+            raise OSError("Connection refused")
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            with pytest.raises(SyncError, match="Cannot connect to alcove"):
+                sync_pull(local_db, remote)
+
+    def test_siftd_not_installed(self, tmp_path, monkeypatch):
+        """Remote 'command not found' gets friendly install hint."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        local_db = tmp_path / "local.db"
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+
+        def mock_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 1
+            result.stderr = b"siftd: command not found"
+            return result
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            with pytest.raises(SyncError, match="not installed on alcove"):
+                sync_pull(local_db, remote)
+
+    def test_dry_run_does_not_merge(self, tmp_path, monkeypatch):
+        """Dry run queries remote but doesn't create local DB."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        db_bytes, stderr_json = self._make_send_response(tmp_path)
+        local_db = tmp_path / "local.db"
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+
+        def mock_run(cmd, **kwargs):
+            stdout_file = kwargs.get("stdout")
+            if stdout_file and hasattr(stdout_file, "write"):
+                stdout_file.write(db_bytes)
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = stderr_json.encode()
+            return result
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            result = sync_pull(local_db, remote, dry_run=True)
+
+        assert result.conversations == 1
+        assert result.dry_run
+        assert not local_db.exists()
+
+
+# --- Pull CLI integration tests ---
+
+
+class TestPullCLI:
+    def test_pull_no_remote(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        rc = main(["db", "pull", "nonexistent"])
+        assert rc == 1
+        assert "not found" in capsys.readouterr().err
+
+    def test_pull_local(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        (tmp_path / "remote").mkdir(exist_ok=True)
+        remote_db = _make_db(
+            tmp_path / "remote" / "team.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        local_db = tmp_path / "local.db"
+        set_sync_remote("local", None, str(remote_db))
+
+        rc = main(["--db", str(local_db), "db", "pull", "local"])
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "Pulled 1 conversations" in captured.out
+        assert "Pulling from local" in captured.err
+
+    def test_pull_dry_run(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        (tmp_path / "remote").mkdir(exist_ok=True)
+        remote_db = _make_db(
+            tmp_path / "remote" / "team.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        local_db = tmp_path / "local.db"
+        set_sync_remote("local", None, str(remote_db))
+
+        rc = main(["--db", str(local_db), "db", "pull", "local", "--dry-run"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Would pull 1 conversations from local" in out
+        assert not local_db.exists()
+
+    def test_pull_empty(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        (tmp_path / "remote").mkdir(exist_ok=True)
+        remote_db = _make_db(tmp_path / "remote" / "team.db", conversations=[])
+        local_db = tmp_path / "local.db"
+        set_sync_remote("local", None, str(remote_db))
+
+        rc = main(["--db", str(local_db), "db", "pull", "local"])
+        assert rc == 0
+        assert "Nothing new to pull from local" in capsys.readouterr().out
+
+
+# --- Send CLI integration tests ---
+
+
+class TestSendCLI:
+    def test_send_tty_rejected(self, tmp_path, monkeypatch, capsys):
+        """db send to a terminal is rejected."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+
+        mock_stdout = MagicMock()
+        mock_stdout.isatty = MagicMock(return_value=True)
+
+        with patch("siftd.cli_db.sys.stdout", mock_stdout):
+            rc = main(["--db", str(source), "db", "send"])
+
+        assert rc == 1
+        err = capsys.readouterr().err
+        error = json.loads(err)
+        assert "terminal" in error["error"]
+
+    def test_send_writes_to_stdout(self, tmp_path, monkeypatch, capsys):
+        """db send writes binary SQLite to stdout and metadata to stderr."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+
+        stdout_buf = io.BytesIO()
+        mock_stdout = MagicMock()
+        mock_stdout.isatty = MagicMock(return_value=False)
+        mock_stdout.buffer = stdout_buf
+
+        with patch("siftd.cli_db.sys.stdout", mock_stdout):
+            rc = main(["--db", str(source), "db", "send"])
+
+        assert rc == 0
+        err = capsys.readouterr().err
+        meta = json.loads(err)
+        assert meta["conversations"] == 1
+        assert meta["size_bytes"] > 0
+
+        # Verify stdout is valid SQLite
+        stdout_buf.seek(0)
+        assert stdout_buf.read(16).startswith(b"SQLite format 3\x00")
+
+    def test_send_empty_db(self, tmp_path, monkeypatch, capsys):
+        """db send with no conversations writes metadata with 0 count."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(tmp_path / "source.db", conversations=[])
+
+        mock_stdout = MagicMock()
+        mock_stdout.isatty = MagicMock(return_value=False)
+        mock_stdout.buffer = io.BytesIO()
+
+        with patch("siftd.cli_db.sys.stdout", mock_stdout):
+            rc = main(["--db", str(source), "db", "send"])
+
+        assert rc == 0
+        err = capsys.readouterr().err
+        meta = json.loads(err)
+        assert meta["conversations"] == 0
