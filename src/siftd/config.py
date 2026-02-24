@@ -64,9 +64,12 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     _SchemaEntry("query.tool_chars", "int", _is_int_like),
     _SchemaEntry("ingestion.filter_binary", "bool", _is_bool_like),
     _SchemaEntry("adapters.*.locations", "list[string]", _is_str_list),
+    _SchemaEntry("sync.ssh.options", "list[string]", _is_str_list),
+    _SchemaEntry("sync.ssh.connect_timeout_s", "int", _is_int_like),
     _SchemaEntry("sync.remotes.*.host", "string", _is_str),
     _SchemaEntry("sync.remotes.*.path", "string", _is_str),
     _SchemaEntry("sync.remotes.*.last_push", "string", _is_str),
+    _SchemaEntry("sync.remotes.*.ssh.options", "list[string]", _is_str_list),
 ]
 
 
@@ -510,6 +513,55 @@ def update_last_push(name: str, timestamp: str) -> None:
 
     cast(Container, remotes_config[name])["last_push"] = timestamp
     cfg_path.write_text(tomlkit.dumps(doc))
+
+
+def get_ssh_options(remote_name: str | None = None) -> list[str]:
+    """Build SSH CLI options from config.
+
+    Per-remote ``sync.remotes.<name>.ssh.options`` takes precedence over
+    global ``sync.ssh.options``.  The ``sync.ssh.connect_timeout_s`` value
+    is always appended as ``-o ConnectTimeout=N`` (unless overridden by a
+    per-remote options list).
+
+    Returns a flat list of strings suitable for splicing into a subprocess
+    command (e.g. ``["ssh"] + get_ssh_options("alcove") + [host, ...]``).
+    """
+    doc = load_config()
+    sync_config = doc.get("sync", {})
+    if not isinstance(sync_config, dict):
+        return []
+
+    # Check per-remote options first
+    if remote_name is not None:
+        remotes_config = sync_config.get("remotes", {})
+        if isinstance(remotes_config, dict):
+            remote_cfg = remotes_config.get(remote_name, {})
+            if isinstance(remote_cfg, dict):
+                ssh_cfg = remote_cfg.get("ssh", {})
+                if isinstance(ssh_cfg, dict):
+                    opts = ssh_cfg.get("options")
+                    if isinstance(opts, list):
+                        return [str(o) for o in opts]
+
+    # Fall back to global options
+    ssh_config = sync_config.get("ssh", {})
+    if not isinstance(ssh_config, dict):
+        return []
+
+    result: list[str] = []
+
+    opts = ssh_config.get("options")
+    if isinstance(opts, list):
+        result.extend(str(o) for o in opts)
+
+    timeout = ssh_config.get("connect_timeout_s")
+    if timeout is not None:
+        try:
+            result.extend(["-o", f"ConnectTimeout={int(timeout)}"])
+        except (ValueError, TypeError):
+            pass
+
+    return result
 
 
 def get_ingestion_filter_binary() -> bool:

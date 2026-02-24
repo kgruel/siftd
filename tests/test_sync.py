@@ -1,14 +1,17 @@
 """Tests for siftd db push — push conversations to a remote database."""
 
+import io
+import json
 import sqlite3
 import subprocess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from siftd.api.sync import SyncError, SyncRemote, sync_push
 from siftd.cli import main
 from siftd.config import (
+    get_ssh_options,
     get_sync_remote,
     get_sync_remotes,
     remove_sync_remote,
@@ -332,9 +335,20 @@ class TestLocalPush:
 # --- SSH push tests (mocked) ---
 
 
+def _ssh_mock_ok(response_json):
+    """Return a mock subprocess.run that succeeds with the given JSON response."""
+    def mock_run(cmd, **kwargs):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = json.dumps(response_json).encode()
+        result.stderr = b""
+        return result
+    return mock_run
+
+
 class TestSSHPush:
-    def test_scp_command_construction(self, tmp_path, monkeypatch):
-        """Verify scp is called with correct arguments for first push."""
+    def test_single_ssh_command(self, tmp_path, monkeypatch):
+        """Verify a single ssh command with db receive is used."""
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
 
         source = _make_db(
@@ -343,33 +357,28 @@ class TestSSHPush:
         )
 
         remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
-        scp_calls = []
+        calls = []
 
         def mock_run(cmd, **kwargs):
-            from unittest.mock import MagicMock
+            calls.append(cmd)
             result = MagicMock()
-            if cmd[0] == "ssh" and "test" in cmd and "-f" in cmd:
-                # _remote_file_exists → file doesn't exist
-                result.returncode = 1
-                return result
-            if cmd[0] == "scp":
-                scp_calls.append(cmd)
-                result.returncode = 0
-                return result
             result.returncode = 0
+            result.stdout = json.dumps({"status": "created", "conversations": 1}).encode()
+            result.stderr = b""
             return result
 
         with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
             result = sync_push(source, remote)
 
         assert result.conversations == 1
-        assert not result.remote_existed
-        assert len(scp_calls) == 1
-        assert scp_calls[0][0] == "scp"
-        assert "alcove:/data/team.db" in scp_calls[0][2]
+        assert not result.remote_existed  # status == "created"
+        assert len(calls) == 1
+        assert calls[0][0] == "ssh"
+        assert "alcove" in calls[0]
+        assert "db receive" in calls[0][-1]
 
-    def test_ssh_merge_for_existing_remote(self, tmp_path, monkeypatch):
-        """When remote exists, verify scp to temp + ssh merge + rm temp."""
+    def test_receive_command_construction(self, tmp_path, monkeypatch):
+        """Verify the ssh command includes --db and --no-fts."""
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
 
         source = _make_db(
@@ -378,44 +387,42 @@ class TestSSHPush:
         )
 
         remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
-        ssh_commands = []
+        calls = []
 
         def mock_run(cmd, **kwargs):
-            from unittest.mock import MagicMock
+            calls.append(cmd)
             result = MagicMock()
-            if cmd[0] == "ssh":
-                ssh_commands.append(cmd)
-                if "test" in cmd and "-f" in cmd:
-                    # _remote_file_exists → file exists
-                    result.returncode = 0
-                    return result
-                if "command" in cmd and "-v" in cmd:
-                    # _require_remote_siftd → found
-                    result.returncode = 0
-                    result.stdout = b"/usr/local/bin/siftd"
-                    return result
-                # ssh merge or rm
-                result.returncode = 0
-                result.stdout = b""
-                return result
-            if cmd[0] == "scp":
-                result.returncode = 0
-                return result
             result.returncode = 0
+            result.stdout = json.dumps({"status": "created", "conversations": 1}).encode()
+            result.stderr = b""
             return result
 
         with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            sync_push(source, remote)
+
+        receive_cmd = calls[0][-1]
+        assert "siftd --db" in receive_cmd
+        assert "db receive --no-fts" in receive_cmd
+
+    def test_merged_status_means_existed(self, tmp_path, monkeypatch):
+        """Remote returning status=merged means remote_existed=True."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+
+        mock = _ssh_mock_ok({"status": "merged", "conversations": 0})
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock):
             result = sync_push(source, remote)
 
-        assert result.conversations == 1
         assert result.remote_existed
 
-        # Check that ssh merge command was called
-        merge_cmds = [c for c in ssh_commands if any("db merge" in str(arg) for arg in c)]
-        assert len(merge_cmds) == 1
-
-    def test_scp_failure(self, tmp_path, monkeypatch):
-        """scp failure raises SyncError."""
+    def test_created_status_means_not_existed(self, tmp_path, monkeypatch):
+        """Remote returning status=created means remote_existed=False."""
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
 
         source = _make_db(
@@ -425,52 +432,14 @@ class TestSSHPush:
 
         remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
 
-        def mock_run(cmd, **kwargs):
-            from unittest.mock import MagicMock
-            result = MagicMock()
-            if cmd[0] == "ssh" and "test" in cmd and "-f" in cmd:
-                result.returncode = 1  # doesn't exist
-                return result
-            if cmd[0] == "scp":
-                result.returncode = 1
-                result.stderr = b"Permission denied"
-                return result
-            result.returncode = 0
-            return result
+        mock = _ssh_mock_ok({"status": "created", "conversations": 1})
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock):
+            result = sync_push(source, remote)
 
-        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
-            with pytest.raises(SyncError, match="Permission denied"):
-                sync_push(source, remote)
-
-    def test_siftd_not_found(self, tmp_path, monkeypatch):
-        """Missing siftd on remote raises SyncError."""
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-
-        source = _make_db(
-            tmp_path / "source.db",
-            conversations=[{"external_id": "conv-A"}],
-        )
-
-        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
-
-        def mock_run(cmd, **kwargs):
-            from unittest.mock import MagicMock
-            result = MagicMock()
-            if cmd[0] == "ssh" and "test" in cmd and "-f" in cmd:
-                result.returncode = 0  # file exists
-                return result
-            if cmd[0] == "ssh" and "command" in cmd:
-                # siftd not found
-                raise __import__("subprocess").CalledProcessError(1, cmd)
-            result.returncode = 0
-            return result
-
-        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
-            with pytest.raises(SyncError, match="does not have siftd installed"):
-                sync_push(source, remote)
+        assert not result.remote_existed
 
     def test_ssh_timeout_raises_syncerror(self, tmp_path, monkeypatch):
-        """SSH timeout surfaces as SyncError."""
+        """SSH timeout surfaces as SyncError with friendly message."""
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
 
         source = _make_db(
@@ -481,19 +450,14 @@ class TestSSHPush:
         remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
 
         def mock_run(cmd, **kwargs):
-            if cmd[0] == "ssh" and "test" in cmd and "-f" in cmd:
-                raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", None))
-            from unittest.mock import MagicMock
-            result = MagicMock()
-            result.returncode = 0
-            return result
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", None))
 
         with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
-            with pytest.raises(SyncError, match="timed out"):
+            with pytest.raises(SyncError, match="timed out.*slow or unreachable"):
                 sync_push(source, remote)
 
-    def test_cleanup_failure_ignored(self, tmp_path, monkeypatch):
-        """Cleanup rm failure shouldn't fail a successful push."""
+    def test_nonzero_exit_siftd_not_found(self, tmp_path, monkeypatch):
+        """Remote 'command not found' gets friendly install hint."""
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
 
         source = _make_db(
@@ -504,34 +468,223 @@ class TestSSHPush:
         remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
 
         def mock_run(cmd, **kwargs):
-            from unittest.mock import MagicMock
             result = MagicMock()
-            if cmd[0] == "ssh":
-                if "test" in cmd and "-f" in cmd:
-                    result.returncode = 0
-                    return result
-                if "command" in cmd and "-v" in cmd:
-                    result.returncode = 0
-                    result.stdout = b"/usr/local/bin/siftd"
-                    return result
-                if "rm -f" in cmd[-1]:
-                    result.returncode = 1
-                    result.stderr = b"rm failed"
-                    return result
-                result.returncode = 0
-                result.stdout = b""
-                return result
-            if cmd[0] == "scp":
-                result.returncode = 0
-                return result
-            result.returncode = 0
+            result.returncode = 1
+            result.stdout = b""
+            result.stderr = b"siftd: command not found"
             return result
 
         with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
-            result = sync_push(source, remote)
+            with pytest.raises(SyncError, match="not installed on alcove.*uv tool install"):
+                sync_push(source, remote)
 
-        assert result.conversations == 1
-        assert result.remote_existed
+    def test_unparseable_json_raises_syncerror(self, tmp_path, monkeypatch):
+        """Unparseable JSON stdout raises SyncError."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+
+        def mock_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = b"not json at all"
+            result.stderr = b""
+            return result
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            with pytest.raises(SyncError, match="Unexpected response"):
+                sync_push(source, remote)
+
+    def test_ssh_options_from_config(self, tmp_path, monkeypatch):
+        """SSH options from config are included in the command."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+        calls = []
+
+        def mock_run(cmd, **kwargs):
+            calls.append(cmd)
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = json.dumps({"status": "created", "conversations": 1}).encode()
+            result.stderr = b""
+            return result
+
+        # Write config with SSH options
+        from siftd.config import set_sync_remote
+        from pathlib import Path
+        import tomlkit
+
+        set_sync_remote("test", "alcove", "/data/team.db")
+        cfg_path = Path(str(tmp_path / "config")) / "siftd" / "config.toml"
+        doc = tomlkit.parse(cfg_path.read_text())
+        if "sync" not in doc:
+            doc["sync"] = tomlkit.table()
+        doc["sync"]["ssh"] = tomlkit.table()
+        doc["sync"]["ssh"]["options"] = ["-o", "StrictHostKeyChecking=no"]
+        doc["sync"]["ssh"]["connect_timeout_s"] = 60
+        cfg_path.write_text(tomlkit.dumps(doc))
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            sync_push(source, remote)
+
+        cmd = calls[0]
+        assert "-o" in cmd
+        assert "StrictHostKeyChecking=no" in cmd
+        assert "ConnectTimeout=60" in cmd[cmd.index("-o", cmd.index("StrictHostKeyChecking=no")) + 1]
+
+    def test_stdin_is_slice_file(self, tmp_path, monkeypatch):
+        """Verify stdin kwarg is the opened slice file."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+        stdin_files = []
+
+        def mock_run(cmd, **kwargs):
+            if "stdin" in kwargs and kwargs["stdin"] is not None:
+                stdin_files.append(kwargs["stdin"])
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = json.dumps({"status": "created", "conversations": 1}).encode()
+            result.stderr = b""
+            return result
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            sync_push(source, remote)
+
+        assert len(stdin_files) == 1
+        assert hasattr(stdin_files[0], "read")  # file-like object
+
+    def test_connection_refused_friendly(self, tmp_path, monkeypatch):
+        """Connection refused gets friendly message."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+
+        def mock_run(cmd, **kwargs):
+            raise OSError("Connection refused")
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            with pytest.raises(SyncError, match="Cannot connect to alcove"):
+                sync_push(source, remote)
+
+    def test_permission_denied_friendly(self, tmp_path, monkeypatch):
+        """Permission denied gets friendly message."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+
+        def mock_run(cmd, **kwargs):
+            raise OSError("Permission denied (publickey)")
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            with pytest.raises(SyncError, match="SSH authentication failed"):
+                sync_push(source, remote)
+
+    def test_hostname_resolution_friendly(self, tmp_path, monkeypatch):
+        """Hostname resolution failure gets friendly message."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        remote = SyncRemote(name="test", host="badhost", path="/data/team.db")
+
+        def mock_run(cmd, **kwargs):
+            raise OSError("Could not resolve hostname 'badhost'")
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            with pytest.raises(SyncError, match="Cannot resolve hostname"):
+                sync_push(source, remote)
+
+    def test_database_locked_json_error(self, tmp_path, monkeypatch):
+        """Remote database locked error (JSON) gets friendly message."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+
+        def mock_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 1
+            result.stdout = b""
+            result.stderr = json.dumps(
+                {"error": "database is locked", "error_type": "database_locked"}
+            ).encode()
+            return result
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            with pytest.raises(SyncError, match="Remote database is locked.*Wait and retry"):
+                sync_push(source, remote)
+
+    def test_generic_json_remote_error(self, tmp_path, monkeypatch):
+        """Remote JSON error without special type gets clean message."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+
+        def mock_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 1
+            result.stdout = b""
+            result.stderr = json.dumps({"error": "Not a valid SQLite database"}).encode()
+            return result
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            with pytest.raises(SyncError, match="Remote error: Not a valid SQLite"):
+                sync_push(source, remote)
+
+    def test_raw_stderr_fallback(self, tmp_path, monkeypatch):
+        """Non-JSON stderr falls back to first line."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        remote = SyncRemote(name="test", host="alcove", path="/data/team.db")
+
+        def mock_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 1
+            result.stdout = b""
+            result.stderr = b"Traceback (most recent call last):\n  File ...\nsqlite3.OperationalError: database is locked"
+            return result
+
+        with patch("siftd.api.sync.subprocess.run", side_effect=mock_run):
+            with pytest.raises(SyncError, match="Remote error on alcove: Traceback"):
+                sync_push(source, remote)
 
 
 # --- CLI integration tests ---
@@ -606,9 +759,10 @@ class TestCLI:
 
         rc = main(["--db", str(source), "db", "push", "local"])
         assert rc == 0
-        out = capsys.readouterr().out
-        assert "Pushed 1 conversation(s)" in out
-        assert "Created new remote database" in out
+        captured = capsys.readouterr()
+        assert "Pushed 1 conversations" in captured.out
+        assert "(new remote database)" in captured.out
+        assert "Pushing to local" in captured.err
 
     def test_push_dry_run(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
@@ -623,7 +777,7 @@ class TestCLI:
         rc = main(["--db", str(source), "db", "push", "local", "--dry-run"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "[dry run]" in out
+        assert "Would push 1 conversations to local" in out
         assert not target_path.exists()
 
     def test_push_empty(self, tmp_path, monkeypatch, capsys):
@@ -635,4 +789,186 @@ class TestCLI:
 
         rc = main(["--db", str(source), "db", "push", "local"])
         assert rc == 0
-        assert "No new conversations" in capsys.readouterr().out
+        assert "Nothing new to push to local" in capsys.readouterr().out
+
+    def test_receive_valid_stdin(self, tmp_path, monkeypatch, capsys):
+        """db receive with valid slice on stdin → JSON output, exit 0."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        target = tmp_path / "target.db"
+
+        # Mock stdin with the source file content
+        with open(source, "rb") as f:
+            data = f.read()
+        mock_stdin = io.BytesIO(data)
+        mock_stdin_wrapper = MagicMock()
+        mock_stdin_wrapper.buffer = mock_stdin
+        mock_stdin_wrapper.isatty = MagicMock(return_value=False)
+
+        with patch("siftd.cli_db.sys.stdin", mock_stdin_wrapper):
+            rc = main(["--db", str(target), "db", "receive"])
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        result = json.loads(out)
+        assert result["status"] == "created"
+        assert result["conversations"] == 1
+
+    def test_receive_empty_stdin(self, tmp_path, monkeypatch, capsys):
+        """db receive with empty stdin → error JSON on stderr, exit 1."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        target = tmp_path / "target.db"
+
+        mock_stdin = io.BytesIO(b"")
+        mock_stdin_wrapper = MagicMock()
+        mock_stdin_wrapper.buffer = mock_stdin
+        mock_stdin_wrapper.isatty = MagicMock(return_value=False)
+
+        with patch("siftd.cli_db.sys.stdin", mock_stdin_wrapper):
+            rc = main(["--db", str(target), "db", "receive"])
+
+        assert rc == 1
+        err = capsys.readouterr().err
+        error = json.loads(err)
+        assert "error" in error
+
+    def test_receive_invalid_data(self, tmp_path, monkeypatch, capsys):
+        """db receive with non-SQLite data → error JSON on stderr, exit 1."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        target = tmp_path / "target.db"
+
+        mock_stdin = io.BytesIO(b"this is not a database at all!!")
+        mock_stdin_wrapper = MagicMock()
+        mock_stdin_wrapper.buffer = mock_stdin
+        mock_stdin_wrapper.isatty = MagicMock(return_value=False)
+
+        with patch("siftd.cli_db.sys.stdin", mock_stdin_wrapper):
+            rc = main(["--db", str(target), "db", "receive"])
+
+        assert rc == 1
+        err = capsys.readouterr().err
+        error = json.loads(err)
+        assert "Not a valid SQLite" in error["error"]
+
+    def test_receive_merge_into_existing(self, tmp_path, monkeypatch, capsys):
+        """db receive into existing DB → JSON with merged status."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        target = tmp_path / "target.db"
+        _make_db(target, conversations=[{"external_id": "conv-B"}])
+
+        with open(source, "rb") as f:
+            data = f.read()
+        mock_stdin = io.BytesIO(data)
+        mock_stdin_wrapper = MagicMock()
+        mock_stdin_wrapper.buffer = mock_stdin
+        mock_stdin_wrapper.isatty = MagicMock(return_value=False)
+
+        with patch("siftd.cli_db.sys.stdin", mock_stdin_wrapper):
+            rc = main(["--db", str(target), "db", "receive"])
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        result = json.loads(out)
+        assert result["status"] == "merged"
+
+
+# --- SSH options tests ---
+
+
+class TestSSHOptions:
+    def test_global_options_applied(self, tmp_path, monkeypatch):
+        """Global SSH options are returned."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        import tomlkit
+        from pathlib import Path
+
+        cfg_dir = tmp_path / "siftd"
+        cfg_dir.mkdir(parents=True)
+        doc = tomlkit.document()
+        doc["sync"] = tomlkit.table()
+        doc["sync"]["ssh"] = tomlkit.table()
+        doc["sync"]["ssh"]["options"] = ["-o", "StrictHostKeyChecking=no"]
+        (cfg_dir / "config.toml").write_text(tomlkit.dumps(doc))
+
+        opts = get_ssh_options()
+        assert opts == ["-o", "StrictHostKeyChecking=no"]
+
+    def test_per_remote_overrides_global(self, tmp_path, monkeypatch):
+        """Per-remote SSH options take precedence over global."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        import tomlkit
+        from pathlib import Path
+
+        cfg_dir = tmp_path / "siftd"
+        cfg_dir.mkdir(parents=True)
+        doc = tomlkit.document()
+        doc["sync"] = tomlkit.table()
+        doc["sync"]["ssh"] = tomlkit.table()
+        doc["sync"]["ssh"]["options"] = ["-o", "StrictHostKeyChecking=no"]
+        doc["sync"]["remotes"] = tomlkit.table()
+        doc["sync"]["remotes"]["alcove"] = tomlkit.table()
+        doc["sync"]["remotes"]["alcove"]["host"] = "alcove"
+        doc["sync"]["remotes"]["alcove"]["path"] = "/data/team.db"
+        doc["sync"]["remotes"]["alcove"]["ssh"] = tomlkit.table()
+        doc["sync"]["remotes"]["alcove"]["ssh"]["options"] = ["-i", "~/.ssh/alcove_key"]
+        (cfg_dir / "config.toml").write_text(tomlkit.dumps(doc))
+
+        opts = get_ssh_options("alcove")
+        assert opts == ["-i", "~/.ssh/alcove_key"]
+
+    def test_connect_timeout_adds_option(self, tmp_path, monkeypatch):
+        """connect_timeout_s adds -o ConnectTimeout=N."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        import tomlkit
+        from pathlib import Path
+
+        cfg_dir = tmp_path / "siftd"
+        cfg_dir.mkdir(parents=True)
+        doc = tomlkit.document()
+        doc["sync"] = tomlkit.table()
+        doc["sync"]["ssh"] = tomlkit.table()
+        doc["sync"]["ssh"]["connect_timeout_s"] = 30
+        (cfg_dir / "config.toml").write_text(tomlkit.dumps(doc))
+
+        opts = get_ssh_options()
+        assert "-o" in opts
+        assert "ConnectTimeout=30" in opts
+
+    def test_missing_config_returns_empty(self, tmp_path, monkeypatch):
+        """No SSH config returns empty list."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        opts = get_ssh_options()
+        assert opts == []
+
+    def test_missing_remote_falls_back_to_global(self, tmp_path, monkeypatch):
+        """Unknown remote name falls back to global SSH options."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        import tomlkit
+        from pathlib import Path
+
+        cfg_dir = tmp_path / "siftd"
+        cfg_dir.mkdir(parents=True)
+        doc = tomlkit.document()
+        doc["sync"] = tomlkit.table()
+        doc["sync"]["ssh"] = tomlkit.table()
+        doc["sync"]["ssh"]["options"] = ["-v"]
+        (cfg_dir / "config.toml").write_text(tomlkit.dumps(doc))
+
+        opts = get_ssh_options("nonexistent")
+        assert opts == ["-v"]

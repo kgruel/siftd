@@ -63,6 +63,9 @@ from siftd.api.peek import (
     read_session_detail,
     tail_session,
 )
+from siftd.api.receive import (
+    receive_database,
+)
 from siftd.api.resources import (
     CopyError,
     copy_adapter,
@@ -202,6 +205,8 @@ __all__ = [
     "list_workspaces",
     # merge
     "merge_database",
+    # receive
+    "receive_database",
     # slice
     "slice_database",
     # sync

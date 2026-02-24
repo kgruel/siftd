@@ -9,7 +9,11 @@ which are user workflows selecting conversations.
 """
 
 import argparse
+import json
+import shutil
+import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 
 from siftd.cli_common import parse_date, resolve_db
@@ -269,6 +273,62 @@ def cmd_db_merge(args) -> int:
     return 0
 
 
+def cmd_db_receive(args) -> int:
+    """Receive a database from stdin and create-or-merge into the local database.
+
+    Designed to be called via SSH pipe:
+        ssh host siftd --db /path db receive < slice.db
+    """
+    db = resolve_db(args)
+
+    if sys.stdin.isatty():
+        print(
+            json.dumps({"error": "No data on stdin. Pipe a database file."}),
+            file=sys.stderr,
+        )
+        return 1
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="siftd-receive-", suffix=".db", delete=False,
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+            shutil.copyfileobj(sys.stdin.buffer, tmp)
+
+        if tmp_path.stat().st_size == 0:
+            print(
+                json.dumps({"error": "Empty input on stdin."}),
+                file=sys.stderr,
+            )
+            return 1
+
+        from siftd.api.receive import receive_database
+
+        rebuild_fts = not args.no_fts
+        result = receive_database(tmp_path, db, rebuild_fts=rebuild_fts)
+        print(json.dumps(result))
+        return 0
+
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        return 1
+    except RuntimeError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        return 1
+    except sqlite3.OperationalError as e:
+        msg = str(e)
+        error_type = "database_locked" if "locked" in msg else "sqlite_error"
+        print(
+            json.dumps({"error": msg, "error_type": error_type}),
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            tmp_path.unlink()
+
+
 def cmd_db_remote_add(args) -> int:
     """Register a sync remote."""
     from siftd.config import set_sync_remote
@@ -345,6 +405,12 @@ def cmd_db_push(args) -> int:
         print("Run 'siftd ingest' to create it.")
         return 1
 
+    dry_run = getattr(args, "dry_run", False)
+    location = f"{remote.host}:{remote.path}" if remote.host else remote.path
+
+    if not dry_run:
+        print(f"Pushing to {args.name} ({location})...", file=sys.stderr)
+
     try:
         result = sync_push(
             db_path=db,
@@ -352,7 +418,7 @@ def cmd_db_push(args) -> int:
             since=getattr(args, "since", None),
             push_all=getattr(args, "push_all", False),
             workspace=getattr(args, "workspace", None),
-            dry_run=getattr(args, "dry_run", False),
+            dry_run=dry_run,
         )
     except SyncError as e:
         print(f"Push failed: {e}", file=sys.stderr)
@@ -361,17 +427,17 @@ def cmd_db_push(args) -> int:
         print(str(e))
         return 1
 
-    prefix = "[dry run] " if result.dry_run else ""
-
     if result.conversations == 0:
-        print(f"{prefix}No new conversations to push.")
+        print(f"Nothing new to push to {args.name}.")
         return 0
 
-    location = f"{remote.host}:{remote.path}" if remote.host else remote.path
-    print(f"{prefix}Pushed {result.conversations} conversation(s) to {location} "
-          f"({result.size_bytes / 1024:.1f} KB)")
-    if not result.remote_existed:
-        print("  Created new remote database.")
+    size_kb = result.size_bytes / 1024
+    suffix = " (new remote database)" if not result.remote_existed else ""
+
+    if result.dry_run:
+        print(f"Would push {result.conversations} conversations to {args.name} ({size_kb:.1f} KB)")
+    else:
+        print(f"Pushed {result.conversations} conversations ({size_kb:.1f} KB){suffix}")
     return 0
 
 
@@ -379,7 +445,7 @@ def build_db_parser(subparsers) -> None:
     """Add the 'db' subparser with nested subcommands."""
     p_db = subparsers.add_parser(
         "db",
-        help="Database operations (info, backup, restore, vacuum, slice, merge, remote, push)",
+        help="Database operations (info, backup, restore, vacuum, slice, merge, receive, remote, push)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Container-level operations on the siftd database.
 
@@ -393,6 +459,7 @@ examples:
   siftd db restore /tmp/siftd.db         # restore from backup
   siftd db slice out.db -w project       # export filtered subset
   siftd db merge laptop-slice.db         # merge slice into main DB
+  siftd db receive < slice.db            # receive via stdin (SSH pipe)
   siftd db remote add alcove host:path   # register sync remote
   siftd db push alcove                   # push delta to remote""",
     )
@@ -469,6 +536,21 @@ examples:
     p_merge.add_argument("--no-replace", action="store_true",
                          help="Keep existing conversations instead of replacing with newer versions")
     p_merge.set_defaults(func=cmd_db_merge)
+
+    # receive
+    p_receive = db_sub.add_parser(
+        "receive",
+        help="Receive a database from stdin and create-or-merge into the local database",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Designed for SSH pipe usage — reads a slice DB from stdin and
+creates or merges it into the target database.
+
+examples:
+  ssh host siftd --db /path/team.db db receive < slice.db
+  ssh host siftd --db /path/team.db db receive --no-fts < slice.db""",
+    )
+    p_receive.add_argument("--no-fts", action="store_true", help="Skip FTS5 index rebuild")
+    p_receive.set_defaults(func=cmd_db_receive)
 
     # remote (sub-namespace)
     p_remote = db_sub.add_parser(
