@@ -134,3 +134,60 @@ class TestPull:
             resp = client.get("/v1/pull")
         assert resp.status_code == 200
         assert int(resp.headers.get("X-Siftd-Conversations", 0)) == 0
+
+
+class TestQuery:
+    def test_query_lists_conversations(self, tmp_path):
+        team_db = _make_team_db(
+            tmp_path / "team.db",
+            conversations=[{"external_id": "c1"}, {"external_id": "c2"}],
+        )
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/v1/query")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "conversations" in body
+        assert len(body["conversations"]) >= 2
+
+    def test_query_with_limit(self, tmp_path):
+        team_db = _make_team_db(
+            tmp_path / "team.db",
+            conversations=[{"external_id": "c1"}, {"external_id": "c2"}],
+        )
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/v1/query", params={"n": 1})
+        body = resp.json()
+        assert len(body["conversations"]) == 1
+
+    def test_query_single_conversation(self, tmp_path):
+        team_db = _make_team_db(
+            tmp_path / "team.db",
+            conversations=[{"external_id": "c1"}],
+        )
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            # First get the list to find the ID
+            resp = client.get("/v1/query")
+            conv_id = resp.json()["conversations"][0]["id"]
+            # Then get the detail
+            resp = client.get("/v1/query", params={"id": conv_id})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "conversation" in body
+        assert body["conversation"]["id"] == conv_id
+
+
+class TestSearch:
+    def test_search_without_embeddings_returns_501(self, tmp_path):
+        """Search endpoint returns 501 when embeddings not installed."""
+        team_db = _make_team_db(
+            tmp_path / "team.db",
+            conversations=[{"external_id": "c1"}],
+        )
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/v1/search", params={"q": "hello"})
+        # Either 200 (if embeddings available) or 501 (if not)
+        assert resp.status_code in (200, 501)

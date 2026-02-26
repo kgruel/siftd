@@ -7,7 +7,7 @@ from pathlib import Path
 from litestar import Litestar
 from litestar.di import Provide
 
-from siftd.serve.routes import health, pull, push
+from siftd.serve.routes import health, pull, push, query, search_route
 
 
 def create_app(
@@ -31,7 +31,7 @@ def create_app(
         return fts_rebuild
 
     return Litestar(
-        route_handlers=[health, push, pull],
+        route_handlers=[health, push, pull, query, search_route],
         dependencies={
             "db_path": Provide(provide_db_path),
             "fts_rebuild": Provide(provide_fts_rebuild),

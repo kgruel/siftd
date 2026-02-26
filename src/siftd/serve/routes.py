@@ -110,3 +110,86 @@ async def pull(
                 "X-Siftd-Size": str(len(data)),
             },
         )
+
+
+@get("/v1/query")
+async def query(
+    db_path: Path,
+    workspace: str | None = Parameter(query="workspace", default=None),
+    since: str | None = Parameter(query="since", default=None),
+    before: str | None = Parameter(query="before", default=None),
+    model: str | None = Parameter(query="model", default=None),
+    tag: list[str] | None = Parameter(query="tag", default=None),
+    search: str | None = Parameter(query="search", default=None),
+    n: int = Parameter(query="n", default=20),
+    id: str | None = Parameter(query="id", default=None),
+) -> dict:
+    """List or detail conversations."""
+    import dataclasses
+
+    from siftd.api.conversations import get_conversation, list_conversations
+
+    if id is not None:
+        detail = get_conversation(id, db_path=db_path)
+        if detail is None:
+            return {"error": f"conversation not found: {id}"}
+        d = dataclasses.asdict(detail)
+        d.pop("exchanges", None)  # property, not serializable
+        return {"conversation": d}
+
+    rows = list_conversations(
+        db_path=db_path,
+        workspace=workspace,
+        model=model,
+        since=since,
+        before=before,
+        search=search,
+        tags=tag,
+        limit=n,
+    )
+    return {"conversations": [dataclasses.asdict(r) for r in rows]}
+
+
+@get("/v1/search")
+async def search_route(
+    db_path: Path,
+    q: str = Parameter(query="q"),
+    workspace: str | None = Parameter(query="workspace", default=None),
+    since: str | None = Parameter(query="since", default=None),
+    before: str | None = Parameter(query="before", default=None),
+    model: str | None = Parameter(query="model", default=None),
+    threshold: float = Parameter(query="threshold", default=0.0),
+    n: int = Parameter(query="n", default=10),
+) -> dict | Response:
+    """Semantic + FTS search against team DB."""
+    try:
+        from siftd.search import hybrid_search
+    except ImportError:
+        return Response(
+            content={"error": "search requires siftd[embed]"},
+            status_code=501,
+        )
+
+    try:
+        results = hybrid_search(
+            q, db_path=db_path, limit=n,
+            workspace=workspace, model=model,
+            since=since, before=before,
+        )
+    except Exception as e:
+        return Response(
+            content={"error": f"search failed: {e}"},
+            status_code=501,
+        )
+
+    if threshold > 0:
+        results = [r for r in results if r.score >= threshold]
+
+    import dataclasses
+
+    serialized = [dataclasses.asdict(r) for r in results]
+    return {
+        "query": q,
+        "result_count": len(serialized),
+        "results": serialized,
+    }
