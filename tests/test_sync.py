@@ -15,6 +15,7 @@ from siftd.config import (
     get_sync_remote,
     get_sync_remotes,
     remove_sync_remote,
+    set_remote_auth,
     set_sync_remote,
     update_last_pull,
     update_last_push,
@@ -139,6 +140,19 @@ class TestConfigRemotes:
 
         assert get_config("search.formatter") == "verbose"
         assert get_sync_remote("alcove") is not None
+
+    def test_remote_auth_config_roundtrip(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        set_sync_remote("team", None, "https://siftd.example.com")
+        set_remote_auth("team", {"token_command": "gh auth token"})
+        remote = get_sync_remote("team")
+        assert remote["auth"] == {"token_command": "gh auth token"}
+
+    def test_remote_without_auth(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        set_sync_remote("local", None, "/tmp/team.db")
+        remote = get_sync_remote("local")
+        assert remote["auth"] is None
 
 
 # --- Local push tests ---
