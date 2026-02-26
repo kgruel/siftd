@@ -33,6 +33,12 @@ embed = [
     "tokenizers",
     "huggingface-hub",
 ]
+serve = [
+    "litestar[standard]",
+    "uvicorn",
+    "httpx",
+    "PyJWT[crypto]",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov",
@@ -56,6 +62,7 @@ pythonpath = ["src"]
 addopts = "-n auto"
 markers = [
     "embeddings: tests that require embedding dependencies",
+    "serve: tests that require serve dependencies",
 ]
 
 [tool.ruff]
