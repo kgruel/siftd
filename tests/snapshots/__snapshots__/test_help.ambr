@@ -2,12 +2,12 @@
 # name: TestHelpSnapshots.test_root_help
   '''
   usage: siftd [-h] [--version] [--db PATH]
-               {register,session-id,status,workspaces,path,config,adapters,db,tag,tags,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export} ...
+               {register,session-id,status,workspaces,path,config,adapters,db,tag,tags,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve} ...
   
   Aggregate and query LLM conversation logs
   
   positional arguments:
-    {register,session-id,status,workspaces,path,config,adapters,db,tag,tags,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export}
+    {register,session-id,status,workspaces,path,config,adapters,db,tag,tags,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve}
       register            Register an active session for live tagging
       session-id          Print the session ID for the current workspace
       status              Show database statistics (use 'siftd db stats')
@@ -32,6 +32,7 @@
       install             Install optional dependencies or bundled components
       peek                Inspect live sessions from disk (bypasses SQLite)
       export              Export conversations for PR review workflows
+      serve               Start the HTTP team sync server
   
   options:
     -h, --help            show this help message and exit

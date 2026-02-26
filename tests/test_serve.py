@@ -271,3 +271,13 @@ class TestAttribution:
         row = conn.execute("SELECT * FROM push_log").fetchone()
         conn.close()
         assert row["user_identity"] == "alice"
+
+
+class TestCLI:
+    def test_serve_help(self):
+        """siftd serve --help exits cleanly."""
+        from siftd.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main(["serve", "--help"])
+        assert exc.value.code == 0
