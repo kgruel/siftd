@@ -50,6 +50,11 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
 
         rebuild_fts = fts_rebuild == "on_push"
         result = receive_database(tmp_path, db_path, rebuild_fts=rebuild_fts)
+
+        # Attribution: record push in push_log
+        identity = _get_push_identity(request)
+        _record_push_log(db_path, identity, result["conversations"], len(body), request)
+
         status_code = 201 if result["status"] == "created" else 200
         return Response(
             content={
@@ -193,3 +198,53 @@ async def search_route(
         "result_count": len(serialized),
         "results": serialized,
     }
+
+
+# ---------------------------------------------------------------------------
+# Attribution helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_push_identity(request: Request) -> str:
+    """Extract user identity from auth middleware or header fallback."""
+    # From auth middleware (if enabled)
+    try:
+        user = request.user
+    except Exception:
+        user = None
+    if user and hasattr(user, "sub") and user.sub != "anonymous":
+        return user.sub
+    # Fallback: explicit header (for --no-auth setups)
+    header_identity = request.headers.get("x-siftd-identity")
+    if header_identity:
+        return header_identity
+    return "anonymous"
+
+
+def _record_push_log(
+    db_path: Path, identity: str, conversations: int, size_bytes: int, request: Request,
+) -> None:
+    """Record a push event in the push_log table."""
+    from datetime import UTC, datetime
+
+    from siftd.ids import ulid
+    from siftd.storage.sqlite import ensure_push_log_table, open_database
+
+    conn = open_database(db_path)
+    try:
+        ensure_push_log_table(conn)
+        conn.execute(
+            "INSERT INTO push_log (push_id, user_identity, pushed_at, conversations, size_bytes, source_ip) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                ulid(),
+                identity,
+                datetime.now(UTC).isoformat(),
+                conversations,
+                size_bytes,
+                request.client.host if request.client else None,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()

@@ -225,3 +225,49 @@ class TestAuthOIDC:
         with TestClient(app) as client:
             resp = client.get("/v1/health")
             assert resp.status_code == 200
+
+
+class TestAttribution:
+    def test_push_records_push_log(self, tmp_path):
+        """Push records an entry in push_log table."""
+        import sqlite3
+
+        slice_bytes = _make_slice_bytes(tmp_path)
+        team_db = tmp_path / "team.db"
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.post(
+                "/v1/push",
+                content=slice_bytes,
+                headers={"Content-Type": "application/octet-stream"},
+            )
+        assert resp.status_code == 201
+
+        conn = sqlite3.connect(str(team_db))
+        rows = conn.execute("SELECT * FROM push_log").fetchall()
+        conn.close()
+        assert len(rows) == 1
+
+    def test_push_log_records_identity(self, tmp_path):
+        """Push log captures the identity from request."""
+        import sqlite3
+
+        slice_bytes = _make_slice_bytes(tmp_path)
+        team_db = tmp_path / "team.db"
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.post(
+                "/v1/push",
+                content=slice_bytes,
+                headers={
+                    "Content-Type": "application/octet-stream",
+                    "X-Siftd-Identity": "alice",
+                },
+            )
+        assert resp.status_code == 201
+
+        conn = sqlite3.connect(str(team_db))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM push_log").fetchone()
+        conn.close()
+        assert row["user_identity"] == "alice"

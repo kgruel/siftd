@@ -464,6 +464,20 @@ def _ensure_tag_indexes(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def ensure_push_log_table(conn: sqlite3.Connection) -> None:
+    """Create push_log table for server attribution. Idempotent."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS push_log (
+            push_id TEXT PRIMARY KEY,
+            user_identity TEXT NOT NULL,
+            pushed_at TEXT NOT NULL,
+            conversations INTEGER NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            source_ip TEXT
+        )
+    """)
+
+
 # Alias for backwards compatibility
 create_database = open_database
 
