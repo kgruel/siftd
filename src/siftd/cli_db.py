@@ -405,6 +405,7 @@ def cmd_db_pull(args) -> int:
         print("Run 'siftd db remote list' to see configured remotes.", file=sys.stderr)
         return 1
 
+    remote_cfg.pop("auth", None)
     remote = SyncRemote(**remote_cfg)
 
     db = resolve_db(args)
@@ -511,6 +512,7 @@ def cmd_db_push(args) -> int:
         print("Run 'siftd db remote list' to see configured remotes.", file=sys.stderr)
         return 1
 
+    remote_cfg.pop("auth", None)
     remote = SyncRemote(**remote_cfg)
 
     db = resolve_db(args)
