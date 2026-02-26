@@ -108,3 +108,29 @@ class TestPush:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "merged"
+
+
+class TestPull:
+    def test_pull_streams_slice(self, tmp_path):
+        """Push data in, then pull it back out."""
+        team_db = _make_team_db(
+            tmp_path / "team.db",
+            conversations=[{"external_id": "c1"}],
+        )
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/v1/pull")
+        assert resp.status_code == 200
+        assert resp.headers["Content-Type"] == "application/octet-stream"
+        assert int(resp.headers["X-Siftd-Conversations"]) >= 1
+        # Response body should be valid SQLite
+        assert resp.content[:16].startswith(b"SQLite format 3")
+
+    def test_pull_empty_db(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db)
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/v1/pull")
+        assert resp.status_code == 200
+        assert int(resp.headers.get("X-Siftd-Conversations", 0)) == 0

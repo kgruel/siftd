@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 from litestar import Request, get, post
+from litestar.params import Parameter
 from litestar.response import Response
 
 
@@ -60,3 +61,52 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
+
+
+@get("/v1/pull")
+async def pull(
+    db_path: Path,
+    workspace: str | None = Parameter(query="workspace", default=None),
+    since: str | None = Parameter(query="since", default=None),
+    before: str | None = Parameter(query="before", default=None),
+    model: str | None = Parameter(query="model", default=None),
+    tag: list[str] | None = Parameter(query="tag", default=None),
+) -> Response:
+    """Slice and stream the team DB based on filters."""
+    from siftd.api.slice import slice_database
+
+    with tempfile.TemporaryDirectory(prefix="siftd-serve-pull-") as tmp_dir:
+        slice_path = Path(tmp_dir) / "pull-slice.db"
+        result = slice_database(
+            source_db=db_path,
+            target_path=slice_path,
+            workspace=workspace,
+            since=since,
+            before=before,
+            model=model,
+            tags=tag,
+            rebuild_fts=False,
+        )
+
+        conversations = result["conversations"]
+        if conversations == 0:
+            return Response(
+                content=b"",
+                status_code=200,
+                media_type="application/octet-stream",
+                headers={
+                    "X-Siftd-Conversations": "0",
+                    "X-Siftd-Size": "0",
+                },
+            )
+
+        data = slice_path.read_bytes()
+        return Response(
+            content=data,
+            status_code=200,
+            media_type="application/octet-stream",
+            headers={
+                "X-Siftd-Conversations": str(conversations),
+                "X-Siftd-Size": str(len(data)),
+            },
+        )
