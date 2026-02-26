@@ -191,3 +191,37 @@ class TestSearch:
             resp = client.get("/v1/search", params={"q": "hello"})
         # Either 200 (if embeddings available) or 501 (if not)
         assert resp.status_code in (200, 501)
+
+
+class TestAuthNoAuth:
+    def test_no_auth_allows_all(self, tmp_path):
+        db = tmp_path / "team.db"
+        create_database(db)
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/v1/health")
+            assert resp.status_code == 200
+
+
+class TestAuthOIDC:
+    def test_missing_token_returns_401(self, tmp_path):
+        db = tmp_path / "team.db"
+        create_database(db)
+        auth_config = {"issuer": "https://example.com", "audience": "siftd"}
+        app = create_app(db_path=db, auth_config=auth_config)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.post(
+                "/v1/push",
+                content=b"x" * 100,
+                headers={"Content-Type": "application/octet-stream"},
+            )
+            assert resp.status_code == 401
+
+    def test_health_bypasses_auth(self, tmp_path):
+        db = tmp_path / "team.db"
+        create_database(db)
+        auth_config = {"issuer": "https://example.com", "audience": "siftd"}
+        app = create_app(db_path=db, auth_config=auth_config)
+        with TestClient(app) as client:
+            resp = client.get("/v1/health")
+            assert resp.status_code == 200

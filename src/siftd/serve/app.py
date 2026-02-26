@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from litestar import Litestar
 from litestar.di import Provide
@@ -30,10 +31,17 @@ def create_app(
     async def provide_fts_rebuild() -> str:
         return fts_rebuild
 
+    middleware: list[Any] = []
+    if auth_config:
+        from siftd.serve.auth import create_auth_middleware
+
+        middleware.append(create_auth_middleware(auth_config))
+
     return Litestar(
         route_handlers=[health, push, pull, query, search_route],
         dependencies={
             "db_path": Provide(provide_db_path),
             "fts_rebuild": Provide(provide_fts_rebuild),
         },
+        middleware=middleware,
     )
