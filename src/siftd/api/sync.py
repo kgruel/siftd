@@ -218,7 +218,7 @@ def _friendly_remote_error(host: str, path: str, stderr: str) -> str:
     """Map remote stderr to user-friendly messages."""
     # SSH-level errors (binary missing on remote)
     if "command not found" in stderr or "No such file" in stderr:
-        return f"siftd is not installed on {host}. Install with: uv tool install siftd"
+        return f"siftd is not installed on {host}. Install with: uv tool install siftd (or pipx install siftd)"
 
     # Try parsing structured JSON error from cmd_db_receive
     try:

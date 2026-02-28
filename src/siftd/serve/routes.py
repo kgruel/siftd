@@ -10,6 +10,21 @@ from litestar.params import Parameter
 from litestar.response import Response
 
 
+@get("/", opt={"no_auth": True})
+async def index() -> dict:
+    """Root — list available API endpoints."""
+    return {
+        "service": "siftd",
+        "endpoints": [
+            {"method": "GET", "path": "/v1/health", "description": "Health check and DB status"},
+            {"method": "POST", "path": "/v1/push", "description": "Push a database slice"},
+            {"method": "GET", "path": "/v1/pull", "description": "Pull a filtered database slice"},
+            {"method": "GET", "path": "/v1/query", "description": "List or detail conversations"},
+            {"method": "GET", "path": "/v1/search", "description": "Semantic + FTS search"},
+        ],
+    }
+
+
 @get("/v1/health", opt={"no_auth": True})
 async def health(db_path: Path) -> dict:
     """Health check — returns DB status."""

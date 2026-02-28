@@ -1,6 +1,6 @@
 """FastEmbed backend — local ONNX embeddings, no network required.
 
-Requires: pip install fastembed
+Requires the [embed] extra: ``siftd install embed``
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ class FastEmbedBackend:
             from fastembed import TextEmbedding
         except ImportError:
             raise ImportError(
-                "fastembed not installed. Install with: pip install fastembed"
+                "fastembed not installed. Install with: siftd install embed"
             )
 
         self.model = model

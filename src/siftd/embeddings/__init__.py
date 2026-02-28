@@ -12,8 +12,9 @@ Usage:
         backend = get_backend()
         vectors = backend.embed(["hello", "world"])
 
-Note: Embedding functionality requires the [embed] extra:
-    pip install siftd[embed]
+Note: Embedding functionality requires the [embed] extra.
+Install via ``siftd install embed`` or directly with the appropriate
+package manager command.
 """
 
 from .availability import (

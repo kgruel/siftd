@@ -595,7 +595,7 @@ class EmbeddingsAvailableCheck:
                     severity="info",
                     message="Embeddings database exists but embedding support not installed",
                     fix_available=False,
-                    context={"install_hint": "pip install siftd[embed]"},
+                    context={"install_hint": "siftd install embed"},
                 )
             ]
 

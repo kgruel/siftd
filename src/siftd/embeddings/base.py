@@ -44,7 +44,7 @@ def get_backend(preferred: str | None = None, verbose: bool = False) -> Embeddin
         "No embedding backend available.\n"
         "Install one of:\n"
         "  - Ollama (running locally with an embedding model)\n"
-        "  - fastembed: pip install fastembed\n"
+        "  - fastembed: siftd install embed\n"
     )
 
 

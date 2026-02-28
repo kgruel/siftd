@@ -353,11 +353,12 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[install]
   '''
-  usage: siftd install [-h] [--dry-run] [--scope {user,project}] {embed,plugin}
+  usage: siftd install [-h] [--dry-run] [--scope {user,project}]
+                       {embed,serve,plugin}
   
   positional arguments:
-    {embed,plugin}        Component to install (embed: semantic search deps,
-                          plugin: Claude Code plugin)
+    {embed,serve,plugin}  Component to install (embed: semantic search, serve:
+                          HTTP server, plugin: Claude Code plugin)
   
   options:
     -h, --help            show this help message and exit
@@ -368,6 +369,7 @@
   
   examples:
     siftd install embed             # install semantic search dependencies
+    siftd install serve             # install HTTP server dependencies
     siftd install embed --dry-run   # show what would be installed
     siftd install plugin            # install Claude Code plugin (user scope)
     siftd install plugin --scope project  # install for current project only

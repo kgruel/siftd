@@ -66,15 +66,30 @@ def embed_installed() -> bool:
         return False
 
 
-# Command templates for each install method
-INSTALL_COMMANDS: dict[str, list[str]] = {
-    "uv_tool": ["uv", "tool", "install", "siftd[embed]", "--force"],
-    "pipx": ["pipx", "install", "siftd[embed]", "--force"],
-    "brew": [sys.prefix + "/bin/python", "-m", "pip", "install", "siftd[embed]"],
-    "pip_venv": ["pip", "install", "siftd[embed]"],
-    "pip_user": ["pip", "install", "--user", "siftd[embed]"],
-    "editable": ["pip", "install", "-e", ".[embed]"],
-}
+def _pip_cmd() -> str:
+    """Return 'uv pip' if uv is on PATH, else 'pip'."""
+    return "uv pip" if shutil.which("uv") else "pip"
+
+
+def install_hint(extra: str) -> str:
+    """Return the install command appropriate for the detected install method.
+
+    Produces a human-readable command string like ``uv tool install 'siftd[serve]' --force``
+    that matches how the user originally installed siftd.
+    """
+    method = detect_install_method()
+    pkg = f"siftd[{extra}]"
+    pip = _pip_cmd()
+    templates = {
+        "uv_tool": f"uv tool install '{pkg}' --force",
+        "pipx": f"pipx install '{pkg}' --force",
+        "brew": f"$(brew --prefix siftd)/libexec/bin/python -m pip install '{pkg}'",
+        "pip_venv": f"{pip} install '{pkg}'",
+        "pip_user": f"{pip} install --user '{pkg}'",
+        "editable": f"{pip} install -e '.[{extra}]'",
+    }
+    return templates.get(method, f"{pip} install '{pkg}'")
+
 
 # Human-readable labels
 METHOD_LABELS: dict[str, str] = {
@@ -87,45 +102,41 @@ METHOD_LABELS: dict[str, str] = {
 }
 
 
-def _install_embed(args) -> int:
-    """Install embed optional dependencies."""
-    # Check if already installed
-    if embed_installed():
-        print("Embed dependencies already installed.")
-        print()
-        print("Semantic search is ready:")
-        print("  siftd search --index    # build embeddings index")
-        print('  siftd search "query"    # search')
+def _install_commands(extra: str) -> dict[str, list[str]]:
+    """Build subprocess command lists for installing a given extra."""
+    pkg = f"siftd[{extra}]"
+    pip = _pip_cmd().split()  # ["uv", "pip"] or ["pip"]
+    return {
+        "uv_tool": ["uv", "tool", "install", pkg, "--force"],
+        "pipx": ["pipx", "install", pkg, "--force"],
+        "brew": [sys.prefix + "/bin/python", "-m", "pip", "install", pkg],
+        "pip_venv": [*pip, "install", pkg],
+        "pip_user": [*pip, "install", "--user", pkg],
+        "editable": [*pip, "install", "-e", f".[{extra}]"],
+    }
+
+
+def _run_extra_install(args, extra: str, *, is_installed, already_msg: str, success_msg: str) -> int:
+    """Common flow: detect method, run subprocess, verify."""
+    if is_installed():
+        print(already_msg)
         return 0
 
-    # Detect installation method
     method = detect_install_method()
     method_label = METHOD_LABELS.get(method, method)
 
     if method == "unknown":
         print("Could not detect installation method.")
         print()
-        print("Try one of these commands:")
-        print()
-        print("  # If installed via uv tool:")
-        print("  uv tool install 'siftd[embed]' --force")
-        print()
-        print("  # If installed via pipx:")
-        print("  pipx install 'siftd[embed]' --force")
-        print()
-        print("  # If installed via pip in a venv:")
-        print("  pip install 'siftd[embed]'")
-        print()
-        print("  # If installed via pip --user:")
-        print("  pip install --user 'siftd[embed]'")
+        print(f"Try: {install_hint(extra)}")
         return 1
 
-    cmd = INSTALL_COMMANDS[method]
+    cmds = _install_commands(extra)
+    cmd = cmds[method]
 
     # For editable installs, we need to be in the project directory
     cwd = None
     if method == "editable":
-        # Try to find project root from direct_url.json
         try:
             dist = distribution("siftd")
             direct_url_text = dist.read_text("direct_url.json")
@@ -141,15 +152,10 @@ def _install_embed(args) -> int:
             print("Detected editable install but could not find project root.")
             print()
             print("Run from your project directory:")
-            print("  pip install -e '.[embed]'")
+            print(f"  pip install -e '.[{extra}]'")
             return 1
 
-    if method == "brew":
-        cmd_str = "$(brew --prefix siftd)/libexec/bin/python -m pip install 'siftd[embed]'"
-    else:
-        cmd_str = " ".join(
-            f"'{c}'" if "[" in c else c for c in cmd
-        )
+    cmd_str = install_hint(extra)
 
     if args.dry_run:
         print(f"Detected: {method_label}")
@@ -158,7 +164,6 @@ def _install_embed(args) -> int:
             print(f"In directory: {cwd}")
         return 0
 
-    # Execute the command
     print(f"Detected: {method_label}")
     print(f"Running: {cmd_str}")
     if cwd:
@@ -173,7 +178,6 @@ def _install_embed(args) -> int:
             print(f"You may need to run manually: {cmd_str}")
             return result.returncode
     except FileNotFoundError:
-        # Package manager not found
         pkg_manager = cmd[0]
         print(f"Error: '{pkg_manager}' not found in PATH")
         print()
@@ -183,19 +187,65 @@ def _install_embed(args) -> int:
             print("Install pipx: https://pipx.pypa.io/stable/installation/")
         return 1
 
-    # Verify installation
+    # Verify
     print()
-    if embed_installed():
-        print("Embed dependencies installed successfully.")
-        print()
-        print("Next steps:")
-        print("  siftd search --index    # build embeddings index")
-        print('  siftd search "query"    # search')
+    if is_installed():
+        print(success_msg)
     else:
-        print("Warning: Installation completed but embed dependencies not detected.", file=sys.stderr)
+        print(f"Warning: Installation completed but [{extra}] dependencies not detected.", file=sys.stderr)
         print("You may need to restart your shell or check for errors above.", file=sys.stderr)
 
     return 0
+
+
+def _install_embed(args) -> int:
+    """Install embed optional dependencies."""
+    return _run_extra_install(
+        args,
+        "embed",
+        is_installed=embed_installed,
+        already_msg=(
+            "Embed dependencies already installed.\n\n"
+            "Semantic search is ready:\n"
+            "  siftd search --index    # build embeddings index\n"
+            '  siftd search "query"    # search'
+        ),
+        success_msg=(
+            "Embed dependencies installed successfully.\n\n"
+            "Next steps:\n"
+            "  siftd search --index    # build embeddings index\n"
+            '  siftd search "query"    # search'
+        ),
+    )
+
+
+def _serve_installed() -> bool:
+    """Check if serve dependencies are already installed."""
+    try:
+        import litestar  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _install_serve(args) -> int:
+    """Install serve optional dependencies."""
+    return _run_extra_install(
+        args,
+        "serve",
+        is_installed=_serve_installed,
+        already_msg=(
+            "Serve dependencies already installed.\n\n"
+            "Start the server:\n"
+            "  siftd serve"
+        ),
+        success_msg=(
+            "Serve dependencies installed successfully.\n\n"
+            "Start the server:\n"
+            "  siftd serve"
+        ),
+    )
 
 
 def _find_plugin_source() -> Path | None:
@@ -273,6 +323,8 @@ def cmd_install(args) -> int:
     """Install optional dependencies or bundled components."""
     if args.extra == "embed":
         return _install_embed(args)
+    elif args.extra == "serve":
+        return _install_serve(args)
     elif args.extra == "plugin":
         return _install_plugin(args)
 
@@ -289,14 +341,15 @@ def build_install_parser(subparsers) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   siftd install embed             # install semantic search dependencies
+  siftd install serve             # install HTTP server dependencies
   siftd install embed --dry-run   # show what would be installed
   siftd install plugin            # install Claude Code plugin (user scope)
   siftd install plugin --scope project  # install for current project only""",
     )
     p_install.add_argument(
         "extra",
-        choices=["embed", "plugin"],
-        help="Component to install (embed: semantic search deps, plugin: Claude Code plugin)",
+        choices=["embed", "serve", "plugin"],
+        help="Component to install (embed: semantic search, serve: HTTP server, plugin: Claude Code plugin)",
     )
     p_install.add_argument(
         "--dry-run",

@@ -8,7 +8,7 @@ from typing import Any
 from litestar import Litestar
 from litestar.di import Provide
 
-from siftd.serve.routes import health, pull, push, query, search_route
+from siftd.serve.routes import health, index, pull, push, query, search_route
 
 
 def create_app(
@@ -38,7 +38,7 @@ def create_app(
         middleware.append(create_auth_middleware(auth_config))
 
     return Litestar(
-        route_handlers=[health, push, pull, query, search_route],
+        route_handlers=[index, health, push, pull, query, search_route],
         dependencies={
             "db_path": Provide(provide_db_path),
             "fts_rebuild": Provide(provide_fts_rebuild),
