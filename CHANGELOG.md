@@ -9,8 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`siftd serve`** — HTTP team sync server (`siftd[serve]` optional extra):
+  - 5 endpoints: `POST /v1/push`, `GET /v1/pull`, `GET /v1/query`, `GET /v1/search`, `GET /v1/health`
+  - Auth middleware: OIDC JWT validation and RFC 7662 token introspection
+  - Client-side token acquisition: `token_command` > `env:VAR` > `file:path` resolution
+  - Push attribution: `push_log` table records identity/IP/timestamp, conversations tagged `pushed_by:<identity>`
+  - FTS rebuild strategies: `on_push` (default), `scheduled`, `off`
+  - Built on Litestar; HTTP transport auto-detected from remote URL prefix
 - **`db pull`** — Pull conversations from a remote database (inverse of `db push`):
-  - SSH transport streams from `siftd db send` on remote, merges locally
+  - SSH and HTTP transport (auto-detected from remote URL)
   - Local-path transport slices remote DB directly
   - `--since`, `--all`, `--dry-run`, `-w` filters mirror push
   - `last_pull` delta tracking — repeated pulls transfer only new conversations
@@ -18,7 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - JSON metadata (conversation count, size) written to stderr
   - Designed for SSH pipe usage: `ssh host siftd db send > slice.db`
   - `--since`, `-w`, `--no-fts` filter flags
-- **Sync concept doc** — `docs/concepts/sync.md` covering remotes, push/pull, delta tracking, transport, and pipe primitives
+- **`acquire_token()`** — Public API function for token acquisition from auth config
+- **Serve concept doc** — `docs/concepts/serve.md` covering HTTP transport, auth, attribution, FTS rebuild, deployment
+- **Sync concept doc** — `docs/concepts/sync.md` covering remotes, push/pull, delta tracking, SSH/HTTP/local transport, and pipe primitives
 
 ## [0.4.7] - 2026-02-18
 
