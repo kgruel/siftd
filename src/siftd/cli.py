@@ -12,6 +12,7 @@ from siftd.cli_meta import build_meta_parser
 from siftd.cli_peek import build_peek_parser
 from siftd.cli_query import build_query_parser
 from siftd.cli_search import build_search_parser
+from siftd.cli_serve import build_serve_parser
 from siftd.cli_sessions import build_sessions_parser
 from siftd.cli_tags import build_tags_parser
 from siftd.paths import db_path
@@ -45,6 +46,7 @@ def main(argv=None) -> int:
     build_install_parser(subparsers)
     build_peek_parser(subparsers)
     build_export_parser(subparsers)
+    build_serve_parser(subparsers)
 
     args = parser.parse_args(argv)
     if not hasattr(args, "func") or args.func is None:

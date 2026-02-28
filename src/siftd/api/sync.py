@@ -25,6 +25,11 @@ class SyncError(Exception):
     """Raised when a sync operation fails."""
 
 
+def _is_http_remote(remote: SyncRemote) -> bool:
+    """Check if remote uses HTTP transport (URL-based detection)."""
+    return remote.path.startswith(("http://", "https://"))
+
+
 def sync_push(
     db_path: Path,
     remote: SyncRemote,
@@ -93,7 +98,9 @@ def sync_push(
                 last_push_updated=False,
             )
 
-        if remote.host:
+        if _is_http_remote(remote):
+            remote_existed = _push_http(remote, slice_path)
+        elif remote.host:
             remote_existed = _push_ssh(remote, slice_path)
         else:
             remote_existed = _push_local(remote, slice_path, db_path)
@@ -258,6 +265,44 @@ def _push_local(remote: SyncRemote, slice_path: Path, db_path: Path) -> bool:
     return True
 
 
+def _push_http(remote: SyncRemote, slice_path: Path) -> bool:
+    """Push via HTTP POST to remote /v1/push endpoint.
+
+    Returns whether remote DB already existed.
+    """
+    import httpx
+
+    from siftd.api.auth import AuthError, acquire_token
+    from siftd.config import get_sync_remote
+
+    remote_cfg = get_sync_remote(remote.name)
+    auth = remote_cfg.get("auth") if remote_cfg else None
+    headers: dict[str, str] = {}
+    try:
+        token = acquire_token(auth)
+        headers["Authorization"] = f"Bearer {token}"
+    except AuthError:
+        pass  # --no-auth server
+
+    url = remote.path.rstrip("/") + "/v1/push"
+    data = slice_path.read_bytes()
+
+    try:
+        with httpx.Client(timeout=300) as client:
+            resp = client.post(
+                url, content=data,
+                headers={**headers, "Content-Type": "application/octet-stream"},
+            )
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        raise SyncError(f"Push to {remote.path} failed: HTTP {e.response.status_code}") from e
+    except httpx.ConnectError as e:
+        raise SyncError(f"Cannot connect to {remote.path}: {e}") from e
+
+    body = resp.json()
+    return body.get("status") != "created"
+
+
 # ---------------------------------------------------------------------------
 # Pull
 # ---------------------------------------------------------------------------
@@ -291,7 +336,11 @@ def sync_pull(
     effective_since = _resolve_pull_since(since, pull_all, remote)
     should_update_last_pull = since is None
 
-    if remote.host:
+    if _is_http_remote(remote):
+        conversations, size_bytes = _pull_http(
+            remote, db_path, effective_since, workspace, dry_run,
+        )
+    elif remote.host:
         conversations, size_bytes = _pull_ssh(
             remote, db_path, effective_since, workspace, dry_run,
         )
@@ -465,6 +514,72 @@ def _pull_local(
 
         receive_database(slice_path, local_db, rebuild_fts=True)
         return conversations, size_bytes
+
+
+def _pull_http(
+    remote: SyncRemote,
+    local_db: Path,
+    since: str | None,
+    workspace: str | None,
+    dry_run: bool,
+) -> tuple[int, int]:
+    """Pull via HTTP GET from remote /v1/pull endpoint.
+
+    Returns (conversations, size_bytes).
+    """
+    import httpx
+
+    from siftd.api.auth import AuthError, acquire_token
+    from siftd.config import get_sync_remote
+
+    remote_cfg = get_sync_remote(remote.name)
+    auth = remote_cfg.get("auth") if remote_cfg else None
+    headers: dict[str, str] = {}
+    try:
+        token = acquire_token(auth)
+        headers["Authorization"] = f"Bearer {token}"
+    except AuthError:
+        pass
+
+    url = remote.path.rstrip("/") + "/v1/pull"
+    params: dict[str, str] = {}
+    if since is not None:
+        params["since"] = since
+    if workspace is not None:
+        params["workspace"] = workspace
+
+    try:
+        with httpx.Client(timeout=300) as client:
+            resp = client.get(url, params=params, headers=headers)
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        raise SyncError(f"Pull from {remote.path} failed: HTTP {e.response.status_code}") from e
+    except httpx.ConnectError as e:
+        raise SyncError(f"Cannot connect to {remote.path}: {e}") from e
+
+    conversations = int(resp.headers.get("X-Siftd-Conversations", 0))
+    if conversations == 0:
+        return 0, 0
+
+    size_bytes = len(resp.content)
+
+    if dry_run:
+        return conversations, size_bytes
+
+    with tempfile.NamedTemporaryFile(
+        prefix="siftd-pull-http-", suffix=".db", delete=False,
+    ) as tmp:
+        tmp_path = Path(tmp.name)
+
+    try:
+        tmp_path.write_bytes(resp.content)
+        from siftd.api.receive import receive_database
+
+        receive_database(tmp_path, local_db, rebuild_fts=True)
+        return conversations, size_bytes
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
 
 
 def _parse_send_metadata(stderr_text: str) -> dict:

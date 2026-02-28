@@ -410,6 +410,7 @@ def get_sync_remotes() -> list[dict]:
             "path": str(cfg.get("path", "")),
             "last_push": cfg.get("last_push"),
             "last_pull": cfg.get("last_pull"),
+            "auth": dict(cfg["auth"]) if "auth" in cfg and isinstance(cfg.get("auth"), dict) else None,
         })
     return remotes
 
@@ -461,6 +462,17 @@ def set_sync_remote(name: str, host: str | None, path: str) -> None:
     remote_tbl["path"] = path
 
     config_dir().mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(tomlkit.dumps(doc))
+
+
+def set_remote_auth(name: str, auth: dict) -> None:
+    """Set auth config for a sync remote."""
+    cfg_path = config_file()
+    doc = tomlkit.parse(cfg_path.read_text())
+    sync_tbl = cast(Container, doc["sync"])
+    remotes_tbl = cast(Container, sync_tbl["remotes"])
+    remote_tbl = cast(Container, remotes_tbl[name])
+    remote_tbl["auth"] = auth
     cfg_path.write_text(tomlkit.dumps(doc))
 
 

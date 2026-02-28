@@ -15,6 +15,7 @@ from siftd.config import (
     get_sync_remote,
     get_sync_remotes,
     remove_sync_remote,
+    set_remote_auth,
     set_sync_remote,
     update_last_pull,
     update_last_push,
@@ -140,6 +141,19 @@ class TestConfigRemotes:
         assert get_config("search.formatter") == "verbose"
         assert get_sync_remote("alcove") is not None
 
+    def test_remote_auth_config_roundtrip(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        set_sync_remote("team", None, "https://siftd.example.com")
+        set_remote_auth("team", {"token_command": "gh auth token"})
+        remote = get_sync_remote("team")
+        assert remote["auth"] == {"token_command": "gh auth token"}
+
+    def test_remote_without_auth(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        set_sync_remote("local", None, "/tmp/team.db")
+        remote = get_sync_remote("local")
+        assert remote["auth"] is None
+
 
 # --- Local push tests ---
 
@@ -241,6 +255,7 @@ class TestLocalPush:
 
         set_sync_remote("test", None, str(target_path))
         remote_cfg = get_sync_remote("test")
+        remote_cfg.pop("auth", None)
         remote = SyncRemote(**remote_cfg)
 
         sync_push(source, remote)
@@ -261,6 +276,7 @@ class TestLocalPush:
         set_sync_remote("test", None, str(target_path))
         update_last_push("test", "2025-01-01T00:00:00+00:00")
         remote_cfg = get_sync_remote("test")
+        remote_cfg.pop("auth", None)
         remote = SyncRemote(**remote_cfg)
 
         result = sync_push(source, remote, since="2024-01-01")
@@ -1069,6 +1085,7 @@ class TestLocalPull:
 
         set_sync_remote("test", None, str(remote_db))
         remote_cfg = get_sync_remote("test")
+        remote_cfg.pop("auth", None)
         remote = SyncRemote(**remote_cfg)
 
         sync_pull(local_db, remote)
@@ -1090,6 +1107,7 @@ class TestLocalPull:
         set_sync_remote("test", None, str(remote_db))
         update_last_pull("test", "2025-01-01T00:00:00+00:00")
         remote_cfg = get_sync_remote("test")
+        remote_cfg.pop("auth", None)
         remote = SyncRemote(**remote_cfg)
 
         result = sync_pull(local_db, remote, since="2024-01-01")
@@ -1458,3 +1476,74 @@ class TestSendCLI:
         err = capsys.readouterr().err
         meta = json.loads(err)
         assert meta["conversations"] == 0
+
+
+# --- HTTP transport tests ---
+
+
+class TestHTTPPush:
+    def test_push_http_posts_slice(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        (tmp_path / "config").mkdir()
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-1"}],
+        )
+        set_sync_remote("team", None, "https://siftd.example.com")
+        set_remote_auth("team", {"token": "test-token"})
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": "created", "conversations": 1}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as MockClient:
+            client_instance = MockClient.return_value.__enter__.return_value
+            client_instance.post.return_value = mock_response
+            cfg = get_sync_remote("team")
+            cfg.pop("auth", None)
+            remote = SyncRemote(**cfg)
+            result = sync_push(source, remote)
+
+        assert result.conversations == 1
+        assert not result.dry_run
+        client_instance.post.assert_called_once()
+        call_args = client_instance.post.call_args
+        assert "/v1/push" in call_args.args[0]
+
+
+class TestHTTPPull:
+    def test_pull_http_streams_slice(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        (tmp_path / "config").mkdir()
+        local_db = tmp_path / "local.db"
+
+        # Create a small valid SQLite DB to use as the pull response body
+        source = _make_db(
+            tmp_path / "remote-slice.db",
+            conversations=[{"external_id": "remote-conv-1"}],
+        )
+        slice_bytes = source.read_bytes()
+
+        set_sync_remote("team", None, "https://siftd.example.com")
+        set_remote_auth("team", {"token": "test-token"})
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = slice_bytes
+        mock_response.headers = {
+            "X-Siftd-Conversations": "1",
+            "X-Siftd-Size": str(len(slice_bytes)),
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as MockClient:
+            client_instance = MockClient.return_value.__enter__.return_value
+            client_instance.get.return_value = mock_response
+            cfg = get_sync_remote("team")
+            cfg.pop("auth", None)
+            remote = SyncRemote(**cfg)
+            result = sync_pull(local_db, remote)
+
+        assert result.conversations == 1
+        assert local_db.exists()

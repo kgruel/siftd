@@ -21,6 +21,7 @@ import pytest
 # - search: query API over storage + embeddings
 # - output: result formatting/printing
 # - doctor: diagnostics and validation
+# - serve: HTTP team sync server (optional [serve] extra)
 # - api: public programmatic API surface
 # - cli: command-line interface entrypoints
 ALLOWED_DEPS: dict[str, list[str]] = {
@@ -35,6 +36,7 @@ ALLOWED_DEPS: dict[str, list[str]] = {
     "search": ["domain", "storage", "embeddings", "peek", "utilities"],
     "output": ["domain", "storage", "search", "utilities", "content"],
     "doctor": ["domain", "storage", "adapters", "embeddings", "output", "utilities"],
+    "serve": ["domain", "storage", "search", "api", "utilities"],
     "api": [
         "domain",
         "storage",
@@ -48,7 +50,7 @@ ALLOWED_DEPS: dict[str, list[str]] = {
         "adapters",
         "utilities",
     ],
-    "cli": ["api", "output", "utilities"],
+    "cli": ["api", "output", "utilities", "serve"],
 }
 
 # Map top-level siftd modules to architecture groups.
@@ -65,6 +67,7 @@ MODULE_GROUPS: dict[str, str] = {
     "adapters": "adapters",
     "content": "content",
     "output": "output",
+    "serve": "serve",
     "builtin_queries": "content",
     "backfill": "ingestion",
     "config": "utilities",
