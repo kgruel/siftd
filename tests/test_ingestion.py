@@ -276,6 +276,9 @@ class TestSessionBasedDedup:
         cur = conn.execute("SELECT COUNT(*) FROM conversations")
         assert cur.fetchone()[0] == 1
 
+        # Simulate file growth (session updated on disk)
+        dest.write_text("dummy updated")
+
         newer_conv = self._conv("test_harness::session-1", "2024-01-01T12:00:00Z")
         NewerAdapter = make_session_adapter(dest, parse_fn=lambda s: [newer_conv])
 
@@ -303,6 +306,9 @@ class TestSessionBasedDedup:
 
         stats1 = ingest_all(conn, [NewerAdapter])
         assert stats1.files_ingested == 1
+
+        # Simulate file change on disk to bypass stat fast-path
+        dest.write_text("dummy changed")
 
         older_conv = self._conv("test_harness::session-1", "2024-01-01T10:00:00Z")
         OlderAdapter = make_session_adapter(dest, parse_fn=lambda s: [older_conv])
@@ -356,6 +362,9 @@ class TestSessionBasedDedup:
         stats1 = ingest_all(conn, [AdapterZ])
         assert stats1.files_ingested == 1
 
+        # Simulate file change to bypass stat fast-path
+        dest.write_text("dummy v2")
+
         # Second: same time but with +00:00 format — should be treated as equal
         conv_offset = self._conv("test_harness::session-1", "2024-01-01T10:00:00+00:00")
         AdapterOffset = make_session_adapter(dest, parse_fn=lambda s: [conv_offset])
@@ -363,6 +372,9 @@ class TestSessionBasedDedup:
         stats2 = ingest_all(conn, [AdapterOffset])
         assert stats2.files_skipped == 1  # Same time, should skip
         assert stats2.files_replaced == 0
+
+        # Simulate file change to bypass stat fast-path
+        dest.write_text("dummy v3")
 
         # Third: newer time with Z suffix — should replace
         conv_newer = self._conv("test_harness::session-1", "2024-01-01T12:00:00Z")

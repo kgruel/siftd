@@ -70,6 +70,7 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
 
         _migrate_labels_to_tags(conn)
         _migrate_add_error_column(conn)
+        _migrate_add_file_stat_columns(conn)
         _migrate_add_branch_column(conn)
         _migrate_add_cascade_deletes(conn)
         ensure_fts_table(conn)
@@ -169,6 +170,16 @@ def _migrate_add_error_column(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in cur.fetchall()}
     if "error" not in columns:
         conn.execute("ALTER TABLE ingested_files ADD COLUMN error TEXT")
+        conn.commit()
+
+
+def _migrate_add_file_stat_columns(conn: sqlite3.Connection) -> None:
+    """Add file_mtime and file_size columns to ingested_files if they don't exist."""
+    cur = conn.execute("PRAGMA table_info(ingested_files)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "file_mtime" not in columns:
+        conn.execute("ALTER TABLE ingested_files ADD COLUMN file_mtime REAL")
+        conn.execute("ALTER TABLE ingested_files ADD COLUMN file_size INTEGER")
         conn.commit()
 
 
@@ -1074,10 +1085,11 @@ def check_file_ingested(conn: sqlite3.Connection, path: str) -> bool:
 def get_ingested_file_info(conn: sqlite3.Connection, path: str) -> dict | None:
     """Get stored info for an ingested file.
 
-    Returns dict with {file_hash, conversation_id, error} or None if not found.
+    Returns dict with {file_hash, conversation_id, error, file_mtime, file_size}
+    or None if not found.
     """
     cur = conn.execute(
-        "SELECT file_hash, conversation_id, error FROM ingested_files WHERE path = ?",
+        "SELECT file_hash, conversation_id, error, file_mtime, file_size FROM ingested_files WHERE path = ?",
         (path,)
     )
     row = cur.fetchone()
@@ -1086,6 +1098,8 @@ def get_ingested_file_info(conn: sqlite3.Connection, path: str) -> dict | None:
             "file_hash": row["file_hash"],
             "conversation_id": row["conversation_id"],
             "error": row["error"],
+            "file_mtime": row["file_mtime"],
+            "file_size": row["file_size"],
         }
     return None
 
@@ -1096,6 +1110,8 @@ def record_ingested_file(
     file_hash: str,
     conversation_id: str,
     *,
+    file_mtime: float | None = None,
+    file_size: int | None = None,
     commit: bool = False,
 ) -> str:
     """Record that a file has been ingested. Returns the record id.
@@ -1116,9 +1132,9 @@ def record_ingested_file(
     ulid = _ulid()
     ingested_at = datetime.now().isoformat()
     conn.execute(
-        """INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (ulid, path, file_hash, harness_id, conversation_id, ingested_at)
+        """INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at, file_mtime, file_size)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (ulid, path, file_hash, harness_id, conversation_id, ingested_at, file_mtime, file_size)
     )
     if commit:
         conn.commit()
@@ -1131,6 +1147,8 @@ def record_empty_file(
     file_hash: str,
     harness_id: str,
     *,
+    file_mtime: float | None = None,
+    file_size: int | None = None,
     commit: bool = False,
 ) -> str:
     """Record an empty file (no conversation). Returns the record id.
@@ -1144,9 +1162,9 @@ def record_empty_file(
     ulid = _ulid()
     ingested_at = datetime.now().isoformat()
     conn.execute(
-        """INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at)
-           VALUES (?, ?, ?, ?, NULL, ?)""",
-        (ulid, path, file_hash, harness_id, ingested_at)
+        """INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at, file_mtime, file_size)
+           VALUES (?, ?, ?, ?, NULL, ?, ?, ?)""",
+        (ulid, path, file_hash, harness_id, ingested_at, file_mtime, file_size)
     )
     if commit:
         conn.commit()
@@ -1160,6 +1178,8 @@ def record_failed_file(
     harness_id: str,
     error: str,
     *,
+    file_mtime: float | None = None,
+    file_size: int | None = None,
     commit: bool = False,
 ) -> str:
     """Record a file that failed ingestion. Returns the record id.
@@ -1172,9 +1192,9 @@ def record_failed_file(
     ulid = _ulid()
     ingested_at = datetime.now().isoformat()
     conn.execute(
-        """INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at, error)
-           VALUES (?, ?, ?, ?, NULL, ?, ?)""",
-        (ulid, path, file_hash, harness_id, ingested_at, error)
+        """INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at, error, file_mtime, file_size)
+           VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)""",
+        (ulid, path, file_hash, harness_id, ingested_at, error, file_mtime, file_size)
     )
     if commit:
         conn.commit()
@@ -1187,3 +1207,21 @@ def clear_ingested_file_error(
 ) -> None:
     """Clear error and delete the ingested_files record so the file can be re-ingested."""
     conn.execute("DELETE FROM ingested_files WHERE path = ?", (path,))
+
+
+def update_file_stat(
+    conn: sqlite3.Connection,
+    path: str,
+    file_mtime: float,
+    file_size: int,
+) -> None:
+    """Update only mtime+size for an existing ingested_files record.
+
+    Used when file content hasn't changed (hash matches) but mtime drifted
+    (e.g., backup restore, copy). Updates the stored stat so future runs
+    can skip via the fast path.
+    """
+    conn.execute(
+        "UPDATE ingested_files SET file_mtime = ?, file_size = ? WHERE path = ?",
+        (file_mtime, file_size, path),
+    )

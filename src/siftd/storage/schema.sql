@@ -247,7 +247,9 @@ CREATE TABLE ingested_files (
     harness_id      TEXT NOT NULL REFERENCES harnesses(id) ON DELETE CASCADE,
     conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
     ingested_at     TEXT NOT NULL,
-    error           TEXT                        -- NULL = success, non-NULL = failure message
+    error           TEXT,                       -- NULL = success, non-NULL = failure message
+    file_mtime      REAL,                       -- st_mtime from os.stat()
+    file_size       INTEGER                     -- st_size from os.stat()
 );
 
 --------------------------------------------------------------------------------

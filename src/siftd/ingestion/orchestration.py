@@ -15,6 +15,7 @@ revisit if a real use case emerges.
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from collections import Counter
 from collections.abc import Callable
@@ -36,6 +37,7 @@ from siftd.storage.sqlite import (
     record_failed_file,
     record_ingested_file,
     store_conversation,
+    update_file_stat,
 )
 from siftd.storage.tags import apply_tag, get_or_create_tag
 
@@ -315,12 +317,30 @@ def ingest_all(
                 # Check if already ingested
                 existing_info = get_ingested_file_info(conn, file_path)
                 if existing_info:
-                    # Compare hash to detect changes
                     location = source.as_path
+
+                    # Fast path: stat-only skip (no file I/O for hashing)
+                    st = location.stat()
+                    stored_mtime = existing_info["file_mtime"]
+                    stored_size = existing_info["file_size"]
+                    if (
+                        stored_mtime is not None
+                        and st.st_mtime == stored_mtime
+                        and st.st_size == stored_size
+                    ):
+                        stats.files_skipped += 1
+                        if on_file:
+                            on_file(source, "skipped")
+                        emit_event("skipped")
+                        continue
+
+                    # Slow path: mtime or size changed (or no stored stat), hash the file
                     current_hash = compute_file_hash(location)
 
                     if current_hash == existing_info["file_hash"]:
-                        # Same hash, skip
+                        # Content unchanged, mtime drifted — update stored stat
+                        update_file_stat(conn, file_path, st.st_mtime, st.st_size)
+                        conn.commit()
                         stats.files_skipped += 1
                         if on_file:
                             on_file(source, "skipped")
@@ -337,7 +357,7 @@ def ingest_all(
 
                     # Re-ingest and update the record
                     conv = _reingest_file(
-                        conn, source, adapter, file_path, current_hash, stats, filter_binary
+                        conn, source, adapter, file_path, current_hash, st, stats, filter_binary
                     )
                     if on_file:
                         on_file(source, "updated")
@@ -352,7 +372,25 @@ def ingest_all(
 
             # Strategy: session-based dedup (latest wins)
             elif dedup_strategy == "session":
-                # We need to parse first to get the conversation and check timestamps
+                # Fast path: stat-only skip for unchanged session files
+                existing_file_info = get_ingested_file_info(conn, file_path)
+                if existing_file_info:
+                    location = source.as_path
+                    st = location.stat()
+                    stored_mtime = existing_file_info["file_mtime"]
+                    stored_size = existing_file_info["file_size"]
+                    if (
+                        stored_mtime is not None
+                        and st.st_mtime == stored_mtime
+                        and st.st_size == stored_size
+                    ):
+                        stats.files_skipped += 1
+                        if on_file:
+                            on_file(source, "skipped")
+                        emit_event("skipped")
+                        continue
+
+                # We need to parse to get the conversation and check timestamps
                 conversations = list(adapter.parse(source))
                 conversation = _get_single_conversation(conversations, file_path)
                 if conversation is None:
@@ -386,8 +424,9 @@ def ingest_all(
 
                         # Record file ingestion
                         location = source.as_path
+                        st = location.stat()
                         file_hash = compute_file_hash(location)
-                        record_ingested_file(conn, file_path, file_hash, conv_id)
+                        record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=st.st_mtime, file_size=st.st_size)
 
                         # Apply pending tags from live session
                         _apply_pending_tags(conn, adapter, conversation, conv_id)
@@ -407,8 +446,9 @@ def ingest_all(
                         # Record file so it's tracked (not shown as pending)
                         if not get_ingested_file_info(conn, file_path):
                             location = source.as_path
+                            st = location.stat()
                             file_hash = compute_file_hash(location)
-                            record_ingested_file(conn, file_path, file_hash, existing["id"])
+                            record_ingested_file(conn, file_path, file_hash, existing["id"], file_mtime=st.st_mtime, file_size=st.st_size)
                             conn.commit()
                         stats.files_skipped += 1
                         if on_file:
@@ -419,8 +459,9 @@ def ingest_all(
                     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary)
 
                     location = source.as_path
+                    st = location.stat()
                     file_hash = compute_file_hash(location)
-                    record_ingested_file(conn, file_path, file_hash, conv_id)
+                    record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=st.st_mtime, file_size=st.st_size)
 
                     # Apply pending tags from live session
                     _apply_pending_tags(conn, adapter, conversation, conv_id)
@@ -460,8 +501,9 @@ def ingest_all(
                         existing = find_conversation_by_external_id(conn, h_id, conv.external_id)
                         if existing and not get_ingested_file_info(conn, file_path):
                             location = source.as_path
+                            st = location.stat()
                             fh = compute_file_hash(location)
-                            record_ingested_file(conn, file_path, fh, existing["id"])
+                            record_ingested_file(conn, file_path, fh, existing["id"], file_mtime=st.st_mtime, file_size=st.st_size)
                             conn.commit()
                             stats.files_skipped += 1
                             if on_file:
@@ -499,12 +541,13 @@ def _record_file_error(
         if get_ingested_file_info(conn, file_path):
             return  # Already recorded from a previous run
         location = source.as_path
+        st = location.stat()
         file_hash = compute_file_hash(location)
         harness_kwargs = {}
         if hasattr(adapter, "HARNESS_SOURCE"):
             harness_kwargs["source"] = adapter.HARNESS_SOURCE
         harness_id = get_or_create_harness(conn, adapter.NAME, **harness_kwargs)
-        record_failed_file(conn, file_path, file_hash, harness_id, error)
+        record_failed_file(conn, file_path, file_hash, harness_id, error, file_mtime=st.st_mtime, file_size=st.st_size)
         conn.commit()
     except Exception:
         pass  # Don't fail the whole ingest because we couldn't record the error
@@ -526,6 +569,7 @@ def _ingest_file(
     """Ingest a single file (file-based dedup strategy)."""
     harness_name = adapter.NAME
     location = source.as_path
+    st = location.stat()
     file_hash = compute_file_hash(location)
 
     conversations = list(adapter.parse(source))
@@ -537,14 +581,14 @@ def _ingest_file(
         if hasattr(adapter, "HARNESS_SOURCE"):
             harness_kwargs["source"] = adapter.HARNESS_SOURCE
         harness_id = get_or_create_harness(conn, harness_name, **harness_kwargs)
-        record_empty_file(conn, file_path, file_hash, harness_id)
+        record_empty_file(conn, file_path, file_hash, harness_id, file_mtime=st.st_mtime, file_size=st.st_size)
         conn.commit()
         stats.files_ingested += 1
         return None
 
     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary)
     _update_stats_for_conversation(stats, harness_name, conversation)
-    record_ingested_file(conn, file_path, file_hash, conv_id)
+    record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=st.st_mtime, file_size=st.st_size)
 
     # Apply pending tags from live session
     _apply_pending_tags(conn, adapter, conversation, conv_id)
@@ -560,6 +604,7 @@ def _reingest_file(
     adapter: AdapterModule,
     file_path: str,
     file_hash: str,
+    file_stat: os.stat_result,
     stats: IngestStats,
     filter_binary: bool,
 ) -> object | None:
@@ -582,7 +627,7 @@ def _reingest_file(
         if hasattr(adapter, "HARNESS_SOURCE"):
             harness_kwargs["source"] = adapter.HARNESS_SOURCE
         harness_id = get_or_create_harness(conn, harness_name, **harness_kwargs)
-        record_empty_file(conn, file_path, file_hash, harness_id)
+        record_empty_file(conn, file_path, file_hash, harness_id, file_mtime=file_stat.st_mtime, file_size=file_stat.st_size)
         conn.commit()
         stats.files_replaced += 1
         stats.by_harness[harness_name]["replaced"] += 1
@@ -590,7 +635,7 @@ def _reingest_file(
 
     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary)
     _update_stats_for_conversation(stats, harness_name, conversation)
-    record_ingested_file(conn, file_path, file_hash, conv_id)
+    record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=file_stat.st_mtime, file_size=file_stat.st_size)
 
     # Apply pending tags from live session
     _apply_pending_tags(conn, adapter, conversation, conv_id)
