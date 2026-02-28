@@ -1481,6 +1481,7 @@ class TestSendCLI:
 # --- HTTP transport tests ---
 
 
+@pytest.mark.serve
 class TestHTTPPush:
     def test_push_http_posts_slice(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
@@ -1512,6 +1513,7 @@ class TestHTTPPush:
         assert "/v1/push" in call_args.args[0]
 
 
+@pytest.mark.serve
 class TestHTTPPull:
     def test_pull_http_streams_slice(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))

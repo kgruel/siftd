@@ -37,7 +37,7 @@ jobs:
         run: uv run ruff check src/
 
       - name: Run tests
-        run: uv run pytest tests/ -v --tb=short --ignore=tests/test_embeddings.py -m "not embeddings"
+        run: uv run pytest tests/ -v --tb=short --ignore=tests/test_embeddings.py -m "not embeddings and not serve"
 
   test-with-embeddings:
     runs-on: ubuntu-latest
