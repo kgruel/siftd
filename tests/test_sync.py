@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from conftest import make_db as _make_db
+
 from siftd.api.sync import SyncError, SyncRemote, sync_pull, sync_push
 from siftd.cli import main
 from siftd.config import (
@@ -20,56 +22,6 @@ from siftd.config import (
     update_last_pull,
     update_last_push,
 )
-from siftd.storage.sqlite import (
-    create_database,
-    get_or_create_harness,
-    get_or_create_model,
-    get_or_create_provider,
-    get_or_create_workspace,
-    insert_conversation,
-    insert_prompt,
-    insert_prompt_content,
-    insert_response,
-    insert_response_content,
-)
-
-
-def _make_db(path, *, conversations=None):
-    """Helper to create a database with optional conversations."""
-    conn = create_database(path)
-
-    harness_id = get_or_create_harness(conn, "test_harness", source="test", log_format="jsonl")
-    workspace_id = get_or_create_workspace(conn, "/test/project", "2024-01-01T10:00:00Z")
-    model_id = get_or_create_model(conn, "test-model")
-    provider_id = get_or_create_provider(conn, "test_provider")
-
-    for conv in (conversations or []):
-        started = conv.get("started_at", "2024-01-15T10:00:00Z")
-        conv_id = insert_conversation(
-            conn,
-            external_id=conv["external_id"],
-            harness_id=harness_id,
-            workspace_id=workspace_id,
-            started_at=started,
-        )
-        prompt_id = insert_prompt(conn, conv_id, f"p-{conv['external_id']}", started)
-        insert_prompt_content(
-            conn, prompt_id, 0, "text",
-            f'{{"text": "{conv.get("prompt_text", "Hello")}"}}',
-        )
-        response_id = insert_response(
-            conn, conv_id, prompt_id, model_id, provider_id,
-            f"r-{conv['external_id']}", started,
-            input_tokens=100, output_tokens=50,
-        )
-        insert_response_content(
-            conn, response_id, 0, "text",
-            f'{{"text": "{conv.get("response_text", "Hi there")}"}}',
-        )
-
-    conn.commit()
-    conn.close()
-    return path
 
 
 # --- Config CRUD tests ---

@@ -4,87 +4,11 @@ import sqlite3
 
 import pytest
 
+from conftest import make_db as _make_db
+
 from siftd.api.merge import merge_database
 from siftd.cli import main
-from siftd.storage.sqlite import (
-    create_database,
-    get_or_create_harness,
-    get_or_create_model,
-    get_or_create_provider,
-    get_or_create_tool,
-    get_or_create_workspace,
-    insert_conversation,
-    insert_prompt,
-    insert_prompt_content,
-    insert_response,
-    insert_response_content,
-    insert_tool_call,
-)
 from siftd.storage.tags import apply_tag, get_or_create_tag
-
-
-def _make_db(path, *, harness_name="test_harness", workspace_path="/test/project",
-             workspace_git_remote=None, model_name="test-model",
-             conversations=None):
-    """Helper to create a database with optional conversations.
-
-    conversations: list of dicts with keys:
-        external_id, prompt_text, response_text, started_at (optional),
-        tags (optional list of tag names), tool_name (optional)
-    """
-    conn = create_database(path)
-
-    harness_id = get_or_create_harness(conn, harness_name, source="test", log_format="jsonl")
-    workspace_id = get_or_create_workspace(conn, workspace_path, "2024-01-01T10:00:00Z")
-
-    # Set git_remote if provided
-    if workspace_git_remote:
-        conn.execute(
-            "UPDATE workspaces SET git_remote = ? WHERE id = ?",
-            (workspace_git_remote, workspace_id),
-        )
-
-    model_id = get_or_create_model(conn, model_name)
-    provider_id = get_or_create_provider(conn, "test_provider")
-
-    for conv in (conversations or []):
-        started = conv.get("started_at", "2024-01-15T10:00:00Z")
-        conv_id = insert_conversation(
-            conn,
-            external_id=conv["external_id"],
-            harness_id=harness_id,
-            workspace_id=workspace_id,
-            started_at=started,
-        )
-        prompt_id = insert_prompt(conn, conv_id, f"p-{conv['external_id']}", started)
-        insert_prompt_content(
-            conn, prompt_id, 0, "text",
-            f'{{"text": "{conv.get("prompt_text", "Hello")}"}}',
-        )
-        response_id = insert_response(
-            conn, conv_id, prompt_id, model_id, provider_id,
-            f"r-{conv['external_id']}", started,
-            input_tokens=100, output_tokens=50,
-        )
-        insert_response_content(
-            conn, response_id, 0, "text",
-            f'{{"text": "{conv.get("response_text", "Hi there")}"}}',
-        )
-
-        if conv.get("tool_name"):
-            tool_id = get_or_create_tool(conn, conv["tool_name"])
-            insert_tool_call(
-                conn, response_id, conv_id, tool_id, f"tc-{conv['external_id']}",
-                '{"cmd": "test"}', '{"output": "ok"}', "success", started,
-            )
-
-        for tag_name in conv.get("tags", []):
-            tag_id = get_or_create_tag(conn, tag_name)
-            apply_tag(conn, "conversation", conv_id, tag_id)
-
-    conn.commit()
-    conn.close()
-    return path
 
 
 def test_disjoint_merge(tmp_path):
