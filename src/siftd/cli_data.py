@@ -56,8 +56,9 @@ class _IngestTextRenderer:
     STATUS_WIDTH = 7
     PROGRESS_WIDTH = 7
 
-    def __init__(self, *, verbose: bool) -> None:
+    def __init__(self, *, verbose: bool, quiet: bool = False) -> None:
         self.verbose = verbose
+        self.quiet = quiet
         self._counts: dict[str, _AdapterCounts] = {}
         self._started: set[str] = set()
 
@@ -67,18 +68,20 @@ class _IngestTextRenderer:
             counts.total = event.total
         counts.add(event.status, event.reason)
 
-        if event.adapter not in self._started:
-            total = counts.total or event.total or 0
-            print(f"{event.adapter} ({total} files)")
-            self._started.add(event.adapter)
+        if self.quiet:
+            return
 
         if event.status != "skipped":
+            if event.adapter not in self._started:
+                total = counts.total or event.total or 0
+                print(f"{event.adapter} ({total} files)")
+                self._started.add(event.adapter)
             print(self._format_line(event))
 
-        if counts.processed == counts.total:
-            self._print_summary(event.adapter, counts)
+        if counts.processed == counts.total and event.adapter in self._started:
+            self._print_adapter_done(event.adapter, counts)
 
-    def _print_summary(self, adapter: str, counts: _AdapterCounts) -> None:
+    def _print_adapter_done(self, adapter: str, counts: _AdapterCounts) -> None:
         parts = [
             f"new {counts.new}",
             f"updated {counts.updated_total}",
@@ -93,6 +96,82 @@ class _IngestTextRenderer:
             )
             summary += f" ({reasons})"
         print(f"  totals: {summary}")
+
+    def print_summary(self, stats: IngestStats) -> None:
+        """Print final ingestion summary."""
+        active = [
+            (name, counts)
+            for name, counts in self._counts.items()
+            if counts.new > 0 or counts.updated_total > 0 or counts.error > 0
+        ]
+
+        has_content = (
+            stats.conversations or stats.prompts
+            or stats.responses or stats.tool_calls
+        )
+
+        if not active:
+            if stats.files_found == 0:
+                if not self.quiet:
+                    print("\nNo files found.")
+            else:
+                if not self.quiet:
+                    msg = f"\n{stats.files_found} files scanned, all up to date."
+                    if self.verbose:
+                        all_reasons: dict[str, int] = {}
+                        for counts in self._counts.values():
+                            for reason, count in counts.skip_reasons.items():
+                                all_reasons[reason] = all_reasons.get(reason, 0) + count
+                        if all_reasons:
+                            parts = ", ".join(
+                                f"{reason} {count}"
+                                for reason, count in sorted(all_reasons.items())
+                            )
+                            msg += f" ({parts})"
+                    print(msg)
+            return
+
+        if self.quiet:
+            if has_content:
+                print(self._format_totals_line(stats))
+            return
+
+        # Per-adapter table
+        print()
+        name_w = max(len(name) for name, _ in active)
+        new_w = max(len(str(c.new)) for _, c in active)
+        upd_w = max(len(str(c.updated_total)) for _, c in active)
+        skip_w = max(len(str(c.skipped)) for _, c in active)
+
+        for name, c in active:
+            line = (
+                f"{name:<{name_w}}"
+                f"  {c.new:>{new_w}} new"
+                f"  {c.updated_total:>{upd_w}} updated"
+                f"  {c.skipped:>{skip_w}} skipped"
+            )
+            if self.verbose and c.skip_reasons:
+                reasons = ", ".join(
+                    f"{reason} {count}"
+                    for reason, count in sorted(c.skip_reasons.items())
+                )
+                line += f" ({reasons})"
+            if c.error:
+                line += f"  {c.error} error"
+            print(line)
+
+        indent = " " * name_w
+        print(f"{indent}  ──")
+        print(f"{indent}  {self._format_totals_line(stats)}")
+
+    @staticmethod
+    def _format_totals_line(stats: IngestStats) -> str:
+        return (
+            f"{stats.conversations:,} conversations"
+            f"  {stats.prompts:,} prompts"
+            f"  {stats.responses:,} responses"
+            f"  {stats.tool_calls:,} tool_calls"
+        )
 
     def _format_line(self, event: IngestEvent) -> str:
         progress = (
@@ -111,7 +190,6 @@ class _IngestTextRenderer:
         model = fmt_model(event.model) if event.model else "--"
         model = self._fit(model, self.MODEL_WIDTH)
         exchanges = f"{event.exchange_count}x" if event.exchange_count is not None else "--"
-        filename = Path(event.path).name
 
         return (
             f"  {progress:<{self.PROGRESS_WIDTH}}  "
@@ -119,8 +197,7 @@ class _IngestTextRenderer:
             f"{self._fit(workspace, self.WORKSPACE_WIDTH)}  "
             f"{summary_text}  "
             f"{exchanges:>3}  "
-            f"{model}  "
-            f"{filename}"
+            f"{model}"
         )
 
     @staticmethod
@@ -231,15 +308,18 @@ def cmd_ingest(args) -> int:
     is_new = not db.exists()
     json_mode = getattr(args, "json", False)
 
+    quiet = getattr(args, "quiet", False)
+
     if json_mode:
         renderer: _IngestJsonRenderer | _IngestTextRenderer = _IngestJsonRenderer()
         renderer.handle_db(db=db, is_new=is_new)
     else:
-        renderer = _IngestTextRenderer(verbose=args.verbose)
-        if is_new:
-            print(f"Creating database: {db}")
-        else:
-            print(f"Using database: {db}")
+        renderer = _IngestTextRenderer(verbose=args.verbose, quiet=quiet)
+        if not quiet:
+            if is_new:
+                print(f"Creating database: {db}")
+            else:
+                print(f"Using database: {db}")
 
     conn = create_database(db)
 
@@ -279,15 +359,16 @@ def cmd_ingest(args) -> int:
         adapters = [p.module for p in plugins]
 
     if not json_mode:
-        if not sys.stdout.isatty():
+        if not quiet and not sys.stdout.isatty():
             print("Tip: use --json for newline-delimited JSON output.", file=sys.stderr)
-        print("\nIngesting...")
+        if not quiet:
+            print("\nIngesting...")
     stats = ingest_all(conn, adapters, on_event=renderer.handle_event)
 
     if json_mode:
         renderer.handle_summary(stats)
     else:
-        _print_stats(stats)
+        renderer.print_summary(stats)
     conn.close()
     return 0
 
@@ -709,28 +790,6 @@ def cmd_doctor(args) -> int:
     return _doctor_run(args)
 
 
-def _print_stats(stats: IngestStats) -> None:
-    """Print ingestion statistics."""
-    print(f"\n{'='*50}")
-    print("SUMMARY")
-    print(f"{'='*50}")
-    print(f"Files found:    {stats.files_found}")
-    print(f"Files ingested: {stats.files_ingested}")
-    print(f"Files replaced: {stats.files_replaced}")
-    print(f"Files skipped:  {stats.files_skipped}")
-    print(f"\nConversations: {stats.conversations}")
-    print(f"Prompts:       {stats.prompts}")
-    print(f"Responses:     {stats.responses}")
-    print(f"Tool calls:    {stats.tool_calls}")
-
-    if stats.by_harness:
-        print("\n--- By Harness ---")
-        for harness, h_stats in stats.by_harness.items():
-            print(f"\n{harness}:")
-            for key, value in h_stats.items():
-                print(f"  {key}: {value}")
-
-
 def build_data_parser(subparsers) -> None:
     """Add 'ingest', 'backfill', 'migrate', 'doctor', 'copy' subparsers."""
     # ingest
@@ -740,12 +799,20 @@ def build_data_parser(subparsers) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   siftd ingest                      # ingest from all adapters
-  siftd ingest -v                   # show per-adapter skip breakdowns
+  siftd ingest -q                   # quiet: totals line only
+  siftd ingest -v                   # verbose: per-adapter skip breakdowns
   siftd ingest -a claude_code       # only run claude_code adapter
   siftd ingest -p ~/logs -p /tmp    # scan additional directories
   siftd ingest --rebuild-fts        # rebuild FTS index from scratch""",
     )
-    p_ingest.add_argument(
+    _verbosity = p_ingest.add_mutually_exclusive_group()
+    _verbosity.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Only show totals line",
+    )
+    _verbosity.add_argument(
         "-v",
         "--verbose",
         action="store_true",
