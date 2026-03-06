@@ -11,29 +11,17 @@ import sys
 from pathlib import Path
 from typing import cast
 
-from siftd.cli_common import resolve_db
+from siftd.cli_common import apply_config_defaults, resolve_db
 from siftd.paths import embeddings_db_path
 
 
-def _apply_search_config(args) -> None:
-    """Apply config defaults to args if no formatter flag is explicitly set."""
-    from siftd.config import get_search_defaults
-
-    # Check if any formatter-related flag was explicitly set
+def _has_explicit_formatter(args) -> bool:
+    """Check if any formatter-related flag was explicitly set on search args."""
     formatter_flags = ["format", "json", "verbose", "full", "thread", "context", "conversations"]
-    has_explicit_formatter = any(
+    return any(
         getattr(args, flag, None) not in (None, False)
         for flag in formatter_flags
     )
-
-    if has_explicit_formatter:
-        return
-
-    # Apply config defaults
-    defaults = get_search_defaults()
-    for key, value in defaults.items():
-        if getattr(args, key, None) is None:
-            setattr(args, key, value)
 
 
 def _print_empty_json_results(args, query: str, db: Path) -> None:
@@ -54,10 +42,12 @@ def cmd_search(args) -> int:
     """Unified search over conversations — auto-selects FTS5 or semantic based on availability."""
     from siftd.api import open_database
     from siftd.api.search import open_embeddings_db, search_similar
-    from siftd.embeddings import embeddings_available
 
     # Apply config defaults before processing
-    _apply_search_config(args)
+    from siftd.config import get_search_defaults
+    from siftd.embeddings import embeddings_available
+
+    apply_config_defaults(args, get_search_defaults, skip_if=_has_explicit_formatter)
 
     db = resolve_db(args)
     embed_db = Path(args.embed_db) if args.embed_db else embeddings_db_path()

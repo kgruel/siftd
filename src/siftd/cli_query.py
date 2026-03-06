@@ -6,35 +6,16 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from siftd.cli_common import resolve_db
-from siftd.output import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
+from siftd.cli_common import apply_config_defaults, resolve_db
+from siftd.output import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace, print_table, truncate_text
 from siftd.paths import queries_dir
-
-
-def _apply_query_config(args) -> None:
-    """Apply config defaults to query args where CLI didn't provide a value."""
-    from siftd.config import get_query_defaults
-
-    defaults = get_query_defaults()
-    hardcoded = {"limit": 10, "chars": 200, "tool_chars": 120}
-
-    for key in ("limit", "chars", "tool_chars"):
-        if getattr(args, key, None) is None:
-            setattr(args, key, defaults.get(key, hardcoded[key]))
-
-
-def _apply_tools_config(args) -> None:
-    """Apply config defaults to tools args where CLI didn't provide a value."""
-    from siftd.config import get_tools_defaults
-
-    defaults = get_tools_defaults()
-    if getattr(args, "limit", None) is None:
-        args.limit = defaults.get("limit", 20)
 
 
 def cmd_tools(args) -> int:
     """Show tool usage summary by category."""
-    _apply_tools_config(args)
+    from siftd.config import get_tools_defaults
+
+    apply_config_defaults(args, get_tools_defaults, {"limit": 20})
     from siftd.api import get_tool_tag_summary, get_tool_tags_by_workspace
 
     db = resolve_db(args)
@@ -73,8 +54,6 @@ def cmd_tools(args) -> int:
 
         # JSON output for by-workspace mode
         if args.json:
-            import json
-
             out = [
                 {
                     "workspace": ws_usage.workspace,
@@ -119,8 +98,6 @@ def cmd_tools(args) -> int:
 
     # JSON output for summary mode
     if args.json:
-        import json
-
         total = sum(t.count for t in tags)
         out = [
             {
@@ -338,19 +315,11 @@ def _query_sql(args) -> int:
 
     # Format output
     if result.rows:
-        columns = result.columns
-        widths = [len(c) for c in columns]
-        str_rows = []
-        for row in result.rows:
-            str_row = [str(v) if v is not None else "" for v in row]
-            str_rows.append(str_row)
-            for i, val in enumerate(str_row):
-                widths[i] = max(widths[i], len(val))
-        header = "  ".join(c.ljust(widths[i]) for i, c in enumerate(columns))
-        print(header)
-        print("  ".join("-" * w for w in widths))
-        for str_row in str_rows:
-            print("  ".join(val.ljust(widths[i]) for i, val in enumerate(str_row)))
+        str_rows = [
+            [str(v) if v is not None else "" for v in row]
+            for row in result.rows
+        ]
+        print_table(result.columns, str_rows)
     else:
         print("OK (no results)")
 
@@ -359,7 +328,9 @@ def _query_sql(args) -> int:
 
 def cmd_query(args) -> int:
     """List conversations with composable filters."""
-    _apply_query_config(args)
+    from siftd.config import get_query_defaults
+
+    apply_config_defaults(args, get_query_defaults, {"limit": 10, "chars": 200, "tool_chars": 120})
 
     # Dispatch to sql subcommand if conversation_id is "sql"
     if args.conversation_id == "sql":
@@ -433,7 +404,6 @@ def cmd_query(args) -> int:
 
     # JSON output
     if args.json:
-        import json
         out = [
             {
                 "id": c.id,
@@ -467,17 +437,7 @@ def cmd_query(args) -> int:
             tags = ", ".join(c.tags) if c.tags else ""
             str_rows.append([cid, ws, model, started, prompts, responses, tokens, cost, tags])
 
-        # Compute column widths and print table
-        widths = [len(col) for col in columns]
-        for str_row in str_rows:
-            for i, val in enumerate(str_row):
-                widths[i] = max(widths[i], len(val))
-
-        header = "  ".join(col.ljust(widths[i]) for i, col in enumerate(columns))
-        print(header)
-        print("  ".join("-" * w for w in widths))
-        for str_row in str_rows:
-            print("  ".join(val.ljust(widths[i]) for i, val in enumerate(str_row)))
+        print_table(columns, str_rows)
         return 0
 
     # Default: short mode — one dense line per conversation with truncated ID

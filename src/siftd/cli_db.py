@@ -156,8 +156,6 @@ def cmd_db_restore(args) -> int:
         print("Use --force to overwrite.", file=sys.stderr)
         return 1
 
-    import shutil
-
     db.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, db)
     size = db.stat().st_size

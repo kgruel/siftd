@@ -7,6 +7,7 @@ from siftd.output.common import (
     fmt_tokens,
     fmt_workspace,
     print_indented,
+    print_table,
     truncate_text,
 )
 from siftd.output.formatters import (
@@ -59,4 +60,5 @@ __all__ = [
     "fmt_model",
     "truncate_text",
     "print_indented",
+    "print_table",
 ]

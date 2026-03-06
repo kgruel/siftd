@@ -624,7 +624,6 @@ def _doctor_fix_pending_tags(args) -> int:
     sessions_deleted, tags_deleted = cleanup_stale_sessions(conn, max_age_hours=48, commit=True)
 
     if args.json:
-        import json
         out = {
             "sessions_deleted": sessions_deleted,
             "tags_deleted": tags_deleted,
@@ -646,8 +645,6 @@ def _doctor_list(args) -> int:
 
     checks = list_checks()
     if args.json:
-        import json
-
         out = [
             {"name": c.name, "description": c.description, "has_fix": c.has_fix}
             for c in checks
@@ -679,8 +676,6 @@ def _doctor_run(args, check_names: list[str] | None = None, show_fixes: bool = F
 
     # JSON output
     if args.json:
-        import json
-
         # Sort same as text mode: severity descending, then check name
         severity_order = {"error": 0, "warning": 1, "info": 2}
         findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))

@@ -379,37 +379,40 @@ class TestDbPathConfig:
 
 class TestApplyQueryConfig:
     def test_config_applied(self, config_dir):
-        from siftd.cli_query import _apply_query_config
+        from siftd.cli_common import apply_config_defaults
+        from siftd.config import get_query_defaults
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text("[query]\nlimit = 25\nchars = 300\ntool_chars = 80\n")
 
         args = argparse.Namespace(limit=None, chars=None, tool_chars=None)
-        _apply_query_config(args)
+        apply_config_defaults(args, get_query_defaults, {"limit": 10, "chars": 200, "tool_chars": 120})
 
         assert args.limit == 25
         assert args.chars == 300
         assert args.tool_chars == 80
 
     def test_cli_overrides_config(self, config_dir):
-        from siftd.cli_query import _apply_query_config
+        from siftd.cli_common import apply_config_defaults
+        from siftd.config import get_query_defaults
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text("[query]\nlimit = 25\n")
 
         args = argparse.Namespace(limit=5, chars=None, tool_chars=None)
-        _apply_query_config(args)
+        apply_config_defaults(args, get_query_defaults, {"limit": 10, "chars": 200, "tool_chars": 120})
 
         assert args.limit == 5  # CLI wins
         assert args.chars == 200  # hardcoded fallback
         assert args.tool_chars == 120  # hardcoded fallback
 
     def test_hardcoded_fallbacks(self, config_dir):
-        from siftd.cli_query import _apply_query_config
+        from siftd.cli_common import apply_config_defaults
+        from siftd.config import get_query_defaults
 
         # No config file at all
         args = argparse.Namespace(limit=None, chars=None, tool_chars=None)
-        _apply_query_config(args)
+        apply_config_defaults(args, get_query_defaults, {"limit": 10, "chars": 200, "tool_chars": 120})
 
         assert args.limit == 10
         assert args.chars == 200
@@ -441,39 +444,44 @@ class TestGetToolsDefaults:
 
 class TestApplyToolsConfig:
     def test_config_applied(self, config_dir):
-        from siftd.cli_query import _apply_tools_config
+        from siftd.cli_common import apply_config_defaults
+        from siftd.config import get_tools_defaults
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text("[tools]\nlimit = 50\n")
 
         args = argparse.Namespace(limit=None)
-        _apply_tools_config(args)
+        apply_config_defaults(args, get_tools_defaults, {"limit": 20})
 
         assert args.limit == 50
 
     def test_cli_overrides_config(self, config_dir):
-        from siftd.cli_query import _apply_tools_config
+        from siftd.cli_common import apply_config_defaults
+        from siftd.config import get_tools_defaults
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text("[tools]\nlimit = 50\n")
 
         args = argparse.Namespace(limit=10)
-        _apply_tools_config(args)
+        apply_config_defaults(args, get_tools_defaults, {"limit": 20})
 
         assert args.limit == 10
 
     def test_hardcoded_fallback(self, config_dir):
-        from siftd.cli_query import _apply_tools_config
+        from siftd.cli_common import apply_config_defaults
+        from siftd.config import get_tools_defaults
 
         args = argparse.Namespace(limit=None)
-        _apply_tools_config(args)
+        apply_config_defaults(args, get_tools_defaults, {"limit": 20})
 
         assert args.limit == 20
 
 
 class TestApplySearchConfig:
     def test_applies_default_formatter(self, config_dir):
-        from siftd.cli_search import _apply_search_config
+        from siftd.cli_common import apply_config_defaults
+        from siftd.cli_search import _has_explicit_formatter
+        from siftd.config import get_search_defaults
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[search]\nformatter = "verbose"\n')
@@ -488,12 +496,14 @@ class TestApplySearchConfig:
             conversations=False,
         )
 
-        _apply_search_config(args)
+        apply_config_defaults(args, get_search_defaults, skip_if=_has_explicit_formatter)
 
         assert args.format == "verbose"
 
     def test_cli_flag_overrides_config(self, config_dir):
-        from siftd.cli_search import _apply_search_config
+        from siftd.cli_common import apply_config_defaults
+        from siftd.cli_search import _has_explicit_formatter
+        from siftd.config import get_search_defaults
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[search]\nformatter = "verbose"\n')
@@ -508,13 +518,15 @@ class TestApplySearchConfig:
             conversations=False,
         )
 
-        _apply_search_config(args)
+        apply_config_defaults(args, get_search_defaults, skip_if=_has_explicit_formatter)
 
         # Should NOT apply config because --json is set
         assert args.format is None
 
     def test_explicit_format_overrides_config(self, config_dir):
-        from siftd.cli_search import _apply_search_config
+        from siftd.cli_common import apply_config_defaults
+        from siftd.cli_search import _has_explicit_formatter
+        from siftd.config import get_search_defaults
 
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "config.toml").write_text('[search]\nformatter = "verbose"\n')
@@ -529,7 +541,7 @@ class TestApplySearchConfig:
             conversations=False,
         )
 
-        _apply_search_config(args)
+        apply_config_defaults(args, get_search_defaults, skip_if=_has_explicit_formatter)
 
         # Should keep explicit format
         assert args.format == "json"
