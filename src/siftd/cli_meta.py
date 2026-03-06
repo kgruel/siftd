@@ -1,4 +1,4 @@
-"""CLI handlers for meta commands (status, workspaces, path, config, adapters)."""
+"""CLI handlers for meta commands (config, adapters) and db-delegated functions."""
 
 import argparse
 import json
@@ -343,58 +343,19 @@ def cmd_adapters(args) -> int:
         print(json.dumps(out, indent=2))
         return 0
 
-    # Compute column widths
-    name_width = max(len(a.name) for a in adapters)
-    origin_width = max(len(a.origin) for a in adapters)
+    from siftd.output import print_table
 
-    # Header
-    print(f"{'NAME':<{name_width}}  {'ORIGIN':<{origin_width}}  LOCATIONS")
-
-    for a in adapters:
-        locations = ", ".join(a.locations) if a.locations else "-"
-        print(f"{a.name:<{name_width}}  {a.origin:<{origin_width}}  {locations}")
+    str_rows = [
+        [a.name, a.origin, ", ".join(a.locations) if a.locations else "-"]
+        for a in adapters
+    ]
+    print_table(["NAME", "ORIGIN", "LOCATIONS"], str_rows)
 
     return 0
 
 
-def _deprecated(old_cmd: str, new_cmd: str, original_func):
-    """Wrap a command function with a deprecation warning."""
-    import functools
-    import sys
-
-    @functools.wraps(original_func)
-    def wrapper(args):
-        print(
-            f"Warning: 'siftd {old_cmd}' is deprecated. Use 'siftd {new_cmd}'.",
-            file=sys.stderr,
-        )
-        return original_func(args)
-
-    return wrapper
-
-
 def build_meta_parser(subparsers) -> None:
-    """Add 'status', 'workspaces', 'path', 'config', 'adapters' subparsers."""
-    # status (deprecated — use 'siftd db stats')
-    p_status = subparsers.add_parser("status", help="Show database statistics (use 'siftd db stats')")
-    p_status.add_argument("--json", action="store_true", help="Output as JSON")
-    p_status.set_defaults(func=_deprecated("status", "db stats", cmd_status))
-
-    # workspaces (deprecated — use 'siftd db workspaces')
-    p_workspaces = subparsers.add_parser(
-        "workspaces",
-        help="List workspaces (use 'siftd db workspaces')",
-    )
-    p_workspaces.add_argument("--json", action="store_true", help="Output as JSON")
-    p_workspaces.add_argument(
-        "-n", "--limit", type=int, default=0, help="Max workspaces (0 = all)"
-    )
-    p_workspaces.set_defaults(func=_deprecated("workspaces", "db workspaces", cmd_workspaces))
-
-    # path (deprecated — use 'siftd db path')
-    p_path = subparsers.add_parser("path", help="Show XDG paths (use 'siftd db path')")
-    p_path.set_defaults(func=_deprecated("path", "db path", cmd_path))
-
+    """Add 'config' and 'adapters' subparsers."""
     # config
     p_config = subparsers.add_parser(
         "config",

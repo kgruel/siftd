@@ -48,6 +48,14 @@ def main(argv=None) -> int:
     build_export_parser(subparsers)
     build_serve_parser(subparsers)
 
+    # Hide deprecated commands from --help (still parseable)
+    _hidden = {"tags"}
+    subparsers._choices_actions = [
+        a for a in subparsers._choices_actions if a.dest not in _hidden
+    ]
+    visible = [k for k in subparsers.choices if k not in _hidden]
+    subparsers.metavar = "{" + ",".join(visible) + "}"
+
     args = parser.parse_args(argv)
     if not hasattr(args, "func") or args.func is None:
         parser.print_help()

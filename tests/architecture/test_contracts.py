@@ -98,7 +98,7 @@ class TestExitCodes:
 
     def test_missing_db_returns_nonzero(self, nonexistent_db):
         """Commands that need DB return nonzero when DB missing."""
-        cmd = ["uv", "run", "siftd", "--db", str(nonexistent_db), "status"]
+        cmd = ["uv", "run", "siftd", "--db", str(nonexistent_db), "db", "stats"]
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         # Should fail because DB doesn't exist
@@ -110,7 +110,7 @@ class TestExitCodes:
 
     def test_success_returns_zero(self, test_db_path):
         """Successful commands return 0."""
-        cmd = ["uv", "run", "siftd", "--db", str(test_db_path), "status"]
+        cmd = ["uv", "run", "siftd", "--db", str(test_db_path), "db", "stats"]
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         assert result.returncode == 0, (
@@ -170,6 +170,8 @@ class TestCommandReferences:
         # storage/tags.py checks for 'siftd ask' to detect historical tool calls
         # in conversation logs (the old command name before rename to 'search')
         ("storage/tags.py", "siftd ask"),
+        # cli_tags.py deprecation bridge references 'siftd tags' in warning message
+        ("cli_tags.py", "siftd tags"),
     ]
 
     # Words that look like commands but are actually prose

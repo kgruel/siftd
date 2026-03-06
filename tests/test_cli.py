@@ -14,9 +14,9 @@ def test_help_exits_zero():
     assert exc_info.value.code == 0
 
 
-def test_status_with_db(test_db):
-    """siftd --db <path> status runs successfully."""
-    rc = main(["--db", str(test_db), "status"])
+def test_db_stats_with_db(test_db):
+    """siftd --db <path> db stats runs successfully."""
+    rc = main(["--db", str(test_db), "db", "stats"])
     assert rc == 0
 
 
