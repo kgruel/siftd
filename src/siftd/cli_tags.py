@@ -1,4 +1,4 @@
-"""CLI handlers for tag commands (tag, tags)."""
+"""CLI handlers for tag command (apply, remove, list, rename, delete)."""
 
 import argparse
 import sys
@@ -21,6 +21,9 @@ from siftd.api.sessions import is_session_registered
 from siftd.api.sessions import queue_tag as queue_pending_tag
 from siftd.cli_common import resolve_db
 from siftd.paths import ensure_dirs
+
+# Subcommand names that can never collide with ULIDs (26-char base32).
+_TAG_SUBCOMMANDS = frozenset({"list", "rename", "delete"})
 
 
 def _parse_tag_args(positional: list[str]) -> tuple[str, str, list[str]] | None:
@@ -97,140 +100,8 @@ def _tag_session(args, db: Path, session_id: str) -> int:
     return 0
 
 
-def cmd_tag(args) -> int:
-    """Apply or remove a tag on a conversation, workspace, or tool_call."""
-    db = resolve_db(args)
-
-    # Warn about silently ignored flag combinations
-    session_id = getattr(args, "session", None)
-    exchange_index = getattr(args, "exchange", None)
-    if exchange_index is not None and not session_id:
-        print("Note: --exchange ignored without --session", file=sys.stderr)
-    if args.last is not None and session_id:
-        print("Note: --last ignored with --session", file=sys.stderr)
-
-    # Handle --session mode (queue pending tags)
-    if session_id:
-        return _tag_session(args, db, session_id)
-
-    if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
-        return 1
-
-    conn = open_database(db)
-    removing = args.remove
-
-    # Handle --last mode
-    if args.last is not None:
-        if not args.positional or len(args.positional) != 1:
-            print("Usage: siftd tag --last [N] <tag>")
-            conn.close()
-            return 1
-
-        tag_name = args.positional[0]
-        n = args.last
-        if n < 1:
-            print("--last requires a positive number")
-            conn.close()
-            return 1
-
-        # Get N most recent conversations
-        ids = get_recent_conversation_ids(conn, n)
-
-        if not ids:
-            print("No conversations found.")
-            conn.close()
-            return 1
-
-        if removing:
-            # Look up existing tag (don't create on remove)
-            tag_id = get_tag_id(conn, tag_name)
-            if not tag_id:
-                print(f"Tag '{tag_name}' not found")
-                conn.close()
-                return 1
-
-            removed = 0
-            for cid in ids:
-                if remove_tag(conn, "conversation", cid, tag_id, commit=False):
-                    removed += 1
-            conn.commit()
-
-            if removed:
-                print(f"Removed tag '{tag_name}' from {removed} conversation(s)")
-            else:
-                print(f"Tag '{tag_name}' not applied to any of {len(ids)} conversation(s)")
-        else:
-            tag_id = get_or_create_tag(conn, tag_name)
-            tagged = 0
-            for cid in ids:
-                if apply_tag(conn, "conversation", cid, tag_id, commit=False):
-                    tagged += 1
-            conn.commit()
-
-            if tagged:
-                print(f"Applied tag '{tag_name}' to {tagged} conversation(s)")
-            else:
-                print(f"Tag '{tag_name}' already applied to all {len(ids)} conversation(s)")
-
-        conn.close()
-        return 0
-
-    # Parse positional args
-    parsed = _parse_tag_args(args.positional or [])
-    if not parsed:
-        print("Usage: siftd tag <id> <tag> [tag2 ...]")
-        print("       siftd tag <entity_type> <id> <tag> [tag2 ...]")
-        print("       siftd tag --last [N] <tag>")
-        print("       siftd tag --session <id> <tag> [tag2 ...]")
-        print("       siftd tag --remove <id> <tag> [tag2 ...]")
-        print("\nTip: Use --session to queue tags for live sessions before ingest.", file=sys.stderr)
-        print("\nEntity types: conversation (default), workspace, tool_call")
-        conn.close()
-        return 1
-
-    entity_type, entity_id, tag_names = parsed
-
-    # Validate entity exists (support prefix match for conversations)
-    resolved_id = resolve_entity_id(conn, entity_type, entity_id)
-    if resolved_id is None:
-        print(f"{entity_type} not found: {entity_id}")
-        conn.close()
-        return 1
-
-    if removing:
-        removed = 0
-        for tag_name in tag_names:
-            tag_id = get_tag_id(conn, tag_name)
-            if not tag_id:
-                print(f"Tag '{tag_name}' not found")
-                continue
-            if remove_tag(conn, entity_type, resolved_id, tag_id, commit=False):
-                print(f"Removed tag '{tag_name}' from {entity_type} {resolved_id[:12]}")
-                removed += 1
-            else:
-                print(f"Tag '{tag_name}' not applied to {entity_type} {resolved_id[:12]}")
-        conn.commit()
-    else:
-        applied = 0
-        for tag_name in tag_names:
-            tag_id = get_or_create_tag(conn, tag_name)
-            if apply_tag(conn, entity_type, resolved_id, tag_id, commit=False):
-                print(f"Applied tag '{tag_name}' to {entity_type} {resolved_id[:12]}")
-                applied += 1
-            else:
-                print(f"Tag '{tag_name}' already applied to {entity_type} {resolved_id[:12]}")
-        conn.commit()
-
-    conn.close()
-    return 0
-
-
-def cmd_tags(args) -> int:
-    """List, rename, or delete tags."""
-    db = resolve_db(args)
-
+def _cmd_tag_list(args, db: Path) -> int:
+    """List tags, or drill down into a specific tag's conversations."""
     if not db.exists():
         print(f"Database not found: {db}")
         print("Run 'siftd ingest' to create it.")
@@ -238,81 +109,19 @@ def cmd_tags(args) -> int:
 
     conn = open_database(db)
 
-    # Handle --rename OLD NEW
-    if args.rename:
-        old_name, new_name = args.rename
-        try:
-            if rename_tag(conn, old_name, new_name, commit=True):
-                print(f"Renamed '{old_name}' → '{new_name}'")
-            else:
-                print(f"Tag not found: {old_name}")
-                conn.close()
-                return 1
-        except ValueError as e:
-            print(f"Error: {e}")
-            conn.close()
-            return 1
-        conn.close()
-        return 0
-
-    # Handle --delete NAME
-    if args.delete:
-        tag_name = args.delete
-
-        # Check associations first
-        tags = list_tags(conn=conn)
-        tag_info = next((t for t in tags if t.name == tag_name), None)
-        if not tag_info:
-            print(f"Tag not found: {tag_name}")
-            conn.close()
-            return 1
-
-        total_associations = (
-            tag_info.conversation_count
-            + tag_info.workspace_count
-            + tag_info.tool_call_count
-            + tag_info.prompt_count
-        )
-
-        if total_associations > 0 and not args.force:
-            parts = []
-            if tag_info.conversation_count:
-                parts.append(f"{tag_info.conversation_count} conversations")
-            if tag_info.workspace_count:
-                parts.append(f"{tag_info.workspace_count} workspaces")
-            if tag_info.tool_call_count:
-                parts.append(f"{tag_info.tool_call_count} tool_calls")
-            if tag_info.prompt_count:
-                parts.append(f"{tag_info.prompt_count} prompts")
-            print(f"Tag '{tag_name}' is applied to {', '.join(parts)}. Use --force to delete.")
-            conn.close()
-            return 1
-
-        delete_tag(conn, tag_name, commit=True)
-        parts = []
-        if tag_info.conversation_count:
-            parts.append(f"{tag_info.conversation_count} conversations")
-        if tag_info.workspace_count:
-            parts.append(f"{tag_info.workspace_count} workspaces")
-        if tag_info.tool_call_count:
-            parts.append(f"{tag_info.tool_call_count} tool_calls")
-        if tag_info.prompt_count:
-            parts.append(f"{tag_info.prompt_count} prompts")
-        if parts:
-            print(f"Deleted tag '{tag_name}' (was applied to {', '.join(parts)})")
-        else:
-            print(f"Deleted tag '{tag_name}'")
-        conn.close()
-        return 0
+    # positional after "list": optional tag name for drill-down
+    positional = args.positional or []
+    # positional[0] is "list", rest is the drill-down name
+    name = positional[1] if len(positional) > 1 else None
 
     # Drill-down: show conversations with a given tag
-    if getattr(args, "name", None):
+    if name:
         from dataclasses import asdict
 
         from siftd.api import list_conversations
         from siftd.cli_filters import extract_filter_args
 
-        tag_name = args.name
+        tag_name = name
         conn.close()
 
         filters = extract_filter_args(args)
@@ -322,11 +131,13 @@ def cmd_tags(args) -> int:
             filter_tags = [tag_name] + filter_tags
         filters.tags = filter_tags
 
+        limit = getattr(args, "limit", None) or 10
+
         try:
             filter_kwargs = asdict(filters)
             filter_kwargs.pop("tags")  # pass explicitly below
             conversations = list_conversations(
-                db_path=db, tags=filters.tags, limit=args.limit, **filter_kwargs,
+                db_path=db, tags=filters.tags, limit=limit, **filter_kwargs,
             )
         except FileNotFoundError as e:
             print(str(e))
@@ -348,7 +159,7 @@ def cmd_tags(args) -> int:
             tag_str = f"  [{', '.join(c.tags)}]" if c.tags else ""
             print(f"{cid}  {started}  {ws}  {model}  {c.prompt_count}p/{c.response_count}r  {tokens} tok{tag_str}")
 
-        if args.limit > 0 and len(conversations) >= args.limit:
+        if limit > 0 and len(conversations) >= limit:
             print(f"\nTip: show more with `siftd query -l {tag_name} -n 0`", file=sys.stderr)
         return 0
 
@@ -397,18 +208,297 @@ def cmd_tags(args) -> int:
     return 0
 
 
+def _cmd_tag_rename(args, db: Path) -> int:
+    """Rename a tag: siftd tag rename <old> <new>."""
+    positional = args.positional or []
+    # positional[0] is "rename", [1] is old, [2] is new
+    if len(positional) < 3:
+        print("Usage: siftd tag rename <old> <new>")
+        return 1
+
+    old_name, new_name = positional[1], positional[2]
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'siftd ingest' to create it.")
+        return 1
+
+    conn = open_database(db)
+    try:
+        if rename_tag(conn, old_name, new_name, commit=True):
+            print(f"Renamed '{old_name}' \u2192 '{new_name}'")
+        else:
+            print(f"Tag not found: {old_name}")
+            conn.close()
+            return 1
+    except ValueError as e:
+        print(f"Error: {e}")
+        conn.close()
+        return 1
+    conn.close()
+    return 0
+
+
+def _cmd_tag_delete(args, db: Path) -> int:
+    """Delete a tag: siftd tag delete <name> [--force]."""
+    positional = args.positional or []
+    # positional[0] is "delete", [1] is name
+    if len(positional) < 2:
+        print("Usage: siftd tag delete <name> [--force]")
+        return 1
+
+    tag_name = positional[1]
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'siftd ingest' to create it.")
+        return 1
+
+    conn = open_database(db)
+
+    # Check associations first
+    tags = list_tags(conn=conn)
+    tag_info = next((t for t in tags if t.name == tag_name), None)
+    if not tag_info:
+        print(f"Tag not found: {tag_name}")
+        conn.close()
+        return 1
+
+    total_associations = (
+        tag_info.conversation_count
+        + tag_info.workspace_count
+        + tag_info.tool_call_count
+        + tag_info.prompt_count
+    )
+
+    force = getattr(args, "force", False)
+    if total_associations > 0 and not force:
+        parts = []
+        if tag_info.conversation_count:
+            parts.append(f"{tag_info.conversation_count} conversations")
+        if tag_info.workspace_count:
+            parts.append(f"{tag_info.workspace_count} workspaces")
+        if tag_info.tool_call_count:
+            parts.append(f"{tag_info.tool_call_count} tool_calls")
+        if tag_info.prompt_count:
+            parts.append(f"{tag_info.prompt_count} prompts")
+        print(f"Tag '{tag_name}' is applied to {', '.join(parts)}. Use --force to delete.")
+        conn.close()
+        return 1
+
+    delete_tag(conn, tag_name, commit=True)
+    parts = []
+    if tag_info.conversation_count:
+        parts.append(f"{tag_info.conversation_count} conversations")
+    if tag_info.workspace_count:
+        parts.append(f"{tag_info.workspace_count} workspaces")
+    if tag_info.tool_call_count:
+        parts.append(f"{tag_info.tool_call_count} tool_calls")
+    if tag_info.prompt_count:
+        parts.append(f"{tag_info.prompt_count} prompts")
+    if parts:
+        print(f"Deleted tag '{tag_name}' (was applied to {', '.join(parts)})")
+    else:
+        print(f"Deleted tag '{tag_name}'")
+    conn.close()
+    return 0
+
+
+def cmd_tag(args) -> int:
+    """Apply, remove, list, rename, or delete tags."""
+    db = resolve_db(args)
+
+    # Check for subcommands (list, rename, delete) via positional args.
+    # Safe: these words can never be ULIDs (26-char base32).
+    positional = args.positional or []
+    if positional and positional[0] in _TAG_SUBCOMMANDS:
+        subcmd = positional[0]
+        if subcmd == "list":
+            return _cmd_tag_list(args, db)
+        if subcmd == "rename":
+            return _cmd_tag_rename(args, db)
+        if subcmd == "delete":
+            return _cmd_tag_delete(args, db)
+
+    # --- Original tag apply/remove logic below ---
+
+    # Warn about silently ignored flag combinations
+    session_id = getattr(args, "session", None)
+    exchange_index = getattr(args, "exchange", None)
+    if exchange_index is not None and not session_id:
+        print("Note: --exchange ignored without --session", file=sys.stderr)
+    if args.last is not None and session_id:
+        print("Note: --last ignored with --session", file=sys.stderr)
+
+    # Handle --session mode (queue pending tags)
+    if session_id:
+        return _tag_session(args, db, session_id)
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'siftd ingest' to create it.")
+        return 1
+
+    conn = open_database(db)
+    removing = args.remove
+
+    # Handle --last mode
+    if args.last is not None:
+        # Resolve N: const=1 gives int, but nargs="?" may capture a string.
+        # If the captured value isn't numeric, treat it as a tag name and default N=1.
+        n = args.last
+        if isinstance(n, str):
+            try:
+                n = int(n)
+            except ValueError:
+                # e.g. `--last brainstorming:x review` → n grabbed "brainstorming:x"
+                positional = [n] + positional
+                n = 1
+
+        if not positional:
+            print("Usage: siftd tag --last [N] <tag> [tag2 ...]")
+            conn.close()
+            return 1
+
+        tag_names: list[str] = [str(t) for t in positional]
+        if n < 1:
+            print("--last requires a positive number")
+            conn.close()
+            return 1
+
+        # Get N most recent conversations
+        ids = get_recent_conversation_ids(conn, n)
+
+        if not ids:
+            print("No conversations found.")
+            conn.close()
+            return 1
+
+        errors = 0
+        if removing:
+            for tag_name in tag_names:
+                tag_id = get_tag_id(conn, tag_name)
+                if not tag_id:
+                    print(f"Tag '{tag_name}' not found")
+                    errors += 1
+                    continue
+                removed = 0
+                for cid in ids:
+                    if remove_tag(conn, "conversation", cid, tag_id, commit=False):
+                        removed += 1
+                if removed:
+                    print(f"Removed tag '{tag_name}' from {removed} conversation(s)")
+                else:
+                    print(f"Tag '{tag_name}' not applied to any of {len(ids)} conversation(s)")
+            conn.commit()
+        else:
+            for tag_name in tag_names:
+                tag_id = get_or_create_tag(conn, tag_name)
+                tagged = 0
+                for cid in ids:
+                    if apply_tag(conn, "conversation", cid, tag_id, commit=False):
+                        tagged += 1
+                if tagged:
+                    print(f"Applied tag '{tag_name}' to {tagged} conversation(s)")
+                else:
+                    print(f"Tag '{tag_name}' already applied to all {len(ids)} conversation(s)")
+            conn.commit()
+
+        conn.close()
+        return 1 if errors == len(tag_names) else 0
+
+    # Parse positional args
+    parsed = _parse_tag_args(positional)
+    if not parsed:
+        print("Usage: siftd tag <id> <tag> [tag2 ...]")
+        print("       siftd tag <entity_type> <id> <tag> [tag2 ...]")
+        print("       siftd tag --last [N] <tag> [tag2 ...]")
+        print("       siftd tag --session <id> <tag> [tag2 ...]")
+        print("       siftd tag --remove <id> <tag> [tag2 ...]")
+        print("       siftd tag list [--prefix PREFIX] [name]")
+        print("       siftd tag rename <old> <new>")
+        print("       siftd tag delete <name> [--force]")
+        print("\nTip: Use --session to queue tags for live sessions before ingest.", file=sys.stderr)
+        print("\nEntity types: conversation (default), workspace, tool_call")
+        conn.close()
+        return 1
+
+    entity_type, entity_id, tag_names = parsed
+
+    # Validate entity exists (support prefix match for conversations)
+    resolved_id = resolve_entity_id(conn, entity_type, entity_id)
+    if resolved_id is None:
+        print(f"{entity_type} not found: {entity_id}")
+        conn.close()
+        return 1
+
+    if removing:
+        removed = 0
+        for tag_name in tag_names:
+            tag_id = get_tag_id(conn, tag_name)
+            if not tag_id:
+                print(f"Tag '{tag_name}' not found")
+                continue
+            if remove_tag(conn, entity_type, resolved_id, tag_id, commit=False):
+                print(f"Removed tag '{tag_name}' from {entity_type} {resolved_id[:12]}")
+                removed += 1
+            else:
+                print(f"Tag '{tag_name}' not applied to {entity_type} {resolved_id[:12]}")
+        conn.commit()
+    else:
+        applied = 0
+        for tag_name in tag_names:
+            tag_id = get_or_create_tag(conn, tag_name)
+            if apply_tag(conn, entity_type, resolved_id, tag_id, commit=False):
+                print(f"Applied tag '{tag_name}' to {entity_type} {resolved_id[:12]}")
+                applied += 1
+            else:
+                print(f"Tag '{tag_name}' already applied to {entity_type} {resolved_id[:12]}")
+        conn.commit()
+
+    conn.close()
+    return 0
+
+
+def _cmd_tags_deprecated(args) -> int:
+    """Deprecated: delegate 'siftd tags' to 'siftd tag list/rename/delete'."""
+    print(
+        "Warning: 'siftd tags' is deprecated. Use 'siftd tag list', 'siftd tag rename', or 'siftd tag delete'.",
+        file=sys.stderr,
+    )
+
+    # Map old flags to subcommand dispatch
+    if getattr(args, "rename", None):
+        old_name, new_name = args.rename
+        args.positional = ["rename", old_name, new_name]
+        return _cmd_tag_rename(args, resolve_db(args))
+
+    if getattr(args, "delete", None):
+        args.positional = ["delete", args.delete]
+        return _cmd_tag_delete(args, resolve_db(args))
+
+    # List or drill-down
+    name = getattr(args, "name", None)
+    if name:
+        args.positional = ["list", name]
+    else:
+        args.positional = ["list"]
+    return _cmd_tag_list(args, resolve_db(args))
+
+
 def build_tags_parser(subparsers) -> None:
-    """Add 'tag' and 'tags' subparsers."""
-    # tag
+    """Add 'tag' subparser (and hidden 'tags' deprecation bridge)."""
+    # tag — unified entry point
     p_tag = subparsers.add_parser(
         "tag",
-        help="Apply or remove a tag on a conversation (or other entity)",
-        description="Apply or remove tags. For live sessions, use --session to queue tags before ingest.",
+        help="Manage tags: apply, remove, list, rename, delete",
+        description="Apply, remove, list, rename, or delete tags.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   siftd tag 01HX... important              # tag conversation (default)
   siftd tag 01HX... important review       # apply multiple tags at once
   siftd tag --last important               # tag most recent conversation
+  siftd tag --last important review        # multiple tags on most recent
   siftd tag --last 3 review                # tag 3 most recent conversations
   siftd tag workspace 01HY... proj         # explicit entity type
   siftd tag tool_call 01HZ... slow         # tag a tool call
@@ -416,47 +506,56 @@ def build_tags_parser(subparsers) -> None:
   siftd tag --remove --last 1 important    # remove from most recent
   siftd tag -r workspace 01HY... proj      # remove from workspace
 
+subcommands:
+  siftd tag list                            # list all tags
+  siftd tag list --prefix research:         # filter by prefix
+  siftd tag list research:auth              # show conversations with tag
+  siftd tag rename old-name new-name        # rename a tag
+  siftd tag delete old-tag                  # delete (refuses if applied)
+  siftd tag delete old-tag --force          # delete with associations
+
 live session tagging:
   siftd tag --session abc123 decision:auth       # queue tag for session
   siftd tag --session abc123 --exchange 5 key    # queue tag for exchange 5""",
     )
-    p_tag.add_argument("positional", nargs="*", help="[entity_type] entity_id tag [tag2 ...]")
+    p_tag.add_argument("positional", nargs="*", help="[entity_type] entity_id tag [tag2 ...] | list | rename | delete")
     p_tag.add_argument(
         "-n",
         "--last",
-        type=int,
         nargs="?",
         const=1,
+        default=None,
         metavar="N",
         help="Tag N most recent conversations (default: 1 if flag used without N)",
     )
     p_tag.add_argument("-r", "--remove", action="store_true", help="Remove tag instead of applying")
     p_tag.add_argument("--session", metavar="ID", help="Queue tag for a live session (applied at ingest)")
     p_tag.add_argument("--exchange", type=int, metavar="INDEX", help="Tag specific exchange (0-based, requires --session)")
-    p_tag.set_defaults(func=cmd_tag)
 
-    # tags
-    p_tags = subparsers.add_parser(
-        "tags",
-        help="List, inspect, rename, or delete tags",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""examples:
-  siftd tags                                      # list all tags
-  siftd tags --prefix research:                   # list tags by prefix
-  siftd tags research:auth                        # show conversations with a tag
-  siftd tags --rename important review:important   # rename tag
-  siftd tags --delete old-tag                      # delete tag (refuses if applied)
-  siftd tags --delete old-tag --force              # delete tag and all associations""",
-    )
-    p_tags.add_argument("name", nargs="?", help="Tag name to drill into (shows conversations)")
-    p_tags.add_argument("--prefix", metavar="PREFIX", help="Filter tag list by prefix (list view only)")
-    p_tags.add_argument("-n", "--limit", type=int, default=10, help="Max conversations to show in drill-down (default: 10)")
-    p_tags.add_argument("--rename", nargs=2, metavar=("OLD", "NEW"), help="Rename a tag")
-    p_tags.add_argument("--delete", metavar="NAME", help="Delete a tag and all associations")
-    p_tags.add_argument("--force", action="store_true", help="Force delete even if tag has associations")
+    # Flags for subcommands (list, delete)
+    p_tag.add_argument("--prefix", metavar="PREFIX", help="Filter tag list by prefix (use with 'tag list')")
+    p_tag.add_argument("--limit", type=int, default=10, help="Max conversations in drill-down (default: 10, use with 'tag list <name>')")
+    p_tag.add_argument("--force", action="store_true", help="Force delete even if tag has associations (use with 'tag delete')")
 
     from siftd.cli_filters import add_filter_args
 
-    add_filter_args(p_tags, include_model=True)
+    add_filter_args(p_tag, include_model=True)
 
-    p_tags.set_defaults(func=cmd_tags)
+    p_tag.set_defaults(func=cmd_tag)
+
+    # tags — hidden deprecation bridge (remove after one release)
+    # Register parser but remove from displayed choices
+    p_tags = subparsers.add_parser(
+        "tags",
+        help=argparse.SUPPRESS,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_tags.add_argument("name", nargs="?", help=argparse.SUPPRESS)
+    p_tags.add_argument("--prefix", metavar="PREFIX", help=argparse.SUPPRESS)
+    p_tags.add_argument("--limit", type=int, default=10, help=argparse.SUPPRESS)
+    p_tags.add_argument("--rename", nargs=2, metavar=("OLD", "NEW"), help=argparse.SUPPRESS)
+    p_tags.add_argument("--delete", metavar="NAME", help=argparse.SUPPRESS)
+    p_tags.add_argument("--force", action="store_true", help=argparse.SUPPRESS)
+    add_filter_args(p_tags, include_model=True)
+    p_tags.set_defaults(func=_cmd_tags_deprecated)
+

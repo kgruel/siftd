@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Unified `tag` command** — `siftd tags` merged into `siftd tag` with subcommands:
+  - `siftd tag list [--prefix] [name]` — list tags or drill down (was `siftd tags`)
+  - `siftd tag rename <old> <new>` — rename a tag (was `siftd tags --rename`)
+  - `siftd tag delete <name> [--force]` — delete a tag (was `siftd tags --delete`)
+  - `siftd tags` still works as a deprecated bridge (prints warning to stderr)
+
+### Removed
+
+- **Deprecated top-level commands** — `siftd status`, `siftd workspaces`, `siftd path` removed; use `siftd db stats`, `siftd db workspaces`, `siftd db path` instead (deprecated since v0.4.4)
+
 ### Added
 
 - **`siftd serve`** — HTTP team sync server (`siftd[serve]` optional extra):

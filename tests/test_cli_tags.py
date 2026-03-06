@@ -1,4 +1,4 @@
-"""Tests for siftd tag and tags CLI commands."""
+"""Tests for siftd tag CLI command (apply, remove, list, rename, delete)."""
 
 import pytest
 
@@ -40,7 +40,7 @@ class TestParseTagArgs:
 
 
 # ---------------------------------------------------------------------------
-# cmd_tag
+# cmd_tag — apply / remove
 # ---------------------------------------------------------------------------
 
 
@@ -106,6 +106,29 @@ class TestCmdTag:
         assert rc == 1
         assert "not found" in capsys.readouterr().out
 
+    def test_tag_last_without_separator(self, test_db, capsys):
+        """--last directly followed by tag name (no -- separator, no N)."""
+        rc = main(["--db", str(test_db), "tag", "--last", "direct-tag"])
+        assert rc == 0
+        assert "Applied tag 'direct-tag'" in capsys.readouterr().out
+
+    def test_tag_last_multiple_tags(self, test_db, capsys):
+        """--last with multiple tags applied at once."""
+        rc = main(["--db", str(test_db), "tag", "--last", "multi-a", "multi-b"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Applied tag 'multi-a'" in out
+        assert "Applied tag 'multi-b'" in out
+
+    def test_tag_last_n_multiple_tags(self, test_db, capsys):
+        """--last N with multiple tags."""
+        rc = main(["--db", str(test_db), "tag", "--last", "2", "batch-a", "batch-b"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Applied tag 'batch-a'" in out
+        assert "Applied tag 'batch-b'" in out
+        assert "2 conversation" in out
+
     def test_tag_last_no_tag_name(self, test_db, capsys):
         rc = main(["--db", str(test_db), "tag", "--last"])
         assert rc == 1
@@ -133,29 +156,28 @@ class TestCmdTag:
 
 
 # ---------------------------------------------------------------------------
-# cmd_tags
+# tag list / rename / delete (unified subcommands)
 # ---------------------------------------------------------------------------
 
 
-class TestCmdTags:
-    def test_tags_list_empty(self, test_db, capsys):
-        """siftd tags on a db with no tags."""
-        rc = main(["--db", str(test_db), "tags"])
+class TestCmdTagList:
+    def test_list_empty(self, test_db, capsys):
+        """siftd tag list on a db with no tags."""
+        rc = main(["--db", str(test_db), "tag", "list"])
         assert rc == 0
 
-    def test_tags_list_with_tags(self, test_db, capsys):
-        # Apply a tag first
+    def test_list_with_tags(self, test_db, capsys):
         conn = open_database(test_db)
         conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
         conn.close()
         main(["--db", str(test_db), "tag", conv_id, "listed-tag"])
         capsys.readouterr()
 
-        rc = main(["--db", str(test_db), "tags"])
+        rc = main(["--db", str(test_db), "tag", "list"])
         assert rc == 0
         assert "listed-tag" in capsys.readouterr().out
 
-    def test_tags_prefix_filter(self, test_db, capsys):
+    def test_list_prefix_filter(self, test_db, capsys):
         conn = open_database(test_db)
         conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
         conn.close()
@@ -163,49 +185,72 @@ class TestCmdTags:
         main(["--db", str(test_db), "tag", conv_id, "other:b"])
         capsys.readouterr()
 
-        rc = main(["--db", str(test_db), "tags", "--prefix", "prefix:"])
+        rc = main(["--db", str(test_db), "tag", "list", "--prefix", "prefix:"])
         assert rc == 0
         out = capsys.readouterr().out
         assert "prefix:a" in out
         assert "other:b" not in out
 
-    def test_tags_prefix_no_match(self, test_db, capsys):
-        # Must have at least one tag so list_tags returns non-empty
-        # (otherwise "No tags defined." is printed before prefix filter)
+    def test_list_prefix_no_match(self, test_db, capsys):
         conn = open_database(test_db)
         conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
         conn.close()
         main(["--db", str(test_db), "tag", conv_id, "exists"])
         capsys.readouterr()
 
-        rc = main(["--db", str(test_db), "tags", "--prefix", "zzz:"])
+        rc = main(["--db", str(test_db), "tag", "list", "--prefix", "zzz:"])
         assert rc == 0
         out = capsys.readouterr().out
         assert "No tags found" in out
 
-    def test_tags_missing_db(self, tmp_path, capsys):
-        rc = main(["--db", str(tmp_path / "missing.db"), "tags"])
+    def test_list_missing_db(self, tmp_path, capsys):
+        rc = main(["--db", str(tmp_path / "missing.db"), "tag", "list"])
         assert rc == 1
 
-    def test_tags_rename(self, test_db, capsys):
+    def test_drill_down(self, test_db, capsys):
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+        main(["--db", str(test_db), "tag", conv_id, "drilldown"])
+        capsys.readouterr()
+
+        rc = main(["--db", str(test_db), "tag", "list", "drilldown"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "drilldown" in out
+
+    def test_drill_down_no_match(self, test_db, capsys):
+        rc = main(["--db", str(test_db), "tag", "list", "nonexistent-tag"])
+        assert rc == 0
+        assert "No conversations found" in capsys.readouterr().out
+
+
+class TestCmdTagRename:
+    def test_rename(self, test_db, capsys):
         conn = open_database(test_db)
         conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
         conn.close()
         main(["--db", str(test_db), "tag", conv_id, "old-name"])
         capsys.readouterr()
 
-        rc = main(["--db", str(test_db), "tags", "--rename", "old-name", "new-name"])
+        rc = main(["--db", str(test_db), "tag", "rename", "old-name", "new-name"])
         assert rc == 0
         out = capsys.readouterr().out
         assert "Renamed" in out
 
-    def test_tags_rename_nonexistent(self, test_db, capsys):
-        rc = main(["--db", str(test_db), "tags", "--rename", "no-such", "new"])
+    def test_rename_nonexistent(self, test_db, capsys):
+        rc = main(["--db", str(test_db), "tag", "rename", "no-such", "new"])
         assert rc == 1
         assert "not found" in capsys.readouterr().out
 
-    def test_tags_delete_unassociated(self, test_db, capsys):
-        # Create then remove tag from conversation (leaves tag in tags table)
+    def test_rename_missing_args(self, test_db, capsys):
+        rc = main(["--db", str(test_db), "tag", "rename", "only-one"])
+        assert rc == 1
+        assert "Usage:" in capsys.readouterr().out
+
+
+class TestCmdTagDelete:
+    def test_delete_unassociated(self, test_db, capsys):
         conn = open_database(test_db)
         conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
         conn.close()
@@ -213,51 +258,114 @@ class TestCmdTags:
         main(["--db", str(test_db), "tag", "--remove", conv_id, "temp-tag"])
         capsys.readouterr()
 
-        rc = main(["--db", str(test_db), "tags", "--delete", "temp-tag"])
+        rc = main(["--db", str(test_db), "tag", "delete", "temp-tag"])
         assert rc == 0
         assert "Deleted" in capsys.readouterr().out
 
-    def test_tags_delete_with_associations_blocked(self, test_db, capsys):
+    def test_delete_with_associations_blocked(self, test_db, capsys):
         conn = open_database(test_db)
         conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
         conn.close()
         main(["--db", str(test_db), "tag", conv_id, "in-use"])
         capsys.readouterr()
 
-        rc = main(["--db", str(test_db), "tags", "--delete", "in-use"])
+        rc = main(["--db", str(test_db), "tag", "delete", "in-use"])
         assert rc == 1
         out = capsys.readouterr().out
         assert "--force" in out
 
-    def test_tags_delete_force(self, test_db, capsys):
+    def test_delete_force(self, test_db, capsys):
         conn = open_database(test_db)
         conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
         conn.close()
         main(["--db", str(test_db), "tag", conv_id, "force-del"])
         capsys.readouterr()
 
-        rc = main(["--db", str(test_db), "tags", "--delete", "force-del", "--force"])
+        rc = main(["--db", str(test_db), "tag", "delete", "force-del", "--force"])
         assert rc == 0
         assert "Deleted" in capsys.readouterr().out
 
-    def test_tags_delete_nonexistent(self, test_db, capsys):
-        rc = main(["--db", str(test_db), "tags", "--delete", "no-such-tag"])
+    def test_delete_nonexistent(self, test_db, capsys):
+        rc = main(["--db", str(test_db), "tag", "delete", "no-such-tag"])
         assert rc == 1
         assert "not found" in capsys.readouterr().out
 
-    def test_tags_drill_down(self, test_db, capsys):
+
+# ---------------------------------------------------------------------------
+# Disambiguation: subcommand names vs conversation IDs
+# ---------------------------------------------------------------------------
+
+
+class TestSubcommandDisambiguation:
+    def test_list_dispatches_to_subcommand(self, test_db, capsys):
+        """'list' is recognized as a subcommand, not a conversation ID."""
+        rc = main(["--db", str(test_db), "tag", "list"])
+        assert rc == 0  # list succeeds (empty or with tags)
+
+    def test_rename_dispatches_to_subcommand(self, test_db, capsys):
+        """'rename' is recognized as a subcommand."""
+        rc = main(["--db", str(test_db), "tag", "rename"])
+        assert rc == 1  # fails due to missing args, but dispatched correctly
+        assert "Usage:" in capsys.readouterr().out
+
+    def test_delete_dispatches_to_subcommand(self, test_db, capsys):
+        """'delete' is recognized as a subcommand."""
+        rc = main(["--db", str(test_db), "tag", "delete"])
+        assert rc == 1  # fails due to missing args, but dispatched correctly
+        assert "Usage:" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Deprecated 'tags' command (bridge)
+# ---------------------------------------------------------------------------
+
+
+class TestTagsDeprecationBridge:
+    def test_tags_warns(self, test_db, capsys):
+        """siftd tags emits deprecation warning."""
+        main(["--db", str(test_db), "tags"])
+        err = capsys.readouterr().err
+        assert "deprecated" in err.lower()
+
+    def test_tags_list_still_works(self, test_db, capsys):
+        """siftd tags still lists tags (with warning)."""
         conn = open_database(test_db)
         conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
         conn.close()
-        main(["--db", str(test_db), "tag", conv_id, "drilldown"])
+        main(["--db", str(test_db), "tag", conv_id, "bridge-tag"])
         capsys.readouterr()
 
-        rc = main(["--db", str(test_db), "tags", "drilldown"])
+        rc = main(["--db", str(test_db), "tags"])
         assert rc == 0
-        out = capsys.readouterr().out
-        assert "drilldown" in out
+        combined = capsys.readouterr()
+        assert "bridge-tag" in combined.out
+        assert "deprecated" in combined.err.lower()
 
-    def test_tags_drill_down_no_match(self, test_db, capsys):
-        rc = main(["--db", str(test_db), "tags", "nonexistent-tag"])
+    def test_tags_rename_still_works(self, test_db, capsys):
+        """siftd tags --rename still works (with warning)."""
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+        main(["--db", str(test_db), "tag", conv_id, "old-bridge"])
+        capsys.readouterr()
+
+        rc = main(["--db", str(test_db), "tags", "--rename", "old-bridge", "new-bridge"])
         assert rc == 0
-        assert "No conversations found" in capsys.readouterr().out
+        combined = capsys.readouterr()
+        assert "Renamed" in combined.out
+        assert "deprecated" in combined.err.lower()
+
+    def test_tags_delete_still_works(self, test_db, capsys):
+        """siftd tags --delete still works (with warning)."""
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+        main(["--db", str(test_db), "tag", conv_id, "del-bridge"])
+        main(["--db", str(test_db), "tag", "--remove", conv_id, "del-bridge"])
+        capsys.readouterr()
+
+        rc = main(["--db", str(test_db), "tags", "--delete", "del-bridge"])
+        assert rc == 0
+        combined = capsys.readouterr()
+        assert "Deleted" in combined.out
+        assert "deprecated" in combined.err.lower()
