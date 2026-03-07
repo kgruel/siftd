@@ -7,20 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **Unified `tag` command** — `siftd tags` merged into `siftd tag` with subcommands:
-  - `siftd tag list [--prefix] [name]` — list tags or drill down (was `siftd tags`)
-  - `siftd tag rename <old> <new>` — rename a tag (was `siftd tags --rename`)
-  - `siftd tag delete <name> [--force]` — delete a tag (was `siftd tags --delete`)
-  - `siftd tags` still works as a deprecated bridge (prints warning to stderr)
-
-### Removed
-
-- **Deprecated top-level commands** — `siftd status`, `siftd workspaces`, `siftd path` removed; use `siftd db stats`, `siftd db workspaces`, `siftd db path` instead (deprecated since v0.4.4)
-
 ### Added
 
+- **`siftd tag --current`** — Auto-detect the active session and queue tags, falling back to `--last` when no session is registered. Eliminates the need for `$()` shell substitution in the plugin command.
 - **`siftd serve`** — HTTP team sync server (`siftd[serve]` optional extra):
   - 5 endpoints: `POST /v1/push`, `GET /v1/pull`, `GET /v1/query`, `GET /v1/search`, `GET /v1/health`
   - Auth middleware: OIDC JWT validation and RFC 7662 token introspection
@@ -40,6 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`acquire_token()`** — Public API function for token acquisition from auth config
 - **Serve concept doc** — `docs/concepts/serve.md` covering HTTP transport, auth, attribution, FTS rebuild, deployment
 - **Sync concept doc** — `docs/concepts/sync.md` covering remotes, push/pull, delta tracking, SSH/HTTP/local transport, and pipe primitives
+
+### Changed
+
+- **Unified `tag` command** — `siftd tags` merged into `siftd tag` with subcommands:
+  - `siftd tag list [--prefix] [name]` — list tags or drill down (was `siftd tags`)
+  - `siftd tag rename <old> <new>` — rename a tag (was `siftd tags --rename`)
+  - `siftd tag delete <name> [--force]` — delete a tag (was `siftd tags --delete`)
+  - `siftd tags` still works as a deprecated bridge (prints warning to stderr)
+- **`/siftd:tag` plugin command** — Simplified to use `--current` instead of shell substitution; fixes Claude Code permission error
+
+### Removed
+
+- **Deprecated top-level commands** — `siftd status`, `siftd workspaces`, `siftd path` removed; use `siftd db stats`, `siftd db workspaces`, `siftd db path` instead (deprecated since v0.4.4)
 
 ## [0.4.7] - 2026-02-18
 
