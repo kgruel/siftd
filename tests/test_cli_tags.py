@@ -154,6 +154,28 @@ class TestCmdTag:
         err = capsys.readouterr().err
         assert "--exchange ignored" in err
 
+    def test_tag_current_with_session(self, test_db, capsys, tmp_path, monkeypatch):
+        """--current queues tags when a session is registered."""
+        from siftd.paths import session_id_file
+
+        monkeypatch.chdir(tmp_path)
+        workspace = str(tmp_path.resolve())
+        sid_file = session_id_file(workspace)
+        sid_file.parent.mkdir(parents=True, exist_ok=True)
+        sid_file.write_text("fake-session-id\n")
+
+        rc = main(["--db", str(test_db), "tag", "--current", "current-tag"])
+        assert rc == 0
+        assert "Queued tag 'current-tag'" in capsys.readouterr().out
+
+    def test_tag_current_falls_back_to_last(self, test_db, capsys, tmp_path, monkeypatch):
+        """--current falls back to --last when no session is registered."""
+        monkeypatch.chdir(tmp_path)
+
+        rc = main(["--db", str(test_db), "tag", "--current", "fallback-tag"])
+        assert rc == 0
+        assert "Applied tag 'fallback-tag'" in capsys.readouterr().out
+
 
 # ---------------------------------------------------------------------------
 # tag list / rename / delete (unified subcommands)

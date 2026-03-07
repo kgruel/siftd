@@ -559,10 +559,10 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[tag]
   '''
-  usage: siftd tag [-h] [-n [N]] [-r] [--session ID] [--exchange INDEX]
-                   [--prefix PREFIX] [--limit LIMIT] [--force] [-w SUBSTR]
-                   [-m NAME] [--since DATE] [--before DATE] [-l NAME]
-                   [--all-tags NAME] [--no-tag NAME]
+  usage: siftd tag [-h] [-n [N]] [-r] [--session ID] [--current]
+                   [--exchange INDEX] [--prefix PREFIX] [--limit LIMIT]
+                   [--force] [-w SUBSTR] [-m NAME] [--since DATE]
+                   [--before DATE] [-l NAME] [--all-tags NAME] [--no-tag NAME]
                    [positional ...]
   
   Apply, remove, list, rename, or delete tags.
@@ -577,6 +577,7 @@
                           used without N)
     -r, --remove          Remove tag instead of applying
     --session ID          Queue tag for a live session (applied at ingest)
+    --current             Auto-detect current session (falls back to --last)
     --exchange INDEX      Tag specific exchange (0-based, requires --session)
     --prefix PREFIX       Filter tag list by prefix (use with 'tag list')
     --limit LIMIT         Max conversations in drill-down (default: 10, use with
@@ -619,6 +620,7 @@
     siftd tag delete old-tag --force          # delete with associations
   
   live session tagging:
+    siftd tag --current decision:auth              # auto-detect session, queue tag
     siftd tag --session abc123 decision:auth       # queue tag for session
     siftd tag --session abc123 --exchange 5 key    # queue tag for exchange 5
   

@@ -20,10 +20,23 @@ from siftd.api import (
 from siftd.api.sessions import is_session_registered
 from siftd.api.sessions import queue_tag as queue_pending_tag
 from siftd.cli_common import resolve_db
-from siftd.paths import ensure_dirs
+from siftd.paths import ensure_dirs, session_id_file
 
 # Subcommand names that can never collide with ULIDs (26-char base32).
 _TAG_SUBCOMMANDS = frozenset({"list", "rename", "delete"})
+
+
+def _detect_current_session() -> str | None:
+    """Return the session ID for the current workspace, or None."""
+    import os
+
+    workspace_path = str(Path(os.getcwd()).resolve())
+    sid_file = session_id_file(workspace_path)
+    if sid_file.exists():
+        session_id = sid_file.read_text().strip()
+        if session_id:
+            return session_id
+    return None
 
 
 def _parse_tag_args(positional: list[str]) -> tuple[str, str, list[str]] | None:
@@ -322,8 +335,16 @@ def cmd_tag(args) -> int:
 
     # --- Original tag apply/remove logic below ---
 
-    # Warn about silently ignored flag combinations
+    # Resolve --current: auto-detect session, fall back to --last
     session_id = getattr(args, "session", None)
+    if getattr(args, "current", False) and not session_id:
+        session_id = _detect_current_session()
+        if not session_id:
+            # No active session — fall back to --last 1
+            if args.last is None:
+                args.last = 1
+
+    # Warn about silently ignored flag combinations
     exchange_index = getattr(args, "exchange", None)
     if exchange_index is not None and not session_id:
         print("Note: --exchange ignored without --session", file=sys.stderr)
@@ -515,6 +536,7 @@ subcommands:
   siftd tag delete old-tag --force          # delete with associations
 
 live session tagging:
+  siftd tag --current decision:auth              # auto-detect session, queue tag
   siftd tag --session abc123 decision:auth       # queue tag for session
   siftd tag --session abc123 --exchange 5 key    # queue tag for exchange 5""",
     )
@@ -530,6 +552,7 @@ live session tagging:
     )
     p_tag.add_argument("-r", "--remove", action="store_true", help="Remove tag instead of applying")
     p_tag.add_argument("--session", metavar="ID", help="Queue tag for a live session (applied at ingest)")
+    p_tag.add_argument("--current", action="store_true", help="Auto-detect current session (falls back to --last)")
     p_tag.add_argument("--exchange", type=int, metavar="INDEX", help="Tag specific exchange (0-based, requires --session)")
 
     # Flags for subcommands (list, delete)
