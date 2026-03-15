@@ -144,6 +144,7 @@ class SearchResult:
     started_at: str | None
     chunk_id: str | None = None
     source_ids: list[str] | None = None
+    breakdown: dict | None = None
 
 
 def mmr_rerank(
@@ -284,6 +285,10 @@ def hybrid_search(
     model: str | None = None,
     since: str | None = None,
     before: str | None = None,
+    tags: list[str] | None = None,
+    all_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+    include_derivative: bool = False,
     backend: str | None = None,
     exclude_active: bool = True,
     rerank: str = "mmr",
@@ -305,6 +310,10 @@ def hybrid_search(
         model: Filter to conversations using models matching this substring.
         since: Filter to conversations started at or after this ISO date.
         before: Filter to conversations started before this ISO date.
+        tags: OR filter — conversations with any of these tags.
+        all_tags: AND filter — conversations with all of these tags.
+        exclude_tags: NOT filter — exclude conversations with any of these tags.
+        include_derivative: Include derivative conversations (default False).
         backend: Preferred embedding backend name (ollama, fastembed).
         exclude_active: Auto-exclude conversations from active sessions (default True).
         rerank: Reranking strategy — "mmr" for diversity or "relevance" for pure similarity.
@@ -325,11 +334,17 @@ def hybrid_search(
 
     require_embeddings("Semantic search")
 
-    from siftd.embeddings import get_backend
+    from siftd.embeddings import SCHEMA_VERSION, get_backend
     from siftd.paths import db_path as default_db_path
     from siftd.paths import embeddings_db_path as default_embed_path
-    from siftd.storage.embeddings import open_embeddings_db, search_similar
+    from siftd.storage.embeddings import (
+        IndexCompatError,
+        open_embeddings_db,
+        search_similar,
+        validate_index_compat,
+    )
     from siftd.storage.fts import fts5_recall_conversations
+    from siftd.storage.tags import DERIVATIVE_TAG
 
     db = db_path if db_path is not None else default_db_path()
     embed_db = embed_db_path if embed_db_path is not None else default_embed_path()
@@ -343,13 +358,26 @@ def hybrid_search(
     excluded: set[str] = set()
     candidate_ids: set[str] | None = None
 
+    exclude_tags_final = list(exclude_tags or [])
+    if not include_derivative and DERIVATIVE_TAG not in exclude_tags_final:
+        exclude_tags_final.append(DERIVATIVE_TAG)
+
     if exclude_active:
         excluded = get_active_conversation_ids(db)
 
     main_conn = open_database(db, read_only=True)
+    fts5_ids: set[str] | None = None
+    fts5_mode: str | None = None
     try:
         candidate_ids = _filter_conversations_conn(
-            main_conn, workspace=workspace, model=model, since=since, before=before,
+            main_conn,
+            workspace=workspace,
+            model=model,
+            since=since,
+            before=before,
+            tags=tags,
+            all_tags=all_tags,
+            exclude_tags=exclude_tags_final or None,
         )
 
         # Pre-filter active sessions when we have an explicit candidate set
@@ -358,7 +386,7 @@ def hybrid_search(
 
         # Hybrid recall: FTS5 narrows candidates, embeddings rerank
         if not embeddings_only:
-            fts5_ids, _fts5_mode = fts5_recall_conversations(main_conn, query, limit=recall)
+            fts5_ids, fts5_mode = fts5_recall_conversations(main_conn, query, limit=recall)
 
             if fts5_ids:
                 # Remove active sessions from FTS5 recall set
@@ -395,6 +423,18 @@ def hybrid_search(
 
     embed_conn = open_embeddings_db(embed_db, read_only=True)
     try:
+        try:
+            validate_index_compat(
+                embed_conn,
+                backend_name=embed_backend.name,
+                backend_model=embed_backend.model,
+                backend_dimension=embed_backend.dimension,
+                current_schema_version=SCHEMA_VERSION,
+            )
+        except IndexCompatError:
+            # Match CLI behavior: actionable error instead of silently returning wrong results.
+            raise
+
         raw_results = search_similar(
             embed_conn,
             query_embedding,
@@ -408,6 +448,15 @@ def hybrid_search(
 
     if not raw_results:
         return []
+
+    # Annotate breakdown with FTS5 recall info (used by JSON output explainability)
+    if fts5_ids is not None:
+        for r in raw_results:
+            breakdown = r.get("breakdown")
+            if breakdown and isinstance(breakdown, ScoreBreakdown):
+                matched = r["conversation_id"] in fts5_ids
+                breakdown.fts5_matched = matched
+                breakdown.fts5_mode = fts5_mode if matched else None
 
     # Apply temporal weighting if requested (before MMR so it affects reranking)
     if recency:
@@ -468,6 +517,8 @@ def hybrid_search(
     for r in raw_results:
         conv_id = r["conversation_id"]
         m = meta.get(conv_id, {})
+        breakdown = r.get("breakdown")
+        breakdown_dict = breakdown.to_dict() if breakdown and isinstance(breakdown, ScoreBreakdown) else None
         results.append(SearchResult(
             conversation_id=conv_id,
             score=r["score"],
@@ -477,6 +528,7 @@ def hybrid_search(
             started_at=m.get("started_at"),
             chunk_id=r.get("chunk_id"),
             source_ids=r.get("source_ids"),
+            breakdown=breakdown_dict,
         ))
 
     return results

@@ -41,6 +41,7 @@ async def health(db_path: Path) -> dict:
             conn.close()
 
     return {
+        "service": "siftd",
         "status": "ok",
         "db_size_bytes": size_bytes,
         "conversations": conversations,
@@ -180,6 +181,19 @@ async def search_route(
     model: str | None = Parameter(query="model", default=None),
     threshold: float = Parameter(query="threshold", default=0.0),
     n: int = Parameter(query="n", default=10),
+    recall: int = Parameter(query="recall", default=80),
+    embeddings_only: bool = Parameter(query="embeddings_only", default=True),
+    exclude_active: bool = Parameter(query="exclude_active", default=True),
+    rerank: str = Parameter(query="rerank", default="mmr"),
+    lambda_: float = Parameter(query="lambda", default=0.7),
+    recency: bool = Parameter(query="recency", default=False),
+    recency_half_life: float = Parameter(query="recency_half_life", default=30.0),
+    recency_max_boost: float = Parameter(query="recency_max_boost", default=1.15),
+    backend: str | None = Parameter(query="backend", default=None),
+    tag: list[str] | None = Parameter(query="tag", default=None),
+    all_tags: list[str] | None = Parameter(query="all_tags", default=None),
+    no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    include_derivative: bool = Parameter(query="include_derivative", default=False),
 ) -> dict | Response:
     """Semantic + FTS search against team DB."""
     try:
@@ -192,9 +206,26 @@ async def search_route(
 
     try:
         results = hybrid_search(
-            q, db_path=db_path, limit=n,
-            workspace=workspace, model=model,
-            since=since, before=before,
+            q,
+            db_path=db_path,
+            limit=n,
+            recall=recall,
+            embeddings_only=embeddings_only,
+            workspace=workspace,
+            model=model,
+            since=since,
+            before=before,
+            backend=backend,
+            exclude_active=exclude_active,
+            rerank=rerank,
+            lambda_=lambda_,
+            recency=recency,
+            recency_half_life=recency_half_life,
+            recency_max_boost=recency_max_boost,
+            tags=tag,
+            all_tags=all_tags,
+            exclude_tags=no_tag,
+            include_derivative=include_derivative,
         )
     except Exception as e:
         return Response(

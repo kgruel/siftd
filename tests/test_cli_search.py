@@ -299,6 +299,52 @@ class TestSearchOutputFormats:
         assert len(out2) >= len(out1)
 
 
+class TestSearchServeDelegation:
+    def test_delegates_to_serve_when_available(self, indexed_db, capsys, monkeypatch):
+        """When delegation returns results, CLI should not initialize a local embedding backend."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            json=True,
+        )
+
+        # Force delegation eligibility regardless of DB path checks.
+        monkeypatch.setattr("siftd.cli_search._can_delegate_to_serve", lambda *a, **k: True)
+
+        fake_results = [
+            {
+                "chunk_id": "01HXFAKECHUNK000000000000",
+                "conversation_id": indexed_db["conv1_id"],
+                "chunk_type": "exchange",
+                "text": "delegated result",
+                "score": 0.9,
+                "source_ids": [],
+                "breakdown": None,
+            }
+        ]
+        monkeypatch.setattr("siftd.cli_search._delegate_search_via_serve", lambda *a, **k: fake_results)
+
+        # If local semantic path is used, this would be called.
+        import siftd.embeddings as embeddings
+
+        def _should_not_be_called(*_a, **_k):
+            raise AssertionError("expected serve delegation (no local embedding backend init)")
+
+        monkeypatch.setattr(embeddings, "get_backend", _should_not_be_called)
+
+        result = cmd_search(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+        import json
+
+        body = json.loads(captured.out)
+        assert body["query"] == "error"
+        assert body["result_count"] == 1
+        assert body["results"][0]["conversation_id"] == indexed_db["conv1_id"]
+
+
 class TestSearchFlagValidation:
     """Tests for flag combination validation."""
 

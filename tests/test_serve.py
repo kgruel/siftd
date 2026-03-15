@@ -72,6 +72,7 @@ class TestHealth:
             resp = client.get("/v1/health")
         assert resp.status_code == 200
         body = resp.json()
+        assert body["service"] == "siftd"
         assert body["status"] == "ok"
         assert "db_size_bytes" in body
         assert "conversations" in body
