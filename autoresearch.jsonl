@@ -1,0 +1,4 @@
+{"type":"config","name":"hybrid-search-latency","metricName":"total_ms","metricUnit":"ms","bestDirection":"lower"}
+{"run":1,"commit":"d7ef0e9","metric":14520.6,"metrics":{"avg_top1":0.757933,"avg_redundancy":0.11},"status":"baseline","description":"Baseline: unmodified hybrid_search with MMR","timestamp":1773598985915,"segment":0}
+{"run":2,"commit":"-------","metric":17531.4,"metrics":{"avg_top1":0.757933,"avg_redundancy":0.11},"status":"discard","description":"Cache db_path() — no meaningful improvement, high noise","timestamp":1773599051296,"segment":0}
+{"run":3,"commit":"-------","metric":14561.5,"metrics":{"avg_top1":0.757933,"avg_redundancy":0.11},"status":"discard","description":"Batch decode + argpartition in search_similar — within noise","timestamp":1773599186526,"segment":0}

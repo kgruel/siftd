@@ -528,11 +528,18 @@ def filter_conversations(
     return {row["id"] for row in rows}
 
 
+_active_ids_cache: tuple[float, Path, set[str]] | None = None
+_ACTIVE_IDS_TTL = 30.0  # seconds
+
+
 def get_active_conversation_ids(db: Path) -> set[str]:
     """Get conversation IDs that originated from currently-active session files.
 
     Uses list_active_sessions() from the peek module to find active JSONL files,
     then looks up which ingested conversations came from those file paths.
+
+    Results are cached for 30 seconds to avoid repeated filesystem scans
+    when called in tight loops (e.g., batch search).
 
     Args:
         db: Path to the main database.
@@ -540,18 +547,30 @@ def get_active_conversation_ids(db: Path) -> set[str]:
     Returns:
         Set of conversation IDs to exclude (may be empty).
     """
+    import time as _time
+
+    global _active_ids_cache
+    now = _time.monotonic()
+    if _active_ids_cache is not None:
+        cached_time, cached_db, cached_ids = _active_ids_cache
+        if cached_db == db and (now - cached_time) < _ACTIVE_IDS_TTL:
+            return cached_ids
+
     try:
         from siftd.peek.scanner import list_active_sessions
     except ImportError:
+        _active_ids_cache = (now, db, set())
         return set()
 
     try:
         sessions = list_active_sessions(include_inactive=False)
     except Exception:
         # Filesystem scan failed — don't block search
+        _active_ids_cache = (now, db, set())
         return set()
 
     if not sessions:
+        _active_ids_cache = (now, db, set())
         return set()
 
     file_paths = [str(s.file_path) for s in sessions]
@@ -566,4 +585,6 @@ def get_active_conversation_ids(db: Path) -> set[str]:
     finally:
         conn.close()
 
-    return {row["conversation_id"] for row in rows}
+    result = {row["conversation_id"] for row in rows}
+    _active_ids_cache = (now, db, result)
+    return result
