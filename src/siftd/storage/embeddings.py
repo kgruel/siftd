@@ -228,10 +228,14 @@ def search_similar(
     limit: int = 10,
     conversation_ids: set[str] | None = None,
     include_embeddings: bool = False,
+    exclude_conversation_ids: set[str] | None = None,
 ) -> list[dict]:
     """Find chunks most similar to the query embedding (cosine similarity).
 
     If conversation_ids is provided, only search within those conversations.
+    If exclude_conversation_ids is provided, mask those conversations from
+    results (scores set to -inf before top-k selection, so they never appear
+    regardless of how many high-scoring chunks they have).
     If include_embeddings is True, each result dict includes an 'embedding' key
     with the decoded float list (used by MMR reranking).
     Returns list of dicts: conversation_id, chunk_type, text, score, source_ids.
@@ -278,6 +282,13 @@ def search_similar(
         scores = np.zeros(candidate_norm.shape[0], dtype=np.float32)
     else:
         scores = candidate_norm @ (query_array / query_norm)
+
+    # Mask excluded conversations so they never appear in results
+    if exclude_conversation_ids:
+        for local_i in range(len(scores)):
+            global_i = int(indices_arr[local_i]) if indices_arr is not None else local_i
+            if cache.conversation_ids[global_i] in exclude_conversation_ids:
+                scores[local_i] = -np.inf
 
     # Find top-k using argpartition (O(n) vs O(n log n) for full sort)
     n = len(scores)

@@ -386,13 +386,12 @@ def hybrid_search(
         embed_backend = get_backend(preferred=backend, verbose=False)
         query_embedding = embed_backend.embed_one(query)
 
-    # Fetch wider candidate set for MMR to select from.
-    # When post-filtering active sessions (no pre-filter possible), request
-    # enough extra results to fill the limit after filtering.
-    post_filter_active = bool(excluded) and candidate_ids is None
+    # Fetch wider candidate set for MMR to select from
     search_limit = limit * 3 if use_mmr else limit
-    if post_filter_active:
-        search_limit = max(search_limit, limit * 5)
+
+    # Pass excluded conversations to search_similar for score masking —
+    # this guarantees they never appear in results regardless of chunk count.
+    exclude_from_search = excluded if (excluded and candidate_ids is None) else None
 
     embed_conn = open_embeddings_db(embed_db, read_only=True)
     try:
@@ -402,13 +401,10 @@ def hybrid_search(
             limit=search_limit,
             conversation_ids=candidate_ids,
             include_embeddings=use_mmr,
+            exclude_conversation_ids=exclude_from_search,
         )
     finally:
         embed_conn.close()
-
-    # Post-filter active sessions when we searched all embeddings
-    if post_filter_active and raw_results:
-        raw_results = [r for r in raw_results if r["conversation_id"] not in excluded]
 
     if not raw_results:
         return []
@@ -565,7 +561,7 @@ def _filter_conversations_conn(
 
 
 _active_ids_cache: tuple[float, Path, set[str]] | None = None
-_ACTIVE_IDS_TTL = 30.0  # seconds
+_ACTIVE_IDS_TTL = 5.0  # seconds — short enough to track session changes, long enough to help batch use
 
 
 def get_active_conversation_ids(db: Path) -> set[str]:
