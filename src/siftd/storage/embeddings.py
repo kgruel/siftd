@@ -161,12 +161,17 @@ class _EmbeddingCache:
         # Lookup: conversation_id -> list of row indices
         self.conv_id_to_indices: dict[str, list[int]] = {}
 
-    def is_valid(self, conn: sqlite3.Connection, db_path_hint: str) -> bool:
-        """Check if cache matches current DB state."""
-        if self._db_path != db_path_hint or self.embeddings is None:
-            return False
-        cur = conn.execute("SELECT COUNT(*) as cnt FROM chunks")
-        return cur.fetchone()["cnt"] == self._chunk_count
+    def is_valid(self, db_path_hint: str) -> bool:
+        """Check if cache is loaded for this DB path.
+
+        Uses path identity only — no SQL query. The cache is invalidated
+        when a new DB path is used or when invalidate() is called.
+        """
+        return self._db_path == db_path_hint and self.embeddings is not None
+
+    def invalidate(self) -> None:
+        """Force cache reload on next access (e.g., after ingest)."""
+        self._db_path = None
 
     def load(self, conn: sqlite3.Connection, db_path_hint: str) -> None:
         """Load all chunk data from DB into memory."""
@@ -230,7 +235,7 @@ def search_similar(
     db_path_hint = conn.execute("PRAGMA database_list").fetchone()[2] or ""
 
     cache = _embedding_cache
-    if not cache.is_valid(conn, db_path_hint):
+    if not cache.is_valid(db_path_hint):
         cache.load(conn, db_path_hint)
 
     if cache.embeddings is None or cache._chunk_count == 0:
