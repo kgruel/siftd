@@ -19,7 +19,7 @@ def cmd_serve(args) -> int:
 
     from pathlib import Path
 
-    from siftd.config import get_config
+    from siftd.config import get_config, load_config
     from siftd.serve.app import create_app
 
     # Resolve DB path: CLI arg > config > default
@@ -39,12 +39,16 @@ def cmd_serve(args) -> int:
     port = int(getattr(args, "port", None) or get_config("serve.port") or 8484)
     fts_rebuild = str(get_config("serve.fts_rebuild") or "on_push")
 
-    # Auth config
+    # Auth config — read from raw TOML document since get_config() returns
+    # None for dict/list nodes
     auth_config = None
     if not args.no_auth:
-        auth_section = get_config("serve.auth")
-        if isinstance(auth_section, dict):
-            auth_config = dict(auth_section)
+        doc = load_config()
+        serve_section = doc.get("serve", {})
+        if isinstance(serve_section, dict):
+            auth_section = serve_section.get("auth")
+            if isinstance(auth_section, dict):
+                auth_config = dict(auth_section)
 
     app = create_app(db_path=db_path, auth_config=auth_config, fts_rebuild=fts_rebuild)
 

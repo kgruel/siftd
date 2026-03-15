@@ -113,6 +113,38 @@ class TestReceiveDatabase:
         conn.close()
         assert count == 2
 
+    def test_first_receive_rebuilds_fts_when_requested(self, tmp_path):
+        """First receive with rebuild_fts=True populates content_fts."""
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        target = tmp_path / "target" / "team.db"
+
+        result = receive_database(source, target, rebuild_fts=True)
+
+        assert result["status"] == "created"
+        conn = sqlite3.connect(str(target))
+        fts_count = conn.execute("SELECT COUNT(*) FROM content_fts").fetchone()[0]
+        conn.close()
+        assert fts_count > 0
+
+    def test_first_receive_skips_fts_by_default(self, tmp_path):
+        """First receive without rebuild_fts leaves content_fts empty."""
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        target = tmp_path / "target" / "team.db"
+
+        result = receive_database(source, target)
+
+        assert result["status"] == "created"
+        conn = sqlite3.connect(str(target))
+        fts_count = conn.execute("SELECT COUNT(*) FROM content_fts").fetchone()[0]
+        conn.close()
+        assert fts_count == 0
+
     def test_fk_integrity_after_create(self, tmp_path):
         """Created target passes FK check."""
         source = _make_db(

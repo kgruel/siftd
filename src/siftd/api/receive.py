@@ -39,7 +39,7 @@ def receive_database(
     _validate_sqlite(source_path)
 
     if not target_db.exists():
-        return _create_from_source(source_path, target_db)
+        return _create_from_source(source_path, target_db, rebuild_fts=rebuild_fts)
 
     from siftd.api.merge import merge_database
 
@@ -56,16 +56,22 @@ def _validate_sqlite(path: Path) -> None:
         raise ValueError(f"Not a valid SQLite database: {path}")
 
 
-def _create_from_source(source_path: Path, target_db: Path) -> dict:
-    """Move source into place as the new target database."""
+def _create_from_source(
+    source_path: Path, target_db: Path, *, rebuild_fts: bool = False,
+) -> dict:
+    """Copy source into place as the new target database."""
     target_db.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, target_db)
 
     from siftd.storage.sqlite import open_database
 
-    conn = open_database(target_db, read_only=True)
+    conn = open_database(target_db)
     try:
         count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+        if rebuild_fts and count > 0:
+            from siftd.storage.fts import rebuild_fts_index
+
+            rebuild_fts_index(conn)
     finally:
         conn.close()
 

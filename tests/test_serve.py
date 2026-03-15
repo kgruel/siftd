@@ -94,6 +94,19 @@ class TestPush:
         assert body["conversations"] >= 1
         assert team_db.exists()
 
+    def test_push_malformed_body_returns_400(self, tmp_path):
+        """Push with non-SQLite body >= 16 bytes returns 400."""
+        team_db = tmp_path / "team.db"
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.post(
+                "/v1/push",
+                content=b"not a sqlite database at all",
+                headers={"Content-Type": "application/octet-stream"},
+            )
+        assert resp.status_code == 400
+        assert "error" in resp.json()
+
     def test_push_merges_into_existing(self, tmp_path):
         slice_bytes = _make_slice_bytes(tmp_path, external_id="c1")
         team_db = tmp_path / "team.db"
@@ -134,6 +147,17 @@ class TestPull:
             resp = client.get("/v1/pull")
         assert resp.status_code == 200
         assert int(resp.headers.get("X-Siftd-Conversations", 0)) == 0
+
+
+    def test_pull_nonexistent_db_returns_empty(self, tmp_path):
+        """Pull from a fresh server (no DB yet) returns empty 200."""
+        team_db = tmp_path / "nonexistent.db"
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/v1/pull")
+        assert resp.status_code == 200
+        assert int(resp.headers.get("X-Siftd-Conversations", 0)) == 0
+        assert resp.content == b""
 
 
 class TestQuery:

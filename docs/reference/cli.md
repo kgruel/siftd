@@ -6,24 +6,19 @@ _Auto-generated from `--help` output._
 
 ```
 usage: siftd [-h] [--version] [--db PATH]
-             {register,session-id,status,workspaces,path,config,adapters,db,tag,tags,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export} ...
+             {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve} ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {register,session-id,status,workspaces,path,config,adapters,db,tag,tags,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export}
+  {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve}
     register            Register an active session for live tagging
     session-id          Print the session ID for the current workspace
-    status              Show database statistics (use 'siftd db stats')
-    workspaces          List workspaces (use 'siftd db workspaces')
-    path                Show XDG paths (use 'siftd db path')
     config              View or modify config settings
     adapters            List discovered adapters
     db                  Database operations (info, backup, restore, vacuum,
-                        slice, merge, remote, push)
-    tag                 Apply or remove a tag on a conversation (or other
-                        entity)
-    tags                List, inspect, rename, or delete tags
+                        slice, merge, send, receive, remote, push, pull)
+    tag                 Manage tags: apply, remove, list, rename, delete
     tools               Summarize tool usage by category
     query               List and filter conversations by metadata
     ingest              Ingest logs from all sources
@@ -36,6 +31,7 @@ positional arguments:
     install             Install optional dependencies or bundled components
     peek                Inspect live sessions from disk (bypasses SQLite)
     export              Export conversations for PR review workflows
+    serve               Start the HTTP team sync server
 
 options:
   -h, --help            show this help message and exit
@@ -76,54 +72,27 @@ examples:
 Exits with code 1 if no session ID found (for scripting).
 ```
 
-## siftd status
-
-```
-usage: siftd status [-h] [--json]
-
-options:
-  -h, --help  show this help message and exit
-  --json      Output as JSON
-```
-
-## siftd workspaces
-
-```
-usage: siftd workspaces [-h] [--json] [-n LIMIT]
-
-options:
-  -h, --help         show this help message and exit
-  --json             Output as JSON
-  -n, --limit LIMIT  Max workspaces (0 = all)
-```
-
-## siftd path
-
-```
-usage: siftd path [-h]
-
-options:
-  -h, --help  show this help message and exit
-```
-
 ## siftd config
 
 ```
-usage: siftd config [-h] [{get,set,path}] [key] [value]
+usage: siftd config [-h] [{get,set,path,append,remove}] [key] [value]
 
 positional arguments:
-  {get,set,path}  Action to perform
-  key             Config key (dotted path, e.g., search.formatter)
-  value           Value to set (for 'set' action)
+  {get,set,path,append,remove}
+                        Action to perform
+  key                   Config key (dotted path, e.g., search.formatter)
+  value                 Value to use (for 'set', 'append', 'remove')
 
 options:
-  -h, --help      show this help message and exit
+  -h, --help            show this help message and exit
 
 examples:
   siftd config                        # show all config
   siftd config path                   # show config file path
   siftd config get search.formatter      # get specific value
   siftd config set search.formatter verbose  # set value
+  siftd config append adapters.claude_code.locations ~/.claude/projects
+  siftd config remove adapters.claude_code.locations ~/.claude/projects
 ```
 
 ## siftd adapters
@@ -140,10 +109,10 @@ options:
 
 ```
 usage: siftd db [-h]
-                {info,stats,workspaces,path,vacuum,backup,restore,slice,merge,remote,push} ...
+                {info,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,send,remote,push,pull} ...
 
 positional arguments:
-  {info,stats,workspaces,path,vacuum,backup,restore,slice,merge,remote,push}
+  {info,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,send,remote,push,pull}
     info                Show database file metadata and schema info
     stats               Show database statistics
     workspaces          List workspaces with conversation counts
@@ -155,8 +124,12 @@ positional arguments:
                         database
     merge               Merge an external database (slice) into the main
                         database
+    receive             Receive a database from stdin and create-or-merge into
+                        the local database
+    send                Slice the database and write binary SQLite to stdout
     remote              Manage sync remotes (add, list, remove)
     push                Push conversations to a sync remote
+    pull                Pull conversations from a sync remote
 
 options:
   -h, --help            show this help message and exit
@@ -173,64 +146,41 @@ examples:
   siftd db restore /tmp/siftd.db         # restore from backup
   siftd db slice out.db -w project       # export filtered subset
   siftd db merge laptop-slice.db         # merge slice into main DB
+  siftd db send > slice.db               # send via stdout (SSH pipe)
+  siftd db receive < slice.db            # receive via stdin (SSH pipe)
   siftd db remote add alcove host:path   # register sync remote
   siftd db push alcove                   # push delta to remote
+  siftd db pull alcove                   # pull delta from remote
 ```
 
 ## siftd tag
 
 ```
-usage: siftd tag [-h] [-n [N]] [-r] [--session ID] [--exchange INDEX]
+usage: siftd tag [-h] [-n [N]] [-r] [--session ID] [--current]
+                 [--exchange INDEX] [--prefix PREFIX] [--limit LIMIT]
+                 [--force] [-w SUBSTR] [-m NAME] [--since DATE]
+                 [--before DATE] [-l NAME] [--all-tags NAME] [--no-tag NAME]
                  [positional ...]
 
-Apply or remove tags. For live sessions, use --session to queue tags before ingest.
+Apply, remove, list, rename, or delete tags.
 
 positional arguments:
-  positional        [entity_type] entity_id tag [tag2 ...]
-
-options:
-  -h, --help        show this help message and exit
-  -n, --last [N]    Tag N most recent conversations (default: 1 if flag used
-                    without N)
-  -r, --remove      Remove tag instead of applying
-  --session ID      Queue tag for a live session (applied at ingest)
-  --exchange INDEX  Tag specific exchange (0-based, requires --session)
-
-examples:
-  siftd tag 01HX... important              # tag conversation (default)
-  siftd tag 01HX... important review       # apply multiple tags at once
-  siftd tag --last important               # tag most recent conversation
-  siftd tag --last 3 review                # tag 3 most recent conversations
-  siftd tag workspace 01HY... proj         # explicit entity type
-  siftd tag tool_call 01HZ... slow         # tag a tool call
-  siftd tag --remove 01HX... important     # remove tag from conversation
-  siftd tag --remove --last 1 important    # remove from most recent
-  siftd tag -r workspace 01HY... proj      # remove from workspace
-
-live session tagging:
-  siftd tag --session abc123 decision:auth       # queue tag for session
-  siftd tag --session abc123 --exchange 5 key    # queue tag for exchange 5
-```
-
-## siftd tags
-
-```
-usage: siftd tags [-h] [--prefix PREFIX] [-n LIMIT] [--rename OLD NEW]
-                  [--delete NAME] [--force] [-w SUBSTR] [-m NAME]
-                  [--since DATE] [--before DATE] [-l NAME] [--all-tags NAME]
-                  [--no-tag NAME]
-                  [name]
-
-positional arguments:
-  name                  Tag name to drill into (shows conversations)
+  positional            [entity_type] entity_id tag [tag2 ...] | list | rename
+                        | delete
 
 options:
   -h, --help            show this help message and exit
-  --prefix PREFIX       Filter tag list by prefix (list view only)
-  -n, --limit LIMIT     Max conversations to show in drill-down (default: 10)
-  --rename OLD NEW      Rename a tag
-  --delete NAME         Delete a tag and all associations
-  --force               Force delete even if tag has associations
+  -n, --last [N]        Tag N most recent conversations (default: 1 if flag
+                        used without N)
+  -r, --remove          Remove tag instead of applying
+  --session ID          Queue tag for a live session (applied at ingest)
+  --current             Auto-detect current session (falls back to --last)
+  --exchange INDEX      Tag specific exchange (0-based, requires --session)
+  --prefix PREFIX       Filter tag list by prefix (use with 'tag list')
+  --limit LIMIT         Max conversations in drill-down (default: 10, use with
+                        'tag list <name>')
+  --force               Force delete even if tag has associations (use with
+                        'tag delete')
 
 filtering:
   -w, --workspace SUBSTR
@@ -247,12 +197,29 @@ tag filtering:
   --no-tag NAME         Exclude conversations with this tag (NOT logic)
 
 examples:
-  siftd tags                                      # list all tags
-  siftd tags --prefix research:                   # list tags by prefix
-  siftd tags research:auth                        # show conversations with a tag
-  siftd tags --rename important review:important   # rename tag
-  siftd tags --delete old-tag                      # delete tag (refuses if applied)
-  siftd tags --delete old-tag --force              # delete tag and all associations
+  siftd tag 01HX... important              # tag conversation (default)
+  siftd tag 01HX... important review       # apply multiple tags at once
+  siftd tag --last important               # tag most recent conversation
+  siftd tag --last important review        # multiple tags on most recent
+  siftd tag --last 3 review                # tag 3 most recent conversations
+  siftd tag workspace 01HY... proj         # explicit entity type
+  siftd tag tool_call 01HZ... slow         # tag a tool call
+  siftd tag --remove 01HX... important     # remove tag from conversation
+  siftd tag --remove --last 1 important    # remove from most recent
+  siftd tag -r workspace 01HY... proj      # remove from workspace
+
+subcommands:
+  siftd tag list                            # list all tags
+  siftd tag list --prefix research:         # filter by prefix
+  siftd tag list research:auth              # show conversations with tag
+  siftd tag rename old-name new-name        # rename a tag
+  siftd tag delete old-tag                  # delete (refuses if applied)
+  siftd tag delete old-tag --force          # delete with associations
+
+live session tagging:
+  siftd tag --current decision:auth              # auto-detect session, queue tag
+  siftd tag --session abc123 decision:auth       # queue tag for session
+  siftd tag --session abc123 --exchange 5 key    # queue tag for exchange 5
 ```
 
 ## siftd tools
@@ -355,10 +322,11 @@ examples:
 ## siftd ingest
 
 ```
-usage: siftd ingest [-h] [-v] [-p DIR] [-a NAME] [--json] [--rebuild-fts]
+usage: siftd ingest [-h] [-q | -v] [-p DIR] [-a NAME] [--json] [--rebuild-fts]
 
 options:
   -h, --help          show this help message and exit
+  -q, --quiet         Only show totals line
   -v, --verbose       Show per-adapter skip breakdowns
   -p, --path DIR      Additional directories to scan (can be repeated)
   -a, --adapter NAME  Only run specific adapter(s) (can be repeated)
@@ -367,7 +335,8 @@ options:
 
 examples:
   siftd ingest                      # ingest from all adapters
-  siftd ingest -v                   # show per-adapter skip breakdowns
+  siftd ingest -q                   # quiet: totals line only
+  siftd ingest -v                   # verbose: per-adapter skip breakdowns
   siftd ingest -a claude_code       # only run claude_code adapter
   siftd ingest -p ~/logs -p /tmp    # scan additional directories
   siftd ingest --rebuild-fts        # rebuild FTS index from scratch
@@ -612,11 +581,12 @@ examples:
 ## siftd install
 
 ```
-usage: siftd install [-h] [--dry-run] [--scope {user,project}] {embed,plugin}
+usage: siftd install [-h] [--dry-run] [--scope {user,project}]
+                     {embed,serve,plugin}
 
 positional arguments:
-  {embed,plugin}        Component to install (embed: semantic search deps,
-                        plugin: Claude Code plugin)
+  {embed,serve,plugin}  Component to install (embed: semantic search, serve:
+                        HTTP server, plugin: Claude Code plugin)
 
 options:
   -h, --help            show this help message and exit
@@ -627,6 +597,7 @@ options:
 
 examples:
   siftd install embed             # install semantic search dependencies
+  siftd install serve             # install HTTP server dependencies
   siftd install embed --dry-run   # show what would be installed
   siftd install plugin            # install Claude Code plugin (user scope)
   siftd install plugin --scope project  # install for current project only
@@ -734,4 +705,18 @@ examples:
   siftd export --last --prompts-only    # omit tool call details
   siftd export --last --no-tag private  # exclude private sessions
   siftd export --last -o context.md     # write to file
+```
+
+## siftd serve
+
+```
+usage: siftd serve [-h] [--host ADDR] [--port PORT] [--no-auth]
+
+Serve the siftd database over HTTP for team sync.
+
+options:
+  -h, --help   show this help message and exit
+  --host ADDR  Bind address (default: 0.0.0.0)
+  --port PORT  Listen port (default: 8484)
+  --no-auth    Disable authentication (development only)
 ```

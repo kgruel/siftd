@@ -64,7 +64,10 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
         from siftd.api.receive import receive_database
 
         rebuild_fts = fts_rebuild == "on_push"
-        result = receive_database(tmp_path, db_path, rebuild_fts=rebuild_fts)
+        try:
+            result = receive_database(tmp_path, db_path, rebuild_fts=rebuild_fts)
+        except ValueError as e:
+            return Response(content={"error": str(e)}, status_code=400)
 
         # Attribution: record push in push_log
         identity = _get_push_identity(request)
@@ -93,6 +96,17 @@ async def pull(
     tag: list[str] | None = Parameter(query="tag", default=None),
 ) -> Response:
     """Slice and stream the team DB based on filters."""
+    if not db_path.exists():
+        return Response(
+            content=b"",
+            status_code=200,
+            media_type="application/octet-stream",
+            headers={
+                "X-Siftd-Conversations": "0",
+                "X-Siftd-Size": "0",
+            },
+        )
+
     from siftd.api.slice import slice_database
 
     with tempfile.TemporaryDirectory(prefix="siftd-serve-pull-") as tmp_dir:

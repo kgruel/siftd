@@ -270,7 +270,12 @@ def _push_http(remote: SyncRemote, slice_path: Path) -> bool:
 
     Returns whether remote DB already existed.
     """
-    import httpx
+    try:
+        import httpx
+    except ImportError:
+        raise SyncError(
+            "HTTP remotes require httpx — install with: pip install siftd[serve]"
+        ) from None
 
     from siftd.api.auth import AuthError, acquire_token
     from siftd.config import get_sync_remote
@@ -527,7 +532,12 @@ def _pull_http(
 
     Returns (conversations, size_bytes).
     """
-    import httpx
+    try:
+        import httpx
+    except ImportError:
+        raise SyncError(
+            "HTTP remotes require httpx — install with: pip install siftd[serve]"
+        ) from None
 
     from siftd.api.auth import AuthError, acquire_token
     from siftd.config import get_sync_remote
