@@ -339,41 +339,40 @@ def hybrid_search(
     if not embed_db.exists():
         raise FileNotFoundError(f"Embeddings database not found: {embed_db}")
 
-    # Build candidate filter set
-    candidate_ids = filter_conversations(db, workspace=workspace, model=model, since=since, before=before)
+    # Open main DB once and share across all steps
+    main_conn = open_database(db, read_only=True)
+    try:
+        # Build candidate filter set
+        candidate_ids = _filter_conversations_conn(
+            main_conn, workspace=workspace, model=model, since=since, before=before,
+        )
 
-    # Exclude conversations from active sessions
-    if exclude_active:
-        excluded = get_active_conversation_ids(db)
-        if excluded:
-            if candidate_ids is not None:
-                candidate_ids = candidate_ids - excluded
-            else:
-                # Need to get all conversation IDs minus excluded
-                conn_tmp = open_database(db, read_only=True)
-                try:
+        # Exclude conversations from active sessions
+        if exclude_active:
+            excluded = get_active_conversation_ids(db)
+            if excluded:
+                if candidate_ids is not None:
+                    candidate_ids = candidate_ids - excluded
+                else:
+                    # Need to get all conversation IDs minus excluded
                     all_ids = {
                         row["id"]
-                        for row in conn_tmp.execute("SELECT id FROM conversations").fetchall()
+                        for row in main_conn.execute("SELECT id FROM conversations").fetchall()
                     }
-                finally:
-                    conn_tmp.close()
-                candidate_ids = all_ids - excluded
+                    candidate_ids = all_ids - excluded
 
-    # Hybrid recall: FTS5 narrows candidates, embeddings rerank
-    if not embeddings_only:
-        main_conn = open_database(db, read_only=True)
-        try:
+        # Hybrid recall: FTS5 narrows candidates, embeddings rerank
+        if not embeddings_only:
             fts5_ids, _fts5_mode = fts5_recall_conversations(main_conn, query, limit=recall)
-        finally:
-            main_conn.close()
 
-        if fts5_ids:
-            if candidate_ids is not None:
-                intersected = fts5_ids & candidate_ids
-                candidate_ids = intersected if intersected else candidate_ids
-            else:
-                candidate_ids = fts5_ids
+            if fts5_ids:
+                if candidate_ids is not None:
+                    intersected = fts5_ids & candidate_ids
+                    candidate_ids = intersected if intersected else candidate_ids
+                else:
+                    candidate_ids = fts5_ids
+    finally:
+        main_conn.close()
 
     # Embed query and search
     use_mmr = rerank == "mmr"
@@ -439,18 +438,18 @@ def hybrid_search(
         )
 
     # Enrich with metadata from main DB
-    main_conn = open_database(db, read_only=True)
+    main_conn_meta = open_database(db, read_only=True)
     try:
         conv_ids = list({r["conversation_id"] for r in raw_results})
         meta_rows = batched_in_query(
-            main_conn,
+            main_conn_meta,
             "SELECT c.id, c.started_at, w.path AS workspace FROM conversations c "
             "LEFT JOIN workspaces w ON w.id = c.workspace_id "
             "WHERE c.id IN ({placeholders})",
             conv_ids,
         )
     finally:
-        main_conn.close()
+        main_conn_meta.close()
     meta = {row["id"]: dict(row) for row in meta_rows}
 
     results = []
@@ -502,6 +501,31 @@ def filter_conversations(
     if not any([workspace, model, since, before, tags, all_tags, exclude_tags]):
         return None
 
+    conn = open_database(db, read_only=True)
+    try:
+        return _filter_conversations_conn(
+            conn, workspace=workspace, model=model, since=since, before=before,
+            tags=tags, all_tags=all_tags, exclude_tags=exclude_tags,
+        )
+    finally:
+        conn.close()
+
+
+def _filter_conversations_conn(
+    conn,
+    *,
+    workspace: str | None = None,
+    model: str | None = None,
+    since: str | None = None,
+    before: str | None = None,
+    tags: list[str] | None = None,
+    all_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+) -> set[str] | None:
+    """Internal: filter conversations using an existing connection."""
+    if not any([workspace, model, since, before, tags, all_tags, exclude_tags]):
+        return None
+
     wb = WhereBuilder()
     wb.workspace(workspace)
     wb.model(model)
@@ -511,20 +535,16 @@ def filter_conversations(
     wb.tags_all(all_tags)
     wb.tags_none(exclude_tags)
 
-    conn = open_database(db, read_only=True)
-    try:
-        sql = f"""
-            SELECT DISTINCT c.id
-            FROM conversations c
-            LEFT JOIN workspaces w ON w.id = c.workspace_id
-            LEFT JOIN responses r ON r.conversation_id = c.id
-            LEFT JOIN models m ON m.id = r.model_id
-            {wb.where_sql()}
-        """
+    sql = f"""
+        SELECT DISTINCT c.id
+        FROM conversations c
+        LEFT JOIN workspaces w ON w.id = c.workspace_id
+        LEFT JOIN responses r ON r.conversation_id = c.id
+        LEFT JOIN models m ON m.id = r.model_id
+        {wb.where_sql()}
+    """
 
-        rows = conn.execute(sql, wb.params).fetchall()
-    finally:
-        conn.close()
+    rows = conn.execute(sql, wb.params).fetchall()
     return {row["id"] for row in rows}
 
 
