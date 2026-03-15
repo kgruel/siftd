@@ -17,3 +17,4 @@
 {"run":16,"commit":"df4cddf","metric":273.7,"metrics":{"avg_top1":0.768334,"avg_redundancy":0.104},"status":"keep","description":"Pre-normalize cached embeddings for O(1) per-query normalization","timestamp":1773600488889,"segment":0}
 {"type":"config","name":"hybrid-search-latency-70q","metricName":"total_ms","metricUnit":"ms","bestDirection":"lower"}
 {"run":17,"commit":"df4cddf","metric":384.3,"metrics":{"avg_top1":0.763322,"avg_redundancy":0.1057,"query_count":70},"status":"baseline","description":"New baseline: 70 queries (added exact-identifiers, error-patterns, mixed, single-token groups)","timestamp":1773602808494,"segment":1}
+{"run":18,"commit":"-------","metric":523.4,"metrics":{"avg_top1":0.763322,"avg_redundancy":0.1057},"status":"discard","description":"Skip main DB open for embeddings-only — branching overhead worse","timestamp":1773602868558,"segment":1}

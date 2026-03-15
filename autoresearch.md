@@ -61,11 +61,18 @@ Minimize total wall-clock time to run 50 benchmark queries through `hybrid_searc
 - OR-first FTS5 — no improvement, OR queries expensive regardless of order
 - Lower AND threshold to 1 — quality collapsed (narrow recall)
 
-### Profile after all keeps (baseline 14520ms → 274ms, 5.5ms/query)
-- Embedding search: ~4ms (73%) — pre-normalized dot product on 24K cached vectors
-- embed_one: ~2.5ms (22%) — model inference (fastembed), fixed cost
-- MMR: ~0.2ms (4%) — negligible
-- Everything else: <0.1ms
+### Profile after all keeps (baseline 14520ms → 274ms → 384ms with 70q)
+- embed_one: ~2.9ms (57%) — model inference (fastembed), fixed cost per query
+- Embedding search: ~1.5ms (30%) — pre-normalized dot product on 24K cached vectors
+- Metadata + MMR + overhead: ~0.6ms (13%) — all lean
+
+### Segment 1: Extended to 70 queries (14 groups)
+Added 4 keyword-heavy groups (exact-identifiers, error-patterns, mixed, single-token).
+Per-group comparison showed embeddings-only wins or ties on ALL 14 groups, including keyword-heavy.
+Asymptotic floor reached at ~5ms/query — dominated by model inference (2.9ms) + matrix dot product (1.5ms).
+
+### Dead ends at this scale
+- Skip main DB open for embeddings-only — branching overhead worse than connection cost
 
 ## Loop Protocol
 1. Edit code with an optimization idea
