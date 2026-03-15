@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Pre-check: syntax validation of files in scope
-python3 -c "
+.venv/bin/python3 -c "
 import py_compile, sys
 files = [
     'src/siftd/search.py',
@@ -24,7 +24,7 @@ if not ok:
 "
 
 # Benchmark: run 50 queries through hybrid_search with MMR
-python3 -c "
+.venv/bin/python3 -c "
 import json, sys, time
 sys.path.insert(0, 'src')
 
