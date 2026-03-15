@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 
 from siftd.ids import ulid as _ulid
-from siftd.math import cosine_similarity_batch
 from siftd.storage.sql_helpers import batched_execute
 
 
@@ -152,7 +151,8 @@ class _EmbeddingCache:
     def __init__(self):
         self._db_path: str | None = None
         self._chunk_count: int = 0
-        self.embeddings: np.ndarray | None = None  # (n, dim) float32
+        self.embeddings: np.ndarray | None = None  # (n, dim) float32, raw
+        self.embeddings_normalized: np.ndarray | None = None  # (n, dim) L2-normalized
         self.chunk_ids: list[str] = []
         self.conversation_ids: list[str] = []
         self.chunk_types: list[str] = []
@@ -183,6 +183,7 @@ class _EmbeddingCache:
             self._db_path = db_path_hint
             self._chunk_count = 0
             self.embeddings = np.empty((0, 0), dtype=np.float32)
+            self.embeddings_normalized = np.empty((0, 0), dtype=np.float32)
             self.chunk_ids = []
             self.conversation_ids = []
             self.chunk_types = []
@@ -196,6 +197,11 @@ class _EmbeddingCache:
         self.embeddings = np.frombuffer(blob_buffer, dtype=np.float32).reshape(
             len(rows), embedding_dim
         ).copy()  # copy to own the memory after blob_buffer is freed
+
+        # Pre-normalize for fast cosine similarity (skip per-query normalization)
+        norms = np.linalg.norm(self.embeddings, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1, norms)
+        self.embeddings_normalized = self.embeddings / norms
 
         self.chunk_ids = [row["id"] for row in rows]
         self.conversation_ids = [row["conversation_id"] for row in rows]
@@ -238,7 +244,7 @@ def search_similar(
     if not cache.is_valid(db_path_hint):
         cache.load(conn, db_path_hint)
 
-    if cache.embeddings is None or cache._chunk_count == 0:
+    if cache.embeddings is None or cache.embeddings_normalized is None or cache._chunk_count == 0:
         return []
 
     embedding_dim = cache.embeddings.shape[1]
@@ -258,14 +264,18 @@ def search_similar(
         if not indices:
             return []
         indices_arr = np.array(indices, dtype=np.intp)
-        candidate_embeddings = cache.embeddings[indices_arr]
+        candidate_norm = cache.embeddings_normalized[indices_arr]
     else:
         indices_arr = None
-        candidate_embeddings = cache.embeddings
+        candidate_norm = cache.embeddings_normalized
 
-    # Compute all similarities at once
+    # Compute similarities using pre-normalized embeddings (only normalize query)
     query_array = np.asarray(query_embedding, dtype=np.float32)
-    scores = cosine_similarity_batch(query_array, candidate_embeddings)
+    query_norm = np.linalg.norm(query_array)
+    if query_norm == 0:
+        scores = np.zeros(candidate_norm.shape[0], dtype=np.float32)
+    else:
+        scores = candidate_norm @ (query_array / query_norm)
 
     # Find top-k using argpartition (O(n) vs O(n log n) for full sort)
     n = len(scores)

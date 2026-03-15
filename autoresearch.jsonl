@@ -13,3 +13,4 @@
 {"run":12,"commit":"-------","metric":3249.5,"metrics":{"avg_top1":0.727849,"avg_redundancy":0.2673},"status":"discard","description":"Lower AND threshold to 1 — massive quality regression","timestamp":1773600056040,"segment":0}
 {"run":13,"commit":"2993720","metric":1329.4,"metrics":{"avg_top1":0.768268,"avg_redundancy":0.104},"status":"keep","description":"Default to embeddings-only search (skip FTS5 recall)","timestamp":1773600158266,"segment":0}
 {"run":14,"commit":"2a89359","metric":607.9,"metrics":{"avg_top1":0.768334,"avg_redundancy":0.104},"status":"keep","description":"Post-filter active sessions instead of pre-filtering embeddings","timestamp":1773600290928,"segment":0}
+{"run":15,"commit":"567aa1b","metric":613.3,"metrics":{"avg_top1":0.768334,"avg_redundancy":0.104},"status":"keep","description":"Replace COUNT(*) cache check with path-identity + invalidate()","timestamp":1773600394153,"segment":0}
