@@ -235,7 +235,7 @@ def cmd_search(args) -> int:
     apply_config_defaults(args, get_search_defaults, skip_if=_has_explicit_formatter)
 
     db = resolve_db(args)
-    embed_db = Path(args.embed_db) if args.embed_db else embeddings_db_path()
+    embed_db = Path(args.embed_db).expanduser() if args.embed_db else embeddings_db_path()
 
     if not db.exists():
         print(f"Database not found: {db}")
