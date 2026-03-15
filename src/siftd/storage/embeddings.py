@@ -152,6 +152,7 @@ class _EmbeddingCache:
 
     def __init__(self):
         self._db_path: str | None = None
+        self._db_mtime: float = 0.0
         self._chunk_count: int = 0
         self.embeddings: np.ndarray | None = None  # (n, dim) float32, raw
         self.embeddings_normalized: np.ndarray | None = None  # (n, dim) L2-normalized
@@ -164,12 +165,19 @@ class _EmbeddingCache:
         self.conv_id_to_indices: dict[str, list[int]] = {}
 
     def is_valid(self, db_path_hint: str) -> bool:
-        """Check if cache is loaded for this DB path.
+        """Check if cache is loaded and current for this DB path.
 
-        Uses path identity only — no SQL query. The cache is invalidated
-        when a new DB path is used or when invalidate() is called.
+        Uses path identity + file mtime to detect external updates
+        (e.g., another process rebuilding the index). A single stat()
+        call (~0.01ms) instead of a SQL COUNT(*) query.
         """
-        return self._db_path == db_path_hint and self.embeddings is not None
+        if self._db_path != db_path_hint or self.embeddings is None:
+            return False
+        try:
+            current_mtime = Path(db_path_hint).stat().st_mtime
+            return current_mtime == self._db_mtime
+        except OSError:
+            return False
 
     def invalidate(self) -> None:
         """Force cache reload on next access (e.g., after ingest)."""
@@ -184,6 +192,10 @@ class _EmbeddingCache:
         if not rows:
             self._db_path = db_path_hint
             self._chunk_count = 0
+            try:
+                self._db_mtime = Path(db_path_hint).stat().st_mtime
+            except OSError:
+                self._db_mtime = 0.0
             self.embeddings = np.empty((0, 0), dtype=np.float32)
             self.embeddings_normalized = np.empty((0, 0), dtype=np.float32)
             self.chunk_ids = []
@@ -217,6 +229,10 @@ class _EmbeddingCache:
 
         self._db_path = db_path_hint
         self._chunk_count = len(rows)
+        try:
+            self._db_mtime = Path(db_path_hint).stat().st_mtime
+        except OSError:
+            self._db_mtime = 0.0
 
 
 _embedding_cache = _EmbeddingCache()
@@ -299,18 +315,22 @@ def search_similar(
         partitioned = np.argpartition(-scores, k)[:k]
         top_local = partitioned[np.argsort(-scores[partitioned])]
 
-    # Build results only for top-k
+    # Build results only for top-k, skipping any masked (-inf) scores
     from siftd.search import ScoreBreakdown
 
     results = []
     for local_idx in top_local:
         local_i = int(local_idx)
+        score_val = float(scores[local_i])
+        if score_val == float("-inf"):
+            continue  # excluded conversation leaked through argpartition
+
         # Map back to global index
         global_i = int(indices_arr[local_i]) if indices_arr is not None else local_i
 
         raw_source = cache.source_ids_raw[global_i]
         source_ids_val = json.loads(raw_source) if raw_source else []
-        embedding_sim = float(scores[local_i])
+        embedding_sim = score_val
         result = {
             "chunk_id": cache.chunk_ids[global_i],
             "conversation_id": cache.conversation_ids[global_i],
