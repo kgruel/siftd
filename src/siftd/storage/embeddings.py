@@ -16,7 +16,13 @@ from siftd.ids import ulid as _ulid
 from siftd.storage.sql_helpers import batched_execute
 
 
-def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
+class EmbeddingsConnection(sqlite3.Connection):
+    """Connection subclass that tracks whether it was opened as immutable."""
+
+    siftd_immutable: bool = False
+
+
+def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> EmbeddingsConnection:
     """Open embeddings database.
 
     Args:
@@ -34,11 +40,11 @@ def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> sqlite3.Con
         # Use immutable=1 to avoid creating WAL/SHM sidecars when the DB lives on
         # read-only media (or in sandboxed environments).
         uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
-        conn = sqlite3.connect(uri, uri=True)
-        conn._siftd_immutable = True  # type: ignore[attr-defined]
+        conn = sqlite3.connect(uri, uri=True, factory=EmbeddingsConnection)
+        conn.siftd_immutable = True
     else:
-        conn = sqlite3.connect(db_path)
-        conn._siftd_immutable = False  # type: ignore[attr-defined]
+        conn = sqlite3.connect(db_path, factory=EmbeddingsConnection)
+        conn.siftd_immutable = False
     conn.row_factory = sqlite3.Row
     if not read_only:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -270,7 +276,7 @@ def search_similar(
         # at open time. If the DB was modified externally, the caller's connection
         # still sees old data. Reopen a fresh connection for the reload.
         # Writable connections always see their own uncommitted writes.
-        is_immutable = getattr(conn, "_siftd_immutable", False)
+        is_immutable = getattr(conn, "siftd_immutable", False)
 
         if is_immutable and db_path_hint:
             reload_conn = open_embeddings_db(Path(db_path_hint), read_only=True)

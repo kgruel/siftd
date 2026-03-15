@@ -319,3 +319,45 @@ def test_prune_orphaned_chunks_over_1000_orphans(tmp_path):
         embed_conn.close()
         main_conn.close()
 
+
+def test_search_similar_writable_uncommitted(tmp_path):
+    """Writable connection with uncommitted chunks should still find them via search."""
+    db_path = tmp_path / "embeddings.db"
+    conn = open_embeddings_db(db_path)
+    try:
+        store_chunk(conn, "c1", "exchange", "hello world", [1.0, 0.0, 0.0], commit=False)
+        results = search_similar(conn, [1.0, 0.0, 0.0], limit=5)
+        assert len(results) == 1
+        assert results[0]["conversation_id"] == "c1"
+    finally:
+        conn.close()
+
+
+def test_search_similar_stale_readonly_sees_external_update(tmp_path):
+    """Long-lived read-only connection should see externally committed chunks after cache reload."""
+    from siftd.storage.embeddings import _embedding_cache
+
+    db_path = tmp_path / "embeddings.db"
+
+    # Create DB with one chunk
+    writer = open_embeddings_db(db_path)
+    store_chunk(writer, "c1", "exchange", "first", [1.0, 0.0, 0.0], commit=True)
+    writer.close()
+
+    # Open a long-lived read-only connection and search (populates cache)
+    reader = open_embeddings_db(db_path, read_only=True)
+    results1 = search_similar(reader, [1.0, 0.0, 0.0], limit=10)
+    assert len(results1) == 1
+
+    # External update: another process adds a second chunk
+    writer2 = open_embeddings_db(db_path)
+    store_chunk(writer2, "c2", "exchange", "second", [0.0, 1.0, 0.0], commit=True)
+    writer2.close()
+
+    # Search again on the same long-lived reader — should see both chunks
+    results2 = search_similar(reader, [1.0, 0.0, 0.0], limit=10)
+    conv_ids = {r["conversation_id"] for r in results2}
+    assert "c1" in conv_ids
+    assert "c2" in conv_ids
+    reader.close()
+
