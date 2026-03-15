@@ -35,8 +35,10 @@ def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> sqlite3.Con
         # read-only media (or in sandboxed environments).
         uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
         conn = sqlite3.connect(uri, uri=True)
+        conn._siftd_immutable = True  # type: ignore[attr-defined]
     else:
         conn = sqlite3.connect(db_path)
+        conn._siftd_immutable = False  # type: ignore[attr-defined]
     conn.row_factory = sqlite3.Row
     if not read_only:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -264,18 +266,13 @@ def search_similar(
 
     cache = _embedding_cache
     if not cache.is_valid(db_path_hint):
-        # Detect read-only connections: they may be immutable and pinned to a
-        # stale snapshot, so we must reopen to see external commits.
-        # Writable connections always see their own uncommitted data.
-        is_readonly = True
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute("ROLLBACK")
-            is_readonly = False
-        except sqlite3.OperationalError:
-            pass
+        # Immutable connections (mode=ro&immutable=1) are pinned to the snapshot
+        # at open time. If the DB was modified externally, the caller's connection
+        # still sees old data. Reopen a fresh connection for the reload.
+        # Writable connections always see their own uncommitted writes.
+        is_immutable = getattr(conn, "_siftd_immutable", False)
 
-        if is_readonly and db_path_hint:
+        if is_immutable and db_path_hint:
             reload_conn = open_embeddings_db(Path(db_path_hint), read_only=True)
             try:
                 cache.load(reload_conn, db_path_hint)

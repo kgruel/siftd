@@ -1,0 +1,11 @@
+{
+  "name": "small-chunks-64",
+  "description": "Very small exchange windows at 64 tokens for maximum semantic focus",
+  "goal": "Test if target_tokens=64 continues the quality improvement trend",
+  "params": {
+    "strategy": "exchange-window",
+    "target_tokens": 64,
+    "max_tokens": 128,
+    "overlap_tokens": 8
+  }
+}
