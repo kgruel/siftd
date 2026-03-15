@@ -279,7 +279,7 @@ def hybrid_search(
     embed_db_path: Path | None = None,
     limit: int = 10,
     recall: int = 80,
-    embeddings_only: bool = False,
+    embeddings_only: bool = True,
     workspace: str | None = None,
     model: str | None = None,
     since: str | None = None,

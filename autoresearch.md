@@ -33,7 +33,25 @@ Minimize total wall-clock time to run 50 benchmark queries through `hybrid_searc
 - No new dependencies
 
 ## What's Been Tried
-(Updated every ~5 experiments)
+
+### Kept
+1. **Cache active session exclusion (30s TTL)** — 89.6ms/call filesystem scan was called per query. Now cached. Saved ~4.5s.
+2. **Share single main DB connection in hybrid_search()** — Saved 2 connection open/close cycles per query.
+3. **Cache embedding backend** — get_backend() re-probed ollama HTTP on every call (70ms × 50). Now cached by preferred key. Saved ~3.5s.
+4. **In-memory embedding cache** — search_similar() fetched + decoded all embeddings from SQLite per call. Now caches the full numpy matrix + metadata + conv_id→indices lookup. Saved ~900ms.
+
+### Discarded
+- Cache db_path() — negligible, benchmark already passes explicit paths
+- Batch decode (b''.join + single frombuffer) — within noise, decode isn't the bottleneck
+- Subquery+DISTINCT FTS5 recall — slower than GROUP BY + ORDER BY MIN(rank)
+- Reduce FTS5 recall from 80→40 — quality regressed (avg_top1 and avg_redundancy both worse)
+- Pre-normalize cached embeddings — within noise, ~1K candidates normalize fast enough
+
+### Profile after 4 keeps (baseline 14520ms → 2719ms)
+- FTS5 recall: 2327ms (69%) — the AND→OR fallback path is 48ms/query, 43/50 queries fall through to OR
+- Embedding search: 876ms (26%) — numpy on cached data, hard to optimize further
+- embed_one: 136ms (4%) — model inference, fixed cost
+- MMR: 12ms (0.4%) — fast enough
 
 ## Loop Protocol
 1. Edit code with an optimization idea
