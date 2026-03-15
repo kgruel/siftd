@@ -22,22 +22,36 @@ class EmbeddingBackend(Protocol):
         ...
 
 
+_backend_cache: dict[str | None, EmbeddingBackend] = {}
+
+
 def get_backend(preferred: str | None = None, verbose: bool = False) -> EmbeddingBackend:
     """Resolve an embedding backend using the fallback chain.
 
     Order: ollama → fastembed → api
     If preferred is set, try that backend first (fail if unavailable).
+
+    The resolved backend is cached by preferred key to avoid repeated
+    initialization (which may involve HTTP probes for ollama).
+    If a cached backend fails at call time, callers should call
+    invalidate_backend_cache() and retry.
     """
+    cached = _backend_cache.get(preferred)
+    if cached is not None:
+        return cached
+
     if preferred:
         backend = _try_backend(preferred, verbose)
         if backend is None:
             raise RuntimeError(f"Requested embedding backend '{preferred}' is not available")
+        _backend_cache[preferred] = backend
         return backend
 
     # Fallback chain
     for name in ("ollama", "fastembed"):
         backend = _try_backend(name, verbose)
         if backend is not None:
+            _backend_cache[preferred] = backend
             return backend
 
     raise RuntimeError(
@@ -46,6 +60,15 @@ def get_backend(preferred: str | None = None, verbose: bool = False) -> Embeddin
         "  - Ollama (running locally with an embedding model)\n"
         "  - fastembed: siftd install embed\n"
     )
+
+
+def invalidate_backend_cache() -> None:
+    """Clear the cached backend so the next get_backend() re-probes.
+
+    Call this when a cached backend fails at runtime (e.g., ollama
+    becomes unreachable in a long-lived process).
+    """
+    _backend_cache.clear()
 
 
 def _try_backend(name: str, verbose: bool) -> EmbeddingBackend | None:

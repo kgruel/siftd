@@ -339,49 +339,59 @@ def hybrid_search(
     if not embed_db.exists():
         raise FileNotFoundError(f"Embeddings database not found: {embed_db}")
 
-    # Build candidate filter set
-    candidate_ids = filter_conversations(db, workspace=workspace, model=model, since=since, before=before)
+    # Build candidate filter set and active exclusion set
+    excluded: set[str] = set()
+    candidate_ids: set[str] | None = None
 
-    # Exclude conversations from active sessions
     if exclude_active:
         excluded = get_active_conversation_ids(db)
-        if excluded:
-            if candidate_ids is not None:
-                candidate_ids = candidate_ids - excluded
-            else:
-                # Need to get all conversation IDs minus excluded
-                conn_tmp = open_database(db, read_only=True)
-                try:
-                    all_ids = {
-                        row["id"]
-                        for row in conn_tmp.execute("SELECT id FROM conversations").fetchall()
-                    }
-                finally:
-                    conn_tmp.close()
-                candidate_ids = all_ids - excluded
 
-    # Hybrid recall: FTS5 narrows candidates, embeddings rerank
-    if not embeddings_only:
-        main_conn = open_database(db, read_only=True)
-        try:
+    main_conn = open_database(db, read_only=True)
+    try:
+        candidate_ids = _filter_conversations_conn(
+            main_conn, workspace=workspace, model=model, since=since, before=before,
+        )
+
+        # Pre-filter active sessions when we have an explicit candidate set
+        if excluded and candidate_ids is not None:
+            candidate_ids = candidate_ids - excluded
+
+        # Hybrid recall: FTS5 narrows candidates, embeddings rerank
+        if not embeddings_only:
             fts5_ids, _fts5_mode = fts5_recall_conversations(main_conn, query, limit=recall)
-        finally:
-            main_conn.close()
 
-        if fts5_ids:
-            if candidate_ids is not None:
-                intersected = fts5_ids & candidate_ids
-                candidate_ids = intersected if intersected else candidate_ids
-            else:
-                candidate_ids = fts5_ids
+            if fts5_ids:
+                # Remove active sessions from FTS5 recall set
+                if excluded:
+                    fts5_ids = fts5_ids - excluded
+                if candidate_ids is not None:
+                    intersected = fts5_ids & candidate_ids
+                    candidate_ids = intersected if intersected else candidate_ids
+                else:
+                    candidate_ids = fts5_ids
+    finally:
+        main_conn.close()
 
     # Embed query and search
     use_mmr = rerank == "mmr"
     embed_backend = get_backend(preferred=backend, verbose=False)
-    query_embedding = embed_backend.embed_one(query)
+    try:
+        query_embedding = embed_backend.embed_one(query)
+    except (RuntimeError, ConnectionError, OSError):
+        # Cached backend may have become unavailable (e.g., ollama stopped).
+        # Invalidate and retry with fallback chain.
+        from siftd.embeddings import invalidate_backend_cache
+
+        invalidate_backend_cache()
+        embed_backend = get_backend(preferred=backend, verbose=False)
+        query_embedding = embed_backend.embed_one(query)
 
     # Fetch wider candidate set for MMR to select from
     search_limit = limit * 3 if use_mmr else limit
+
+    # Pass excluded conversations to search_similar for score masking —
+    # this guarantees they never appear in results regardless of chunk count.
+    exclude_from_search = excluded if (excluded and candidate_ids is None) else None
 
     embed_conn = open_embeddings_db(embed_db, read_only=True)
     try:
@@ -391,6 +401,7 @@ def hybrid_search(
             limit=search_limit,
             conversation_ids=candidate_ids,
             include_embeddings=use_mmr,
+            exclude_conversation_ids=exclude_from_search,
         )
     finally:
         embed_conn.close()
@@ -439,18 +450,18 @@ def hybrid_search(
         )
 
     # Enrich with metadata from main DB
-    main_conn = open_database(db, read_only=True)
+    main_conn_meta = open_database(db, read_only=True)
     try:
         conv_ids = list({r["conversation_id"] for r in raw_results})
         meta_rows = batched_in_query(
-            main_conn,
+            main_conn_meta,
             "SELECT c.id, c.started_at, w.path AS workspace FROM conversations c "
             "LEFT JOIN workspaces w ON w.id = c.workspace_id "
             "WHERE c.id IN ({placeholders})",
             conv_ids,
         )
     finally:
-        main_conn.close()
+        main_conn_meta.close()
     meta = {row["id"]: dict(row) for row in meta_rows}
 
     results = []
@@ -502,6 +513,31 @@ def filter_conversations(
     if not any([workspace, model, since, before, tags, all_tags, exclude_tags]):
         return None
 
+    conn = open_database(db, read_only=True)
+    try:
+        return _filter_conversations_conn(
+            conn, workspace=workspace, model=model, since=since, before=before,
+            tags=tags, all_tags=all_tags, exclude_tags=exclude_tags,
+        )
+    finally:
+        conn.close()
+
+
+def _filter_conversations_conn(
+    conn,
+    *,
+    workspace: str | None = None,
+    model: str | None = None,
+    since: str | None = None,
+    before: str | None = None,
+    tags: list[str] | None = None,
+    all_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+) -> set[str] | None:
+    """Internal: filter conversations using an existing connection."""
+    if not any([workspace, model, since, before, tags, all_tags, exclude_tags]):
+        return None
+
     wb = WhereBuilder()
     wb.workspace(workspace)
     wb.model(model)
@@ -511,21 +547,21 @@ def filter_conversations(
     wb.tags_all(all_tags)
     wb.tags_none(exclude_tags)
 
-    conn = open_database(db, read_only=True)
-    try:
-        sql = f"""
-            SELECT DISTINCT c.id
-            FROM conversations c
-            LEFT JOIN workspaces w ON w.id = c.workspace_id
-            LEFT JOIN responses r ON r.conversation_id = c.id
-            LEFT JOIN models m ON m.id = r.model_id
-            {wb.where_sql()}
-        """
+    sql = f"""
+        SELECT DISTINCT c.id
+        FROM conversations c
+        LEFT JOIN workspaces w ON w.id = c.workspace_id
+        LEFT JOIN responses r ON r.conversation_id = c.id
+        LEFT JOIN models m ON m.id = r.model_id
+        {wb.where_sql()}
+    """
 
-        rows = conn.execute(sql, wb.params).fetchall()
-    finally:
-        conn.close()
+    rows = conn.execute(sql, wb.params).fetchall()
     return {row["id"] for row in rows}
+
+
+_active_ids_cache: tuple[float, Path, set[str]] | None = None
+_ACTIVE_IDS_TTL = 5.0  # seconds — short enough to track session changes, long enough to help batch use
 
 
 def get_active_conversation_ids(db: Path) -> set[str]:
@@ -534,24 +570,39 @@ def get_active_conversation_ids(db: Path) -> set[str]:
     Uses list_active_sessions() from the peek module to find active JSONL files,
     then looks up which ingested conversations came from those file paths.
 
+    Results are cached for 30 seconds to avoid repeated filesystem scans
+    when called in tight loops (e.g., batch search).
+
     Args:
         db: Path to the main database.
 
     Returns:
         Set of conversation IDs to exclude (may be empty).
     """
+    import time as _time
+
+    global _active_ids_cache
+    now = _time.monotonic()
+    if _active_ids_cache is not None:
+        cached_time, cached_db, cached_ids = _active_ids_cache
+        if cached_db == db and (now - cached_time) < _ACTIVE_IDS_TTL:
+            return cached_ids
+
     try:
         from siftd.peek.scanner import list_active_sessions
     except ImportError:
+        _active_ids_cache = (now, db, set())
         return set()
 
     try:
         sessions = list_active_sessions(include_inactive=False)
     except Exception:
         # Filesystem scan failed — don't block search
+        _active_ids_cache = (now, db, set())
         return set()
 
     if not sessions:
+        _active_ids_cache = (now, db, set())
         return set()
 
     file_paths = [str(s.file_path) for s in sessions]
@@ -566,4 +617,6 @@ def get_active_conversation_ids(db: Path) -> set[str]:
     finally:
         conn.close()
 
-    return {row["conversation_id"] for row in rows}
+    result = {row["conversation_id"] for row in rows}
+    _active_ids_cache = (now, db, result)
+    return result

@@ -269,6 +269,8 @@ Content blocks in responses (text, thinking, tool references)
 | `conversation_id` | TEXT | REFERENCES conversations(id) ON DELETE CASCADE |  |
 | `ingested_at` | TEXT | NOT NULL |  |
 | `error` | TEXT |  | NULL = success, non-NULL = failure message |
+| `file_mtime` | REAL |  | st_mtime from os.stat() |
+| `file_size` | INTEGER |  | st_size from os.stat() |
 
 ## CONTENT-ADDRESSABLE STORAGE
 

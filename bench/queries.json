@@ -109,6 +109,50 @@
         "what problems did the first search implementation have",
         "lessons learned from search quality benchmarking"
       ]
+    },
+    {
+      "name": "exact-identifiers",
+      "description": "Exact code identifiers, pragmas, and constants — tests where FTS5 excels",
+      "queries": [
+        "batched_in_query",
+        "PRAGMA journal_mode",
+        "ADAPTER_INTERFACE_VERSION",
+        "cosine_similarity_batch",
+        "fts5_recall_conversations"
+      ]
+    },
+    {
+      "name": "error-patterns",
+      "description": "Error messages and stack traces — literal string matching territory",
+      "queries": [
+        "FileNotFoundError: Database not found",
+        "EmbeddingsNotAvailable",
+        "IndexCompatError embedding dimension mismatch",
+        "malformed FTS query fall through to OR rewrite",
+        "ValueError query embedding dimension does not match"
+      ]
+    },
+    {
+      "name": "mixed-keyword-semantic",
+      "description": "Natural language mixed with specific identifiers — hybrid territory",
+      "queries": [
+        "how does batched_in_query handle the 999 variable limit",
+        "why does open_database use immutable mode for read-only",
+        "what happens when cosine_similarity gets a zero vector",
+        "the WhereBuilder pattern for constructing SQL filters",
+        "how peek_scan extracts metadata from session files"
+      ]
+    },
+    {
+      "name": "single-token",
+      "description": "Single keyword queries — minimal context for embeddings to work with",
+      "queries": [
+        "ULID",
+        "WAL",
+        "FTS5",
+        "embeddings",
+        "ingestion"
+      ]
     }
   ]
 }

@@ -32,7 +32,7 @@ __all__ = [
 
 # Conditionally export embedding functionality when deps are available
 if embeddings_available():
-    from .base import EmbeddingBackend, get_backend
+    from .base import EmbeddingBackend, get_backend, invalidate_backend_cache
     from .indexer import SCHEMA_VERSION, IndexStats, build_embeddings_index
 
-    __all__ += ["EmbeddingBackend", "get_backend", "IndexStats", "build_embeddings_index", "SCHEMA_VERSION"]
+    __all__ += ["EmbeddingBackend", "get_backend", "invalidate_backend_cache", "IndexStats", "build_embeddings_index", "SCHEMA_VERSION"]

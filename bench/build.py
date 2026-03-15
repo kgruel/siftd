@@ -32,19 +32,37 @@ def extract_chunks(main_conn: sqlite3.Connection, params: dict) -> list[dict]:
     emb = TextEmbedding("BAAI/bge-small-en-v1.5")
     tokenizer = emb.model.tokenizer
 
-    return extract_exchange_window_chunks(
+    max_convs = params.get("max_convs", None)
+    if max_convs is not None:
+        max_convs = int(max_convs)
+
+    chunks = extract_exchange_window_chunks(
         main_conn,
         tokenizer,
         target_tokens=target_tokens,
         max_tokens=max_tokens,
         overlap_tokens=overlap_tokens,
     )
+    if max_convs is not None:
+        seen: list[str] = []
+        seen_set: set[str] = set()
+        for c in chunks:
+            cid = c["conversation_id"]
+            if cid not in seen_set:
+                seen_set.add(cid)
+                seen.append(cid)
+        keep = set(seen[:max_convs])
+        chunks = [c for c in chunks if c["conversation_id"] in keep]
+        print(f"  Limited to {min(max_convs, len(seen))} conversations → {len(chunks)} chunks")
+    return chunks
 
 
-def build(strategy_path: Path, output_path: Path, db_path: Path) -> None:
+def build(strategy_path: Path, output_path: Path, db_path: Path, *, max_convs: int | None = None) -> None:
     """Build embeddings DB from strategy."""
     strategy = json.loads(strategy_path.read_text())
-    params = strategy["params"]
+    params = dict(strategy["params"])
+    if max_convs is not None:
+        params["max_convs"] = max_convs
 
     # Extract chunks from main DB
     main_conn = sqlite3.connect(db_path)
@@ -94,6 +112,7 @@ def main():
     parser.add_argument("--strategy", type=Path, required=True, help="Path to strategy JSON file")
     parser.add_argument("--output", type=Path, default=None, help="Output embeddings DB path")
     parser.add_argument("--db", type=Path, default=None, help="Path to main siftd.db")
+    parser.add_argument("--max-convs", type=int, default=None, dest="max_convs", help="Limit to first N conversations (for quick testing)")
     args = parser.parse_args()
 
     if not args.strategy.exists():
@@ -115,7 +134,7 @@ def main():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output = data_dir() / f"embeddings_{name}_{timestamp}.db"
 
-    build(args.strategy, output, db)
+    build(args.strategy, output, db, max_convs=args.max_convs)
 
 
 if __name__ == "__main__":

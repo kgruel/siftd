@@ -13,11 +13,16 @@ from pathlib import Path
 import numpy as np
 
 from siftd.ids import ulid as _ulid
-from siftd.math import cosine_similarity_batch
-from siftd.storage.sql_helpers import batched_execute, batched_in_query
+from siftd.storage.sql_helpers import batched_execute
 
 
-def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
+class EmbeddingsConnection(sqlite3.Connection):
+    """Connection subclass that tracks whether it was opened as immutable."""
+
+    siftd_immutable: bool = False
+
+
+def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> EmbeddingsConnection:
     """Open embeddings database.
 
     Args:
@@ -35,9 +40,11 @@ def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> sqlite3.Con
         # Use immutable=1 to avoid creating WAL/SHM sidecars when the DB lives on
         # read-only media (or in sandboxed environments).
         uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
-        conn = sqlite3.connect(uri, uri=True)
+        conn = sqlite3.connect(uri, uri=True, factory=EmbeddingsConnection)
+        conn.siftd_immutable = True
     else:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, factory=EmbeddingsConnection)
+        conn.siftd_immutable = False
     conn.row_factory = sqlite3.Row
     if not read_only:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -110,6 +117,7 @@ def store_chunk(
     )
     if commit:
         conn.commit()
+    _embedding_cache.invalidate()
     return chunk_id
 
 
@@ -124,6 +132,7 @@ def clear_all(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE IF EXISTS chunks")
     _create_schema(conn)
     conn.commit()
+    _embedding_cache.invalidate()
 
 
 def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
@@ -142,16 +151,115 @@ def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
     return row["value"] if row else None
 
 
+class _EmbeddingCache:
+    """In-memory cache of all embedding data for fast repeated searches.
+
+    Holds pre-decoded numpy embeddings and row metadata so search_similar()
+    can skip SQLite fetch + blob decode on repeated calls.
+    """
+
+    def __init__(self):
+        self._db_path: str | None = None
+        self._db_mtime: float = 0.0
+        self._chunk_count: int = 0
+        self.embeddings: np.ndarray | None = None  # (n, dim) float32, raw
+        self.embeddings_normalized: np.ndarray | None = None  # (n, dim) L2-normalized
+        self.chunk_ids: list[str] = []
+        self.conversation_ids: list[str] = []
+        self.chunk_types: list[str] = []
+        self.texts: list[str] = []
+        self.source_ids_raw: list[str | None] = []
+        # Lookup: conversation_id -> list of row indices
+        self.conv_id_to_indices: dict[str, list[int]] = {}
+
+    def is_valid(self, db_path_hint: str) -> bool:
+        """Check if cache is loaded and current for this DB path.
+
+        Uses path identity + file mtime to detect external updates
+        (e.g., another process rebuilding the index). A single stat()
+        call (~0.01ms) instead of a SQL COUNT(*) query.
+        """
+        if self._db_path != db_path_hint or self.embeddings is None:
+            return False
+        try:
+            current_mtime = Path(db_path_hint).stat().st_mtime
+            return current_mtime == self._db_mtime
+        except OSError:
+            return False
+
+    def invalidate(self) -> None:
+        """Force cache reload on next access (e.g., after ingest)."""
+        self._db_path = None
+
+    def load(self, conn: sqlite3.Connection, db_path_hint: str) -> None:
+        """Load all chunk data from DB into memory."""
+        rows = conn.execute(
+            "SELECT id, conversation_id, chunk_type, text, embedding, source_ids FROM chunks"
+        ).fetchall()
+
+        if not rows:
+            self._db_path = db_path_hint
+            self._chunk_count = 0
+            try:
+                self._db_mtime = Path(db_path_hint).stat().st_mtime
+            except OSError:
+                self._db_mtime = 0.0
+            self.embeddings = np.empty((0, 0), dtype=np.float32)
+            self.embeddings_normalized = np.empty((0, 0), dtype=np.float32)
+            self.chunk_ids = []
+            self.conversation_ids = []
+            self.chunk_types = []
+            self.texts = []
+            self.source_ids_raw = []
+            self.conv_id_to_indices = {}
+            return
+
+        embedding_dim = len(rows[0]["embedding"]) // 4
+        blob_buffer = b"".join(row["embedding"] for row in rows)
+        self.embeddings = np.frombuffer(blob_buffer, dtype=np.float32).reshape(
+            len(rows), embedding_dim
+        ).copy()  # copy to own the memory after blob_buffer is freed
+
+        # Pre-normalize for fast cosine similarity (skip per-query normalization)
+        norms = np.linalg.norm(self.embeddings, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1, norms)
+        self.embeddings_normalized = self.embeddings / norms
+
+        self.chunk_ids = [row["id"] for row in rows]
+        self.conversation_ids = [row["conversation_id"] for row in rows]
+        self.chunk_types = [row["chunk_type"] for row in rows]
+        self.texts = [row["text"] for row in rows]
+        self.source_ids_raw = [row["source_ids"] for row in rows]
+
+        self.conv_id_to_indices = {}
+        for i, cid in enumerate(self.conversation_ids):
+            self.conv_id_to_indices.setdefault(cid, []).append(i)
+
+        self._db_path = db_path_hint
+        self._chunk_count = len(rows)
+        try:
+            self._db_mtime = Path(db_path_hint).stat().st_mtime
+        except OSError:
+            self._db_mtime = 0.0
+
+
+_embedding_cache = _EmbeddingCache()
+
+
 def search_similar(
     conn: sqlite3.Connection,
     query_embedding: list[float],
     limit: int = 10,
     conversation_ids: set[str] | None = None,
     include_embeddings: bool = False,
+    exclude_conversation_ids: set[str] | None = None,
 ) -> list[dict]:
     """Find chunks most similar to the query embedding (cosine similarity).
 
     If conversation_ids is provided, only search within those conversations.
+    If exclude_conversation_ids is provided, mask those conversations from
+    results (scores set to -inf before top-k selection, so they never appear
+    regardless of how many high-scoring chunks they have).
     If include_embeddings is True, each result dict includes an 'embedding' key
     with the decoded float list (used by MMR reranking).
     Returns list of dicts: conversation_id, chunk_type, text, score, source_ids.
@@ -159,24 +267,30 @@ def search_similar(
     if conversation_ids is not None and not conversation_ids:
         return []
 
-    if conversation_ids is not None:
-        rows = batched_in_query(
-            conn,
-            "SELECT id, conversation_id, chunk_type, text, embedding, source_ids FROM chunks WHERE conversation_id IN ({placeholders})",
-            conversation_ids,
-        )
-    else:
-        rows = conn.execute("SELECT id, conversation_id, chunk_type, text, embedding, source_ids FROM chunks").fetchall()
+    # Determine DB identity for cache validation
+    db_path_hint = conn.execute("PRAGMA database_list").fetchone()[2] or ""
 
-    if not rows:
+    cache = _embedding_cache
+    if not cache.is_valid(db_path_hint):
+        # Immutable connections (mode=ro&immutable=1) are pinned to the snapshot
+        # at open time. If the DB was modified externally, the caller's connection
+        # still sees old data. Reopen a fresh connection for the reload.
+        # Writable connections always see their own uncommitted writes.
+        is_immutable = getattr(conn, "siftd_immutable", False)
+
+        if is_immutable and db_path_hint:
+            reload_conn = open_embeddings_db(Path(db_path_hint), read_only=True)
+            try:
+                cache.load(reload_conn, db_path_hint)
+            finally:
+                reload_conn.close()
+        else:
+            cache.load(conn, db_path_hint)
+
+    if cache.embeddings is None or cache.embeddings_normalized is None or cache._chunk_count == 0:
         return []
 
-    # Batch decode embeddings into numpy array
-    embedding_dim = len(rows[0]["embedding"]) // 4  # float32 = 4 bytes
-    embeddings_array = np.empty((len(rows), embedding_dim), dtype=np.float32)
-
-    for i, row in enumerate(rows):
-        embeddings_array[i] = _decode_embedding_numpy(row["embedding"])
+    embedding_dim = cache.embeddings.shape[1]
 
     # Validate query embedding dimension matches index
     if len(query_embedding) != embedding_dim:
@@ -185,34 +299,73 @@ def search_similar(
             f"Rebuild the index with 'siftd search --rebuild' using the same embedding backend."
         )
 
-    # Compute all similarities at once
-    query_array = np.asarray(query_embedding, dtype=np.float32)
-    scores = cosine_similarity_batch(query_array, embeddings_array)
+    # Filter to candidate conversation IDs if provided
+    if conversation_ids is not None:
+        indices = []
+        for cid in conversation_ids:
+            indices.extend(cache.conv_id_to_indices.get(cid, []))
+        if not indices:
+            return []
+        indices_arr = np.array(indices, dtype=np.intp)
+        candidate_norm = cache.embeddings_normalized[indices_arr]
+    else:
+        indices_arr = None
+        candidate_norm = cache.embeddings_normalized
 
-    # Build results with scores and breakdown for explainability
+    # Compute similarities using pre-normalized embeddings (only normalize query)
+    query_array = np.asarray(query_embedding, dtype=np.float32)
+    query_norm = np.linalg.norm(query_array)
+    if query_norm == 0:
+        scores = np.zeros(candidate_norm.shape[0], dtype=np.float32)
+    else:
+        scores = candidate_norm @ (query_array / query_norm)
+
+    # Mask excluded conversations so they never appear in results
+    if exclude_conversation_ids:
+        for local_i in range(len(scores)):
+            global_i = int(indices_arr[local_i]) if indices_arr is not None else local_i
+            if cache.conversation_ids[global_i] in exclude_conversation_ids:
+                scores[local_i] = -np.inf
+
+    # Find top-k using argpartition (O(n) vs O(n log n) for full sort)
+    n = len(scores)
+    k = min(limit, n)
+    if n <= limit:
+        top_local = np.argsort(-scores)
+    else:
+        partitioned = np.argpartition(-scores, k)[:k]
+        top_local = partitioned[np.argsort(-scores[partitioned])]
+
+    # Build results only for top-k, skipping any masked (-inf) scores
     from siftd.search import ScoreBreakdown
 
     results = []
-    for i, row in enumerate(rows):
-        source_ids_val = json.loads(row["source_ids"]) if row["source_ids"] else []
-        embedding_sim = float(scores[i])
+    for local_idx in top_local:
+        local_i = int(local_idx)
+        score_val = float(scores[local_i])
+        if score_val == float("-inf"):
+            continue  # excluded conversation leaked through argpartition
+
+        # Map back to global index
+        global_i = int(indices_arr[local_i]) if indices_arr is not None else local_i
+
+        raw_source = cache.source_ids_raw[global_i]
+        source_ids_val = json.loads(raw_source) if raw_source else []
+        embedding_sim = score_val
         result = {
-            "chunk_id": row["id"],
-            "conversation_id": row["conversation_id"],
-            "chunk_type": row["chunk_type"],
-            "text": row["text"],
+            "chunk_id": cache.chunk_ids[global_i],
+            "conversation_id": cache.conversation_ids[global_i],
+            "chunk_type": cache.chunk_types[global_i],
+            "text": cache.texts[global_i],
             "score": embedding_sim,
             "source_ids": source_ids_val,
             "breakdown": ScoreBreakdown(embedding_sim=embedding_sim),
         }
         if include_embeddings:
-            result["embedding"] = embeddings_array[i]
+            result["embedding"] = cache.embeddings[global_i]
         results.append(result)
 
-    # Sort by score descending, with chunk_id as deterministic tie-breaker
-    # (ULIDs are lexicographically sortable by creation time, so older chunks win ties)
-    results.sort(key=lambda r: (-r["score"], r["chunk_id"]))
-    return results[:limit]
+    return results
 
 
 def chunk_count(conn: sqlite3.Connection) -> int:
@@ -353,4 +506,6 @@ def prune_orphaned_chunks(
         orphaned_ids,
     )
     embeddings_conn.commit()
+    if deleted:
+        _embedding_cache.invalidate()
     return deleted

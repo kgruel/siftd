@@ -1,0 +1,11 @@
+{
+  "name": "small-chunks-96",
+  "description": "Smaller exchange windows at 96 tokens for tighter semantic focus",
+  "goal": "Test target_tokens=96 to see if even smaller chunks improve avg_top1",
+  "params": {
+    "strategy": "exchange-window",
+    "target_tokens": 96,
+    "max_tokens": 192,
+    "overlap_tokens": 12
+  }
+}
