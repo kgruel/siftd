@@ -78,31 +78,26 @@ def _can_delegate_to_serve(args, *, db: Path, embed_db: Path) -> bool:
     if not _serve_delegation_enabled():
         return False
 
+    try:
+        from siftd.config import get_config
+    except Exception:
+        get_config = None  # type: ignore[assignment]
+
     base_url = os.environ.get("SIFTD_SERVE_URL")
     if base_url is None:
-        try:
-            from siftd.config import get_config
-
+        if get_config is not None:
             base_url = get_config("serve.url")
-        except Exception:
-            base_url = None
     base_url = base_url or "http://127.0.0.1:8484"
 
     # Only auto-delegate to loopback to keep the cold-path probe bounded (<10ms).
     if not _is_loopback_url(base_url):
         return False
 
-    # Serve DB is chosen at startup; if the CLI uses a non-default DB, assume mismatch.
-    from siftd.paths import db_path as default_db_path
-
+    # Serve DB is chosen at startup; avoid delegating when the CLI points at a
+    # non-default DB unless serve.db explicitly matches.
     serve_db = None
-    try:
-        from siftd.config import get_config
-
+    if get_config is not None:
         serve_db = get_config("serve.db")
-    except Exception:
-        serve_db = None
-
     if serve_db:
         try:
             if Path(serve_db).expanduser() != db:
@@ -110,8 +105,13 @@ def _can_delegate_to_serve(args, *, db: Path, embed_db: Path) -> bool:
         except Exception:
             return False
     else:
-        if db != default_db_path():
-            return False
+        # No explicit serve.db config: only delegate when we're using the default-resolved DB.
+        # If the user explicitly set --db, require it to match the default path.
+        if getattr(args, "db", None):
+            from siftd.paths import db_path as default_db_path
+
+            if db != default_db_path():
+                return False
 
     # Embeddings DB overrides are not supported over HTTP.
     if getattr(args, "embed_db", None):
@@ -142,7 +142,7 @@ def _delegate_search_via_serve(
     from siftd.serve.client import search as serve_search
 
     try:
-        probe_health(base_url=base_url, timeout_s=0.008)
+        probe_health(base_url=base_url)
     except Exception:
         return None
 

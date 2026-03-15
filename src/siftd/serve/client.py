@@ -84,7 +84,7 @@ def _get_json(
     return body
 
 
-def probe_health(*, base_url: str, timeout_s: float = 0.008) -> dict[str, Any]:
+def probe_health(*, base_url: str, timeout_s: float = 0.02) -> dict[str, Any]:
     """Return health payload if siftd-serve is running, else raise ServeUnavailable."""
     body = _get_json(base_url, "/v1/health", timeout_s=timeout_s)
     if body.get("status") != "ok" or body.get("service") != "siftd":
@@ -100,4 +100,3 @@ def search(
 ) -> dict[str, Any]:
     """Call the serve search endpoint and return parsed JSON body."""
     return _get_json(base_url, "/v1/search", params=params, timeout_s=timeout_s)
-
