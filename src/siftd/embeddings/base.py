@@ -33,6 +33,8 @@ def get_backend(preferred: str | None = None, verbose: bool = False) -> Embeddin
 
     The resolved backend is cached by preferred key to avoid repeated
     initialization (which may involve HTTP probes for ollama).
+    If a cached backend fails at call time, callers should call
+    invalidate_backend_cache() and retry.
     """
     cached = _backend_cache.get(preferred)
     if cached is not None:
@@ -58,6 +60,15 @@ def get_backend(preferred: str | None = None, verbose: bool = False) -> Embeddin
         "  - Ollama (running locally with an embedding model)\n"
         "  - fastembed: siftd install embed\n"
     )
+
+
+def invalidate_backend_cache() -> None:
+    """Clear the cached backend so the next get_backend() re-probes.
+
+    Call this when a cached backend fails at runtime (e.g., ollama
+    becomes unreachable in a long-lived process).
+    """
+    _backend_cache.clear()
 
 
 def _try_backend(name: str, verbose: bool) -> EmbeddingBackend | None:

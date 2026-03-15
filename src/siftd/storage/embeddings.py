@@ -109,6 +109,7 @@ def store_chunk(
     )
     if commit:
         conn.commit()
+    _embedding_cache.invalidate()
     return chunk_id
 
 
@@ -123,6 +124,7 @@ def clear_all(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE IF EXISTS chunks")
     _create_schema(conn)
     conn.commit()
+    _embedding_cache.invalidate()
 
 
 def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
@@ -452,4 +454,6 @@ def prune_orphaned_chunks(
         orphaned_ids,
     )
     embeddings_conn.commit()
+    if deleted:
+        _embedding_cache.invalidate()
     return deleted

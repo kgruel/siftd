@@ -343,24 +343,27 @@ def hybrid_search(
     excluded: set[str] = set()
     candidate_ids: set[str] | None = None
 
+    if exclude_active:
+        excluded = get_active_conversation_ids(db)
+
     main_conn = open_database(db, read_only=True)
     try:
         candidate_ids = _filter_conversations_conn(
             main_conn, workspace=workspace, model=model, since=since, before=before,
         )
 
-        if exclude_active:
-            excluded = get_active_conversation_ids(db)
-            # Only pre-filter if there are explicit candidate_ids to narrow
-            # (avoids expensive all_ids - excluded when searching all embeddings)
-            if excluded and candidate_ids is not None:
-                candidate_ids = candidate_ids - excluded
+        # Pre-filter active sessions when we have an explicit candidate set
+        if excluded and candidate_ids is not None:
+            candidate_ids = candidate_ids - excluded
 
         # Hybrid recall: FTS5 narrows candidates, embeddings rerank
         if not embeddings_only:
             fts5_ids, _fts5_mode = fts5_recall_conversations(main_conn, query, limit=recall)
 
             if fts5_ids:
+                # Remove active sessions from FTS5 recall set
+                if excluded:
+                    fts5_ids = fts5_ids - excluded
                 if candidate_ids is not None:
                     intersected = fts5_ids & candidate_ids
                     candidate_ids = intersected if intersected else candidate_ids
@@ -372,14 +375,24 @@ def hybrid_search(
     # Embed query and search
     use_mmr = rerank == "mmr"
     embed_backend = get_backend(preferred=backend, verbose=False)
-    query_embedding = embed_backend.embed_one(query)
+    try:
+        query_embedding = embed_backend.embed_one(query)
+    except (RuntimeError, ConnectionError, OSError):
+        # Cached backend may have become unavailable (e.g., ollama stopped).
+        # Invalidate and retry with fallback chain.
+        from siftd.embeddings import invalidate_backend_cache
 
-    # Fetch wider candidate set for MMR to select from
-    # Request extra results when post-filtering active sessions
+        invalidate_backend_cache()
+        embed_backend = get_backend(preferred=backend, verbose=False)
+        query_embedding = embed_backend.embed_one(query)
+
+    # Fetch wider candidate set for MMR to select from.
+    # When post-filtering active sessions (no pre-filter possible), request
+    # enough extra results to fill the limit after filtering.
     post_filter_active = bool(excluded) and candidate_ids is None
     search_limit = limit * 3 if use_mmr else limit
     if post_filter_active:
-        search_limit += len(excluded) * 3  # headroom for excluded results
+        search_limit = max(search_limit, limit * 5)
 
     embed_conn = open_embeddings_db(embed_db, read_only=True)
     try:

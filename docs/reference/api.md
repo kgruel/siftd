@@ -962,6 +962,7 @@ A registered sync remote.
 | `host` | `str \| None` |  |
 | `path` | `str` |  |
 | `last_push` | `str \| None` |  |
+| `last_pull` | `str \| None` |  |
 
 ### Exceptions
 
@@ -1147,6 +1148,26 @@ def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..
 **Raises:**
 
 - `FileNotFoundError`: If either database does not exist.
+
+### receive_database
+
+Create or merge a source database into the target.
+
+```python
+def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = ...) -> dict
+```
+
+**Parameters:**
+
+- `source_path`: Path to the incoming database (e.g. a slice).
+- `target_db`: Path to the target siftd database.
+
+**Returns:** Dict with ``status`` ("created" or "merged") and merge stats.
+
+**Raises:**
+
+- `ValueError`: If source is not a valid SQLite database.
+- `FileNotFoundError`: If source does not exist.
 
 ### slice_database
 
