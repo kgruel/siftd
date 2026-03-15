@@ -264,13 +264,25 @@ def search_similar(
 
     cache = _embedding_cache
     if not cache.is_valid(db_path_hint):
-        # Reload from the caller's connection. This is correct for:
-        # - Writable connections (see their own uncommitted writes)
-        # - Fresh immutable connections (hybrid_search opens per call, so the
-        #   snapshot reflects the DB state at open time)
-        # Long-lived immutable readers that outlive external DB updates should
-        # close and reopen the connection to pick up changes.
-        cache.load(conn, db_path_hint)
+        # Detect read-only connections: they may be immutable and pinned to a
+        # stale snapshot, so we must reopen to see external commits.
+        # Writable connections always see their own uncommitted data.
+        is_readonly = True
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("ROLLBACK")
+            is_readonly = False
+        except sqlite3.OperationalError:
+            pass
+
+        if is_readonly and db_path_hint:
+            reload_conn = open_embeddings_db(Path(db_path_hint), read_only=True)
+            try:
+                cache.load(reload_conn, db_path_hint)
+            finally:
+                reload_conn.close()
+        else:
+            cache.load(conn, db_path_hint)
 
     if cache.embeddings is None or cache.embeddings_normalized is None or cache._chunk_count == 0:
         return []
