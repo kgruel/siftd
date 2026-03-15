@@ -1,0 +1,11 @@
+{
+  "name": "small-chunks",
+  "description": "Smaller exchange windows for more focused semantic matching",
+  "goal": "target_tokens=128 for tighter semantic focus, reducing noise per chunk",
+  "params": {
+    "strategy": "exchange-window",
+    "target_tokens": 128,
+    "max_tokens": 256,
+    "overlap_tokens": 15
+  }
+}
