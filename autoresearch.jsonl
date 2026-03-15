@@ -4,3 +4,6 @@
 {"run":3,"commit":"-------","metric":14561.5,"metrics":{"avg_top1":0.757933,"avg_redundancy":0.11},"status":"discard","description":"Batch decode + argpartition in search_similar — within noise","timestamp":1773599186526,"segment":0}
 {"run":4,"commit":"f079642","metric":8730.2,"metrics":{"avg_top1":0.757933,"avg_redundancy":0.11},"status":"keep","description":"Cache active session exclusion set with 30s TTL","timestamp":1773599290821,"segment":0}
 {"run":5,"commit":"a90af23","metric":8308.0,"metrics":{"avg_top1":0.757933,"avg_redundancy":0.11},"status":"keep","description":"Share single main DB connection within hybrid_search()","timestamp":1773599388834,"segment":0}
+{"run":6,"commit":"3276e99","metric":3847.2,"metrics":{"avg_top1":0.757933,"avg_redundancy":0.11},"status":"keep","description":"Cache resolved embedding backend to avoid repeated HTTP probing","timestamp":1773599577198,"segment":0}
+{"run":7,"commit":"-------","metric":4942.7,"metrics":{"avg_top1":0.760795,"avg_redundancy":0.108},"status":"discard","description":"Subquery+DISTINCT FTS5 recall — slower than GROUP BY","timestamp":1773599673593,"segment":0}
+{"run":8,"commit":"-------","metric":3281.6,"metrics":{"avg_top1":0.753346,"avg_redundancy":0.128},"status":"discard","description":"Reduce FTS5 recall from 80 to 40 — quality regressed","timestamp":1773599700435,"segment":0}
