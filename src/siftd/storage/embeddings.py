@@ -264,14 +264,13 @@ def search_similar(
 
     cache = _embedding_cache
     if not cache.is_valid(db_path_hint):
-        # The passed connection may be immutable (mode=ro&immutable=1) and pinned
-        # to a stale snapshot. Open a fresh connection for the reload so we pick
-        # up any externally committed chunks.
-        reload_conn = open_embeddings_db(Path(db_path_hint), read_only=True)
-        try:
-            cache.load(reload_conn, db_path_hint)
-        finally:
-            reload_conn.close()
+        # Reload from the caller's connection. This is correct for:
+        # - Writable connections (see their own uncommitted writes)
+        # - Fresh immutable connections (hybrid_search opens per call, so the
+        #   snapshot reflects the DB state at open time)
+        # Long-lived immutable readers that outlive external DB updates should
+        # close and reopen the connection to pick up changes.
+        cache.load(conn, db_path_hint)
 
     if cache.embeddings is None or cache.embeddings_normalized is None or cache._chunk_count == 0:
         return []
