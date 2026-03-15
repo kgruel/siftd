@@ -339,27 +339,22 @@ def hybrid_search(
     if not embed_db.exists():
         raise FileNotFoundError(f"Embeddings database not found: {embed_db}")
 
-    # Open main DB once and share across all steps
+    # Build candidate filter set and active exclusion set
+    excluded: set[str] = set()
+    candidate_ids: set[str] | None = None
+
     main_conn = open_database(db, read_only=True)
     try:
-        # Build candidate filter set
         candidate_ids = _filter_conversations_conn(
             main_conn, workspace=workspace, model=model, since=since, before=before,
         )
 
-        # Exclude conversations from active sessions
         if exclude_active:
             excluded = get_active_conversation_ids(db)
-            if excluded:
-                if candidate_ids is not None:
-                    candidate_ids = candidate_ids - excluded
-                else:
-                    # Need to get all conversation IDs minus excluded
-                    all_ids = {
-                        row["id"]
-                        for row in main_conn.execute("SELECT id FROM conversations").fetchall()
-                    }
-                    candidate_ids = all_ids - excluded
+            # Only pre-filter if there are explicit candidate_ids to narrow
+            # (avoids expensive all_ids - excluded when searching all embeddings)
+            if excluded and candidate_ids is not None:
+                candidate_ids = candidate_ids - excluded
 
         # Hybrid recall: FTS5 narrows candidates, embeddings rerank
         if not embeddings_only:
@@ -380,7 +375,11 @@ def hybrid_search(
     query_embedding = embed_backend.embed_one(query)
 
     # Fetch wider candidate set for MMR to select from
+    # Request extra results when post-filtering active sessions
+    post_filter_active = bool(excluded) and candidate_ids is None
     search_limit = limit * 3 if use_mmr else limit
+    if post_filter_active:
+        search_limit += len(excluded) * 3  # headroom for excluded results
 
     embed_conn = open_embeddings_db(embed_db, read_only=True)
     try:
@@ -393,6 +392,10 @@ def hybrid_search(
         )
     finally:
         embed_conn.close()
+
+    # Post-filter active sessions when we searched all embeddings
+    if post_filter_active and raw_results:
+        raw_results = [r for r in raw_results if r["conversation_id"] not in excluded]
 
     if not raw_results:
         return []

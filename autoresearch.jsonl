@@ -11,3 +11,4 @@
 {"run":10,"commit":"-------","metric":2754.1,"metrics":{"avg_top1":0.757933,"avg_redundancy":0.11},"status":"discard","description":"Pre-normalize cached embeddings — within noise","timestamp":1773599953234,"segment":0}
 {"run":11,"commit":"-------","metric":3401.4,"metrics":{"avg_top1":0.762727,"avg_redundancy":0.106},"status":"discard","description":"OR-first FTS5 recall — no speed improvement","timestamp":1773600026937,"segment":0}
 {"run":12,"commit":"-------","metric":3249.5,"metrics":{"avg_top1":0.727849,"avg_redundancy":0.2673},"status":"discard","description":"Lower AND threshold to 1 — massive quality regression","timestamp":1773600056040,"segment":0}
+{"run":13,"commit":"2993720","metric":1329.4,"metrics":{"avg_top1":0.768268,"avg_redundancy":0.104},"status":"keep","description":"Default to embeddings-only search (skip FTS5 recall)","timestamp":1773600158266,"segment":0}
