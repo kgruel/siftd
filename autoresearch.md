@@ -47,11 +47,25 @@ Minimize total wall-clock time to run 50 benchmark queries through `hybrid_searc
 - Reduce FTS5 recall from 80→40 — quality regressed (avg_top1 and avg_redundancy both worse)
 - Pre-normalize cached embeddings — within noise, ~1K candidates normalize fast enough
 
-### Profile after 4 keeps (baseline 14520ms → 2719ms)
-- FTS5 recall: 2327ms (69%) — the AND→OR fallback path is 48ms/query, 43/50 queries fall through to OR
-- Embedding search: 876ms (26%) — numpy on cached data, hard to optimize further
-- embed_one: 136ms (4%) — model inference, fixed cost
-- MMR: 12ms (0.4%) — fast enough
+5. **Default to embeddings-only search** — FTS5 recall was both slow (2300ms) AND hurt quality. Pure embedding search has better avg_top1 (0.768 vs 0.758) and better diversity.
+6. **Post-filter active sessions** — Instead of pre-computing `all_ids - excluded` (9968 IDs → 37MB numpy copy), search unfiltered and post-filter the 30 results. Saved ~6ms/query.
+7. **Path-identity cache check** — Replaced per-call COUNT(*) with simple string comparison.
+8. **Pre-normalize cached embeddings** — Normalize all 24K embeddings once at cache load. Per-query: just normalize the query (384 floats) + matrix-vector dot product. Saved ~5ms/query.
+
+### Discarded
+- Cache db_path() — benchmark passes explicit paths
+- Batch blob decode — decode isn't the bottleneck
+- Subquery+DISTINCT FTS5 — slower than GROUP BY
+- Reduce FTS5 recall 80→40 — quality regressed
+- Pre-normalize on 1K subset — within noise at that scale
+- OR-first FTS5 — no improvement, OR queries expensive regardless of order
+- Lower AND threshold to 1 — quality collapsed (narrow recall)
+
+### Profile after all keeps (baseline 14520ms → 274ms, 5.5ms/query)
+- Embedding search: ~4ms (73%) — pre-normalized dot product on 24K cached vectors
+- embed_one: ~2.5ms (22%) — model inference (fastembed), fixed cost
+- MMR: ~0.2ms (4%) — negligible
+- Everything else: <0.1ms
 
 ## Loop Protocol
 1. Edit code with an optimization idea

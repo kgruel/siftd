@@ -23,7 +23,7 @@ if not ok:
     sys.exit(1)
 "
 
-# Benchmark: run 50 queries through hybrid_search with MMR
+# Benchmark: run all queries through hybrid_search with MMR
 .venv/bin/python3 -c "
 import json, sys, time
 sys.path.insert(0, 'src')
@@ -39,7 +39,8 @@ with open('bench/queries.json') as f:
     data = json.load(f)
 
 queries = [q for g in data['groups'] for q in g['queries']]
-assert len(queries) == 50, f'Expected 50 queries, got {len(queries)}'
+n = len(queries)
+print(f'Running {n} queries across {len(data[\"groups\"])} groups', file=sys.stderr)
 
 # Warm up: one query to load model + caches
 hybrid_search(queries[0], db_path=db, embed_db_path=embed_db, rerank='mmr')
@@ -67,4 +68,5 @@ avg_redundancy = round(sum(redundancies) / len(redundancies), 4) if redundancies
 print(f'METRIC total_ms={total_ms}')
 print(f'METRIC avg_top1={avg_top1}')
 print(f'METRIC avg_redundancy={avg_redundancy}')
+print(f'METRIC query_count={n}')
 "

@@ -14,3 +14,6 @@
 {"run":13,"commit":"2993720","metric":1329.4,"metrics":{"avg_top1":0.768268,"avg_redundancy":0.104},"status":"keep","description":"Default to embeddings-only search (skip FTS5 recall)","timestamp":1773600158266,"segment":0}
 {"run":14,"commit":"2a89359","metric":607.9,"metrics":{"avg_top1":0.768334,"avg_redundancy":0.104},"status":"keep","description":"Post-filter active sessions instead of pre-filtering embeddings","timestamp":1773600290928,"segment":0}
 {"run":15,"commit":"567aa1b","metric":613.3,"metrics":{"avg_top1":0.768334,"avg_redundancy":0.104},"status":"keep","description":"Replace COUNT(*) cache check with path-identity + invalidate()","timestamp":1773600394153,"segment":0}
+{"run":16,"commit":"df4cddf","metric":273.7,"metrics":{"avg_top1":0.768334,"avg_redundancy":0.104},"status":"keep","description":"Pre-normalize cached embeddings for O(1) per-query normalization","timestamp":1773600488889,"segment":0}
+{"type":"config","name":"hybrid-search-latency-70q","metricName":"total_ms","metricUnit":"ms","bestDirection":"lower"}
+{"run":17,"commit":"df4cddf","metric":384.3,"metrics":{"avg_top1":0.763322,"avg_redundancy":0.1057,"query_count":70},"status":"baseline","description":"New baseline: 70 queries (added exact-identifiers, error-patterns, mixed, single-token groups)","timestamp":1773602808494,"segment":1}
