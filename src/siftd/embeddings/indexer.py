@@ -113,7 +113,12 @@ def build_embeddings_index(
     )
     new_conv_ids = {c["conversation_id"] for c in chunks}
 
-    tool_summary_targets = new_conv_ids | missing_tool_summaries
+    # Also include conversations that have tool calls but produced no exchange
+    # chunks (e.g. tool-only sessions with no prompt/response text).
+    all_with_tool_calls = _all_conversation_ids_with_tool_calls(main_conn)
+    tool_only_unindexed = all_with_tool_calls - already_indexed - new_conv_ids
+
+    tool_summary_targets = new_conv_ids | missing_tool_summaries | tool_only_unindexed
     tool_summary_targets = _filter_conversations_with_tool_calls(main_conn, tool_summary_targets)
     tool_chunks: list[dict] = []
     if tool_summary_targets:
@@ -202,6 +207,12 @@ def _count_tokens(tokenizer, text: str) -> int:
     """Count tokens excluding special tokens."""
     ids = tokenizer.encode(text).ids
     return max(0, len(ids) - 2)
+
+
+def _all_conversation_ids_with_tool_calls(conn) -> set[str]:
+    """Return all conversation_ids that have at least one tool_call row."""
+    rows = conn.execute("SELECT DISTINCT conversation_id FROM tool_calls").fetchall()
+    return {r[0] for r in rows}
 
 
 def _filter_conversations_with_tool_calls(conn, conversation_ids: set[str]) -> set[str]:

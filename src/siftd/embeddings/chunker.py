@@ -269,6 +269,25 @@ def _window_exchanges(
     return windows
 
 
+# --- Tool category matching helpers ---
+
+_FILE_NAMES = frozenset({"file.read", "file.edit", "file.write", "file.glob"})
+_SHELL_NAMES = frozenset({"shell.execute"})
+_SEARCH_NAMES = frozenset({"search.grep"})
+
+
+def _is_file_tool(tool_name: str, category: str) -> bool:
+    return tool_name in _FILE_NAMES or category == "file"
+
+
+def _is_shell_tool(tool_name: str, category: str) -> bool:
+    return tool_name in _SHELL_NAMES or category == "shell"
+
+
+def _is_search_tool(tool_name: str, category: str) -> bool:
+    return tool_name in _SEARCH_NAMES or category == "search"
+
+
 def extract_tool_summary_chunks(
     main_conn: sqlite3.Connection,
     *,
@@ -295,7 +314,8 @@ def extract_tool_summary_chunks(
         params = tuple(conversation_ids)
 
     rows = main_conn.execute(
-        f"""SELECT tc.conversation_id, t.name AS tool_name, tc.input, tc.status
+        f"""SELECT tc.conversation_id, t.name AS tool_name, t.category,
+                   tc.input, tc.status
             FROM tool_calls tc
             LEFT JOIN tools t ON tc.tool_id = t.id
             {where}
@@ -303,24 +323,27 @@ def extract_tool_summary_chunks(
         params,
     ).fetchall()
 
-    conv_tool_calls: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+    # Each entry: (tool_name, category, raw_input, status)
+    conv_tool_calls: dict[str, list[tuple[str, str, str, str]]] = defaultdict(list)
     for row in rows:
-        conv_tool_calls[row[0]].append((row[1] or "unknown", row[2] or "", row[3] or ""))
+        conv_tool_calls[row[0]].append(
+            (row[1] or "unknown", row[2] or "", row[3] or "", row[4] or "")
+        )
 
     chunks: list[dict] = []
     for conv_id, calls in conv_tool_calls.items():
         lines: list[str] = ["Tools used in this conversation:"]
 
         tool_counts: dict[str, int] = {}
-        for tool_name, _, _ in calls:
+        for tool_name, _, _, _ in calls:
             tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
         for tool_name, count in sorted(tool_counts.items(), key=lambda x: -x[1]):
             lines.append(f"- {tool_name}: {count} calls")
 
         file_paths: list[str] = []
         seen_paths: set[str] = set()
-        for tool_name, raw_input, _ in calls:
-            if tool_name in ("file.read", "file.edit", "file.write", "file.glob"):
+        for tool_name, category, raw_input, _ in calls:
+            if _is_file_tool(tool_name, category):
                 try:
                     inp = _json.loads(raw_input)
                     path = inp.get("file_path") or inp.get("pattern") or ""
@@ -340,8 +363,8 @@ def extract_tool_summary_chunks(
         seen_descs: set[str] = set()
         grep_patterns: list[str] = []
         seen_patterns: set[str] = set()
-        for tool_name, raw_input, _ in calls:
-            if tool_name == "shell.execute":
+        for tool_name, category, raw_input, _ in calls:
+            if _is_shell_tool(tool_name, category):
                 try:
                     inp = _json.loads(raw_input)
                     cmd = inp.get("command", "").strip()
@@ -356,7 +379,7 @@ def extract_tool_summary_chunks(
                         cmd_descriptions.append(desc)
                 except (ValueError, TypeError):
                     pass
-            elif tool_name == "search.grep":
+            elif _is_search_tool(tool_name, category):
                 try:
                     inp = _json.loads(raw_input)
                     pat = inp.get("pattern", "") or inp.get("query", "")
@@ -373,7 +396,7 @@ def extract_tool_summary_chunks(
         if grep_patterns:
             lines.append(f"Grep patterns: {', '.join(grep_patterns[:10])}")
 
-        error_count = sum(1 for _, _, status in calls if status == "error")
+        error_count = sum(1 for _, _, _, status in calls if status == "error")
         if error_count:
             lines.append(f"Tool errors: {error_count}")
 

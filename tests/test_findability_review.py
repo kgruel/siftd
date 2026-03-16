@@ -123,7 +123,7 @@ def test_extract_tool_summary_chunks_smoke():
     try:
         conn.executescript(
             """
-            CREATE TABLE tools (id TEXT PRIMARY KEY, name TEXT);
+            CREATE TABLE tools (id TEXT PRIMARY KEY, name TEXT, category TEXT);
             CREATE TABLE tool_calls (
                 conversation_id TEXT NOT NULL,
                 tool_id TEXT,
@@ -134,11 +134,11 @@ def test_extract_tool_summary_chunks_smoke():
             """
         )
         conn.executemany(
-            "INSERT INTO tools (id, name) VALUES (?, ?)",
+            "INSERT INTO tools (id, name, category) VALUES (?, ?, ?)",
             [
-                ("t_read", "file.read"),
-                ("t_shell", "shell.execute"),
-                ("t_grep", "search.grep"),
+                ("t_read", "file.read", "file"),
+                ("t_shell", "shell.execute", "shell"),
+                ("t_grep", "search.grep", "search"),
             ],
         )
         conn.executemany(
@@ -167,6 +167,55 @@ def test_extract_tool_summary_chunks_smoke():
         assert "Shell descriptions: Check working tree" in text
         assert "Grep patterns: TODO" in text
         assert "Tool errors: 1" in text
+    finally:
+        conn.close()
+
+
+def test_extract_tool_summary_chunks_raw_names_use_category():
+    """Non-canonical tool names still produce hints when category is set."""
+    from siftd.embeddings.chunker import extract_tool_summary_chunks
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE tools (id TEXT PRIMARY KEY, name TEXT, category TEXT);
+            CREATE TABLE tool_calls (
+                conversation_id TEXT NOT NULL,
+                tool_id TEXT,
+                input TEXT,
+                status TEXT,
+                timestamp INTEGER
+            );
+            """
+        )
+        # Raw names stored without canonical alias mapping
+        conn.executemany(
+            "INSERT INTO tools (id, name, category) VALUES (?, ?, ?)",
+            [
+                ("t_read", "read", "file"),
+                ("t_bash", "Bash", "shell"),
+                ("t_grep", "Grep", "search"),
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO tool_calls (conversation_id, tool_id, input, status, timestamp) VALUES (?, ?, ?, ?, ?)",
+            [
+                ("c1", "t_read", '{"file_path":"/repo/pyproject.toml"}', "success", 1),
+                ("c1", "t_bash", '{"command":"git status","description":"Check tree"}', "success", 2),
+                ("c1", "t_grep", '{"pattern":"TODO"}', "success", 3),
+            ],
+        )
+        conn.commit()
+
+        chunks = extract_tool_summary_chunks(conn, conversation_ids={"c1"})
+        assert len(chunks) == 1
+        text = chunks[0]["text"]
+        assert "Files accessed: pyproject.toml" in text
+        assert "Shell commands: git" in text
+        assert "Shell descriptions: Check tree" in text
+        assert "Grep patterns: TODO" in text
     finally:
         conn.close()
 
