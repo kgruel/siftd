@@ -557,6 +557,7 @@ A single search result from hybrid_search.
 | `started_at` | `str \| None` |  |
 | `chunk_id` | `str \| None` |  |
 | `source_ids` | `list[str] \| None` |  |
+| `breakdown` | `dict \| None` |  |
 
 ### ConversationScore
 
@@ -579,7 +580,7 @@ Aggregated conversation-level search result.
 Run hybrid FTS5+embeddings search, return structured results.
 
 ```python
-def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., limit: int = ..., recall: int = ..., embeddings_only: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., backend: str | None = ..., exclude_active: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ...) -> list[SearchResult]
+def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., limit: int = ..., recall: int = ..., embeddings_only: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tags: list[str] | None = ..., all_tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., include_derivative: bool = ..., backend: str | None = ..., exclude_active: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ...) -> list[SearchResult]
 ```
 
 **Parameters:**
@@ -594,6 +595,10 @@ def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embe
 - `model`: Filter to conversations using models matching this substring.
 - `since`: Filter to conversations started at or after this ISO date.
 - `before`: Filter to conversations started before this ISO date.
+- `tags`: OR filter — conversations with any of these tags.
+- `all_tags`: AND filter — conversations with all of these tags.
+- `exclude_tags`: NOT filter — exclude conversations with any of these tags.
+- `include_derivative`: Include derivative conversations (default False).
 - `backend`: Preferred embedding backend name (ollama, fastembed).
 - `exclude_active`: Auto-exclude conversations from active sessions (default True).
 - `rerank`: Reranking strategy — "mmr" for diversity or "relevance" for pure similarity.
