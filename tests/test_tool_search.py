@@ -105,7 +105,8 @@ class TestToolSearchIndex:
 
         conn.close()
 
-    def test_table_exists_on_database_create(self, tmp_path):
+    def test_tables_not_created_eagerly_on_database_open(self, tmp_path):
+        """tool_search tables are lazy — not created until first tool-search use."""
         conn = create_database(tmp_path / "empty.db")
 
         tables = {
@@ -115,6 +116,6 @@ class TestToolSearchIndex:
             ).fetchall()
         }
 
-        assert "tool_search" in tables
-        assert "tool_search_fts" in tables
+        assert "tool_search" not in tables
+        assert "tool_search_fts" not in tables
         conn.close()
