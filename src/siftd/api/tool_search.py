@@ -91,30 +91,37 @@ def search_tool_calls(
         tool=tool,
         tool_tag=tool_tag,
     )
-    conn = open_database(db_path, read_only=False)
-    try:
-        if rebuild_index:
+    if rebuild_index:
+        conn = open_database(db_path, read_only=False)
+        try:
             rebuild_tool_search_index(conn, commit=True)
-        else:
-            _auto_rebuild_if_stale(conn)
+            results = _search_tool_calls_impl(conn, parsed, limit=limit)
+            return parsed, results
+        finally:
+            conn.close()
+
+    # Open read-only first; only escalate to writable if the index is stale.
+    conn = open_database(db_path, read_only=True)
+    try:
+        if _needs_rebuild(conn):
+            conn.close()
+            conn = open_database(db_path, read_only=False)
+            ensure_tool_search_tables(conn)
+            rebuild_tool_search_index(conn, commit=True)
         results = _search_tool_calls_impl(conn, parsed, limit=limit)
         return parsed, results
     finally:
         conn.close()
 
 
-def _auto_rebuild_if_stale(conn: sqlite3.Connection) -> None:
-    """Rebuild the projection if it's missing or behind tool_calls."""
+def _needs_rebuild(conn: sqlite3.Connection) -> bool:
+    """Check if the projection is missing or behind tool_calls."""
     try:
         ts_count = conn.execute("SELECT COUNT(*) FROM tool_search").fetchone()[0]
         tc_count = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
-        if ts_count >= tc_count:
-            return  # up to date (or no tool calls)
+        return ts_count < tc_count
     except sqlite3.OperationalError:
-        pass  # tables missing — fall through to rebuild
-
-    ensure_tool_search_tables(conn)
-    rebuild_tool_search_index(conn, commit=True)
+        return True  # tables missing
 
 
 def _search_tool_calls_impl(
