@@ -154,16 +154,18 @@ def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
 class _EmbeddingCache:
     """In-memory cache of all embedding data for fast repeated searches.
 
-    Holds pre-decoded numpy embeddings and row metadata so search_similar()
-    can skip SQLite fetch + blob decode on repeated calls.
+    Holds a pre-decoded, L2-normalized numpy matrix and row metadata so
+    search_similar() can skip SQLite fetch + blob decode on repeated calls.
     """
 
     def __init__(self):
         self._db_path: str | None = None
         self._db_mtime: float = 0.0
         self._chunk_count: int = 0
-        self.embeddings: np.ndarray | None = None  # (n, dim) float32, raw
-        self.embeddings_normalized: np.ndarray | None = None  # (n, dim) L2-normalized
+        # Keep only the normalized matrix to avoid doubling resident memory.
+        # (MMR reranking normalizes again, so returning normalized vectors is fine.)
+        self.embeddings: np.ndarray | None = None  # legacy / unused (kept for compatibility)
+        self.embeddings_normalized: np.ndarray | None = None  # (n, dim) float32, L2-normalized
         self.chunk_ids: list[str] = []
         self.conversation_ids: list[str] = []
         self.chunk_types: list[str] = []
@@ -179,7 +181,7 @@ class _EmbeddingCache:
         (e.g., another process rebuilding the index). A single stat()
         call (~0.01ms) instead of a SQL COUNT(*) query.
         """
-        if self._db_path != db_path_hint or self.embeddings is None:
+        if self._db_path != db_path_hint or self.embeddings_normalized is None:
             return False
         try:
             current_mtime = Path(db_path_hint).stat().st_mtime
@@ -204,7 +206,7 @@ class _EmbeddingCache:
                 self._db_mtime = Path(db_path_hint).stat().st_mtime
             except OSError:
                 self._db_mtime = 0.0
-            self.embeddings = np.empty((0, 0), dtype=np.float32)
+            self.embeddings = None
             self.embeddings_normalized = np.empty((0, 0), dtype=np.float32)
             self.chunk_ids = []
             self.conversation_ids = []
@@ -216,14 +218,17 @@ class _EmbeddingCache:
 
         embedding_dim = len(rows[0]["embedding"]) // 4
         blob_buffer = b"".join(row["embedding"] for row in rows)
-        self.embeddings = np.frombuffer(blob_buffer, dtype=np.float32).reshape(
+        embeddings = np.frombuffer(blob_buffer, dtype=np.float32).reshape(
             len(rows), embedding_dim
         ).copy()  # copy to own the memory after blob_buffer is freed
 
-        # Pre-normalize for fast cosine similarity (skip per-query normalization)
-        norms = np.linalg.norm(self.embeddings, axis=1, keepdims=True)
+        # Pre-normalize for fast cosine similarity (skip per-query normalization).
+        # Do this in-place to avoid keeping both raw + normalized matrices.
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         norms = np.where(norms == 0, 1, norms)
-        self.embeddings_normalized = self.embeddings / norms
+        embeddings /= norms
+        self.embeddings_normalized = embeddings
+        self.embeddings = None
 
         self.chunk_ids = [row["id"] for row in rows]
         self.conversation_ids = [row["conversation_id"] for row in rows]
@@ -287,10 +292,10 @@ def search_similar(
         else:
             cache.load(conn, db_path_hint)
 
-    if cache.embeddings is None or cache.embeddings_normalized is None or cache._chunk_count == 0:
+    if cache.embeddings_normalized is None or cache._chunk_count == 0:
         return []
 
-    embedding_dim = cache.embeddings.shape[1]
+    embedding_dim = cache.embeddings_normalized.shape[1]
 
     # Validate query embedding dimension matches index
     if len(query_embedding) != embedding_dim:
@@ -362,7 +367,7 @@ def search_similar(
             "breakdown": ScoreBreakdown(embedding_sim=embedding_sim),
         }
         if include_embeddings:
-            result["embedding"] = cache.embeddings[global_i]
+            result["embedding"] = cache.embeddings_normalized[global_i]
         results.append(result)
 
     return results

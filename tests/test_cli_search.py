@@ -299,6 +299,152 @@ class TestSearchOutputFormats:
         assert len(out2) >= len(out1)
 
 
+class TestSearchServeDelegation:
+    def test_delegates_to_serve_when_available(self, indexed_db, capsys, monkeypatch):
+        """When delegation returns results, CLI should not initialize a local embedding backend."""
+        args = make_args(
+            query=["error"],
+            db=str(indexed_db["db_path"]),
+            embed_db=str(indexed_db["embed_db_path"]),
+            json=True,
+        )
+
+        # Force delegation eligibility regardless of DB path checks.
+        monkeypatch.setattr("siftd.cli_search._can_delegate_to_serve", lambda *a, **k: True)
+
+        fake_results = [
+            {
+                "chunk_id": "01HXFAKECHUNK000000000000",
+                "conversation_id": indexed_db["conv1_id"],
+                "chunk_type": "exchange",
+                "text": "delegated result",
+                "score": 0.9,
+                "source_ids": [],
+                "breakdown": None,
+            }
+        ]
+        monkeypatch.setattr("siftd.cli_search._delegate_search_via_serve", lambda *a, **k: fake_results)
+
+        # If local semantic path is used, this would be called.
+        import siftd.embeddings as embeddings
+
+        def _should_not_be_called(*_a, **_k):
+            raise AssertionError("expected serve delegation (no local embedding backend init)")
+
+        monkeypatch.setattr(embeddings, "get_backend", _should_not_be_called)
+
+        result = cmd_search(args)
+        captured = capsys.readouterr()
+
+        assert result == 0
+        import json
+
+        body = json.loads(captured.out)
+        assert body["query"] == "error"
+        assert body["result_count"] == 1
+        assert body["results"][0]["conversation_id"] == indexed_db["conv1_id"]
+
+    def test_delegation_rejects_mismatched_db_path(self, monkeypatch, tmp_path):
+        """Delegate path should reject serve instances pointing at a different DB."""
+        from siftd.cli_search import _delegate_search_via_serve
+
+        args = make_args()
+
+        cli_db = tmp_path / "cli.db"
+        cli_db.write_text("")  # path existence isn't required, but keep it realistic
+        other_db = tmp_path / "other.db"
+        other_db.write_text("")
+
+        monkeypatch.setenv("SIFTD_SERVE_URL", "http://127.0.0.1:8484")
+
+        monkeypatch.setattr(
+            "siftd.serve.client.probe_health",
+            lambda **_k: {"service": "siftd", "status": "ok", "db_path": str(other_db.resolve())},
+        )
+
+        def _should_not_call_search(**_k):
+            raise AssertionError("expected DB mismatch rejection before calling /v1/search")
+
+        monkeypatch.setattr("siftd.serve.client.search", _should_not_call_search)
+
+        out = _delegate_search_via_serve(
+            args,
+            query="q",
+            n=10,
+            embeddings_only=False,
+            rerank="mmr",
+            exclude_active=True,
+            db=cli_db,
+        )
+        assert out is None
+
+    def test_resolves_default_url_from_serve_port_config(self, monkeypatch, tmp_path):
+        from siftd.cli_search import _resolve_serve_base_url
+
+        monkeypatch.delenv("SIFTD_SERVE_URL", raising=False)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        cfg_dir = tmp_path / "siftd"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "config.toml").write_text("[serve]\nport = 9000\n")
+
+        base_url, explicit = _resolve_serve_base_url()
+        assert base_url == "http://127.0.0.1:9000"
+        assert explicit is False
+
+    def test_resolves_url_from_serve_state_file(self, monkeypatch, tmp_path):
+        """CLI discovers serve port from runtime state file."""
+        from siftd.cli_search import _resolve_serve_base_url
+        import json
+        import os
+
+        monkeypatch.delenv("SIFTD_SERVE_URL", raising=False)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+        state_dir = tmp_path / "state" / "siftd"
+        state_dir.mkdir(parents=True)
+        (state_dir / "serve.json").write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),  # current process is alive
+                    "port": 9000,
+                    "db_path": "/tmp/test.db",
+                }
+            )
+        )
+
+        base_url, explicit = _resolve_serve_base_url()
+        assert base_url == "http://127.0.0.1:9000"
+        assert explicit is False
+
+    def test_serve_port_config_takes_precedence_over_state_file(self, monkeypatch, tmp_path):
+        """serve.port config should win over a live state file."""
+        from siftd.cli_search import _resolve_serve_base_url
+        import json
+        import os
+
+        monkeypatch.delenv("SIFTD_SERVE_URL", raising=False)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+        # Config says port 7000
+        cfg_dir = tmp_path / "config" / "siftd"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "config.toml").write_text("[serve]\nport = 7000\n")
+
+        # State file says port 9000 (live PID)
+        state_dir = tmp_path / "state" / "siftd"
+        state_dir.mkdir(parents=True)
+        (state_dir / "serve.json").write_text(
+            json.dumps({"pid": os.getpid(), "port": 9000, "db_path": "/tmp/test.db"})
+        )
+
+        base_url, explicit = _resolve_serve_base_url()
+        assert base_url == "http://127.0.0.1:7000"
+        assert explicit is False
+
+
 class TestSearchFlagValidation:
     """Tests for flag combination validation."""
 

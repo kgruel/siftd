@@ -53,7 +53,29 @@ def cmd_serve(args) -> int:
     print(f"siftd serve — listening on {host}:{port}", file=sys.stderr)
     print(f"  db: {db_path}", file=sys.stderr)
     print(f"  auth: {'enabled' if auth_config else 'disabled (--no-auth)'}", file=sys.stderr)
-    uvicorn.run(app, host=host, port=port, log_level="info")
+
+    # Runtime discovery for CLI delegation: write serve state for `siftd search`.
+    import json
+    import os
+
+    from siftd.paths import state_dir
+
+    serve_state_file = state_dir() / "serve.json"
+    serve_state_file.parent.mkdir(parents=True, exist_ok=True)
+    serve_state_file.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "port": port,
+                "db_path": str(db_path.resolve()),
+            }
+        )
+    )
+
+    try:
+        uvicorn.run(app, host=host, port=port, log_level="info")
+    finally:
+        serve_state_file.unlink(missing_ok=True)
     return 0
 
 
