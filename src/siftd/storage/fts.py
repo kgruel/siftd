@@ -1,18 +1,43 @@
 """FTS5 full-text search operations for siftd storage."""
 
 import sqlite3
+from dataclasses import dataclass
 
 
 def ensure_fts_table(conn: sqlite3.Connection) -> None:
-    """Create the FTS5 virtual table if it doesn't exist. Idempotent."""
-    conn.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
+    """Ensure the main content FTS5 table exists with the expected tokenizer.
+
+    Notes:
+      - SQLite does not support altering an existing FTS5 virtual table's tokenizer.
+      - If an existing DB has a non-Porter tokenizer, we drop and rebuild the FTS
+        index to apply stemming. This happens on upgrade during the next open in
+        write mode (e.g., `siftd ingest`).
+    """
+    expected = """
+        CREATE VIRTUAL TABLE content_fts USING fts5(
             text_content,
             content_id UNINDEXED,
             side UNINDEXED,
-            conversation_id UNINDEXED
+            conversation_id UNINDEXED,
+            tokenize='porter unicode61 remove_diacritics 1'
         )
-    """)
+    """
+
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='content_fts'"
+    ).fetchone()
+    if row is None:
+        conn.execute(expected)
+        return
+
+    existing_sql = (row[0] or "").lower()
+    has_porter = "tokenize" in existing_sql and "porter" in existing_sql
+    if has_porter:
+        return
+
+    conn.execute("DROP TABLE IF EXISTS content_fts")
+    conn.execute(expected)
+    rebuild_fts_index(conn)
 
 
 def rebuild_fts_index(conn: sqlite3.Connection) -> None:
@@ -34,6 +59,7 @@ def rebuild_fts_index(conn: sqlite3.Connection) -> None:
         FROM prompt_content pc
         JOIN prompts p ON p.id = pc.prompt_id
         WHERE pc.block_type = 'text'
+          AND json_valid(pc.content)
           AND json_extract(pc.content, '$.text') IS NOT NULL
     """)
 
@@ -48,6 +74,7 @@ def rebuild_fts_index(conn: sqlite3.Connection) -> None:
         FROM response_content rc
         JOIN responses r ON r.id = rc.response_id
         WHERE rc.block_type = 'text'
+          AND json_valid(rc.content)
           AND json_extract(rc.content, '$.text') IS NOT NULL
     """)
 
@@ -112,10 +139,10 @@ def _fts5_or_rewrite(query: str) -> str | None:
     return " OR ".join(f'"{t}"' for t in tokens)
 
 
-def _fts5_conversation_ids(
+def _fts5_conversation_ids_ordered(
     conn: sqlite3.Connection, fts_query: str, limit: int
-) -> set[str]:
-    """Run FTS5 MATCH and return distinct conversation IDs."""
+) -> list[str]:
+    """Run FTS5 MATCH and return distinct conversation IDs (best-first)."""
     cur = conn.execute(
         """
         SELECT conversation_id FROM content_fts
@@ -126,7 +153,16 @@ def _fts5_conversation_ids(
         """,
         (fts_query, limit),
     )
-    return {row["conversation_id"] for row in cur.fetchall()}
+    return [row["conversation_id"] for row in cur.fetchall()]
+
+
+@dataclass(frozen=True)
+class Fts5Recall:
+    """FTS5 recall decision result for a query."""
+
+    conversation_ids: list[str]
+    mode: str
+    fts_query: str | None
 
 
 def fts5_recall_conversations(
@@ -143,11 +179,39 @@ def fts5_recall_conversations(
         Tuple of (conversation_id set, mode string).
         Mode is "and", "or", or "none".
     """
+    recall = fts5_recall_details(conn, query, limit=limit)
+    return set(recall.conversation_ids), recall.mode
+
+
+def fts5_recall_details(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    limit: int = 80,
+    min_and_hits: int = 10,
+) -> Fts5Recall:
+    """FTS5 recall with detail about the chosen query form.
+
+    Uses implicit AND (raw query) when it yields enough conversations, otherwise
+    rewrites the query into an OR expression for broader recall.
+
+    Args:
+        conn: Database connection.
+        query: Search query string (FTS5 MATCH syntax).
+        limit: Maximum conversation IDs to return.
+        min_and_hits: Minimum number of conversations required to keep AND mode.
+            If fewer matches are found, OR rewrite is attempted. Set to 1 for
+            strict AND-first behavior; set to >=limit to strongly prefer OR.
+
+    Returns:
+        Fts5Recall with ordered conversation IDs, mode string, and the concrete
+        FTS5 MATCH expression used (fts_query).
+    """
     # Phase 1: implicit AND (raw query)
     try:
-        ids = _fts5_conversation_ids(conn, query, limit)
-        if len(ids) >= 10:
-            return ids, "and"
+        ids = _fts5_conversation_ids_ordered(conn, query, limit)
+        if len(ids) >= min_and_hits:
+            return Fts5Recall(conversation_ids=ids, mode="and", fts_query=query)
     except Exception:
         pass  # malformed FTS query, fall through to OR rewrite
 
@@ -155,10 +219,37 @@ def fts5_recall_conversations(
     or_query = _fts5_or_rewrite(query)
     if or_query:
         try:
-            ids = _fts5_conversation_ids(conn, or_query, limit)
+            ids = _fts5_conversation_ids_ordered(conn, or_query, limit)
             if ids:
-                return ids, "or"
+                return Fts5Recall(conversation_ids=ids, mode="or", fts_query=or_query)
         except Exception:
             pass
 
-    return set(), "none"
+    return Fts5Recall(conversation_ids=[], mode="none", fts_query=None)
+
+
+def fts5_best_hit_for_conversation(
+    conn: sqlite3.Connection,
+    fts_query: str,
+    *,
+    conversation_id: str,
+) -> dict | None:
+    """Return the best (lowest-rank) hit for a conversation, including snippet."""
+    cur = conn.execute(
+        """
+        SELECT
+            side,
+            snippet(content_fts, 0, '>>>', '<<<', '...', 64) as snippet,
+            rank
+        FROM content_fts
+        WHERE content_fts MATCH ?
+          AND conversation_id = ?
+        ORDER BY rank
+        LIMIT 1
+        """,
+        (fts_query, conversation_id),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {"side": row["side"], "snippet": row["snippet"], "rank": row["rank"]}

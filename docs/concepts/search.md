@@ -31,6 +31,8 @@ FTS5 supports standard search operators:
 
 Use keyword search when you know the specific terms that appeared in the conversation.
 
+Note: siftd's FTS5 index uses the Porter stemmer (so "writing" can match "write"). If you upgrade from an older version, the next `siftd ingest` may rebuild the FTS index once to apply the tokenizer change.
+
 ## Semantic search (embeddings)
 
 Semantic search uses vector embeddings to match by meaning. Each chunk of text is converted to a high-dimensional vector; similar meanings produce similar vectors.
