@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import re
 from datetime import date, timedelta
 
@@ -16,7 +15,7 @@ def parse_date(value: str | None) -> str | None:
     - Relative weeks: 1w, 2w (subtract N weeks from today)
     - Keywords: yesterday, today
 
-    Raises argparse.ArgumentTypeError for unrecognized formats.
+    Raises ValueError for unrecognized formats.
     """
     if not value:
         return None
@@ -39,6 +38,6 @@ def parse_date(value: str | None) -> str | None:
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
         return value
 
-    raise argparse.ArgumentTypeError(
+    raise ValueError(
         f"invalid date format: '{value}' (expected YYYY-MM-DD, Nd, Nw, today, or yesterday)"
     )

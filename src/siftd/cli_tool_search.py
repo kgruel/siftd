@@ -14,27 +14,33 @@ from siftd.output.common import fmt_timestamp, fmt_workspace, truncate_text
 
 def cmd_tool_search(args) -> int:
     query = " ".join(args.query) if args.query else ""
-    if not query:
+    filters = extract_filter_args(args)
+    has_filters = any(v is not None for v in vars(filters).values())
+    if not query and not has_filters and not args.rebuild_index:
         print("Usage: siftd tool-search <query>")
+        print("       siftd tool-search --rebuild-index")
         return 1
 
     db = Path(args.db) if args.db else None
-    filters = extract_filter_args(args)
-    parsed, results = search_tool_calls(
-        query,
-        db_path=db,
-        limit=args.limit,
-        rebuild_index=args.rebuild_index,
-        workspace=filters.workspace,
-        model=filters.model,
-        since=filters.since,
-        before=filters.before,
-        tags=filters.tags,
-        all_tags=filters.all_tags,
-        exclude_tags=filters.exclude_tags,
-        tool=filters.tool,
-        tool_tag=filters.tool_tag,
-    )
+    try:
+        parsed, results = search_tool_calls(
+            query,
+            db_path=db,
+            limit=args.limit,
+            rebuild_index=args.rebuild_index,
+            workspace=filters.workspace,
+            model=filters.model,
+            since=filters.since,
+            before=filters.before,
+            tags=filters.tags,
+            all_tags=filters.all_tags,
+            exclude_tags=filters.exclude_tags,
+            tool=filters.tool,
+            tool_tag=filters.tool_tag,
+        )
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
     groups = group_tool_search_results(results)
 

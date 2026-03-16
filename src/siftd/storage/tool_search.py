@@ -241,8 +241,9 @@ def _build_search_text(**parts: str | None) -> str:
     fields: list[str] = []
     if parts.get("tool_name"):
         fields.append(str(parts["tool_name"]))
-    if parts.get("tool_name"):
-        fields.append(_normalize_tool_tokens(parts["tool_name"]) or "")
+        normalized = _normalize_tool_tokens(parts["tool_name"])
+        if normalized and normalized != parts["tool_name"]:
+            fields.append(normalized)
     for key in (
         "tool_description",
         "tool_family",

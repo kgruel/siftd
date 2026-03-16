@@ -1,6 +1,5 @@
 """Tests for tool-search API and CLI."""
 
-import argparse
 import json
 
 import pytest
@@ -333,7 +332,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search.db"
         _build_db(db_path)
 
-        with pytest.raises(argparse.ArgumentTypeError, match="invalid date format"):
+        with pytest.raises(ValueError, match="invalid date format"):
             search_tool_calls("since:not-a-date git", db_path=db_path)
 
     def test_search_tool_calls_flag_only_and_inline_only_filters_are_equivalent(self, tmp_path):

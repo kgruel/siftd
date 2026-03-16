@@ -1,6 +1,5 @@
 """Tests for tool-oriented query parsing."""
 
-import argparse
 
 import pytest
 
@@ -122,7 +121,7 @@ class TestParseToolQuery:
         assert parsed.fields["tag"] == ["bug", "docs"]
 
     def test_invalid_inline_dates_raise_parse_error(self):
-        with pytest.raises(argparse.ArgumentTypeError, match="invalid date format"):
+        with pytest.raises(ValueError, match="invalid date format"):
             parse_tool_query("since:not-a-date")
 
     def test_known_field_vocabulary_matches_roadmap_baseline(self):

@@ -102,14 +102,20 @@ def search_tool_calls(
             if not _is_missing_tool_search_table_error(e):
                 raise
             conn.close()
-            conn = open_database(db_path, read_only=False)
-            ensure_tool_search_tables(conn)
-            rebuild_tool_search_index(conn)
-            conn.commit()
-            results = _search_tool_calls_impl(conn, parsed, limit=limit)
+            conn = None  # type: ignore[assignment]
+            rw_conn = open_database(db_path, read_only=False)
+            try:
+                ensure_tool_search_tables(rw_conn)
+                rebuild_tool_search_index(rw_conn)
+                rw_conn.commit()
+                results = _search_tool_calls_impl(rw_conn, parsed, limit=limit)
+            finally:
+                rw_conn.close()
+            return parsed, results
         return parsed, results
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def _search_tool_calls_impl(
@@ -132,8 +138,8 @@ def _search_tool_calls_impl(
 
     _add_tool_name_clauses(where, params, parsed.fields.get("tool"))
     _add_eq_or_clauses(where, params, "ts.tool_family", parsed.fields.get("tool_family"))
-    _add_eq_or_clauses(where, params, "ts.status", parsed.fields.get("status"))
-    _add_eq_or_clauses(where, params, "ts.status", parsed.fields.get("result_status"))
+    status_values = [*(parsed.fields.get("status") or []), *(parsed.fields.get("result_status") or [])]
+    _add_eq_or_clauses(where, params, "ts.status", status_values or None)
     _add_like_or_clauses(where, params, "ts.path", parsed.fields.get("path"))
     _add_like_or_clauses(where, params, "ts.basename", parsed.fields.get("basename"))
     _add_eq_or_clauses(where, params, "ts.ext", parsed.fields.get("ext"))
@@ -287,8 +293,13 @@ def _add_tool_name_clauses(where: list[str], params: list[object], values: list[
 def _add_like_or_clauses(where: list[str], params: list[object], column: str, values: list[str] | None) -> None:
     if not values:
         return
-    where.append("(" + " OR ".join(f"{column} LIKE ?" for _ in values) + ")")
-    params.extend([f"%{value}%" for value in values])
+    where.append("(" + " OR ".join(f"{column} LIKE ? ESCAPE '\\'" for _ in values) + ")")
+    params.extend([f"%{_escape_like(value)}%" for value in values])
+
+
+def _escape_like(value: str) -> str:
+    """Escape LIKE metacharacters so user input is matched literally."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _add_since_before(
@@ -301,8 +312,10 @@ def _add_since_before(
 ) -> None:
     if not values:
         return
-    where.append("(" + " OR ".join(f"{column} {op} ?" for _ in values) + ")")
-    params.extend(values)
+    # Date bounds use AND — each constraint tightens the range.
+    for value in values:
+        where.append(f"{column} {op} ?")
+        params.append(value)
 
 
 def _add_conversation_tags_any(where: list[str], params: list[object], tags: list[str] | None) -> None:
