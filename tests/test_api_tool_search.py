@@ -552,6 +552,33 @@ class TestApiToolSearch:
         _, results = search_tool_calls("tool:shell.execute", db_path=db_path)
         assert len(results) > 0
 
+    def test_auto_rebuild_on_stale_index(self, tmp_path):
+        """search_tool_calls auto-rebuilds when new tool_calls exist after ingest."""
+        db_path = tmp_path / "tool_search.db"
+        _build_db(db_path)
+
+        # First search populates the projection
+        _, results_before = search_tool_calls("tool:shell.execute", db_path=db_path)
+        count_before = len(results_before)
+
+        # Simulate a new ingest adding a tool call directly to tool_calls
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()[0]
+        resp_id = conn.execute("SELECT id FROM responses LIMIT 1").fetchone()[0]
+        tool_id = conn.execute("SELECT id FROM tools WHERE name = 'shell.execute' LIMIT 1").fetchone()[0]
+        conn.execute(
+            "INSERT INTO tool_calls (id, conversation_id, response_id, tool_id, timestamp, status, input)"
+            " VALUES ('new_tc_001', ?, ?, ?, '2024-06-15T12:00:00Z', 'success', '{\"command\": \"echo hello\"}')",
+            (conv_id, resp_id, tool_id),
+        )
+        conn.commit()
+        conn.close()
+
+        # Second search should detect staleness and rebuild
+        _, results_after = search_tool_calls("tool:shell.execute", db_path=db_path)
+        assert len(results_after) > count_before
+
 
 class TestCliToolSearch:
     def test_tool_search_text_output_is_grouped_by_default(self, tmp_path, capsys):

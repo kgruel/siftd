@@ -91,29 +91,30 @@ def search_tool_calls(
         tool=tool,
         tool_tag=tool_tag,
     )
-    conn = open_database(db_path, read_only=not rebuild_index)
+    conn = open_database(db_path, read_only=False)
     try:
         if rebuild_index:
             rebuild_tool_search_index(conn, commit=True)
-        try:
-            results = _search_tool_calls_impl(conn, parsed, limit=limit)
-        except sqlite3.OperationalError as e:
-            if not _is_missing_tool_search_table_error(e):
-                raise
-            conn.close()
-            conn = None  # type: ignore[assignment]
-            rw_conn = open_database(db_path, read_only=False)
-            try:
-                ensure_tool_search_tables(rw_conn)
-                rebuild_tool_search_index(rw_conn, commit=True)
-                results = _search_tool_calls_impl(rw_conn, parsed, limit=limit)
-            finally:
-                rw_conn.close()
-            return parsed, results
+        else:
+            _auto_rebuild_if_stale(conn)
+        results = _search_tool_calls_impl(conn, parsed, limit=limit)
         return parsed, results
     finally:
-        if conn is not None:
-            conn.close()
+        conn.close()
+
+
+def _auto_rebuild_if_stale(conn: sqlite3.Connection) -> None:
+    """Rebuild the projection if it's missing or behind tool_calls."""
+    try:
+        ts_count = conn.execute("SELECT COUNT(*) FROM tool_search").fetchone()[0]
+        tc_count = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
+        if ts_count >= tc_count:
+            return  # up to date (or no tool calls)
+    except sqlite3.OperationalError:
+        pass  # tables missing — fall through to rebuild
+
+    ensure_tool_search_tables(conn)
+    rebuild_tool_search_index(conn, commit=True)
 
 
 def _search_tool_calls_impl(
@@ -256,14 +257,6 @@ def _merge_cli_filters(
         fields=fields,
         bare_terms=parsed.bare_terms,
         unknown_fields=parsed.unknown_fields,
-    )
-
-
-def _is_missing_tool_search_table_error(error: sqlite3.OperationalError) -> bool:
-    msg = str(error).lower()
-    return (
-        "no such table: tool_search" in msg
-        or "no such table: tool_search_fts" in msg
     )
 
 
