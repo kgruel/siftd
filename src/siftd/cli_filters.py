@@ -44,7 +44,7 @@ def add_filter_args(
     Callers opt in to extensions beyond the base set
     (workspace, since, before, tags, exclude_tags).
     """
-    from siftd.cli_common import parse_date
+    from siftd.dateparse import parse_date
 
     filter_group = parser.add_argument_group("filtering")
     filter_group.add_argument(

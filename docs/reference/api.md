@@ -557,6 +557,7 @@ A single search result from hybrid_search.
 | `started_at` | `str \| None` |  |
 | `chunk_id` | `str \| None` |  |
 | `source_ids` | `list[str] \| None` |  |
+| `breakdown` | `dict \| None` |  |
 
 ### ConversationScore
 
@@ -572,6 +573,44 @@ Aggregated conversation-level search result.
 | `workspace_path` | `str \| None` |  |
 | `started_at` | `str \| None` |  |
 
+### ToolSearchGroup
+
+Conversation-level grouping for tool-search presentation.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `conversation_id` | `str` |  |
+| `workspace_path` | `str \| None` |  |
+| `first_timestamp` | `str \| None` |  |
+| `last_timestamp` | `str \| None` |  |
+| `tool_call_count` | `int` |  |
+| `tool_names` | `list[str]` |  |
+| `results` | `list[ToolSearchResult]` |  |
+
+### ToolSearchResult
+
+Single tool-call search result.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool_call_id` | `str` |  |
+| `conversation_id` | `str` |  |
+| `response_id` | `str` |  |
+| `timestamp` | `str \| None` |  |
+| `tool_name` | `str \| None` |  |
+| `tool_family` | `str \| None` |  |
+| `status` | `str \| None` |  |
+| `path` | `str \| None` |  |
+| `basename` | `str \| None` |  |
+| `ext` | `str \| None` |  |
+| `command` | `str \| None` |  |
+| `command_verb` | `str \| None` |  |
+| `pattern` | `str \| None` |  |
+| `arg` | `str \| None` |  |
+| `result_snippet` | `str \| None` |  |
+| `workspace_path` | `str \| None` |  |
+| `rank` | `float \| None` |  |
+
 ### Functions
 
 ### hybrid_search
@@ -579,7 +618,7 @@ Aggregated conversation-level search result.
 Run hybrid FTS5+embeddings search, return structured results.
 
 ```python
-def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., limit: int = ..., recall: int = ..., embeddings_only: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., backend: str | None = ..., exclude_active: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ...) -> list[SearchResult]
+def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., limit: int = ..., recall: int = ..., embeddings_only: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tags: list[str] | None = ..., all_tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., include_derivative: bool = ..., backend: str | None = ..., exclude_active: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ...) -> list[SearchResult]
 ```
 
 **Parameters:**
@@ -594,6 +633,10 @@ def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embe
 - `model`: Filter to conversations using models matching this substring.
 - `since`: Filter to conversations started at or after this ISO date.
 - `before`: Filter to conversations started before this ISO date.
+- `tags`: OR filter — conversations with any of these tags.
+- `all_tags`: AND filter — conversations with all of these tags.
+- `exclude_tags`: NOT filter — exclude conversations with any of these tags.
+- `include_derivative`: Include derivative conversations (default False).
 - `backend`: Preferred embedding backend name (ollama, fastembed).
 - `exclude_active`: Auto-exclude conversations from active sessions (default True).
 - `rerank`: Reranking strategy — "mmr" for diversity or "relevance" for pure similarity.
@@ -646,6 +689,22 @@ def build_index(*, db_path: pathlib._local.Path | None = ..., embed_db_path: pat
 - `FileNotFoundError`: If main database doesn't exist.
 - `RuntimeError`: If no embedding backend is available.
 - `EmbeddingsNotAvailable`: If embedding dependencies are not installed.
+
+### group_tool_search_results
+
+Collapse tool-call results into conversation groups for display.
+
+```python
+def group_tool_search_results(results: list[ToolSearchResult]) -> list[ToolSearchGroup]
+```
+
+### search_tool_calls
+
+Search tool calls using structured fields + FTS over the projection.
+
+```python
+def search_tool_calls(query: str, *, db_path: pathlib._local.Path | None = ..., limit: int = ..., rebuild_index: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tags: list[str] | None = ..., all_tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., tool: str | None = ..., tool_tag: str | None = ...) -> tuple[ToolQuery, list[ToolSearchResult]]
+```
 
 ## Stats
 

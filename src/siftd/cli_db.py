@@ -16,7 +16,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from siftd.cli_common import parse_date, resolve_db
+from siftd.cli_common import resolve_db
+from siftd.dateparse import parse_date
 
 
 def cmd_db_info(args) -> int:

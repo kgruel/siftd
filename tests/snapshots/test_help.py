@@ -44,6 +44,7 @@ SUBCOMMANDS = [
     "status",
     "workspaces",
     "search",
+    "tool-search",
     "install",
     "register",
     "session-id",
