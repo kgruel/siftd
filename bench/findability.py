@@ -235,41 +235,68 @@ def _build_fts5_tool_index(main_conn: sqlite3.Connection, scope_convs: set[str] 
 
 
 def _fts5_query(fts_conn: sqlite3.Connection, query_text: str, k: int) -> set[str]:
-    """Run a FTS5 MATCH query and return top-k distinct conversation IDs."""
-    # Build FTS5 query from natural language: use individual words as OR terms
-    # This mirrors what a real user would type into a search box.
+    """Run a FTS5 MATCH query and return top-k distinct conversation IDs.
+
+    Strategy: rank candidates by how many distinct query terms they match,
+    then by BM25 score. This reduces false-positive noise from broad OR queries
+    while still finding conversations that partially match.
+    """
     import re
     words = re.findall(r'[a-zA-Z0-9_.]+', query_text)
-    # Filter very common words
-    stop = {"conversations", "where", "were", "with", "the", "and", "or", "for", "files", "that", "new"}
+    # Broad stop words — do NOT remove domain terms like "files", "new", "git"
+    stop = {"conversations", "where", "were", "with", "the", "and", "or",
+            "that", "this", "are", "have", "been", "using", "used"}
     keywords = [w for w in words if w.lower() not in stop and len(w) > 2]
     if not keywords:
         return set()
 
-    # Use OR logic: any keyword match counts
-    fts5_expr = " OR ".join(keywords)
-    try:
-        rows = fts_conn.execute(
-            """SELECT conversation_id, rank FROM tool_fts
-               WHERE tool_fts MATCH ?
-               ORDER BY rank
-               LIMIT ?""",
-            (fts5_expr, k * 5),  # fetch more, deduplicate by conversation
-        ).fetchall()
-    except sqlite3.OperationalError:
-        # Fallback: try simpler query with first keyword only
+    # Deduplicate keywords (case-insensitive)
+    seen_kw: dict[str, str] = {}
+    for kw in keywords:
+        key = kw.lower()
+        if key not in seen_kw:
+            seen_kw[key] = kw
+    keywords = list(seen_kw.values())
+
+    # Try progressively: AND (most precise) → OR (broader fallback)
+    # This gives high precision when AND finds enough results, falls back for rare terms.
+    and_expr = " AND ".join(keywords)
+    or_expr  = " OR ".join(keywords)
+
+    def _run_match(expr: str) -> list:
         try:
-            rows = fts_conn.execute(
-                "SELECT conversation_id, rank FROM tool_fts WHERE tool_fts MATCH ? ORDER BY rank LIMIT ?",
-                (keywords[0], k * 5),
+            return fts_conn.execute(
+                """SELECT conversation_id, rank FROM tool_fts
+                   WHERE tool_fts MATCH ?
+                   ORDER BY rank
+                   LIMIT ?""",
+                (expr, k * 10),
             ).fetchall()
         except sqlite3.OperationalError:
-            return set()
+            return []
+
+    rows = _run_match(and_expr)
+    # Count distinct conversations from AND
+    and_convs: set[str] = set()
+    for row in rows:
+        and_convs.add(row[0])
+
+    if len(and_convs) >= k:
+        # AND gives enough candidates — use these (high precision)
+        candidates = rows
+    else:
+        # Fall back to OR for more recall, but boost AND matches
+        or_rows = _run_match(or_expr)
+        # Put AND-matching convs first, then OR-only convs
+        and_set = and_convs
+        priority: list = [r for r in or_rows if r[0] in and_set]
+        remainder: list = [r for r in or_rows if r[0] not in and_set]
+        candidates = priority + remainder
 
     # Deduplicate: keep first (best-ranked) occurrence per conversation
     seen: set[str] = set()
     result: list[str] = []
-    for row in rows:
+    for row in candidates:
         cid = row[0]
         if cid not in seen:
             seen.add(cid)
