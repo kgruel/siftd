@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from siftd.embeddings import get_backend
-from siftd.embeddings.chunker import extract_exchange_window_chunks
+from siftd.embeddings.chunker import extract_exchange_window_chunks, extract_tool_summary_chunks
 from siftd.paths import db_path as default_db_path
 from siftd.paths import embeddings_db_path as default_embed_path
 from siftd.storage.embeddings import (
@@ -86,6 +86,14 @@ def build_embeddings_index(
 
     # Determine which conversations need indexing
     already_indexed = get_indexed_conversation_ids(embed_conn)
+    tool_summaries_indexed = {
+        row["conversation_id"]
+        for row in embed_conn.execute(
+            "SELECT DISTINCT conversation_id FROM chunks WHERE chunk_type = ?",
+            ("tool_summary",),
+        ).fetchall()
+    }
+    missing_tool_summaries = already_indexed - tool_summaries_indexed
 
     # Get exchange-window chunks from main DB
     main_conn = open_database(db, read_only=True)
@@ -103,7 +111,19 @@ def build_embeddings_index(
         overlap_tokens=overlap_tokens,
         exclude_conversation_ids=already_indexed,
     )
+    new_conv_ids = {c["conversation_id"] for c in chunks}
+
+    tool_summary_targets = new_conv_ids | missing_tool_summaries
+    tool_summary_targets = _filter_conversations_with_tool_calls(main_conn, tool_summary_targets)
+    tool_chunks: list[dict] = []
+    if tool_summary_targets:
+        tool_chunks = extract_tool_summary_chunks(main_conn, conversation_ids=tool_summary_targets)
+        for c in tool_chunks:
+            c["token_count"] = _count_tokens(tokenizer, c["text"])
+
     main_conn.close()
+
+    chunks.extend(tool_chunks)
 
     if not chunks:
         total = chunk_count(embed_conn)
@@ -148,6 +168,7 @@ def build_embeddings_index(
     set_meta(embed_conn, "model", backend.model)
     set_meta(embed_conn, "dimension", str(backend.dimension))
     set_meta(embed_conn, "strategy", "exchange-window")
+    set_meta(embed_conn, "include_tool_summaries", "1")
     set_meta(embed_conn, "target_tokens", str(target_tokens))
     set_meta(embed_conn, "max_tokens", str(max_tokens))
     set_meta(embed_conn, "overlap_tokens", str(overlap_tokens))
@@ -175,6 +196,32 @@ def _get_tokenizer():
 
     emb = TextEmbedding("BAAI/bge-small-en-v1.5")
     return emb.model.tokenizer
+
+
+def _count_tokens(tokenizer, text: str) -> int:
+    """Count tokens excluding special tokens."""
+    ids = tokenizer.encode(text).ids
+    return max(0, len(ids) - 2)
+
+
+def _filter_conversations_with_tool_calls(conn, conversation_ids: set[str]) -> set[str]:
+    """Return only conversation_ids that have at least one tool_call row."""
+    if not conversation_ids:
+        return set()
+
+    keep: set[str] = set()
+    ids = list(conversation_ids)
+    batch_size = 900  # stay under SQLite variable limits
+    for i in range(0, len(ids), batch_size):
+        batch = ids[i : i + batch_size]
+        ph = ",".join("?" * len(batch))
+        rows = conn.execute(
+            f"SELECT DISTINCT conversation_id FROM tool_calls WHERE conversation_id IN ({ph})",
+            batch,
+        ).fetchall()
+        keep.update(r[0] for r in rows)
+
+    return keep
 
 
 def _validate_incremental_compat(conn, backend) -> None:

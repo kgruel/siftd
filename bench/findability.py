@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Findability benchmark: recall@10 for tool-usage queries.
 
-Three modes compared side-by-side:
+Four modes compared side-by-side:
+  content_fts5 — FTS5 on conversation text (prompts+responses), baseline
   semantic   — embed query, search vector chunks
   fts5       — FTS5 on tool_calls (tool name + input text)
   hybrid     — FTS5 recall set → semantic rerank
@@ -27,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from siftd.storage.embeddings import search_similar  # noqa: E402
 from siftd.embeddings.fastembed_backend import FastEmbedBackend  # noqa: E402
 from siftd.paths import data_dir  # noqa: E402
+from siftd.storage.fts import search_content  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +144,75 @@ def compute_semantic_recall(
         query_emb = backend.embed_one(query_text)
         search_results = search_similar(embed_conn, query_emb, limit=k)
         found_convs = {r["conversation_id"] for r in search_results}
+
+        hits = len(relevant & found_convs)
+        recall = hits / len(relevant)
+        hit_at_k = 1 if hits else 0
+
+        results.append({
+            "query": query_text,
+            "relevant_indexed": len(relevant),
+            "hits_in_top_k": hits,
+            "recall_at_k": round(recall, 4),
+            "hit_at_k": hit_at_k,
+        })
+        if verbose:
+            print(f"  [{'✓' if hit_at_k else '✗'}][{label}] [{hits}/{len(relevant)}] {recall:.3f} | {query_text}")
+
+    return _compute_aggregate(results, k)
+
+
+# ---------------------------------------------------------------------------
+# Mode 0: Baseline — FTS5 on conversation text content (prompts+responses)
+# ---------------------------------------------------------------------------
+
+def compute_content_fts5_recall(
+    main_conn: sqlite3.Connection,
+    *,
+    k: int = 10,
+    scope_convs: set[str] | None = None,
+    verbose: bool = False,
+    label: str = "content_fts5",
+) -> dict:
+    """Keyword search on prompt/response text via the main DB's content_fts."""
+    results = []
+    for query_text, sql, params in GROUND_TRUTH_QUERIES:
+        relevant_all = {r[0] for r in main_conn.execute(sql, params).fetchall()}
+        relevant = relevant_all if scope_convs is None else (relevant_all & scope_convs)
+        if not relevant:
+            if verbose:
+                print(f"  [{label}] SKIP '{query_text}' — no relevant convs in scope")
+            continue
+
+        # Overfetch for dedupe. Some natural-language queries include punctuation
+        # (e.g., "pyproject.toml") which is invalid in FTS5 MATCH unless quoted.
+        try:
+            raw_hits = search_content(main_conn, query_text, limit=k * 50)
+        except sqlite3.OperationalError:
+            import re
+
+            tokens = re.findall(r"[A-Za-z0-9_]+", query_text)
+            tokens = [t for t in tokens if len(t) >= 3]
+            if not tokens:
+                raw_hits = []
+            else:
+                expr = " OR ".join(f'"{t}"' for t in dict.fromkeys(tokens))
+                try:
+                    raw_hits = search_content(main_conn, expr, limit=k * 50)
+                except sqlite3.OperationalError:
+                    raw_hits = []
+        found: list[str] = []
+        seen: set[str] = set()
+        for h in raw_hits:
+            cid = h["conversation_id"]
+            if scope_convs is not None and cid not in scope_convs:
+                continue
+            if cid not in seen:
+                seen.add(cid)
+                found.append(cid)
+                if len(found) >= k:
+                    break
+        found_convs = set(found)
 
         hits = len(relevant & found_convs)
         recall = hits / len(relevant)
@@ -496,6 +567,7 @@ def main():
 
     print(f"\nFindability benchmark (recall@{args.k}) — {len(scope_convs)} indexed conversations\n", file=sys.stderr)
 
+    content = compute_content_fts5_recall(main_conn, k=args.k, scope_convs=scope_convs, verbose=args.verbose)
     sem   = compute_semantic_recall(main_conn, embed_conn, backend, k=args.k, scope_convs=scope_convs, verbose=args.verbose)
     fts5  = compute_fts5_recall(main_conn, k=args.k, scope_convs=scope_convs, verbose=args.verbose)
     hyb   = compute_hybrid_recall(main_conn, embed_conn, backend, k=args.k, scope_convs=scope_convs, verbose=args.verbose)
@@ -503,13 +575,14 @@ def main():
     print(f"\n{'='*64}", file=sys.stderr)
     print(f"  {'Mode':<12} {'recall@'+str(args.k):<14} {'hit@'+str(args.k):<12} queries", file=sys.stderr)
     print(f"  {'-'*60}", file=sys.stderr)
-    for label, r in [("semantic", sem), ("fts5", fts5), ("hybrid", hyb)]:
+    for label, r in [("content_fts5", content), ("semantic", sem), ("fts5", fts5), ("hybrid", hyb)]:
         print(f"  {label:<12} {r['recall_at_k']:<14.4f} {r['hit_at_k']:<12.4f} {r['query_count']}", file=sys.stderr)
     print(f"{'='*64}", file=sys.stderr)
 
     if args.metric:
         # Primary: semantic (what chunker tuning affects)
         print(f"METRIC recall_at_10={sem['recall_at_k']}")
+        print(f"METRIC content_fts5_recall_at_10={content['recall_at_k']}")
         # Secondary: FTS5 and hybrid as comparison
         print(f"METRIC fts5_recall_at_10={fts5['recall_at_k']}")
         print(f"METRIC hybrid_recall_at_10={hyb['recall_at_k']}")

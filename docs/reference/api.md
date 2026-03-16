@@ -580,7 +580,7 @@ Aggregated conversation-level search result.
 Run hybrid FTS5+embeddings search, return structured results.
 
 ```python
-def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., limit: int = ..., recall: int = ..., embeddings_only: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tags: list[str] | None = ..., all_tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., include_derivative: bool = ..., backend: str | None = ..., exclude_active: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ...) -> list[SearchResult]
+def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., limit: int = ..., recall: int = ..., embeddings_only: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tags: list[str] | None = ..., all_tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., include_derivative: bool = ..., backend: str | None = ..., exclude_active: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., fts5_passthrough: bool = ...) -> list[SearchResult]
 ```
 
 **Parameters:**
@@ -605,6 +605,7 @@ def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embe
 - `lambda_`: MMR balance between relevance (1.0) and diversity (0.0). Default 0.7.
 - `recency`: Enable temporal weighting to boost recent results. Default False.
 - `recency_half_life`: Days until recency boost decays to half. Default 30.
+- `recency_max_boost`: Maximum boost for today's results (e.g., 1.15 = 15%). Default 1.15.
 
 **Returns:** List of SearchResult ordered by reranking strategy.
 
