@@ -296,6 +296,7 @@ def hybrid_search(
     recency: bool = False,
     recency_half_life: float = 30.0,
     recency_max_boost: float = 1.15,
+    fts5_passthrough: bool = False,
 ) -> list[SearchResult]:
     """Run hybrid FTS5+embeddings search, return structured results.
 
@@ -321,6 +322,10 @@ def hybrid_search(
         recency: Enable temporal weighting to boost recent results. Default False.
         recency_half_life: Days until recency boost decays to half. Default 30.
         recency_max_boost: Maximum boost for today's results (e.g., 1.15 = 15%). Default 1.15.
+        fts5_passthrough: If True, allow an FTS5-only fast-path when FTS5 can
+            supply at least `limit` results (after filters). This is an opt-in
+            escape hatch for structured identifier queries where semantic reranking
+            may hurt exact-match relevance. Default False.
 
     Returns:
         List of SearchResult ordered by reranking strategy.
@@ -343,7 +348,7 @@ def hybrid_search(
         search_similar,
         validate_index_compat,
     )
-    from siftd.storage.fts import fts5_recall_conversations
+    from siftd.storage.fts import fts5_best_hit_for_conversation, fts5_recall_details
     from siftd.storage.tags import DERIVATIVE_TAG
 
     db = db_path if db_path is not None else default_db_path()
@@ -368,6 +373,8 @@ def hybrid_search(
     main_conn = open_database(db, read_only=True)
     fts5_ids: set[str] | None = None
     fts5_mode: str | None = None
+    fts5_query: str | None = None
+    fts5_ordered: list[str] | None = None
     try:
         candidate_ids = _filter_conversations_conn(
             main_conn,
@@ -386,7 +393,11 @@ def hybrid_search(
 
         # Hybrid recall: FTS5 narrows candidates, embeddings rerank
         if not embeddings_only:
-            fts5_ids, fts5_mode = fts5_recall_conversations(main_conn, query, limit=recall)
+            recall_details = fts5_recall_details(main_conn, query, limit=recall)
+            fts5_ordered = recall_details.conversation_ids
+            fts5_ids = set(fts5_ordered)
+            fts5_mode = recall_details.mode
+            fts5_query = recall_details.fts_query
 
             if fts5_ids:
                 # Remove active sessions from FTS5 recall set
@@ -399,6 +410,85 @@ def hybrid_search(
                     candidate_ids = fts5_ids
     finally:
         main_conn.close()
+
+    # Optional FTS5-only passthrough for exact-match structured queries.
+    # Default remains pure hybrid (FTS5 recall -> embeddings scoring -> reranking).
+    if (
+        fts5_passthrough
+        and not embeddings_only
+        and fts5_query
+        and fts5_ordered
+        and fts5_mode in {"and", "or"}
+    ):
+        passthrough_ids: list[str] = []
+        for conv_id in fts5_ordered:
+            if excluded and conv_id in excluded:
+                continue
+            if candidate_ids is not None and conv_id not in candidate_ids:
+                continue
+            passthrough_ids.append(conv_id)
+            if len(passthrough_ids) >= limit:
+                break
+
+        if len(passthrough_ids) >= limit:
+            main_conn_fts = open_database(db, read_only=True)
+            try:
+                raw_results: list[dict] = []
+                for conv_id in passthrough_ids[:limit]:
+                    hit = fts5_best_hit_for_conversation(main_conn_fts, fts5_query, conversation_id=conv_id)
+                    snippet = hit["snippet"] if hit else ""
+                    rank = float(hit["rank"]) if hit and hit.get("rank") is not None else 0.0
+                    score = -rank
+                    raw_results.append(
+                        {
+                            "conversation_id": conv_id,
+                            "score": score,
+                            "text": snippet,
+                            "chunk_type": "fts5",
+                            "chunk_id": None,
+                            "source_ids": None,
+                            "breakdown": ScoreBreakdown(
+                                embedding_sim=0.0,
+                                pre_mmr_score=score,
+                                final_score=score,
+                                fts5_matched=True,
+                                fts5_mode=fts5_mode,
+                            ),
+                        }
+                    )
+
+                meta_rows = batched_in_query(
+                    main_conn_fts,
+                    "SELECT c.id, c.started_at, w.path AS workspace FROM conversations c "
+                    "LEFT JOIN workspaces w ON w.id = c.workspace_id "
+                    "WHERE c.id IN ({placeholders})",
+                    passthrough_ids[:limit],
+                )
+                meta = {row["id"]: dict(row) for row in meta_rows}
+            finally:
+                main_conn_fts.close()
+
+            results: list[SearchResult] = []
+            for r in raw_results:
+                conv_id = r["conversation_id"]
+                m = meta.get(conv_id, {})
+                breakdown = r.get("breakdown")
+                breakdown_dict = breakdown.to_dict() if breakdown and isinstance(breakdown, ScoreBreakdown) else None
+                results.append(
+                    SearchResult(
+                        conversation_id=conv_id,
+                        score=r["score"],
+                        text=r["text"],
+                        chunk_type=r["chunk_type"],
+                        workspace_path=m.get("workspace"),
+                        started_at=m.get("started_at"),
+                        chunk_id=None,
+                        source_ids=None,
+                        breakdown=breakdown_dict,
+                    )
+                )
+
+            return results
 
     # Embed query and search
     use_mmr = rerank == "mmr"

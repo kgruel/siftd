@@ -267,3 +267,122 @@ def _window_exchanges(
         windows.append((window_text, _count_tokens(tokenizer, window_text), current_ids))
 
     return windows
+
+
+def extract_tool_summary_chunks(
+    main_conn: sqlite3.Connection,
+    *,
+    conversation_ids: set[str] | None = None,
+) -> list[dict]:
+    """Extract one tool-summary chunk per conversation.
+
+    Each chunk summarizes the tools used, key file paths, and commands
+    in plain text suitable for semantic embedding. This improves findability
+    for tool-usage queries like "conversations where pyproject.toml was read".
+
+    Returns list of dicts with keys: conversation_id, chunk_type, text,
+    token_count (0), source_ids ([]).
+    """
+    import json as _json
+    import os
+    from collections import defaultdict
+
+    where = ""
+    params: tuple = ()
+    if conversation_ids:
+        ph = ",".join("?" * len(conversation_ids))
+        where = f"WHERE tc.conversation_id IN ({ph})"
+        params = tuple(conversation_ids)
+
+    rows = main_conn.execute(
+        f"""SELECT tc.conversation_id, t.name AS tool_name, tc.input, tc.status
+            FROM tool_calls tc
+            LEFT JOIN tools t ON tc.tool_id = t.id
+            {where}
+            ORDER BY tc.conversation_id, tc.timestamp""",
+        params,
+    ).fetchall()
+
+    conv_tool_calls: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+    for row in rows:
+        conv_tool_calls[row[0]].append((row[1] or "unknown", row[2] or "", row[3] or ""))
+
+    chunks: list[dict] = []
+    for conv_id, calls in conv_tool_calls.items():
+        lines: list[str] = ["Tools used in this conversation:"]
+
+        tool_counts: dict[str, int] = {}
+        for tool_name, _, _ in calls:
+            tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
+        for tool_name, count in sorted(tool_counts.items(), key=lambda x: -x[1]):
+            lines.append(f"- {tool_name}: {count} calls")
+
+        file_paths: list[str] = []
+        seen_paths: set[str] = set()
+        for tool_name, raw_input, _ in calls:
+            if tool_name in ("file.read", "file.edit", "file.write", "file.glob"):
+                try:
+                    inp = _json.loads(raw_input)
+                    path = inp.get("file_path") or inp.get("pattern") or ""
+                    if path and path not in seen_paths:
+                        seen_paths.add(path)
+                        file_paths.append(os.path.basename(path))
+                        if len(file_paths) >= 20:
+                            break
+                except (ValueError, TypeError):
+                    pass
+        if file_paths:
+            lines.append(f"Files accessed: {', '.join(file_paths)}")
+
+        commands: list[str] = []
+        seen_cmds: set[str] = set()
+        cmd_descriptions: list[str] = []
+        seen_descs: set[str] = set()
+        grep_patterns: list[str] = []
+        seen_patterns: set[str] = set()
+        for tool_name, raw_input, _ in calls:
+            if tool_name == "shell.execute":
+                try:
+                    inp = _json.loads(raw_input)
+                    cmd = inp.get("command", "").strip()
+                    desc = inp.get("description", "").strip()
+                    if cmd:
+                        first = cmd.split()[0] if cmd.split() else cmd
+                        if first not in seen_cmds:
+                            seen_cmds.add(first)
+                            commands.append(first)
+                    if desc and desc not in seen_descs:
+                        seen_descs.add(desc)
+                        cmd_descriptions.append(desc)
+                except (ValueError, TypeError):
+                    pass
+            elif tool_name == "search.grep":
+                try:
+                    inp = _json.loads(raw_input)
+                    pat = inp.get("pattern", "") or inp.get("query", "")
+                    if pat and pat not in seen_patterns:
+                        seen_patterns.add(pat)
+                        grep_patterns.append(pat)
+                except (ValueError, TypeError):
+                    pass
+
+        if commands:
+            lines.append(f"Shell commands: {', '.join(commands[:10])}")
+        if cmd_descriptions:
+            lines.append(f"Shell descriptions: {'; '.join(cmd_descriptions[:8])}")
+        if grep_patterns:
+            lines.append(f"Grep patterns: {', '.join(grep_patterns[:10])}")
+
+        error_count = sum(1 for _, _, status in calls if status == "error")
+        if error_count:
+            lines.append(f"Tool errors: {error_count}")
+
+        chunks.append({
+            "conversation_id": conv_id,
+            "chunk_type": "tool_summary",
+            "text": "\n".join(lines),
+            "token_count": 0,
+            "source_ids": [],
+        })
+
+    return chunks

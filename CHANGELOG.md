@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `siftd tag delete <name> [--force]` — delete a tag (was `siftd tags --delete`)
   - `siftd tags` still works as a deprecated bridge (prints warning to stderr)
 - **`/siftd:tag` plugin command** — Simplified to use `--current` instead of shell substitution; fixes Claude Code permission error
+- **FTS5 tokenizer upgrade** — Content keyword search now uses the Porter stemmer; opening an existing DB in write mode (e.g., `siftd ingest`) will rebuild the FTS index once to apply stemming.
+- **Embeddings index tool summaries** — `siftd search --index` now adds a per-conversation `tool_summary` chunk (tools, key files, commands) and will backfill missing summaries for already-indexed conversations that have tool calls.
 
 ### Removed
 
