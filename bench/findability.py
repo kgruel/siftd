@@ -306,6 +306,41 @@ def _fts5_query(fts_conn: sqlite3.Connection, query_text: str, k: int) -> set[st
     return set(result)
 
 
+def _fts5_query_ordered(fts_conn: sqlite3.Connection, query_text: str, k: int) -> list[str]:
+    """Like _fts5_query but returns an ordered list (best first)."""
+    result_set = _fts5_query(fts_conn, query_text, k)
+    # Re-run to get ranking order
+    import re
+    words = re.findall(r'[a-zA-Z0-9_.]+', query_text)
+    stop = {"conversations", "where", "were", "with", "the", "and", "or",
+            "that", "this", "are", "have", "been", "using", "used"}
+    keywords = [w for w in words if w.lower() not in stop and len(w) > 2]
+    if not keywords:
+        return list(result_set)
+
+    or_expr = " OR ".join(dict.fromkeys(kw for kw in keywords))
+    try:
+        rows = fts_conn.execute(
+            "SELECT conversation_id, rank FROM tool_fts WHERE tool_fts MATCH ? ORDER BY rank LIMIT ?",
+            (or_expr, k * 10),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return list(result_set)
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for row in rows:
+        cid = row[0]
+        if cid in result_set and cid not in seen:
+            seen.add(cid)
+            ordered.append(cid)
+    # Append any from result_set not found in OR ranking
+    for cid in result_set:
+        if cid not in seen:
+            ordered.append(cid)
+    return ordered
+
+
 def compute_fts5_recall(
     main_conn: sqlite3.Connection,
     *,
@@ -383,19 +418,26 @@ def compute_hybrid_recall(
                 print(f"  [hybrid] SKIP '{query_text}' — no indexed relevant convs")
             continue
 
-        # FTS5 recall: get candidate conversation IDs
-        fts5_candidates = _fts5_query(fts_conn, query_text, fts5_recall_k)
-        # Intersect with indexed convs (only those we can rerank)
-        candidates = fts5_candidates & indexed_convs
+        # FTS5 recall: get candidate conversation IDs (ordered list for ranking)
+        fts5_candidates_ordered = _fts5_query_ordered(fts_conn, query_text, fts5_recall_k)
+        # Intersect with indexed convs while preserving FTS5 order
+        fts5_top_k = [c for c in fts5_candidates_ordered if c in indexed_convs][:k]
+        candidates_set = set(fts5_top_k)
 
-        # Semantic rerank within candidates (or fall back to full search)
-        query_emb = backend.embed_one(query_text)
-        conversation_ids = list(candidates) if candidates else None
-        search_results = search_similar(
-            embed_conn, query_emb, limit=k,
-            conversation_ids=conversation_ids,
-        )
-        found_convs = {r["conversation_id"] for r in search_results}
+        if len(fts5_top_k) >= k:
+            # FTS5 found enough — trust its ranking, skip semantic reranking.
+            # Semantic reranking of tool-usage queries hurts: embedding similarity
+            # doesn't capture "which conversations ran git" as well as FTS5 does.
+            found_convs = set(fts5_top_k)
+        else:
+            # FTS5 found too few — semantic search over FTS5 candidates + fallback
+            query_emb = backend.embed_one(query_text)
+            conversation_ids = list(candidates_set) if candidates_set else None
+            search_results = search_similar(
+                embed_conn, query_emb, limit=k,
+                conversation_ids=conversation_ids,
+            )
+            found_convs = {r["conversation_id"] for r in search_results}
 
         hits = len(relevant & found_convs)
         recall = hits / len(relevant)
@@ -404,7 +446,7 @@ def compute_hybrid_recall(
         results.append({
             "query": query_text,
             "relevant_indexed": len(relevant),
-            "fts5_candidates": len(candidates),
+            "fts5_candidates": len(candidates_set),
             "hits_in_top_k": hits,
             "recall_at_k": round(recall, 4),
             "hit_at_k": hit_at_k,
