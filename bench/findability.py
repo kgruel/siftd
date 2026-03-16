@@ -186,7 +186,7 @@ def _build_fts5_tool_index(main_conn: sqlite3.Connection, scope_convs: set[str] 
             conversation_id UNINDEXED,
             tool_name,
             input_text,
-            tokenize='unicode61 remove_diacritics 1'
+            tokenize='porter unicode61 remove_diacritics 1'
         )
     """)
 
@@ -199,7 +199,7 @@ def _build_fts5_tool_index(main_conn: sqlite3.Connection, scope_convs: set[str] 
         params = tuple(scope_convs)
 
     rows = main_conn.execute(
-        f"""SELECT tc.conversation_id, COALESCE(t.name, ''), tc.input
+        f"""SELECT tc.conversation_id, COALESCE(t.name, ''), COALESCE(t.description, ''), tc.input, tc.status
             FROM tool_calls tc
             LEFT JOIN tools t ON tc.tool_id = t.id
             {where}""",
@@ -208,7 +208,7 @@ def _build_fts5_tool_index(main_conn: sqlite3.Connection, scope_convs: set[str] 
 
     batch = []
     for row in rows:
-        conv_id, tool_name, raw_input = row[0], row[1], row[2] or ""
+        conv_id, tool_name, tool_desc, raw_input, status = row[0], row[1], row[2], row[3] or "", row[4] or ""
         # Parse JSON input and extract text values for indexing
         try:
             inp = _json.loads(raw_input)
@@ -220,8 +220,13 @@ def _build_fts5_tool_index(main_conn: sqlite3.Connection, scope_convs: set[str] 
         except (ValueError, TypeError):
             input_text = raw_input
 
-        # Include tool_name tokens (e.g. "file.read" → "file read") for better matching
-        tool_tokens = tool_name.replace(".", " ").replace("_", " ")
+        # Append status so "error" / "failure" queries can match
+        if status and status != "success":
+            input_text = f"{input_text} {status}"
+
+        # Include tool_name tokens (e.g. "file.read" → "file read") + description
+        # so "writing" → porter("write") matches both "file.write" and "Write/create a file"
+        tool_tokens = f"{tool_name.replace('.', ' ').replace('_', ' ')} {tool_desc}"
         batch.append((conv_id, tool_tokens, input_text))
 
     mem.executemany("INSERT INTO tool_fts VALUES (?, ?, ?)", batch)
