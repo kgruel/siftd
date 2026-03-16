@@ -1,6 +1,7 @@
 """Tests for tool-search API and CLI."""
 
 import json
+import sqlite3
 
 import pytest
 
@@ -523,6 +524,33 @@ class TestApiToolSearch:
 
         assert results
         assert results[0].command == "git status"
+
+
+    def test_result_status_alias_works_as_status_filter(self, tmp_path):
+        """result_status: is an alias for status: — both filter the same column."""
+        db_path = tmp_path / "tool_search.db"
+        _build_db(db_path)
+
+        _, by_status = search_tool_calls("status:error", db_path=db_path)
+        _, by_alias = search_tool_calls("result_status:error", db_path=db_path)
+
+        assert len(by_status) > 0
+        assert [r.tool_call_id for r in by_status] == [r.tool_call_id for r in by_alias]
+
+    def test_auto_rebuild_on_missing_tables(self, tmp_path):
+        """search_tool_calls auto-rebuilds when tool_search tables are missing."""
+        db_path = tmp_path / "tool_search.db"
+        _build_db(db_path)
+
+        # Drop the projection tables to simulate a pre-existing DB
+        conn = sqlite3.connect(db_path)
+        conn.execute("DROP TABLE IF EXISTS tool_search_fts")
+        conn.execute("DROP TABLE IF EXISTS tool_search")
+        conn.commit()
+        conn.close()
+
+        _, results = search_tool_calls("tool:shell.execute", db_path=db_path)
+        assert len(results) > 0
 
 
 class TestCliToolSearch:

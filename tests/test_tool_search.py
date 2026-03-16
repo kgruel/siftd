@@ -111,7 +111,7 @@ class TestToolSearchIndex:
         tables = {
             row["name"]
             for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type IN ('table', 'virtual table')"
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
 

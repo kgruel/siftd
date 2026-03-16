@@ -10,7 +10,7 @@ from pathlib import Path
 _TOOL_NAME_SPLIT_RE = re.compile(r"[^a-z0-9]+", re.IGNORECASE)
 
 
-def ensure_tool_search_tables(conn: sqlite3.Connection) -> None:
+def ensure_tool_search_tables(conn: sqlite3.Connection, *, commit: bool = False) -> None:
     """Create tool-search projection tables if they do not exist."""
     conn.execute(
         """
@@ -60,9 +60,25 @@ def ensure_tool_search_tables(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_tool_search_command_verb ON tool_search(command_verb)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_search_timestamp ON tool_search(timestamp)"
+    )
+    # Keep contentless FTS in sync when tool_search rows are cascade-deleted.
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_tool_search_fts_delete
+        AFTER DELETE ON tool_search
+        BEGIN
+            INSERT INTO tool_search_fts(tool_search_fts, rowid, search_text, tool_call_id)
+            VALUES ('delete', OLD.rowid, OLD.search_text, OLD.tool_call_id);
+        END
+        """
+    )
+    if commit:
+        conn.commit()
 
 
-def rebuild_tool_search_index(conn: sqlite3.Connection) -> None:
+def rebuild_tool_search_index(conn: sqlite3.Connection, *, commit: bool = False) -> None:
     """Rebuild the tool-search projection from tool_calls and related tables."""
     ensure_tool_search_tables(conn)
     conn.execute("DELETE FROM tool_search")
@@ -126,6 +142,9 @@ def rebuild_tool_search_index(conn: sqlite3.Connection) -> None:
             "INSERT INTO tool_search_fts (rowid, search_text, tool_call_id) VALUES (last_insert_rowid(), ?, ?)",
             (proj["search_text"], row["tool_call_id"]),
         )
+
+    if commit:
+        conn.commit()
 
 
 def _project_tool_call(row: sqlite3.Row) -> dict[str, str | None]:

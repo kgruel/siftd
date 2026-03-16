@@ -94,8 +94,7 @@ def search_tool_calls(
     conn = open_database(db_path, read_only=not rebuild_index)
     try:
         if rebuild_index:
-            rebuild_tool_search_index(conn)
-            conn.commit()
+            rebuild_tool_search_index(conn, commit=True)
         try:
             results = _search_tool_calls_impl(conn, parsed, limit=limit)
         except sqlite3.OperationalError as e:
@@ -106,8 +105,7 @@ def search_tool_calls(
             rw_conn = open_database(db_path, read_only=False)
             try:
                 ensure_tool_search_tables(rw_conn)
-                rebuild_tool_search_index(rw_conn)
-                rw_conn.commit()
+                rebuild_tool_search_index(rw_conn, commit=True)
                 results = _search_tool_calls_impl(rw_conn, parsed, limit=limit)
             finally:
                 rw_conn.close()
