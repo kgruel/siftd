@@ -461,6 +461,11 @@ def main():
         metavar="FLOAT",
         help="MMR lambda: 1.0=pure relevance, 0.0=pure diversity (default: 0.7)",
     )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Embedding model name (default: BAAI/bge-small-en-v1.5)",
+    )
     args = parser.parse_args()
 
     # Load strategy if provided
@@ -500,8 +505,9 @@ def main():
 
     # Initialize backend
     from siftd.embeddings.fastembed_backend import FastEmbedBackend
-    print("Initializing embedding model...", file=sys.stderr)
-    backend = FastEmbedBackend()
+    model_name = getattr(args, 'model', None) or 'BAAI/bge-small-en-v1.5'
+    print(f"Initializing embedding model: {model_name}", file=sys.stderr)
+    backend = FastEmbedBackend(model=model_name)
     tokenizer = get_tokenizer(backend)
 
     # Run

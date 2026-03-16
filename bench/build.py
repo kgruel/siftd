@@ -23,11 +23,14 @@ from siftd.storage.embeddings import open_embeddings_db, store_chunk, set_meta
 def extract_chunks(main_conn: sqlite3.Connection, params: dict) -> list[dict]:
     """Extract chunks from main DB using the exchange-window chunker."""
     from fastembed import TextEmbedding
-    from siftd.embeddings.chunker import extract_exchange_window_chunks
+    from siftd.embeddings.chunker import extract_exchange_window_chunks, extract_tool_summary_chunks
 
     target_tokens = params.get("target_tokens", 256)
     max_tokens = params.get("max_tokens", 512)
     overlap_tokens = params.get("overlap_tokens", 25)
+    include_tool_summaries = params.get("include_tool_summaries", False)
+    if isinstance(include_tool_summaries, str):
+        include_tool_summaries = include_tool_summaries.lower() in ("true", "1", "yes")
 
     emb = TextEmbedding("BAAI/bge-small-en-v1.5")
     tokenizer = emb.model.tokenizer
@@ -54,6 +57,13 @@ def extract_chunks(main_conn: sqlite3.Connection, params: dict) -> list[dict]:
         keep = set(seen[:max_convs])
         chunks = [c for c in chunks if c["conversation_id"] in keep]
         print(f"  Limited to {min(max_convs, len(seen))} conversations → {len(chunks)} chunks")
+
+    if include_tool_summaries:
+        conv_ids = {c["conversation_id"] for c in chunks}
+        tool_chunks = extract_tool_summary_chunks(main_conn, conversation_ids=conv_ids)
+        print(f"  Adding {len(tool_chunks)} tool summary chunks")
+        chunks.extend(tool_chunks)
+
     return chunks
 
 

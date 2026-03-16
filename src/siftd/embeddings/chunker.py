@@ -159,6 +159,120 @@ def _split_sentences(text: str) -> list[str]:
 # --- High-level: exchange-window chunking from main DB ---
 
 
+def extract_tool_summary_chunks(
+    main_conn: sqlite3.Connection,
+    *,
+    conversation_ids: set[str] | None = None,
+) -> list[dict]:
+    """Extract one tool-summary chunk per conversation.
+
+    Each chunk summarizes the tools used, key file paths, and commands
+    in plain text suitable for semantic embedding. This improves findability
+    for tool-usage queries like "conversations where pyproject.toml was read".
+
+    Returns list of dicts with keys: conversation_id, chunk_type, text,
+    token_count (0), source_ids ([]).
+    """
+    import json as _json
+
+    # Load tool calls grouped by conversation
+    where = ""
+    params: tuple = ()
+    if conversation_ids:
+        ph = ",".join("?" * len(conversation_ids))
+        where = f"WHERE tc.conversation_id IN ({ph})"
+        params = tuple(conversation_ids)
+
+    rows = main_conn.execute(
+        f"""SELECT tc.conversation_id, t.name AS tool_name, tc.input, tc.status
+            FROM tool_calls tc
+            LEFT JOIN tools t ON tc.tool_id = t.id
+            {where}
+            ORDER BY tc.conversation_id, tc.timestamp""",
+        params,
+    ).fetchall()
+
+    # Group by conversation
+    from collections import defaultdict
+    conv_tool_calls: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+    for row in rows:
+        conv_id = row[0]
+        tool_name = row[1] or "unknown"
+        raw_input = row[2] or ""
+        status = row[3] or ""
+        conv_tool_calls[conv_id].append((tool_name, raw_input, status))
+
+    chunks: list[dict] = []
+    for conv_id, calls in conv_tool_calls.items():
+        lines: list[str] = ["Tools used in this conversation:"]
+
+        # Count tools
+        tool_counts: dict[str, int] = {}
+        for tool_name, _, _ in calls:
+            tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
+
+        for tool_name, count in sorted(tool_counts.items(), key=lambda x: -x[1]):
+            lines.append(f"- {tool_name}: {count} calls")
+
+        # Key file paths (from file.read, file.edit, file.write)
+        file_paths: list[str] = []
+        seen_paths: set[str] = set()
+        for tool_name, raw_input, _ in calls:
+            if tool_name in ("file.read", "file.edit", "file.write", "file.glob"):
+                try:
+                    inp = _json.loads(raw_input)
+                    path = inp.get("file_path") or inp.get("pattern") or ""
+                    if path and path not in seen_paths:
+                        seen_paths.add(path)
+                        import os
+                        file_paths.append(os.path.basename(path))
+                        if len(file_paths) >= 20:
+                            break
+                except (ValueError, TypeError):
+                    pass
+
+        if file_paths:
+            lines.append(f"Files accessed: {', '.join(file_paths)}")
+
+        # Key shell commands (just first word/verb of each unique command)
+        commands: list[str] = []
+        seen_cmds: set[str] = set()
+        for tool_name, raw_input, _ in calls:
+            if tool_name == "shell.execute":
+                try:
+                    inp = _json.loads(raw_input)
+                    cmd = inp.get("command", "").strip()
+                    if cmd:
+                        # First meaningful token
+                        first = cmd.split()[0] if cmd.split() else cmd
+                        if first not in seen_cmds:
+                            seen_cmds.add(first)
+                            commands.append(first)
+                            if len(commands) >= 10:
+                                break
+                except (ValueError, TypeError):
+                    pass
+
+        if commands:
+            lines.append(f"Shell commands: {', '.join(commands)}")
+
+        # Error summary
+        error_count = sum(1 for _, _, status in calls if status == "error")
+        if error_count:
+            lines.append(f"Tool errors: {error_count}")
+
+        text = "\n".join(lines)
+        chunks.append({
+            "conversation_id": conv_id,
+            "chunk_type": "tool_summary",
+            "text": text,
+            "token_count": 0,
+            "source_ids": [],
+        })
+
+    return chunks
+
+
 def extract_exchange_window_chunks(
     main_conn: sqlite3.Connection,
     tokenizer: Tokenizer,

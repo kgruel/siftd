@@ -1,2 +1,3 @@
 {"type":"config","name":"Findability: tool content in search surface (recall@10)","metricName":"recall_at_10","metricUnit":"","bestDirection":"higher"}
 {"run":1,"commit":"d760469","metric":0,"metrics":{},"status":"crash","description":"Baseline timeout: embedding 500 convs (2289 chunks) takes ~16min. Need to reduce scope or cache DB.","timestamp":1773627361480,"segment":0}
+{"run":2,"commit":"fada2af","metric":0.1951,"metrics":{"hit_at_10":1,"build_chunks":298},"status":"keep","description":"Baseline: exchange-window chunker, 50 convs, no tool content. recall@10=0.1951, hit@10=1.0 (semantic text already finds some tool-usage patterns)","timestamp":1773627629371,"segment":0}

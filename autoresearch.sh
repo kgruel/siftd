@@ -10,7 +10,7 @@ export PATH="$(pwd)/.venv/bin:$PATH"
 DB_PATH="${HOME}/.local/share/siftd/siftd.db"
 EMBED_DB="/tmp/autoresearch_findability.db"
 MAX_CONVS=50   # limit for speed; ~2-3min build time
-STRATEGY="bench/strategies/exchange-window.json"
+STRATEGY="bench/strategies/exchange-window-tool-summaries.json"
 
 # Clean up previous run
 rm -f "$EMBED_DB"
