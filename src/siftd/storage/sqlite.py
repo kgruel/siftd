@@ -19,6 +19,7 @@ from siftd.model_names import parse_model_name
 from siftd.storage.fts import ensure_fts_table, insert_fts_content
 from siftd.storage.sessions import ensure_prompt_tags_table, ensure_session_tables
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
+from siftd.storage.tool_search import ensure_tool_search_tables
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 SCHEMA_VERSION = 1
@@ -74,6 +75,7 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         _migrate_add_branch_column(conn)
         _migrate_add_cascade_deletes(conn)
         ensure_fts_table(conn)
+        ensure_tool_search_tables(conn)
         ensure_pricing_table(conn)
         ensure_canonical_tools(conn)
         ensure_tool_call_tags_table(conn)

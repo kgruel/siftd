@@ -15,6 +15,7 @@ from siftd.cli_search import build_search_parser
 from siftd.cli_serve import build_serve_parser
 from siftd.cli_sessions import build_sessions_parser
 from siftd.cli_tags import build_tags_parser
+from siftd.cli_tool_search import build_tool_search_parser
 from siftd.paths import db_path
 
 
@@ -43,6 +44,7 @@ def main(argv=None) -> int:
     build_query_parser(subparsers)
     build_data_parser(subparsers)
     build_search_parser(subparsers)
+    build_tool_search_parser(subparsers)
     build_install_parser(subparsers)
     build_peek_parser(subparsers)
     build_export_parser(subparsers)
