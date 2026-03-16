@@ -392,6 +392,32 @@ class TestSearchServeDelegation:
         assert base_url == "http://127.0.0.1:9000"
         assert explicit is False
 
+    def test_resolves_url_from_serve_state_file(self, monkeypatch, tmp_path):
+        """CLI discovers serve port from runtime state file."""
+        from siftd.cli_search import _resolve_serve_base_url
+        import json
+        import os
+
+        monkeypatch.delenv("SIFTD_SERVE_URL", raising=False)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+        state_dir = tmp_path / "state" / "siftd"
+        state_dir.mkdir(parents=True)
+        (state_dir / "serve.json").write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),  # current process is alive
+                    "port": 9000,
+                    "db_path": "/tmp/test.db",
+                }
+            )
+        )
+
+        base_url, explicit = _resolve_serve_base_url()
+        assert base_url == "http://127.0.0.1:9000"
+        assert explicit is False
+
 
 class TestSearchFlagValidation:
     """Tests for flag combination validation."""
