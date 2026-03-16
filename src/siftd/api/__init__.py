@@ -101,6 +101,12 @@ from siftd.api.tags import (
     remove_tag,
     rename_tag,
 )
+from siftd.api.tool_search import (
+    ToolSearchGroup,
+    ToolSearchResult,
+    group_tool_search_results,
+    search_tool_calls,
+)
 from siftd.api.tools import (
     TagUsage,
     WorkspaceTagUsage,
@@ -219,6 +225,10 @@ __all__ = [
     "WorkspaceTagUsage",
     "get_tool_tag_summary",
     "get_tool_tags_by_workspace",
+    "ToolSearchGroup",
+    "ToolSearchResult",
+    "group_tool_search_results",
+    "search_tool_calls",
     # export
     "ExportedConversation",
     "ExportOptions",

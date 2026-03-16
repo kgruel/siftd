@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from siftd.cli_common import parse_date
+from siftd.dateparse import parse_date
 
 
 class TestParseDate:
@@ -14,7 +14,7 @@ class TestParseDate:
     @pytest.fixture
     def fixed_today(self):
         """Patch date.today to return 2024-06-15 for all tests."""
-        with patch("siftd.cli_common.date") as mock_date:
+        with patch("siftd.dateparse.date") as mock_date:
             mock_date.today.return_value = date(2024, 6, 15)
             yield
 
@@ -29,9 +29,8 @@ class TestParseDate:
         assert parse_date("") is None
 
     def test_whitespace_raises_error(self):
-        """Whitespace-only string raises ArgumentTypeError."""
-        import argparse
-        with pytest.raises(argparse.ArgumentTypeError):
+        """Whitespace-only string raises ValueError."""
+        with pytest.raises(ValueError):
             parse_date("   ")
 
     def test_iso_format_passthrough(self):
@@ -44,21 +43,19 @@ class TestParseDate:
         assert parse_date("  2024-01-15  ") == "2024-01-15"
 
     def test_invalid_format_raises_error(self):
-        """Invalid formats raise ArgumentTypeError."""
-        import argparse
-        with pytest.raises(argparse.ArgumentTypeError, match="invalid date format"):
+        """Invalid formats raise ValueError."""
+        with pytest.raises(ValueError, match="invalid date format"):
             parse_date("not-a-date")
-        with pytest.raises(argparse.ArgumentTypeError, match="invalid date format"):
+        with pytest.raises(ValueError, match="invalid date format"):
             parse_date("2024/01/15")
-        with pytest.raises(argparse.ArgumentTypeError, match="invalid date format"):
+        with pytest.raises(ValueError, match="invalid date format"):
             parse_date("Jan 15, 2024")
 
     def test_partial_iso_raises_error(self):
-        """Partial ISO formats raise ArgumentTypeError."""
-        import argparse
-        with pytest.raises(argparse.ArgumentTypeError, match="invalid date format"):
+        """Partial ISO formats raise ValueError."""
+        with pytest.raises(ValueError, match="invalid date format"):
             parse_date("2024-01")
-        with pytest.raises(argparse.ArgumentTypeError, match="invalid date format"):
+        with pytest.raises(ValueError, match="invalid date format"):
             parse_date("2024")
 
     # Relative date tests (need fixed_today fixture)
