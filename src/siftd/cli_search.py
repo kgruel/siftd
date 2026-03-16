@@ -135,13 +135,14 @@ def _delegate_search_via_serve(
     db: Path,
 ) -> list[dict] | None:
     """Try to run semantic/hybrid search via siftd-serve; return results or None."""
-    base_url, _explicit = _resolve_serve_base_url()
+    base_url, explicit = _resolve_serve_base_url()
 
     from siftd.serve.client import probe_health
     from siftd.serve.client import search as serve_search
 
     try:
-        health = probe_health(base_url=base_url)
+        probe_timeout = 0.5 if explicit else 0.02
+        health = probe_health(base_url=base_url, timeout_s=probe_timeout)
     except Exception:
         return None
 
