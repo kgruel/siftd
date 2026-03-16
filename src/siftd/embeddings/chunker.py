@@ -237,11 +237,16 @@ def extract_tool_summary_chunks(
         # Key shell commands (just first word/verb of each unique command)
         commands: list[str] = []
         seen_cmds: set[str] = set()
+        cmd_descriptions: list[str] = []
+        seen_descs: set[str] = set()
+        grep_patterns: list[str] = []
+        seen_patterns: set[str] = set()
         for tool_name, raw_input, _ in calls:
             if tool_name == "shell.execute":
                 try:
                     inp = _json.loads(raw_input)
                     cmd = inp.get("command", "").strip()
+                    desc = inp.get("description", "").strip()
                     if cmd:
                         # First meaningful token
                         first = cmd.split()[0] if cmd.split() else cmd
@@ -250,11 +255,29 @@ def extract_tool_summary_chunks(
                             commands.append(first)
                             if len(commands) >= 10:
                                 break
+                    if desc and desc not in seen_descs:
+                        seen_descs.add(desc)
+                        cmd_descriptions.append(desc)
+                except (ValueError, TypeError):
+                    pass
+            elif tool_name == "search.grep":
+                try:
+                    inp = _json.loads(raw_input)
+                    pat = inp.get("pattern", "") or inp.get("query", "")
+                    if pat and pat not in seen_patterns:
+                        seen_patterns.add(pat)
+                        grep_patterns.append(pat)
+                        if len(grep_patterns) >= 10:
+                            break
                 except (ValueError, TypeError):
                     pass
 
         if commands:
             lines.append(f"Shell commands: {', '.join(commands)}")
+        if cmd_descriptions:
+            lines.append(f"Shell descriptions: {'; '.join(cmd_descriptions[:8])}")
+        if grep_patterns:
+            lines.append(f"Grep patterns: {', '.join(grep_patterns)}")
 
         # Error summary
         error_count = sum(1 for _, _, status in calls if status == "error")
