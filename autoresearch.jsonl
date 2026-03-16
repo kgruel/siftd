@@ -1,0 +1,2 @@
+{"type":"config","name":"Findability: tool content in search surface (recall@10)","metricName":"recall_at_10","metricUnit":"","bestDirection":"higher"}
+{"run":1,"commit":"d760469","metric":0,"metrics":{},"status":"crash","description":"Baseline timeout: embedding 500 convs (2289 chunks) takes ~16min. Need to reduce scope or cache DB.","timestamp":1773627361480,"segment":0}

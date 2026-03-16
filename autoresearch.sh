@@ -1,12 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
+# Use project venv
+export PATH="$(pwd)/.venv/bin:$PATH"
+
 # Findability autoresearch: recall@10 for tool-usage queries
 # Builds an embeddings DB (limited convs for speed) and measures findability.
 
 DB_PATH="${HOME}/.local/share/siftd/siftd.db"
 EMBED_DB="/tmp/autoresearch_findability.db"
-MAX_CONVS=500  # limit for speed; ~30s build time
+MAX_CONVS=50   # limit for speed; ~2-3min build time
 STRATEGY="bench/strategies/exchange-window.json"
 
 # Clean up previous run
