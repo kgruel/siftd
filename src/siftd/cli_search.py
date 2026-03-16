@@ -94,31 +94,34 @@ def _resolve_serve_base_url() -> tuple[str, bool]:
             return cfg_url, True
 
     port = 8484
+    port_from_config = False
     if get_config is not None:
         port_cfg = get_config("serve.port")
         if port_cfg:
             try:
                 port = int(port_cfg)
+                port_from_config = True
             except (ValueError, TypeError):
                 pass
 
-    # Runtime fallback: if serve was started with a CLI-only --port (no config),
-    # consult the state file written by `siftd serve`.
-    import json
+    # Runtime fallback: only consult the state file when serve.port is NOT
+    # configured, so config remains authoritative over stale/other state files.
+    if not port_from_config:
+        import json
 
-    from siftd.paths import state_dir
+        from siftd.paths import state_dir
 
-    serve_state = state_dir() / "serve.json"
-    try:
-        data = json.loads(serve_state.read_text())
-        pid = data.get("pid")
-        if isinstance(pid, int):
-            os.kill(pid, 0)  # raises OSError if process doesn't exist
-            state_port = data.get("port")
-            if isinstance(state_port, int):
-                port = state_port
-    except (OSError, json.JSONDecodeError, KeyError, TypeError):
-        pass
+        serve_state = state_dir() / "serve.json"
+        try:
+            data = json.loads(serve_state.read_text())
+            pid = data.get("pid")
+            if isinstance(pid, int):
+                os.kill(pid, 0)  # raises OSError if process doesn't exist
+                state_port = data.get("port")
+                if isinstance(state_port, int):
+                    port = state_port
+        except (OSError, json.JSONDecodeError, KeyError, TypeError):
+            pass
 
     return f"http://127.0.0.1:{port}", False
 

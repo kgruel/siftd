@@ -418,6 +418,32 @@ class TestSearchServeDelegation:
         assert base_url == "http://127.0.0.1:9000"
         assert explicit is False
 
+    def test_serve_port_config_takes_precedence_over_state_file(self, monkeypatch, tmp_path):
+        """serve.port config should win over a live state file."""
+        from siftd.cli_search import _resolve_serve_base_url
+        import json
+        import os
+
+        monkeypatch.delenv("SIFTD_SERVE_URL", raising=False)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+        # Config says port 7000
+        cfg_dir = tmp_path / "config" / "siftd"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "config.toml").write_text("[serve]\nport = 7000\n")
+
+        # State file says port 9000 (live PID)
+        state_dir = tmp_path / "state" / "siftd"
+        state_dir.mkdir(parents=True)
+        (state_dir / "serve.json").write_text(
+            json.dumps({"pid": os.getpid(), "port": 9000, "db_path": "/tmp/test.db"})
+        )
+
+        base_url, explicit = _resolve_serve_base_url()
+        assert base_url == "http://127.0.0.1:7000"
+        assert explicit is False
+
 
 class TestSearchFlagValidation:
     """Tests for flag combination validation."""
