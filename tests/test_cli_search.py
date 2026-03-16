@@ -344,6 +344,54 @@ class TestSearchServeDelegation:
         assert body["result_count"] == 1
         assert body["results"][0]["conversation_id"] == indexed_db["conv1_id"]
 
+    def test_delegation_rejects_mismatched_db_path(self, monkeypatch, tmp_path):
+        """Delegate path should reject serve instances pointing at a different DB."""
+        from siftd.cli_search import _delegate_search_via_serve
+
+        args = make_args()
+
+        cli_db = tmp_path / "cli.db"
+        cli_db.write_text("")  # path existence isn't required, but keep it realistic
+        other_db = tmp_path / "other.db"
+        other_db.write_text("")
+
+        monkeypatch.setenv("SIFTD_SERVE_URL", "http://127.0.0.1:8484")
+
+        monkeypatch.setattr(
+            "siftd.serve.client.probe_health",
+            lambda **_k: {"service": "siftd", "status": "ok", "db_path": str(other_db.resolve())},
+        )
+
+        def _should_not_call_search(**_k):
+            raise AssertionError("expected DB mismatch rejection before calling /v1/search")
+
+        monkeypatch.setattr("siftd.serve.client.search", _should_not_call_search)
+
+        out = _delegate_search_via_serve(
+            args,
+            query="q",
+            n=10,
+            embeddings_only=False,
+            rerank="mmr",
+            exclude_active=True,
+            db=cli_db,
+        )
+        assert out is None
+
+    def test_resolves_default_url_from_serve_port_config(self, monkeypatch, tmp_path):
+        from siftd.cli_search import _resolve_serve_base_url
+
+        monkeypatch.delenv("SIFTD_SERVE_URL", raising=False)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        cfg_dir = tmp_path / "siftd"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "config.toml").write_text("[serve]\nport = 9000\n")
+
+        base_url, explicit = _resolve_serve_base_url()
+        assert base_url == "http://127.0.0.1:9000"
+        assert explicit is False
+
 
 class TestSearchFlagValidation:
     """Tests for flag combination validation."""

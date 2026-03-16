@@ -30,6 +30,7 @@ async def health(db_path: Path) -> dict:
     """Health check — returns DB status."""
     from siftd.storage.sqlite import open_database
 
+    db_path_str = str(db_path.resolve())
     size_bytes = db_path.stat().st_size if db_path.exists() else 0
     conversations = 0
     if db_path.exists():
@@ -43,6 +44,7 @@ async def health(db_path: Path) -> dict:
     return {
         "service": "siftd",
         "status": "ok",
+        "db_path": db_path_str,
         "db_size_bytes": size_bytes,
         "conversations": conversations,
     }

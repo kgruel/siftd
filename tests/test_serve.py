@@ -74,6 +74,7 @@ class TestHealth:
         body = resp.json()
         assert body["service"] == "siftd"
         assert body["status"] == "ok"
+        assert body["db_path"] == str(db.resolve())
         assert "db_size_bytes" in body
         assert "conversations" in body
 

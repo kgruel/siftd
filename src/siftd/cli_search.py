@@ -73,45 +73,48 @@ def _is_loopback_url(base_url: str) -> bool:
     return host in ("127.0.0.1", "localhost", "::1")
 
 
-def _can_delegate_to_serve(args, *, db: Path, embed_db: Path) -> bool:
-    """Conservatively decide whether it's safe to delegate to siftd-serve."""
-    if not _serve_delegation_enabled():
-        return False
+def _resolve_serve_base_url() -> tuple[str, bool]:
+    """Resolve siftd-serve base URL.
 
+    Returns (base_url, explicit) where explicit means it came from SIFTD_SERVE_URL
+    or config `serve.url` (as opposed to the localhost default fallback).
+    """
     try:
         from siftd.config import get_config
     except Exception:
         get_config = None  # type: ignore[assignment]
 
-    base_url = os.environ.get("SIFTD_SERVE_URL")
-    if base_url is None:
-        if get_config is not None:
-            base_url = get_config("serve.url")
-    base_url = base_url or "http://127.0.0.1:8484"
+    env_url = os.environ.get("SIFTD_SERVE_URL")
+    if env_url:
+        return env_url, True
 
-    # Only auto-delegate to loopback to keep the cold-path probe bounded (<10ms).
-    if not _is_loopback_url(base_url):
+    if get_config is not None:
+        cfg_url = get_config("serve.url")
+        if cfg_url:
+            return cfg_url, True
+
+    port = 8484
+    if get_config is not None:
+        port_cfg = get_config("serve.port")
+        if port_cfg:
+            try:
+                port = int(port_cfg)
+            except (ValueError, TypeError):
+                pass
+
+    return f"http://127.0.0.1:{port}", False
+
+
+def _can_delegate_to_serve(args, *, db: Path, embed_db: Path) -> bool:
+    """Conservatively decide whether it's safe to delegate to siftd-serve."""
+    if not _serve_delegation_enabled():
         return False
 
-    # Serve DB is chosen at startup; avoid delegating when the CLI points at a
-    # non-default DB unless serve.db explicitly matches.
-    serve_db = None
-    if get_config is not None:
-        serve_db = get_config("serve.db")
-    if serve_db:
-        try:
-            if Path(serve_db).expanduser() != db:
-                return False
-        except Exception:
-            return False
-    else:
-        # No explicit serve.db config: only delegate when we're using the default-resolved DB.
-        # If the user explicitly set --db, require it to match the default path.
-        if getattr(args, "db", None):
-            from siftd.paths import db_path as default_db_path
+    base_url, explicit = _resolve_serve_base_url()
 
-            if db != default_db_path():
-                return False
+    # Only auto-delegate to loopback to keep the cold-path probe bounded (<10ms).
+    if not explicit and not _is_loopback_url(base_url):
+        return False
 
     # Embeddings DB overrides are not supported over HTTP.
     if getattr(args, "embed_db", None):
@@ -129,21 +132,23 @@ def _delegate_search_via_serve(
     embeddings_only: bool,
     rerank: str,
     exclude_active: bool,
+    db: Path,
 ) -> list[dict] | None:
     """Try to run semantic/hybrid search via siftd-serve; return results or None."""
-    base_url = os.environ.get("SIFTD_SERVE_URL")
-    if base_url is None:
-        from siftd.config import get_config
-
-        base_url = get_config("serve.url")
-    base_url = base_url or "http://127.0.0.1:8484"
+    base_url, _explicit = _resolve_serve_base_url()
 
     from siftd.serve.client import probe_health
     from siftd.serve.client import search as serve_search
 
     try:
-        probe_health(base_url=base_url)
+        health = probe_health(base_url=base_url)
     except Exception:
+        return None
+
+    served_db_path = health.get("db_path")
+    if not isinstance(served_db_path, str):
+        return None
+    if served_db_path != str(db.resolve()):
         return None
 
     params: dict[str, object] = {
@@ -304,6 +309,7 @@ def cmd_search(args) -> int:
             embeddings_only=bool(getattr(args, "embeddings_only", False)),
             rerank="mmr" if use_mmr else "relevance",
             exclude_active=not args.no_exclude_active,
+            db=db,
         )
 
     if results is None:

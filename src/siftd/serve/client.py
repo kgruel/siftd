@@ -24,10 +24,11 @@ class ServeTarget:
     scheme: str
     host: str
     port: int
+    path_prefix: str
 
     @property
     def base_url(self) -> str:
-        return f"{self.scheme}://{self.host}:{self.port}"
+        return f"{self.scheme}://{self.host}:{self.port}{self.path_prefix}"
 
 
 def _parse_target(base_url: str) -> ServeTarget:
@@ -37,7 +38,8 @@ def _parse_target(base_url: str) -> ServeTarget:
         raise ValueError(f"Unsupported serve URL scheme: {scheme!r}")
     host = parsed.hostname or "127.0.0.1"
     port = parsed.port or (443 if scheme == "https" else 80)
-    return ServeTarget(scheme=scheme, host=host, port=port)
+    path_prefix = parsed.path.rstrip("/")
+    return ServeTarget(scheme=scheme, host=host, port=port, path_prefix=path_prefix)
 
 
 def default_base_url() -> str:
@@ -60,7 +62,9 @@ def _get_json(
 ) -> dict[str, Any]:
     target = _parse_target(base_url)
     query = urlencode(params or {}, doseq=True)
-    full_path = f"{path}?{query}" if query else path
+    full_path = f"{target.path_prefix}{path}"
+    if query:
+        full_path = f"{full_path}?{query}"
 
     conn = _conn(target, timeout_s)
     try:
