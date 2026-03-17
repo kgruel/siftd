@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from siftd.adapters.sdk import canonicalize_tool_name, extract_tool_hint
+from siftd.domain.peek import PeekNarrativeBlock, PeekToolCall
 
 
 @dataclass
@@ -28,6 +29,7 @@ class FollowEvent:
     text: str | None = None
     tool_calls: list[tuple[str, int, list[str]]] = field(default_factory=list)
     """List of (canonical_name, count, hints)."""
+    narrative: list[PeekNarrativeBlock] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
     is_user: bool = False
@@ -38,6 +40,7 @@ def parse_record(
     *,
     tool_aliases: dict[str, str] | None = None,
     hint_keys: dict[str, list[str]] | None = None,
+    include_thinking: bool = False,
 ) -> FollowEvent | None:
     """Parse a single JSONL record into a FollowEvent.
 
@@ -88,13 +91,39 @@ def parse_record(
 
     # Extract text (without [tool: X] placeholders — redundant with hint lines)
     text_parts = []
+    narrative: list[PeekNarrativeBlock] = []
+    pending_tools: list[PeekToolCall] = []
     for block in content:
         if isinstance(block, str):
             text_parts.append(block)
+            narrative.append(PeekNarrativeBlock(block_type="text", content=block))
         elif isinstance(block, dict) and block.get("type") == "text":
             t = block.get("text", "")
             if t:
                 text_parts.append(t)
+                narrative.append(PeekNarrativeBlock(block_type="text", content=t))
+        elif (
+            include_thinking
+            and isinstance(block, dict)
+            and block.get("type") == "thinking"
+        ):
+            t = block.get("thinking") or block.get("text", "")
+            if t:
+                text_parts.append(f"[thinking] {t}")
+                narrative.append(PeekNarrativeBlock(block_type="thinking", content=t))
+            else:
+                text_parts.append("[thinking]")
+        elif isinstance(block, dict) and block.get("type") == "tool_use":
+            raw_name = block.get("name", "unknown")
+            canonical = raw_name
+            if tool_aliases:
+                canonical = canonicalize_tool_name(raw_name, tool_aliases)
+            hint = None
+            if hint_keys:
+                raw_input = block.get("input")
+                input_dict = raw_input if isinstance(raw_input, dict) else {}
+                hint = extract_tool_hint(canonical, input_dict, hint_keys)
+            pending_tools.append(PeekToolCall(tool_name=canonical, input=hint))
 
     # Collect tool calls with hints
     tool_counter: Counter[str] = Counter()
@@ -119,11 +148,14 @@ def parse_record(
         (name, count, tool_hints.get(name, []))
         for name, count in tool_counter.most_common()
     ]
+    if pending_tools:
+        narrative.append(PeekNarrativeBlock(block_type="tool_calls", tool_calls=pending_tools))
 
     return FollowEvent(
         timestamp=timestamp,
         text="\n".join(text_parts) if text_parts else None,
         tool_calls=tool_calls,
+        narrative=narrative,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         is_user=False,
@@ -183,6 +215,7 @@ def follow_session(
     poll_interval: float = 0.5,
     render: Callable[[FollowEvent], None] | None = None,
     on_turn: Callable[[FollowEvent], None] | None = None,
+    include_thinking: bool = False,
 ) -> None:
     """Follow a live session file, emitting events as they arrive.
 
@@ -259,6 +292,7 @@ def follow_session(
                     record,
                     tool_aliases=tool_aliases,
                     hint_keys=hint_keys,
+                    include_thinking=include_thinking,
                 )
                 if event is None:
                     continue

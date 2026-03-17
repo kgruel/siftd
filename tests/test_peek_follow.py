@@ -204,6 +204,23 @@ class TestParseRecord:
         assert event.text is None
         assert len(event.tool_calls) == 1
 
+    def test_assistant_record_includes_thinking_when_requested(self):
+        record = {
+            "type": "assistant",
+            "timestamp": "2025-01-20T10:00:05Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should inspect the config first."},
+                    {"type": "text", "text": "I'll inspect the config."},
+                ],
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            },
+        }
+        event = parse_record(record, include_thinking=True)
+        assert event is not None
+        assert event.text == "[thinking] I should inspect the config first.\nI'll inspect the config."
+
     def test_non_message_record_returns_none(self):
         assert parse_record({"type": "system"}) is None
         assert parse_record({}) is None

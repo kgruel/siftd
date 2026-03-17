@@ -7,7 +7,10 @@ import sys
 from pathlib import Path
 
 from siftd.cli_common import apply_config_defaults, resolve_db
-from siftd.output import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace, print_table, truncate_text
+from siftd.output import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace, print_table
+from siftd.output.painted_bridge import print_block as print_painted_block
+from siftd.output.painted_bridge import render_query_detail_block
+from siftd.output.zoom import query_detail_zoom
 from siftd.paths import queries_dir
 
 
@@ -123,21 +126,81 @@ def cmd_tools(args) -> int:
 
 
 def _format_tool_input(raw_input: str | None) -> str:
-    """Extract most useful field from tool input JSON for display."""
+    """Format tool input JSON into a compact, readable summary."""
     if not raw_input:
         return ""
     try:
         obj = json.loads(raw_input)
         if isinstance(obj, dict):
-            # Prioritized field extraction
-            for key in ("command", "file_path", "path", "pattern", "query", "url"):
-                if key in obj:
-                    return f"{key}: {obj[key]}"
-            # Fallback: truncated raw JSON
-            return raw_input
+            priority_keys = (
+                "description", "command", "cmd", "file_path", "path",
+                "pattern", "query", "url", "title", "max_output_tokens",
+            )
+            parts: list[str] = []
+            for key in priority_keys:
+                value = obj.get(key)
+                if value in (None, "", [], {}):
+                    continue
+                parts.append(f"{key}: {value}")
+            if parts:
+                return " · ".join(parts)
+            return json.dumps(obj, ensure_ascii=False, sort_keys=True)
+        if isinstance(obj, list):
+            return json.dumps(obj, ensure_ascii=False)
     except (json.JSONDecodeError, TypeError):
         pass
     return raw_input
+
+
+def _format_tool_result(raw_result: str | None) -> str:
+    """Format tool result JSON into a readable summary."""
+    if not raw_result:
+        return ""
+    try:
+        obj = json.loads(raw_result)
+        if isinstance(obj, dict):
+            parts: list[str] = []
+            output = obj.get("output")
+            if isinstance(output, str) and output.strip():
+                lines = [line for line in output.strip().splitlines() if line.strip()]
+                meta_parts = []
+                for key, label in (
+                    ("exit_code", "exit"),
+                    ("wall_time_seconds", "wall"),
+                    ("wall_time", "wall"),
+                    ("duration", "duration"),
+                    ("original_token_count", "tokens"),
+                    ("chunk_id", "chunk"),
+                ):
+                    value = obj.get(key)
+                    if value not in (None, "", [], {}):
+                        meta_parts.append(f"{label}: {value}")
+                if meta_parts:
+                    parts.append(" · ".join(meta_parts))
+                preview = lines[:6]
+                parts.append("\n".join(preview))
+                if len(lines) > 6:
+                    parts.append(f"... +{len(lines) - 6} more lines")
+                return "\n".join(part for part in parts if part)
+
+            for key in ("text", "result", "message"):
+                value = obj.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value
+
+            compact = []
+            for key in ("output", "result", "message", "error", "status"):
+                value = obj.get(key)
+                if value not in (None, "", [], {}):
+                    compact.append(f"{key}: {value}")
+            if compact:
+                return " · ".join(compact)
+            return json.dumps(obj, ensure_ascii=False, sort_keys=True)
+        if isinstance(obj, list):
+            return json.dumps(obj, ensure_ascii=False)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return raw_result
 
 
 def _query_detail(args) -> int:
@@ -153,9 +216,14 @@ def _query_detail(args) -> int:
     db = Path(args.db) if args.db else None
 
     # Resolve flags
-    include_thinking = getattr(args, "thinking", False)
+    include_thinking = getattr(args, "thinking", False) or getattr(args, "full", False)
     tools_flag = getattr(args, "tools", None)
-    include_tool_content = tools_flag is not None
+    zoom = query_detail_zoom(
+        full=getattr(args, "full", False),
+        thinking=getattr(args, "thinking", False),
+        tools=tools_flag,
+    )
+    include_tool_content = tools_flag is not None or getattr(args, "full", False)
     tool_filter = None
     if tools_flag is not None and tools_flag != "all":
         tool_filter = tools_flag
@@ -184,80 +252,50 @@ def _query_detail(args) -> int:
     elif getattr(args, "full", False):
         chars_limit = 0  # no truncation
 
-    tool_chars = args.tool_chars
-
-    # Header
-    ws_name = fmt_workspace(detail.workspace_path)
-    started = fmt_timestamp(detail.started_at)
-    total_tokens = detail.total_input_tokens + detail.total_output_tokens
-
-    print(f"Conversation: {detail.id}")
-    if ws_name:
-        print(f"Workspace: {ws_name}")
-    print(f"Started: {started}")
-    print(f"Model: {detail.model or 'unknown'}")
-    print(f"Tokens: {fmt_tokens(total_tokens)} (input: {fmt_tokens(detail.total_input_tokens)} / output: {fmt_tokens(detail.total_output_tokens)})")
-    if detail.tags:
-        print(f"Tags: {', '.join(detail.tags)}")
+    tool_chars = 0 if getattr(args, "full", False) else args.tool_chars
 
     # Summary mode: just metadata, no exchanges
     if getattr(args, "summary", False):
+        ws_name = fmt_workspace(detail.workspace_path)
+        started = fmt_timestamp(detail.started_at)
+        total_tokens = detail.total_input_tokens + detail.total_output_tokens
+
+        print(f"Conversation: {detail.id}")
+        if ws_name:
+            print(f"Workspace: {ws_name}")
+        print(f"Started: {started}")
+        print(f"Model: {detail.model or 'unknown'}")
+        print(f"Tokens: {fmt_tokens(total_tokens)} (input: {fmt_tokens(detail.total_input_tokens)} / output: {fmt_tokens(detail.total_output_tokens)})")
+        if detail.tags:
+            print(f"Tags: {', '.join(detail.tags)}")
         print(f"Turns: {len(detail.turns)}")
         return 0
-
-    print()
 
     # Determine which turns to show
     show_turns = detail.turns
     if exchanges_n is not None:
         show_turns = show_turns[-exchanges_n:] if exchanges_n < len(show_turns) else show_turns
 
-    # Timeline using turns (narrative-aware)
-    for turn in show_turns:
-        ts = fmt_timestamp(turn.timestamp, time_only=True)
-
-        # Prompt (shown once per turn)
-        if turn.prompt_text:
-            text = truncate_text(turn.prompt_text, chars_limit)
-            print(f"[prompt] {ts}")
-            print(f"  {text}")
-            print()
-
-        # Response narrative (or summary if narrative is empty)
-        tool_summaries = turn.tool_call_summaries
-        has_response = bool(turn.narrative) or turn.total_input_tokens or turn.total_output_tokens or tool_summaries
-        if has_response:
-            tok = turn.total_input_tokens + turn.total_output_tokens
-            print(f"[response] {ts} ({fmt_tokens(tok)} tok)")
+    if include_tool_content:
+        for turn in show_turns:
             for block in turn.narrative:
-                if block.block_type == "text":
-                    text = truncate_text(block.content or "", chars_limit)
-                    print(f"  {text}")
-                elif block.block_type == "thinking":
-                    text = truncate_text(block.content or "", chars_limit)
-                    print(f"  [thinking] {text}")
-                elif block.block_type in ("tool_result", "tool_output"):
-                    text = truncate_text(block.content or "", tool_chars)
-                    print(f"  [{block.block_type}] {text}")
-                elif block.block_type == "tool_calls":
-                    for tc in block.tool_calls:
-                        if tc.count > 1:
-                            line = f"    \u2192 {tc.tool_name} \u00d7{tc.count} ({tc.status})"
-                        else:
-                            line = f"    \u2192 {tc.tool_name} ({tc.status})"
-                        if tc.input is not None:
-                            line += f"  {truncate_text(_format_tool_input(tc.input), tool_chars)}"
-                        print(line)
-                        if tc.result is not None:
-                            print(f"      \u2190 {truncate_text(tc.result, tool_chars)}")
-            if not turn.narrative and tool_summaries:
-                for tc in tool_summaries:
-                    if tc.count > 1:
-                        print(f"    \u2192 {tc.tool_name} \u00d7{tc.count} ({tc.status})")
-                    else:
-                        print(f"    \u2192 {tc.tool_name} ({tc.status})")
-            print()
+                if block.block_type != "tool_calls":
+                    continue
+                for tc in block.tool_calls:
+                    if tc.input is not None:
+                        tc.input = _format_tool_input(tc.input)
+                    if tc.result is not None:
+                        tc.result = _format_tool_result(tc.result)
 
+    block = render_query_detail_block(
+        detail,
+        turns=show_turns,
+        chars_limit=chars_limit,
+        tool_chars=tool_chars,
+        zoom=zoom,
+        show_tool_content=include_tool_content,
+    )
+    print_painted_block(block)
     return 0
 
 

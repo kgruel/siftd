@@ -25,7 +25,12 @@ class AmbiguousSessionError(Exception):
         )
 
 
-def read_session_detail(path: Path, *, last_n: int = 5) -> SessionDetail | None:
+def read_session_detail(
+    path: Path,
+    *,
+    last_n: int = 5,
+    include_thinking: bool = False,
+) -> SessionDetail | None:
     """Read session detail from a session file.
 
     Delegates to the appropriate adapter's peek hooks.
@@ -33,6 +38,7 @@ def read_session_detail(path: Path, *, last_n: int = 5) -> SessionDetail | None:
     Args:
         path: Path to the session file.
         last_n: Number of most recent exchanges to include (minimum 1).
+        include_thinking: Include inline thinking/reasoning content when available.
 
     Returns:
         SessionDetail or None if the file can't be read.
@@ -73,6 +79,12 @@ def read_session_detail(path: Path, *, last_n: int = 5) -> SessionDetail | None:
         )
 
     try:
+        exchanges = peek_exchanges_fn(
+            path,
+            last_n,
+            include_thinking=include_thinking,
+        )
+    except TypeError:
         exchanges = peek_exchanges_fn(path, last_n)
     except Exception as e:
         logger.debug("peek_exchanges failed for %s: %s", path, e, exc_info=True)

@@ -5,10 +5,9 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from siftd.cli import main
-from siftd.domain.peek import SessionInfo
+from siftd.domain.peek import PeekExchange, PeekNarrativeBlock, PeekToolCall, SessionInfo
+from siftd.output.common import fmt_timestamp
 
 
 def _session(session_id="abc123", **kwargs):
@@ -25,6 +24,31 @@ def _session(session_id="abc123", **kwargs):
     }
     defaults.update(kwargs)
     return SessionInfo(session_id=session_id, **defaults)
+
+
+def _detail(*, include_thinking: bool = False):
+    narrative = [PeekNarrativeBlock(block_type="text", content="Doing it.")]
+    if include_thinking:
+        narrative.insert(0, PeekNarrativeBlock(block_type="thinking", content="Plan it."))
+    narrative.append(
+        PeekNarrativeBlock(
+            block_type="tool_calls",
+            tool_calls=[PeekToolCall(tool_name="shell.execute", input="git status")],
+        )
+    )
+    return type("Detail", (), {
+        "info": _session("abc123"),
+        "started_at": "2025-01-20T10:00:00Z",
+        "exchanges": [
+            PeekExchange(
+                timestamp="2025-01-20T10:01:00Z",
+                prompt_text="show me",
+                narrative=narrative,
+                input_tokens=10,
+                output_tokens=20,
+            )
+        ],
+    })()
 
 
 class TestPeekValidation:
@@ -59,6 +83,46 @@ class TestPeekValidation:
         rc = main(["peek", "--exchanges", "0"])
         assert rc == 1
         assert "--exchanges must be at least 1" in capsys.readouterr().out
+
+
+class TestPeekDetailMode:
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.api.read_session_detail")
+    def test_tools_renders_painted_detail(self, mock_read_detail, mock_find, capsys):
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.return_value = _detail()
+
+        rc = main(["peek", "abc123", "--tools"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        expected_started = fmt_timestamp("2025-01-20T10:00:00Z")
+        expected_turn = fmt_timestamp("2025-01-20T10:01:00Z", time_only=True)
+
+        assert "Session: abc123" in out
+        assert f"Started: {expected_started}" in out
+        assert f"[prompt] {expected_turn}" in out
+        assert f"[response] {expected_turn} (30 tok)" in out
+        assert "Doing it." in out
+        assert "→ shell.execute" in out
+        assert "input: git status" in out
+        assert "[thinking]" not in out
+        mock_read_detail.assert_called_once_with(Path("/tmp/fake-session.jsonl"), last_n=5, include_thinking=False)
+
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.api.read_session_detail")
+    def test_thinking_renders_inline_when_requested(self, mock_read_detail, mock_find, capsys):
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.side_effect = lambda path, last_n, include_thinking: _detail(include_thinking=include_thinking)
+
+        rc = main(["peek", "abc123", "--thinking"])
+        assert rc == 0
+        out = capsys.readouterr().out
+
+        assert "[thinking] Plan it." in out
+        assert "Doing it." in out
+        assert "→ shell.execute" in out
+        assert "input: git status" not in out
+        mock_read_detail.assert_called_once_with(Path("/tmp/fake-session.jsonl"), last_n=5, include_thinking=True)
 
 
 class TestPeekListMode:

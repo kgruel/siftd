@@ -123,6 +123,7 @@ A single user→assistant exchange for detail view.
 | `prompt_text` | `str \| None` |  |
 | `response_text` | `str \| None` |  |
 | `tool_calls` | `list[tuple[str, int]]` |  |
+| `narrative` | `list[PeekNarrativeBlock]` |  |
 | `input_tokens` | `int` |  |
 | `output_tokens` | `int` |  |
 
@@ -192,12 +193,13 @@ def list_active_sessions(*, workspace: str | None = ..., branch: str | None = ..
 Read session detail from a session file.
 
 ```python
-def read_session_detail(path: Path, *, last_n: int = ...) -> siftd.domain.peek.SessionDetail | None
+def read_session_detail(path: Path, *, last_n: int = ..., include_thinking: bool = ...) -> siftd.domain.peek.SessionDetail | None
 ```
 
 **Parameters:**
 
 - `path`: Path to the session file.
+- `last_n`: Number of most recent exchanges to include (minimum 1).
 
 **Returns:** SessionDetail or None if the file can't be read.
 

@@ -667,9 +667,9 @@ examples:
 
 ```
 usage: siftd peek [-h] [-w SUBSTR] [--branch SUBSTR] [--all] [-n N]
-                  [--exchanges N] [--full] [--chars N] [-f] [--tail]
-                  [--tail-lines N] [--json] [--main-only] [--children ID]
-                  [--last-response] [--last-prompt]
+                  [--exchanges N] [--full] [--chars N] [--thinking] [--tools]
+                  [-f] [--tail] [--tail-lines N] [--json] [--main-only]
+                  [--children ID] [--last-response] [--last-prompt]
                   [session_id]
 
 positional arguments:
@@ -685,6 +685,9 @@ options:
   --exchanges N         Detail mode: number of exchanges to show (default: 5)
   --full                Show full text (no truncation)
   --chars N             Truncate text at N characters (default: 200)
+  --thinking            Show model thinking/reasoning blocks inline when
+                        available
+  --tools               Show tool inputs/results inline when available
   -f, --follow          Follow a live session in real time (like tail -f)
   --tail                Raw JSONL tail (last 20 records)
   --tail-lines N        Number of records for --tail (default: 20)
@@ -704,6 +707,8 @@ examples:
   siftd peek -w myproject       # filter by workspace name
   siftd peek c520f862           # detail view for session (last 5 exchanges)
   siftd peek c520 --exchanges 10  # show last 10 exchanges
+  siftd peek c520 --thinking    # show thinking blocks inline
+  siftd peek c520 --tools       # show tool inputs/results inline when available
   siftd peek c520 --full        # show full text (no truncation)
   siftd peek c520 --tail        # raw JSONL tail
   siftd peek c520 --tail --json # tail as JSON array
