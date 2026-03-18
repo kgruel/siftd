@@ -154,7 +154,7 @@ class TestPeekDetailMode:
         assert f"[response] {expected_turn} (30 tok)" in out
         assert "Doing it." in out
         assert "→ shell.execute" in out
-        assert "input: git status" in out
+        assert "$ git status" in out
         assert "[thinking]" not in out
         mock_read_detail.assert_called_once_with(Path("/tmp/fake-session.jsonl"), last_n=5, include_thinking=False)
 
@@ -171,7 +171,7 @@ class TestPeekDetailMode:
         assert "[thinking] Plan it." in out
         assert "Doing it." in out
         assert "→ shell.execute" in out
-        assert "input: git status" not in out
+        assert "$ git status" not in out
         mock_read_detail.assert_called_once_with(Path("/tmp/fake-session.jsonl"), last_n=5, include_thinking=True)
 
     @patch("siftd.api.find_session_file")
@@ -185,7 +185,7 @@ class TestPeekDetailMode:
         out = capsys.readouterr().out
 
         assert "[thinking] Plan it." in out
-        assert "input: git status" in out
+        assert "$ git status" in out
         mock_read_detail.assert_called_once_with(Path("/tmp/fake-session.jsonl"), last_n=5, include_thinking=True)
 
 
@@ -269,8 +269,8 @@ class TestPeekFollowMode:
         assert rc == 0
         out = capsys.readouterr().out
 
-        assert "input: git status" in out
-        assert "input: src/config.py" in out
+        assert "$ git status" in out
+        assert "src/config.py" in out
 
     @patch("siftd.api.find_session_file")
     @patch("siftd.peek.read_session_detail")

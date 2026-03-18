@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -97,6 +98,415 @@ def _append_multiline(
         lines.append(_line((continuation, prefix_style), (part, text_style)))
 
 
+# ---------------------------------------------------------------------------
+# Tool-specific presenters
+# ---------------------------------------------------------------------------
+
+_TOOL_INDENT = "      "  # 6-space indent, consistent with current convention
+_MAX_PREVIEW_LINES = 6
+
+
+def _parse_json_safe(raw: str | None) -> dict | None:
+    """Parse raw JSON string to dict, returning None on failure."""
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw) if isinstance(raw, str) else raw
+        return obj if isinstance(obj, dict) else None
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _output_preview_lines(
+    output: str,
+    *,
+    result_style: Style,
+    styles: _RoleStyles,
+    tool_chars: int,
+) -> list[Line]:
+    """Render output text as a line-limited preview with overflow indicator."""
+    lines: list[Line] = []
+    raw_lines = [ln for ln in output.strip().splitlines() if ln.strip()]
+    if not raw_lines:
+        return lines
+    max_lines = 0 if tool_chars == 0 else _MAX_PREVIEW_LINES
+    preview = raw_lines if max_lines == 0 else raw_lines[:max_lines]
+    for out_line in preview:
+        _append_multiline(lines, _TOOL_INDENT, styles.meta, out_line, result_style, tool_chars)
+    if max_lines > 0 and len(raw_lines) > max_lines:
+        overflow = len(raw_lines) - max_lines
+        lines.append(_line((_TOOL_INDENT + f"... +{overflow} more lines", styles.summary_hint)))
+    return lines
+
+
+def _render_shell_execute_lines(
+    raw_input: str | None,
+    raw_result: str | None,
+    status: str | None,
+    styles: _RoleStyles,
+    tool_chars: int,
+) -> list[Line]:
+    """Render shell.execute (Bash) tool call content."""
+    lines: list[Line] = []
+    inp = _parse_json_safe(raw_input)
+    res = _parse_json_safe(raw_result)
+
+    command = ""
+    if isinstance(inp, dict):
+        command = inp.get("command") or inp.get("cmd", "")
+    elif raw_input:
+        command = str(raw_input)
+    if command:
+        lines.append(_line((_TOOL_INDENT + "$ ", styles.meta), (command, styles.tool)))
+
+    if isinstance(res, dict):
+        meta_parts: list[str] = []
+        exit_code = res.get("exit_code")
+        if exit_code is not None:
+            meta_parts.append(f"exit: {exit_code}")
+        wall = res.get("wall_time_seconds") or res.get("wall_time")
+        if wall is not None:
+            meta_parts.append(f"wall: {wall}s")
+        if meta_parts:
+            meta_style = styles.tool_error if status == "error" else styles.meta
+            lines.append(_line((_TOOL_INDENT, meta_style), (" · ".join(meta_parts), meta_style)))
+
+        output = res.get("output", "")
+        if isinstance(output, str) and output.strip():
+            result_style = styles.tool_error if status == "error" else styles.tool_result
+            lines.extend(
+                _output_preview_lines(output, result_style=result_style, styles=styles, tool_chars=tool_chars)
+            )
+    elif raw_result:
+        result_style = styles.tool_error if status == "error" else styles.tool_result
+        _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, str(raw_result), result_style, tool_chars)
+
+    return lines
+
+
+def _render_file_read_lines(
+    raw_input: str | None,
+    raw_result: str | None,
+    status: str | None,
+    styles: _RoleStyles,
+    tool_chars: int,
+) -> list[Line]:
+    """Render file.read (Read) tool call content."""
+    lines: list[Line] = []
+    inp = _parse_json_safe(raw_input)
+    res = _parse_json_safe(raw_result)
+
+    path_str = ""
+    if isinstance(inp, dict):
+        path = inp.get("file_path") or inp.get("path", "")
+        if path:
+            path_str = str(path)
+            offset = inp.get("offset")
+            limit = inp.get("limit")
+            if offset is not None and limit is not None:
+                path_str += f":{offset}-{offset + limit - 1}"
+            elif offset is not None:
+                path_str += f":{offset}"
+    elif raw_input:
+        path_str = str(raw_input)
+
+    if path_str:
+        suffix_parts: list[str] = []
+        if isinstance(res, dict):
+            tokens = res.get("original_token_count")
+            if tokens:
+                suffix_parts.append(f"{tokens} tokens")
+        suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
+        lines.append(_line((_TOOL_INDENT, styles.meta), (path_str, styles.tool), (suffix, styles.meta)))
+
+    if status == "error" and isinstance(res, dict):
+        error_text = res.get("error") or res.get("message") or res.get("output", "")
+        if error_text:
+            _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, str(error_text), styles.tool_error, tool_chars)
+
+    return lines
+
+
+def _render_file_edit_lines(
+    raw_input: str | None,
+    raw_result: str | None,
+    status: str | None,
+    styles: _RoleStyles,
+    tool_chars: int,
+) -> list[Line]:
+    """Render file.edit (Edit) tool call content."""
+    lines: list[Line] = []
+    inp = _parse_json_safe(raw_input)
+    res = _parse_json_safe(raw_result)
+
+    if isinstance(inp, dict):
+        path = inp.get("file_path") or inp.get("path", "")
+        if path:
+            lines.append(_line((_TOOL_INDENT, styles.meta), (str(path), styles.tool)))
+
+        old = inp.get("old_string", "")
+        new = inp.get("new_string", "")
+        if old:
+            _append_multiline(lines, _TOOL_INDENT + "- ", styles.tool_input, str(old), styles.tool_input, tool_chars)
+        if new:
+            _append_multiline(lines, _TOOL_INDENT + "+ ", styles.meta, str(new), styles.tool_result, tool_chars)
+    elif raw_input:
+        lines.append(_line((_TOOL_INDENT, styles.meta), (str(raw_input), styles.tool)))
+
+    if status == "error" and isinstance(res, dict):
+        error_text = res.get("error") or res.get("message") or res.get("text", "")
+        if error_text:
+            _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, str(error_text), styles.tool_error, tool_chars)
+
+    return lines
+
+
+def _render_file_write_lines(
+    raw_input: str | None,
+    raw_result: str | None,
+    status: str | None,
+    styles: _RoleStyles,
+    tool_chars: int,
+) -> list[Line]:
+    """Render file.write (Write) tool call content."""
+    lines: list[Line] = []
+    inp = _parse_json_safe(raw_input)
+    res = _parse_json_safe(raw_result)
+
+    if isinstance(inp, dict):
+        path = inp.get("file_path") or inp.get("path", "")
+        if path:
+            content = inp.get("content", "")
+            line_count = len(content.splitlines()) if isinstance(content, str) and content else 0
+            suffix = f" ({line_count} lines)" if line_count else ""
+            lines.append(_line((_TOOL_INDENT, styles.meta), (str(path), styles.tool), (suffix, styles.meta)))
+    elif raw_input:
+        lines.append(_line((_TOOL_INDENT, styles.meta), (str(raw_input), styles.tool)))
+
+    if status == "error" and isinstance(res, dict):
+        error_text = res.get("error") or res.get("message") or res.get("text", "")
+        if error_text:
+            _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, str(error_text), styles.tool_error, tool_chars)
+
+    return lines
+
+
+def _render_search_grep_lines(
+    raw_input: str | None,
+    raw_result: str | None,
+    status: str | None,
+    styles: _RoleStyles,
+    tool_chars: int,
+) -> list[Line]:
+    """Render search.grep (Grep) tool call content."""
+    lines: list[Line] = []
+    inp = _parse_json_safe(raw_input)
+    res = _parse_json_safe(raw_result)
+
+    if isinstance(inp, dict):
+        pattern = inp.get("pattern", "")
+        path = inp.get("path", "")
+        include = inp.get("include") or inp.get("glob", "")
+        parts: list[tuple[str, Style]] = [(_TOOL_INDENT, styles.meta)]
+        if pattern:
+            parts.append((f"/{pattern}/", styles.tool))
+        if path:
+            parts.append((f" in {path}", styles.tool_input))
+        if include:
+            parts.append((f" {include}", styles.tool_input))
+        if len(parts) > 1:
+            lines.append(_line(*parts))
+    elif raw_input:
+        _append_multiline(lines, _TOOL_INDENT + "input: ", styles.tool_input, str(raw_input), styles.tool_input, tool_chars)
+
+    if isinstance(res, dict):
+        output = res.get("output", "")
+        if isinstance(output, str) and output.strip():
+            result_style = styles.tool_error if status == "error" else styles.tool_result
+            lines.extend(
+                _output_preview_lines(output, result_style=result_style, styles=styles, tool_chars=tool_chars)
+            )
+    elif raw_result:
+        result_style = styles.tool_error if status == "error" else styles.tool_result
+        _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, str(raw_result), result_style, tool_chars)
+
+    return lines
+
+
+def _render_file_glob_lines(
+    raw_input: str | None,
+    raw_result: str | None,
+    status: str | None,
+    styles: _RoleStyles,
+    tool_chars: int,
+) -> list[Line]:
+    """Render file.glob (Glob) tool call content."""
+    lines: list[Line] = []
+    inp = _parse_json_safe(raw_input)
+    res = _parse_json_safe(raw_result)
+
+    if isinstance(inp, dict):
+        pattern = inp.get("pattern", "")
+        path = inp.get("path", "")
+        parts: list[tuple[str, Style]] = [(_TOOL_INDENT, styles.meta)]
+        if pattern:
+            parts.append((pattern, styles.tool))
+        if path:
+            parts.append((f" in {path}", styles.tool_input))
+        if len(parts) > 1:
+            lines.append(_line(*parts))
+    elif raw_input:
+        _append_multiline(lines, _TOOL_INDENT + "input: ", styles.tool_input, str(raw_input), styles.tool_input, tool_chars)
+
+    if isinstance(res, dict):
+        output = res.get("output", "")
+        if isinstance(output, str) and output.strip():
+            lines.extend(
+                _output_preview_lines(output, result_style=styles.tool_result, styles=styles, tool_chars=tool_chars)
+            )
+    elif raw_result:
+        _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, str(raw_result), styles.tool_result, tool_chars)
+
+    return lines
+
+
+def _render_todo_lines(
+    raw_input: str | None,
+    raw_result: str | None,
+    status: str | None,
+    styles: _RoleStyles,
+    tool_chars: int,
+) -> list[Line]:
+    """Render ui.todo (TodoWrite) tool call content."""
+    lines: list[Line] = []
+    inp = _parse_json_safe(raw_input)
+
+    if isinstance(inp, dict):
+        title = inp.get("title", "")
+        if title:
+            lines.append(_line((_TOOL_INDENT, styles.meta), (str(title), styles.tool)))
+        tasks = inp.get("tasks") or inp.get("plan") or []
+        if isinstance(tasks, list):
+            for item in tasks:
+                if isinstance(item, dict):
+                    step = item.get("description") or item.get("step") or item.get("content", "")
+                    item_status = item.get("status", "")
+                    check = "✓" if item_status in ("done", "completed") else "○"
+                    if step:
+                        lines.append(
+                            _line((_TOOL_INDENT + f"  {check} ", styles.meta), (str(step), styles.tool_input))
+                        )
+                elif isinstance(item, str):
+                    lines.append(_line((_TOOL_INDENT + "  ○ ", styles.meta), (item, styles.tool_input)))
+    elif raw_input:
+        _append_multiline(lines, _TOOL_INDENT + "input: ", styles.tool_input, str(raw_input), styles.tool_input, tool_chars)
+
+    return lines
+
+
+def _format_generic_input(raw: str) -> str:
+    """Format tool input JSON into a compact, readable summary."""
+    obj = _parse_json_safe(raw)
+    if isinstance(obj, dict):
+        priority_keys = (
+            "description", "command", "cmd", "file_path", "path",
+            "pattern", "query", "url", "title",
+        )
+        parts: list[str] = []
+        for key in priority_keys:
+            value = obj.get(key)
+            if value in (None, "", [], {}):
+                continue
+            parts.append(f"{key}: {value}")
+        if parts:
+            return " · ".join(parts)
+        return json.dumps(obj, ensure_ascii=False, sort_keys=True)
+    return raw
+
+
+def _format_generic_result(raw: str) -> str:
+    """Format tool result JSON into a readable summary."""
+    obj = _parse_json_safe(raw)
+    if isinstance(obj, dict):
+        output = obj.get("output")
+        if isinstance(output, str) and output.strip():
+            meta_parts: list[str] = []
+            for mkey, label in (
+                ("exit_code", "exit"),
+                ("wall_time_seconds", "wall"),
+                ("wall_time", "wall"),
+                ("duration", "duration"),
+            ):
+                mvalue = obj.get(mkey)
+                if mvalue not in (None, "", [], {}):
+                    meta_parts.append(f"{label}: {mvalue}")
+            prefix = " · ".join(meta_parts) + "\n" if meta_parts else ""
+            return prefix + output
+
+        for key in ("text", "result", "message"):
+            value = obj.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+
+        compact: list[str] = []
+        for key in ("output", "result", "message", "error", "status"):
+            value = obj.get(key)
+            if value not in (None, "", [], {}):
+                compact.append(f"{key}: {value}")
+        if compact:
+            return " · ".join(compact)
+        return json.dumps(obj, ensure_ascii=False, sort_keys=True)
+    return raw
+
+
+def _render_generic_lines(
+    raw_input: str | None,
+    raw_result: str | None,
+    status: str | None,
+    styles: _RoleStyles,
+    tool_chars: int,
+) -> list[Line]:
+    """Render any tool call with generic input/result formatting."""
+    lines: list[Line] = []
+
+    if raw_input:
+        formatted = _format_generic_input(raw_input)
+        if formatted:
+            _append_multiline(lines, _TOOL_INDENT + "input: ", styles.tool_input, formatted, styles.tool_input, tool_chars)
+
+    if raw_result:
+        formatted = _format_generic_result(raw_result)
+        if formatted:
+            result_style = styles.tool_error if status == "error" else styles.tool_result
+            _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, formatted, result_style, tool_chars)
+
+    return lines
+
+
+_TOOL_PRESENTERS = {
+    "shell.execute": _render_shell_execute_lines,
+    "file.read": _render_file_read_lines,
+    "file.edit": _render_file_edit_lines,
+    "file.write": _render_file_write_lines,
+    "search.grep": _render_search_grep_lines,
+    "file.glob": _render_file_glob_lines,
+    "ui.todo": _render_todo_lines,
+}
+
+
+def _render_tool_content_lines(
+    name: str,
+    raw_input: str | None,
+    raw_result: str | None,
+    status: str | None,
+    styles: _RoleStyles,
+    tool_chars: int,
+) -> list[Line]:
+    """Dispatch to tool-specific or generic presenter."""
+    renderer = _TOOL_PRESENTERS.get(name, _render_generic_lines)
+    return renderer(raw_input, raw_result, status, styles, tool_chars)
+
+
 def render_narrative_lines(
     blocks: list,
     *,
@@ -152,28 +562,16 @@ def render_narrative_lines(
                 if not show_tool_content:
                     continue
 
-                input_text = getattr(tc, "input", None)
-                if input_text:
-                    _append_multiline(
-                        lines,
-                        "      input: ",
-                        styles.tool_input,
-                        str(input_text),
-                        styles.tool_input,
+                lines.extend(
+                    _render_tool_content_lines(
+                        name,
+                        getattr(tc, "input", None),
+                        getattr(tc, "result", None),
+                        status,
+                        styles,
                         tool_chars,
                     )
-
-                result_text = getattr(tc, "result", None)
-                if result_text:
-                    result_style = styles.tool_error if status == "error" else styles.tool_result
-                    _append_multiline(
-                        lines,
-                        "      ← ",
-                        styles.meta,
-                        str(result_text),
-                        result_style,
-                        tool_chars,
-                    )
+                )
 
     return lines
 

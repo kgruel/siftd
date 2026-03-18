@@ -6,18 +6,17 @@ Active migration plan for the current UX-focused branch.
 
 Current branch name: `feat/painted-ux-migration`
 
-Current state as of 2026-03-17:
+Current state as of 2026-03-18:
 - Stage 0 is complete: `painted` is now a real siftd dependency and the bridge/seam exists
 - Stage 1 is complete for `query <id>` / `query <id> --full`
 - Stage 2 is complete for `peek <id>` / `peek <id> --full`
 - Stage 3 is complete for `peek --follow` static painted rendering
+- Stage 4 is complete: tool-specific painted presenters for shell, file, search, and todo tools
 - `query`, `peek`, and `peek --follow` now share the same painted-backed UX family
-- `peek --follow` now renders a painted initial context block plus painted live event blocks, without adopting in-place live updates yet
-- human-readable timestamps now display in local time instead of raw stored UTC strings
-- `--thinking` and `--tools` now share the same painted-backed detail/follow family, but remain distinct feature reveals: `--thinking` exposes thinking, `--tools` exposes tool payloads, and `--full` shows both
-- an upstream ANSI spacing bug was found in `painted`, fixed, and released as `painted 0.1.2`
-- siftd now depends on `painted>=0.1.2` and no longer needs a local rendering workaround
-- next target is now Stage 4: tool-specific painted components
+- tool content formatting now lives in the bridge layer, dispatched by canonical tool_name
+- tool-specific presenters handle both JSON and plain-string inputs (DB vs peek adapter)
+- `--tools` and `--full` produce significantly richer output with semantic structure per tool type
+- next target is Stage 5: lens architecture cleanup
 
 ## Why this exists
 
@@ -411,13 +410,23 @@ Delivered:
 - the same zoom semantics as static detail views (`default`, `--thinking`, `--tools`, `--full`)
 - significantly improved trace readability without adopting in-place updates
 
-### Stage 4 — Tool-specific components
+### Stage 4 — Tool-specific components ✅ complete
 
 Layer richer tool presenters on top of the migration.
 
-Deliverables:
-- shell/file/todo-specific visuals
-- much better `--tools` and `--full`
+Delivered:
+- tool-specific painted presenters dispatched by canonical tool_name
+- `shell.execute`: `$ command`, exit code + wall time, output preview with line limit
+- `file.read`: path + line range, token count suffix
+- `file.edit`: path, diff preview with `-`/`+` prefixes
+- `file.write`: path + line count
+- `search.grep`: `/pattern/ in /path glob`, output preview
+- `file.glob`: `pattern in /path`, output preview
+- `ui.todo`: title + task checklist with completion indicators
+- generic fallback: priority-key extraction for unknown tools
+- tool content formatting moved from CLI layer (cli_query.py) into the bridge layer
+- plain-string input fallback for all presenters (peek adapters provide non-JSON inputs)
+- output preview limited to 6 lines in default mode, unlimited in `--full`
 
 ### Stage 5 — Lens architecture cleanup
 
@@ -522,14 +531,13 @@ Still open:
 
 ## Immediate next steps
 
-1. Start Stage 4 by adding richer tool-specific painted presenters, beginning with `shell.execute`
-2. Reuse the current bridge/zoom/semantic role work instead of forking per-tool renderers
-3. Add stronger regression coverage and a repeatable real-TTY review checklist for future stages
-4. Keep refining tool presenters now that `query`, `peek`, and `peek --follow` share the same projection family
-5. Decide how explicitly we want to surface zoom semantics in the public CLI now that follow has landed
-6. Revisit detail truncation/verbosity semantics after Stage 3, especially:
+1. Start Stage 5: formalize the lens/projection layer now that Stages 0–4 are complete
+2. Add stronger regression coverage and a repeatable real-TTY review checklist for future stages
+3. Decide how explicitly we want to surface zoom semantics in the public CLI
+4. Revisit detail truncation/verbosity semantics:
    - whether `--thinking` should default to less truncation or no truncation
    - whether detail views should get a first-class verbosity/zoom control instead of today’s list-focused `-v` behavior
+5. Consider extending the tool presenter registry with additional adapters’ tool names if canonical mapping gaps emerge
 
 ## Quick manual verification commands
 

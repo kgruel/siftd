@@ -89,7 +89,7 @@ def test_query_tools_formats_input_and_result(capsys, tmp_path):
     assert rc == 0
     out = capsys.readouterr().out
     assert "[thinking]" not in out
-    assert "input: cmd: git status · max_output_tokens: 4000" in out
+    assert "$ git status" in out
     assert "Chunk ID: abc123" in out
     assert "Plan updated" in out
 
@@ -103,7 +103,7 @@ def test_query_thinking_shows_thinking_without_tool_payloads(capsys, tmp_path):
     out = capsys.readouterr().out
     assert "[thinking] First I'll inspect the repo state." in out
     assert "    → shell.execute" in out
-    assert "input: cmd: git status · max_output_tokens: 4000" not in out
+    assert "$ git status" not in out
     assert "Chunk ID: abc123" not in out
 
 
@@ -138,6 +138,6 @@ def test_query_full_alias_implies_tool_content(capsys, tmp_path):
     rc = main(["--db", str(db), "query", conv_id, "-F"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "input: cmd: git status · max_output_tokens: 4000" in out
+    assert "$ git status" in out
     assert "Chunk ID: abc123" in out
-    assert "title: Plan updated" in out or "plan:" in out
+    assert "Plan updated" in out
