@@ -8,10 +8,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from siftd.output.common import fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
-from siftd.output.zoom import NarrativeZoom
 
 if TYPE_CHECKING:
-    from painted import Block, Line, Style
+    from painted import Block, Fidelity, Line, Style
 
 
 @dataclass(frozen=True)
@@ -507,20 +506,36 @@ def _render_tool_content_lines(
     return renderer(raw_input, raw_result, status, styles, tool_chars)
 
 
+_DEFAULT_TOOL_CHARS = 120
+
+
+def _tool_density(fidelity: Fidelity) -> int:
+    """Derive tool content char limit from fidelity."""
+    if fidelity.depth >= 3:
+        return 0  # full depth = no truncation
+    if fidelity.chars > 0:
+        return fidelity.chars  # match text density
+    return _DEFAULT_TOOL_CHARS
+
+
 def render_narrative_lines(
     blocks: list,
     *,
-    chars_limit: int,
-    tool_chars: int,
-    zoom: NarrativeZoom,
-    show_tool_content: bool = False,
+    fidelity: Fidelity,
+    tool_chars: int = 0,
 ) -> list[Line]:
     """Render narrative blocks into styled painted lines.
 
-    Plain output is intentionally text-identical to the current string renderer.
+    Args:
+        blocks: Narrative blocks to render.
+        fidelity: Three-axis rendering spec (depth, visibility, density).
+        tool_chars: Optional tool density override (0=derive from fidelity).
     """
     styles = _styles()
     lines: list[Line] = []
+    chars_limit = fidelity.chars
+    effective_tool_chars = tool_chars or _tool_density(fidelity)
+    show_tool_content = fidelity.shows("tools")
 
     for block in blocks:
         block_type = getattr(block, "block_type", "")
@@ -540,7 +555,7 @@ def render_narrative_lines(
                     styles.meta,
                     content,
                     styles.tool_result,
-                    tool_chars,
+                    effective_tool_chars,
                 )
         elif block_type == "tool_calls":
             for tc in getattr(block, "tool_calls", []):
@@ -569,7 +584,7 @@ def render_narrative_lines(
                         getattr(tc, "result", None),
                         status,
                         styles,
-                        tool_chars,
+                        effective_tool_chars,
                     )
                 )
 
@@ -637,10 +652,8 @@ def render_query_detail_block(
     detail,
     *,
     turns: list,
-    chars_limit: int,
-    tool_chars: int,
-    zoom: NarrativeZoom,
-    show_tool_content: bool = False,
+    fidelity: Fidelity,
+    tool_chars: int = 0,
 ) -> Block:
     """Render a conversation detail view as a painted block."""
     styles = _styles()
@@ -675,7 +688,7 @@ def render_query_detail_block(
 
         if turn.prompt_text:
             lines.append(_line(("[prompt] ", styles.prompt), (ts, styles.meta)))
-            _append_multiline(lines, "  ", styles.assistant, turn.prompt_text, styles.assistant, chars_limit)
+            _append_multiline(lines, "  ", styles.assistant, turn.prompt_text, styles.assistant, fidelity.chars)
             lines.append(_line())
 
         tool_summaries = turn.tool_call_summaries
@@ -694,10 +707,8 @@ def render_query_detail_block(
         lines.extend(
             render_narrative_lines(
                 turn.narrative,
-                chars_limit=chars_limit,
+                fidelity=fidelity,
                 tool_chars=tool_chars,
-                zoom=zoom,
-                show_tool_content=show_tool_content,
             )
         )
         if not turn.narrative and tool_summaries:
@@ -711,10 +722,8 @@ def render_peek_detail_block(
     detail,
     *,
     exchanges: list,
-    chars_limit: int,
-    tool_chars: int,
-    zoom: NarrativeZoom,
-    show_tool_content: bool = False,
+    fidelity: Fidelity,
+    tool_chars: int = 0,
 ) -> Block:
     """Render a peek session detail view as a painted block."""
     styles = _styles()
@@ -750,7 +759,7 @@ def render_peek_detail_block(
 
         if exchange.prompt_text:
             lines.append(_line(("[prompt] ", styles.prompt), (ts, styles.meta)))
-            _append_multiline(lines, "  ", styles.assistant, exchange.prompt_text, styles.assistant, chars_limit)
+            _append_multiline(lines, "  ", styles.assistant, exchange.prompt_text, styles.assistant, fidelity.chars)
             lines.append(_line())
 
         has_response = bool(
@@ -775,14 +784,12 @@ def render_peek_detail_block(
             lines.extend(
                 render_narrative_lines(
                     exchange.narrative,
-                    chars_limit=chars_limit,
+                    fidelity=fidelity,
                     tool_chars=tool_chars,
-                    zoom=zoom,
-                    show_tool_content=show_tool_content,
                 )
             )
         elif exchange.response_text:
-            _append_multiline(lines, "  ", styles.assistant, exchange.response_text, styles.assistant, chars_limit)
+            _append_multiline(lines, "  ", styles.assistant, exchange.response_text, styles.assistant, fidelity.chars)
 
         if not exchange.narrative and exchange.tool_calls:
             lines.extend(_peek_tool_summary_lines(exchange.tool_calls))
@@ -794,10 +801,8 @@ def render_peek_detail_block(
 def render_follow_event_block(
     event,
     *,
-    chars_limit: int,
-    tool_chars: int,
-    zoom: NarrativeZoom,
-    show_tool_content: bool = False,
+    fidelity: Fidelity,
+    tool_chars: int = 0,
 ) -> Block:
     """Render a single follow-mode event as a painted block."""
     styles = _styles()
@@ -808,7 +813,7 @@ def render_follow_event_block(
         lines.append(_line(("[prompt] ", styles.prompt), (ts, styles.meta)))
         text = getattr(event, "text", None)
         if text:
-            _append_multiline(lines, "  ", styles.assistant, text, styles.assistant, chars_limit)
+            _append_multiline(lines, "  ", styles.assistant, text, styles.assistant, fidelity.chars)
         return _lines_to_block(lines)
 
     total_tokens = getattr(event, "input_tokens", 0) + getattr(event, "output_tokens", 0)
@@ -825,16 +830,14 @@ def render_follow_event_block(
         lines.extend(
             render_narrative_lines(
                 narrative,
-                chars_limit=chars_limit,
+                fidelity=fidelity,
                 tool_chars=tool_chars,
-                zoom=zoom,
-                show_tool_content=show_tool_content,
             )
         )
     else:
         text = getattr(event, "text", None)
         if text:
-            _append_multiline(lines, "  ", styles.assistant, text, styles.assistant, chars_limit)
+            _append_multiline(lines, "  ", styles.assistant, text, styles.assistant, fidelity.chars)
         tool_calls = getattr(event, "tool_calls", [])
         if tool_calls:
             lines.extend(_follow_tool_summary_lines(tool_calls))

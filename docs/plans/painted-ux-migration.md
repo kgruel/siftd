@@ -428,14 +428,16 @@ Delivered:
 - plain-string input fallback for all presenters (peek adapters provide non-JSON inputs)
 - output preview limited to 6 lines in default mode, unlimited in `--full`
 
-### Stage 5 — Lens architecture cleanup
+### Stage 5 — Fidelity model migration ✅ complete
 
-Once the major commands are migrated, formalize the lens/projection layer.
+Adopt painted's three-axis `Fidelity(depth, visible, chars, lines)` model, replacing the four-parameter threading in the bridge.
 
-Deliverables:
-- stable siftd-side renderable types
-- explicit lens functions
-- CLI becomes thinner and mostly selects source + zoom + format + lens
+Delivered:
+- bridge render functions accept `fidelity: Fidelity` instead of `chars_limit`, `tool_chars`, `zoom`, `show_tool_content`
+- CLI commands construct `Fidelity` from flags: `--thinking`/`--tools` → visibility, `--brief`/`--full` → density + depth
+- `NarrativeZoom` removed from the bridge (was unused — zoom was a dead parameter)
+- tool density derived from fidelity via `_tool_density()` helper, with `tool_chars` override for `--tool-chars N`
+- `render_narrative_lines` checks `fidelity.shows("tools")` for visibility instead of a boolean flag
 
 ## UX testing plan
 

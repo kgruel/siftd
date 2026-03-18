@@ -9,6 +9,8 @@ def cmd_peek(args) -> int:
     import json as _json
     import time
 
+    from painted import Fidelity
+
     from siftd.api import (
         find_session_file,
         list_active_sessions,
@@ -18,15 +20,15 @@ def cmd_peek(args) -> int:
     from siftd.output import fmt_ago, fmt_model
     from siftd.output.painted_bridge import print_block as print_painted_block
     from siftd.output.painted_bridge import render_follow_event_block, render_peek_detail_block
-    from siftd.output.zoom import peek_detail_zoom
     from siftd.peek import AmbiguousSessionError
 
     # Extract flags
     last_response = getattr(args, "last_response", False)
     last_prompt = getattr(args, "last_prompt", False)
     follow = getattr(args, "follow", False)
-    show_tool_details = getattr(args, "tools", False) or getattr(args, "full", False)
-    include_thinking = getattr(args, "thinking", False) or getattr(args, "full", False)
+    is_full = getattr(args, "full", False)
+    show_tool_details = getattr(args, "tools", False) or is_full
+    include_thinking = getattr(args, "thinking", False) or is_full
 
     # Validate mutual exclusivity
     if last_response and last_prompt:
@@ -64,16 +66,28 @@ def cmd_peek(args) -> int:
         print("Error: --exchanges must be at least 1")
         return 1
 
-    # Determine truncation limit
-    chars_limit = 0
-    if getattr(args, "brief", False):
-        chars_limit = 80
-    if getattr(args, "chars", None) is not None:
-        chars_limit = args.chars
-    if getattr(args, "full", False):
-        chars_limit = 0  # No truncation
+    # Build fidelity spec from CLI flags
+    visible: set[str] = {"text"}
+    if include_thinking:
+        visible.add("thinking")
+    if show_tool_details:
+        visible.add("tools")
 
-    if getattr(args, "full", False):
+    chars = 0
+    if getattr(args, "brief", False):
+        chars = 80
+    if getattr(args, "chars", None) is not None:
+        chars = args.chars
+    if is_full:
+        chars = 0
+
+    fidelity = Fidelity(
+        depth=3 if is_full else 1,
+        visible=frozenset(visible),
+        chars=chars,
+    )
+
+    if is_full:
         tool_chars = 0
     elif getattr(args, "brief", False):
         tool_chars = 80
@@ -81,11 +95,6 @@ def cmd_peek(args) -> int:
         tool_chars = 0 if args.chars <= 0 else min(args.chars, 120)
     else:
         tool_chars = 120
-    zoom = peek_detail_zoom(
-        full=getattr(args, "full", False),
-        thinking=getattr(args, "thinking", False),
-        tools=show_tool_details,
-    )
 
     # --last-response / --last-prompt mode: extract single text, output raw
     if last_response or last_prompt:
@@ -175,10 +184,8 @@ def cmd_peek(args) -> int:
                 initial_block = render_peek_detail_block(
                     detail,
                     exchanges=detail.exchanges,
-                    chars_limit=chars_limit,
+                    fidelity=fidelity,
                     tool_chars=tool_chars,
-                    zoom=zoom,
-                    show_tool_content=show_tool_details,
                 )
                 print_painted_block(initial_block)
                 print()
@@ -188,10 +195,8 @@ def cmd_peek(args) -> int:
             def _render_follow_event(event: FollowEvent) -> None:
                 block = render_follow_event_block(
                     event,
-                    chars_limit=chars_limit,
+                    fidelity=fidelity,
                     tool_chars=tool_chars,
-                    zoom=zoom,
-                    show_tool_content=show_tool_details,
                 )
                 print_painted_block(block)
                 print()
@@ -302,10 +307,8 @@ def cmd_peek(args) -> int:
         block = render_peek_detail_block(
             detail,
             exchanges=detail.exchanges,
-            chars_limit=chars_limit,
+            fidelity=fidelity,
             tool_chars=tool_chars,
-            zoom=zoom,
-            show_tool_content=show_tool_details,
         )
         print_painted_block(block)
         return 0

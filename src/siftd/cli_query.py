@@ -10,7 +10,6 @@ from siftd.cli_common import apply_config_defaults, resolve_db
 from siftd.output import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace, print_table
 from siftd.output.painted_bridge import print_block as print_painted_block
 from siftd.output.painted_bridge import render_query_detail_block
-from siftd.output.zoom import query_detail_zoom
 from siftd.paths import queries_dir
 
 
@@ -128,6 +127,8 @@ def cmd_tools(args) -> int:
 
 def _query_detail(args) -> int:
     """Show conversation detail timeline."""
+    from painted import Fidelity
+
     from siftd.api import get_conversation
 
     # Validate --exchanges
@@ -139,14 +140,10 @@ def _query_detail(args) -> int:
     db = Path(args.db) if args.db else None
 
     # Resolve flags
-    include_thinking = getattr(args, "thinking", False) or getattr(args, "full", False)
+    is_full = getattr(args, "full", False)
+    include_thinking = getattr(args, "thinking", False) or is_full
     tools_flag = getattr(args, "tools", None)
-    zoom = query_detail_zoom(
-        full=getattr(args, "full", False),
-        thinking=getattr(args, "thinking", False),
-        tools=tools_flag,
-    )
-    include_tool_content = tools_flag is not None or getattr(args, "full", False)
+    include_tool_content = tools_flag is not None or is_full
     tool_filter = None
     if tools_flag is not None and tools_flag != "all":
         tool_filter = tools_flag
@@ -168,16 +165,27 @@ def _query_detail(args) -> int:
         print(f"Conversation not found: {args.conversation_id}")
         return 1
 
-    # Determine truncation limit
-    chars_limit = 0
-    if getattr(args, "brief", False):
-        chars_limit = 80
-    if args.chars is not None:
-        chars_limit = args.chars
-    if getattr(args, "full", False):
-        chars_limit = 0  # no truncation
+    # Build fidelity spec from CLI flags
+    visible: set[str] = {"text"}
+    if include_thinking:
+        visible.add("thinking")
+    if include_tool_content:
+        visible.add("tools")
 
-    tool_chars = 0 if getattr(args, "full", False) else args.tool_chars
+    chars = 0
+    if getattr(args, "brief", False):
+        chars = 80
+    if args.chars is not None:
+        chars = args.chars
+    if is_full:
+        chars = 0
+
+    fidelity = Fidelity(
+        depth=3 if is_full else 1,
+        visible=frozenset(visible),
+        chars=chars,
+    )
+    tool_chars = 0 if is_full else args.tool_chars
 
     # Summary mode: just metadata, no exchanges
     if getattr(args, "summary", False):
@@ -204,10 +212,8 @@ def _query_detail(args) -> int:
     block = render_query_detail_block(
         detail,
         turns=show_turns,
-        chars_limit=chars_limit,
+        fidelity=fidelity,
         tool_chars=tool_chars,
-        zoom=zoom,
-        show_tool_content=include_tool_content,
     )
     print_painted_block(block)
     return 0
