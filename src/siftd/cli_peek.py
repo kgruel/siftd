@@ -15,11 +15,10 @@ def cmd_peek(args) -> int:
         read_session_detail,
         tail_session,
     )
-    from siftd.output import fmt_ago, fmt_model, fmt_timestamp, fmt_tokens, print_indented, truncate_text
-    from siftd.output.narrative import render_narrative_blocks
+    from siftd.output import fmt_ago, fmt_model
     from siftd.output.painted_bridge import print_block as print_painted_block
-    from siftd.output.painted_bridge import render_peek_detail_block
-    from siftd.output.zoom import NarrativeZoom, peek_detail_zoom
+    from siftd.output.painted_bridge import render_follow_event_block, render_peek_detail_block
+    from siftd.output.zoom import peek_detail_zoom
     from siftd.peek import AmbiguousSessionError
 
     # Extract flags
@@ -78,7 +77,6 @@ def cmd_peek(args) -> int:
         thinking=getattr(args, "thinking", False),
         tools=show_tool_details,
     )
-    detailed_narrative = zoom >= NarrativeZoom.DETAILED
 
     # --last-response / --last-prompt mode: extract single text, output raw
     if last_response or last_prompt:
@@ -134,7 +132,7 @@ def cmd_peek(args) -> int:
     # Follow mode
     if follow:
         from siftd.peek import follow_session, read_session_detail
-        from siftd.peek.follow import FollowEvent, event_to_json, render_tool_line
+        from siftd.peek.follow import FollowEvent, event_to_json
 
         # Resolve session: use provided ID or default to most recent active
         if args.session_id:
@@ -159,64 +157,35 @@ def cmd_peek(args) -> int:
         initial_n = exchanges_n if exchanges_n is not None else 3
 
         if not args.json:
-            # Print initial context (CLI layer handles rendering)
             detail = read_session_detail(
                 path,
                 last_n=initial_n,
                 include_thinking=include_thinking,
             )
             if detail is not None:
-                for ex in detail.exchanges:
-                    ts = fmt_timestamp(ex.timestamp, time_only=True)
-                    if ex.prompt_text:
-                        print(f"[{ts}] user")
-                        print_indented(truncate_text(ex.prompt_text, chars_limit))
-                        print()
-                    if ex.response_text or ex.tool_calls or ex.narrative:
-                        token_info = f"{fmt_tokens(ex.input_tokens)} in / {fmt_tokens(ex.output_tokens)} out"
-                        print(f"[{ts}] assistant ({token_info})")
-                        if detailed_narrative and ex.narrative:
-                            for line in render_narrative_blocks(
-                                ex.narrative,
-                                chars_limit=chars_limit,
-                                tool_chars=tool_chars,
-                                full=getattr(args, "full", False),
-                                show_tool_content=show_tool_details,
-                            ):
-                                print(line)
-                        else:
-                            if ex.response_text:
-                                print_indented(truncate_text(ex.response_text, chars_limit))
-                            if ex.tool_calls:
-                                for name, count in ex.tool_calls:
-                                    print(render_tool_line(name, count, []))
-                        print()
+                initial_block = render_peek_detail_block(
+                    detail,
+                    exchanges=detail.exchanges,
+                    chars_limit=chars_limit,
+                    tool_chars=tool_chars,
+                    zoom=zoom,
+                    show_tool_content=show_tool_details,
+                )
+                print_painted_block(initial_block)
+                print()
 
             print("--- following ---", file=sys.stderr)
 
             def _render_follow_event(event: FollowEvent) -> None:
-                ts = fmt_timestamp(event.timestamp, time_only=True)
-                if event.is_user:
-                    print(f"\n[{ts}] user")
-                    if event.text:
-                        print_indented(truncate_text(event.text, chars_limit))
-                else:
-                    token_info = f"{fmt_tokens(event.input_tokens)} in / {fmt_tokens(event.output_tokens)} out"
-                    print(f"\n[{ts}] assistant ({token_info})")
-                    if detailed_narrative and event.narrative:
-                        for line in render_narrative_blocks(
-                            event.narrative,
-                            chars_limit=chars_limit,
-                            tool_chars=tool_chars,
-                            full=getattr(args, "full", False),
-                            show_tool_content=show_tool_details,
-                        ):
-                            print(line)
-                    else:
-                        if event.text:
-                            print_indented(truncate_text(event.text, chars_limit))
-                        for name, count, hints in event.tool_calls:
-                            print(render_tool_line(name, count, hints))
+                block = render_follow_event_block(
+                    event,
+                    chars_limit=chars_limit,
+                    tool_chars=tool_chars,
+                    zoom=zoom,
+                    show_tool_content=show_tool_details,
+                )
+                print_painted_block(block)
+                print()
                 sys.stdout.flush()
 
             follow_session(

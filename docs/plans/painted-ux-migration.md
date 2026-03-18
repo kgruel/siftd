@@ -10,12 +10,14 @@ Current state as of 2026-03-17:
 - Stage 0 is complete: `painted` is now a real siftd dependency and the bridge/seam exists
 - Stage 1 is complete for `query <id>` / `query <id> --full`
 - Stage 2 is complete for `peek <id>` / `peek <id> --full`
-- `query` and `peek` detail views now share the same painted-backed projection family
+- Stage 3 is complete for `peek --follow` static painted rendering
+- `query`, `peek`, and `peek --follow` now share the same painted-backed UX family
+- `peek --follow` now renders a painted initial context block plus painted live event blocks, without adopting in-place live updates yet
 - human-readable timestamps now display in local time instead of raw stored UTC strings
-- `--thinking` and `--tools` now share the same painted-backed detail family, but remain distinct feature reveals: `--thinking` exposes thinking, `--tools` exposes tool payloads, and `--full` shows both
+- `--thinking` and `--tools` now share the same painted-backed detail/follow family, but remain distinct feature reveals: `--thinking` exposes thinking, `--tools` exposes tool payloads, and `--full` shows both
 - an upstream ANSI spacing bug was found in `painted`, fixed, and released as `painted 0.1.2`
 - siftd now depends on `painted>=0.1.2` and no longer needs a local rendering workaround
-- next target is now Stage 3: `peek --follow` painted migration
+- next target is now Stage 4: tool-specific painted components
 
 ## Why this exists
 
@@ -397,16 +399,17 @@ Delivered:
 - local-time human timestamps in the painted detail views
 - backend differences kept to available data only
 
-### Stage 3 — Follow static painted migration
+### Stage 3 — Follow static painted migration ✅ complete
 
 Migrate `peek --follow` to render painted blocks statically in the stream.
 
 Important: do **not** adopt in-place live rendering yet.
 
-Deliverables:
-- event-by-event painted output
-- same zoom semantics as static detail views
-- significantly improved trace readability
+Delivered:
+- painted initial context rendering via the same peek detail projection family
+- event-by-event painted output for live follow turns
+- the same zoom semantics as static detail views (`default`, `--thinking`, `--tools`, `--full`)
+- significantly improved trace readability without adopting in-place updates
 
 ### Stage 4 — Tool-specific components
 
@@ -519,11 +522,11 @@ Still open:
 
 ## Immediate next steps
 
-1. Migrate `peek --follow` onto painted-backed static event rendering without adopting in-place live updates yet
-2. Reuse the current bridge/zoom/semantic role work instead of forking a separate follow renderer
+1. Start Stage 4 by adding richer tool-specific painted presenters, beginning with `shell.execute`
+2. Reuse the current bridge/zoom/semantic role work instead of forking per-tool renderers
 3. Add stronger regression coverage and a repeatable real-TTY review checklist for future stages
-4. Keep refining tool presenters now that `query` and `peek` detail share the same projection family
-5. Decide how explicitly we want to surface zoom semantics in the public CLI once follow lands
+4. Keep refining tool presenters now that `query`, `peek`, and `peek --follow` share the same projection family
+5. Decide how explicitly we want to surface zoom semantics in the public CLI now that follow has landed
 6. Revisit detail truncation/verbosity semantics after Stage 3, especially:
    - whether `--thinking` should default to less truncation or no truncation
    - whether detail views should get a first-class verbosity/zoom control instead of today’s list-focused `-v` behavior
@@ -579,11 +582,13 @@ uv run siftd peek <session_id> --follow --thinking
 uv run siftd peek <session_id> --follow --tools
 ```
 
-What you should see right now:
-- follow is **not** painted yet; that is the next stage
-- but the detailed/detail-ish behavior should still be more aligned with the new zoom semantics
-- `--thinking` should surface thinking blocks when available
-- `--tools` should push follow into the richer narrative rendering path when tool narrative data exists
+What you should see now:
+- follow is painted-backed in the same overall UX family as `query` and `peek`
+- initial context renders as a painted peek detail block before live streaming begins
+- live follow turns render as painted prompt/response event blocks
+- `--thinking` surfaces thinking blocks when available
+- `--tools` reveals tool payloads inline when the live narrative includes them
+- `--full` keeps the same broad meaning as elsewhere: maximal detail with no truncation
 
 ### TTY-specific checks
 

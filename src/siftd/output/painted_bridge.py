@@ -207,6 +207,20 @@ def _peek_tool_summary_lines(tool_summaries: list[tuple[str, int]]) -> list[Line
     return lines
 
 
+def _follow_tool_summary_lines(tool_summaries: list[tuple[str, int, list[str]]]) -> list[Line]:
+    styles = _styles()
+    lines: list[Line] = []
+    for tool_name, count, _hints in tool_summaries:
+        parts: list[tuple[str, Style]] = [
+            ("    → ", styles.meta),
+            (tool_name, styles.tool),
+        ]
+        if count > 1:
+            parts.append((f" ×{count}", styles.meta))
+        lines.append(_line(*parts))
+    return lines
+
+
 def _peek_workspace(info) -> str:
     workspace = getattr(info, "workspace_name", None) or fmt_workspace(getattr(info, "workspace_path", None))
     branch = getattr(info, "branch", None)
@@ -375,5 +389,56 @@ def render_peek_detail_block(
         if not exchange.narrative and exchange.tool_calls:
             lines.extend(_peek_tool_summary_lines(exchange.tool_calls))
         lines.append(_line())
+
+    return _lines_to_block(lines)
+
+
+def render_follow_event_block(
+    event,
+    *,
+    chars_limit: int,
+    tool_chars: int,
+    zoom: NarrativeZoom,
+    show_tool_content: bool = False,
+) -> Block:
+    """Render a single follow-mode event as a painted block."""
+    styles = _styles()
+    lines: list[Line] = []
+    ts = fmt_timestamp(getattr(event, "timestamp", None), time_only=True)
+
+    if getattr(event, "is_user", False):
+        lines.append(_line(("[prompt] ", styles.prompt), (ts, styles.meta)))
+        text = getattr(event, "text", None)
+        if text:
+            _append_multiline(lines, "  ", styles.assistant, text, styles.assistant, chars_limit)
+        return _lines_to_block(lines)
+
+    total_tokens = getattr(event, "input_tokens", 0) + getattr(event, "output_tokens", 0)
+    header_parts: list[tuple[str, Style]] = [
+        ("[response] ", styles.prompt),
+        (ts, styles.meta),
+    ]
+    if total_tokens:
+        header_parts.append((f" ({fmt_tokens(total_tokens)} tok)", styles.meta))
+    lines.append(_line(*header_parts))
+
+    narrative = getattr(event, "narrative", [])
+    if narrative:
+        lines.extend(
+            render_narrative_lines(
+                narrative,
+                chars_limit=chars_limit,
+                tool_chars=tool_chars,
+                zoom=zoom,
+                show_tool_content=show_tool_content,
+            )
+        )
+    else:
+        text = getattr(event, "text", None)
+        if text:
+            _append_multiline(lines, "  ", styles.assistant, text, styles.assistant, chars_limit)
+        tool_calls = getattr(event, "tool_calls", [])
+        if tool_calls:
+            lines.extend(_follow_tool_summary_lines(tool_calls))
 
     return _lines_to_block(lines)
