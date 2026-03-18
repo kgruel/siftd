@@ -245,11 +245,13 @@ def _query_detail(args) -> int:
         print(f"Conversation not found: {args.conversation_id}")
         return 1
 
-    # Determine truncation limit (config defaults already applied by cmd_query)
-    chars_limit = args.chars
+    # Determine truncation limit
+    chars_limit = 0
     if getattr(args, "brief", False):
         chars_limit = 80
-    elif getattr(args, "full", False):
+    if args.chars is not None:
+        chars_limit = args.chars
+    if getattr(args, "full", False):
         chars_limit = 0  # no truncation
 
     tool_chars = 0 if getattr(args, "full", False) else args.tool_chars
@@ -368,7 +370,12 @@ def cmd_query(args) -> int:
     """List conversations with composable filters."""
     from siftd.config import get_query_defaults
 
-    apply_config_defaults(args, get_query_defaults, {"limit": 10, "chars": 200, "tool_chars": 120})
+    query_defaults = get_query_defaults()
+    apply_config_defaults(
+        args,
+        lambda: {k: v for k, v in query_defaults.items() if k in {"limit", "chars", "tool_chars"}},
+        {"limit": 10, "tool_chars": 120},
+    )
 
     # Dispatch to sql subcommand if conversation_id is "sql"
     if args.conversation_id == "sql":
@@ -543,8 +550,10 @@ examples:
   siftd query <id>                    # show conversation detail
   siftd query <id> --summary          # metadata only, no exchanges
   siftd query <id> --exchanges 5      # last 5 exchanges
-  siftd query <id> --brief            # brief output (80 char truncation)
+  siftd query <id> --brief            # compact detail view (80 char truncation)
+  siftd query <id> -b                 # short alias for --brief
   siftd query <id> --full             # full text, no truncation
+  siftd query <id> -F                 # short alias for --full
   siftd query sql                     # list available .sql files
   siftd query sql cost                # run the 'cost' query
   siftd query sql cost --var ws=proj  # run with variable substitution""",
@@ -570,10 +579,10 @@ examples:
     # Detail view options (when conversation_id is provided)
     detail_group = p_query.add_argument_group("detail view")
     detail_group.add_argument("--exchanges", type=int, metavar="N", help="Number of turns to show (default: all)")
-    detail_group.add_argument("--brief", action="store_true", help="Brief output (80 char truncation)")
+    detail_group.add_argument("-b", "--brief", action="store_true", help="Compact detail view (80 char truncation)")
     detail_group.add_argument("--summary", action="store_true", help="Summary only (metadata, no turns)")
-    detail_group.add_argument("--full", action="store_true", help="Full text (no truncation)")
-    detail_group.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: 200)")
+    detail_group.add_argument("-F", "--full", action="store_true", help="Full text (no truncation)")
+    detail_group.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: no truncation)")
     detail_group.add_argument("--thinking", action="store_true", help="Show model thinking/reasoning blocks")
     detail_group.add_argument("--tools", nargs="?", const="all", metavar="FILTER",
         help="Show tool inputs/results (optional filter: tool name prefix or 'errors')")

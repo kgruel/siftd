@@ -19,7 +19,7 @@ from siftd.storage.sqlite import (
 )
 
 
-def _build_db(tmp_path: Path) -> Path:
+def _build_db(tmp_path: Path, *, response_text: str = "Working on it.") -> Path:
     db_path = tmp_path / "query_tools.db"
     conn = create_database(db_path)
 
@@ -42,7 +42,7 @@ def _build_db(tmp_path: Path) -> Path:
         conn, conv_id, prompt_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
         input_tokens=100, output_tokens=50,
     )
-    insert_response_content(conn, response_id, 0, "text", json.dumps({"text": "Working on it."}))
+    insert_response_content(conn, response_id, 0, "text", json.dumps({"text": response_text}))
     insert_response_content(conn, response_id, 1, "thinking", json.dumps({"thinking": "First I'll inspect the repo state."}))
     insert_response_content(conn, response_id, 2, "tool_use", json.dumps({"id": "tc1", "name": "shell.execute"}))
     insert_response_content(conn, response_id, 3, "tool_use", json.dumps({"id": "tc2", "name": "ui.todo"}))
@@ -107,11 +107,35 @@ def test_query_thinking_shows_thinking_without_tool_payloads(capsys, tmp_path):
     assert "Chunk ID: abc123" not in out
 
 
-def test_query_full_implies_tool_content(capsys, tmp_path):
+def test_query_default_detail_does_not_truncate_text(capsys, tmp_path):
+    long_text = "Working on it. " * 30
+    db = _build_db(tmp_path, response_text=long_text)
+    conv_id = list_conversations(db_path=db, limit=1)[0].id
+
+    rc = main(["--db", str(db), "query", conv_id])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out.count("Working on it.") >= 20
+    assert "..." not in out
+
+
+def test_query_brief_alias_truncates_text(capsys, tmp_path):
+    long_text = "Working on it. " * 30
+    db = _build_db(tmp_path, response_text=long_text)
+    conv_id = list_conversations(db_path=db, limit=1)[0].id
+
+    rc = main(["--db", str(db), "query", conv_id, "-b"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Working on it." in out
+    assert "..." in out
+
+
+def test_query_full_alias_implies_tool_content(capsys, tmp_path):
     db = _build_db(tmp_path)
     conv_id = list_conversations(db_path=db, limit=1)[0].id
 
-    rc = main(["--db", str(db), "query", conv_id, "--full"])
+    rc = main(["--db", str(db), "query", conv_id, "-F"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "input: cmd: git status · max_output_tokens: 4000" in out

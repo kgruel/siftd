@@ -65,13 +65,22 @@ def cmd_peek(args) -> int:
         return 1
 
     # Determine truncation limit
-    chars_limit = 200
+    chars_limit = 0
+    if getattr(args, "brief", False):
+        chars_limit = 80
+    if getattr(args, "chars", None) is not None:
+        chars_limit = args.chars
     if getattr(args, "full", False):
         chars_limit = 0  # No truncation
-    elif getattr(args, "chars", None) is not None:
-        chars_limit = args.chars
 
-    tool_chars = 0 if getattr(args, "full", False) else min(chars_limit, 120)
+    if getattr(args, "full", False):
+        tool_chars = 0
+    elif getattr(args, "brief", False):
+        tool_chars = 80
+    elif getattr(args, "chars", None) is not None:
+        tool_chars = 0 if args.chars <= 0 else min(args.chars, 120)
+    else:
+        tool_chars = 120
     zoom = peek_detail_zoom(
         full=getattr(args, "full", False),
         thinking=getattr(args, "thinking", False),
@@ -414,7 +423,10 @@ def build_peek_parser(subparsers) -> None:
   siftd peek c520 --exchanges 10  # show last 10 exchanges
   siftd peek c520 --thinking    # show thinking blocks inline
   siftd peek c520 --tools       # show tool inputs/results inline when available
+  siftd peek c520 --brief       # compact detail view (80 char truncation)
+  siftd peek c520 -b            # short alias for --brief
   siftd peek c520 --full        # show full text (no truncation)
+  siftd peek c520 -F            # short alias for --full
   siftd peek c520 --tail        # raw JSONL tail
   siftd peek c520 --tail --json # tail as JSON array
   siftd peek --main-only        # exclude subagent sessions
@@ -434,8 +446,9 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_peek.add_argument("--all", action="store_true", help="Include inactive sessions (not just last 2 hours)")
     p_peek.add_argument("-n", "--limit", type=int, metavar="N", help="Maximum number of sessions to list (default: 10)")
     p_peek.add_argument("--exchanges", type=int, metavar="N", help="Detail mode: number of exchanges to show (default: 5)")
-    p_peek.add_argument("--full", action="store_true", help="Show full text (no truncation)")
-    p_peek.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: 200)")
+    p_peek.add_argument("-b", "--brief", action="store_true", help="Compact detail/follow view (80 char truncation)")
+    p_peek.add_argument("-F", "--full", action="store_true", help="Show full text (no truncation)")
+    p_peek.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: no truncation)")
     p_peek.add_argument("--thinking", action="store_true", help="Show model thinking/reasoning blocks inline when available")
     p_peek.add_argument("--tools", action="store_true", help="Show tool inputs/results inline when available")
     p_peek.add_argument("-f", "--follow", action="store_true", help="Follow a live session in real time (like tail -f)")

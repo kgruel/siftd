@@ -253,7 +253,7 @@
 # name: TestHelpSnapshots.test_subcommand_help[peek]
   '''
   usage: siftd peek [-h] [-w SUBSTR] [--branch SUBSTR] [--all] [-n N]
-                    [--exchanges N] [--full] [--chars N] [--thinking] [--tools]
+                    [--exchanges N] [-b] [-F] [--chars N] [--thinking] [--tools]
                     [-f] [--tail] [--tail-lines N] [--json] [--main-only]
                     [--children ID] [--last-response] [--last-prompt]
                     [session_id]
@@ -269,8 +269,9 @@
     --all                 Include inactive sessions (not just last 2 hours)
     -n, --limit N         Maximum number of sessions to list (default: 10)
     --exchanges N         Detail mode: number of exchanges to show (default: 5)
-    --full                Show full text (no truncation)
-    --chars N             Truncate text at N characters (default: 200)
+    -b, --brief           Compact detail/follow view (80 char truncation)
+    -F, --full            Show full text (no truncation)
+    --chars N             Truncate text at N characters (default: no truncation)
     --thinking            Show model thinking/reasoning blocks inline when
                           available
     --tools               Show tool inputs/results inline when available
@@ -295,7 +296,10 @@
     siftd peek c520 --exchanges 10  # show last 10 exchanges
     siftd peek c520 --thinking    # show thinking blocks inline
     siftd peek c520 --tools       # show tool inputs/results inline when available
+    siftd peek c520 --brief       # compact detail view (80 char truncation)
+    siftd peek c520 -b            # short alias for --brief
     siftd peek c520 --full        # show full text (no truncation)
+    siftd peek c520 -F            # short alias for --full
     siftd peek c520 --tail        # raw JSONL tail
     siftd peek c520 --tail --json # tail as JSON array
     siftd peek --main-only        # exclude subagent sessions
@@ -316,9 +320,9 @@
   usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                      [-l NAME] [--all-tags NAME] [--no-tag NAME] [-t NAME]
                      [--tool-tag NAME] [-n LIMIT] [-v] [--oldest] [--json]
-                     [--stats] [--exchanges N] [--brief] [--summary] [--full]
-                     [--chars N] [--thinking] [--tools [FILTER]]
-                     [--tool-chars N] [--var KEY=VALUE]
+                     [--stats] [--exchanges N] [-b] [--summary] [-F] [--chars N]
+                     [--thinking] [--tools [FILTER]] [--tool-chars N]
+                     [--var KEY=VALUE]
                      [conversation_id] [sql_name]
   
   positional arguments:
@@ -354,10 +358,10 @@
   
   detail view:
     --exchanges N         Number of turns to show (default: all)
-    --brief               Brief output (80 char truncation)
+    -b, --brief           Compact detail view (80 char truncation)
     --summary             Summary only (metadata, no turns)
-    --full                Full text (no truncation)
-    --chars N             Truncate text at N characters (default: 200)
+    -F, --full            Full text (no truncation)
+    --chars N             Truncate text at N characters (default: no truncation)
     --thinking            Show model thinking/reasoning blocks
     --tools [FILTER]      Show tool inputs/results (optional filter: tool name
                           prefix or 'errors')
@@ -382,8 +386,10 @@
     siftd query <id>                    # show conversation detail
     siftd query <id> --summary          # metadata only, no exchanges
     siftd query <id> --exchanges 5      # last 5 exchanges
-    siftd query <id> --brief            # brief output (80 char truncation)
+    siftd query <id> --brief            # compact detail view (80 char truncation)
+    siftd query <id> -b                 # short alias for --brief
     siftd query <id> --full             # full text, no truncation
+    siftd query <id> -F                 # short alias for --full
     siftd query sql                     # list available .sql files
     siftd query sql cost                # run the 'cost' query
     siftd query sql cost --var ws=proj  # run with variable substitution
@@ -544,65 +550,6 @@
   
   '''
 # ---
-# name: TestHelpSnapshots.test_subcommand_help[tool-search]
-  '''
-  usage: siftd tool-search [-h] [-w SUBSTR] [-m NAME] [--since DATE]
-                           [--before DATE] [-l NAME] [--all-tags NAME]
-                           [--no-tag NAME] [-t NAME] [--tool-tag NAME]
-                           [-n LIMIT] [--json] [--grouped] [--ungrouped]
-                           [--show-snippets] [--rebuild-index]
-                           [query ...]
-  
-  Search tool calls with structured inline fields plus bare-term FTS.
-  
-  Filter contract:
-  - repeated same field = OR
-  - different fields = AND
-  - CLI flags and inline fields accumulate into the same field set
-  - inline field aliases: all-tags/all_tag/all-tag → all_tags; no-tag → no_tag; tool-tag → tool_tag
-  - date fields (`since:`, `before:`) accept YYYY-MM-DD, Nd, Nw, today, yesterday
-  - invalid inline dates fail with a parse error
-  
-  positional arguments:
-    query                 Tool search query
-  
-  options:
-    -h, --help            show this help message and exit
-    -n, --limit LIMIT     Max results (default: 20)
-    --json                Output as structured JSON
-    --grouped             Group results by conversation (default: on)
-    --ungrouped           Show one row per tool call
-    --show-snippets       Show short per-match snippets under compact grouped
-                          results
-    --rebuild-index       Rebuild the tool-search projection before searching
-  
-  filtering:
-    -w, --workspace SUBSTR
-                          Filter by workspace path substring
-    -m, --model NAME      Filter by model name
-    --since DATE          Conversations started after this date (YYYY-MM-DD, 7d,
-                          1w, yesterday, today)
-    --before DATE         Conversations started before this date (YYYY-MM-DD,
-                          7d, 1w, yesterday, today)
-    -t, --tool NAME       Filter by canonical tool name (e.g. shell.execute)
-  
-  tag filtering:
-    -l, --tag NAME        Filter by tag (repeatable, OR logic)
-    --all-tags NAME       Require all specified tags (AND logic)
-    --no-tag NAME         Exclude conversations with this tag (NOT logic)
-    --tool-tag NAME       Filter by tool call tag (e.g. shell:test)
-  
-  examples:
-    siftd tool-search tool:file.read path:pyproject.toml
-    siftd tool-search status:error tool:shell.execute git
-    siftd tool-search -w siftd --since 7d tool:file.edit
-    siftd tool-search --tool-tag shell:test cmd:pytest
-    siftd tool-search --show-snippets tool:file.read path:pyproject.toml
-    siftd tool-search --ungrouped status:error tool:shell.execute
-    siftd tool-search --json cmd:git tool:shell.execute
-  
-  '''
-# ---
 # name: TestHelpSnapshots.test_subcommand_help[session-id]
   '''
   usage: siftd session-id [-h] [--workspace PATH]
@@ -712,6 +659,65 @@
     -l, --tag NAME        Filter by tag (repeatable, OR logic)
     --all-tags NAME       Require all specified tags (AND logic)
     --no-tag NAME         Exclude conversations with this tag (NOT logic)
+  
+  '''
+# ---
+# name: TestHelpSnapshots.test_subcommand_help[tool-search]
+  '''
+  usage: siftd tool-search [-h] [-w SUBSTR] [-m NAME] [--since DATE]
+                           [--before DATE] [-l NAME] [--all-tags NAME]
+                           [--no-tag NAME] [-t NAME] [--tool-tag NAME]
+                           [-n LIMIT] [--json] [--grouped] [--ungrouped]
+                           [--show-snippets] [--rebuild-index]
+                           [query ...]
+  
+  Search tool calls with structured inline fields plus bare-term FTS.
+  
+  Filter contract:
+  - repeated same field = OR
+  - different fields = AND
+  - CLI flags and inline fields accumulate into the same field set
+  - inline field aliases: all-tags/all_tag/all-tag → all_tags; no-tag → no_tag; tool-tag → tool_tag
+  - date fields (`since:`, `before:`) accept YYYY-MM-DD, Nd, Nw, today, yesterday
+  - invalid inline dates fail with a parse error
+  
+  positional arguments:
+    query                 Tool search query
+  
+  options:
+    -h, --help            show this help message and exit
+    -n, --limit LIMIT     Max results (default: 20)
+    --json                Output as structured JSON
+    --grouped             Group results by conversation (default: on)
+    --ungrouped           Show one row per tool call
+    --show-snippets       Show short per-match snippets under compact grouped
+                          results
+    --rebuild-index       Rebuild the tool-search projection before searching
+  
+  filtering:
+    -w, --workspace SUBSTR
+                          Filter by workspace path substring
+    -m, --model NAME      Filter by model name
+    --since DATE          Conversations started after this date (YYYY-MM-DD, 7d,
+                          1w, yesterday, today)
+    --before DATE         Conversations started before this date (YYYY-MM-DD,
+                          7d, 1w, yesterday, today)
+    -t, --tool NAME       Filter by canonical tool name (e.g. shell.execute)
+  
+  tag filtering:
+    -l, --tag NAME        Filter by tag (repeatable, OR logic)
+    --all-tags NAME       Require all specified tags (AND logic)
+    --no-tag NAME         Exclude conversations with this tag (NOT logic)
+    --tool-tag NAME       Filter by tool call tag (e.g. shell:test)
+  
+  examples:
+    siftd tool-search tool:file.read path:pyproject.toml
+    siftd tool-search status:error tool:shell.execute git
+    siftd tool-search -w siftd --since 7d tool:file.edit
+    siftd tool-search --tool-tag shell:test cmd:pytest
+    siftd tool-search --show-snippets tool:file.read path:pyproject.toml
+    siftd tool-search --ungrouped status:error tool:shell.execute
+    siftd tool-search --json cmd:git tool:shell.execute
   
   '''
 # ---

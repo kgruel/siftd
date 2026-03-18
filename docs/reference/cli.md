@@ -247,9 +247,9 @@ examples:
 usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                    [-l NAME] [--all-tags NAME] [--no-tag NAME] [-t NAME]
                    [--tool-tag NAME] [-n LIMIT] [-v] [--oldest] [--json]
-                   [--stats] [--exchanges N] [--brief] [--summary] [--full]
-                   [--chars N] [--thinking] [--tools [FILTER]]
-                   [--tool-chars N] [--var KEY=VALUE]
+                   [--stats] [--exchanges N] [-b] [--summary] [-F] [--chars N]
+                   [--thinking] [--tools [FILTER]] [--tool-chars N]
+                   [--var KEY=VALUE]
                    [conversation_id] [sql_name]
 
 positional arguments:
@@ -285,10 +285,10 @@ output:
 
 detail view:
   --exchanges N         Number of turns to show (default: all)
-  --brief               Brief output (80 char truncation)
+  -b, --brief           Compact detail view (80 char truncation)
   --summary             Summary only (metadata, no turns)
-  --full                Full text (no truncation)
-  --chars N             Truncate text at N characters (default: 200)
+  -F, --full            Full text (no truncation)
+  --chars N             Truncate text at N characters (default: no truncation)
   --thinking            Show model thinking/reasoning blocks
   --tools [FILTER]      Show tool inputs/results (optional filter: tool name
                         prefix or 'errors')
@@ -313,8 +313,10 @@ examples:
   siftd query <id>                    # show conversation detail
   siftd query <id> --summary          # metadata only, no exchanges
   siftd query <id> --exchanges 5      # last 5 exchanges
-  siftd query <id> --brief            # brief output (80 char truncation)
+  siftd query <id> --brief            # compact detail view (80 char truncation)
+  siftd query <id> -b                 # short alias for --brief
   siftd query <id> --full             # full text, no truncation
+  siftd query <id> -F                 # short alias for --full
   siftd query sql                     # list available .sql files
   siftd query sql cost                # run the 'cost' query
   siftd query sql cost --var ws=proj  # run with variable substitution
@@ -667,7 +669,7 @@ examples:
 
 ```
 usage: siftd peek [-h] [-w SUBSTR] [--branch SUBSTR] [--all] [-n N]
-                  [--exchanges N] [--full] [--chars N] [--thinking] [--tools]
+                  [--exchanges N] [-b] [-F] [--chars N] [--thinking] [--tools]
                   [-f] [--tail] [--tail-lines N] [--json] [--main-only]
                   [--children ID] [--last-response] [--last-prompt]
                   [session_id]
@@ -683,8 +685,9 @@ options:
   --all                 Include inactive sessions (not just last 2 hours)
   -n, --limit N         Maximum number of sessions to list (default: 10)
   --exchanges N         Detail mode: number of exchanges to show (default: 5)
-  --full                Show full text (no truncation)
-  --chars N             Truncate text at N characters (default: 200)
+  -b, --brief           Compact detail/follow view (80 char truncation)
+  -F, --full            Show full text (no truncation)
+  --chars N             Truncate text at N characters (default: no truncation)
   --thinking            Show model thinking/reasoning blocks inline when
                         available
   --tools               Show tool inputs/results inline when available
@@ -709,7 +712,10 @@ examples:
   siftd peek c520 --exchanges 10  # show last 10 exchanges
   siftd peek c520 --thinking    # show thinking blocks inline
   siftd peek c520 --tools       # show tool inputs/results inline when available
+  siftd peek c520 --brief       # compact detail view (80 char truncation)
+  siftd peek c520 -b            # short alias for --brief
   siftd peek c520 --full        # show full text (no truncation)
+  siftd peek c520 -F            # short alias for --full
   siftd peek c520 --tail        # raw JSONL tail
   siftd peek c520 --tail --json # tail as JSON array
   siftd peek --main-only        # exclude subagent sessions

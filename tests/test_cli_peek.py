@@ -27,8 +27,8 @@ def _session(session_id="abc123", **kwargs):
     return SessionInfo(session_id=session_id, **defaults)
 
 
-def _detail(*, include_thinking: bool = False):
-    narrative = [PeekNarrativeBlock(block_type="text", content="Doing it.")]
+def _detail(*, include_thinking: bool = False, response_text: str = "Doing it."):
+    narrative = [PeekNarrativeBlock(block_type="text", content=response_text)]
     if include_thinking:
         narrative.insert(0, PeekNarrativeBlock(block_type="thinking", content="Plan it."))
     narrative.append(
@@ -52,8 +52,8 @@ def _detail(*, include_thinking: bool = False):
     })()
 
 
-def _follow_event(*, include_thinking: bool = False) -> FollowEvent:
-    narrative = [PeekNarrativeBlock(block_type="text", content="Still working.")]
+def _follow_event(*, include_thinking: bool = False, response_text: str = "Still working.") -> FollowEvent:
+    narrative = [PeekNarrativeBlock(block_type="text", content=response_text)]
     if include_thinking:
         narrative.insert(0, PeekNarrativeBlock(block_type="thinking", content="Check config."))
     narrative.append(
@@ -64,7 +64,7 @@ def _follow_event(*, include_thinking: bool = False) -> FollowEvent:
     )
     return FollowEvent(
         timestamp="2025-01-20T10:02:00Z",
-        text="Still working.",
+        text=response_text,
         narrative=narrative,
         tool_calls=[("file.read", 1, ["src/config.py"])],
         input_tokens=5,
@@ -110,6 +110,34 @@ class TestPeekValidation:
 class TestPeekDetailMode:
     @patch("siftd.api.find_session_file")
     @patch("siftd.api.read_session_detail")
+    def test_default_detail_does_not_truncate_text(self, mock_read_detail, mock_find, capsys):
+        long_text = "Doing it. " * 30
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.return_value = _detail(response_text=long_text)
+
+        rc = main(["peek", "abc123"])
+        assert rc == 0
+        out = capsys.readouterr().out
+
+        assert out.count("Doing it.") >= 20
+        assert "..." not in out
+
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.api.read_session_detail")
+    def test_brief_alias_truncates_text(self, mock_read_detail, mock_find, capsys):
+        long_text = "Doing it. " * 30
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.return_value = _detail(response_text=long_text)
+
+        rc = main(["peek", "abc123", "-b"])
+        assert rc == 0
+        out = capsys.readouterr().out
+
+        assert "Doing it." in out
+        assert "..." in out
+
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.api.read_session_detail")
     def test_tools_renders_painted_detail(self, mock_read_detail, mock_find, capsys):
         mock_find.return_value = Path("/tmp/fake-session.jsonl")
         mock_read_detail.return_value = _detail()
@@ -146,8 +174,45 @@ class TestPeekDetailMode:
         assert "input: git status" not in out
         mock_read_detail.assert_called_once_with(Path("/tmp/fake-session.jsonl"), last_n=5, include_thinking=True)
 
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.api.read_session_detail")
+    def test_full_alias_shows_thinking_and_tool_payloads(self, mock_read_detail, mock_find, capsys):
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.side_effect = lambda path, last_n, include_thinking: _detail(include_thinking=include_thinking)
+
+        rc = main(["peek", "abc123", "-F"])
+        assert rc == 0
+        out = capsys.readouterr().out
+
+        assert "[thinking] Plan it." in out
+        assert "input: git status" in out
+        mock_read_detail.assert_called_once_with(Path("/tmp/fake-session.jsonl"), last_n=5, include_thinking=True)
+
 
 class TestPeekFollowMode:
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.peek.read_session_detail")
+    @patch("siftd.peek.follow_session")
+    def test_follow_default_does_not_truncate_text(self, mock_follow, mock_read_detail, mock_find, capsys):
+        long_initial = "Doing it. " * 30
+        long_live = "Still working. " * 30
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.return_value = _detail(response_text=long_initial)
+
+        def _emit(path, *, json_mode, render, include_thinking):
+            assert not json_mode
+            render(_follow_event(response_text=long_live))
+
+        mock_follow.side_effect = _emit
+
+        rc = main(["peek", "abc123", "--follow"])
+        assert rc == 0
+        out = capsys.readouterr().out
+
+        assert out.count("Doing it.") >= 20
+        assert out.count("Still working.") >= 20
+        assert "..." not in out
+
     @patch("siftd.api.find_session_file")
     @patch("siftd.peek.read_session_detail")
     @patch("siftd.peek.follow_session")
