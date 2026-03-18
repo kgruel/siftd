@@ -108,11 +108,9 @@ def parse_record(
             and block.get("type") == "thinking"
         ):
             t = block.get("thinking") or block.get("text", "")
-            if t:
+            if isinstance(t, str) and t.strip():
                 text_parts.append(f"[thinking] {t}")
                 narrative.append(PeekNarrativeBlock(block_type="thinking", content=t))
-            else:
-                text_parts.append("[thinking]")
         elif isinstance(block, dict) and block.get("type") == "tool_use":
             raw_name = block.get("name", "unknown")
             canonical = raw_name
@@ -151,9 +149,13 @@ def parse_record(
     if pending_tools:
         narrative.append(PeekNarrativeBlock(block_type="tool_calls", tool_calls=pending_tools))
 
+    text = "\n".join(text_parts) if text_parts else None
+    if not text and not narrative and not tool_calls:
+        return None
+
     return FollowEvent(
         timestamp=timestamp,
-        text="\n".join(text_parts) if text_parts else None,
+        text=text,
         tool_calls=tool_calls,
         narrative=narrative,
         input_tokens=input_tokens,

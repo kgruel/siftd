@@ -221,6 +221,38 @@ class TestParseRecord:
         assert event is not None
         assert event.text == "[thinking] I should inspect the config first.\nI'll inspect the config."
 
+    def test_assistant_record_skips_empty_thinking_placeholder(self):
+        record = {
+            "type": "assistant",
+            "timestamp": "2025-01-20T10:00:05Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "   "},
+                    {"type": "text", "text": "I'll inspect the config."},
+                ],
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            },
+        }
+        event = parse_record(record, include_thinking=True)
+        assert event is not None
+        assert event.text == "I'll inspect the config."
+        assert [b.block_type for b in event.narrative] == ["text"]
+
+    def test_assistant_record_with_only_empty_thinking_returns_none(self):
+        record = {
+            "type": "assistant",
+            "timestamp": "2025-01-20T10:00:05Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": ""},
+                ],
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            },
+        }
+        assert parse_record(record, include_thinking=True) is None
+
     def test_non_message_record_returns_none(self):
         assert parse_record({"type": "system"}) is None
         assert parse_record({}) is None
