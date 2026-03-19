@@ -520,26 +520,26 @@ Mitigation:
 
 ## Open questions
 
-Resolved so far:
-1. `painted` should be a hard dependency immediately, via PyPI, with `painted>=0.1.2`
+Resolved:
+1. `painted` should be a hard dependency immediately, via PyPI, with `painted>=0.1.3`
+2. CLI flags ARE the long-term interface — `--thinking`/`--tools` control visibility, `--brief`/`--full` control density+depth, `-v`/`-q` are user gestures that map onto fidelity axes
+3. "Zoom" dissolved — it was a placeholder for depth × visibility. Fidelity(depth, visible, chars, lines) is the canonical model.
+4. `-v`/`-vv` are verbosity gestures, not a rendering axis — the consumer maps them onto fidelity changes
 
 Still open:
-2. Do we want to preserve current CLI flags as the long-term public interface, or eventually expose zoom more directly?
-3. How much ANSI styling should default output use before it feels noisy?
-4. Should plain output use the same structural hierarchy with simpler glyphs, or a separately tuned compact plain renderer?
-5. When we reach live mode later, should follow stay scroll-based by default, with in-place as an opt-in mode?
-6. Should `--thinking` imply less truncation by default, since hidden reasoning is often the whole point of that flag?
-7. Should detail verbosity eventually map onto explicit zoom controls, or should `-v` / `-vv` gain meaning in detail views instead of remaining primarily list-output flags?
+5. How much ANSI styling should default output use before it feels noisy?
+6. Should plain output use the same structural hierarchy with simpler glyphs, or a separately tuned compact plain renderer?
+7. When we reach live mode later, should follow stay scroll-based by default, with in-place as an opt-in mode?
+8. Should `--thinking` imply less truncation by default, since hidden reasoning is often the whole point of that flag?
+9. Should the data layer always provide full content (including thinking) and let fidelity control visibility? Currently `include_thinking` filters at the DB query layer.
 
 ## Immediate next steps
 
-1. Start Stage 5: formalize the lens/projection layer now that Stages 0–4 are complete
-2. Add stronger regression coverage and a repeatable real-TTY review checklist for future stages
-3. Decide how explicitly we want to surface zoom semantics in the public CLI
-4. Revisit detail truncation/verbosity semantics:
-   - whether `--thinking` should default to less truncation or no truncation
-   - whether detail views should get a first-class verbosity/zoom control instead of today’s list-focused `-v` behavior
-5. Consider extending the tool presenter registry with additional adapters’ tool names if canonical mapping gaps emerge
+1. Publish `painted 0.1.3` to PyPI so siftd CI can resolve the dependency
+2. Move data-layer thinking filter to the bridge: always load thinking blocks, let `fidelity.shows("thinking")` control rendering
+3. Add stronger regression coverage and a repeatable real-TTY review checklist
+4. Consider extending the tool presenter registry with additional adapters’ tool names if canonical mapping gaps emerge
+5. Explore painted Phase 2: density CLI flags + lens density awareness
 
 ## Quick manual verification commands
 
