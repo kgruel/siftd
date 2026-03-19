@@ -2,7 +2,10 @@
 
 ## Status
 
-Planning. Branch: `feat/extension-points` (not yet created).
+In progress. Branch: `feat/extension-points` (4 commits ahead of main at v0.5.2).
+
+Stages 1-4 complete (infrastructure, formatter stubs, narrative walker, fidelity unification).
+Next: Stage 5 (list views), Stage 6 (tool summary unification), then make formatters load-bearing.
 
 ## Why this exists
 
@@ -137,44 +140,34 @@ The peek list stays separate — SessionInfo is a genuinely different shape from
 
 ## Migration sequence
 
-### Stage 1: Extension point infrastructure
+### Stage 1: Extension point infrastructure [DONE]
 
-Extract shared discovery/registration/copy/versioning from existing adapter code into a general module.
+- Added `load_all_extensions()` to `plugin_discovery.py` — generic three-source discovery with dedup
+- Refactored `adapters/registry.py` to delegate to `load_all_extensions()`
+- Formatter validation updated: `FORMATTER_INTERFACE_VERSION`, `name`, `media_type`, `render_detail`
 
-- New: `src/siftd/extensions.py` — discovery, registration, copy base
-- Refactor: `src/siftd/api/adapters.py` — delegate to extensions
-- Refactor: `src/siftd/api/resources.py` — `siftd copy` gains formatter support
-- Tests: adapter discovery/copy behavior preserved
+### Stage 2: Formatter interface + built-in formatters (stubs) [DONE]
 
-### Stage 2: Formatter interface + built-in formatters (stubs)
+- `output/format_registry.py` — `select_format()` with context-aware defaults
+- `output/terminal_fmt.py` — stub wrapping painted_bridge
+- `output/markdown_fmt.py` — stub (delegate pattern)
+- `output/json_fmt.py` — stub (delegate pattern)
+- Search formatter registry updated to accept new-style drop-in modules
 
-Define the formatter protocol and register the three built-ins.
+### Stage 3: Narrative walker + emitters [DONE]
 
-- New: `src/siftd/output/formatter.py` — interface definition, selection logic
-- New: `src/siftd/output/terminal.py` — stub wrapping current painted_bridge
-- New: `src/siftd/output/markdown.py` — stub wrapping current export markdown
-- New: `src/siftd/output/json_fmt.py` — stub wrapping current export JSON
-- Formatter discovery wired through extension point system
+- `output/narrative.py` — `NarrativeEmitter` protocol, `walk_narrative()`, `MarkdownEmitter`, `JsonEmitter`
+- Export's `_render_narrative_md` and `_narrative_to_json` delegate to walker
+- ~150 lines of duplicated rendering logic removed from api/export.py
+- `_options_to_fidelity` bridges ExportOptions → Fidelity temporarily
 
-### Stage 3: Narrative walker + emitters
+### Stage 4: Fidelity unification [DONE]
 
-Build the shared decision engine and wire it into formatters.
+- `fidelity_from_args()` and `tool_chars_from_args()` in cli_common.py
+- cli_query, cli_peek, cli_export all use shared construction
+- ExportOptions still exists as bridge (dissolves when formatters are load-bearing)
 
-- New: `src/siftd/output/narrative.py` — `NarrativeEmitter` protocol, `walk_narrative()`
-- Refactor: terminal formatter implements `TerminalEmitter`
-- Refactor: markdown formatter implements `MarkdownEmitter`
-- Refactor: json formatter implements `JsonEmitter`
-- `render_narrative_lines` and `_render_narrative_md` delegate to walker
-- Tests: existing test_tool_presenters tests pass unchanged
-
-### Stage 4: Fidelity unification
-
-- New: `fidelity_from_args()` in `src/siftd/cli_common.py`
-- Refactor: cli_query, cli_peek, cli_export use `fidelity_from_args()`
-- Dissolve: `ExportOptions` replaced by `Fidelity` + format selection
-- `--brief`/`--full`/`--thinking`/`--tools` work uniformly across commands
-
-### Stage 5: List views
+### Stage 5: List views [NEXT]
 
 - Add `render_list` to each formatter
 - Refactor: `cli_query` list mode, `cli_tags` drill-down use formatter
