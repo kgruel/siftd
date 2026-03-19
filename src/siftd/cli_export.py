@@ -27,11 +27,10 @@ def cmd_export(args) -> int:
     if not conversation_ids and last is None:
         last = 1
 
-    # Resolve visibility flags
-    is_full = getattr(args, "full", False)
-    include_thinking = getattr(args, "thinking", False) or is_full
-    include_tools = getattr(args, "tools", False) or is_full
-    is_brief = getattr(args, "brief", False)
+    from siftd.cli_common import fidelity_from_args
+
+    fidelity = fidelity_from_args(args, default_chars=300 if getattr(args, "brief", False) else 0)
+    include_tools = fidelity.shows("tools")
 
     try:
         conversations = export_conversations(
@@ -68,9 +67,9 @@ def cmd_export(args) -> int:
 
     options = ExportOptions(
         json_mode=getattr(args, "json", False),
-        include_thinking=include_thinking,
+        include_thinking=fidelity.shows("thinking"),
         include_tools=include_tools,
-        brief=is_brief,
+        brief=fidelity.chars > 0,
         no_header=args.no_header,
     )
 

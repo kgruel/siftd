@@ -77,6 +77,29 @@ def fidelity_from_args(args, *, default_chars: int = 0):  # -> painted.Fidelity
     )
 
 
+def tool_chars_from_args(args, fidelity) -> int:
+    """Derive tool content char limit from args and fidelity.
+
+    Args:
+        args: Parsed argparse namespace.
+        fidelity: The Fidelity object (from fidelity_from_args).
+
+    Returns:
+        Character limit for tool content (0 = no truncation).
+    """
+    if fidelity.depth >= 3:  # --full
+        return 0
+    explicit = getattr(args, "tool_chars", None)
+    if explicit is not None:
+        return explicit
+    if getattr(args, "brief", False):
+        return 80
+    chars = getattr(args, "chars", None)
+    if chars is not None:
+        return 0 if chars <= 0 else min(chars, 120)
+    return 120
+
+
 def _get_version() -> str:
     """Get package version from metadata."""
     try:

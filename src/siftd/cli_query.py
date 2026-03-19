@@ -127,9 +127,8 @@ def cmd_tools(args) -> int:
 
 def _query_detail(args) -> int:
     """Show conversation detail timeline."""
-    from painted import Fidelity
-
     from siftd.api import get_conversation
+    from siftd.cli_common import fidelity_from_args, tool_chars_from_args
 
     # Validate --exchanges
     exchanges_n = getattr(args, "exchanges", None)
@@ -139,11 +138,12 @@ def _query_detail(args) -> int:
 
     db = Path(args.db) if args.db else None
 
-    # Resolve flags
-    is_full = getattr(args, "full", False)
-    include_thinking = getattr(args, "thinking", False) or is_full
+    fidelity = fidelity_from_args(args)
+    tool_chars = tool_chars_from_args(args, fidelity)
+
+    include_thinking = fidelity.shows("thinking")
+    include_tool_content = fidelity.shows("tools")
     tools_flag = getattr(args, "tools", None)
-    include_tool_content = tools_flag is not None or is_full
     tool_filter = None
     if tools_flag is not None and tools_flag != "all":
         tool_filter = tools_flag
@@ -164,28 +164,6 @@ def _query_detail(args) -> int:
     if not detail:
         print(f"Conversation not found: {args.conversation_id}")
         return 1
-
-    # Build fidelity spec from CLI flags
-    visible: set[str] = {"text"}
-    if include_thinking:
-        visible.add("thinking")
-    if include_tool_content:
-        visible.add("tools")
-
-    chars = 0
-    if getattr(args, "brief", False):
-        chars = 80
-    if args.chars is not None:
-        chars = args.chars
-    if is_full:
-        chars = 0
-
-    fidelity = Fidelity(
-        depth=3 if is_full else 1,
-        visible=frozenset(visible),
-        chars=chars,
-    )
-    tool_chars = 0 if is_full else args.tool_chars
 
     # Summary mode: just metadata, no exchanges
     if getattr(args, "summary", False):

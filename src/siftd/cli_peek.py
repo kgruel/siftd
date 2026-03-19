@@ -9,14 +9,13 @@ def cmd_peek(args) -> int:
     import json as _json
     import time
 
-    from painted import Fidelity
-
     from siftd.api import (
         find_session_file,
         list_active_sessions,
         read_session_detail,
         tail_session,
     )
+    from siftd.cli_common import fidelity_from_args, tool_chars_from_args
     from siftd.output import fmt_ago, fmt_model
     from siftd.output.painted_bridge import print_block as print_painted_block
     from siftd.output.painted_bridge import render_follow_event_block, render_peek_detail_block
@@ -27,7 +26,6 @@ def cmd_peek(args) -> int:
     last_prompt = getattr(args, "last_prompt", False)
     follow = getattr(args, "follow", False)
     is_full = getattr(args, "full", False)
-    show_tool_details = getattr(args, "tools", False) or is_full
     include_thinking = getattr(args, "thinking", False) or is_full
 
     # Validate mutual exclusivity
@@ -66,35 +64,8 @@ def cmd_peek(args) -> int:
         print("Error: --exchanges must be at least 1")
         return 1
 
-    # Build fidelity spec from CLI flags
-    visible: set[str] = {"text"}
-    if include_thinking:
-        visible.add("thinking")
-    if show_tool_details:
-        visible.add("tools")
-
-    chars = 0
-    if getattr(args, "brief", False):
-        chars = 80
-    if getattr(args, "chars", None) is not None:
-        chars = args.chars
-    if is_full:
-        chars = 0
-
-    fidelity = Fidelity(
-        depth=3 if is_full else 1,
-        visible=frozenset(visible),
-        chars=chars,
-    )
-
-    if is_full:
-        tool_chars = 0
-    elif getattr(args, "brief", False):
-        tool_chars = 80
-    elif getattr(args, "chars", None) is not None:
-        tool_chars = 0 if args.chars <= 0 else min(args.chars, 120)
-    else:
-        tool_chars = 120
+    fidelity = fidelity_from_args(args)
+    tool_chars = tool_chars_from_args(args, fidelity)
 
     # --last-response / --last-prompt mode: extract single text, output raw
     if last_response or last_prompt:
