@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-03-19
+
+### Fixed
+
+- **`siftd upgrade` on Homebrew** — Runs `brew update` before `brew upgrade` so the tap formula is current. Suppresses stale "update available" notice after successful upgrade.
+
 ## [0.5.1] - 2026-03-19
 
 ### Changed
