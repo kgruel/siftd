@@ -87,8 +87,9 @@ jobs:
 
           sdist = next(f for f in pkg["urls"] if f["packagetype"] == "sdist")
 
+          import re
           requires = pkg["info"].get("requires_dist") or []
-          deps = [r.split()[0].rstrip(";") for r in requires if ";" not in r and "extra ==" not in r]
+          deps = [re.split(r"[>=<!\[]", r.split()[0].rstrip(";"))[0] for r in requires if ";" not in r and "extra ==" not in r]
 
           resources = []
           for dep in deps:
