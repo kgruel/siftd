@@ -165,6 +165,7 @@ def cmd_peek(args) -> int:
         else:
             sessions = list_active_sessions(
                 limit=1,
+                workspace=args.workspace,
                 branch=getattr(args, "branch", None),
             )
             if not sessions:

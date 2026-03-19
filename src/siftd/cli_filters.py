@@ -44,7 +44,15 @@ def add_filter_args(
     Callers opt in to extensions beyond the base set
     (workspace, since, before, tags, exclude_tags).
     """
+    import argparse as _ap
+
     from siftd.dateparse import parse_date
+
+    def _date_arg(value: str) -> str | None:
+        try:
+            return parse_date(value)
+        except ValueError as e:
+            raise _ap.ArgumentTypeError(str(e)) from e
 
     filter_group = parser.add_argument_group("filtering")
     filter_group.add_argument(
@@ -57,11 +65,11 @@ def add_filter_args(
             help="Filter by model name",
         )
     filter_group.add_argument(
-        "--since", metavar="DATE", type=parse_date,
+        "--since", metavar="DATE", type=_date_arg,
         help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)",
     )
     filter_group.add_argument(
-        "--before", metavar="DATE", type=parse_date,
+        "--before", metavar="DATE", type=_date_arg,
         help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)",
     )
 

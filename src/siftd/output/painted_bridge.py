@@ -87,9 +87,9 @@ def _append_multiline(
     limit: int,
 ) -> None:
     rendered = truncate_text(text.strip(), limit)
-    split = rendered.splitlines() or [rendered]
-    if not split:
+    if not rendered:
         return
+    split = rendered.splitlines() or [rendered]
 
     lines.append(_line((prefix, prefix_style), (split[0], text_style)))
     continuation = " " * len(prefix)

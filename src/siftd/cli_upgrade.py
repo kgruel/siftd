@@ -209,7 +209,11 @@ def cmd_upgrade(args) -> int:
         return 1
 
     print(f"Running: {' '.join(cmd)}", file=sys.stderr)
-    result = subprocess.run(cmd)
+    try:
+        result = subprocess.run(cmd)
+    except FileNotFoundError:
+        print(f"Error: '{cmd[0]}' not found on PATH", file=sys.stderr)
+        return 1
     return result.returncode
 
 

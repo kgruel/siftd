@@ -712,7 +712,7 @@ def get_active_conversation_ids(db: Path) -> set[str]:
     Uses list_active_sessions() from the peek module to find active JSONL files,
     then looks up which ingested conversations came from those file paths.
 
-    Results are cached for 30 seconds to avoid repeated filesystem scans
+    Results are cached for 5 seconds to avoid repeated filesystem scans
     when called in tight loops (e.g., batch search).
 
     Args:
