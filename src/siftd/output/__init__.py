@@ -1,4 +1,4 @@
-"""Output formatters for search results."""
+"""Output formatting: search result formatters, output format registry, and common utilities."""
 
 from siftd.output.common import (
     fmt_ago,

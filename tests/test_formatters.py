@@ -240,16 +240,14 @@ class TestFormatterRegistry:
 
 class TestDropinFormatters:
     def test_load_valid_dropin(self, tmp_path):
-        # Create a valid drop-in formatter
+        # Create a valid drop-in formatter (new interface)
         formatter_code = '''
-NAME = "custom"
+FORMATTER_INTERFACE_VERSION = 1
+name = "custom"
+media_type = "text/plain"
 
-class CustomFormatter:
-    def format(self, ctx):
-        print("Custom output")
-
-def create_formatter():
-    return CustomFormatter()
+def render_detail(turns, fidelity, **context):
+    return "custom output"
 '''
         (tmp_path / "custom.py").write_text(formatter_code)
 
@@ -259,9 +257,9 @@ def create_formatter():
         assert plugins[0].name == "custom"
 
     def test_skip_invalid_dropin(self, tmp_path, capsys):
-        # Create an invalid drop-in (missing NAME)
+        # Create an invalid drop-in (missing required attrs)
         formatter_code = '''
-def create_formatter():
+def render_detail(turns, fidelity, **context):
     return None
 '''
         (tmp_path / "invalid.py").write_text(formatter_code)
@@ -270,26 +268,31 @@ def create_formatter():
 
         assert len(plugins) == 0
         captured = capsys.readouterr()
-        assert "missing" in captured.err and "NAME" in captured.err
+        assert "missing" in captured.err
 
     def test_skip_underscore_files(self, tmp_path):
         # Files starting with _ should be skipped
-        (tmp_path / "_helper.py").write_text("NAME = 'helper'")
+        (tmp_path / "_helper.py").write_text("name = 'helper'")
 
         plugins = load_dropin_formatters(tmp_path)
 
         assert len(plugins) == 0
 
     def test_dropin_overrides_builtin(self, tmp_path):
-        # Create a drop-in that overrides 'json'
+        # Create a drop-in that overrides 'json' (new interface)
         formatter_code = '''
-NAME = "json"
+FORMATTER_INTERFACE_VERSION = 1
+name = "json"
+media_type = "application/json"
 
-class OverrideFormatter:
-    def format(self, ctx):
-        print("Override!")
+def render_detail(turns, fidelity, **context):
+    return "overridden"
 
 def create_formatter():
+    """Legacy compat for search formatter registry."""
+    class OverrideFormatter:
+        def format(self, ctx):
+            print("Override!")
     return OverrideFormatter()
 '''
         (tmp_path / "json_override.py").write_text(formatter_code)
@@ -305,8 +308,10 @@ def create_formatter():
 class TestValidateFormatter:
     def test_valid_module(self):
         module = MagicMock()
-        module.NAME = "test"
-        module.create_formatter = lambda: None
+        module.FORMATTER_INTERFACE_VERSION = 1
+        module.name = "test"
+        module.media_type = "text/plain"
+        module.render_detail = lambda turns, fidelity, **ctx: ""
 
         error = _validate_formatter(module, "test")
 
@@ -318,26 +323,43 @@ class TestValidateFormatter:
         error = _validate_formatter(module, "test")
 
         assert error is not None
-        assert "NAME" in error
+        assert "name" in error
 
     def test_wrong_name_type(self):
         module = MagicMock()
-        module.NAME = 123  # Should be str
+        module.FORMATTER_INTERFACE_VERSION = 1
+        module.name = 123  # Should be str
+        module.media_type = "text/plain"
+        module.render_detail = lambda turns, fidelity, **ctx: ""
 
         error = _validate_formatter(module, "test")
 
         assert error is not None
         assert "str" in error and "int" in error  # type mismatch
 
-    def test_missing_create_formatter(self):
+    def test_missing_render_detail(self):
         module = MagicMock()
-        module.NAME = "test"
-        del module.create_formatter  # Remove the callable
+        module.FORMATTER_INTERFACE_VERSION = 1
+        module.name = "test"
+        module.media_type = "text/plain"
+        del module.render_detail  # Remove the callable
 
         error = _validate_formatter(module, "test")
 
         assert error is not None
-        assert "create_formatter" in error
+        assert "render_detail" in error
+
+    def test_wrong_interface_version(self):
+        module = MagicMock()
+        module.FORMATTER_INTERFACE_VERSION = 99
+        module.name = "test"
+        module.media_type = "text/plain"
+        module.render_detail = lambda turns, fidelity, **ctx: ""
+
+        error = _validate_formatter(module, "test")
+
+        assert error is not None
+        assert "incompatible" in error
 
 
 class TestVerboseFormatter:

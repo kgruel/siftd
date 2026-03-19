@@ -43,13 +43,18 @@ def load_builtin_factories() -> dict[str, FormatterFactory]:
     }
 
 
+def _get_formatter_name(m) -> str:
+    """Extract formatter name, supporting both old (NAME) and new (name) interface."""
+    return getattr(m, "name", None) or getattr(m, "NAME", "unknown")
+
+
 def load_dropin_formatters(path: Path) -> list[PluginInfo]:
     """Scan a directory for .py formatter files, import and validate them."""
     return load_dropin_modules(
         path,
         module_name_prefix="siftd_dropin_formatter_",
         validate=_validate_formatter,
-        get_name=lambda m: getattr(m, "NAME", "unknown"),
+        get_name=_get_formatter_name,
     )
 
 
@@ -58,7 +63,7 @@ def load_entrypoint_formatters() -> list[PluginInfo]:
     return load_entrypoint_modules(
         group="siftd.formatters",
         validate=_validate_formatter,
-        get_name=lambda m: getattr(m, "NAME", "unknown"),
+        get_name=_get_formatter_name,
     )
 
 
@@ -79,11 +84,13 @@ class FormatterRegistry:
 
         # Entry points override built-ins
         for plugin in load_entrypoint_formatters():
-            self._factories[plugin.name] = plugin.module.create_formatter
+            if hasattr(plugin.module, "create_formatter"):
+                self._factories[plugin.name] = plugin.module.create_formatter
 
         # Drop-ins have highest priority
         for plugin in load_dropin_formatters(dropin_path):
-            self._factories[plugin.name] = plugin.module.create_formatter
+            if hasattr(plugin.module, "create_formatter"):
+                self._factories[plugin.name] = plugin.module.create_formatter
 
     def get(self, name: str) -> "OutputFormatter | None":
         """Get a formatter by name."""

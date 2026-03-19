@@ -4,7 +4,7 @@ from pathlib import Path
 
 from siftd.adapters import aider, claude_code, codex_cli, copilot_cli, gemini_cli, opencode, pi_agent, vscode
 from siftd.adapters.validation import validate_adapter
-from siftd.plugin_discovery import PluginInfo, load_dropin_modules, load_entrypoint_modules
+from siftd.plugin_discovery import PluginInfo, load_all_extensions, load_dropin_modules, load_entrypoint_modules
 
 # Re-export for backwards compatibility (deprecated, use siftd.adapters.validation)
 _validate_adapter = validate_adapter
@@ -85,23 +85,16 @@ def load_all_adapters(dropin_path: Path | None = None) -> list[PluginInfo]:
     if dropin_path is None:
         dropin_path = adapters_dir()
 
-    dropins = load_dropin_adapters(dropin_path)
-    entrypoints = load_entrypoint_adapters()
-    builtins = load_builtin_adapters()
+    result = load_all_extensions(
+        builtins=load_builtin_adapters(),
+        dropin_path=dropin_path,
+        dropin_prefix="siftd_dropin_adapter_",
+        entrypoint_group="siftd.adapters",
+        validate=_validate_adapter,
+        get_name=lambda m: getattr(m, "NAME", "unknown"),
+    )
 
-    seen_names: set[str] = set()
-    result: list[PluginInfo] = []
-
-    # Priority order: drop-in > entry point > built-in
-    for plugin_list in [dropins, entrypoints, builtins]:
-        for plugin in plugin_list:
-            if plugin.name in seen_names:
-                # Silently skip - expected when drop-in overrides built-in
-                continue
-            seen_names.add(plugin.name)
-            result.append(plugin)
-
-    # Apply config location overrides
+    # Apply adapter-specific config location overrides
     from siftd.config import get_adapter_locations
 
     for plugin in result:

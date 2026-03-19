@@ -235,6 +235,50 @@ def validate_dropin_module(
         return None, [f"import failed: {e}"]
 
 
+def load_all_extensions(
+    *,
+    builtins: list[PluginInfo],
+    dropin_path: Path,
+    dropin_prefix: str,
+    entrypoint_group: str,
+    validate: Validator,
+    get_name: Callable[[ModuleType], str] | None = None,
+) -> list[PluginInfo]:
+    """Load extensions from all sources, deduplicated by name.
+
+    Priority: drop-in > entry point > built-in (drop-ins can override built-ins).
+
+    Args:
+        builtins: Pre-loaded built-in plugins.
+        dropin_path: Directory to scan for drop-in .py files.
+        dropin_prefix: Module name prefix for drop-in imports.
+        entrypoint_group: Entry point group name (e.g., "siftd.adapters").
+        validate: Validation function for drop-in and entry point modules.
+        get_name: Optional function to extract plugin name from module.
+
+    Returns:
+        Deduplicated list of PluginInfo, highest-priority source wins.
+    """
+    dropins = load_dropin_modules(
+        dropin_path, dropin_prefix, validate, get_name=get_name,
+    )
+    entrypoints = load_entrypoint_modules(
+        entrypoint_group, validate, get_name=get_name,
+    )
+
+    seen_names: set[str] = set()
+    result: list[PluginInfo] = []
+
+    for plugin_list in [dropins, entrypoints, builtins]:
+        for plugin in plugin_list:
+            if plugin.name in seen_names:
+                continue
+            seen_names.add(plugin.name)
+            result.append(plugin)
+
+    return result
+
+
 def validate_dropin_ast(
     py_file: Path,
     required_names: list[str],

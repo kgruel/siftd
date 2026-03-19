@@ -1,28 +1,30 @@
 """Public validation utilities for formatter modules.
 
-Provides the same validation logic used by FormatterRegistry,
-exposed for external tools (SDK, doctor) to validate formatters
-without importing private registry internals.
+Provides validation logic for both built-in and drop-in formatters.
+Drop-in formatters are Python modules in ~/.config/siftd/formatters/
+that implement the formatter interface.
 """
 
 from types import ModuleType
 
 from siftd.plugin_discovery import validate_required_interface
 
+# Current formatter interface version
+FORMATTER_INTERFACE_VERSION = 1
+
 # Required module-level attributes for a valid formatter module
 REQUIRED_ATTRS = {
-    "NAME": str,
+    "FORMATTER_INTERFACE_VERSION": int,
+    "name": str,
+    "media_type": str,
 }
 
 # Required callable attributes
-REQUIRED_CALLABLES = ["create_formatter"]
+REQUIRED_CALLABLES = ["render_detail"]
 
 
 def validate_formatter(module: ModuleType, origin: str = "formatter") -> str | None:
     """Validate a formatter module has the required interface.
-
-    This is the public validation function. Use this instead of importing
-    private validators from the registry.
 
     Args:
         module: The loaded formatter module to validate.
@@ -30,13 +32,15 @@ def validate_formatter(module: ModuleType, origin: str = "formatter") -> str | N
 
     Returns:
         Error message string if invalid, None if valid.
-
-    Example:
-        import my_formatter
-        error = validate_formatter(my_formatter)
-        if error:
-            print(f"Invalid formatter: {error}")
     """
-    return validate_required_interface(
+    error = validate_required_interface(
         module, origin, REQUIRED_ATTRS, REQUIRED_CALLABLES
     )
+    if error:
+        return error
+
+    version = getattr(module, "FORMATTER_INTERFACE_VERSION")
+    if version != FORMATTER_INTERFACE_VERSION:
+        return f"{origin}: incompatible interface version {version}, expected {FORMATTER_INTERFACE_VERSION}"
+
+    return None
