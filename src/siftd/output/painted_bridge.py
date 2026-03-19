@@ -86,7 +86,7 @@ def _append_multiline(
     text_style: Style,
     limit: int,
 ) -> None:
-    rendered = truncate_text(text, limit)
+    rendered = truncate_text(text.strip(), limit)
     split = rendered.splitlines() or [rendered]
     if not split:
         return
