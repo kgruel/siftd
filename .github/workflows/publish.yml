@@ -88,16 +88,28 @@ jobs:
           sdist = next(f for f in pkg["urls"] if f["packagetype"] == "sdist")
 
           import re
-          requires = pkg["info"].get("requires_dist") or []
-          deps = [re.split(r"[>=<!\[]", r.split()[0].rstrip(";"))[0] for r in requires if ";" not in r and "extra ==" not in r]
 
+          def _core_deps(requires_dist):
+              """Extract non-extra, non-marker dependency names."""
+              return [re.split(r"[>=<!\[; ]", r)[0] for r in (requires_dist or [])
+                      if "extra ==" not in r and ";" not in r]
+
+          # Walk the full transitive dependency tree (BFS)
+          seen = set()
+          queue = _core_deps(pkg["info"].get("requires_dist"))
           resources = []
-          for dep in deps:
+          while queue:
+              dep = queue.pop(0)
+              if dep in seen:
+                  continue
+              seen.add(dep)
               with urllib.request.urlopen(f"https://pypi.org/pypi/{dep}/json") as dr:
                   dp = json.loads(dr.read())
               ds = next((f for f in dp["urls"] if f["packagetype"] == "sdist"), None)
               if ds:
                   resources.append((dep, ds["url"], ds["digests"]["sha256"]))
+              # Enqueue transitive deps
+              queue.extend(d for d in _core_deps(dp["info"].get("requires_dist")) if d not in seen)
 
           lines = [
               'class Siftd < Formula',
