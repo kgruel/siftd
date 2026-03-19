@@ -77,6 +77,7 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     _SchemaEntry("sync.remotes.*.last_push", "string", _is_str),
     _SchemaEntry("sync.remotes.*.last_pull", "string", _is_str),
     _SchemaEntry("sync.remotes.*.ssh.options", "list[string]", _is_str_list),
+    _SchemaEntry("update.check", "bool", _is_bool_like),
 ]
 
 

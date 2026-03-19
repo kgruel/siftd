@@ -6,12 +6,12 @@ _Auto-generated from `--help` output._
 
 ```
 usage: siftd [-h] [--version] [--db PATH]
-             {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,tool-search,install,peek,export,serve} ...
+             {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,tool-search,install,peek,export,serve,upgrade} ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,tool-search,install,peek,export,serve}
+  {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,tool-search,install,peek,export,serve,upgrade}
     register            Register an active session for live tagging
     session-id          Print the session ID for the current workspace
     config              View or modify config settings
@@ -33,6 +33,7 @@ positional arguments:
     peek                Inspect live sessions from disk (bypasses SQLite)
     export              Export conversations for PR review workflows
     serve               Start the HTTP team sync server
+    upgrade             Check for and install updates
 
 options:
   -h, --help            show this help message and exit
@@ -790,4 +791,14 @@ options:
   --host ADDR  Bind address (default: 0.0.0.0)
   --port PORT  Listen port (default: 8484)
   --no-auth    Disable authentication (development only)
+```
+
+## siftd upgrade
+
+```
+usage: siftd upgrade [-h] [--check]
+
+options:
+  -h, --help  show this help message and exit
+  --check     Check for updates without installing
 ```

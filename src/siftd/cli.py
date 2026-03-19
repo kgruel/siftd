@@ -16,6 +16,7 @@ from siftd.cli_serve import build_serve_parser
 from siftd.cli_sessions import build_sessions_parser
 from siftd.cli_tags import build_tags_parser
 from siftd.cli_tool_search import build_tool_search_parser
+from siftd.cli_upgrade import build_upgrade_parser
 from siftd.paths import db_path
 
 
@@ -49,6 +50,7 @@ def main(argv=None) -> int:
     build_peek_parser(subparsers)
     build_export_parser(subparsers)
     build_serve_parser(subparsers)
+    build_upgrade_parser(subparsers)
 
     # Hide deprecated commands from --help (still parseable)
     _hidden = {"tags"}
@@ -63,10 +65,17 @@ def main(argv=None) -> int:
         parser.print_help()
         return 0
     try:
-        return args.func(args)
+        exit_code = args.func(args)
     except KeyboardInterrupt:
         # Exit cleanly on Ctrl+C (130 = 128 + SIGINT)
         return 130
+
+    # Post-command: passive update check (non-blocking)
+    from siftd.cli_upgrade import maybe_print_notice, maybe_start_check
+
+    maybe_print_notice()
+    maybe_start_check()
+    return exit_code
 
 
 if __name__ == "__main__":

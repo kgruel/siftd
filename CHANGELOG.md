@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`siftd upgrade`** — Check for and install updates. Detects install method (uv tool, pipx, Homebrew, pip) and runs the right upgrade command. `--check` flag for check-only mode
+- **Passive update check** — After any command, a background thread checks PyPI once every 24 hours. If a newer version exists, a one-line notice prints to stderr on the next invocation. Disable with `siftd config set update.check false` or `SIFTD_NO_UPDATE_CHECK=1`
 - **`siftd tool-search`** — Search tool usage across conversations
 - **`siftd tag --current`** — Auto-detect the active session and queue tags, falling back to `--last` when no session is registered
 - **`siftd serve`** — HTTP team sync server (`siftd[serve]` optional extra):
