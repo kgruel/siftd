@@ -884,7 +884,7 @@ A conversation prepared for export.
 | `workspace_name` | `str \| None` |  |
 | `model` | `str \| None` |  |
 | `started_at` | `str \| None` |  |
-| `exchanges` | `list[Exchange]` |  |
+| `turns` | `list[Turn]` |  |
 | `tags` | `list[str]` |  |
 | `total_tokens` | `int` |  |
 
@@ -894,8 +894,10 @@ Options controlling export output.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `format` | `str` |  |
-| `prompts_only` | `bool` |  |
+| `json_mode` | `bool` |  |
+| `include_thinking` | `bool` |  |
+| `include_tools` | `bool` |  |
+| `brief` | `bool` |  |
 | `no_header` | `bool` |  |
 
 ### Functions
@@ -905,26 +907,8 @@ Options controlling export output.
 Export conversations matching the specified criteria.
 
 ```python
-def export_conversations(*, conversation_ids: list[str] | None = ..., last: int | None = ..., workspace: str | None = ..., tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib._local.Path | None = ...) -> list[ExportedConversation]
+def export_conversations(*, conversation_ids: list[str] | None = ..., last: int | None = ..., workspace: str | None = ..., tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib._local.Path | None = ..., include_thinking: bool = ..., include_tool_content: bool = ...) -> list[ExportedConversation]
 ```
-
-**Parameters:**
-
-- `conversation_ids`: Specific conversation IDs to export (prefix match).
-- `last`: Export the N most recent conversations.
-- `workspace`: Filter by workspace path substring.
-- `tags`: Include only conversations with any of these tags.
-- `exclude_tags`: Exclude conversations with any of these tags.
-- `since`: Conversations started after this date.
-- `before`: Conversations started before this date.
-- `search`: FTS5 full-text search filter.
-
-**Returns:** List of ExportedConversation objects with full exchange data.
-
-**Raises:**
-
-- `FileNotFoundError`: If database does not exist.
-- `ValueError`: If no conversations match criteria.
 
 ### format_export
 
@@ -934,54 +918,21 @@ Format conversations according to export options.
 def format_export(conversations: list[ExportedConversation], options: ExportOptions) -> str
 ```
 
-**Parameters:**
-
-- `conversations`: List of exported conversations.
-
-**Returns:** Formatted string (markdown or JSON).
-
-### format_exchanges
-
-Format conversations as prompt-response exchanges.
-
-```python
-def format_exchanges(conversations: list[ExportedConversation], *, prompts_only: bool = ..., no_header: bool = ...) -> str
-```
-
-**Parameters:**
-
-- `conversations`: List of exported conversations.
-- `prompts_only`: If True, omit response text and tool calls.
-
-**Returns:** Markdown string with exchanges.
-
 ### format_json
 
-Format conversations as JSON.
+Format conversations as structured JSON.
 
 ```python
-def format_json(conversations: list[ExportedConversation], *, prompts_only: bool = ...) -> str
+def format_json(conversations: list[ExportedConversation], options: ExportOptions) -> str
 ```
 
-**Parameters:**
+### format_markdown
 
-- `conversations`: List of exported conversations.
-
-**Returns:** JSON string with structured conversation data.
-
-### format_prompts
-
-Format conversations as prompts-only markdown.
+Format conversations as markdown with full exchanges.
 
 ```python
-def format_prompts(conversations: list[ExportedConversation], *, no_header: bool = ...) -> str
+def format_markdown(conversations: list[ExportedConversation], options: ExportOptions) -> str
 ```
-
-**Parameters:**
-
-- `conversations`: List of exported conversations.
-
-**Returns:** Markdown string with numbered prompts.
 
 ## Other
 

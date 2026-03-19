@@ -42,10 +42,9 @@ from siftd.api.export import (
     ExportedConversation,
     ExportOptions,
     export_conversations,
-    format_exchanges,
     format_export,
     format_json,
-    format_prompts,
+    format_markdown,
 )
 from siftd.api.file_refs import (
     FileRef,
@@ -234,7 +233,6 @@ __all__ = [
     "ExportOptions",
     "export_conversations",
     "format_export",
-    "format_exchanges",
     "format_json",
-    "format_prompts",
+    "format_markdown",
 ]

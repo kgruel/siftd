@@ -8,48 +8,82 @@ from siftd.api import (
     ExportedConversation,
     ExportOptions,
     export_conversations,
-    format_exchanges,
     format_export,
     format_json,
-    format_prompts,
+    format_markdown,
     list_conversations,
 )
-from siftd.api.conversations import Exchange, ToolCallSummary
+from siftd.api.conversations import NarrativeBlock, ToolCallDetail, Turn
+
+
+def _make_turn(
+    *,
+    prompt="Test prompt",
+    text="Test response",
+    thinking=None,
+    tool_calls=None,
+    timestamp="2024-01-01T10:00:00Z",
+):
+    """Build a Turn with narrative blocks for testing."""
+    narrative = []
+    if thinking:
+        narrative.append(NarrativeBlock(block_type="thinking", content=thinking))
+    if tool_calls:
+        narrative.append(NarrativeBlock(block_type="tool_calls", tool_calls=tool_calls))
+    if text:
+        narrative.append(NarrativeBlock(block_type="text", content=text))
+    return Turn(
+        timestamp=timestamp,
+        prompt_text=prompt,
+        total_input_tokens=100,
+        total_output_tokens=50,
+        narrative=narrative,
+    )
+
+
+def _make_conv(turns=None, **kwargs):
+    """Build an ExportedConversation for testing."""
+    defaults = dict(
+        id="test123456789",
+        workspace_path="/home/user/project",
+        workspace_name="project",
+        model="claude-opus-4-5",
+        started_at="2024-01-15T10:00:00Z",
+        turns=turns or [_make_turn()],
+        tags=["review"],
+        total_tokens=150,
+    )
+    defaults.update(kwargs)
+    return ExportedConversation(**defaults)
 
 
 class TestExportConversations:
     def test_export_by_last(self, test_db):
         conversations = export_conversations(last=1, db_path=test_db)
-
         assert len(conversations) == 1
         assert isinstance(conversations[0], ExportedConversation)
 
     def test_export_by_id(self, test_db):
         summaries = list_conversations(db_path=test_db, limit=1)
         conv_id = summaries[0].id
-
         conversations = export_conversations(
             conversation_ids=[conv_id], db_path=test_db
         )
-
         assert len(conversations) == 1
         assert conversations[0].id == conv_id
 
     def test_export_by_id_prefix(self, test_db):
         summaries = list_conversations(db_path=test_db, limit=1)
         prefix = summaries[0].id[:8]
-
         conversations = export_conversations(
             conversation_ids=[prefix], db_path=test_db
         )
-
         assert len(conversations) == 1
 
-    def test_export_includes_exchanges(self, test_db):
+    def test_export_has_turns(self, test_db):
         conversations = export_conversations(last=1, db_path=test_db)
-
-        assert len(conversations[0].exchanges) > 0
-        assert conversations[0].exchanges[0].prompt_text is not None
+        assert len(conversations[0].turns) > 0
+        assert conversations[0].turns[0].prompt_text is not None
 
     def test_export_workspace_filter(self, test_db):
         conversations = export_conversations(
@@ -64,7 +98,6 @@ class TestExportConversations:
 
     def test_export_workspace_name_populated(self, test_db):
         conversations = export_conversations(last=1, db_path=test_db)
-
         assert conversations[0].workspace_name == "project"
 
     def test_raises_for_missing_db(self, tmp_path):
@@ -72,165 +105,226 @@ class TestExportConversations:
             export_conversations(last=1, db_path=tmp_path / "nonexistent.db")
 
 
-class TestFormatPrompts:
-    def test_basic_output(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
-        output = format_prompts(conversations)
+class TestFormatMarkdown:
+    def test_default_includes_both_sides(self):
+        conv = _make_conv()
+        options = ExportOptions()
+        output = format_markdown([conv], options)
 
-        assert "## Session" in output
-        assert "1." in output  # numbered prompt
+        assert "### " in output
+        assert "User" in output
+        assert "Assistant" in output
+        assert "Test prompt" in output
+        assert "Test response" in output
 
-    def test_includes_workspace_and_date(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
-        output = format_prompts(conversations)
+    def test_session_header(self):
+        conv = _make_conv()
+        options = ExportOptions()
+        output = format_markdown([conv], options)
 
+        assert "# Session test1234" in output
         assert "project" in output
-        assert "2024-01" in output
+        assert "claude-opus-4-5" in output
+        assert "150 tokens" in output
 
-    def test_no_header_option(self, test_db):
+    def test_no_header(self):
+        conv = _make_conv()
+        options = ExportOptions(no_header=True)
+        output = format_markdown([conv], options)
+
+        assert "# Session" not in output
+        assert "User" in output
+
+    def test_thinking_placeholder_by_default(self):
+        conv = _make_conv(turns=[_make_turn(thinking="Deep analysis...")])
+        options = ExportOptions()
+        output = format_markdown([conv], options)
+
+        assert "*[thinking]*" in output
+        assert "Deep analysis" not in output
+
+    def test_thinking_expanded(self):
+        conv = _make_conv(turns=[_make_turn(thinking="Deep analysis here")])
+        options = ExportOptions(include_thinking=True)
+        output = format_markdown([conv], options)
+
+        assert "Deep analysis here" in output
+        assert "*[thinking]*" not in output
+
+    def test_tool_summary_by_default(self):
+        tools = [
+            ToolCallDetail(tool_name="file.read", status="success", count=3),
+            ToolCallDetail(tool_name="shell.execute", status="success", count=1),
+        ]
+        conv = _make_conv(turns=[_make_turn(tool_calls=tools)])
+        options = ExportOptions()
+        output = format_markdown([conv], options)
+
+        assert "*[file.read ×3, shell.execute]*" in output
+
+    def test_tool_detail_expanded(self):
+        tools = [
+            ToolCallDetail(
+                tool_name="file.read", status="success", count=1,
+                input="src/auth.py", result="def validate(): ...",
+            ),
+        ]
+        conv = _make_conv(turns=[_make_turn(tool_calls=tools)])
+        options = ExportOptions(include_tools=True)
+        output = format_markdown([conv], options)
+
+        assert "**file.read**" in output
+        assert "`src/auth.py`" in output
+
+    def test_brief_truncates(self):
+        long_text = "x" * 500
+        conv = _make_conv(turns=[_make_turn(text=long_text)])
+        options = ExportOptions(brief=True)
+        output = format_markdown([conv], options)
+
+        assert "..." in output
+        assert len(output) < 500
+
+    def test_timestamps_in_headings(self):
+        conv = _make_conv(turns=[_make_turn(timestamp="2024-01-15T10:30:00Z")])
+        options = ExportOptions()
+        output = format_markdown([conv], options)
+
+        # Timestamp is converted to local time; just verify some HH:MM appears
+        assert "— User" in output
+        # The heading should contain a time like "HH:MM — User"
+        import re
+        assert re.search(r"\d{2}:\d{2} — User", output)
+
+    def test_tags_in_header(self):
+        conv = _make_conv(tags=["review", "important"])
+        options = ExportOptions()
+        output = format_markdown([conv], options)
+
+        assert "tags: review, important" in output
+
+    def test_multiple_sessions(self):
+        convs = [_make_conv(id="aaa111222333"), _make_conv(id="bbb444555666")]
+        options = ExportOptions()
+        output = format_markdown(convs, options)
+
+        assert output.count("# Session") == 2
+
+    def test_from_db(self, test_db):
         conversations = export_conversations(last=1, db_path=test_db)
-        output = format_prompts(conversations, no_header=True)
+        options = ExportOptions()
+        output = format_markdown(conversations, options)
 
-        assert "## Session" not in output
-        assert "1." in output  # still has numbered prompts
-
-    def test_multiple_sessions_separated(self, test_db):
-        conversations = export_conversations(last=2, db_path=test_db)
-        output = format_prompts(conversations)
-
-        # Should have two session headers
-        assert output.count("## Session") == 2
-
-
-class TestFormatExchanges:
-    def test_includes_prompts_and_responses(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
-        output = format_exchanges(conversations)
-
-        assert "**User:**" in output
-        assert "**Assistant:**" in output
-
-    def test_prompts_only_option(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
-        output = format_exchanges(conversations, prompts_only=True)
-
-        assert "**User:**" in output
-        assert "**Assistant:**" not in output
-
-    def test_includes_tool_calls(self):
-        # Create mock conversation with tool calls
-        conv = ExportedConversation(
-            id="test123",
-            workspace_path="/test",
-            workspace_name="test",
-            model="claude-3",
-            started_at="2024-01-01T10:00:00Z",
-            exchanges=[
-                Exchange(
-                    timestamp="2024-01-01T10:00:00Z",
-                    prompt_text="Test prompt",
-                    response_text="Test response",
-                    input_tokens=100,
-                    output_tokens=50,
-                    tool_calls=[
-                        ToolCallSummary(tool_name="shell.execute", status="success", count=2),
-                    ],
-                )
-            ],
-            tags=[],
-            total_tokens=150,
-        )
-
-        output = format_exchanges([conv])
-
-        assert "*Tools:" in output
-        assert "shell.execute ×2" in output
+        assert "# Session" in output
+        assert "User" in output
 
 
 class TestFormatJson:
-    def test_valid_json_output(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
-        output = format_json(conversations)
+    def test_valid_json(self):
+        conv = _make_conv()
+        options = ExportOptions(json_mode=True)
+        output = format_json([conv], options)
 
         data = json.loads(output)
         assert isinstance(data, list)
         assert len(data) == 1
 
-    def test_includes_all_fields(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
-        output = format_json(conversations)
+    def test_structure(self):
+        conv = _make_conv()
+        options = ExportOptions(json_mode=True)
+        output = format_json([conv], options)
 
         data = json.loads(output)
-        conv = data[0]
+        c = data[0]
+        assert "id" in c
+        assert "workspace" in c
+        assert "model" in c
+        assert "turns" in c
+        assert "tags" in c
 
-        assert "id" in conv
-        assert "workspace" in conv
-        assert "workspace_name" in conv
-        assert "model" in conv
-        assert "started_at" in conv
-        assert "exchanges" in conv
-        assert "tags" in conv
-        assert "total_tokens" in conv
-
-    def test_exchanges_structure(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
-        output = format_json(conversations)
+    def test_turns_have_narrative(self):
+        conv = _make_conv()
+        options = ExportOptions(json_mode=True)
+        output = format_json([conv], options)
 
         data = json.loads(output)
-        exchange = data[0]["exchanges"][0]
+        turn = data[0]["turns"][0]
+        assert "prompt" in turn
+        assert "narrative" in turn
+        assert "tokens" in turn
 
-        assert "timestamp" in exchange
-        assert "prompt" in exchange
-        assert "response" in exchange
-        assert "tool_calls" in exchange
-        assert "tokens" in exchange
-
-    def test_prompts_only_option(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
-        output = format_json(conversations, prompts_only=True)
+    def test_thinking_excluded_by_default(self):
+        conv = _make_conv(turns=[_make_turn(thinking="Secret thoughts")])
+        options = ExportOptions(json_mode=True)
+        output = format_json([conv], options)
 
         data = json.loads(output)
-        exchange = data[0]["exchanges"][0]
+        thinking_blocks = [
+            b for b in data[0]["turns"][0]["narrative"]
+            if b["type"] == "thinking"
+        ]
+        assert len(thinking_blocks) == 1
+        assert "content" not in thinking_blocks[0]  # block present, content omitted
 
-        assert "prompt" in exchange
-        assert "response" not in exchange
-        assert "tool_calls" not in exchange
+    def test_thinking_included(self):
+        conv = _make_conv(turns=[_make_turn(thinking="Secret thoughts")])
+        options = ExportOptions(json_mode=True, include_thinking=True)
+        output = format_json([conv], options)
+
+        data = json.loads(output)
+        thinking_blocks = [
+            b for b in data[0]["turns"][0]["narrative"]
+            if b["type"] == "thinking"
+        ]
+        assert thinking_blocks[0]["content"] == "Secret thoughts"
+
+    def test_tool_detail_included(self):
+        tools = [
+            ToolCallDetail(
+                tool_name="file.read", status="success",
+                input="foo.py", result="contents",
+            ),
+        ]
+        conv = _make_conv(turns=[_make_turn(tool_calls=tools)])
+        options = ExportOptions(json_mode=True, include_tools=True)
+        output = format_json([conv], options)
+
+        data = json.loads(output)
+        tool_block = next(
+            b for b in data[0]["turns"][0]["narrative"]
+            if b["type"] == "tool_calls"
+        )
+        assert tool_block["tools"][0]["input"] == "foo.py"
+
+    def test_from_db(self, test_db):
+        conversations = export_conversations(last=1, db_path=test_db)
+        options = ExportOptions(json_mode=True)
+        output = format_json(conversations, options)
+
+        data = json.loads(output)
+        assert len(data) == 1
+        assert "turns" in data[0]
 
 
 class TestFormatExport:
-    def test_prompts_format(self, test_db):
+    def test_default_is_markdown(self, test_db):
         conversations = export_conversations(last=1, db_path=test_db)
-        options = ExportOptions(format="prompts")
+        options = ExportOptions()
         output = format_export(conversations, options)
 
-        assert "## Session" in output
-        assert "1." in output
+        assert "# Session" in output
 
-    def test_exchanges_format(self, test_db):
+    def test_json_mode(self, test_db):
         conversations = export_conversations(last=1, db_path=test_db)
-        options = ExportOptions(format="exchanges")
-        output = format_export(conversations, options)
-
-        assert "**User:**" in output
-
-    def test_json_format(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
-        options = ExportOptions(format="json")
+        options = ExportOptions(json_mode=True)
         output = format_export(conversations, options)
 
         data = json.loads(output)
         assert isinstance(data, list)
 
-    def test_prompts_only_passed_through(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
-        options = ExportOptions(format="exchanges", prompts_only=True)
-        output = format_export(conversations, options)
-
-        assert "**Assistant:**" not in output
-
 
 class TestExportCLI:
-    def test_export_last_default(self, test_db):
+    def test_export_default(self, test_db):
         from siftd.cli import main
 
         result = main(["--db", str(test_db), "export"])
@@ -242,24 +336,39 @@ class TestExportCLI:
         result = main(["--db", str(test_db), "export", "--last", "2"])
         assert result == 0
 
-    def test_export_format_json(self, test_db, capsys):
+    def test_export_json(self, test_db, capsys):
         from siftd.cli import main
 
-        result = main(["--db", str(test_db), "export", "--format", "json"])
+        result = main(["--db", str(test_db), "export", "--json"])
         assert result == 0
 
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert isinstance(data, list)
 
-    def test_export_format_exchanges(self, test_db, capsys):
+    def test_export_thinking(self, test_db):
         from siftd.cli import main
 
-        result = main(["--db", str(test_db), "export", "--format", "exchanges"])
+        result = main(["--db", str(test_db), "export", "--thinking"])
         assert result == 0
 
-        captured = capsys.readouterr()
-        assert "**User:**" in captured.out
+    def test_export_tools(self, test_db):
+        from siftd.cli import main
+
+        result = main(["--db", str(test_db), "export", "--tools"])
+        assert result == 0
+
+    def test_export_full(self, test_db):
+        from siftd.cli import main
+
+        result = main(["--db", str(test_db), "export", "--full"])
+        assert result == 0
+
+    def test_export_brief(self, test_db):
+        from siftd.cli import main
+
+        result = main(["--db", str(test_db), "export", "--brief"])
+        assert result == 0
 
     def test_export_to_file(self, test_db, tmp_path):
         from siftd.cli import main
@@ -270,20 +379,7 @@ class TestExportCLI:
 
         assert output_file.exists()
         content = output_file.read_text()
-        assert "## Session" in content
-
-    def test_export_prompts_only(self, test_db, capsys):
-        from siftd.cli import main
-
-        result = main([
-            "--db", str(test_db),
-            "export", "--format", "exchanges", "--prompts-only"
-        ])
-        assert result == 0
-
-        captured = capsys.readouterr()
-        assert "**User:**" in captured.out
-        assert "**Assistant:**" not in captured.out
+        assert "# Session" in content
 
     def test_export_no_header(self, test_db, capsys):
         from siftd.cli import main
@@ -292,7 +388,7 @@ class TestExportCLI:
         assert result == 0
 
         captured = capsys.readouterr()
-        assert "## Session" not in captured.out
+        assert "# Session" not in captured.out
 
     def test_export_workspace_filter(self, test_db):
         from siftd.cli import main

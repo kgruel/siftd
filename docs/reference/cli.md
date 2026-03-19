@@ -31,7 +31,7 @@ positional arguments:
     tool-search         Search tool calls with fielded query syntax
     install             Install optional dependencies or bundled components
     peek                Inspect live sessions from disk (bypasses SQLite)
-    export              Export conversations for PR review workflows
+    export              Export conversations as markdown or JSON
     serve               Start the HTTP team sync server
     upgrade             Check for and install updates
 
@@ -735,23 +735,17 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
 
 ```
 usage: siftd export [-h] [-n [N]] [-w SUBSTR] [--since DATE] [--before DATE]
-                    [-l NAME] [--no-tag NAME] [-s QUERY]
-                    [-f {prompts,exchanges,json}] [--prompts-only]
-                    [--no-header] [-o FILE]
+                    [-l NAME] [--no-tag NAME] [-s QUERY] [--thinking]
+                    [--tools] [-b] [-F] [--json] [--no-header] [-o FILE]
                     [conversation_id]
 
 positional arguments:
-  conversation_id       Conversation ID to export (prefix match)
+  conversation_id       Conversation ID (prefix match)
 
 options:
   -h, --help            show this help message and exit
   -n, --last [N]        Export N most recent sessions (default: 1 if no ID
                         given)
-  -f, --format {prompts,exchanges,json}
-                        Output format: prompts (default), exchanges, json
-  --prompts-only        Omit response text and tool calls
-  --no-header           Omit session metadata header
-  -o, --output FILE     Write to file instead of stdout
 
 filtering:
   -w, --workspace SUBSTR
@@ -766,16 +760,25 @@ tag filtering:
   -l, --tag NAME        Filter by tag (repeatable, OR logic)
   --no-tag NAME         Exclude conversations with this tag (NOT logic)
 
+rendering:
+  --thinking            Expand thinking/reasoning blocks (default:
+                        placeholder)
+  --tools               Expand tool inputs and results (default: summary)
+  -b, --brief           Condensed output (truncate long text)
+  -F, --full            Full output: thinking + tools, no truncation
+  --json                Structured JSON output
+  --no-header           Omit session metadata header
+  -o, --output FILE     Write to file instead of stdout
+
 examples:
-  siftd export --last                   # export most recent session (prompts)
+  siftd export --last                   # export most recent session
   siftd export --last 3                 # export last 3 sessions
   siftd export 01HX4G7K                 # export specific session (prefix match)
-  siftd export -w myproject --since 2024-01-01  # filter by workspace and date
-  siftd export -l decision:auth         # export tagged conversations
-  siftd export --last --format json     # structured JSON output
-  siftd export --last --format exchanges  # include response summaries
-  siftd export --last --prompts-only    # omit tool call details
-  siftd export --last --no-tag private  # exclude private sessions
+  siftd export --last --thinking        # include thinking blocks
+  siftd export --last --tools           # include tool inputs/results
+  siftd export --last --full            # everything: thinking + tools
+  siftd export --last --brief           # condensed output
+  siftd export --last --json            # structured JSON output
   siftd export --last -o context.md     # write to file
 ```
 

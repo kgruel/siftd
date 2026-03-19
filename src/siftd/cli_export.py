@@ -1,4 +1,4 @@
-"""CLI handler for export command (export conversations for PR review)."""
+"""CLI handler for export command (export conversations as markdown or JSON)."""
 
 import argparse
 import sqlite3
@@ -9,7 +9,7 @@ from siftd.cli_common import resolve_db
 
 
 def cmd_export(args) -> int:
-    """Export conversations for PR review."""
+    """Export conversations as readable markdown or structured JSON."""
     from siftd.api import ExportOptions, export_conversations, format_export
 
     db = resolve_db(args)
@@ -27,6 +27,12 @@ def cmd_export(args) -> int:
     if not conversation_ids and last is None:
         last = 1
 
+    # Resolve visibility flags
+    is_full = getattr(args, "full", False)
+    include_thinking = getattr(args, "thinking", False) or is_full
+    include_tools = getattr(args, "tools", False) or is_full
+    is_brief = getattr(args, "brief", False)
+
     try:
         conversations = export_conversations(
             conversation_ids=conversation_ids,
@@ -38,6 +44,8 @@ def cmd_export(args) -> int:
             before=args.before,
             search=args.search,
             db_path=db,
+            include_thinking=True,  # always fetch so placeholders work
+            include_tool_content=include_tools,
         )
     except FileNotFoundError as e:
         print(str(e))
@@ -58,10 +66,11 @@ def cmd_export(args) -> int:
         print("No conversations found matching criteria.")
         return 1
 
-    # Format output
     options = ExportOptions(
-        format=args.format,
-        prompts_only=args.prompts_only,
+        json_mode=getattr(args, "json", False),
+        include_thinking=include_thinking,
+        include_tools=include_tools,
+        brief=is_brief,
         no_header=args.no_header,
     )
 
@@ -80,36 +89,52 @@ def cmd_export(args) -> int:
 
 def build_export_parser(subparsers) -> None:
     """Add the 'export' subparser to the CLI."""
-    p_export = subparsers.add_parser(
+    p = subparsers.add_parser(
         "export",
-        help="Export conversations for PR review workflows",
+        help="Export conversations as markdown or JSON",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  siftd export --last                   # export most recent session (prompts)
+  siftd export --last                   # export most recent session
   siftd export --last 3                 # export last 3 sessions
   siftd export 01HX4G7K                 # export specific session (prefix match)
-  siftd export -w myproject --since 2024-01-01  # filter by workspace and date
-  siftd export -l decision:auth         # export tagged conversations
-  siftd export --last --format json     # structured JSON output
-  siftd export --last --format exchanges  # include response summaries
-  siftd export --last --prompts-only    # omit tool call details
-  siftd export --last --no-tag private  # exclude private sessions
+  siftd export --last --thinking        # include thinking blocks
+  siftd export --last --tools           # include tool inputs/results
+  siftd export --last --full            # everything: thinking + tools
+  siftd export --last --brief           # condensed output
+  siftd export --last --json            # structured JSON output
   siftd export --last -o context.md     # write to file""",
     )
-    p_export.add_argument("conversation_id", nargs="?", help="Conversation ID to export (prefix match)")
-    p_export.add_argument("-n", "--last", type=int, nargs="?", const=1, metavar="N", help="Export N most recent sessions (default: 1 if no ID given)")
+    p.add_argument("conversation_id", nargs="?", help="Conversation ID (prefix match)")
+    p.add_argument(
+        "-n", "--last", type=int, nargs="?", const=1, metavar="N",
+        help="Export N most recent sessions (default: 1 if no ID given)",
+    )
 
     from siftd.cli_filters import add_filter_args
 
-    add_filter_args(p_export, include_model=False, include_search=True, include_all_tags=False)
-    p_export.add_argument(
-        "-f",
-        "--format",
-        choices=["prompts", "exchanges", "json"],
-        default="prompts",
-        help="Output format: prompts (default), exchanges, json",
+    add_filter_args(p, include_model=False, include_search=True, include_all_tags=False)
+
+    rendering = p.add_argument_group("rendering")
+    rendering.add_argument(
+        "--thinking", action="store_true",
+        help="Expand thinking/reasoning blocks (default: placeholder)",
     )
-    p_export.add_argument("--prompts-only", action="store_true", help="Omit response text and tool calls")
-    p_export.add_argument("--no-header", action="store_true", help="Omit session metadata header")
-    p_export.add_argument("-o", "--output", metavar="FILE", help="Write to file instead of stdout")
-    p_export.set_defaults(func=cmd_export)
+    rendering.add_argument(
+        "--tools", action="store_true",
+        help="Expand tool inputs and results (default: summary)",
+    )
+    rendering.add_argument(
+        "-b", "--brief", action="store_true",
+        help="Condensed output (truncate long text)",
+    )
+    rendering.add_argument(
+        "-F", "--full", action="store_true",
+        help="Full output: thinking + tools, no truncation",
+    )
+    rendering.add_argument(
+        "--json", action="store_true",
+        help="Structured JSON output",
+    )
+    rendering.add_argument("--no-header", action="store_true", help="Omit session metadata header")
+    rendering.add_argument("-o", "--output", metavar="FILE", help="Write to file instead of stdout")
+    p.set_defaults(func=cmd_export)

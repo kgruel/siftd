@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-03-19
+
+### Changed
+
+- **Export rewrite** — `siftd export` now renders full conversation exchanges as markdown by default (both user and assistant sides). Previous default showed only user prompts.
+- **Narrative-aware rendering** — Export walks the full NarrativeBlock structure from the DB instead of collapsing to flat text. Thinking blocks show as `*[thinking]*` placeholders, tool calls as consolidated summaries like `*[file.read ×6, shell.execute ×2]*`
+- **New export flags** — `--thinking` expands thinking blocks, `--tools` expands tool inputs/results, `--full` enables both, `--brief` truncates long text, `--json` for structured output. Timestamps included per turn.
+- **Breaking:** Removed `--format`, `--prompts-only` flags. Old `prompts` and `exchanges` formats replaced by single markdown format.
+
+### Fixed
+
+- **Homebrew formula missing transitive deps** — Formula generator now walks the full dependency tree (BFS), fixing `wcwidth` missing from painted
+
 ## [0.5.0] - 2026-03-19
 
 ### Added
