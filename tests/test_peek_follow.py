@@ -2,9 +2,9 @@
 
 import io
 import json
+import sys
 import threading
 import time
-import sys
 
 from siftd.adapters.claude_code import TOOL_ALIASES, TOOL_HINT_KEYS
 from siftd.adapters.sdk import extract_tool_hint
@@ -15,7 +15,6 @@ from siftd.peek.follow import (
     parse_record,
     render_tool_line,
 )
-
 
 # ---------------------------------------------------------------------------
 # extract_tool_hint
@@ -340,6 +339,47 @@ class TestEventToJson:
         assert d["tool_calls"][0]["name"] == "file.read"
         assert d["tool_calls"][0]["count"] == 2
         assert d["tool_calls"][0]["hints"] == ["a.py", "b.py"]
+
+    def test_narrative_serialized_when_present(self):
+        from siftd.domain.peek import PeekNarrativeBlock, PeekToolCall
+
+        event = FollowEvent(
+            timestamp="2025-01-20T10:01:00Z",
+            text="Thinking then acting.",
+            narrative=[
+                PeekNarrativeBlock(block_type="thinking", content="Let me check."),
+                PeekNarrativeBlock(block_type="text", content="Thinking then acting."),
+                PeekNarrativeBlock(
+                    block_type="tool_calls",
+                    tool_calls=[PeekToolCall(tool_name="file.read", input="a.py")],
+                ),
+            ],
+            tool_calls=[("file.read", 1, ["a.py"])],
+            input_tokens=100,
+            output_tokens=50,
+        )
+        d = event_to_json(event)
+        assert "narrative" in d
+        assert len(d["narrative"]) == 3
+        assert d["narrative"][0] == {"block_type": "thinking", "content": "Let me check."}
+        assert d["narrative"][1] == {"block_type": "text", "content": "Thinking then acting."}
+        assert d["narrative"][2] == {
+            "block_type": "tool_calls",
+            "tool_calls": [{"tool_name": "file.read", "count": 1, "input": "a.py"}],
+        }
+        # Must be JSON-serializable
+        json.dumps(d)
+
+    def test_narrative_omitted_when_empty(self):
+        event = FollowEvent(
+            timestamp="2025-01-20T10:01:00Z",
+            text="No narrative.",
+            tool_calls=[],
+            input_tokens=100,
+            output_tokens=50,
+        )
+        d = event_to_json(event)
+        assert "narrative" not in d
 
     def test_json_serializable(self):
         event = FollowEvent(

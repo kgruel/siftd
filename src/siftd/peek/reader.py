@@ -1,5 +1,6 @@
 """Session reader: parse full session detail from JSONL files."""
 
+import inspect
 import json
 import logging
 from pathlib import Path
@@ -79,13 +80,15 @@ def read_session_detail(
         )
 
     try:
-        exchanges = peek_exchanges_fn(
-            path,
-            last_n,
-            include_thinking=include_thinking,
-        )
-    except TypeError:
-        exchanges = peek_exchanges_fn(path, last_n)
+        sig = inspect.signature(peek_exchanges_fn)
+        if "include_thinking" in sig.parameters:
+            exchanges = peek_exchanges_fn(
+                path,
+                last_n,
+                include_thinking=include_thinking,
+            )
+        else:
+            exchanges = peek_exchanges_fn(path, last_n)
     except Exception as e:
         logger.debug("peek_exchanges failed for %s: %s", path, e, exc_info=True)
         exchanges = []

@@ -1025,21 +1025,13 @@ wheels = [
 [[package]]
 name = "painted"
 version = "0.1.3"
-source = { editable = "../painted" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "wcwidth" },
 ]
-
-[package.metadata]
-requires-dist = [{ name = "wcwidth", specifier = ">=0.2" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.23" },
-    { name = "pytest-cov", specifier = ">=6.0" },
-    { name = "ruff", specifier = ">=0.8" },
-    { name = "ty", specifier = ">=0.0.1a11" },
+sdist = { url = "https://files.pythonhosted.org/packages/68/1d/6a2cb9362d3f85c38bbec2094e13cbab998db96ce8c36ddae1955413a73e/painted-0.1.3.tar.gz", hash = "sha256:ea989ee8cb520c2756244d8b95185d178fdcf8d6be5830f3ec11bf51b19c4cd2", size = 7494056, upload-time = "2026-03-19T04:23:54.279Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3b/2f/bdf54bee447d1cd12feaf17731930139ed7554a9f4b4d8a6da69ab6941c0/painted-0.1.3-py3-none-any.whl", hash = "sha256:33719c10d652616937312e67d2daf3357dcc2ad6c0100b72f3a66f7ac0065ffa", size = 91882, upload-time = "2026-03-19T04:23:52.795Z" },
 ]
 
 [[package]]
@@ -1456,7 +1448,7 @@ requires-dist = [
     { name = "litestar", extras = ["standard"], marker = "extra == 'serve'" },
     { name = "numpy", marker = "extra == 'embed'" },
     { name = "onnxruntime", marker = "extra == 'embed'" },
-    { name = "painted", editable = "../painted" },
+    { name = "painted", specifier = ">=0.1.3" },
     { name = "prysk", marker = "extra == 'dev'" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'serve'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },

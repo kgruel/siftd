@@ -123,24 +123,14 @@ def parse_record(
                 hint = extract_tool_hint(canonical, input_dict, hint_keys)
             pending_tools.append(PeekToolCall(tool_name=canonical, input=hint))
 
-    # Collect tool calls with hints
+    # Derive tool_counter and tool_hints from pending_tools (already has
+    # canonical names and hint strings from the first pass above).
     tool_counter: Counter[str] = Counter()
     tool_hints: dict[str, list[str]] = {}
-    for block in content:
-        if not isinstance(block, dict) or block.get("type") != "tool_use":
-            continue
-        raw_name = block.get("name", "unknown")
-        canonical = raw_name
-        if tool_aliases:
-            canonical = canonicalize_tool_name(raw_name, tool_aliases)
-        tool_counter[canonical] += 1
-
-        if hint_keys:
-            raw_input = block.get("input")
-            input_dict = raw_input if isinstance(raw_input, dict) else {}
-            hint = extract_tool_hint(canonical, input_dict, hint_keys)
-            if hint:
-                tool_hints.setdefault(canonical, []).append(hint)
+    for tc in pending_tools:
+        tool_counter[tc.tool_name] += 1
+        if tc.input:
+            tool_hints.setdefault(tc.tool_name, []).append(tc.input)
 
     tool_calls = [
         (name, count, tool_hints.get(name, []))
@@ -207,6 +197,19 @@ def event_to_json(event: FollowEvent) -> dict:
             {"name": name, "count": count, "hints": hints}
             for name, count, hints in event.tool_calls
         ]
+        if event.narrative:
+            d["narrative"] = [
+                {
+                    "block_type": b.block_type,
+                    **({"content": b.content} if b.content else {}),
+                    **({"tool_calls": [
+                        {"tool_name": tc.tool_name, "count": tc.count,
+                         **({"input": tc.input} if tc.input else {})}
+                        for tc in b.tool_calls
+                    ]} if b.tool_calls else {}),
+                }
+                for b in event.narrative
+            ]
     return d
 
 
