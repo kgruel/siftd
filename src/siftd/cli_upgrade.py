@@ -208,12 +208,24 @@ def cmd_upgrade(args) -> int:
         print("Try: pip install --upgrade siftd", file=sys.stderr)
         return 1
 
+    # Homebrew needs a tap update before upgrade to pull new formulae
+    if method == "brew":
+        print("Running: brew update", file=sys.stderr)
+        subprocess.run(["brew", "update"], capture_output=True)
+
     print(f"Running: {' '.join(cmd)}", file=sys.stderr)
     try:
         result = subprocess.run(cmd)
     except FileNotFoundError:
         print(f"Error: '{cmd[0]}' not found on PATH", file=sys.stderr)
         return 1
+
+    # Write current version to cache so the post-command notice doesn't
+    # re-fire (the running process still reports the old version).
+    # Next invocation runs the new binary and the background check refreshes.
+    if result.returncode == 0:
+        _write_cache(current)
+
     return result.returncode
 
 
