@@ -292,9 +292,9 @@ class TestFormatJson:
         data = json.loads(output)
         tool_block = next(
             b for b in data[0]["turns"][0]["narrative"]
-            if b["type"] == "tool_calls"
+            if b["type"] == "tool_call"
         )
-        assert tool_block["tools"][0]["input"] == "foo.py"
+        assert tool_block["input"] == "foo.py"
 
     def test_from_db(self, test_db):
         conversations = export_conversations(last=1, db_path=test_db)

@@ -1,6 +1,7 @@
 """Export API for siftd.
 
 Renders full conversation exchanges as markdown or JSON.
+Narrative rendering is delegated to the shared walker in output.narrative.
 """
 
 import json
@@ -9,8 +10,6 @@ from pathlib import Path
 
 from siftd.api.conversations import (
     ConversationDetail,
-    NarrativeBlock,
-    ToolCallDetail,
     Turn,
     get_conversation,
     list_conversations,
@@ -121,148 +120,37 @@ def _detail_to_export(detail: ConversationDetail) -> ExportedConversation:
 
 
 # ---------------------------------------------------------------------------
-# Markdown formatter
+# Narrative rendering (delegated to shared walker)
 # ---------------------------------------------------------------------------
 
 
-def _tool_summary(tool_calls: list[ToolCallDetail]) -> str:
-    """Render tool calls as compact summary: [file.read ×3, shell.execute ×1].
+def _options_to_fidelity(options: ExportOptions):
+    """Convert ExportOptions to a Fidelity spec for the narrative walker."""
+    from painted import Fidelity
 
-    Aggregates by tool name, preserving order of first occurrence.
-    """
-    from collections import Counter
+    visible: set[str] = {"text"}
+    if options.include_thinking:
+        visible.add("thinking")
+    if options.include_tools:
+        visible.add("tools")
 
-    counts: Counter[str] = Counter()
-    order: list[str] = []
-    for tc in tool_calls:
-        if tc.tool_name not in counts:
-            order.append(tc.tool_name)
-        counts[tc.tool_name] += tc.count
+    chars = 300 if options.brief else 0
 
-    parts = []
-    for name in order:
-        n = counts[name]
-        if n > 1:
-            parts.append(f"{name} ×{n}")
-        else:
-            parts.append(name)
-    return f"*[{', '.join(parts)}]*"
+    return Fidelity(
+        depth=3 if options.include_tools else 1,
+        visible=frozenset(visible),
+        chars=chars,
+    )
 
 
-def _tool_detail_lines(tool_calls: list[ToolCallDetail]) -> list[str]:
-    """Render tool calls with input/result detail."""
-    lines: list[str] = []
-    for tc in tool_calls:
-        count_suffix = f" ×{tc.count}" if tc.count > 1 else ""
-        status_suffix = f" ({tc.status})" if tc.status and tc.status != "success" else ""
-        header = f"- **{tc.tool_name}**{count_suffix}{status_suffix}"
+def _render_narrative_md(narrative: list, options: ExportOptions) -> list[str]:
+    """Render narrative blocks to markdown via the shared walker."""
+    from siftd.output.narrative import MarkdownEmitter, walk_narrative
 
-        if tc.input:
-            # Show first line of input as inline hint
-            first_line = tc.input.strip().split("\n")[0]
-            if len(first_line) > 100:
-                first_line = first_line[:100] + "..."
-            header += f" `{first_line}`"
-
-        lines.append(header)
-
-        if tc.result:
-            result_text = tc.result.strip()
-            if len(result_text) > 200:
-                result_text = result_text[:200] + "..."
-            for rline in result_text.split("\n"):
-                lines.append(f"  {rline}")
-
-    return lines
-
-
-def _render_narrative_md(
-    narrative: list[NarrativeBlock],
-    *,
-    include_thinking: bool = False,
-    include_tools: bool = False,
-    brief: bool = False,
-) -> list[str]:
-    """Render narrative blocks to markdown lines.
-
-    In default mode (no --tools), consecutive tool_calls blocks are
-    consolidated into a single summary line with collapsed counts.
-    """
-    lines: list[str] = []
-
-    # Collect all tool calls and thinking occurrences for summary mode
-    if not include_tools or not include_thinking:
-        pending_tools: list[ToolCallDetail] = []
-        has_thinking = False
-
-        def _flush_pending() -> None:
-            nonlocal pending_tools, has_thinking
-            hints: list[str] = []
-            if has_thinking and not include_thinking:
-                hints.append("*[thinking]*")
-                has_thinking = False
-            if pending_tools and not include_tools:
-                hints.append(_tool_summary(pending_tools))
-                pending_tools = []
-            if hints:
-                lines.append("  ".join(hints))
-                lines.append("")
-
-        for block in narrative:
-            if block.block_type == "text" and block.content:
-                _flush_pending()
-                text = block.content.strip()
-                if brief and len(text) > 300:
-                    text = text[:300] + "..."
-                lines.append(text)
-                lines.append("")
-
-            elif block.block_type == "thinking":
-                if include_thinking and block.content:
-                    _flush_pending()
-                    lines.append("> **Thinking**")
-                    lines.append(">")
-                    for tline in block.content.strip().split("\n"):
-                        lines.append(f"> {tline}")
-                    lines.append("")
-                else:
-                    has_thinking = True
-
-            elif block.block_type == "tool_calls" and block.tool_calls:
-                if include_tools:
-                    _flush_pending()
-                    lines.extend(_tool_detail_lines(block.tool_calls))
-                    lines.append("")
-                else:
-                    pending_tools.extend(block.tool_calls)
-
-            elif block.block_type in ("tool_result", "tool_output"):
-                if include_tools and block.content:
-                    _flush_pending()
-                    lines.append(f"```\n{block.content.strip()}\n```")
-                    lines.append("")
-
-        _flush_pending()
-    else:
-        # Full mode: render everything inline
-        for block in narrative:
-            if block.block_type == "text" and block.content:
-                lines.append(block.content.strip())
-                lines.append("")
-            elif block.block_type == "thinking" and block.content:
-                lines.append("> **Thinking**")
-                lines.append(">")
-                for tline in block.content.strip().split("\n"):
-                    lines.append(f"> {tline}")
-                lines.append("")
-            elif block.block_type == "tool_calls" and block.tool_calls:
-                lines.extend(_tool_detail_lines(block.tool_calls))
-                lines.append("")
-            elif block.block_type in ("tool_result", "tool_output") and block.content:
-                lines.append(f"```\n{block.content.strip()}\n```")
-                lines.append("")
-
-    return lines
+    fidelity = _options_to_fidelity(options)
+    emitter = MarkdownEmitter()
+    walk_narrative(narrative, emitter, fidelity=fidelity)
+    return emitter.lines
 
 
 def format_markdown(
@@ -313,13 +201,7 @@ def format_markdown(
             if turn.narrative:
                 lines.append(f"### {ts_prefix}Assistant")
                 lines.append("")
-                narrative_lines = _render_narrative_md(
-                    turn.narrative,
-                    include_thinking=options.include_thinking,
-                    include_tools=options.include_tools,
-                    brief=options.brief,
-                )
-                lines.extend(narrative_lines)
+                lines.extend(_render_narrative_md(turn.narrative, options))
 
             lines.append("---")
             lines.append("")
@@ -334,46 +216,14 @@ def format_markdown(
 # ---------------------------------------------------------------------------
 
 
-def _narrative_to_json(
-    narrative: list[NarrativeBlock],
-    *,
-    include_thinking: bool = False,
-    include_tools: bool = False,
-) -> list[dict]:
-    """Serialize narrative blocks to JSON-ready dicts."""
-    blocks = []
-    for block in narrative:
-        d: dict = {"type": block.block_type}
+def _narrative_to_json(narrative: list, options: ExportOptions) -> list[dict]:
+    """Serialize narrative blocks to JSON via the shared walker."""
+    from siftd.output.narrative import JsonEmitter, walk_narrative
 
-        if block.block_type == "text":
-            d["content"] = block.content
-
-        elif block.block_type == "thinking":
-            if include_thinking and block.content:
-                d["content"] = block.content
-            # Always include the block so consumer knows thinking occurred
-
-        elif block.block_type == "tool_calls":
-            d["tools"] = [
-                {
-                    "name": tc.tool_name,
-                    "status": tc.status,
-                    "count": tc.count,
-                    **({"input": tc.input} if include_tools and tc.input else {}),
-                    **({"result": tc.result} if include_tools and tc.result else {}),
-                }
-                for tc in block.tool_calls
-            ]
-
-        elif block.block_type in ("tool_result", "tool_output"):
-            if include_tools and block.content:
-                d["content"] = block.content
-            else:
-                continue  # skip tool output blocks when not requested
-
-        blocks.append(d)
-
-    return blocks
+    fidelity = _options_to_fidelity(options)
+    emitter = JsonEmitter()
+    walk_narrative(narrative, emitter, fidelity=fidelity)
+    return emitter.blocks
 
 
 def format_json(
@@ -389,11 +239,7 @@ def format_json(
             turn_data: dict = {
                 "timestamp": turn.timestamp,
                 "prompt": turn.prompt_text,
-                "narrative": _narrative_to_json(
-                    turn.narrative,
-                    include_thinking=options.include_thinking,
-                    include_tools=options.include_tools,
-                ),
+                "narrative": _narrative_to_json(turn.narrative, options),
                 "tokens": {
                     "input": turn.total_input_tokens,
                     "output": turn.total_output_tokens,
