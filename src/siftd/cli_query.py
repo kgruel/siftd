@@ -7,7 +7,9 @@ import sys
 from pathlib import Path
 
 from siftd.cli_common import apply_config_defaults, resolve_db
-from siftd.output import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace, print_table, truncate_text
+from siftd.output import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace, print_table
+from siftd.output.painted_bridge import print_block as print_painted_block
+from siftd.output.painted_bridge import render_query_detail_block
 from siftd.paths import queries_dir
 
 
@@ -122,26 +124,11 @@ def cmd_tools(args) -> int:
     return 0
 
 
-def _format_tool_input(raw_input: str | None) -> str:
-    """Extract most useful field from tool input JSON for display."""
-    if not raw_input:
-        return ""
-    try:
-        obj = json.loads(raw_input)
-        if isinstance(obj, dict):
-            # Prioritized field extraction
-            for key in ("command", "file_path", "path", "pattern", "query", "url"):
-                if key in obj:
-                    return f"{key}: {obj[key]}"
-            # Fallback: truncated raw JSON
-            return raw_input
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return raw_input
-
 
 def _query_detail(args) -> int:
     """Show conversation detail timeline."""
+    from painted import Fidelity
+
     from siftd.api import get_conversation
 
     # Validate --exchanges
@@ -153,9 +140,10 @@ def _query_detail(args) -> int:
     db = Path(args.db) if args.db else None
 
     # Resolve flags
-    include_thinking = getattr(args, "thinking", False)
+    is_full = getattr(args, "full", False)
+    include_thinking = getattr(args, "thinking", False) or is_full
     tools_flag = getattr(args, "tools", None)
-    include_tool_content = tools_flag is not None
+    include_tool_content = tools_flag is not None or is_full
     tool_filter = None
     if tools_flag is not None and tools_flag != "all":
         tool_filter = tools_flag
@@ -177,87 +165,57 @@ def _query_detail(args) -> int:
         print(f"Conversation not found: {args.conversation_id}")
         return 1
 
-    # Determine truncation limit (config defaults already applied by cmd_query)
-    chars_limit = args.chars
+    # Build fidelity spec from CLI flags
+    visible: set[str] = {"text"}
+    if include_thinking:
+        visible.add("thinking")
+    if include_tool_content:
+        visible.add("tools")
+
+    chars = 0
     if getattr(args, "brief", False):
-        chars_limit = 80
-    elif getattr(args, "full", False):
-        chars_limit = 0  # no truncation
+        chars = 80
+    if args.chars is not None:
+        chars = args.chars
+    if is_full:
+        chars = 0
 
-    tool_chars = args.tool_chars
-
-    # Header
-    ws_name = fmt_workspace(detail.workspace_path)
-    started = fmt_timestamp(detail.started_at)
-    total_tokens = detail.total_input_tokens + detail.total_output_tokens
-
-    print(f"Conversation: {detail.id}")
-    if ws_name:
-        print(f"Workspace: {ws_name}")
-    print(f"Started: {started}")
-    print(f"Model: {detail.model or 'unknown'}")
-    print(f"Tokens: {fmt_tokens(total_tokens)} (input: {fmt_tokens(detail.total_input_tokens)} / output: {fmt_tokens(detail.total_output_tokens)})")
-    if detail.tags:
-        print(f"Tags: {', '.join(detail.tags)}")
+    fidelity = Fidelity(
+        depth=3 if is_full else 1,
+        visible=frozenset(visible),
+        chars=chars,
+    )
+    tool_chars = 0 if is_full else args.tool_chars
 
     # Summary mode: just metadata, no exchanges
     if getattr(args, "summary", False):
+        ws_name = fmt_workspace(detail.workspace_path)
+        started = fmt_timestamp(detail.started_at)
+        total_tokens = detail.total_input_tokens + detail.total_output_tokens
+
+        print(f"Conversation: {detail.id}")
+        if ws_name:
+            print(f"Workspace: {ws_name}")
+        print(f"Started: {started}")
+        print(f"Model: {detail.model or 'unknown'}")
+        print(f"Tokens: {fmt_tokens(total_tokens)} (input: {fmt_tokens(detail.total_input_tokens)} / output: {fmt_tokens(detail.total_output_tokens)})")
+        if detail.tags:
+            print(f"Tags: {', '.join(detail.tags)}")
         print(f"Turns: {len(detail.turns)}")
         return 0
-
-    print()
 
     # Determine which turns to show
     show_turns = detail.turns
     if exchanges_n is not None:
         show_turns = show_turns[-exchanges_n:] if exchanges_n < len(show_turns) else show_turns
 
-    # Timeline using turns (narrative-aware)
-    for turn in show_turns:
-        ts = fmt_timestamp(turn.timestamp, time_only=True)
-
-        # Prompt (shown once per turn)
-        if turn.prompt_text:
-            text = truncate_text(turn.prompt_text, chars_limit)
-            print(f"[prompt] {ts}")
-            print(f"  {text}")
-            print()
-
-        # Response narrative (or summary if narrative is empty)
-        tool_summaries = turn.tool_call_summaries
-        has_response = bool(turn.narrative) or turn.total_input_tokens or turn.total_output_tokens or tool_summaries
-        if has_response:
-            tok = turn.total_input_tokens + turn.total_output_tokens
-            print(f"[response] {ts} ({fmt_tokens(tok)} tok)")
-            for block in turn.narrative:
-                if block.block_type == "text":
-                    text = truncate_text(block.content or "", chars_limit)
-                    print(f"  {text}")
-                elif block.block_type == "thinking":
-                    text = truncate_text(block.content or "", chars_limit)
-                    print(f"  [thinking] {text}")
-                elif block.block_type in ("tool_result", "tool_output"):
-                    text = truncate_text(block.content or "", tool_chars)
-                    print(f"  [{block.block_type}] {text}")
-                elif block.block_type == "tool_calls":
-                    for tc in block.tool_calls:
-                        if tc.count > 1:
-                            line = f"    \u2192 {tc.tool_name} \u00d7{tc.count} ({tc.status})"
-                        else:
-                            line = f"    \u2192 {tc.tool_name} ({tc.status})"
-                        if tc.input is not None:
-                            line += f"  {truncate_text(_format_tool_input(tc.input), tool_chars)}"
-                        print(line)
-                        if tc.result is not None:
-                            print(f"      \u2190 {truncate_text(tc.result, tool_chars)}")
-            if not turn.narrative and tool_summaries:
-                for tc in tool_summaries:
-                    if tc.count > 1:
-                        print(f"    \u2192 {tc.tool_name} \u00d7{tc.count} ({tc.status})")
-                    else:
-                        print(f"    \u2192 {tc.tool_name} ({tc.status})")
-            print()
-
+    block = render_query_detail_block(
+        detail,
+        turns=show_turns,
+        fidelity=fidelity,
+        tool_chars=tool_chars,
+    )
+    print_painted_block(block)
     return 0
 
 
@@ -330,7 +288,12 @@ def cmd_query(args) -> int:
     """List conversations with composable filters."""
     from siftd.config import get_query_defaults
 
-    apply_config_defaults(args, get_query_defaults, {"limit": 10, "chars": 200, "tool_chars": 120})
+    query_defaults = get_query_defaults()
+    apply_config_defaults(
+        args,
+        lambda: {k: v for k, v in query_defaults.items() if k in {"limit", "chars", "tool_chars"}},
+        {"limit": 10, "tool_chars": 120},
+    )
 
     # Dispatch to sql subcommand if conversation_id is "sql"
     if args.conversation_id == "sql":
@@ -505,8 +468,10 @@ examples:
   siftd query <id>                    # show conversation detail
   siftd query <id> --summary          # metadata only, no exchanges
   siftd query <id> --exchanges 5      # last 5 exchanges
-  siftd query <id> --brief            # brief output (80 char truncation)
+  siftd query <id> --brief            # compact detail view (80 char truncation)
+  siftd query <id> -b                 # short alias for --brief
   siftd query <id> --full             # full text, no truncation
+  siftd query <id> -F                 # short alias for --full
   siftd query sql                     # list available .sql files
   siftd query sql cost                # run the 'cost' query
   siftd query sql cost --var ws=proj  # run with variable substitution""",
@@ -532,10 +497,10 @@ examples:
     # Detail view options (when conversation_id is provided)
     detail_group = p_query.add_argument_group("detail view")
     detail_group.add_argument("--exchanges", type=int, metavar="N", help="Number of turns to show (default: all)")
-    detail_group.add_argument("--brief", action="store_true", help="Brief output (80 char truncation)")
+    detail_group.add_argument("-b", "--brief", action="store_true", help="Compact detail view (80 char truncation)")
     detail_group.add_argument("--summary", action="store_true", help="Summary only (metadata, no turns)")
-    detail_group.add_argument("--full", action="store_true", help="Full text (no truncation)")
-    detail_group.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: 200)")
+    detail_group.add_argument("-F", "--full", action="store_true", help="Full text (no truncation)")
+    detail_group.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: no truncation)")
     detail_group.add_argument("--thinking", action="store_true", help="Show model thinking/reasoning blocks")
     detail_group.add_argument("--tools", nargs="?", const="all", metavar="FILTER",
         help="Show tool inputs/results (optional filter: tool name prefix or 'errors')")

@@ -5,10 +5,10 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from siftd.cli import main
-from siftd.domain.peek import SessionInfo
+from siftd.domain.peek import PeekExchange, PeekNarrativeBlock, PeekToolCall, SessionInfo
+from siftd.output.common import fmt_timestamp
+from siftd.peek.follow import FollowEvent
 
 
 def _session(session_id="abc123", **kwargs):
@@ -25,6 +25,52 @@ def _session(session_id="abc123", **kwargs):
     }
     defaults.update(kwargs)
     return SessionInfo(session_id=session_id, **defaults)
+
+
+def _detail(*, include_thinking: bool = False, response_text: str = "Doing it."):
+    narrative = [PeekNarrativeBlock(block_type="text", content=response_text)]
+    if include_thinking:
+        narrative.insert(0, PeekNarrativeBlock(block_type="thinking", content="Plan it."))
+    narrative.append(
+        PeekNarrativeBlock(
+            block_type="tool_calls",
+            tool_calls=[PeekToolCall(tool_name="shell.execute", input="git status")],
+        )
+    )
+    return type("Detail", (), {
+        "info": _session("abc123"),
+        "started_at": "2025-01-20T10:00:00Z",
+        "exchanges": [
+            PeekExchange(
+                timestamp="2025-01-20T10:01:00Z",
+                prompt_text="show me",
+                narrative=narrative,
+                input_tokens=10,
+                output_tokens=20,
+            )
+        ],
+    })()
+
+
+def _follow_event(*, include_thinking: bool = False, response_text: str = "Still working.") -> FollowEvent:
+    narrative = [PeekNarrativeBlock(block_type="text", content=response_text)]
+    if include_thinking:
+        narrative.insert(0, PeekNarrativeBlock(block_type="thinking", content="Check config."))
+    narrative.append(
+        PeekNarrativeBlock(
+            block_type="tool_calls",
+            tool_calls=[PeekToolCall(tool_name="file.read", input="src/config.py")],
+        )
+    )
+    return FollowEvent(
+        timestamp="2025-01-20T10:02:00Z",
+        text=response_text,
+        narrative=narrative,
+        tool_calls=[("file.read", 1, ["src/config.py"])],
+        input_tokens=5,
+        output_tokens=6,
+        is_user=False,
+    )
 
 
 class TestPeekValidation:
@@ -59,6 +105,196 @@ class TestPeekValidation:
         rc = main(["peek", "--exchanges", "0"])
         assert rc == 1
         assert "--exchanges must be at least 1" in capsys.readouterr().out
+
+
+class TestPeekDetailMode:
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.api.read_session_detail")
+    def test_default_detail_does_not_truncate_text(self, mock_read_detail, mock_find, capsys):
+        long_text = "Doing it. " * 30
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.return_value = _detail(response_text=long_text)
+
+        rc = main(["peek", "abc123"])
+        assert rc == 0
+        out = capsys.readouterr().out
+
+        assert out.count("Doing it.") >= 20
+        assert "..." not in out
+
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.api.read_session_detail")
+    def test_brief_alias_truncates_text(self, mock_read_detail, mock_find, capsys):
+        long_text = "Doing it. " * 30
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.return_value = _detail(response_text=long_text)
+
+        rc = main(["peek", "abc123", "-b"])
+        assert rc == 0
+        out = capsys.readouterr().out
+
+        assert "Doing it." in out
+        assert "..." in out
+
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.api.read_session_detail")
+    def test_tools_renders_painted_detail(self, mock_read_detail, mock_find, capsys):
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.return_value = _detail()
+
+        rc = main(["peek", "abc123", "--tools"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        expected_started = fmt_timestamp("2025-01-20T10:00:00Z")
+        expected_turn = fmt_timestamp("2025-01-20T10:01:00Z", time_only=True)
+
+        assert "Session: abc123" in out
+        assert f"Started: {expected_started}" in out
+        assert f"[prompt] {expected_turn}" in out
+        assert f"[response] {expected_turn} (30 tok)" in out
+        assert "Doing it." in out
+        assert "→ shell.execute" in out
+        assert "$ git status" in out
+        assert "[thinking]" not in out
+        mock_read_detail.assert_called_once_with(Path("/tmp/fake-session.jsonl"), last_n=5, include_thinking=False)
+
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.api.read_session_detail")
+    def test_thinking_renders_inline_when_requested(self, mock_read_detail, mock_find, capsys):
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.side_effect = lambda path, last_n, include_thinking: _detail(include_thinking=include_thinking)
+
+        rc = main(["peek", "abc123", "--thinking"])
+        assert rc == 0
+        out = capsys.readouterr().out
+
+        assert "[thinking] Plan it." in out
+        assert "Doing it." in out
+        assert "→ shell.execute" in out
+        assert "$ git status" not in out
+        mock_read_detail.assert_called_once_with(Path("/tmp/fake-session.jsonl"), last_n=5, include_thinking=True)
+
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.api.read_session_detail")
+    def test_full_alias_shows_thinking_and_tool_payloads(self, mock_read_detail, mock_find, capsys):
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.side_effect = lambda path, last_n, include_thinking: _detail(include_thinking=include_thinking)
+
+        rc = main(["peek", "abc123", "-F"])
+        assert rc == 0
+        out = capsys.readouterr().out
+
+        assert "[thinking] Plan it." in out
+        assert "$ git status" in out
+        mock_read_detail.assert_called_once_with(Path("/tmp/fake-session.jsonl"), last_n=5, include_thinking=True)
+
+
+class TestPeekFollowMode:
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.peek.read_session_detail")
+    @patch("siftd.peek.follow_session")
+    def test_follow_default_does_not_truncate_text(self, mock_follow, mock_read_detail, mock_find, capsys):
+        long_initial = "Doing it. " * 30
+        long_live = "Still working. " * 30
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.return_value = _detail(response_text=long_initial)
+
+        def _emit(path, *, json_mode, render, include_thinking):
+            assert not json_mode
+            render(_follow_event(response_text=long_live))
+
+        mock_follow.side_effect = _emit
+
+        rc = main(["peek", "abc123", "--follow"])
+        assert rc == 0
+        out = capsys.readouterr().out
+
+        assert out.count("Doing it.") >= 20
+        assert out.count("Still working.") >= 20
+        assert "..." not in out
+
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.peek.read_session_detail")
+    @patch("siftd.peek.follow_session")
+    def test_follow_renders_painted_initial_context_and_live_events(self, mock_follow, mock_read_detail, mock_find, capsys):
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.return_value = _detail()
+
+        def _emit(path, *, json_mode, render, include_thinking):
+            assert path == Path("/tmp/fake-session.jsonl")
+            assert not json_mode
+            assert include_thinking is False
+            render(_follow_event())
+
+        mock_follow.side_effect = _emit
+
+        rc = main(["peek", "abc123", "--follow"])
+        assert rc == 0
+        captured = capsys.readouterr()
+        out = captured.out
+        err = captured.err
+        expected_started = fmt_timestamp("2025-01-20T10:00:00Z")
+        expected_initial_turn = fmt_timestamp("2025-01-20T10:01:00Z", time_only=True)
+        expected_live_turn = fmt_timestamp("2025-01-20T10:02:00Z", time_only=True)
+
+        assert "Session: abc123" in out
+        assert f"Started: {expected_started}" in out
+        assert f"[prompt] {expected_initial_turn}" in out
+        assert f"[response] {expected_initial_turn} (30 tok)" in out
+        assert f"[response] {expected_live_turn} (11 tok)" in out
+        assert "Doing it." in out
+        assert "Still working." in out
+        assert "→ shell.execute" in out
+        assert "→ file.read" in out
+        assert "input: git status" not in out
+        assert "input: src/config.py" not in out
+        assert "--- following ---" in err
+        mock_read_detail.assert_called_once_with(Path("/tmp/fake-session.jsonl"), last_n=3, include_thinking=False)
+
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.peek.read_session_detail")
+    @patch("siftd.peek.follow_session")
+    def test_follow_tools_reveals_tool_payloads(self, mock_follow, mock_read_detail, mock_find, capsys):
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.return_value = _detail()
+
+        def _emit(path, *, json_mode, render, include_thinking):
+            assert not json_mode
+            assert include_thinking is False
+            render(_follow_event())
+
+        mock_follow.side_effect = _emit
+
+        rc = main(["peek", "abc123", "--follow", "--tools"])
+        assert rc == 0
+        out = capsys.readouterr().out
+
+        assert "$ git status" in out
+        assert "src/config.py" in out
+
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.peek.read_session_detail")
+    @patch("siftd.peek.follow_session")
+    def test_follow_thinking_renders_inline_when_requested(self, mock_follow, mock_read_detail, mock_find, capsys):
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read_detail.side_effect = lambda path, last_n, include_thinking: _detail(include_thinking=include_thinking)
+
+        def _emit(path, *, json_mode, render, include_thinking):
+            assert not json_mode
+            assert include_thinking is True
+            render(_follow_event(include_thinking=True))
+
+        mock_follow.side_effect = _emit
+
+        rc = main(["peek", "abc123", "--follow", "--thinking"])
+        assert rc == 0
+        out = capsys.readouterr().out
+
+        assert "[thinking] Plan it." in out
+        assert "[thinking] Check config." in out
+        assert "input: git status" not in out
+        assert "input: src/config.py" not in out
+        mock_read_detail.assert_called_once_with(Path("/tmp/fake-session.jsonl"), last_n=3, include_thinking=True)
 
 
 class TestPeekListMode:

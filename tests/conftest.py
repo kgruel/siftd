@@ -1,4 +1,20 @@
-"""Shared test fixtures for the siftd test suite."""
+"""Shared test fixtures for the siftd test suite.
+
+xdist safety note
+-----------------
+Avoid ``monkeypatch.setattr(sys, "stdout", ...)`` or ``sys.stderr`` in tests.
+Under pytest-xdist, workers share the process-level stdio descriptors, so
+monkeypatching them races with capture and other workers.
+
+Preferred alternatives:
+- Use callback parameters (``on_turn``, ``render``) to collect output in-process.
+- Use ``capsys`` / ``capfd`` (pytest-native, xdist-aware).
+- For functions that unconditionally write to stdout, pass an explicit ``file=``
+  parameter or refactor to accept a writable object.
+
+See: test_peek_follow.py test_follow_session_json_output for the canonical
+example of converting from monkeypatch-stdout to callback collection.
+"""
 
 import json
 from pathlib import Path

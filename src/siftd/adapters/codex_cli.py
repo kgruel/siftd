@@ -394,7 +394,12 @@ def peek_scan(path: Path) -> "PeekScanResult | None":
     )
 
 
-def peek_exchanges(path: Path, last_n: int = 5) -> list["PeekExchange"]:
+def peek_exchanges(
+    path: Path,
+    last_n: int = 5,
+    *,
+    include_thinking: bool = False,  # accepted for interface conformance; Codex has no thinking blocks
+) -> list["PeekExchange"]:
     """Extract recent exchanges for session detail view."""
     from siftd.domain.peek import PeekExchange
 

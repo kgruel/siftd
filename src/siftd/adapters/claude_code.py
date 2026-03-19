@@ -436,7 +436,12 @@ def peek_scan(path: Path) -> "PeekScanResult | None":
     )
 
 
-def peek_exchanges(path: Path, last_n: int = 5) -> list["PeekExchange"]:
+def peek_exchanges(
+    path: Path,
+    last_n: int = 5,
+    *,
+    include_thinking: bool = False,
+) -> list["PeekExchange"]:
     """Extract recent exchanges for session detail view.
 
     Called by read_session_detail().
@@ -452,6 +457,7 @@ def peek_exchanges(path: Path, last_n: int = 5) -> list["PeekExchange"]:
         get_usage=_get_usage,
         is_tool_result=_is_tool_result,
         tool_aliases=TOOL_ALIASES,
+        include_thinking=include_thinking,
     )
 
 

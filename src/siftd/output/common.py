@@ -3,6 +3,7 @@
 Shared by peek, query, search, and export commands.
 """
 
+from datetime import datetime, tzinfo
 from pathlib import Path
 
 
@@ -43,25 +44,48 @@ def fmt_ago(seconds: float) -> str:
     return f"{hours}h ago"
 
 
-def fmt_timestamp(iso_timestamp: str | None, *, time_only: bool = False) -> str:
-    """Format ISO timestamp for display.
+def fmt_timestamp(
+    iso_timestamp: str | None,
+    *,
+    time_only: bool = False,
+    local_tz: tzinfo | None = None,
+) -> str:
+    """Format ISO timestamp for display in local time when timezone info exists.
 
     Args:
-        iso_timestamp: ISO 8601 timestamp string (e.g., "2024-01-15T10:23:45")
+        iso_timestamp: ISO 8601 timestamp string (e.g., "2024-01-15T10:23:45Z")
         time_only: If True, return just HH:MM. Otherwise YYYY-MM-DD HH:MM.
+        local_tz: Optional local timezone override for tests/callers.
 
     Returns:
         Formatted timestamp string, or empty string if input is None.
         For date-only strings (<16 chars), returns raw string if not time_only.
+        Naive timestamps are treated as already-local and are not shifted.
     """
     if not iso_timestamp:
         return ""
     if len(iso_timestamp) < 16:
         # Date-only or short string: return raw for full mode, empty for time_only
         return "" if time_only else iso_timestamp
-    if time_only:
-        return iso_timestamp[11:16]  # HH:MM
-    return iso_timestamp[:16].replace("T", " ")  # YYYY-MM-DD HH:MM
+
+    normalized = iso_timestamp.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        if time_only:
+            return iso_timestamp[11:16]
+        return iso_timestamp[:16].replace("T", " ")
+
+    if dt.tzinfo is not None:
+        if local_tz is None:
+            dt = dt.astimezone()
+        else:
+            dt = dt.astimezone(local_tz)
+
+    return dt.strftime("%H:%M" if time_only else "%Y-%m-%d %H:%M")
 
 
 def truncate_text(text: str, limit: int, *, suffix: str = "...") -> str:

@@ -331,9 +331,14 @@ def peek_scan(path: Path) -> "PeekScanResult | None":
     )
 
 
-def peek_exchanges(path: Path, last_n: int = 5) -> list["PeekExchange"]:
+def peek_exchanges(
+    path: Path,
+    last_n: int = 5,
+    *,
+    include_thinking: bool = False,
+) -> list["PeekExchange"]:
     """Extract recent exchanges for session detail view."""
-    from siftd.domain.peek import PeekExchange
+    from siftd.domain.peek import PeekExchange, PeekNarrativeBlock, PeekToolCall
 
     if last_n < 1:
         last_n = 1
@@ -365,17 +370,41 @@ def peek_exchanges(path: Path, last_n: int = 5) -> list["PeekExchange"]:
             tokens_data = message.get("tokens", {})
             current_exchange.input_tokens += tokens_data.get("input", 0)
             current_exchange.output_tokens += tokens_data.get("output", 0)
-            current_exchange.response_text = content_text if content_text else None
+
+            response_parts: list[str] = []
+            narrative: list[PeekNarrativeBlock] = []
+            if include_thinking:
+                for thought in message.get("thoughts", []):
+                    subject = thought.get("subject")
+                    description = thought.get("description")
+                    if subject and description:
+                        text = f"{subject}: {description}"
+                    else:
+                        text = description or subject or ""
+                    if text:
+                        response_parts.append(f"[thinking] {text}")
+                        narrative.append(PeekNarrativeBlock(block_type="thinking", content=text))
+            if content_text:
+                response_parts.append(content_text)
+                narrative.append(PeekNarrativeBlock(block_type="text", content=content_text))
+            current_exchange.response_text = "\n".join(response_parts) if response_parts else None
 
             # Collect tool calls
             tool_calls: dict[str, int] = {}
+            tool_details: list[PeekToolCall] = []
             for tool_call_data in message.get("toolCalls", []):
                 tool_name = tool_call_data.get("name", "unknown")
                 tool_name = canonicalize_tool_name(tool_name, TOOL_ALIASES)
                 tool_calls[tool_name] = tool_calls.get(tool_name, 0) + 1
+                hint = tool_call_data.get("description") or tool_call_data.get("query") or tool_call_data.get("pattern")
+                tool_details.append(PeekToolCall(tool_name=tool_name, input=hint))
 
             if tool_calls:
                 current_exchange.tool_calls = list(tool_calls.items())
+            if narrative or tool_details:
+                if tool_details:
+                    narrative.append(PeekNarrativeBlock(block_type="tool_calls", tool_calls=tool_details))
+                current_exchange.narrative.extend(narrative)
 
     return exchanges[-last_n:] if len(exchanges) > last_n else exchanges
 

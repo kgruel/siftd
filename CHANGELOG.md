@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-19
+
 ### Added
 
-- **`siftd tag --current`** — Auto-detect the active session and queue tags, falling back to `--last` when no session is registered. Eliminates the need for `$()` shell substitution in the plugin command.
+- **`siftd tool-search`** — Search tool usage across conversations
+- **`siftd tag --current`** — Auto-detect the active session and queue tags, falling back to `--last` when no session is registered
 - **`siftd serve`** — HTTP team sync server (`siftd[serve]` optional extra):
   - 5 endpoints: `POST /v1/push`, `GET /v1/pull`, `GET /v1/query`, `GET /v1/search`, `GET /v1/health`
   - Auth middleware: OIDC JWT validation and RFC 7662 token introspection
@@ -22,28 +25,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Local-path transport slices remote DB directly
   - `--since`, `--all`, `--dry-run`, `-w` filters mirror push
   - `last_pull` delta tracking — repeated pulls transfer only new conversations
-- **`db send`** — Slice database to stdout as binary SQLite (inverse of `db receive`):
-  - JSON metadata (conversation count, size) written to stderr
-  - Designed for SSH pipe usage: `ssh host siftd db send > slice.db`
-  - `--since`, `-w`, `--no-fts` filter flags
+- **`db send`** — Slice database to stdout as binary SQLite (inverse of `db receive`)
+- **Porter stemmer for FTS5** — Improves keyword recall for morphological variants
+- **Scoped FTS5 passthrough** — Field-scoped queries (e.g. `tool:read`) pass through to FTS5 directly
+- **Tool summary embeddings** — Tool call patterns embedded alongside text for semantic search over tool usage
+- **In-memory embedding cache** — Cached embeddings, backend resolution, and active-session exclusion sets with TTL-based invalidation
+- **CLI→serve delegation** — Search commands delegate to serve endpoint when configured
 - **`acquire_token()`** — Public API function for token acquisition from auth config
-- **Serve concept doc** — `docs/concepts/serve.md` covering HTTP transport, auth, attribution, FTS rebuild, deployment
-- **Sync concept doc** — `docs/concepts/sync.md` covering remotes, push/pull, delta tracking, SSH/HTTP/local transport, and pipe primitives
 
 ### Changed
 
-- **Unified `tag` command** — `siftd tags` merged into `siftd tag` with subcommands:
-  - `siftd tag list [--prefix] [name]` — list tags or drill down (was `siftd tags`)
-  - `siftd tag rename <old> <new>` — rename a tag (was `siftd tags --rename`)
-  - `siftd tag delete <name> [--force]` — delete a tag (was `siftd tags --delete`)
-  - `siftd tags` still works as a deprecated bridge (prints warning to stderr)
-- **`/siftd:tag` plugin command** — Simplified to use `--current` instead of shell substitution; fixes Claude Code permission error
-- **FTS5 tokenizer upgrade** — Content keyword search now uses the Porter stemmer; opening an existing DB in write mode (e.g., `siftd ingest`) will rebuild the FTS index once to apply stemming.
-- **Embeddings index tool summaries** — `siftd search --index` now adds a per-conversation `tool_summary` chunk (tools, key files, commands) and will backfill missing summaries for already-indexed conversations that have tool calls.
+- **Output rendering migrated to painted** — Peek and query detail views render through painted's block/line primitives with the three-axis Fidelity model (visibility × depth × density), replacing the single-axis zoom system
+- **`--brief` / `-b` and `--full` / `-F` flags** — Aliases for compact and full-depth rendering on peek and query detail
+- **Tool-specific presenters** — file.read, file.edit, shell.execute, search.grep, and task.spawn render structured hints instead of raw input dumps
+- **Unified `tag` command** — `siftd tags` merged into `siftd tag` with subcommands (`list`, `rename`, `delete`). `siftd tags` still works as deprecated bridge
+- **FTS5 tokenizer upgrade** — Content keyword search now uses the Porter stemmer; opening an existing DB in write mode will rebuild the FTS index once to apply stemming
+- **Embeddings index tool summaries** — `siftd search --index` now adds a per-conversation `tool_summary` chunk and will backfill missing summaries for already-indexed conversations that have tool calls
+- **Search defaults to embeddings-only** — Skips FTS5 recall pass for lower latency; hybrid mode still available
+- **Connection tracking** — Read-only connections reopened on cache reload to escape stale snapshots
+
+### Fixed
+
+- **Search caching correctness** — Fixed -inf score leak, stale cache detection, active-session exclusion underfill, and cache TTL regression
+- **Tool-only conversations skipped** — Conversations with only tool calls (no text) were silently dropped during ingestion
+- **`event_to_json` missing narrative** — `--follow --json --thinking` no longer silently drops thinking content
+- **Trailing whitespace in block rendering** — painted 0.1.4 strips trailing space cells, fixing terminal line-wrap on wide blocks
 
 ### Removed
 
-- **Deprecated top-level commands** — `siftd status`, `siftd workspaces`, `siftd path` removed; use `siftd db stats`, `siftd db workspaces`, `siftd db path` instead (deprecated since v0.4.4)
+- **Deprecated top-level commands** — `siftd status`, `siftd workspaces`, `siftd path` removed (deprecated since v0.4.4)
+- **Zoom module** — Replaced by painted's Fidelity model
 
 ## [0.4.7] - 2026-02-18
 

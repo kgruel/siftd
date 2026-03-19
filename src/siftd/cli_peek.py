@@ -2,7 +2,6 @@
 
 import argparse
 import sys
-from datetime import datetime
 
 
 def cmd_peek(args) -> int:
@@ -10,19 +9,26 @@ def cmd_peek(args) -> int:
     import json as _json
     import time
 
+    from painted import Fidelity
+
     from siftd.api import (
         find_session_file,
         list_active_sessions,
         read_session_detail,
         tail_session,
     )
-    from siftd.output import fmt_ago, fmt_model, fmt_timestamp, fmt_tokens, print_indented, truncate_text
+    from siftd.output import fmt_ago, fmt_model
+    from siftd.output.painted_bridge import print_block as print_painted_block
+    from siftd.output.painted_bridge import render_follow_event_block, render_peek_detail_block
     from siftd.peek import AmbiguousSessionError
 
     # Extract flags
     last_response = getattr(args, "last_response", False)
     last_prompt = getattr(args, "last_prompt", False)
     follow = getattr(args, "follow", False)
+    is_full = getattr(args, "full", False)
+    show_tool_details = getattr(args, "tools", False) or is_full
+    include_thinking = getattr(args, "thinking", False) or is_full
 
     # Validate mutual exclusivity
     if last_response and last_prompt:
@@ -60,12 +66,35 @@ def cmd_peek(args) -> int:
         print("Error: --exchanges must be at least 1")
         return 1
 
-    # Determine truncation limit
-    chars_limit = 200
-    if getattr(args, "full", False):
-        chars_limit = 0  # No truncation
+    # Build fidelity spec from CLI flags
+    visible: set[str] = {"text"}
+    if include_thinking:
+        visible.add("thinking")
+    if show_tool_details:
+        visible.add("tools")
+
+    chars = 0
+    if getattr(args, "brief", False):
+        chars = 80
+    if getattr(args, "chars", None) is not None:
+        chars = args.chars
+    if is_full:
+        chars = 0
+
+    fidelity = Fidelity(
+        depth=3 if is_full else 1,
+        visible=frozenset(visible),
+        chars=chars,
+    )
+
+    if is_full:
+        tool_chars = 0
+    elif getattr(args, "brief", False):
+        tool_chars = 80
     elif getattr(args, "chars", None) is not None:
-        chars_limit = args.chars
+        tool_chars = 0 if args.chars <= 0 else min(args.chars, 120)
+    else:
+        tool_chars = 120
 
     # --last-response / --last-prompt mode: extract single text, output raw
     if last_response or last_prompt:
@@ -93,7 +122,7 @@ def cmd_peek(args) -> int:
             path = sessions[0].file_path
 
         # Read just the last exchange
-        detail = read_session_detail(path, last_n=1)
+        detail = read_session_detail(path, last_n=1, include_thinking=include_thinking)
         if detail is None:
             print(f"Could not read session: {path}", file=sys.stderr)
             return 1
@@ -121,7 +150,7 @@ def cmd_peek(args) -> int:
     # Follow mode
     if follow:
         from siftd.peek import follow_session, read_session_detail
-        from siftd.peek.follow import FollowEvent, event_to_json, render_tool_line
+        from siftd.peek.follow import FollowEvent, event_to_json
 
         # Resolve session: use provided ID or default to most recent active
         if args.session_id:
@@ -146,61 +175,61 @@ def cmd_peek(args) -> int:
         initial_n = exchanges_n if exchanges_n is not None else 3
 
         if not args.json:
-            # Print initial context (CLI layer handles rendering)
-            detail = read_session_detail(path, last_n=initial_n)
+            detail = read_session_detail(
+                path,
+                last_n=initial_n,
+                include_thinking=include_thinking,
+            )
             if detail is not None:
-                for ex in detail.exchanges:
-                    ts = fmt_timestamp(ex.timestamp, time_only=True)
-                    if ex.prompt_text:
-                        print(f"[{ts}] user")
-                        print_indented(truncate_text(ex.prompt_text, chars_limit))
-                        print()
-                    if ex.response_text or ex.tool_calls:
-                        token_info = f"{fmt_tokens(ex.input_tokens)} in / {fmt_tokens(ex.output_tokens)} out"
-                        print(f"[{ts}] assistant ({token_info})")
-                        if ex.response_text:
-                            print_indented(truncate_text(ex.response_text, chars_limit))
-                        if ex.tool_calls:
-                            for name, count in ex.tool_calls:
-                                print(render_tool_line(name, count, []))
-                        print()
+                initial_block = render_peek_detail_block(
+                    detail,
+                    exchanges=detail.exchanges,
+                    fidelity=fidelity,
+                    tool_chars=tool_chars,
+                )
+                print_painted_block(initial_block)
+                print()
 
             print("--- following ---", file=sys.stderr)
 
             def _render_follow_event(event: FollowEvent) -> None:
-                ts = fmt_timestamp(event.timestamp, time_only=True)
-                if event.is_user:
-                    print(f"\n[{ts}] user")
-                    if event.text:
-                        print_indented(truncate_text(event.text, chars_limit))
-                else:
-                    token_info = f"{fmt_tokens(event.input_tokens)} in / {fmt_tokens(event.output_tokens)} out"
-                    print(f"\n[{ts}] assistant ({token_info})")
-                    if event.text:
-                        print_indented(truncate_text(event.text, chars_limit))
-                    for name, count, hints in event.tool_calls:
-                        print(render_tool_line(name, count, hints))
+                block = render_follow_event_block(
+                    event,
+                    fidelity=fidelity,
+                    tool_chars=tool_chars,
+                )
+                print_painted_block(block)
+                print()
                 sys.stdout.flush()
 
-            follow_session(path, json_mode=False, render=_render_follow_event)
+            follow_session(
+                path,
+                json_mode=False,
+                render=_render_follow_event,
+                include_thinking=include_thinking,
+            )
         else:
             # JSON mode: initial context as NDJSON
-            detail = read_session_detail(path, last_n=initial_n)
+            detail = read_session_detail(
+                path,
+                last_n=initial_n,
+                include_thinking=include_thinking,
+            )
             if detail is not None:
                 for ex in detail.exchanges:
                     if ex.prompt_text:
                         user_ev = FollowEvent(timestamp=ex.timestamp, text=ex.prompt_text, is_user=True)
                         print(_json.dumps(event_to_json(user_ev), separators=(",", ":")))
-                    if ex.response_text or ex.tool_calls:
+                    if ex.response_text or ex.tool_calls or ex.narrative:
                         tc = [(n, c, []) for n, c in ex.tool_calls]
                         asst_ev = FollowEvent(
                             timestamp=ex.timestamp, text=ex.response_text,
-                            tool_calls=tc, input_tokens=ex.input_tokens,
+                            tool_calls=tc, narrative=ex.narrative, input_tokens=ex.input_tokens,
                             output_tokens=ex.output_tokens,
                         )
                         print(_json.dumps(event_to_json(asst_ev), separators=(",", ":")))
 
-            follow_session(path, json_mode=True)
+            follow_session(path, json_mode=True, include_thinking=include_thinking)
 
         return 0
 
@@ -239,7 +268,11 @@ def cmd_peek(args) -> int:
         # Detail mode
         # Use --exchanges if provided, otherwise default to 5
         last_n = exchanges_n if exchanges_n is not None else 5
-        detail = read_session_detail(path, last_n=last_n)
+        detail = read_session_detail(
+            path,
+            last_n=last_n,
+            include_thinking=include_thinking,
+        )
         if detail is None:
             print(f"Could not read session: {path}")
             return 1
@@ -271,61 +304,13 @@ def cmd_peek(args) -> int:
             print(_json.dumps(out, indent=2))
             return 0
 
-        # Header
-        ws = detail.info.workspace_name or ""
-        model = detail.info.model or "unknown"
-        adapter = detail.info.adapter_name or "unknown"
-        started = fmt_timestamp(detail.started_at, time_only=True)
-        last_activity = ""
-        if detail.info.last_activity:
-            last_activity = datetime.fromtimestamp(
-                detail.info.last_activity
-            ).strftime("%H:%M")
-
-        print(detail.info.session_id)
-        parts = []
-        if ws:
-            parts.append(ws)
-        parts.append(model)
-        parts.append(adapter)
-        if started:
-            parts.append(f"started {started}")
-        if last_activity:
-            parts.append(f"last {last_activity}")
-        parts.append(f"{detail.info.exchange_count} exchanges")
-        print(" \u00b7 ".join(parts))
-        # Add file path to detail header
-        print(f"file: {detail.info.file_path}")
-        print()
-
-        # Exchanges
-        for ex in detail.exchanges:
-            ts = fmt_timestamp(ex.timestamp, time_only=True)
-
-            # Prompt
-            if ex.prompt_text is not None:
-                print(f"[{ts}] user")
-                text = truncate_text(ex.prompt_text, chars_limit)
-                print_indented(text)
-                print()
-
-            # Response
-            if ex.response_text is not None or ex.tool_calls:
-                token_info = f"{fmt_tokens(ex.input_tokens)} in / {fmt_tokens(ex.output_tokens)} out"
-                print(f"[{ts}] assistant ({token_info})")
-                if ex.response_text:
-                    text = truncate_text(ex.response_text, chars_limit)
-                    print_indented(text)
-                if ex.tool_calls:
-                    tool_parts = []
-                    for name, count in ex.tool_calls:
-                        if count > 1:
-                            tool_parts.append(f"{name} \u00d7{count}")
-                        else:
-                            tool_parts.append(name)
-                    print(f"  \u2192 {', '.join(tool_parts)}")
-                print()
-
+        block = render_peek_detail_block(
+            detail,
+            exchanges=detail.exchanges,
+            fidelity=fidelity,
+            tool_chars=tool_chars,
+        )
+        print_painted_block(block)
         return 0
 
     # List mode
@@ -337,6 +322,8 @@ def cmd_peek(args) -> int:
         ignored.append("--tail-lines")
     if exchanges_n is not None:
         ignored.append("--exchanges")
+    if getattr(args, "tools", False):
+        ignored.append("--tools")
     if ignored:
         print(f"Note: {', '.join(ignored)} ignored in list mode (requires session ID)", file=sys.stderr)
 
@@ -437,7 +424,12 @@ def build_peek_parser(subparsers) -> None:
   siftd peek -w myproject       # filter by workspace name
   siftd peek c520f862           # detail view for session (last 5 exchanges)
   siftd peek c520 --exchanges 10  # show last 10 exchanges
+  siftd peek c520 --thinking    # show thinking blocks inline
+  siftd peek c520 --tools       # show tool inputs/results inline when available
+  siftd peek c520 --brief       # compact detail view (80 char truncation)
+  siftd peek c520 -b            # short alias for --brief
   siftd peek c520 --full        # show full text (no truncation)
+  siftd peek c520 -F            # short alias for --full
   siftd peek c520 --tail        # raw JSONL tail
   siftd peek c520 --tail --json # tail as JSON array
   siftd peek --main-only        # exclude subagent sessions
@@ -457,8 +449,11 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_peek.add_argument("--all", action="store_true", help="Include inactive sessions (not just last 2 hours)")
     p_peek.add_argument("-n", "--limit", type=int, metavar="N", help="Maximum number of sessions to list (default: 10)")
     p_peek.add_argument("--exchanges", type=int, metavar="N", help="Detail mode: number of exchanges to show (default: 5)")
-    p_peek.add_argument("--full", action="store_true", help="Show full text (no truncation)")
-    p_peek.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: 200)")
+    p_peek.add_argument("-b", "--brief", action="store_true", help="Compact detail/follow view (80 char truncation)")
+    p_peek.add_argument("-F", "--full", action="store_true", help="Show full text (no truncation)")
+    p_peek.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: no truncation)")
+    p_peek.add_argument("--thinking", action="store_true", help="Show model thinking/reasoning blocks inline when available")
+    p_peek.add_argument("--tools", action="store_true", help="Show tool inputs/results inline when available")
     p_peek.add_argument("-f", "--follow", action="store_true", help="Follow a live session in real time (like tail -f)")
     p_peek.add_argument("--tail", action="store_true", help="Raw JSONL tail (last 20 records)")
     p_peek.add_argument("--tail-lines", type=int, default=20, metavar="N", dest="tail_lines", help="Number of records for --tail (default: 20)")

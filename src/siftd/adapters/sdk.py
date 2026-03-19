@@ -340,7 +340,11 @@ def canonicalize_tool_name(raw_name: str, aliases: dict[str, str]) -> str:
     return aliases.get(raw_name, raw_name)
 
 
-def extract_text_with_placeholders(blocks: list) -> str | None:
+def extract_text_with_placeholders(
+    blocks: list,
+    *,
+    include_thinking: bool = False,
+) -> str | None:
     """Extract text from content blocks, adding placeholders for non-text.
 
     Unlike simple text extraction, this indicates presence of images,
@@ -348,6 +352,7 @@ def extract_text_with_placeholders(blocks: list) -> str | None:
 
     Args:
         blocks: List of content blocks (dicts or strings).
+        include_thinking: Render thinking text inline instead of a placeholder.
 
     Returns:
         Combined text with placeholders, or None if no content.
@@ -371,7 +376,14 @@ def extract_text_with_placeholders(blocks: list) -> str | None:
             elif block_type == "tool_result":
                 parts.append("[tool result]")
             elif block_type == "thinking":
-                parts.append("[thinking]")
+                if include_thinking:
+                    text = block.get("thinking") or block.get("text") or ""
+                    if text:
+                        parts.append(f"[thinking] {text}")
+                    else:
+                        parts.append("[thinking]")
+                else:
+                    parts.append("[thinking]")
             elif block_type:
                 parts.append(f"[{block_type}]")
 
@@ -560,6 +572,7 @@ def peek_jsonl_exchanges(
     get_usage: Callable[[dict], tuple[int, int]] | None = None,
     is_tool_result: Callable[[dict], bool] | None = None,
     tool_aliases: dict[str, str] | None = None,
+    include_thinking: bool = False,
 ) -> list[PeekExchange]:
     """Generic JSONL exchange extractor.
 
@@ -578,7 +591,7 @@ def peek_jsonl_exchanges(
     Returns:
         List of PeekExchange objects.
     """
-    from siftd.domain.peek import PeekExchange
+    from siftd.domain.peek import PeekExchange, PeekNarrativeBlock, PeekToolCall
 
     # Enforce minimum
     if last_n < 1:
@@ -629,22 +642,49 @@ def peek_jsonl_exchanges(
                         current_exchange.output_tokens += output_tokens
 
                     # Keep first non-empty response_text (shows reasoning/intent)
-                    text = extract_text_with_placeholders(content_blocks)
+                    text = extract_text_with_placeholders(
+                        content_blocks,
+                        include_thinking=include_thinking,
+                    )
                     if text and not current_exchange.response_text:
                         if _is_tool_placeholder_only(text):
                             text = None
                     if text and not current_exchange.response_text:
                         current_exchange.response_text = text
 
-                    # Accumulate tool calls across assistant turns
+                    # Build narrative blocks and accumulate tool calls across assistant turns
+                    pending_tool_blocks: list[PeekToolCall] = []
                     for block in content_blocks:
-                        if isinstance(block, dict) and block.get("type") == "tool_use":
+                        if not isinstance(block, dict):
+                            continue
+                        block_type = block.get("type")
+                        if block_type == "text":
+                            text_val = block.get("text", "")
+                            if text_val:
+                                current_exchange.narrative.append(
+                                    PeekNarrativeBlock(block_type="text", content=text_val)
+                                )
+                        elif block_type == "thinking":
+                            if include_thinking:
+                                text_val = block.get("thinking") or block.get("text") or ""
+                                if text_val:
+                                    current_exchange.narrative.append(
+                                        PeekNarrativeBlock(block_type="thinking", content=text_val)
+                                    )
+                        elif block_type == "tool_use":
                             tool_name = block.get("name", "unknown")
                             if tool_aliases:
-                                tool_name = canonicalize_tool_name(
-                                    tool_name, tool_aliases
-                                )
+                                tool_name = canonicalize_tool_name(tool_name, tool_aliases)
                             tool_counter[tool_name] += 1
+                            input_dict = block.get("input") if isinstance(block.get("input"), dict) else {}
+                            hint = None
+                            if input_dict:
+                                hint = str(input_dict.get("description") or input_dict.get("command") or input_dict.get("file_path") or input_dict.get("path") or input_dict.get("pattern") or "") or None
+                            pending_tool_blocks.append(PeekToolCall(tool_name=tool_name, input=hint))
+                    if pending_tool_blocks:
+                        current_exchange.narrative.append(
+                            PeekNarrativeBlock(block_type="tool_calls", tool_calls=pending_tool_blocks)
+                        )
                     if tool_counter:
                         current_exchange.tool_calls = list(tool_counter.most_common())
 

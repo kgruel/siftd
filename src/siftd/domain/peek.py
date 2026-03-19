@@ -5,6 +5,26 @@ from pathlib import Path
 
 
 @dataclass
+class PeekToolCall:
+    """Tool call detail for peek narrative rendering."""
+
+    tool_name: str
+    count: int = 1
+    input: str | None = None
+    result: str | None = None
+    status: str = "success"
+
+
+@dataclass
+class PeekNarrativeBlock:
+    """A single block in a peek assistant narrative."""
+
+    block_type: str
+    content: str | None = None
+    tool_calls: list[PeekToolCall] = field(default_factory=list)
+
+
+@dataclass
 class PeekScanResult:
     """Lightweight metadata from scanning a session file."""
 
@@ -25,6 +45,7 @@ class PeekExchange:
     prompt_text: str | None = None
     response_text: str | None = None
     tool_calls: list[tuple[str, int]] = field(default_factory=list)
+    narrative: list[PeekNarrativeBlock] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
 
