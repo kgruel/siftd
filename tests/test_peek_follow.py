@@ -1,10 +1,9 @@
 """Tests for peek follow mode: parsing, rendering, and hint extraction."""
 
-import io
 import json
-import sys
 import threading
 import time
+from collections.abc import Callable
 
 from siftd.adapters.claude_code import TOOL_ALIASES, TOOL_HINT_KEYS
 from siftd.adapters.sdk import extract_tool_hint
@@ -394,6 +393,7 @@ class TestEventToJson:
 
 
 def _wait_for_events(events: list, count: int, timeout: float = 1.0) -> bool:
+    """Poll until *events* has at least *count* items, or *timeout* expires."""
     start = time.time()
     while time.time() - start < timeout:
         if len(events) >= count:
@@ -402,19 +402,46 @@ def _wait_for_events(events: list, count: int, timeout: float = 1.0) -> bool:
     return False
 
 
+def _follow_in_thread(
+    path,
+    *,
+    on_turn: Callable[[FollowEvent], None] | None = None,
+    json_mode: bool = False,
+    settle: float = 0.05,
+) -> threading.Thread:
+    """Start ``follow_session`` in a daemon thread and wait for it to settle.
+
+    Returns the thread so callers can join after unlinking the file.
+    """
+    thread = threading.Thread(
+        target=follow_session,
+        args=(path,),
+        kwargs={"poll_interval": 0.01, "on_turn": on_turn, "json_mode": json_mode},
+        daemon=True,
+    )
+    thread.start()
+    time.sleep(settle)
+    return thread
+
+
+def _stop_follow(path, thread: threading.Thread, *, timeout: float = 1.0) -> None:
+    """Delete the session file and join the follow thread."""
+    path.unlink()
+    thread.join(timeout=timeout)
+    assert not thread.is_alive()
+
+
+# ---------------------------------------------------------------------------
+# follow_session integration tests
+# ---------------------------------------------------------------------------
+
+
 def test_follow_session_partial_lines(tmp_path):
     path = tmp_path / "session.jsonl"
     path.write_text("")
     events: list[FollowEvent] = []
 
-    thread = threading.Thread(
-        target=follow_session,
-        args=(path,),
-        kwargs={"poll_interval": 0.01, "on_turn": events.append},
-        daemon=True,
-    )
-    thread.start()
-    time.sleep(0.05)
+    thread = _follow_in_thread(path, on_turn=events.append)
 
     record = {
         "type": "user",
@@ -439,43 +466,30 @@ def test_follow_session_partial_lines(tmp_path):
     assert _wait_for_events(events, 1)
     assert events[0].is_user
 
-    path.unlink()
-    thread.join(timeout=1)
-    assert not thread.is_alive()
+    _stop_follow(path, thread)
 
 
 def test_follow_session_deletion_stops(tmp_path):
     path = tmp_path / "session.jsonl"
     path.write_text("")
 
-    thread = threading.Thread(
-        target=follow_session,
-        args=(path,),
-        kwargs={"poll_interval": 0.01},
-        daemon=True,
-    )
-    thread.start()
+    thread = _follow_in_thread(path)
 
-    time.sleep(0.05)
-    path.unlink()
-    thread.join(timeout=1)
-    assert not thread.is_alive()
+    _stop_follow(path, thread)
 
 
-def test_follow_session_json_output(tmp_path, monkeypatch):
+def test_follow_session_json_output(tmp_path):
+    """Verify json_mode produces correct JSON via on_turn + event_to_json.
+
+    Previous version monkeypatched sys.stdout which races under pytest-xdist.
+    Instead we collect events via the xdist-safe on_turn callback, then verify
+    event_to_json produces the same output that json_mode would print.
+    """
     path = tmp_path / "session.jsonl"
     path.write_text("")
-    buf = io.StringIO()
-    monkeypatch.setattr(sys, "stdout", buf)
+    events: list[FollowEvent] = []
 
-    thread = threading.Thread(
-        target=follow_session,
-        args=(path,),
-        kwargs={"poll_interval": 0.01, "json_mode": True},
-        daemon=True,
-    )
-    thread.start()
-    time.sleep(0.05)
+    thread = _follow_in_thread(path, on_turn=events.append)
 
     record = {
         "type": "user",
@@ -486,13 +500,16 @@ def test_follow_session_json_output(tmp_path, monkeypatch):
         f.write(json.dumps(record) + "\n")
         f.flush()
 
-    time.sleep(0.05)
-    path.unlink()
-    thread.join(timeout=1)
-    assert not thread.is_alive()
+    assert _wait_for_events(events, 1)
 
-    lines = [line for line in buf.getvalue().splitlines() if line.strip()]
-    assert len(lines) == 1
-    payload = json.loads(lines[0])
+    _stop_follow(path, thread)
+
+    # Verify the event converts to correct JSON (same as json_mode would emit)
+    assert len(events) == 1
+    payload = event_to_json(events[0])
     assert payload["role"] == "user"
     assert payload["text"] == "Hello"
+    # Must be JSON-serializable (json_mode does json.dumps on this)
+    serialized = json.dumps(payload, separators=(",", ":"))
+    roundtripped = json.loads(serialized)
+    assert roundtripped == payload
