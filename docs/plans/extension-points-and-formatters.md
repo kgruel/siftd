@@ -2,14 +2,14 @@
 
 ## Status
 
-In progress. Branch: `feat/extension-points` (4 commits ahead of main at v0.5.2).
+In progress. Branch: `feat/extension-points` (6 commits ahead of main at v0.5.2).
 
 Stages 1-6 complete (infrastructure, formatter stubs, narrative walker, fidelity unification, list views, tool summary unification).
-Next: Stage 7 (search formatter bridge, optional), then make formatters load-bearing for detail views.
+Next: Stage 7 (detail views through formatters), then Stage 8 (search unification).
 
 ## Why this exists
 
-siftd has two discoverable module systems — adapters (input) and formatters (output, about to be built) — that share the same structural pattern: versioned Python modules in a known directory, discovered at runtime, copyable from builtins for customization. Today the adapter machinery is bespoke. Building formatters would duplicate it.
+siftd has two discoverable module systems — adapters (input) and formatters (output) — that share the same structural pattern: versioned Python modules in a known directory, discovered at runtime, copyable from builtins for customization. Today the adapter machinery is bespoke. Building formatters would duplicate it.
 
 This plan extracts the shared pattern into a general extension point system, migrates adapters onto it, and builds the formatter interface on top. The formatter work then enables the output unification: a narrative walker with shared decision logic, format-agnostic rendering, and universal Fidelity controls.
 
@@ -19,6 +19,7 @@ This plan extracts the shared pattern into a general extension point system, mig
 - **Formatters are extension points.** Built-in terminal, markdown, JSON formatters ship with siftd. Users can copy and customize them, or write new ones (HTML, Rich, etc.).
 - **Adapters and formatters share infrastructure.** Discovery, registration, versioning, and `siftd copy` work identically for both.
 - **Fidelity is universal.** `--brief`/`--full`/`--thinking`/`--tools` work the same across all commands. The formatter interprets what "brief" means for its output medium.
+- **One formatter system.** All command output (detail, list, search) routes through the same output format modules. A custom HTML formatter can handle everything, not just detail views.
 
 ## Architecture
 
@@ -61,7 +62,7 @@ def render_list(summaries: list, fidelity: Fidelity, **context) -> str:
     """Render conversation/session list rows."""
     ...
 
-def render_search(results: list, fidelity: Fidelity, **context) -> str:
+def render_search(results: SearchResults, fidelity: Fidelity, **context) -> str:
     """Render search results."""
     ...
 ```
@@ -103,25 +104,42 @@ Each built-in formatter provides its own emitter implementation:
 
 `fidelity_from_args(args)` replaces duplicated construction in cli_query and cli_peek. The formatter provides context-appropriate defaults (brief_chars).
 
-```python
-def fidelity_from_args(args, formatter=None) -> Fidelity:
-    """Build Fidelity from standard CLI flags.
-
-    The formatter provides defaults (brief_chars) for its output medium.
-    CLI flags override formatter defaults.
-    """
-```
-
 ExportOptions dissolves — replaced by Fidelity + format selection.
 
 ### Conversation list component
 
-One rendering function per formatter for list views. Parameterized by:
-- Context label ("Query results", "Active sessions", "Tagged: review")
-- Palette/style for differentiation
-- Fidelity for density (brief = ID + workspace + age, default = adds model/tokens, full = adds tags)
+One rendering function per formatter for list views. Parameterized by Fidelity for density (depth 0 = brief, depth 1 = default, depth 3 = full table with tags).
 
 The peek list stays separate — SessionInfo is a genuinely different shape from ConversationSummary.
+
+### Search result architecture
+
+Search output separates two orthogonal concerns:
+
+**Search views** (data processing — what to show):
+- **chunks** (default): flat list of scored chunks
+- **conversations**: aggregate by conversation, rank by max score
+- **thread**: two-tier — high-scoring expanded, rest compact
+- **context(n)**: ±N exchanges around each match
+- **full-exchange**: fetch complete prompt+response from DB
+
+**Output formats** (rendering — how to show it):
+- terminal, markdown, json (and user-defined)
+
+The flags `--conversations`, `--thread`, `--context N`, `--full` select a **view**. The output medium is selected by TTY detection / `--json` / `--format`. Each view produces a structured `SearchResults` object; the formatter's `render_search()` renders it.
+
+```python
+@dataclass
+class SearchResults:
+    """Processed search results ready for rendering."""
+    query: str
+    mode: str                           # "chunks", "conversations", "thread"
+    chunks: list[SearchChunk]           # for chunks/verbose mode
+    conversations: list[SearchConv]     # for conversations mode
+    tiers: tuple[list, list] | None     # for thread mode (tier1, tier2)
+```
+
+This replaces the current six formatter classes (ChunkListFormatter, VerboseFormatter, FullExchangeFormatter, ContextFormatter, ThreadFormatter, ConversationFormatter) which each mix data processing with terminal-specific rendering.
 
 ## Dissolution inventory
 
@@ -134,9 +152,12 @@ The peek list stays separate — SessionInfo is a genuinely different shape from
 | `_narrative_to_json` (export) | JsonEmitter via narrative walker |
 | 3x tool summary functions (painted_bridge) | Single function, uniform `(name, count, status)` input |
 | Fidelity construction in cli_query + cli_peek | `fidelity_from_args()` |
-| `query --summary` bypass | Formatter handles metadata header via render_detail |
 | Tag drill-down list duplication | Shared `render_list` in formatter |
-| Search `select_formatter()` | General formatter selection (but search formatters may stay as-is initially) |
+| `formatters.py` (6 search formatter classes) | Search view processors + `render_search` on output formats |
+| `registry.py` (search FormatterRegistry) | `format_registry.py` (unified) |
+| `select_formatter()` | `select_format()` + view selection |
+| `FormatterContext` | `SearchResults` + Fidelity |
+| `_get_conversation_metadata()` in formatters.py | Moves to search view processors |
 
 ## Migration sequence
 
@@ -184,24 +205,49 @@ The peek list stays separate — SessionInfo is a genuinely different shape from
 - Call sites normalize input: ToolCallSummary → tuple, peek (name, count) → (name, count, None), follow (name, count, hints) → (name, count, None)
 - Status shown only when non-None; error status gets error styling
 
-### Stage 7: Search formatter bridge (optional)
+### Stage 7: Detail views through formatters [NEXT]
 
-- Evaluate whether existing search formatters can be expressed as formatters
-- If natural: migrate. If forced: leave as-is with a note.
+- cli_query detail path dispatches through `select_format()` → `render_detail()` instead of calling `render_query_detail_block` directly
+- cli_peek detail path similarly routes through formatter
+- cli_export routes through formatter (markdown_fmt becomes load-bearing for export)
+- Dissolve `ExportOptions` → Fidelity + format selection
+- Dissolve `_options_to_fidelity` bridge
+
+### Stage 8: Search result unification
+
+- Extract data processing from search formatter classes into standalone view processors
+  - `prepare_chunk_view()`, `prepare_conversation_view()`, `prepare_thread_view()`, `prepare_context_view()`
+  - Each returns a structured `SearchResults` dataclass
+- Add `render_search(results, fidelity, **context)` to each output format
+  - Terminal: current visual output (painted or plain text)
+  - Markdown: table or structured markdown
+  - JSON: structured JSON (current JsonFormatter logic)
+- Wire cli_search: view processor → formatter.render_search()
+- Dissolve `formatters.py` classes, `registry.py`, `FormatterContext`, `select_formatter()`
+- `format_refs_annotation` and `print_refs_content` stay (post-processing, not formatter concern)
+
+### Stage 9: Cleanup and copy command
+
+- Wire `siftd copy formatter` command
+- Remove backward-compat shims in registry.py
+- Final dissolution audit
 
 ## What stays as-is
 
 - **Peek list rows** — SessionInfo is a different shape. Not a false unification target.
 - **`print_table`** — used for verbose/SQL output. Plain text table is fine.
-- **Ingest renderer** — streaming progress, different concern entirely. Tier 3.
+- **Ingest renderer** — streaming progress, different concern entirely.
 - **db/config/install output** — single-line confirmations. Not worth abstracting.
+- **`format_refs_annotation` / `print_refs_content`** — post-processing after search, not a formatter concern.
 
 ## Risks
 
 - **Walker must handle two block types** — NarrativeBlock (DB) and PeekNarrativeBlock (disk). Duck typing is intentional; don't try to unify the types.
 - **Tool presenters are format-specific** — The terminal emitter calls painted presenters; markdown/json emitters use simpler representations. The walker calls the emitter, the emitter picks the presenter.
 - **Formatter discovery at import time** — Must be lazy to avoid import overhead for simple commands. Follow the adapter pattern: discover on first use.
+- **Search view complexity** — ThreadFormatter's tiering and ContextFormatter's ±N window are non-trivial. The view processor extraction must preserve this logic intact. Test coverage for search formatters should be verified before refactoring.
+- **Search imports are gated** — Search/embeddings is an optional extra. `render_search` must not pull in embeddings at import time.
 
 ## Version
 
-This is a 0.6.0 release. Scope: extension point system, formatter infrastructure, output unification, universal Fidelity controls.
+This is a 0.6.0 release. Scope: extension point system, one unified formatter system for all output (detail, list, search), universal Fidelity controls.
