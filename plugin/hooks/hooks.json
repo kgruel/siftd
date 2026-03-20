@@ -1,5 +1,5 @@
 {
-  "description": "Nudges agents toward the siftd skill for conversation research",
+  "description": "Session lifecycle, research guidance, and auto-ingest for siftd",
   "hooks": {
     "SessionStart": [
       {
@@ -7,6 +7,17 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/stop.sh",
+            "timeout": 10
           }
         ]
       }

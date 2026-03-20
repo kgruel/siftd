@@ -63,13 +63,14 @@ Commands run siftd directly and show output without agent interpretation. Use th
 
 ### Hooks
 
-Three hooks support the research workflow:
+Four hooks support the research workflow:
 
 | Hook | Trigger | Behavior |
 |------|---------|----------|
-| `SessionStart` | Session start/resume | Reminds agent that siftd is available |
-| `UserPromptSubmit` | User mentions "siftd" | Suggests loading the skill |
-| `PostToolUse` | Agent runs `siftd` in Bash | Suggests refinements based on the command run |
+| `SessionStart` | Session start/resume/compact | Registers session for live tagging; reminds agent on compact/resume |
+| `Stop` | Session exit | Runs `siftd ingest -a claude_code` to apply pending tags |
+| `UserPromptSubmit` | User mentions "siftd" or past sessions | Suggests loading the skill (high-precision patterns only) |
+| `PostToolUse` | Agent runs `siftd` in Bash | Contextual tips, once per subcommand per session |
 
 ## Structure
 
@@ -81,6 +82,7 @@ plugin/
 │   └── hooks.json        # Hook definitions
 ├── scripts/
 │   ├── session-start.sh  # Register session + remind on compact/resume
+│   ├── stop.sh           # Auto-ingest on session exit (applies pending tags)
 │   ├── skill-reminder.sh # Detect research intent in user prompts
 │   └── post-siftd.sh     # Contextual tips after siftd commands
 ├── commands/
