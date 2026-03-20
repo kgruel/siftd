@@ -63,8 +63,14 @@ class WhereBuilder:
 
     def model(self, value: str | None) -> None:
         if value:
-            self.require_join("m")
-            self.add("(m.raw_name LIKE ? OR m.name LIKE ?)", f"%{value}%", f"%{value}%")
+            self.add(
+                "EXISTS (SELECT 1 FROM responses r_m"
+                " JOIN models m ON m.id = r_m.model_id"
+                " WHERE r_m.conversation_id = c.id"
+                " AND (m.raw_name LIKE ? OR m.name LIKE ?))",
+                f"%{value}%",
+                f"%{value}%",
+            )
 
     def since(self, value: str | None) -> None:
         if value:
