@@ -526,7 +526,7 @@ def ingest_all(
     # Rebuild materialized stats table for fast list_conversations queries.
     from siftd.storage.conversation_stats import rebuild_conversation_stats
 
-    rebuild_conversation_stats(conn)
+    rebuild_conversation_stats(conn, commit=True)
 
     return stats
 

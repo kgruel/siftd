@@ -22,10 +22,11 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
 """
 
 
-def ensure_conversation_stats_table(conn: sqlite3.Connection) -> None:
+def ensure_conversation_stats_table(conn: sqlite3.Connection, *, commit: bool = False) -> None:
     """Create the conversation_stats table if it doesn't exist."""
     conn.execute(_CREATE_SQL)
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def has_conversation_stats_table(conn: sqlite3.Connection) -> bool:
@@ -37,7 +38,7 @@ def has_conversation_stats_table(conn: sqlite3.Connection) -> bool:
     return row[0] > 0
 
 
-def rebuild_conversation_stats(conn: sqlite3.Connection) -> int:
+def rebuild_conversation_stats(conn: sqlite3.Connection, *, commit: bool = False) -> int:
     """Rebuild the entire conversation_stats table from source tables.
 
     Returns the number of rows written.
@@ -93,5 +94,6 @@ def rebuild_conversation_stats(conn: sqlite3.Connection) -> int:
         FROM conversations c
     """)
     count = conn.execute(f"SELECT COUNT(*) FROM {_TABLE}").fetchone()[0]
-    conn.commit()
+    if commit:
+        conn.commit()
     return count
