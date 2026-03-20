@@ -645,7 +645,7 @@ examples:
 
 ```
 usage: siftd install [-h] [--dry-run] [--scope {user,project}]
-                     {embed,serve,skill,plugin}
+                     [{embed,serve,skill,plugin}]
 
 positional arguments:
   {embed,serve,skill,plugin}

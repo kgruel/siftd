@@ -388,6 +388,16 @@ def _install_plugin(args) -> int:
 
 def cmd_install(args) -> int:
     """Install optional dependencies or bundled components."""
+    if not args.extra:
+        print("Available components:\n")
+        print("  skill    /siftd skill only (lightweight, no hooks)")
+        print("  plugin   Full plugin: skill + hooks + commands")
+        print("  embed    Semantic search dependencies")
+        print("  serve    HTTP server dependencies")
+        print()
+        print("Usage: siftd install <component> [--scope user|project] [--dry-run]")
+        return 0
+
     if args.extra == "embed":
         return _install_embed(args)
     elif args.extra == "serve":
@@ -418,6 +428,8 @@ def build_install_parser(subparsers) -> None:
     )
     p_install.add_argument(
         "extra",
+        nargs="?",
+        default=None,
         choices=["embed", "serve", "skill", "plugin"],
         help="Component to install (skill: search workflow, plugin: skill + hooks + commands, embed: semantic search, serve: HTTP server)",
     )
