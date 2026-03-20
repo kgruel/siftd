@@ -4,8 +4,8 @@
 
 In progress. Branch: `feat/extension-points` (6 commits ahead of main at v0.5.2).
 
-Stages 1-6 complete (infrastructure, formatter stubs, narrative walker, fidelity unification, list views, tool summary unification).
-Next: Stage 7 (detail views through formatters), then Stage 8 (search unification).
+Stages 1-7 complete (infrastructure, formatter stubs, narrative walker, fidelity unification, list views, tool summary unification, detail views through formatters).
+Next: Stage 8 (search unification).
 
 ## Why this exists
 
@@ -205,13 +205,14 @@ This replaces the current six formatter classes (ChunkListFormatter, VerboseForm
 - Call sites normalize input: ToolCallSummary → tuple, peek (name, count) → (name, count, None), follow (name, count, hints) → (name, count, None)
 - Status shown only when non-None; error status gets error styling
 
-### Stage 7: Detail views through formatters [NEXT]
+### Stage 7: Detail views through formatters [DONE]
 
-- cli_query detail path dispatches through `select_format()` → `render_detail()` instead of calling `render_query_detail_block` directly
-- cli_peek detail path similarly routes through formatter
-- cli_export routes through formatter (markdown_fmt becomes load-bearing for export)
-- Dissolve `ExportOptions` → Fidelity + format selection
-- Dissolve `_options_to_fidelity` bridge
+- markdown_fmt.render_detail: real implementation with session header, turn loop, narrative walker
+- json_fmt.render_detail: returns dict (caller serializes), uses JsonEmitter for narrative
+- cli_query detail dispatches through `select_format()` → `render_detail()` — non-TTY gets markdown, TTY gets terminal
+- cli_export dispatches through `select_format()` per conversation, joins results
+- Dissolved: `ExportOptions`, `_options_to_fidelity`, `_render_narrative_md`, `_narrative_to_json`, `format_markdown`, `format_json`, `format_export` — all from api/export.py
+- cli_peek detail stays as-is (peek-specific metadata, different detail view)
 
 ### Stage 8: Search result unification
 

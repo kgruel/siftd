@@ -16,19 +16,55 @@ media_type = "application/json"
 brief_chars = 0  # JSON never truncates
 
 
-def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> str:
-    """Render conversation detail as JSON string.
+def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> dict:
+    """Render conversation detail as a dict.
 
-    This is a stub that will be replaced by the narrative walker (Stage 4).
-    Currently delegates to the caller via context for backward compat.
+    Returns a dict (not a JSON string) so callers can compose
+    (e.g. wrapping multiple conversations in an array for export).
+    Caller serializes with json.dumps().
 
     Context keys:
-        _render_fn: callable(turns, fidelity, **context) -> str
+        detail: conversation metadata object (ConversationDetail or ExportedConversation)
     """
-    render_fn = context.get("_render_fn")
-    if render_fn:
-        return render_fn(turns, fidelity, **context)
-    return "[]"
+    from siftd.output.narrative import JsonEmitter, walk_narrative
+
+    detail = context.get("detail")
+
+    turns_data = []
+    for turn in turns:
+        emitter = JsonEmitter()
+        narrative = getattr(turn, "narrative", [])
+        walk_narrative(narrative, emitter, fidelity=fidelity)
+
+        turns_data.append({
+            "timestamp": getattr(turn, "timestamp", None),
+            "prompt": getattr(turn, "prompt_text", None),
+            "narrative": emitter.blocks,
+            "tokens": {
+                "input": getattr(turn, "total_input_tokens", 0),
+                "output": getattr(turn, "total_output_tokens", 0),
+            },
+        })
+
+    conv_data: dict[str, Any] = {}
+    if detail:
+        total_tokens = getattr(detail, "total_tokens", None)
+        if total_tokens is None:
+            total_tokens = (
+                getattr(detail, "total_input_tokens", 0)
+                + getattr(detail, "total_output_tokens", 0)
+            )
+        conv_data = {
+            "id": getattr(detail, "id", None),
+            "workspace": getattr(detail, "workspace_path", None),
+            "model": getattr(detail, "model", None),
+            "started_at": getattr(detail, "started_at", None),
+            "tags": getattr(detail, "tags", []),
+            "total_tokens": total_tokens,
+        }
+
+    conv_data["turns"] = turns_data
+    return conv_data
 
 
 def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:

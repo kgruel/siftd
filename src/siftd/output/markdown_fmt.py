@@ -17,18 +17,74 @@ brief_chars = 300
 
 
 def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> str:
-    """Render conversation detail as markdown string.
-
-    This is a stub that will be replaced by the narrative walker (Stage 3).
-    Currently delegates to the caller via context for backward compat.
+    """Render conversation detail as GFM markdown.
 
     Context keys:
-        _render_fn: callable(turns, fidelity, **context) -> str
+        detail: conversation metadata object (ConversationDetail or ExportedConversation)
+        no_header: bool — omit session header (default: False)
     """
-    render_fn = context.get("_render_fn")
-    if render_fn:
-        return render_fn(turns, fidelity, **context)
-    return ""
+    from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
+    from siftd.output.narrative import MarkdownEmitter, walk_narrative
+
+    detail = context.get("detail")
+    no_header = context.get("no_header", False)
+
+    lines: list[str] = []
+
+    if detail and not no_header:
+        detail_id = getattr(detail, "id", "") or ""
+        lines.append(f"# Session {detail_id[:12]}")
+        meta_parts: list[str] = []
+        ws = fmt_workspace(getattr(detail, "workspace_path", None))
+        if ws:
+            meta_parts.append(ws)
+        ts = fmt_timestamp(getattr(detail, "started_at", None))
+        if ts:
+            meta_parts.append(ts)
+        model = fmt_model(getattr(detail, "model", None))
+        if model:
+            meta_parts.append(model)
+        total_tokens = getattr(detail, "total_tokens", None)
+        if total_tokens is None:
+            total_tokens = (
+                getattr(detail, "total_input_tokens", 0)
+                + getattr(detail, "total_output_tokens", 0)
+            )
+        if total_tokens:
+            meta_parts.append(fmt_tokens(total_tokens) + " tokens")
+        tags = getattr(detail, "tags", None)
+        if tags:
+            meta_parts.append("tags: " + ", ".join(tags))
+        if meta_parts:
+            lines.append(f"*{' · '.join(meta_parts)}*")
+        lines.append("")
+
+    for turn in turns:
+        ts = fmt_timestamp(getattr(turn, "timestamp", None), time_only=True)
+        ts_prefix = f"{ts} — " if ts else ""
+
+        prompt_text = getattr(turn, "prompt_text", None)
+        if prompt_text:
+            lines.append(f"### {ts_prefix}User")
+            lines.append("")
+            prompt = prompt_text.strip()
+            if fidelity.chars > 0 and len(prompt) > fidelity.chars:
+                prompt = prompt[:fidelity.chars] + "..."
+            lines.append(prompt)
+            lines.append("")
+
+        narrative = getattr(turn, "narrative", [])
+        if narrative:
+            lines.append(f"### {ts_prefix}Assistant")
+            lines.append("")
+            emitter = MarkdownEmitter()
+            walk_narrative(narrative, emitter, fidelity=fidelity)
+            lines.extend(emitter.lines)
+
+        lines.append("---")
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
 
 
 def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:

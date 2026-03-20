@@ -40,11 +40,7 @@ from siftd.api.doctor import (
 )
 from siftd.api.export import (
     ExportedConversation,
-    ExportOptions,
     export_conversations,
-    format_export,
-    format_json,
-    format_markdown,
 )
 from siftd.api.file_refs import (
     FileRef,
@@ -230,9 +226,5 @@ __all__ = [
     "search_tool_calls",
     # export
     "ExportedConversation",
-    "ExportOptions",
     "export_conversations",
-    "format_export",
-    "format_json",
-    "format_markdown",
 ]

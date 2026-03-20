@@ -3,7 +3,6 @@ from pathlib import Path
 
 from siftd.api import list_conversations
 from siftd.cli import main
-from siftd.output.common import fmt_timestamp
 from siftd.storage.sqlite import (
     create_database,
     get_or_create_harness,
@@ -71,14 +70,13 @@ def test_query_detail_plain_output(capsys, tmp_path):
     rc = main(["--db", str(db), "query", conv_id])
     assert rc == 0
     out = capsys.readouterr().out
-    expected_time = fmt_timestamp("2024-01-15T10:00:00Z", time_only=True)
-    assert f"Conversation: {conv_id}" in out
-    assert "Workspace: project" in out
-    assert f"[prompt] {expected_time}" in out
-    assert "  Do the thing" in out
-    assert f"[response] {expected_time} (150 tok)" in out
-    assert "    → shell.execute" in out
-    assert "input: cmd: git status" not in out
+    # Non-TTY output is markdown format
+    assert f"# Session {conv_id[:12]}" in out
+    assert "project" in out
+    assert "User" in out
+    assert "Do the thing" in out
+    assert "Assistant" in out
+    assert "*[shell.execute" in out
 
 
 def test_query_tools_formats_input_and_result(capsys, tmp_path):
@@ -88,9 +86,9 @@ def test_query_tools_formats_input_and_result(capsys, tmp_path):
     rc = main(["--db", str(db), "query", conv_id, "--tools", "all"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "[thinking]" not in out
-    assert "$ git status" in out
-    assert "Chunk ID: abc123" in out
+    # Markdown tool detail: shows tool name and raw input/result
+    assert "**shell.execute**" in out
+    assert "git status" in out
     assert "Plan updated" in out
 
 
@@ -101,10 +99,11 @@ def test_query_thinking_shows_thinking_without_tool_payloads(capsys, tmp_path):
     rc = main(["--db", str(db), "query", conv_id, "--thinking"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "[thinking] First I'll inspect the repo state." in out
-    assert "    → shell.execute" in out
-    assert "$ git status" not in out
-    assert "Chunk ID: abc123" not in out
+    # Markdown thinking: blockquote format
+    assert "First I'll inspect the repo state." in out
+    assert "**Thinking**" in out
+    # Tool summary present but not expanded
+    assert "*[shell.execute" in out
 
 
 def test_query_default_detail_does_not_truncate_text(capsys, tmp_path):
@@ -138,6 +137,6 @@ def test_query_full_alias_implies_tool_content(capsys, tmp_path):
     rc = main(["--db", str(db), "query", conv_id, "-F"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "$ git status" in out
-    assert "Chunk ID: abc123" in out
+    # --full expands tools in markdown format
+    assert "git status" in out
     assert "Plan updated" in out

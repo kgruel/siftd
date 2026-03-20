@@ -9,7 +9,6 @@ from pathlib import Path
 from siftd.cli_common import apply_config_defaults, fidelity_from_args, resolve_db
 from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, print_table
 from siftd.output.painted_bridge import print_block as print_painted_block
-from siftd.output.painted_bridge import render_query_detail_block
 from siftd.paths import queries_dir
 
 
@@ -187,13 +186,21 @@ def _query_detail(args) -> int:
     if exchanges_n is not None:
         show_turns = show_turns[-exchanges_n:] if exchanges_n < len(show_turns) else show_turns
 
-    block = render_query_detail_block(
-        detail,
-        turns=show_turns,
-        fidelity=fidelity,
-        tool_chars=tool_chars,
+    from siftd.output.format_registry import select_format
+
+    fmt = select_format(
+        json_mode=getattr(args, "json", False),
+        is_tty=sys.stdout.isatty(),
     )
-    print_painted_block(block)
+    result = fmt.render_detail(
+        show_turns, fidelity, detail=detail, tool_chars=tool_chars,
+    )
+    if isinstance(result, str):
+        print(result)
+    elif isinstance(result, dict):
+        print(json.dumps(result, indent=2))
+    else:
+        print_painted_block(result)
     return 0
 
 

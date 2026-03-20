@@ -888,18 +888,6 @@ A conversation prepared for export.
 | `tags` | `list[str]` |  |
 | `total_tokens` | `int` |  |
 
-### ExportOptions
-
-Options controlling export output.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `json_mode` | `bool` |  |
-| `include_thinking` | `bool` |  |
-| `include_tools` | `bool` |  |
-| `brief` | `bool` |  |
-| `no_header` | `bool` |  |
-
 ### Functions
 
 ### export_conversations
@@ -908,30 +896,6 @@ Export conversations matching the specified criteria.
 
 ```python
 def export_conversations(*, conversation_ids: list[str] | None = ..., last: int | None = ..., workspace: str | None = ..., tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib._local.Path | None = ..., include_thinking: bool = ..., include_tool_content: bool = ...) -> list[ExportedConversation]
-```
-
-### format_export
-
-Format conversations according to export options.
-
-```python
-def format_export(conversations: list[ExportedConversation], options: ExportOptions) -> str
-```
-
-### format_json
-
-Format conversations as structured JSON.
-
-```python
-def format_json(conversations: list[ExportedConversation], options: ExportOptions) -> str
-```
-
-### format_markdown
-
-Format conversations as markdown with full exchanges.
-
-```python
-def format_markdown(conversations: list[ExportedConversation], options: ExportOptions) -> str
 ```
 
 ## Other
