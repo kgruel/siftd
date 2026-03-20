@@ -4,8 +4,8 @@
 
 In progress. Branch: `feat/extension-points` (4 commits ahead of main at v0.5.2).
 
-Stages 1-4 complete (infrastructure, formatter stubs, narrative walker, fidelity unification).
-Next: Stage 5 (list views), Stage 6 (tool summary unification), then make formatters load-bearing.
+Stages 1-5 complete (infrastructure, formatter stubs, narrative walker, fidelity unification, list views).
+Next: Stage 6 (tool summary unification), then make formatters load-bearing for detail views.
 
 ## Why this exists
 
@@ -167,12 +167,16 @@ The peek list stays separate — SessionInfo is a genuinely different shape from
 - cli_query, cli_peek, cli_export all use shared construction
 - ExportOptions still exists as bridge (dissolves when formatters are load-bearing)
 
-### Stage 5: List views [NEXT]
+### Stage 5: List views [DONE]
 
-- Add `render_list` to each formatter
-- Refactor: `cli_query` list mode, `cli_tags` drill-down use formatter
-- Parameterize by context (header, palette)
-- Fidelity controls density
+- `render_list()` added to terminal_fmt, markdown_fmt, json_fmt
+- Fidelity depth controls column density: 0=brief (id/time/workspace), 1=default (adds model/turns/tokens/cost), 3=full (aligned table with tags)
+- `--brief` now sets depth=0 (was depth=1); safe since depth is only checked as >=3 elsewhere
+- `--verbose` in cli_query bumps depth to 3 (table output via formatter)
+- cli_query and cli_tags drill-down both dispatch to formatter via `select_format()`
+- Cost column unified: always shown at depth>=1 (tag drill-down previously omitted it)
+- `format_table()` added to common.py (string-returning); `print_table()` delegates to it
+- First case where formatters are load-bearing (for list rendering)
 
 ### Stage 6: Unify tool summary functions
 

@@ -29,3 +29,27 @@ def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> str:
     if render_fn:
         return render_fn(turns, fidelity, **context)
     return "[]"
+
+
+def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
+    """Render conversation list as JSON array.
+
+    Always includes all fields regardless of fidelity depth.
+    """
+    import json
+
+    out = [
+        {
+            "id": c.id,
+            "workspace": c.workspace_path,
+            "model": c.model,
+            "started_at": c.started_at,
+            "prompts": c.prompt_count,
+            "responses": c.response_count,
+            "tokens": c.total_tokens,
+            "cost": c.cost,
+            "tags": c.tags,
+        }
+        for c in summaries
+    ]
+    return json.dumps(out, indent=2)

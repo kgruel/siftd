@@ -6,8 +6,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from siftd.cli_common import apply_config_defaults, resolve_db
-from siftd.output import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace, print_table
+from siftd.cli_common import apply_config_defaults, fidelity_from_args, resolve_db
+from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, print_table
 from siftd.output.painted_bridge import print_block as print_painted_block
 from siftd.output.painted_bridge import render_query_detail_block
 from siftd.paths import queries_dir
@@ -343,54 +343,17 @@ def cmd_query(args) -> int:
                 )
         return 0
 
-    # JSON output
-    if args.json:
-        out = [
-            {
-                "id": c.id,
-                "workspace": c.workspace_path,
-                "model": c.model,
-                "started_at": c.started_at,
-                "prompts": c.prompt_count,
-                "responses": c.response_count,
-                "tokens": c.total_tokens,
-                "cost": c.cost,
-                "tags": c.tags,
-            }
-            for c in conversations
-        ]
-        print(json.dumps(out, indent=2))
-        return 0
+    # Render list via formatter
+    from siftd.output.format_registry import select_format
 
-    # Verbose mode: full table with all columns
+    fidelity = fidelity_from_args(args)
     if args.verbose:
-        columns = ["id", "workspace", "model", "started_at", "prompts", "responses", "tokens", "cost", "tags"]
-        str_rows = []
-        for c in conversations:
-            cid = c.id[:12] if c.id else ""
-            ws = fmt_workspace(c.workspace_path)
-            model = c.model or ""
-            started = fmt_timestamp(c.started_at)
-            prompts = str(c.prompt_count)
-            responses = str(c.response_count)
-            tokens = str(c.total_tokens)
-            cost = f"${c.cost:.4f}" if c.cost else "$0.0000"
-            tags = ", ".join(c.tags) if c.tags else ""
-            str_rows.append([cid, ws, model, started, prompts, responses, tokens, cost, tags])
+        fidelity = fidelity.with_depth(3)
 
-        print_table(columns, str_rows)
-        return 0
-
-    # Default: short mode — one dense line per conversation with truncated ID
-    for c in conversations:
-        cid = c.id[:12] if c.id else ""
-        ws = fmt_workspace(c.workspace_path)
-        model = fmt_model(c.model) if c.model else ""
-        started = fmt_timestamp(c.started_at)
-        tokens = fmt_tokens(c.total_tokens)
-        cost = f"${c.cost:.4f}" if c.cost else "$0.0000"
-        tag_str = f"  [{', '.join(c.tags)}]" if c.tags else ""
-        print(f"{cid}  {started}  {ws}  {model}  {c.prompt_count}p/{c.response_count}r  {tokens} tok  {cost}{tag_str}")
+    fmt = select_format(json_mode=args.json, is_tty=sys.stdout.isatty())
+    output = fmt.render_list(conversations, fidelity)
+    if output:
+        print(output)
 
     # Stats summary (shown after list when --stats flag is set)
     if args.stats:

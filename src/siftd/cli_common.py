@@ -68,7 +68,7 @@ def fidelity_from_args(args, *, default_chars: int = 0):  # -> painted.Fidelity
     if is_full:
         chars = 0
 
-    depth = 3 if is_full else 1
+    depth = 3 if is_full else (0 if getattr(args, "brief", False) else 1)
 
     return Fidelity(
         depth=depth,

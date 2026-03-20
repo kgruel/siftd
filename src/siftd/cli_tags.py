@@ -160,17 +160,18 @@ def _cmd_tag_list(args, db: Path) -> int:
             print(f"No conversations found for tag: {tag_name}")
             return 0
 
-        from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace
+        from siftd.cli_common import fidelity_from_args
+        from siftd.output.format_registry import select_format
 
         print(f"Conversations tagged '{tag_name}' (showing {len(conversations)}):")
-        for c in conversations:
-            cid = c.id[:12] if c.id else ""
-            ws = fmt_workspace(c.workspace_path)
-            model = c.model or ""
-            started = fmt_timestamp(c.started_at)
-            tokens = fmt_tokens(c.total_tokens)
-            tag_str = f"  [{', '.join(c.tags)}]" if c.tags else ""
-            print(f"{cid}  {started}  {ws}  {model}  {c.prompt_count}p/{c.response_count}r  {tokens} tok{tag_str}")
+        fidelity = fidelity_from_args(args)
+        fmt = select_format(
+            json_mode=getattr(args, "json", False),
+            is_tty=sys.stdout.isatty(),
+        )
+        output = fmt.render_list(conversations, fidelity)
+        if output:
+            print(output)
 
         if limit > 0 and len(conversations) >= limit:
             print(f"\nTip: show more with `siftd query -l {tag_name} -n 0`", file=sys.stderr)

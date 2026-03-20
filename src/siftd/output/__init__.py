@@ -6,6 +6,7 @@ from siftd.output.common import (
     fmt_timestamp,
     fmt_tokens,
     fmt_workspace,
+    format_table,
     print_indented,
     print_table,
     truncate_text,
@@ -60,5 +61,6 @@ __all__ = [
     "fmt_model",
     "truncate_text",
     "print_indented",
+    "format_table",
     "print_table",
 ]

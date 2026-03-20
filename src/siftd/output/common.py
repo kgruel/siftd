@@ -124,22 +124,31 @@ def fmt_model(model: str | None, *, strip_date: bool = True) -> str:
     return model
 
 
-def print_table(columns: list[str], rows: list[list[str]], *, sep: str = "  ") -> None:
-    """Print column-aligned table with header and separator line.
+def format_table(columns: list[str], rows: list[list[str]], *, sep: str = "  ") -> str:
+    """Format column-aligned table with header and separator line.
 
     Args:
         columns: Header labels.
         rows: List of string rows (each same length as columns).
         sep: Column separator (default: two spaces).
+
+    Returns:
+        Formatted table as a string.
     """
     widths = [len(c) for c in columns]
     for row in rows:
         for i, val in enumerate(row):
             widths[i] = max(widths[i], len(val))
-    print(sep.join(c.ljust(widths[i]) for i, c in enumerate(columns)))
-    print(sep.join("-" * w for w in widths))
+    lines = [sep.join(c.ljust(widths[i]) for i, c in enumerate(columns))]
+    lines.append(sep.join("-" * w for w in widths))
     for row in rows:
-        print(sep.join(val.ljust(widths[i]) for i, val in enumerate(row)))
+        lines.append(sep.join(val.ljust(widths[i]) for i, val in enumerate(row)))
+    return "\n".join(lines)
+
+
+def print_table(columns: list[str], rows: list[list[str]], *, sep: str = "  ") -> None:
+    """Print column-aligned table with header and separator line."""
+    print(format_table(columns, rows, sep=sep))
 
 
 def print_indented(text: str, indent: str = "  ") -> None:
