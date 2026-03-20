@@ -64,7 +64,9 @@ from siftd.api.receive import (
 from siftd.api.resources import (
     CopyError,
     copy_adapter,
+    copy_formatter,
     copy_query,
+    list_builtin_formatters,
     list_builtin_queries,
 )
 from siftd.api.slice import (
@@ -187,7 +189,9 @@ __all__ = [
     # resources
     "CopyError",
     "copy_adapter",
+    "copy_formatter",
     "copy_query",
+    "list_builtin_formatters",
     "list_builtin_queries",
     # search
     "SearchResult",

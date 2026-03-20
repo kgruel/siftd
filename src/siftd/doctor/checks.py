@@ -1088,9 +1088,9 @@ class ConfigValidCheck:
 
     def _validate_formatter(self, formatter_name: str) -> list[Finding]:
         """Validate that the formatter name is registered."""
-        from siftd.output.registry import get_registry
+        from siftd.output.format_registry import list_format_names
 
-        valid_names = get_registry().list_names()
+        valid_names = list_format_names()
         if formatter_name not in valid_names:
             return [
                 Finding(

@@ -106,8 +106,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         tier1: list — expanded results (thread mode)
         tier2: list — compact results (thread mode)
     """
-    from siftd.output.common import truncate_text
-    from siftd.output.formatters import format_refs_annotation
+    from siftd.output.common import format_refs_annotation, truncate_text
 
     query = context.get("query", "")
     mode = context.get("mode", "chunks")

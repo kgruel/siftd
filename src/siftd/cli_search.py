@@ -707,8 +707,8 @@ def cmd_search(args) -> int:
     import json as json_mod
 
     from siftd.cli_common import fidelity_from_args
+    from siftd.output.common import print_refs_content
     from siftd.output.format_registry import select_format
-    from siftd.output.formatters import print_refs_content
 
     fidelity = fidelity_from_args(args)
     try:

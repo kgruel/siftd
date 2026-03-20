@@ -1,4 +1,4 @@
-"""Tests for output formatters and registry."""
+"""Tests for output formatters and format registry."""
 
 import argparse
 import json
@@ -8,22 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from painted import Fidelity
 
-from siftd.output import (
-    ChunkListFormatter,
-    ContextFormatter,
-    ConversationFormatter,
-    FormatterContext,
-    FullExchangeFormatter,
-    JsonFormatter,
-    ThreadFormatter,
-    VerboseFormatter,
-    select_formatter,
-)
-from siftd.output.registry import (
-    FormatterRegistry,
-    _validate_formatter,
-    load_dropin_formatters,
-)
+from siftd.output.validation import validate_formatter
 
 
 @pytest.fixture
@@ -472,42 +457,6 @@ class TestMarkdownRenderSearch:
         assert "### More results" in output
 
 
-class TestSelectFormatter:
-    def test_default_is_chunk_list(self):
-        args = argparse.Namespace()
-        formatter = select_formatter(args)
-        assert isinstance(formatter, ChunkListFormatter)
-
-    def test_verbose_flag(self):
-        args = argparse.Namespace(verbose=True)
-        formatter = select_formatter(args)
-        assert isinstance(formatter, VerboseFormatter)
-
-    def test_json_flag(self):
-        args = argparse.Namespace(json=True)
-        formatter = select_formatter(args)
-        assert isinstance(formatter, JsonFormatter)
-
-    def test_json_flag_priority(self):
-        # --json should work even with --verbose
-        args = argparse.Namespace(json=True, verbose=True)
-        formatter = select_formatter(args)
-        assert isinstance(formatter, JsonFormatter)
-
-    def test_format_argument(self):
-        args = argparse.Namespace(format="json")
-        formatter = select_formatter(args)
-        assert isinstance(formatter, JsonFormatter)
-
-    def test_unknown_format_raises_error(self):
-        args = argparse.Namespace(format="nonexistent")
-        with pytest.raises(ValueError) as exc_info:
-            select_formatter(args)
-        assert "Unknown format 'nonexistent'" in str(exc_info.value)
-        assert "Available:" in str(exc_info.value)
-        assert "json" in str(exc_info.value)
-
-
 class TestSelectFormat:
     """Tests for the unified select_format system used by search."""
 
@@ -550,36 +499,10 @@ class TestSelectFormat:
             assert hasattr(fmt, "render_search"), f"{name} missing render_search"
 
 
-class TestFormatterRegistry:
-    def test_builtin_formatters_available(self):
-        registry = FormatterRegistry(dropin_path=Path("/nonexistent"))
-
-        names = registry.list_names()
-
-        assert "default" in names
-        assert "verbose" in names
-        assert "json" in names
-        assert "thread" in names
-        assert "conversations" in names
-
-    def test_get_builtin_formatter(self):
-        registry = FormatterRegistry(dropin_path=Path("/nonexistent"))
-
-        formatter = registry.get("json")
-
-        assert formatter is not None
-        assert isinstance(formatter, JsonFormatter)
-
-    def test_get_unknown_returns_none(self):
-        registry = FormatterRegistry(dropin_path=Path("/nonexistent"))
-
-        formatter = registry.get("nonexistent_formatter")
-
-        assert formatter is None
-
-
 class TestDropinFormatters:
     def test_load_valid_dropin(self, tmp_path):
+        from siftd.output.format_registry import load_all_formats
+
         # Create a valid drop-in formatter (new interface)
         formatter_code = '''
 FORMATTER_INTERFACE_VERSION = 1
@@ -591,12 +514,15 @@ def render_detail(turns, fidelity, **context):
 '''
         (tmp_path / "custom.py").write_text(formatter_code)
 
-        plugins = load_dropin_formatters(tmp_path)
+        plugins = load_all_formats(dropin_path=tmp_path)
 
-        assert len(plugins) == 1
-        assert plugins[0].name == "custom"
+        # Should include the 3 builtins + 1 dropin
+        names = [p.name for p in plugins]
+        assert "custom" in names
 
     def test_skip_invalid_dropin(self, tmp_path, capsys):
+        from siftd.output.format_registry import load_all_formats
+
         # Create an invalid drop-in (missing required attrs)
         formatter_code = '''
 def render_detail(turns, fidelity, **context):
@@ -604,21 +530,28 @@ def render_detail(turns, fidelity, **context):
 '''
         (tmp_path / "invalid.py").write_text(formatter_code)
 
-        plugins = load_dropin_formatters(tmp_path)
+        plugins = load_all_formats(dropin_path=tmp_path)
 
-        assert len(plugins) == 0
+        # Should only have the 3 builtins, not the invalid dropin
+        names = [p.name for p in plugins]
+        assert "invalid" not in names
         captured = capsys.readouterr()
         assert "missing" in captured.err
 
     def test_skip_underscore_files(self, tmp_path):
+        from siftd.output.format_registry import load_all_formats
+
         # Files starting with _ should be skipped
         (tmp_path / "_helper.py").write_text("name = 'helper'")
 
-        plugins = load_dropin_formatters(tmp_path)
+        plugins = load_all_formats(dropin_path=tmp_path)
 
-        assert len(plugins) == 0
+        names = [p.name for p in plugins]
+        assert "helper" not in names
 
     def test_dropin_overrides_builtin(self, tmp_path):
+        from siftd.output.format_registry import load_all_formats
+
         # Create a drop-in that overrides 'json' (new interface)
         formatter_code = '''
 FORMATTER_INTERFACE_VERSION = 1
@@ -627,22 +560,16 @@ media_type = "application/json"
 
 def render_detail(turns, fidelity, **context):
     return "overridden"
-
-def create_formatter():
-    """Legacy compat for search formatter registry."""
-    class OverrideFormatter:
-        def format(self, ctx):
-            print("Override!")
-    return OverrideFormatter()
 '''
         (tmp_path / "json_override.py").write_text(formatter_code)
 
-        registry = FormatterRegistry(dropin_path=tmp_path)
-        formatter = registry.get("json")
+        plugins = load_all_formats(dropin_path=tmp_path)
 
-        # Should get the drop-in, not the built-in
-        assert formatter is not None
-        assert type(formatter).__name__ == "OverrideFormatter"
+        # Find the json plugin
+        json_plugins = [p for p in plugins if p.name == "json"]
+        assert len(json_plugins) == 1
+        # Should be the dropin, not the builtin
+        assert json_plugins[0].origin != "builtin"
 
 
 class TestValidateFormatter:
@@ -653,14 +580,14 @@ class TestValidateFormatter:
         module.media_type = "text/plain"
         module.render_detail = lambda turns, fidelity, **ctx: ""
 
-        error = _validate_formatter(module, "test")
+        error = validate_formatter(module, "test")
 
         assert error is None
 
     def test_missing_name(self):
         module = MagicMock(spec=[])  # No attributes
 
-        error = _validate_formatter(module, "test")
+        error = validate_formatter(module, "test")
 
         assert error is not None
         assert "name" in error
@@ -672,7 +599,7 @@ class TestValidateFormatter:
         module.media_type = "text/plain"
         module.render_detail = lambda turns, fidelity, **ctx: ""
 
-        error = _validate_formatter(module, "test")
+        error = validate_formatter(module, "test")
 
         assert error is not None
         assert "str" in error and "int" in error  # type mismatch
@@ -684,7 +611,7 @@ class TestValidateFormatter:
         module.media_type = "text/plain"
         del module.render_detail  # Remove the callable
 
-        error = _validate_formatter(module, "test")
+        error = validate_formatter(module, "test")
 
         assert error is not None
         assert "render_detail" in error
@@ -696,7 +623,7 @@ class TestValidateFormatter:
         module.media_type = "text/plain"
         module.render_detail = lambda turns, fidelity, **ctx: ""
 
-        error = _validate_formatter(module, "test")
+        error = validate_formatter(module, "test")
 
         assert error is not None
         assert "incompatible" in error
@@ -770,32 +697,3 @@ class TestSearchHelpers:
             assert "_started_at" in r
             assert r["_workspace"] == "project"
             assert r["_started_at"] == "2024-01-15"
-
-
-class TestSelectFormatterExtended:
-    """Extended tests for formatter selection logic (old system, backward compat)."""
-
-    def test_thread_flag(self):
-        """--thread selects ThreadFormatter."""
-        args = argparse.Namespace(thread=True)
-        formatter = select_formatter(args)
-        assert isinstance(formatter, ThreadFormatter)
-
-    def test_conversations_flag(self):
-        """--conversations selects ConversationFormatter."""
-        args = argparse.Namespace(conversations=True)
-        formatter = select_formatter(args)
-        assert isinstance(formatter, ConversationFormatter)
-
-    def test_context_flag(self):
-        """--context N selects ContextFormatter."""
-        args = argparse.Namespace(context=2)
-        formatter = select_formatter(args)
-        assert isinstance(formatter, ContextFormatter)
-        assert formatter.n == 2
-
-    def test_full_flag(self):
-        """--full selects FullExchangeFormatter."""
-        args = argparse.Namespace(full=True)
-        formatter = select_formatter(args)
-        assert isinstance(formatter, FullExchangeFormatter)

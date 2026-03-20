@@ -512,6 +512,25 @@ def copy_adapter(name: str, *, dest_dir: pathlib._local.Path | None = ..., force
 
 - `CopyError`: If adapter not found, file exists (without force), or copy fails.
 
+### copy_formatter
+
+Copy a built-in formatter to the config directory for customization.
+
+```python
+def copy_formatter(name: str, *, dest_dir: pathlib._local.Path | None = ..., force: bool = ...) -> Path
+```
+
+**Parameters:**
+
+- `name`: Formatter name (e.g., "terminal", "markdown", "json").
+- `dest_dir`: Destination directory. Uses default formatters_dir if not specified.
+
+**Returns:** Path to the copied file.
+
+**Raises:**
+
+- `CopyError`: If formatter not found, file exists (without force), or copy fails.
+
 ### copy_query
 
 Copy a built-in query to the config directory for customization.
@@ -530,6 +549,14 @@ def copy_query(name: str, *, dest_dir: pathlib._local.Path | None = ..., force: 
 **Raises:**
 
 - `CopyError`: If query not found, file exists (without force), or copy fails.
+
+### list_builtin_formatters
+
+Return names of built-in formatters (for copy command).
+
+```python
+def list_builtin_formatters() -> list[str]
+```
 
 ### list_builtin_queries
 

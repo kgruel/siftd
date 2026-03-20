@@ -517,8 +517,10 @@ def cmd_copy(args) -> int:
     from siftd.api import (
         CopyError,
         copy_adapter,
+        copy_formatter,
         copy_query,
         list_builtin_adapters,
+        list_builtin_formatters,
         list_builtin_queries,
     )
 
@@ -602,9 +604,44 @@ def cmd_copy(args) -> int:
             print(f"Error: {e}")
             return 1
 
+    elif resource_type == "formatter":
+        if copy_all:
+            names = list_builtin_formatters()
+            if not names:
+                print("No built-in formatters available.")
+                return 1
+            copied = []
+            for n in names:
+                try:
+                    dest = copy_formatter(n, force=force)
+                    copied.append((n, dest))
+                except CopyError as e:
+                    print(f"Error copying {n}: {e}")
+            if copied:
+                print("Copied formatters:")
+                for n, dest in copied:
+                    print(f"  {n} → {dest}")
+            return 0
+
+        if not name:
+            print("Usage: siftd copy formatter <name> [--force]")
+            print("       siftd copy formatter --all [--force]")
+            print("\nAvailable formatters:")
+            for n in list_builtin_formatters():
+                print(f"  {n}")
+            return 1
+
+        try:
+            dest = copy_formatter(name, force=force)
+            print(f"Copied {name} → {dest}")
+            return 0
+        except CopyError as e:
+            print(f"Error: {e}")
+            return 1
+
     else:
         print(f"Unknown resource type: {resource_type}")
-        print("Supported: adapter, query")
+        print("Supported: adapter, query, formatter")
         return 1
 
 
@@ -869,9 +906,10 @@ def build_data_parser(subparsers) -> None:
         epilog="""examples:
   siftd copy adapter claude_code    # copy adapter to ~/.config/siftd/adapters/
   siftd copy adapter --all          # copy all built-in adapters
-  siftd copy query cost             # copy query to ~/.config/siftd/queries/""",
+  siftd copy query cost             # copy query to ~/.config/siftd/queries/
+  siftd copy formatter markdown     # copy formatter to ~/.config/siftd/formatters/""",
     )
-    p_copy.add_argument("resource_type", choices=["adapter", "query"], help="Resource type to copy")
+    p_copy.add_argument("resource_type", choices=["adapter", "query", "formatter"], help="Resource type to copy")
     p_copy.add_argument("name", nargs="?", help="Resource name")
     p_copy.add_argument("--all", action="store_true", help="Copy all resources of this type")
     p_copy.add_argument("--force", action="store_true", help="Overwrite existing files")
