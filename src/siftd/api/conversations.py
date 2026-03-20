@@ -256,16 +256,17 @@ def _list_conversations_impl(
     order = "ASC" if oldest_first else "DESC"
     limit_clause = f"LIMIT {limit}" if limit > 0 else ""
 
-    # Phase 1: Identify the target conversations quickly using only indexed columns.
-    # This avoids materializing the full response_attributes table.
+    # Phase 1: Identify the target conversations quickly.
+    # WhereBuilder tracks which JOINs its filters actually need, so we only
+    # join responses/models when a filter (e.g. --model) requires them.
+    phase1_joins = wb.joins_sql()
+    group_by = "GROUP BY c.id" if wb.needs_group_by else ""
     id_sql = f"""
         SELECT c.id
         FROM conversations c
-        LEFT JOIN workspaces w ON w.id = c.workspace_id
-        LEFT JOIN responses r ON r.conversation_id = c.id
-        LEFT JOIN models m ON m.id = r.model_id
+        {phase1_joins}
         {where}
-        GROUP BY c.id
+        {group_by}
         ORDER BY c.started_at {order}
         {limit_clause}
     """
