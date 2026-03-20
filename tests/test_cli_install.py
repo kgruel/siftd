@@ -1,15 +1,19 @@
-"""Tests for 'siftd install plugin' command."""
+"""Tests for 'siftd install plugin' and 'siftd install skill' commands."""
 
 import os
 import stat
 from argparse import Namespace
 from pathlib import Path
 
-from siftd.cli_install import _find_plugin_source, _install_plugin
+from siftd.cli_install import _find_plugin_source, _install_plugin, _install_skill
 
 
 def _make_args(dry_run=False, scope="user") -> Namespace:
     return Namespace(extra="plugin", dry_run=dry_run, scope=scope)
+
+
+def _make_skill_args(dry_run=False, scope="user") -> Namespace:
+    return Namespace(extra="skill", dry_run=dry_run, scope=scope)
 
 
 class TestPluginBundled:
@@ -143,3 +147,89 @@ class TestInstallPluginCLI:
 
         assert rc == 0
         assert (fake_home / ".claude" / "plugins" / "siftd" / ".claude-plugin" / "plugin.json").exists()
+
+
+class TestInstallSkill:
+    """Install skill-only (no hooks, no commands)."""
+
+    def test_copies_skill_to_user_scope(self, tmp_path, monkeypatch):
+        """Skill files are copied to ~/.claude/skills/siftd/."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = _install_skill(_make_skill_args())
+
+        assert rc == 0
+        target = fake_home / ".claude" / "skills" / "siftd"
+        assert target.is_dir()
+        assert (target / "SKILL.md").exists()
+        assert (target / "reference" / "search.md").exists()
+        assert (target / "reference" / "query.md").exists()
+        assert (target / "reference" / "tags.md").exists()
+
+    def test_no_hooks_or_commands(self, tmp_path, monkeypatch):
+        """Skill install does not include plugin artifacts."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        _install_skill(_make_skill_args())
+
+        target = fake_home / ".claude" / "skills" / "siftd"
+        assert not (target / "hooks").exists()
+        assert not (target / "scripts").exists()
+        assert not (target / "commands").exists()
+        assert not (target / ".claude-plugin").exists()
+
+    def test_copies_skill_to_project_scope(self, tmp_path, monkeypatch):
+        """--scope project installs to cwd/.claude/skills/siftd/."""
+        monkeypatch.chdir(tmp_path)
+
+        rc = _install_skill(_make_skill_args(scope="project"))
+
+        assert rc == 0
+        target = tmp_path / ".claude" / "skills" / "siftd"
+        assert (target / "SKILL.md").exists()
+
+    def test_dry_run_no_write(self, tmp_path, monkeypatch, capsys):
+        """--dry-run shows plan without writing."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = _install_skill(_make_skill_args(dry_run=True))
+
+        assert rc == 0
+        assert not (fake_home / ".claude" / "skills" / "siftd").exists()
+        captured = capsys.readouterr()
+        assert "Source:" in captured.out
+
+    def test_plugin_install_removes_standalone_skill(self, tmp_path, monkeypatch):
+        """Installing plugin removes standalone skill to avoid duplicates."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        # Install skill first
+        _install_skill(_make_skill_args())
+        skill_target = fake_home / ".claude" / "skills" / "siftd"
+        assert skill_target.exists()
+
+        # Install plugin — should clean up the standalone skill
+        _install_plugin(_make_args())
+        assert not skill_target.exists()
+        assert (fake_home / ".claude" / "plugins" / "siftd" / ".claude-plugin" / "plugin.json").exists()
+
+    def test_install_skill_via_main(self, tmp_path, monkeypatch):
+        """siftd install skill works end-to-end through CLI dispatch."""
+        from siftd.cli import main
+
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = main(["install", "skill"])
+
+        assert rc == 0
+        assert (fake_home / ".claude" / "skills" / "siftd" / "SKILL.md").exists()

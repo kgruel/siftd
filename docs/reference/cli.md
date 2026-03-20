@@ -645,25 +645,27 @@ examples:
 
 ```
 usage: siftd install [-h] [--dry-run] [--scope {user,project}]
-                     {embed,serve,plugin}
+                     {embed,serve,skill,plugin}
 
 positional arguments:
-  {embed,serve,plugin}  Component to install (embed: semantic search, serve:
-                        HTTP server, plugin: Claude Code plugin)
+  {embed,serve,skill,plugin}
+                        Component to install (skill: search workflow, plugin:
+                        skill + hooks + commands, embed: semantic search,
+                        serve: HTTP server)
 
 options:
   -h, --help            show this help message and exit
   --dry-run             Show what would be run without executing
   --scope {user,project}
-                        Plugin install scope: user (~/.claude/plugins/) or
-                        project (.claude/plugins/)
+                        Install scope: user (~/.claude/) or project (.claude/)
 
 examples:
+  siftd install skill             # install skill only (lightweight, no hooks)
+  siftd install plugin            # install full plugin (hooks + commands + skill)
+  siftd install plugin --scope project  # install for current project only
   siftd install embed             # install semantic search dependencies
   siftd install serve             # install HTTP server dependencies
   siftd install embed --dry-run   # show what would be installed
-  siftd install plugin            # install Claude Code plugin (user scope)
-  siftd install plugin --scope project  # install for current project only
 ```
 
 ## siftd peek

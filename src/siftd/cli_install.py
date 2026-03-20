@@ -279,8 +279,67 @@ def _find_plugin_source() -> Path | None:
     return None
 
 
+def _install_skill(args) -> int:
+    """Install the /siftd skill (no hooks, no commands).
+
+    Provides the decision tree and reference docs.
+    Lightweight alternative to the full plugin for users who just
+    want the search workflow without hooks on every prompt/tool use.
+    """
+    source_path = _find_plugin_source()
+    if source_path is None:
+        print("Error: Bundled plugin files not found in this installation.", file=sys.stderr)
+        return 1
+
+    skill_source = source_path / "skills" / "siftd"
+    if not skill_source.is_dir():
+        print("Error: Skill directory not found in bundled plugin.", file=sys.stderr)
+        return 1
+
+    scope = getattr(args, "scope", "user")
+    if scope == "project":
+        target = Path.cwd() / ".claude" / "skills" / "siftd"
+    else:
+        target = Path.home() / ".claude" / "skills" / "siftd"
+
+    if args.dry_run:
+        print(f"Source: {skill_source}")
+        print(f"Target: {target}")
+        print(f"Scope:  {scope}")
+        return 0
+
+    if target.is_symlink():
+        target.unlink()
+    elif target.exists():
+        shutil.rmtree(target)
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(skill_source, target)
+
+    # Verify
+    if not (target / "SKILL.md").exists():
+        print("Warning: Skill copied but SKILL.md not found.", file=sys.stderr)
+        return 1
+
+    # Check if plugin is also installed and warn about overlap
+    plugin_user = Path.home() / ".claude" / "plugins" / "siftd"
+    plugin_project = Path.cwd() / ".claude" / "plugins" / "siftd"
+    if plugin_user.exists() or plugin_project.exists():
+        print("Note: the plugin is also installed and already includes this skill.", file=sys.stderr)
+        print("You may want to remove one to avoid duplicate /siftd skill entries.", file=sys.stderr)
+
+    print(f"Installed skill to {target}")
+    print(f"Scope: {scope}")
+    print()
+    print("Available as: /siftd")
+    print()
+    print("For hooks (live tagging, auto-ingest, contextual tips):")
+    print("  siftd install plugin")
+    return 0
+
+
 def _install_plugin(args) -> int:
-    """Install the bundled Claude Code plugin."""
+    """Install the bundled Claude Code plugin (hooks + commands + skill)."""
     source_path = _find_plugin_source()
     if source_path is None:
         print("Error: Bundled plugin files not found in this installation.", file=sys.stderr)
@@ -314,6 +373,14 @@ def _install_plugin(args) -> int:
         print("Warning: Plugin copied but plugin.json not found at expected location.", file=sys.stderr)
         return 1
 
+    # Check if standalone skill is also installed and clean it up
+    skill_user = Path.home() / ".claude" / "skills" / "siftd"
+    skill_project = Path.cwd() / ".claude" / "skills" / "siftd"
+    for stale_skill in (skill_user, skill_project):
+        if stale_skill.exists() and not stale_skill.is_symlink():
+            shutil.rmtree(stale_skill)
+            print(f"Removed standalone skill at {stale_skill} (plugin includes it)")
+
     print(f"Installed plugin to {target}")
     print(f"Scope: {scope}")
     return 0
@@ -325,6 +392,8 @@ def cmd_install(args) -> int:
         return _install_embed(args)
     elif args.extra == "serve":
         return _install_serve(args)
+    elif args.extra == "skill":
+        return _install_skill(args)
     elif args.extra == "plugin":
         return _install_plugin(args)
 
@@ -340,16 +409,17 @@ def build_install_parser(subparsers) -> None:
         help="Install optional dependencies or bundled components",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
+  siftd install skill             # install skill only (lightweight, no hooks)
+  siftd install plugin            # install full plugin (hooks + commands + skill)
+  siftd install plugin --scope project  # install for current project only
   siftd install embed             # install semantic search dependencies
   siftd install serve             # install HTTP server dependencies
-  siftd install embed --dry-run   # show what would be installed
-  siftd install plugin            # install Claude Code plugin (user scope)
-  siftd install plugin --scope project  # install for current project only""",
+  siftd install embed --dry-run   # show what would be installed""",
     )
     p_install.add_argument(
         "extra",
-        choices=["embed", "serve", "plugin"],
-        help="Component to install (embed: semantic search, serve: HTTP server, plugin: Claude Code plugin)",
+        choices=["embed", "serve", "skill", "plugin"],
+        help="Component to install (skill: search workflow, plugin: skill + hooks + commands, embed: semantic search, serve: HTTP server)",
     )
     p_install.add_argument(
         "--dry-run",
@@ -360,6 +430,6 @@ def build_install_parser(subparsers) -> None:
         "--scope",
         choices=["user", "project"],
         default="user",
-        help="Plugin install scope: user (~/.claude/plugins/) or project (.claude/plugins/)",
+        help="Install scope: user (~/.claude/) or project (.claude/)",
     )
     p_install.set_defaults(func=cmd_install)
