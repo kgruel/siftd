@@ -98,21 +98,23 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[copy]
   '''
-  usage: siftd copy [-h] [--all] [--force] {adapter,query} [name]
+  usage: siftd copy [-h] [--all] [--force] {adapter,query,formatter} [name]
   
   positional arguments:
-    {adapter,query}  Resource type to copy
-    name             Resource name
+    {adapter,query,formatter}
+                          Resource type to copy
+    name                  Resource name
   
   options:
-    -h, --help       show this help message and exit
-    --all            Copy all resources of this type
-    --force          Overwrite existing files
+    -h, --help            show this help message and exit
+    --all                 Copy all resources of this type
+    --force               Overwrite existing files
   
   examples:
     siftd copy adapter claude_code    # copy adapter to ~/.config/siftd/adapters/
     siftd copy adapter --all          # copy all built-in adapters
     siftd copy query cost             # copy query to ~/.config/siftd/queries/
+    siftd copy formatter markdown     # copy formatter to ~/.config/siftd/formatters/
   
   '''
 # ---

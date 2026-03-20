@@ -1,16 +1,14 @@
-"""Tests for the export API and CLI."""
+"""Tests for the export API and formatter-driven rendering."""
 
 import json
 
 import pytest
 
+from painted import Fidelity
+
 from siftd.api import (
     ExportedConversation,
-    ExportOptions,
     export_conversations,
-    format_export,
-    format_json,
-    format_markdown,
     list_conversations,
 )
 from siftd.api.conversations import NarrativeBlock, ToolCallDetail, Turn
@@ -55,6 +53,10 @@ def _make_conv(turns=None, **kwargs):
     )
     defaults.update(kwargs)
     return ExportedConversation(**defaults)
+
+
+def _default_fidelity():
+    return Fidelity(depth=1, visible=frozenset({"text"}))
 
 
 class TestExportConversations:
@@ -105,11 +107,12 @@ class TestExportConversations:
             export_conversations(last=1, db_path=tmp_path / "nonexistent.db")
 
 
-class TestFormatMarkdown:
+class TestMarkdownRenderDetail:
     def test_default_includes_both_sides(self):
+        from siftd.output.markdown_fmt import render_detail
+
         conv = _make_conv()
-        options = ExportOptions()
-        output = format_markdown([conv], options)
+        output = render_detail(conv.turns, _default_fidelity(), detail=conv)
 
         assert "### " in output
         assert "User" in output
@@ -118,9 +121,10 @@ class TestFormatMarkdown:
         assert "Test response" in output
 
     def test_session_header(self):
+        from siftd.output.markdown_fmt import render_detail
+
         conv = _make_conv()
-        options = ExportOptions()
-        output = format_markdown([conv], options)
+        output = render_detail(conv.turns, _default_fidelity(), detail=conv)
 
         assert "# Session test1234" in output
         assert "project" in output
@@ -128,41 +132,48 @@ class TestFormatMarkdown:
         assert "150 tokens" in output
 
     def test_no_header(self):
+        from siftd.output.markdown_fmt import render_detail
+
         conv = _make_conv()
-        options = ExportOptions(no_header=True)
-        output = format_markdown([conv], options)
+        output = render_detail(conv.turns, _default_fidelity(), detail=conv, no_header=True)
 
         assert "# Session" not in output
         assert "User" in output
 
     def test_thinking_placeholder_by_default(self):
+        from siftd.output.markdown_fmt import render_detail
+
         conv = _make_conv(turns=[_make_turn(thinking="Deep analysis...")])
-        options = ExportOptions()
-        output = format_markdown([conv], options)
+        output = render_detail(conv.turns, _default_fidelity(), detail=conv)
 
         assert "*[thinking]*" in output
         assert "Deep analysis" not in output
 
     def test_thinking_expanded(self):
+        from siftd.output.markdown_fmt import render_detail
+
         conv = _make_conv(turns=[_make_turn(thinking="Deep analysis here")])
-        options = ExportOptions(include_thinking=True)
-        output = format_markdown([conv], options)
+        fidelity = Fidelity(depth=1, visible=frozenset({"text", "thinking"}))
+        output = render_detail(conv.turns, fidelity, detail=conv)
 
         assert "Deep analysis here" in output
         assert "*[thinking]*" not in output
 
     def test_tool_summary_by_default(self):
+        from siftd.output.markdown_fmt import render_detail
+
         tools = [
             ToolCallDetail(tool_name="file.read", status="success", count=3),
             ToolCallDetail(tool_name="shell.execute", status="success", count=1),
         ]
         conv = _make_conv(turns=[_make_turn(tool_calls=tools)])
-        options = ExportOptions()
-        output = format_markdown([conv], options)
+        output = render_detail(conv.turns, _default_fidelity(), detail=conv)
 
-        assert "*[file.read ×3, shell.execute]*" in output
+        assert "*[file.read \u00d73, shell.execute]*" in output
 
     def test_tool_detail_expanded(self):
+        from siftd.output.markdown_fmt import render_detail
+
         tools = [
             ToolCallDetail(
                 tool_name="file.read", status="success", count=1,
@@ -170,72 +181,78 @@ class TestFormatMarkdown:
             ),
         ]
         conv = _make_conv(turns=[_make_turn(tool_calls=tools)])
-        options = ExportOptions(include_tools=True)
-        output = format_markdown([conv], options)
+        fidelity = Fidelity(depth=1, visible=frozenset({"text", "tools"}))
+        output = render_detail(conv.turns, fidelity, detail=conv)
 
         assert "**file.read**" in output
         assert "`src/auth.py`" in output
 
     def test_brief_truncates(self):
+        from siftd.output.markdown_fmt import render_detail
+
         long_text = "x" * 500
         conv = _make_conv(turns=[_make_turn(text=long_text)])
-        options = ExportOptions(brief=True)
-        output = format_markdown([conv], options)
+        fidelity = Fidelity(depth=0, visible=frozenset({"text"}), chars=300)
+        output = render_detail(conv.turns, fidelity, detail=conv)
 
         assert "..." in output
         assert len(output) < 500
 
     def test_timestamps_in_headings(self):
-        conv = _make_conv(turns=[_make_turn(timestamp="2024-01-15T10:30:00Z")])
-        options = ExportOptions()
-        output = format_markdown([conv], options)
-
-        # Timestamp is converted to local time; just verify some HH:MM appears
-        assert "— User" in output
-        # The heading should contain a time like "HH:MM — User"
         import re
-        assert re.search(r"\d{2}:\d{2} — User", output)
+
+        from siftd.output.markdown_fmt import render_detail
+
+        conv = _make_conv(turns=[_make_turn(timestamp="2024-01-15T10:30:00Z")])
+        output = render_detail(conv.turns, _default_fidelity(), detail=conv)
+
+        assert "\u2014 User" in output
+        assert re.search(r"\d{2}:\d{2} \u2014 User", output)
 
     def test_tags_in_header(self):
+        from siftd.output.markdown_fmt import render_detail
+
         conv = _make_conv(tags=["review", "important"])
-        options = ExportOptions()
-        output = format_markdown([conv], options)
+        output = render_detail(conv.turns, _default_fidelity(), detail=conv)
 
         assert "tags: review, important" in output
 
     def test_multiple_sessions(self):
+        from siftd.output.markdown_fmt import render_detail
+
         convs = [_make_conv(id="aaa111222333"), _make_conv(id="bbb444555666")]
-        options = ExportOptions()
-        output = format_markdown(convs, options)
+        sections = [render_detail(c.turns, _default_fidelity(), detail=c) for c in convs]
+        output = "\n".join(sections)
 
         assert output.count("# Session") == 2
 
     def test_from_db(self, test_db):
+        from siftd.output.markdown_fmt import render_detail
+
         conversations = export_conversations(last=1, db_path=test_db)
-        options = ExportOptions()
-        output = format_markdown(conversations, options)
+        output = render_detail(
+            conversations[0].turns, _default_fidelity(), detail=conversations[0],
+        )
 
         assert "# Session" in output
         assert "User" in output
 
 
-class TestFormatJson:
-    def test_valid_json(self):
-        conv = _make_conv()
-        options = ExportOptions(json_mode=True)
-        output = format_json([conv], options)
+class TestJsonRenderDetail:
+    def test_returns_dict(self):
+        from siftd.output.json_fmt import render_detail
 
-        data = json.loads(output)
-        assert isinstance(data, list)
-        assert len(data) == 1
+        conv = _make_conv()
+        result = render_detail(conv.turns, _default_fidelity(), detail=conv)
+
+        assert isinstance(result, dict)
 
     def test_structure(self):
-        conv = _make_conv()
-        options = ExportOptions(json_mode=True)
-        output = format_json([conv], options)
+        from siftd.output.json_fmt import render_detail
 
-        data = json.loads(output)
-        c = data[0]
+        conv = _make_conv()
+        c = render_detail(conv.turns, _default_fidelity(), detail=conv)
+
         assert "id" in c
         assert "workspace" in c
         assert "model" in c
@@ -243,42 +260,45 @@ class TestFormatJson:
         assert "tags" in c
 
     def test_turns_have_narrative(self):
-        conv = _make_conv()
-        options = ExportOptions(json_mode=True)
-        output = format_json([conv], options)
+        from siftd.output.json_fmt import render_detail
 
-        data = json.loads(output)
-        turn = data[0]["turns"][0]
+        conv = _make_conv()
+        c = render_detail(conv.turns, _default_fidelity(), detail=conv)
+
+        turn = c["turns"][0]
         assert "prompt" in turn
         assert "narrative" in turn
         assert "tokens" in turn
 
     def test_thinking_excluded_by_default(self):
-        conv = _make_conv(turns=[_make_turn(thinking="Secret thoughts")])
-        options = ExportOptions(json_mode=True)
-        output = format_json([conv], options)
+        from siftd.output.json_fmt import render_detail
 
-        data = json.loads(output)
+        conv = _make_conv(turns=[_make_turn(thinking="Secret thoughts")])
+        c = render_detail(conv.turns, _default_fidelity(), detail=conv)
+
         thinking_blocks = [
-            b for b in data[0]["turns"][0]["narrative"]
+            b for b in c["turns"][0]["narrative"]
             if b["type"] == "thinking"
         ]
         assert len(thinking_blocks) == 1
-        assert "content" not in thinking_blocks[0]  # block present, content omitted
+        assert "content" not in thinking_blocks[0]
 
     def test_thinking_included(self):
-        conv = _make_conv(turns=[_make_turn(thinking="Secret thoughts")])
-        options = ExportOptions(json_mode=True, include_thinking=True)
-        output = format_json([conv], options)
+        from siftd.output.json_fmt import render_detail
 
-        data = json.loads(output)
+        conv = _make_conv(turns=[_make_turn(thinking="Secret thoughts")])
+        fidelity = Fidelity(depth=1, visible=frozenset({"text", "thinking"}))
+        c = render_detail(conv.turns, fidelity, detail=conv)
+
         thinking_blocks = [
-            b for b in data[0]["turns"][0]["narrative"]
+            b for b in c["turns"][0]["narrative"]
             if b["type"] == "thinking"
         ]
         assert thinking_blocks[0]["content"] == "Secret thoughts"
 
     def test_tool_detail_included(self):
+        from siftd.output.json_fmt import render_detail
+
         tools = [
             ToolCallDetail(
                 tool_name="file.read", status="success",
@@ -286,41 +306,31 @@ class TestFormatJson:
             ),
         ]
         conv = _make_conv(turns=[_make_turn(tool_calls=tools)])
-        options = ExportOptions(json_mode=True, include_tools=True)
-        output = format_json([conv], options)
+        fidelity = Fidelity(depth=1, visible=frozenset({"text", "tools"}))
+        c = render_detail(conv.turns, fidelity, detail=conv)
 
-        data = json.loads(output)
         tool_block = next(
-            b for b in data[0]["turns"][0]["narrative"]
-            if b["type"] == "tool_calls"
+            b for b in c["turns"][0]["narrative"]
+            if b["type"] == "tool_call"
         )
-        assert tool_block["tools"][0]["input"] == "foo.py"
+        assert tool_block["input"] == "foo.py"
+
+    def test_serializable_as_json(self):
+        from siftd.output.json_fmt import render_detail
+
+        conv = _make_conv()
+        c = render_detail(conv.turns, _default_fidelity(), detail=conv)
+        output = json.dumps(c, indent=2)
+        assert json.loads(output)["id"] == "test123456789"
 
     def test_from_db(self, test_db):
+        from siftd.output.json_fmt import render_detail
+
         conversations = export_conversations(last=1, db_path=test_db)
-        options = ExportOptions(json_mode=True)
-        output = format_json(conversations, options)
-
-        data = json.loads(output)
-        assert len(data) == 1
-        assert "turns" in data[0]
-
-
-class TestFormatExport:
-    def test_default_is_markdown(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
-        options = ExportOptions()
-        output = format_export(conversations, options)
-
-        assert "# Session" in output
-
-    def test_json_mode(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
-        options = ExportOptions(json_mode=True)
-        output = format_export(conversations, options)
-
-        data = json.loads(output)
-        assert isinstance(data, list)
+        c = render_detail(
+            conversations[0].turns, _default_fidelity(), detail=conversations[0],
+        )
+        assert "turns" in c
 
 
 class TestExportCLI:

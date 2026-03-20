@@ -28,16 +28,18 @@ def _has_explicit_formatter(args) -> bool:
 
 def _print_empty_json_results(args, query: str, db: Path) -> None:
     """Emit empty JSON results for --json output modes."""
-    from siftd.api import open_database
-    from siftd.output import FormatterContext
-    from siftd.output.formatters import JsonFormatter
+    import json
 
-    conn = open_database(db, read_only=True)
-    try:
-        ctx = FormatterContext(query=query, results=[], conn=conn, args=args)
-        JsonFormatter().format(ctx)
-    finally:
-        conn.close()
+    from painted import Fidelity
+
+    from siftd.output.format_registry import select_format
+
+    fmt = select_format(json_mode=True, is_tty=False)
+    result = fmt.render_search([], Fidelity(), query=query, mode="chunks")
+    if isinstance(result, dict):
+        print(json.dumps(result, indent=2))
+    else:
+        print(result)
 
 
 def _parse_bool_like(value: str | None) -> bool | None:
@@ -248,6 +250,127 @@ def _delegate_search_via_serve(
         )
 
     return results
+
+
+def _fetch_search_metadata(conn, results):
+    """Fetch conversation metadata and enrich results in-place."""
+    from siftd.output.common import fmt_workspace
+
+    conv_ids = list({r["conversation_id"] for r in results})
+    if not conv_ids:
+        return
+    placeholders = ",".join("?" * len(conv_ids))
+    rows = conn.execute(
+        f"""
+        SELECT c.id, c.started_at, w.path AS workspace
+        FROM conversations c
+        LEFT JOIN workspaces w ON w.id = c.workspace_id
+        WHERE c.id IN ({placeholders})
+    """,
+        conv_ids,
+    ).fetchall()
+    meta = {row["id"]: dict(row) for row in rows}
+    for r in results:
+        m = meta.get(r["conversation_id"], {})
+        r["_workspace"] = fmt_workspace(m.get("workspace"))
+        r["_started_at"] = (m.get("started_at") or "")[:10]
+
+
+def _aggregate_conversations(results, *, limit=10):
+    """Aggregate search results by conversation. Returns conversation-level summaries."""
+    from statistics import mean as _mean
+
+    by_conv: dict[str, list[dict]] = {}
+    for r in results:
+        by_conv.setdefault(r["conversation_id"], []).append(r)
+
+    conv_scores = []
+    for conv_id, chunks in by_conv.items():
+        max_score = max(c["score"] for c in chunks)
+        mean_score = _mean(c["score"] for c in chunks)
+        best_chunk = max(chunks, key=lambda c: c["score"])
+        conv_scores.append(
+            {
+                "conversation_id": conv_id,
+                "max_score": max_score,
+                "mean_score": mean_score,
+                "chunk_count": len(chunks),
+                "best_excerpt": best_chunk["text"],
+                "_workspace": best_chunk.get("_workspace", ""),
+                "_started_at": best_chunk.get("_started_at", ""),
+                "file_refs": best_chunk.get("file_refs", []),
+            }
+        )
+    conv_scores.sort(key=lambda x: x["max_score"], reverse=True)
+    return conv_scores[:limit]
+
+
+def _compute_thread_tiers(results):
+    """Split results into tier1 (expanded) and tier2 (compact) for thread mode."""
+    conv_scores: dict[str, float] = {}
+    conv_best: dict[str, dict] = {}
+    for r in results:
+        cid = r["conversation_id"]
+        if cid not in conv_scores or r["score"] > conv_scores[cid]:
+            conv_scores[cid] = r["score"]
+            conv_best[cid] = r
+
+    scores = list(conv_scores.values())
+    mean_score = sum(scores) / len(scores) if scores else 0.0
+
+    tier1_ids = [cid for cid, s in conv_scores.items() if s > mean_score]
+    tier2_ids = [cid for cid in conv_scores if cid not in set(tier1_ids)]
+
+    # Sort tier1 chronologically, tier2 by score desc
+    tier1_ids.sort(key=lambda cid: conv_best[cid].get("_started_at", ""))
+    tier2_ids.sort(key=lambda cid: conv_scores[cid], reverse=True)
+
+    tier1 = [conv_best[cid] for cid in tier1_ids]
+    tier2 = [conv_best[cid] for cid in tier2_ids]
+    return tier1, tier2
+
+
+def _enrich_exchanges(conn, results):
+    """Fetch full prompt+response texts for each result's source_ids."""
+    from siftd.api.search import fetch_prompt_response_texts
+
+    for r in results:
+        source_ids = r.get("source_ids") or []
+        if source_ids:
+            r["_exchanges"] = fetch_prompt_response_texts(conn, source_ids)
+
+
+def _enrich_context(conn, results, n):
+    """Fetch +/-N surrounding exchanges for each result."""
+    from siftd.api.search import fetch_prompt_response_texts
+
+    for r in results:
+        source_ids = r.get("source_ids") or []
+        conv_id = r["conversation_id"]
+        if not source_ids:
+            continue
+
+        all_prompts = conn.execute(
+            """
+            SELECT p.id FROM prompts p
+            WHERE p.conversation_id = ?
+            ORDER BY p.timestamp
+        """,
+            (conv_id,),
+        ).fetchall()
+
+        prompt_order = [row[0] for row in all_prompts]
+        source_set = set(source_ids)
+        source_indices = [i for i, pid in enumerate(prompt_order) if pid in source_set]
+        if not source_indices:
+            continue
+
+        start = max(0, min(source_indices) - n)
+        end = min(len(prompt_order), max(source_indices) + n + 1)
+        context_ids = prompt_order[start:end]
+
+        exchanges = fetch_prompt_response_texts(conn, context_ids)
+        r["_context"] = [(pid, pt, rt, pid in source_set) for pid, pt, rt in exchanges]
 
 
 def cmd_search(args) -> int:
@@ -580,30 +703,71 @@ def cmd_search(args) -> int:
     if args.full or args.refs:
         print("Note: Showing full content which may contain sensitive information.", file=sys.stderr)
 
-    # Select and run formatter
-    from siftd.output import FormatterContext, print_refs_content, select_formatter
+    # Select output format and determine mode
+    import json as json_mod
+
+    from siftd.cli_common import fidelity_from_args
+    from siftd.output.common import print_refs_content
+    from siftd.output.format_registry import select_format
+
+    fidelity = fidelity_from_args(args)
     try:
-        formatter = select_formatter(args)
+        fmt = select_format(
+            name=getattr(args, "format", None),
+            json_mode=args.json,
+            is_tty=sys.stdout.isatty(),
+        )
     except ValueError as e:
         main_conn.close()
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    try:
-        # Warn if --by-time is used with a mode that ignores it
-        if args.by_time:
-            from siftd.output.formatters import (
-                ConversationFormatter,
-                JsonFormatter,
-                ThreadFormatter,
-            )
-            if isinstance(formatter, (ConversationFormatter, ThreadFormatter, JsonFormatter)):
-                mode = "conversation" if isinstance(formatter, ConversationFormatter) else \
-                       "thread" if isinstance(formatter, ThreadFormatter) else "json"
-                print(f"Note: --by-time has no effect in {mode} mode", file=sys.stderr)
+    mode = "chunks"
+    if args.conversations:
+        mode = "conversations"
+    elif args.thread:
+        mode = "thread"
 
-        ctx = FormatterContext(query=query, results=results, conn=main_conn, args=args)
-        formatter.format(ctx)
+    try:
+        # Metadata enrichment (moved from formatter classes)
+        _fetch_search_metadata(main_conn, results)
+
+        # Warn if --by-time is used with a mode that ignores it
+        if args.by_time and mode in ("conversations", "thread"):
+            print(f"Note: --by-time has no effect in {mode} mode", file=sys.stderr)
+
+        # Sort by time if requested
+        if args.by_time and mode == "chunks":
+            results.sort(
+                key=lambda r: (r.get("_started_at", ""), r.get("chunk_id", ""))
+            )
+
+        # Mode-specific data processing
+        ctx_kwargs: dict = {"query": query, "mode": mode}
+
+        if mode == "conversations":
+            results = _aggregate_conversations(results, limit=getattr(args, "limit", 10))
+        elif mode == "thread":
+            # Enrich tier1 exchanges for thread display
+            _enrich_exchanges(main_conn, results)
+            tier1, tier2 = _compute_thread_tiers(results)
+            ctx_kwargs["tier1"] = tier1
+            ctx_kwargs["tier2"] = tier2
+
+        # Exchange enrichment for --full
+        if args.full and mode == "chunks":
+            _enrich_exchanges(main_conn, results)
+
+        # Context enrichment for --context N
+        context_n = getattr(args, "context", None)
+        if context_n is not None and mode == "chunks":
+            _enrich_context(main_conn, results, context_n)
+
+        output = fmt.render_search(results, fidelity, **ctx_kwargs)
+        if isinstance(output, str):
+            print(output)
+        elif isinstance(output, dict):
+            print(json_mod.dumps(output, indent=2, default=str))
 
         # --refs content dump (post-processor, not part of formatter)
         if args.refs and not args.conversations:
@@ -731,51 +895,50 @@ def _search_fts_only(args, db: Path, query: str) -> int:
             print(f"No results for: {query}")
             return 0
 
-        # Transform to common result format for formatters
+        # Transform to common result format — normalize side → chunk_type
         results = []
         for r in raw_results:
             results.append({
                 "conversation_id": r["conversation_id"],
                 "score": abs(r["rank"]),  # FTS5 rank is negative (lower = better)
                 "text": r["snippet"],
-                "side": r["side"],
+                "chunk_type": r["side"],  # Normalized from FTS5 "side" field
                 # Minimal fields needed for display
                 "source_ids": [],
                 "file_refs": [],
             })
 
-        # JSON output
-        if args.json:
-            import json
-            out = {
-                "query": query,
-                "mode": "fts5",
-                "results": [
-                    {
-                        "conversation_id": r["conversation_id"],
-                        "score": r["score"],
-                        "snippet": r["text"],
-                        "side": r["side"],
-                    }
-                    for r in results
-                ],
-            }
+        # Enrich with metadata and render via unified formatter system
+        import json as json_mod
+
+        from painted import Fidelity
+
+        from siftd.output.format_registry import select_format
+
+        _fetch_search_metadata(conn, results)
+
+        fidelity = Fidelity()
+        fmt = select_format(
+            name=getattr(args, "format", None),
+            json_mode=args.json,
+            is_tty=sys.stdout.isatty(),
+        )
+
+        output = fmt.render_search(results, fidelity, query=query, mode="chunks")
+        if isinstance(output, str):
+            print(output)
+        elif isinstance(output, dict):
+            # Preserve FTS5-specific fields for JSON
             if unsupported_flags:
-                out["warnings"] = [
+                output["warnings"] = [
                     f"{flag} ignored in FTS5 mode (requires embeddings)"
                     for flag in unsupported_flags
                 ]
-            print(json.dumps(out, indent=2))
-            return 0
+            output["mode"] = "fts5"
+            print(json_mod.dumps(output, indent=2, default=str))
 
-        # Default text output — one result per line with snippet
-        for r in results:
-            cid = r["conversation_id"][:12]
-            snippet = r["text"].replace("\n", " ")[:80]
-            print(f"{cid}  {snippet}")
-
-        # Tagging hint
-        if results:
+        # Tagging hint (skip for JSON output)
+        if not args.json and results:
             first_id = results[0]["conversation_id"][:12]
             print(f"Tip: Tag useful results: siftd tag {first_id} research:<topic>", file=sys.stderr)
 

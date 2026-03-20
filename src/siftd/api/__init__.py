@@ -40,11 +40,7 @@ from siftd.api.doctor import (
 )
 from siftd.api.export import (
     ExportedConversation,
-    ExportOptions,
     export_conversations,
-    format_export,
-    format_json,
-    format_markdown,
 )
 from siftd.api.file_refs import (
     FileRef,
@@ -68,7 +64,9 @@ from siftd.api.receive import (
 from siftd.api.resources import (
     CopyError,
     copy_adapter,
+    copy_formatter,
     copy_query,
+    list_builtin_formatters,
     list_builtin_queries,
 )
 from siftd.api.slice import (
@@ -191,7 +189,9 @@ __all__ = [
     # resources
     "CopyError",
     "copy_adapter",
+    "copy_formatter",
     "copy_query",
+    "list_builtin_formatters",
     "list_builtin_queries",
     # search
     "SearchResult",
@@ -230,9 +230,5 @@ __all__ = [
     "search_tool_calls",
     # export
     "ExportedConversation",
-    "ExportOptions",
     "export_conversations",
-    "format_export",
-    "format_json",
-    "format_markdown",
 ]

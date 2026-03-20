@@ -875,7 +875,7 @@ class TestConfigValidCheck:
     def test_valid_config(self, check_context, monkeypatch, tmp_path):
         """Returns no findings for valid config file."""
         config_path = tmp_path / "config.toml"
-        config_path.write_text('[search]\nformatter = "default"\n')
+        config_path.write_text('[search]\nformatter = "terminal"\n')
 
         monkeypatch.setattr(
             "siftd.paths.config_file",

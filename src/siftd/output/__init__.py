@@ -1,4 +1,4 @@
-"""Output formatters for search results."""
+"""Output formatting: common utilities and format registry."""
 
 from siftd.output.common import (
     fmt_ago,
@@ -6,53 +6,15 @@ from siftd.output.common import (
     fmt_timestamp,
     fmt_tokens,
     fmt_workspace,
+    format_refs_annotation,
+    format_table,
     print_indented,
+    print_refs_content,
     print_table,
     truncate_text,
 )
-from siftd.output.formatters import (
-    ChunkListFormatter,
-    ContextFormatter,
-    ConversationFormatter,
-    FormatterContext,
-    FullExchangeFormatter,
-    JsonFormatter,
-    OutputFormatter,
-    ThreadFormatter,
-    VerboseFormatter,
-    format_refs_annotation,
-    print_refs_content,
-    select_formatter,
-)
-from siftd.output.registry import (
-    FormatterRegistry,
-    get_formatter,
-    get_registry,
-)
 
 __all__ = [
-    # Protocol
-    "OutputFormatter",
-    # Context
-    "FormatterContext",
-    # Built-in formatters
-    "ChunkListFormatter",
-    "VerboseFormatter",
-    "FullExchangeFormatter",
-    "ContextFormatter",
-    "ThreadFormatter",
-    "ConversationFormatter",
-    "JsonFormatter",
-    # Selection
-    "select_formatter",
-    # Registry
-    "FormatterRegistry",
-    "get_formatter",
-    "get_registry",
-    # Utilities (search-specific)
-    "format_refs_annotation",
-    "print_refs_content",
-    # Utilities (common formatting)
     "fmt_tokens",
     "fmt_workspace",
     "fmt_ago",
@@ -60,5 +22,8 @@ __all__ = [
     "fmt_model",
     "truncate_text",
     "print_indented",
+    "format_table",
     "print_table",
+    "format_refs_annotation",
+    "print_refs_content",
 ]

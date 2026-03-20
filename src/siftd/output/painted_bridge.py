@@ -591,45 +591,22 @@ def render_narrative_lines(
     return lines
 
 
-def _tool_summary_lines(tool_summaries: list) -> list[Line]:
+def _tool_summary_lines(
+    tools: list[tuple[str, int, str | None]],
+) -> list[Line]:
+    """Render tool summary lines from (name, count, status) tuples."""
     styles = _styles()
     lines: list[Line] = []
-    for tc in tool_summaries:
+    for name, count, status in tools:
         parts: list[tuple[str, Style]] = [
             ("    → ", styles.meta),
-            (tc.tool_name, styles.tool),
-        ]
-        if tc.count > 1:
-            parts.append((f" ×{tc.count}", styles.meta))
-        parts.append((f" ({tc.status})", styles.tool_error if tc.status == "error" else styles.meta))
-        lines.append(_line(*parts))
-    return lines
-
-
-def _peek_tool_summary_lines(tool_summaries: list[tuple[str, int]]) -> list[Line]:
-    styles = _styles()
-    lines: list[Line] = []
-    for tool_name, count in tool_summaries:
-        parts: list[tuple[str, Style]] = [
-            ("    → ", styles.meta),
-            (tool_name, styles.tool),
+            (name, styles.tool),
         ]
         if count > 1:
             parts.append((f" ×{count}", styles.meta))
-        lines.append(_line(*parts))
-    return lines
-
-
-def _follow_tool_summary_lines(tool_summaries: list[tuple[str, int, list[str]]]) -> list[Line]:
-    styles = _styles()
-    lines: list[Line] = []
-    for tool_name, count, _hints in tool_summaries:
-        parts: list[tuple[str, Style]] = [
-            ("    → ", styles.meta),
-            (tool_name, styles.tool),
-        ]
-        if count > 1:
-            parts.append((f" ×{count}", styles.meta))
+        if status:
+            status_style = styles.tool_error if status == "error" else styles.meta
+            parts.append((f" ({status})", status_style))
         lines.append(_line(*parts))
     return lines
 
@@ -712,7 +689,9 @@ def render_query_detail_block(
             )
         )
         if not turn.narrative and tool_summaries:
-            lines.extend(_tool_summary_lines(tool_summaries))
+            lines.extend(_tool_summary_lines(
+                [(tc.tool_name, tc.count, tc.status) for tc in tool_summaries]
+            ))
         lines.append(_line())
 
     return _lines_to_block(lines)
@@ -792,7 +771,9 @@ def render_peek_detail_block(
             _append_multiline(lines, "  ", styles.assistant, exchange.response_text, styles.assistant, fidelity.chars)
 
         if not exchange.narrative and exchange.tool_calls:
-            lines.extend(_peek_tool_summary_lines(exchange.tool_calls))
+            lines.extend(_tool_summary_lines(
+                [(name, count, None) for name, count in exchange.tool_calls]
+            ))
         lines.append(_line())
 
     return _lines_to_block(lines)
@@ -840,6 +821,8 @@ def render_follow_event_block(
             _append_multiline(lines, "  ", styles.assistant, text, styles.assistant, fidelity.chars)
         tool_calls = getattr(event, "tool_calls", [])
         if tool_calls:
-            lines.extend(_follow_tool_summary_lines(tool_calls))
+            lines.extend(_tool_summary_lines(
+                [(name, count, None) for name, count, *_ in tool_calls]
+            ))
 
     return _lines_to_block(lines)

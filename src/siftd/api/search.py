@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from siftd.storage.queries import (
     fetch_all_conversation_ids,
     fetch_conversation_timestamps,
+    fetch_prompt_response_texts,
     fetch_prompt_timestamps,
 )
 
@@ -62,6 +63,8 @@ __all__ = [
     # FTS5
     "fts5_recall_conversations",
     "rebuild_fts_index",
+    # Exchange data
+    "fetch_prompt_response_texts",
 ]
 
 

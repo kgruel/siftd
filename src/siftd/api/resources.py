@@ -1,10 +1,10 @@
-"""Resource copy API for adapters and queries."""
+"""Resource copy API for adapters, queries, and formatters."""
 
 import importlib.resources
 import shutil
 from pathlib import Path
 
-from siftd.paths import adapters_dir, queries_dir
+from siftd.paths import adapters_dir, formatters_dir, queries_dir
 
 
 class CopyError(Exception):
@@ -130,3 +130,50 @@ def list_builtin_queries() -> list[str]:
         )
     except (ModuleNotFoundError, TypeError):
         return []
+
+
+def copy_formatter(
+    name: str,
+    *,
+    dest_dir: Path | None = None,
+    force: bool = False,
+) -> Path:
+    """Copy a built-in formatter to the config directory for customization.
+
+    Args:
+        name: Formatter name (e.g., "terminal", "markdown", "json").
+        dest_dir: Destination directory. Uses default formatters_dir if not specified.
+        force: Overwrite existing file if True.
+
+    Returns:
+        Path to the copied file.
+
+    Raises:
+        CopyError: If formatter not found, file exists (without force), or copy fails.
+    """
+    if dest_dir is None:
+        dest_dir = formatters_dir()
+
+    filename = f"{name}_fmt.py" if not name.endswith("_fmt") else f"{name}.py"
+    try:
+        source_ref = importlib.resources.files("siftd.output").joinpath(filename)
+    except (ModuleNotFoundError, TypeError) as e:
+        raise CopyError(f"Cannot locate formatter package: {e}") from e
+
+    if not source_ref.is_file():
+        available = ", ".join(list_builtin_formatters())
+        raise CopyError(f"Built-in formatter not found: {name}. Available: {available}")
+
+    dest_path = dest_dir / filename
+    if dest_path.exists() and not force:
+        raise CopyError(f"File exists: {dest_path}. Use --force to overwrite.")
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    with importlib.resources.as_file(source_ref) as source_path:
+        shutil.copy2(source_path, dest_path)
+    return dest_path
+
+
+def list_builtin_formatters() -> list[str]:
+    """Return names of built-in formatters (for copy command)."""
+    return ["terminal", "markdown", "json"]

@@ -124,22 +124,31 @@ def fmt_model(model: str | None, *, strip_date: bool = True) -> str:
     return model
 
 
-def print_table(columns: list[str], rows: list[list[str]], *, sep: str = "  ") -> None:
-    """Print column-aligned table with header and separator line.
+def format_table(columns: list[str], rows: list[list[str]], *, sep: str = "  ") -> str:
+    """Format column-aligned table with header and separator line.
 
     Args:
         columns: Header labels.
         rows: List of string rows (each same length as columns).
         sep: Column separator (default: two spaces).
+
+    Returns:
+        Formatted table as a string.
     """
     widths = [len(c) for c in columns]
     for row in rows:
         for i, val in enumerate(row):
             widths[i] = max(widths[i], len(val))
-    print(sep.join(c.ljust(widths[i]) for i, c in enumerate(columns)))
-    print(sep.join("-" * w for w in widths))
+    lines = [sep.join(c.ljust(widths[i]) for i, c in enumerate(columns))]
+    lines.append(sep.join("-" * w for w in widths))
     for row in rows:
-        print(sep.join(val.ljust(widths[i]) for i, val in enumerate(row)))
+        lines.append(sep.join(val.ljust(widths[i]) for i, val in enumerate(row)))
+    return "\n".join(lines)
+
+
+def print_table(columns: list[str], rows: list[list[str]], *, sep: str = "  ") -> None:
+    """Print column-aligned table with header and separator line."""
+    print(format_table(columns, rows, sep=sep))
 
 
 def print_indented(text: str, indent: str = "  ") -> None:
@@ -151,3 +160,69 @@ def print_indented(text: str, indent: str = "  ") -> None:
     """
     for line in text.splitlines():
         print(f"{indent}{line}")
+
+
+def format_refs_annotation(refs: list, *, max_shown: int = 5) -> str:
+    """Compact one-liner: 'refs: file(r) file(w) +N more'."""
+    if not refs:
+        return ""
+
+    # Deduplicate: same basename+op shown once
+    seen = set()
+    unique = []
+    for ref in refs:
+        key = (ref.basename, ref.op)
+        if key not in seen:
+            seen.add(key)
+            unique.append(ref)
+
+    shown = unique[:max_shown]
+    parts = [f"{r.basename}({r.op})" for r in shown]
+    overflow = len(unique) - max_shown
+    if overflow > 0:
+        parts.append(f"+{overflow} more")
+
+    return "refs: " + " ".join(parts)
+
+
+def print_refs_content(
+    all_refs: list, filter_basenames: list[str] | None = None
+) -> None:
+    """Print file reference content dump section."""
+    if not all_refs:
+        return
+
+    # Deduplicate by path+op (keep first occurrence for point-in-time snapshot)
+    seen = set()
+    unique = []
+    for ref in all_refs:
+        key = (ref.path, ref.op)
+        if key not in seen:
+            seen.add(key)
+            unique.append(ref)
+
+    # Apply basename filter if provided
+    if filter_basenames:
+        filter_set = {b.lower() for b in filter_basenames}
+        unique = [r for r in unique if r.basename.lower() in filter_set]
+        if not unique:
+            names = ", ".join(filter_basenames)
+            print(f"No file references matching: {names}")
+            return
+
+    op_labels = {"r": "read", "w": "write", "e": "edit"}
+
+    print(f"\n{'─── File References ─' * 1}{'─' * 30}")
+    print()
+
+    for i, ref in enumerate(unique, 1):
+        op_label = op_labels.get(ref.op, ref.op)
+        print(f"[{i}] {ref.basename} ({op_label})")
+        print(f"    {ref.path}")
+        print("────")
+        if ref.content:
+            print(ref.content)
+        else:
+            print("(no content available)")
+        print("────")
+        print()

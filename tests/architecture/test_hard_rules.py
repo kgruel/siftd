@@ -194,33 +194,23 @@ class TestFormatterRegistry:
     """
 
     def test_all_formatters_exist(self):
-        """Every format name maps to a callable formatter."""
-        from siftd.output.registry import load_builtin_factories
+        """Every output format module has the required interface."""
+        from siftd.output.format_registry import load_all_formats
 
-        factories = load_builtin_factories()
+        formats = load_all_formats()
         violations = []
-
-        for name, factory in factories.items():
-            if not callable(factory):
-                violations.append(f"'{name}' is not callable")
-                continue
-            try:
-                instance = factory()
-                if not hasattr(instance, "format") or not callable(instance.format):
-                    violations.append(f"'{name}' formatter missing format() method")
-            except Exception as e:
-                violations.append(f"'{name}' factory raised: {e}")
-
+        for plugin in formats:
+            m = plugin.module
+            if not hasattr(m, "render_detail") or not callable(m.render_detail):
+                violations.append(f"'{plugin.name}' formatter missing render_detail()")
         if violations:
-            pytest.fail("Formatter registration violations:\n" + "\n".join(violations))
+            pytest.fail("Formatter violations:\n" + "\n".join(violations))
 
     def test_unknown_format_errors_cleanly(self):
-        """--format unknown gives helpful error (returns None)."""
-        from siftd.output.registry import get_formatter
+        """Unknown format name returns None from get_format."""
+        from siftd.output.format_registry import get_format
 
-        result = get_formatter("nonexistent_format_xyz")
-        # Registry returns None for unknown formats, which select_formatter
-        # handles by falling through to built-in selection
+        result = get_format("nonexistent_format_xyz")
         assert result is None
 
 
