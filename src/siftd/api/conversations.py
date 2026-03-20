@@ -256,20 +256,39 @@ def _list_conversations_impl(
     order = "ASC" if oldest_first else "DESC"
     limit_clause = f"LIMIT {limit}" if limit > 0 else ""
 
-    cache_join = (
-        "LEFT JOIN ("
-        "SELECT response_id, MAX(CAST(value AS INTEGER)) AS cache_read "
-        "FROM response_attributes "
-        "WHERE key = 'cache_read_input_tokens' "
-        "GROUP BY response_id"
-        ") ra_cache_read "
-        "ON ra_cache_read.response_id = r.id"
-    )
+    # Phase 1: Identify the target conversations quickly using only indexed columns.
+    # This avoids materializing the full response_attributes table.
+    id_sql = f"""
+        SELECT c.id
+        FROM conversations c
+        LEFT JOIN workspaces w ON w.id = c.workspace_id
+        LEFT JOIN responses r ON r.conversation_id = c.id
+        LEFT JOIN models m ON m.id = r.model_id
+        {where}
+        GROUP BY c.id
+        ORDER BY c.started_at {order}
+        {limit_clause}
+    """
+    id_rows = conn.execute(id_sql, params).fetchall()
+    conv_ids = [row["id"] for row in id_rows]
+
+    if not conv_ids:
+        return []
+
+    # Phase 2: Compute full stats only for the selected conversations.
+    placeholders = ",".join("?" * len(conv_ids))
+
     billable_input_expr = (
         "CASE "
-        "WHEN COALESCE(r.input_tokens, 0) - COALESCE(ra_cache_read.cache_read, 0) < 0 "
+        "WHEN COALESCE(r.input_tokens, 0) - COALESCE("
+        "(SELECT MAX(CAST(ra.value AS INTEGER)) "
+        "FROM response_attributes ra "
+        "WHERE ra.response_id = r.id AND ra.key = 'cache_read_input_tokens'), 0) < 0 "
         "THEN 0 "
-        "ELSE COALESCE(r.input_tokens, 0) - COALESCE(ra_cache_read.cache_read, 0) "
+        "ELSE COALESCE(r.input_tokens, 0) - COALESCE("
+        "(SELECT MAX(CAST(ra.value AS INTEGER)) "
+        "FROM response_attributes ra "
+        "WHERE ra.response_id = r.id AND ra.key = 'cache_read_input_tokens'), 0) "
         "END"
     )
     cost_expr = (
@@ -286,7 +305,7 @@ def _list_conversations_impl(
         else ""
     )
 
-    sql = f"""
+    detail_sql = f"""
         SELECT
             c.id AS conversation_id,
             w.path AS workspace,
@@ -307,17 +326,14 @@ def _list_conversations_impl(
         LEFT JOIN models m ON m.id = r.model_id
         LEFT JOIN providers pv ON pv.id = r.provider_id
         {pricing_join}
-        {cache_join}
-        {where}
+        WHERE c.id IN ({placeholders})
         GROUP BY c.id
         ORDER BY c.started_at {order}
-        {limit_clause}
     """
 
-    rows = conn.execute(sql, params).fetchall()
+    rows = conn.execute(detail_sql, conv_ids).fetchall()
 
     # Bulk-fetch tags for returned conversations (single query, no N+1)
-    conv_ids = [row["conversation_id"] for row in rows]
     tags_by_conv = fetch_tags_for_conversations(conn, conv_ids)
 
     return [
