@@ -4,8 +4,8 @@
 
 In progress. Branch: `feat/extension-points` (6 commits ahead of main at v0.5.2).
 
-Stages 1-7 complete (infrastructure, formatter stubs, narrative walker, fidelity unification, list views, tool summary unification, detail views through formatters).
-Next: Stage 8 (search unification).
+Stages 1-8 complete (infrastructure, formatter stubs, narrative walker, fidelity unification, list views, tool summary unification, detail views through formatters, search unification).
+Next: Stage 9 (cleanup and copy command).
 
 ## Why this exists
 
@@ -214,17 +214,22 @@ This replaces the current six formatter classes (ChunkListFormatter, VerboseForm
 - Dissolved: `ExportOptions`, `_options_to_fidelity`, `_render_narrative_md`, `_narrative_to_json`, `format_markdown`, `format_json`, `format_export` — all from api/export.py
 - cli_peek detail stays as-is (peek-specific metadata, different detail view)
 
-### Stage 8: Search result unification
+### Stage 8: Search result unification [DONE]
 
-- Extract data processing from search formatter classes into standalone view processors
-  - `prepare_chunk_view()`, `prepare_conversation_view()`, `prepare_thread_view()`, `prepare_context_view()`
-  - Each returns a structured `SearchResults` dataclass
-- Add `render_search(results, fidelity, **context)` to each output format
-  - Terminal: current visual output (painted or plain text)
-  - Markdown: table or structured markdown
-  - JSON: structured JSON (current JsonFormatter logic)
-- Wire cli_search: view processor → formatter.render_search()
-- Dissolve `formatters.py` classes, `registry.py`, `FormatterContext`, `select_formatter()`
+- Data processing extracted from search formatter classes into cli_search helpers:
+  - `_fetch_search_metadata()` — enriches results with `_workspace`, `_started_at`
+  - `_aggregate_conversations()` — groups by conversation, computes max/mean/chunk_count
+  - `_compute_thread_tiers()` — splits into tier1 (above mean) and tier2
+  - `_enrich_exchanges()` — fetches full prompt+response for --full mode
+  - `_enrich_context()` — fetches +/-N surrounding exchanges for --context N
+- `render_search(results, fidelity, **context)` added to terminal_fmt, markdown_fmt, json_fmt
+  - All three handle chunks, conversations, and thread modes
+  - Terminal: text output with score/metadata headers, truncation controlled by fidelity
+  - Markdown: headers + sections for chunks, tables for conversations, sections for thread
+  - JSON: returns dict (caller serializes), includes breakdown/file_refs
+- cli_search dispatch refactored: fidelity_from_args + select_format → render_search
+- FTS5-only path also unified: normalizes `side` → `chunk_type`, uses render_search
+- Old formatter classes (`formatters.py`) and `registry.py` retained for backward compat
 - `format_refs_annotation` and `print_refs_content` stay (post-processing, not formatter concern)
 
 ### Stage 9: Cleanup and copy command

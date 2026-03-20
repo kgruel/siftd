@@ -131,3 +131,126 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     for row in rows:
         lines.append("| " + " | ".join(row) + " |")
     return "\n".join(lines)
+
+
+def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
+    """Render search results as GFM markdown.
+
+    Context keys:
+        query: str — the search query
+        mode: str — "chunks", "conversations", or "thread"
+        tier1: list — expanded results (thread mode)
+        tier2: list — compact results (thread mode)
+    """
+    from siftd.output.common import truncate_text
+
+    query = context.get("query", "")
+    mode = context.get("mode", "chunks")
+
+    lines: list[str] = []
+
+    if mode == "conversations":
+        lines.append(f"## Conversations for: {query}")
+        lines.append("")
+        headers = ["ID", "Max Score", "Mean Score", "Chunks", "Started", "Workspace"]
+        lines.append("| " + " | ".join(headers) + " |")
+        lines.append("| " + " | ".join("---" for _ in headers) + " |")
+        for r in results:
+            conv_id = r.get("conversation_id", "")
+            row = [
+                conv_id[:12],
+                f"{r.get('max_score', 0.0):.3f}",
+                f"{r.get('mean_score', 0.0):.3f}",
+                str(r.get("chunk_count", 0)),
+                r.get("_started_at", ""),
+                r.get("_workspace", ""),
+            ]
+            lines.append("| " + " | ".join(row) + " |")
+        return "\n".join(lines)
+
+    if mode == "thread":
+        tier1 = context.get("tier1", [])
+        tier2 = context.get("tier2", [])
+        lines.append(f"## Results for: {query}")
+        lines.append("")
+
+        for r in tier1:
+            ws = r.get("_workspace", "")
+            started = r.get("_started_at", "")
+            lines.append(f"### {ws} — {started}")
+            lines.append("")
+            exchanges = r.get("_exchanges")
+            if exchanges:
+                for _pid, prompt_text, response_text in exchanges:
+                    if prompt_text:
+                        lines.append(f"> {prompt_text.strip()}")
+                        lines.append("")
+                    if response_text:
+                        lines.append(response_text.strip())
+                        lines.append("")
+            else:
+                text = r.get("text", "").strip()
+                if text:
+                    lines.append(text)
+                    lines.append("")
+            lines.append("---")
+            lines.append("")
+
+        if tier2:
+            lines.append("### More results")
+            lines.append("")
+            for r in tier2:
+                conv_id = r.get("conversation_id", "")
+                ws = r.get("_workspace", "")
+                started = r.get("_started_at", "")
+                score = r.get("score", 0.0)
+                snippet = truncate_text(
+                    r.get("text", ""), 120
+                ).replace("\n", " ")
+                lines.append(f"- **{conv_id[:12]}** {score:.3f} — {ws} {started} — {snippet}")
+            lines.append("")
+        return "\n".join(lines)
+
+    # Chunks mode
+    lines.append(f"## Results for: {query}")
+    lines.append("")
+    for r in results:
+        conv_id = r.get("conversation_id", "")
+        chunk_type = r.get("chunk_type", "").upper()[:8]
+        score = r.get("score", 0.0)
+        ws = r.get("_workspace", "")
+        started = r.get("_started_at", "")
+
+        lines.append(f"#### {conv_id[:12]} — {score:.3f} [{chunk_type}] {started} {ws}")
+        lines.append("")
+
+        exchanges = r.get("_exchanges")
+        context_data = r.get("_context")
+        if exchanges:
+            for _pid, prompt_text, response_text in exchanges:
+                if prompt_text:
+                    lines.append(f"> {prompt_text.strip()}")
+                    lines.append("")
+                if response_text:
+                    lines.append(response_text.strip())
+                    lines.append("")
+        elif context_data:
+            for pid, prompt_text, response_text, is_match in context_data:
+                marker = "**>>>**" if is_match else ""
+                if prompt_text:
+                    lines.append(f"> {marker} {prompt_text.strip()}")
+                    lines.append("")
+                if response_text:
+                    lines.append(f"{marker} {response_text.strip()}")
+                    lines.append("")
+        else:
+            chars = fidelity.chars
+            if chars == 0 and fidelity.depth < 2:
+                chars = 200
+            text = r.get("text", "")
+            if chars > 0:
+                text = truncate_text(text, chars)
+            lines.append(text)
+            lines.append("")
+
+    return "\n".join(lines)
