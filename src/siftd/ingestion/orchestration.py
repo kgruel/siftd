@@ -692,6 +692,14 @@ def _apply_pending_tags(
     # This handles the case where a user tags during a subagent session —
     # the tag targets the parent session ID, but the subagent conversation
     # has a different external_id.
+    #
+    # Ingest-order note: if the parent conversation is ingested first in the
+    # same run, it will consume the tags itself (correct — both belong to the
+    # same session). The subagent fallback only fires when the subagent is
+    # ingested before the parent, or when the parent file was skipped
+    # (unchanged since last ingest). Either way, the tag lands on exactly one
+    # conversation in the session, which is the intended "tag this session"
+    # semantic.
     parent_id = None
     if not pending and "::agent::" in session_id:
         parent_id = session_id.split("::agent::")[0]
