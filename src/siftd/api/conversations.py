@@ -282,14 +282,27 @@ def _list_conversations_impl(
 
     if use_stats:
         # Fast path: read precomputed stats from conversation_stats table.
-        # Single query with one lightweight JOIN — no response table scan.
+        # COALESCEs to live subqueries for any rows missing from the stats
+        # table (e.g. conversations inserted since the last ingest rebuild).
         rows = conn.execute(
             f"""SELECT c.id AS conversation_id, w.path AS workspace,
                     c.started_at,
-                    COALESCE(cs.prompt_count, 0) AS prompts,
-                    COALESCE(cs.response_count, 0) AS responses,
-                    COALESCE(cs.total_tokens, 0) AS tokens,
-                    cs.model_name AS model,
+                    COALESCE(cs.prompt_count,
+                        (SELECT COUNT(*) FROM prompts WHERE conversation_id = c.id)
+                    ) AS prompts,
+                    COALESCE(cs.response_count,
+                        (SELECT COUNT(*) FROM responses WHERE conversation_id = c.id)
+                    ) AS responses,
+                    COALESCE(cs.total_tokens,
+                        (SELECT COALESCE(SUM(input_tokens),0) + COALESCE(SUM(output_tokens),0)
+                         FROM responses WHERE conversation_id = c.id)
+                    ) AS tokens,
+                    COALESCE(cs.model_name,
+                        (SELECT m2.name FROM responses r2
+                         LEFT JOIN models m2 ON m2.id = r2.model_id
+                         WHERE r2.conversation_id = c.id
+                         GROUP BY m2.name ORDER BY COUNT(*) DESC LIMIT 1)
+                    ) AS model,
                     cs.cost
                 FROM conversations c
                 LEFT JOIN workspaces w ON w.id = c.workspace_id
