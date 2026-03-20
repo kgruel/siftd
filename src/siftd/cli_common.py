@@ -47,7 +47,6 @@ def fidelity_from_args(args, *, default_chars: int = 0):  # -> painted.Fidelity
     Args:
         args: Parsed argparse namespace.
         default_chars: Base char limit when no flags given (0 = no truncation).
-            Formatters may override this via their brief_chars attribute.
     """
     from painted import Fidelity
 

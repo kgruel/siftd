@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 FORMATTER_INTERFACE_VERSION = 1
 name = "terminal"
 media_type = "terminal"
-brief_chars = 80
 
 
 def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> Any:
@@ -156,8 +155,6 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
                     if response_text:
                         rt = truncate_text(response_text, 800)
                         lines.append(f"  [asst] {rt}")
-                if not exchanges:
-                    lines.append("  (no exchange text available)")
             else:
                 chunk_type = r.get("chunk_type", "")
                 side = "[user]" if chunk_type == "prompt" else "[asst]"

@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 FORMATTER_INTERFACE_VERSION = 1
 name = "json"
 media_type = "application/json"
-brief_chars = 0  # JSON never truncates
 
 
 def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> dict:

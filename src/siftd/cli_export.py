@@ -32,7 +32,7 @@ def cmd_export(args) -> int:
 
     from siftd.cli_common import fidelity_from_args
 
-    fidelity = fidelity_from_args(args, default_chars=300 if getattr(args, "brief", False) else 0)
+    fidelity = fidelity_from_args(args)
     include_tools = fidelity.shows("tools")
 
     try:

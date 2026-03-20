@@ -4,9 +4,8 @@ Output formatters handle rendering conversation data to different media types
 (terminal, markdown, JSON, HTML, etc.). Each formatter implements render methods
 for the content types it supports (detail views, list views, search results).
 
-This is separate from the search-specific FormatterRegistry in registry.py,
-which handles search result display modes. The two systems will merge in a
-future release.
+This replaces the former search-specific FormatterRegistry that lived in
+registry.py — the two systems were unified in 0.6.0.
 """
 
 from __future__ import annotations
@@ -26,15 +25,23 @@ if TYPE_CHECKING:
 class OutputFormat(Protocol):
     """Protocol for output format modules.
 
-    Required:
+    Required attributes:
         name: str — format identifier (e.g., "terminal", "markdown", "json")
         media_type: str — MIME-like type ("terminal", "text/markdown", "application/json")
-        render_detail(turns, fidelity, **ctx) -> Any — render conversation detail
 
-    Optional:
-        brief_chars: int — default char limit for --brief (0 = no truncation)
-        render_list(summaries, fidelity, **ctx) -> Any — render conversation list
-        render_search(results, fidelity, **ctx) -> Any — render search results
+    Required methods:
+        render_detail(turns, fidelity, **ctx) -> Any
+            Render conversation detail. Return type varies by format:
+            terminal returns a painted Block, markdown returns str, json returns dict.
+            Callers dispatch on isinstance(result, str/dict) with Block as fallback.
+        render_list(summaries, fidelity, **ctx) -> str | dict
+            Render conversation list.
+        render_search(results, fidelity, **ctx) -> str | dict
+            Render search results.
+
+    All built-in formatters implement all three render methods. Drop-in
+    formatters that omit render_list or render_search will raise AttributeError
+    when the corresponding CLI command invokes them.
     """
 
     name: str

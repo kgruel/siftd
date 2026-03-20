@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 FORMATTER_INTERFACE_VERSION = 1
 name = "markdown"
 media_type = "text/markdown"
-brief_chars = 300
 
 
 def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> str:

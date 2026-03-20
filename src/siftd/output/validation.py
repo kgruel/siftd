@@ -9,7 +9,11 @@ from types import ModuleType
 
 from siftd.plugin_discovery import validate_required_interface
 
-# Current formatter interface version
+# Expected formatter interface version.  Each formatter module declares its own
+# FORMATTER_INTERFACE_VERSION; validate_formatter() rejects mismatches.  This
+# intentional duplication mirrors the adapter versioning pattern — formatters
+# and the registry evolve independently, and the check surfaces incompatibility
+# at load time rather than at runtime.
 FORMATTER_INTERFACE_VERSION = 1
 
 # Required module-level attributes for a valid formatter module
