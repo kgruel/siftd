@@ -277,33 +277,32 @@ def _list_conversations_impl(
         return []
 
     # Phase 2: Compute full stats only for the selected conversations.
+    # Uses correlated subqueries instead of JOINs to avoid the O(responses) GROUP BY.
     placeholders = ",".join("?" * len(conv_ids))
 
-    billable_input_expr = (
-        "CASE "
-        "WHEN COALESCE(r.input_tokens, 0) - COALESCE("
-        "(SELECT MAX(CAST(ra.value AS INTEGER)) "
-        "FROM response_attributes ra "
-        "WHERE ra.response_id = r.id AND ra.key = 'cache_read_input_tokens'), 0) < 0 "
-        "THEN 0 "
-        "ELSE COALESCE(r.input_tokens, 0) - COALESCE("
-        "(SELECT MAX(CAST(ra.value AS INTEGER)) "
-        "FROM response_attributes ra "
-        "WHERE ra.response_id = r.id AND ra.key = 'cache_read_input_tokens'), 0) "
-        "END"
-    )
-    cost_expr = (
-        f"""ROUND(SUM(
-            {billable_input_expr} * COALESCE(pr.input_per_mtok, 0)
-            + COALESCE(r.output_tokens, 0) * COALESCE(pr.output_per_mtok, 0)
-        ) / 1000000.0, 4)"""
+    cost_subquery = (
+        """(SELECT ROUND(SUM(
+            CASE
+                WHEN COALESCE(r2.input_tokens, 0) - COALESCE(
+                    (SELECT MAX(CAST(ra.value AS INTEGER))
+                     FROM response_attributes ra
+                     WHERE ra.response_id = r2.id
+                       AND ra.key = 'cache_read_input_tokens'), 0) < 0
+                THEN 0
+                ELSE COALESCE(r2.input_tokens, 0) - COALESCE(
+                    (SELECT MAX(CAST(ra.value AS INTEGER))
+                     FROM response_attributes ra
+                     WHERE ra.response_id = r2.id
+                       AND ra.key = 'cache_read_input_tokens'), 0)
+            END * COALESCE(pr.input_per_mtok, 0)
+            + COALESCE(r2.output_tokens, 0) * COALESCE(pr.output_per_mtok, 0)
+        ) / 1000000.0, 4)
+        FROM responses r2
+        LEFT JOIN pricing pr ON pr.model_id = r2.model_id
+                             AND pr.provider_id = r2.provider_id
+        WHERE r2.conversation_id = c.id)"""
         if has_pricing
         else "NULL"
-    )
-    pricing_join = (
-        "LEFT JOIN pricing pr ON pr.model_id = r.model_id AND pr.provider_id = r.provider_id"
-        if has_pricing
-        else ""
     )
 
     detail_sql = f"""
@@ -318,17 +317,13 @@ def _list_conversations_impl(
              LIMIT 1) AS model,
             c.started_at,
             (SELECT COUNT(*) FROM prompts WHERE conversation_id = c.id) AS prompts,
-            COUNT(DISTINCT r.id) AS responses,
-            COALESCE(SUM(r.input_tokens), 0) + COALESCE(SUM(r.output_tokens), 0) AS tokens,
-            {cost_expr} AS cost
+            (SELECT COUNT(*) FROM responses WHERE conversation_id = c.id) AS responses,
+            (SELECT COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0)
+             FROM responses WHERE conversation_id = c.id) AS tokens,
+            {cost_subquery} AS cost
         FROM conversations c
         LEFT JOIN workspaces w ON w.id = c.workspace_id
-        LEFT JOIN responses r ON r.conversation_id = c.id
-        LEFT JOIN models m ON m.id = r.model_id
-        LEFT JOIN providers pv ON pv.id = r.provider_id
-        {pricing_join}
         WHERE c.id IN ({placeholders})
-        GROUP BY c.id
         ORDER BY c.started_at {order}
     """
 
