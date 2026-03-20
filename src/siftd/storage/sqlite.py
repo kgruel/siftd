@@ -82,6 +82,7 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         ensure_prompt_tags_table(conn)
         _ensure_git_remote_index(conn)
         _ensure_tag_indexes(conn)
+        _ensure_response_attributes_key_index(conn)
 
         # Stamp schema version after successful migrations
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -471,6 +472,19 @@ def _ensure_tag_indexes(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_tool_call_tags_tag ON tool_call_tags(tag_id)"
+    )
+    conn.commit()
+
+
+def _ensure_response_attributes_key_index(conn: sqlite3.Connection) -> None:
+    """Create covering index on response_attributes(key, response_id, value).
+
+    Eliminates full table scan in the cache_read_input_tokens subquery
+    used by list_conversations cost calculation.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_response_attributes_key"
+        " ON response_attributes(key, response_id, value)"
     )
     conn.commit()
 
