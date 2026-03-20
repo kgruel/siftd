@@ -4,8 +4,7 @@
 
 In progress. Branch: `feat/extension-points` (6 commits ahead of main at v0.5.2).
 
-Stages 1-8 complete (infrastructure, formatter stubs, narrative walker, fidelity unification, list views, tool summary unification, detail views through formatters, search unification).
-Next: Stage 9 (cleanup and copy command).
+All 9 stages complete. Ready for 0.6.0 release.
 
 ## Why this exists
 
@@ -232,11 +231,16 @@ This replaces the current six formatter classes (ChunkListFormatter, VerboseForm
 - Old formatter classes (`formatters.py`) and `registry.py` retained for backward compat
 - `format_refs_annotation` and `print_refs_content` stay (post-processing, not formatter concern)
 
-### Stage 9: Cleanup and copy command
+### Stage 9: Cleanup and copy command [DONE]
 
-- Wire `siftd copy formatter` command
-- Remove backward-compat shims in registry.py
-- Final dissolution audit
+- `format_refs_annotation` and `print_refs_content` moved from formatters.py to common.py
+- All 6 search formatter classes dissolved (ChunkListFormatter, VerboseFormatter, FullExchangeFormatter, ContextFormatter, ThreadFormatter, ConversationFormatter)
+- `FormatterContext`, `select_formatter`, `OutputFormatter` protocol dissolved
+- `FormatterRegistry` and `registry.py` dissolved
+- `siftd copy formatter <name>` wired with `copy_formatter` API + `list_builtin_formatters`
+- `doctor/checks.py` updated to use `format_registry.list_format_names()`
+- Architecture tests updated to validate new format system
+- `output/__init__.py` cleaned: only common.py utilities exported
 
 ## What stays as-is
 
