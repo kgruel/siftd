@@ -52,38 +52,52 @@ def summaries():
 
 
 class TestTerminalRenderList:
+    @staticmethod
+    def _block_to_text(block):
+        """Extract plain text from a painted Block."""
+        lines = []
+        for y in range(block.height):
+            lines.append("".join(cell.char for cell in block.row(y)).rstrip())
+        return "\n".join(lines)
+
     def test_brief_depth_shows_id_timestamp_workspace(self, summaries):
         from siftd.output.terminal_fmt import render_list
 
         fidelity = Fidelity(depth=0)
-        output = render_list(summaries, fidelity)
+        block = render_list(summaries, fidelity)
+        output = self._block_to_text(block)
 
         lines = output.strip().split("\n")
-        assert len(lines) == 2
+        # header + separator + 2 data rows
+        assert len(lines) == 4
+        assert "id" in lines[0]
+        assert "─" in lines[1]
 
-        # Brief: only id, timestamp, workspace
-        assert "01ABCDEF1234" in lines[0]
-        assert "my-project" in lines[0]
+        # Data row: only id, timestamp, workspace
+        assert "01ABCDEF1234" in lines[2]
+        assert "my-project" in lines[2]
         # Should NOT have model, tokens, cost
-        assert "claude-opus" not in lines[0]
-        assert "tok" not in lines[0]
-        assert "$" not in lines[0]
+        assert "claude-opus" not in lines[2]
+        assert "tok" not in lines[2]
+        assert "$" not in lines[2]
 
     def test_default_depth_shows_standard_columns(self, summaries):
         from siftd.output.terminal_fmt import render_list
 
         fidelity = Fidelity(depth=1)
-        output = render_list(summaries, fidelity)
+        block = render_list(summaries, fidelity)
+        output = self._block_to_text(block)
 
         lines = output.strip().split("\n")
-        assert len(lines) == 2
+        # header + separator + 2 data rows
+        assert len(lines) == 4
 
-        line = lines[0]
+        line = lines[2]  # first data row
         assert "01ABCDEF1234" in line
         assert "my-project" in line
         assert "claude-opus-4-5" in line  # model with date stripped
         assert "3p/5r" in line
-        assert "1.2k tok" in line
+        assert "1.2k" in line
         assert "$0.0340" in line
         # Tags not shown at default depth
         assert "review" not in line
@@ -92,30 +106,32 @@ class TestTerminalRenderList:
         from siftd.output.terminal_fmt import render_list
 
         fidelity = Fidelity(depth=3)
-        output = render_list(summaries, fidelity)
+        block = render_list(summaries, fidelity)
+        output = self._block_to_text(block)
 
         lines = output.strip().split("\n")
-        # Table: header + separator + 2 data rows
+        # header + separator + 2 data rows
         assert len(lines) == 4
         assert "id" in lines[0]
         assert "tags" in lines[0]
-        assert "---" in lines[1]
+        assert "─" in lines[1]
         assert "review, bug" in lines[2]
 
-    def test_empty_list_returns_empty_string(self):
+    def test_empty_list_returns_none(self):
         from siftd.output.terminal_fmt import render_list
 
         output = render_list([], Fidelity(depth=1))
-        assert output == ""
+        assert output is None
 
     def test_none_cost_shows_zero(self, summaries):
         from siftd.output.terminal_fmt import render_list
 
         fidelity = Fidelity(depth=1)
-        output = render_list(summaries, fidelity)
+        block = render_list(summaries, fidelity)
+        output = self._block_to_text(block)
 
         lines = output.strip().split("\n")
-        assert "$0.0000" in lines[1]  # second summary has cost=None
+        assert "$0.0000" in lines[3]  # second data row (after header + sep)
 
 
 class TestMarkdownRenderList:

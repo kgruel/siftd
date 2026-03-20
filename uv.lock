@@ -1024,14 +1024,14 @@ wheels = [
 
 [[package]]
 name = "painted"
-version = "0.1.4"
+version = "0.1.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "wcwidth" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/07/21/2b543795fd07e3a555e5ebfe97e5e6f2648e0411067891ed857fecbc8ed3/painted-0.1.4.tar.gz", hash = "sha256:27267bfd56528e5fe373680b2aa83f5f9a672342669d0d983a00314c5956866a", size = 7494229, upload-time = "2026-03-19T17:52:33.407Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/57/f34dd48266fe50e8c2d2a8800a6eb0411cdad34687beedbc69c39419c98f/painted-0.1.7.tar.gz", hash = "sha256:3cad4f90f0f06f7c02a01aecde87486fb27604f642c2ef3ea08afc2a829248d4", size = 7547163, upload-time = "2026-03-20T05:35:46.942Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/93/cb29452b7768a5bc73f9233533b2c1ccbd6d7fc3a4e3032079c688721a51/painted-0.1.4-py3-none-any.whl", hash = "sha256:d4a7c1c02dcc886694bddcb444f59b5a495f46c140bd47b456f9082b482c4a13", size = 92019, upload-time = "2026-03-19T17:52:35.166Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/1a/fd7bf0b3afb327ca03ca50789f7792c5450d4ec6d2765c602a5249e26743/painted-0.1.7-py3-none-any.whl", hash = "sha256:14b3812ed42bcde373a54670ab29ab2e3929e4501c55e9b2b43046d2fb9ee23d", size = 118692, upload-time = "2026-03-20T05:35:44.987Z" },
 ]
 
 [[package]]
@@ -1448,7 +1448,7 @@ requires-dist = [
     { name = "litestar", extras = ["standard"], marker = "extra == 'serve'" },
     { name = "numpy", marker = "extra == 'embed'" },
     { name = "onnxruntime", marker = "extra == 'embed'" },
-    { name = "painted", specifier = ">=0.1.4" },
+    { name = "painted", specifier = ">=0.1.7" },
     { name = "prysk", marker = "extra == 'dev'" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'serve'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },

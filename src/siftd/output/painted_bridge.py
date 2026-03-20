@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -10,7 +11,7 @@ from typing import TYPE_CHECKING
 from siftd.output.common import fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
 
 if TYPE_CHECKING:
-    from painted import Block, Fidelity, Line, Style
+    from painted import Align, Block, Fidelity, Line, Style
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,24 @@ def print_block(block: Block) -> None:
     """Print a painted block with auto-detected ANSI/plain behavior."""
     _, _, _, _, _, _, painted_print_block = _painted()
     painted_print_block(block)
+
+
+def emit_output(result) -> None:
+    """Dispatch formatter output to the appropriate printer.
+
+    Handles str (markdown/terminal), dict (json), and Block (painted terminal).
+    No-ops on falsy values.
+    """
+    if not result:
+        return
+    if isinstance(result, str):
+        print(result)
+    elif isinstance(result, dict):
+        import json as json_mod
+
+        print(json_mod.dumps(result, indent=2, default=str))
+    else:
+        print_block(result)
 
 
 def _append_multiline(
@@ -518,24 +537,53 @@ def _tool_density(fidelity: Fidelity) -> int:
     return _DEFAULT_TOOL_CHARS
 
 
-def render_narrative_lines(
+def render_narrative_block(
     blocks: list,
     *,
     fidelity: Fidelity,
     tool_chars: int = 0,
-) -> list[Line]:
-    """Render narrative blocks into styled painted lines.
+) -> Block:
+    """Render narrative blocks into a composed painted Block.
+
+    Text and tool headers render as styled lines. Tool content and thinking
+    render as bordered sub-blocks using the domain theme's border chars.
 
     Args:
         blocks: Narrative blocks to render.
         fidelity: Three-axis rendering spec (depth, visibility, density).
         tool_chars: Optional tool density override (0=derive from fidelity).
     """
-    styles = _styles()
-    lines: list[Line] = []
+    from painted import border, pad
+
+    from siftd.output.theme import domain_styles
+
+    Block, _, _, _, _, join_vertical, _ = _painted()
+
+    ds = domain_styles(fidelity)
+    # Bridge: tool presenters still use _RoleStyles internally
+    role_styles = _RoleStyles(
+        heading=ds.label,
+        meta=ds.separator,
+        prompt=ds.prompt,
+        assistant=ds.assistant,
+        thinking=ds.thinking,
+        tool=ds.tool_name,
+        tool_input=ds.tool_input,
+        tool_result=ds.tool_result,
+        tool_error=ds.tool_error,
+        summary_hint=ds.summary,
+    )
+    parts: list[Block] = []
     chars_limit = fidelity.chars
     effective_tool_chars = tool_chars or _tool_density(fidelity)
     show_tool_content = fidelity.shows("tools")
+
+    def _flush_lines(lines: list[Line]) -> None:
+        if lines:
+            parts.append(_lines_to_block(lines))
+            lines.clear()
+
+    pending: list[Line] = []
 
     for block in blocks:
         block_type = getattr(block, "block_type", "")
@@ -543,69 +591,117 @@ def render_narrative_lines(
 
         if block_type == "text":
             if content:
-                _append_multiline(lines, "  ", styles.assistant, content, styles.assistant, chars_limit)
+                _append_multiline(pending, "  ", ds.assistant, content, ds.assistant, chars_limit)
+
         elif block_type == "thinking":
             if content:
-                _append_multiline(lines, "  [thinking] ", styles.thinking, content, styles.thinking, chars_limit)
+                _flush_lines(pending)
+                think_lines: list[Line] = []
+                _append_multiline(think_lines, "", ds.thinking, content, ds.thinking, chars_limit)
+                inner = _lines_to_block(think_lines)
+                # Ensure minimum width for border title to render
+                title_text = "thinking"
+                min_inner_width = len(title_text) + 5  # title + 3 (border rule) + 2 (padding)
+                if inner.width + 2 < min_inner_width:
+                    inner = pad(inner, right=min_inner_width - inner.width - 2)
+                bordered = border(
+                    pad(inner, left=1, right=1),
+                    chars=ds.thinking_border,
+                    style=ds.separator,
+                    title=title_text,
+                    title_style=ds.thinking,
+                )
+                parts.append(pad(bordered, left=4))
+
         elif block_type in ("tool_result", "tool_output"):
             if content and show_tool_content:
                 _append_multiline(
-                    lines,
+                    pending,
                     f"  [{block_type}] ",
-                    styles.meta,
+                    ds.summary,
                     content,
-                    styles.tool_result,
+                    ds.tool_result,
                     effective_tool_chars,
                 )
+
         elif block_type == "tool_calls":
             for tc in getattr(block, "tool_calls", []):
                 name = getattr(tc, "tool_name", "unknown")
                 count = getattr(tc, "count", 1)
                 status = getattr(tc, "status", None)
 
-                header_parts: list[tuple[str, Style]] = [
-                    ("    → ", styles.meta),
-                    (name, styles.tool),
-                ]
+                # Build title suffix for count/status
+                title = name
                 if count > 1:
-                    header_parts.append((f" ×{count}", styles.meta))
+                    title += f" ×{count}"
                 if status and status != "success":
-                    status_style = styles.tool_error if status == "error" else styles.meta
-                    header_parts.append((f" ({status})", status_style))
-                lines.append(_line(*header_parts))
+                    title += f" ({status})"
 
                 if not show_tool_content:
+                    # Compact: arrow + name header
+                    header_parts: list[tuple[str, Style]] = [
+                        ("    → ", ds.separator),
+                        (name, ds.tool_name),
+                    ]
+                    if count > 1:
+                        header_parts.append((f" ×{count}", ds.separator))
+                    if status and status != "success":
+                        status_style = ds.tool_error if status == "error" else ds.separator
+                        header_parts.append((f" ({status})", status_style))
+                    pending.append(_line(*header_parts))
                     continue
 
-                lines.extend(
-                    _render_tool_content_lines(
-                        name,
-                        getattr(tc, "input", None),
-                        getattr(tc, "result", None),
-                        status,
-                        styles,
-                        effective_tool_chars,
-                    )
+                # Expanded: bordered block with tool name as title
+                tool_lines = _render_tool_content_lines(
+                    name,
+                    getattr(tc, "input", None),
+                    getattr(tc, "result", None),
+                    status,
+                    role_styles,
+                    effective_tool_chars,
                 )
+                if tool_lines:
+                    _flush_lines(pending)
+                    inner = _lines_to_block(tool_lines)
+                    title_style = ds.tool_error if status == "error" else ds.tool_name
+                    min_inner_width = len(title) + 5
+                    if inner.width + 2 < min_inner_width:
+                        inner = pad(inner, right=min_inner_width - inner.width - 2)
+                    bordered = border(
+                        pad(inner, left=1, right=1),
+                        chars=ds.tool_border,
+                        style=ds.separator,
+                        title=title,
+                        title_style=title_style,
+                    )
+                    parts.append(pad(bordered, left=4))
 
-    return lines
+    _flush_lines(pending)
+
+    if not parts:
+        return Block.empty(0, 0)
+    if len(parts) == 1:
+        return parts[0]
+    return join_vertical(*parts)
 
 
 def _tool_summary_lines(
     tools: list[tuple[str, int, str | None]],
 ) -> list[Line]:
     """Render tool summary lines from (name, count, status) tuples."""
-    styles = _styles()
+    from siftd.output.theme import domain_styles
+
+    ds = domain_styles()
     lines: list[Line] = []
     for name, count, status in tools:
         parts: list[tuple[str, Style]] = [
-            ("    → ", styles.meta),
-            (name, styles.tool),
+            ("    → ", ds.separator),
+            (name, ds.tool_name),
         ]
         if count > 1:
-            parts.append((f" ×{count}", styles.meta))
+            parts.append((f" ×{count}", ds.separator))
         if status:
-            status_style = styles.tool_error if status == "error" else styles.meta
+            status_style = ds.tool_error if status == "error" else ds.separator
             parts.append((f" ({status})", status_style))
         lines.append(_line(*parts))
     return lines
@@ -633,68 +729,82 @@ def render_query_detail_block(
     tool_chars: int = 0,
 ) -> Block:
     """Render a conversation detail view as a painted block."""
-    styles = _styles()
-    lines: list[Line] = []
+    from siftd.output.theme import domain_styles
+
+    Block, _, _, _, _, join_vertical, _ = _painted()
+
+    ds = domain_styles(fidelity)
+    parts: list[Block] = []
 
     ws_name = fmt_workspace(detail.workspace_path)
     started = fmt_timestamp(detail.started_at)
     total_tokens = detail.total_input_tokens + detail.total_output_tokens
 
-    lines.append(_line(("Conversation: ", styles.heading), (detail.id, styles.assistant)))
+    header_lines: list[Line] = []
+    header_lines.append(_line(("Conversation: ", ds.label), (detail.id, ds.identifier)))
     if ws_name:
-        lines.append(_line(("Workspace: ", styles.meta), (ws_name, styles.assistant)))
-    lines.append(_line(("Started: ", styles.meta), (started, styles.assistant)))
-    lines.append(_line(("Model: ", styles.meta), (detail.model or "unknown", styles.assistant)))
-    lines.append(
+        header_lines.append(_line(("Workspace: ", ds.temporal), (ws_name, ds.workspace)))
+    header_lines.append(_line(("Started: ", ds.temporal), (started, ds.temporal)))
+    header_lines.append(_line(("Model: ", ds.temporal), (detail.model or "unknown", ds.model)))
+    header_lines.append(
         _line(
-            ("Tokens: ", styles.meta),
-            (fmt_tokens(total_tokens), styles.assistant),
+            ("Tokens: ", ds.temporal),
+            (fmt_tokens(total_tokens), ds.metric),
             (
                 f" (input: {fmt_tokens(detail.total_input_tokens)} / output: {fmt_tokens(detail.total_output_tokens)})",
-                styles.meta,
+                ds.metric,
             ),
         )
     )
     if detail.tags:
-        lines.append(_line(("Tags: ", styles.meta), (", ".join(detail.tags), styles.assistant)))
-
-    lines.append(_line())
+        header_lines.append(_line(("Tags: ", ds.temporal), (", ".join(detail.tags), ds.tag)))
+    header_lines.append(_line())
+    parts.append(_lines_to_block(header_lines))
 
     for turn in turns:
         ts = fmt_timestamp(turn.timestamp, time_only=True)
+        turn_lines: list[Line] = []
 
         if turn.prompt_text:
-            lines.append(_line(("[prompt] ", styles.prompt), (ts, styles.meta)))
-            _append_multiline(lines, "  ", styles.assistant, turn.prompt_text, styles.assistant, fidelity.chars)
-            lines.append(_line())
+            turn_lines.append(_line(("[prompt] ", ds.prompt), (ts, ds.temporal)))
+            _append_multiline(turn_lines, "  ", ds.assistant, turn.prompt_text, ds.assistant, fidelity.chars)
+            turn_lines.append(_line())
 
         tool_summaries = turn.tool_call_summaries
         has_response = bool(turn.narrative) or turn.total_input_tokens or turn.total_output_tokens or tool_summaries
         if not has_response:
+            if turn_lines:
+                parts.append(_lines_to_block(turn_lines))
             continue
 
         tok = turn.total_input_tokens + turn.total_output_tokens
-        lines.append(
+        turn_lines.append(
             _line(
-                ("[response] ", styles.prompt),
-                (ts, styles.meta),
-                (f" ({fmt_tokens(tok)} tok)", styles.meta),
+                ("[response] ", ds.prompt),
+                (ts, ds.temporal),
+                (f" ({fmt_tokens(tok)} tok)", ds.metric),
             )
         )
-        lines.extend(
-            render_narrative_lines(
+
+        if turn_lines:
+            parts.append(_lines_to_block(turn_lines))
+
+        if turn.narrative:
+            parts.append(render_narrative_block(
                 turn.narrative,
                 fidelity=fidelity,
                 tool_chars=tool_chars,
-            )
-        )
-        if not turn.narrative and tool_summaries:
-            lines.extend(_tool_summary_lines(
-                [(tc.tool_name, tc.count, tc.status) for tc in tool_summaries]
             ))
-        lines.append(_line())
+        elif tool_summaries:
+            parts.append(_lines_to_block(_tool_summary_lines(
+                [(tc.tool_name, tc.count, tc.status) for tc in tool_summaries]
+            )))
 
-    return _lines_to_block(lines)
+        parts.append(_blank_block())
+
+    if not parts:
+        return Block.empty(0, 0)
+    return join_vertical(*parts)
 
 
 def render_peek_detail_block(
@@ -705,8 +815,12 @@ def render_peek_detail_block(
     tool_chars: int = 0,
 ) -> Block:
     """Render a peek session detail view as a painted block."""
-    styles = _styles()
-    lines: list[Line] = []
+    from siftd.output.theme import domain_styles
+
+    Block, _, _, _, _, join_vertical, _ = _painted()
+
+    ds = domain_styles(fidelity)
+    parts: list[Block] = []
 
     info = detail.info
     ws_name = _peek_workspace(info)
@@ -718,28 +832,31 @@ def render_peek_detail_block(
     if shown_exchanges and total_exchanges > shown_exchanges:
         exchanges_text = f"{shown_exchanges} shown / {total_exchanges} total"
 
-    lines.append(_line(("Session: ", styles.heading), (info.session_id, styles.assistant)))
+    header_lines: list[Line] = []
+    header_lines.append(_line(("Session: ", ds.label), (info.session_id, ds.identifier)))
     if ws_name:
-        lines.append(_line(("Workspace: ", styles.meta), (ws_name, styles.assistant)))
+        header_lines.append(_line(("Workspace: ", ds.temporal), (ws_name, ds.workspace)))
     if started:
-        lines.append(_line(("Started: ", styles.meta), (started, styles.assistant)))
+        header_lines.append(_line(("Started: ", ds.temporal), (started, ds.temporal)))
     if last_activity:
-        lines.append(_line(("Last activity: ", styles.meta), (last_activity, styles.assistant)))
-    lines.append(_line(("Model: ", styles.meta), (info.model or "unknown", styles.assistant)))
-    lines.append(_line(("Adapter: ", styles.meta), ((info.adapter_name or "unknown"), styles.assistant)))
-    lines.append(_line(("Exchanges: ", styles.meta), (exchanges_text, styles.assistant)))
+        header_lines.append(_line(("Last activity: ", ds.temporal), (last_activity, ds.temporal)))
+    header_lines.append(_line(("Model: ", ds.temporal), (info.model or "unknown", ds.model)))
+    header_lines.append(_line(("Adapter: ", ds.temporal), ((info.adapter_name or "unknown"), ds.adapter)))
+    header_lines.append(_line(("Exchanges: ", ds.temporal), (exchanges_text, ds.metric)))
     if getattr(info, "parent_session_id", None):
-        lines.append(_line(("Parent: ", styles.meta), (info.parent_session_id, styles.assistant)))
-    lines.append(_line(("File: ", styles.meta), (str(info.file_path), styles.assistant)))
-    lines.append(_line())
+        header_lines.append(_line(("Parent: ", ds.temporal), (info.parent_session_id, ds.identifier)))
+    header_lines.append(_line(("File: ", ds.temporal), (str(info.file_path), ds.workspace)))
+    header_lines.append(_line())
+    parts.append(_lines_to_block(header_lines))
 
     for exchange in exchanges:
         ts = fmt_timestamp(exchange.timestamp, time_only=True)
+        ex_lines: list[Line] = []
 
         if exchange.prompt_text:
-            lines.append(_line(("[prompt] ", styles.prompt), (ts, styles.meta)))
-            _append_multiline(lines, "  ", styles.assistant, exchange.prompt_text, styles.assistant, fidelity.chars)
-            lines.append(_line())
+            ex_lines.append(_line(("[prompt] ", ds.prompt), (ts, ds.temporal)))
+            _append_multiline(ex_lines, "  ", ds.assistant, exchange.prompt_text, ds.assistant, fidelity.chars)
+            ex_lines.append(_line())
 
         has_response = bool(
             exchange.narrative
@@ -749,34 +866,44 @@ def render_peek_detail_block(
             or exchange.output_tokens
         )
         if not has_response:
+            if ex_lines:
+                parts.append(_lines_to_block(ex_lines))
             continue
 
         total_tokens = exchange.input_tokens + exchange.output_tokens
-        lines.append(
+        ex_lines.append(
             _line(
-                ("[response] ", styles.prompt),
-                (ts, styles.meta),
-                (f" ({fmt_tokens(total_tokens)} tok)", styles.meta),
+                ("[response] ", ds.prompt),
+                (ts, ds.temporal),
+                (f" ({fmt_tokens(total_tokens)} tok)", ds.metric),
             )
         )
+
+        if ex_lines:
+            parts.append(_lines_to_block(ex_lines))
+
         if exchange.narrative:
-            lines.extend(
-                render_narrative_lines(
-                    exchange.narrative,
-                    fidelity=fidelity,
-                    tool_chars=tool_chars,
-                )
-            )
+            parts.append(render_narrative_block(
+                exchange.narrative,
+                fidelity=fidelity,
+                tool_chars=tool_chars,
+            ))
         elif exchange.response_text:
-            _append_multiline(lines, "  ", styles.assistant, exchange.response_text, styles.assistant, fidelity.chars)
+            resp_lines: list[Line] = []
+            _append_multiline(resp_lines, "  ", ds.assistant, exchange.response_text, ds.assistant, fidelity.chars)
+            if resp_lines:
+                parts.append(_lines_to_block(resp_lines))
 
         if not exchange.narrative and exchange.tool_calls:
-            lines.extend(_tool_summary_lines(
+            parts.append(_lines_to_block(_tool_summary_lines(
                 [(name, count, None) for name, count in exchange.tool_calls]
-            ))
-        lines.append(_line())
+            )))
 
-    return _lines_to_block(lines)
+        parts.append(_blank_block())
+
+    if not parts:
+        return Block.empty(0, 0)
+    return join_vertical(*parts)
 
 
 def render_follow_event_block(
@@ -786,43 +913,190 @@ def render_follow_event_block(
     tool_chars: int = 0,
 ) -> Block:
     """Render a single follow-mode event as a painted block."""
-    styles = _styles()
-    lines: list[Line] = []
+    from siftd.output.theme import domain_styles
+
+    Block, _, _, _, _, join_vertical, _ = _painted()
+
+    ds = domain_styles(fidelity)
     ts = fmt_timestamp(getattr(event, "timestamp", None), time_only=True)
 
     if getattr(event, "is_user", False):
-        lines.append(_line(("[prompt] ", styles.prompt), (ts, styles.meta)))
+        lines: list[Line] = []
+        lines.append(_line(("[prompt] ", ds.prompt), (ts, ds.temporal)))
         text = getattr(event, "text", None)
         if text:
-            _append_multiline(lines, "  ", styles.assistant, text, styles.assistant, fidelity.chars)
+            _append_multiline(lines, "  ", ds.assistant, text, ds.assistant, fidelity.chars)
         return _lines_to_block(lines)
 
     total_tokens = getattr(event, "input_tokens", 0) + getattr(event, "output_tokens", 0)
     header_parts: list[tuple[str, Style]] = [
-        ("[response] ", styles.prompt),
-        (ts, styles.meta),
+        ("[response] ", ds.prompt),
+        (ts, ds.temporal),
     ]
     if total_tokens:
-        header_parts.append((f" ({fmt_tokens(total_tokens)} tok)", styles.meta))
-    lines.append(_line(*header_parts))
+        header_parts.append((f" ({fmt_tokens(total_tokens)} tok)", ds.metric))
+
+    parts: list[Block] = [_line_block(_line(*header_parts))]
 
     narrative = getattr(event, "narrative", [])
     if narrative:
-        lines.extend(
-            render_narrative_lines(
-                narrative,
-                fidelity=fidelity,
-                tool_chars=tool_chars,
-            )
-        )
+        parts.append(render_narrative_block(
+            narrative,
+            fidelity=fidelity,
+            tool_chars=tool_chars,
+        ))
     else:
         text = getattr(event, "text", None)
         if text:
-            _append_multiline(lines, "  ", styles.assistant, text, styles.assistant, fidelity.chars)
+            text_lines: list[Line] = []
+            _append_multiline(text_lines, "  ", ds.assistant, text, ds.assistant, fidelity.chars)
+            if text_lines:
+                parts.append(_lines_to_block(text_lines))
         tool_calls = getattr(event, "tool_calls", [])
         if tool_calls:
-            lines.extend(_tool_summary_lines(
+            parts.append(_lines_to_block(_tool_summary_lines(
                 [(name, count, None) for name, count, *_ in tool_calls]
-            ))
+            )))
 
-    return _lines_to_block(lines)
+    if len(parts) == 1:
+        return parts[0]
+    return join_vertical(*parts)
+
+
+def _styled_table(
+    col_defs: list[tuple[str, Callable, Style, Align]],
+    items: list,
+) -> Block:
+    """Build a painted table from column definitions and data items.
+
+    Each col_def is (header, cell_fn, cell_style, alignment).
+    cell_fn(item) -> str for each row.
+
+    Styling comes from the ambient Theme (palette + borders).
+    Selection highlight is disabled (static table, not interactive).
+    """
+    from painted import Style as PStyle
+    from painted.views import Column, TableState, table
+
+    # Build cell text grid and compute column widths from content
+    cell_texts: list[list[str]] = []
+    for item in items:
+        cell_texts.append([col_fn(item) for _, col_fn, _, _ in col_defs])
+
+    widths = [len(header) for header, _, _, _ in col_defs]
+    for row in cell_texts:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+
+    # Build painted Column definitions and styled rows
+    columns: list[Column] = []
+    for i, (header, _, _, align) in enumerate(col_defs):
+        columns.append(Column(
+            header=_line((header, PStyle())),
+            width=widths[i],
+            align=align,
+        ))
+
+    rows: list[list[Line]] = []
+    for row_texts in cell_texts:
+        rows.append([
+            _line((text, col_def[2])) for text, col_def in zip(row_texts, col_defs)
+        ])
+
+    state = TableState().with_count(len(rows)).with_visible(len(rows))
+    return table(state, columns, rows, visible_height=len(rows), selected_style=PStyle())
+
+
+def render_list_block(
+    summaries: list,
+    fidelity: Fidelity,
+) -> Block | None:
+    """Render conversation list as a styled painted table.
+
+    Depth controls which columns are visible:
+        0 (brief): id, timestamp, workspace
+        1-2 (default): + model, turns, tokens, cost
+        3+ (full): + prompts, responses, tags
+
+    Returns None for empty lists (emit_output no-ops on None).
+    """
+    if not summaries:
+        return None
+
+    from painted import Align, current_palette
+    from painted import Style as PStyle
+
+    from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
+
+    p = current_palette()
+    depth = fidelity.depth
+
+    col_defs: list[tuple[str, Callable, PStyle, Align]] = [
+        ("id", lambda c: c.id[:12] if c.id else "", p.accent, Align.START),
+        ("started_at", lambda c: fmt_timestamp(c.started_at), p.muted, Align.START),
+        ("workspace", lambda c: fmt_workspace(c.workspace_path), PStyle(), Align.START),
+    ]
+    if depth >= 1:
+        col_defs.extend([
+            ("model", lambda c: fmt_model(c.model) if c.model else "", PStyle(), Align.START),
+            ("turns", lambda c: f"{c.prompt_count}p/{c.response_count}r", p.muted, Align.END),
+            ("tokens", lambda c: fmt_tokens(c.total_tokens), p.muted, Align.END),
+            ("cost", lambda c: f"${c.cost:.4f}" if c.cost else "$0.0000", p.muted, Align.END),
+        ])
+    if depth >= 3:
+        col_defs.extend([
+            ("prompts", lambda c: str(c.prompt_count), p.muted, Align.END),
+            ("responses", lambda c: str(c.response_count), p.muted, Align.END),
+            ("tags", lambda c: ", ".join(c.tags) if c.tags else "", p.accent, Align.START),
+        ])
+
+    return _styled_table(col_defs, summaries)
+
+
+def render_peek_list_block(
+    sessions: list,
+    children_by_parent: dict[str, list],
+) -> Block | None:
+    """Render peek session list as a styled painted table.
+
+    Returns None for empty lists.
+    """
+    if not sessions:
+        return None
+
+    import time
+
+    from painted import Align, current_palette
+    from painted import Style as PStyle
+
+    from siftd.output import fmt_ago, fmt_model
+
+    p = current_palette()
+    now = time.time()
+
+    def _workspace(s) -> str:
+        ws = s.workspace_name or ""
+        if s.branch:
+            return f"{ws} [{s.branch}]" if ws else f"[{s.branch}]"
+        return ws
+
+    def _exchanges(s) -> str:
+        if s.preview_available:
+            return f"{s.exchange_count} exchanges"
+        return "(preview unavailable)"
+
+    def _suffix(s) -> str:
+        child_count = len(children_by_parent.get(s.session_id, []))
+        return f"+{child_count} agents" if child_count > 0 else ""
+
+    col_defs: list[tuple[str, Callable, PStyle, Align]] = [
+        ("session", lambda s: s.session_id[:8], p.accent, Align.START),
+        ("workspace", _workspace, PStyle(), Align.START),
+        ("activity", lambda s: fmt_ago(now - s.last_activity), p.muted, Align.START),
+        ("exchanges", _exchanges, p.muted, Align.START),
+        ("model", lambda s: fmt_model(s.model), PStyle(), Align.START),
+        ("adapter", lambda s: s.adapter_name or "", p.muted, Align.START),
+        ("agents", _suffix, p.accent, Align.START),
+    ]
+
+    return _styled_table(col_defs, sessions)

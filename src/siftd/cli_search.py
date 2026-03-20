@@ -704,7 +704,6 @@ def cmd_search(args) -> int:
         print("Note: Showing full content which may contain sensitive information.", file=sys.stderr)
 
     # Select output format and determine mode
-    import json as json_mod
 
     from siftd.cli_common import fidelity_from_args
     from siftd.output.common import print_refs_content
@@ -764,10 +763,9 @@ def cmd_search(args) -> int:
             _enrich_context(main_conn, results, context_n)
 
         output = fmt.render_search(results, fidelity, **ctx_kwargs)
-        if isinstance(output, str):
-            print(output)
-        elif isinstance(output, dict):
-            print(json_mod.dumps(output, indent=2, default=str))
+        from siftd.output.painted_bridge import emit_output
+
+        emit_output(output)
 
         # --refs content dump (post-processor, not part of formatter)
         if args.refs and not args.conversations:
@@ -925,9 +923,7 @@ def _search_fts_only(args, db: Path, query: str) -> int:
         )
 
         output = fmt.render_search(results, fidelity, query=query, mode="chunks")
-        if isinstance(output, str):
-            print(output)
-        elif isinstance(output, dict):
+        if isinstance(output, dict):
             # Preserve FTS5-specific fields for JSON
             if unsupported_flags:
                 output["warnings"] = [
@@ -936,6 +932,10 @@ def _search_fts_only(args, db: Path, query: str) -> int:
                 ]
             output["mode"] = "fts5"
             print(json_mod.dumps(output, indent=2, default=str))
+        else:
+            from siftd.output.painted_bridge import emit_output
+
+            emit_output(output)
 
         # Tagging hint (skip for JSON output)
         if not args.json and results:

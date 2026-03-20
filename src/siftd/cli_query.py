@@ -8,7 +8,7 @@ from pathlib import Path
 
 from siftd.cli_common import apply_config_defaults, fidelity_from_args, resolve_db
 from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, print_table
-from siftd.output.painted_bridge import print_block as print_painted_block
+from siftd.output.painted_bridge import emit_output
 from siftd.paths import queries_dir
 
 
@@ -195,12 +195,7 @@ def _query_detail(args) -> int:
     result = fmt.render_detail(
         show_turns, fidelity, detail=detail, tool_chars=tool_chars,
     )
-    if isinstance(result, str):
-        print(result)
-    elif isinstance(result, dict):
-        print(json.dumps(result, indent=2))
-    else:
-        print_painted_block(result)
+    emit_output(result)
     return 0
 
 
@@ -359,8 +354,7 @@ def cmd_query(args) -> int:
 
     fmt = select_format(json_mode=args.json, is_tty=sys.stdout.isatty())
     output = fmt.render_list(conversations, fidelity)
-    if output:
-        print(output)
+    emit_output(output)
 
     # Stats summary (shown after list when --stats flag is set)
     if args.stats:

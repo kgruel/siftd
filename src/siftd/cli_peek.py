@@ -7,7 +7,6 @@ import sys
 def cmd_peek(args) -> int:
     """Inspect live sessions directly from disk."""
     import json as _json
-    import time
 
     from siftd.api import (
         find_session_file,
@@ -16,9 +15,8 @@ def cmd_peek(args) -> int:
         tail_session,
     )
     from siftd.cli_common import fidelity_from_args, tool_chars_from_args
-    from siftd.output import fmt_ago, fmt_model
+    from siftd.output.painted_bridge import emit_output, render_follow_event_block, render_peek_detail_block
     from siftd.output.painted_bridge import print_block as print_painted_block
-    from siftd.output.painted_bridge import render_follow_event_block, render_peek_detail_block
     from siftd.peek import AmbiguousSessionError
 
     # Extract flags
@@ -354,30 +352,16 @@ def cmd_peek(args) -> int:
     # Track which parent session IDs are actually in our result set
     session_ids_in_results = {s.session_id for s in sessions}
 
-    now = time.time()
-    for s in sessions:
-        # Skip children only if their parent is visible in results
-        # (orphaned children whose parent is filtered out should still show)
-        if s.parent_session_id and s.parent_session_id in session_ids_in_results:
-            continue
+    # Filter to displayable rows: skip children whose parent is visible
+    display_sessions = [
+        s for s in sessions
+        if not s.parent_session_id or s.parent_session_id not in session_ids_in_results
+    ]
 
-        sid = s.session_id[:8]
-        ws = s.workspace_name or ""
-        if s.branch:
-            ws = f"{ws} [{s.branch}]" if ws else f"[{s.branch}]"
-        ago = fmt_ago(now - s.last_activity)
-        if s.preview_available:
-            exchanges = f"{s.exchange_count} exchanges"
-        else:
-            exchanges = "(preview unavailable)"
-        model = fmt_model(s.model)
-        adapter = s.adapter_name or ""
+    from siftd.output.painted_bridge import render_peek_list_block
 
-        # Add child count suffix if this session has children in results
-        child_count = len(children_by_parent.get(s.session_id, []))
-        suffix = f" (+{child_count} agents)" if child_count > 0 else ""
-
-        print(f"  {sid}  {ws:<16s} {ago:<12s} {exchanges:<16s} {model} {adapter}{suffix}")
+    block = render_peek_list_block(display_sessions, children_by_parent)
+    emit_output(block)
 
     return 0
 

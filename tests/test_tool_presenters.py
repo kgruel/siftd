@@ -8,23 +8,22 @@ from painted import Fidelity
 
 from siftd.api.conversations import NarrativeBlock, ToolCallDetail
 from siftd.domain.peek import PeekNarrativeBlock, PeekToolCall
-from siftd.output.painted_bridge import render_narrative_lines
+from siftd.output.painted_bridge import render_narrative_block
 
 
-def _lines_text(lines) -> list[str]:
-    """Extract plain text from painted Line objects."""
-    result = []
-    for line in lines:
-        text = "".join(span.text for span in line.spans)
-        result.append(text)
-    return result
+def _block_to_lines(block) -> list[str]:
+    """Extract plain text lines from a painted Block."""
+    lines = []
+    for y in range(block.height):
+        lines.append("".join(cell.char for cell in block.row(y)).rstrip())
+    return lines
 
 
 def _render(blocks, *, fidelity=None, tool_chars=0):
     """Render narrative blocks and return plain text lines."""
     fidelity = fidelity or Fidelity(depth=1, visible=frozenset({"text", "tools"}))
-    lines = render_narrative_lines(blocks, fidelity=fidelity, tool_chars=tool_chars)
-    return _lines_text(lines)
+    block = render_narrative_block(blocks, fidelity=fidelity, tool_chars=tool_chars)
+    return _block_to_lines(block)
 
 
 def _tool_block(tool_name, *, input=None, result=None, status="success", count=1):
@@ -345,12 +344,14 @@ class TestFidelityIntegration:
         text = "\n".join(lines)
         assert "$ ls" in text
 
-    def test_empty_visible_shows_all(self):
+    def test_empty_visible_hides_tool_content(self):
         block = _tool_block("shell.execute", input=json.dumps({"command": "ls"}))
-        fidelity = Fidelity(depth=1)  # empty visible = show all
+        fidelity = Fidelity(depth=1)  # empty visible = nothing extra
         lines = _render([block], fidelity=fidelity)
         text = "\n".join(lines)
-        assert "$ ls" in text
+        # Tool header shown, but content ($ ls) hidden
+        assert "shell.execute" in text
+        assert "$ ls" not in text
 
     def test_density_truncates_text(self):
         text_block = NarrativeBlock(block_type="text", content="A" * 200)

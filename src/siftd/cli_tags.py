@@ -170,8 +170,9 @@ def _cmd_tag_list(args, db: Path) -> int:
             is_tty=sys.stdout.isatty(),
         )
         output = fmt.render_list(conversations, fidelity)
-        if output:
-            print(output)
+        from siftd.output.painted_bridge import emit_output
+
+        emit_output(output)
 
         if limit > 0 and len(conversations) >= limit:
             print(f"\nTip: show more with `siftd query -l {tag_name} -n 0`", file=sys.stderr)
