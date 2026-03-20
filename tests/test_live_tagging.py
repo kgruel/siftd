@@ -358,6 +358,60 @@ class TestLiveTaggingFlow:
         # Verify session unregistered
         assert not is_session_registered(live_db["conn"], namespaced_session_id)
 
+    def test_subagent_inherits_parent_session_tags(self, live_db, tmp_path):
+        """Tags queued against a parent session apply to subagent conversations.
+
+        When a user tags during a subagent session, the tag targets the parent
+        session ID (claude_code::<session>), but the subagent conversation has
+        external_id = claude_code::<session>::agent::<agent_id>.
+
+        The tag should still be applied when the subagent conversation is ingested.
+        """
+        parent_session_id = "claude_code::parent-session-abc"
+        subagent_external_id = f"{parent_session_id}::agent::agent-xyz-123"
+        tag_name = "decision:api-design"
+
+        test_file = tmp_path / "subagent.jsonl"
+        test_file.write_text("{}")
+
+        # Subagent conversation uses the extended external_id
+        conversation = make_conversation(
+            external_id=subagent_external_id,
+            workspace_path="/test/project",
+            started_at="2024-01-15T10:00:00Z",
+            harness_name="claude_code",
+            harness_source="anthropic",
+        )
+
+        # Register and queue tag against the *parent* session (as the hook does)
+        register_session(live_db["conn"], parent_session_id, "claude_code", "/test/project", commit=True)
+        queue_tag(live_db["conn"], parent_session_id, tag_name, commit=True)
+
+        # Verify tag is pending on the parent session
+        pending = get_pending_tags(live_db["conn"], parent_session_id)
+        assert len(pending) == 1
+
+        # Ingest the subagent conversation (parent file may have been skipped)
+        adapter = make_live_adapter(str(test_file), conversation)
+        ingest_all(live_db["conn"], [adapter])
+
+        # Tag should be applied to the subagent conversation
+        cur = live_db["conn"].execute("""
+            SELECT t.name FROM tags t
+            JOIN conversation_tags ct ON ct.tag_id = t.id
+            JOIN conversations c ON c.id = ct.conversation_id
+            WHERE c.external_id = ?
+        """, (subagent_external_id,))
+        tags = [row[0] for row in cur.fetchall()]
+        assert tag_name in tags
+
+        # Pending tags consumed
+        pending = get_pending_tags(live_db["conn"], parent_session_id)
+        assert len(pending) == 0
+
+        # Parent session unregistered
+        assert not is_session_registered(live_db["conn"], parent_session_id)
+
     def test_reregister_refreshes_last_seen_at(self, live_db):
         """Re-registering a session updates last_seen_at but keeps started_at."""
         session_id = "reregister-session"

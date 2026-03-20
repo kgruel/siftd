@@ -309,15 +309,21 @@ def _install_skill(args) -> int:
     info = HARNESS_INFO[harness]
     scope_dirs = info.get("scope_dirs", {})
 
+    # If harness has exactly one scope, use it regardless of what --scope says
+    if len(scope_dirs) == 1:
+        scope = next(iter(scope_dirs))
+
     if scope not in scope_dirs:
         available = ", ".join(scope_dirs)
         print(f"{info['display_name']} only supports scope: {available}", file=sys.stderr)
         return 1
 
     raw_target = scope_dirs[scope]
-    if raw_target.startswith("~"):
+    if raw_target.startswith("~/"):
         # Use Path.home() so monkeypatching works in tests
-        base = Path.home() / raw_target[2:]  # strip ~/
+        base = Path.home() / raw_target[2:]
+    elif raw_target == "~":
+        base = Path.home()
     elif raw_target.startswith("/"):
         base = Path(raw_target)
     else:
@@ -423,7 +429,10 @@ def _install_plugin(args) -> int:
     skill_user = Path.home() / ".claude" / "skills" / "siftd"
     skill_project = Path.cwd() / ".claude" / "skills" / "siftd"
     for stale_skill in (skill_user, skill_project):
-        if stale_skill.exists() and not stale_skill.is_symlink():
+        if stale_skill.is_symlink():
+            stale_skill.unlink()
+            print(f"Removed standalone skill symlink at {stale_skill} (plugin includes it)")
+        elif stale_skill.exists():
             shutil.rmtree(stale_skill)
             print(f"Removed standalone skill at {stale_skill} (plugin includes it)")
 

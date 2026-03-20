@@ -687,9 +687,21 @@ def _apply_pending_tags(
     session_id = conversation.external_id
     pending = consume_pending_tags(conn, session_id)
 
+    # For subagent conversations (external_id contains ::agent::),
+    # also check for tags queued against the parent session.
+    # This handles the case where a user tags during a subagent session —
+    # the tag targets the parent session ID, but the subagent conversation
+    # has a different external_id.
+    parent_id = None
+    if not pending and "::agent::" in session_id:
+        parent_id = session_id.split("::agent::")[0]
+        pending = consume_pending_tags(conn, parent_id)
+
     if not pending:
         # No pending tags, but still unregister the session
         unregister_session(conn, session_id)
+        if parent_id:
+            unregister_session(conn, parent_id)
         return 0
 
     applied = 0
@@ -719,8 +731,10 @@ def _apply_pending_tags(
                     f"tag '{pt.tag_name}' not applied"
                 )
 
-    # Unregister the session
+    # Unregister the session (and parent if subagent)
     unregister_session(conn, session_id)
+    if parent_id:
+        unregister_session(conn, parent_id)
     return applied
 
 
