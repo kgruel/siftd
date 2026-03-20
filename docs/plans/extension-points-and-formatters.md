@@ -4,8 +4,8 @@
 
 In progress. Branch: `feat/extension-points` (4 commits ahead of main at v0.5.2).
 
-Stages 1-5 complete (infrastructure, formatter stubs, narrative walker, fidelity unification, list views).
-Next: Stage 6 (tool summary unification), then make formatters load-bearing for detail views.
+Stages 1-6 complete (infrastructure, formatter stubs, narrative walker, fidelity unification, list views, tool summary unification).
+Next: Stage 7 (search formatter bridge, optional), then make formatters load-bearing for detail views.
 
 ## Why this exists
 
@@ -178,10 +178,11 @@ The peek list stays separate — SessionInfo is a genuinely different shape from
 - `format_table()` added to common.py (string-returning); `print_table()` delegates to it
 - First case where formatters are load-bearing (for list rendering)
 
-### Stage 6: Unify tool summary functions
+### Stage 6: Unify tool summary functions [DONE]
 
-- Single function replacing 3 variants in painted_bridge
-- Input normalized to `(name, count, status)` tuples
+- Single `_tool_summary_lines(tools: list[tuple[str, int, str | None]])` replaces 3 variants
+- Call sites normalize input: ToolCallSummary → tuple, peek (name, count) → (name, count, None), follow (name, count, hints) → (name, count, None)
+- Status shown only when non-None; error status gets error styling
 
 ### Stage 7: Search formatter bridge (optional)
 
