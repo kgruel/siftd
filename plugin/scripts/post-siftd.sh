@@ -1,55 +1,66 @@
 #!/bin/bash
-# After agent runs siftd in Bash, suggest refinements based on the subcommand and flags used.
+# After agent runs siftd in Bash, suggest refinements — once per subcommand per session.
+#
+# Uses a state file to suppress repeated hints. First use of `siftd search` gets a tip;
+# second use doesn't. Resets on session start (see session-start.sh).
 
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
-if [ "$TOOL" != "Bash" ]; then
-  exit 0
-fi
-
-if ! echo "$COMMAND" | grep -q "siftd "; then
-  exit 0
-fi
+[ "$TOOL" = "Bash" ] || exit 0
+echo "$COMMAND" | grep -q 'siftd ' || exit 0
 
 SUBCOMMAND=$(echo "$COMMAND" | sed 's/.*siftd //' | awk '{print $1}')
 
+# --- Per-session dedup ---
+# State dir lives in XDG_STATE_HOME or /tmp as fallback.
+STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/siftd/hook-hints"
+mkdir -p "$STATE_DIR" 2>/dev/null
+
+HINT_KEY="$SUBCOMMAND"
+# For search, distinguish plain vs --thread (different tips)
+if [ "$SUBCOMMAND" = "search" ] && echo "$COMMAND" | grep -q '\-\-thread'; then
+  HINT_KEY="search-thread"
+fi
+
+MARKER="$STATE_DIR/$HINT_KEY"
+if [ -f "$MARKER" ]; then
+  exit 0  # Already hinted this subcommand in this session
+fi
+touch "$MARKER" 2>/dev/null
+
 case "$SUBCOMMAND" in
   search)
-    # Check which flags are already used to give contextual hints
-    if echo "$COMMAND" | grep -q "\-\-thread"; then
-      # Already using --thread, suggest next steps
+    if echo "$COMMAND" | grep -q '\-\-thread'; then
       cat <<'JSON'
 {
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "Tip: drill into a specific result with `siftd query <id>`. To bookmark a useful find: `siftd tag <id> research:<topic>`."
+    "additionalContext": "Tip: drill into a specific result with `siftd query <id>`. To bookmark: `siftd tag <id> research:<topic>`."
   }
 }
 JSON
-    elif echo "$COMMAND" | grep -q "\-\-json"; then
-      # JSON output, no tips needed
+    elif echo "$COMMAND" | grep -q '\-\-json'; then
       exit 0
     else
       cat <<'JSON'
 {
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "Tip: for narrative results, re-run with `--thread`. To see surrounding context, add `--context 2`. To bookmark results: `siftd tag <id> research:<topic>`."
+    "additionalContext": "Tip: for narrative results, add `--thread`. To bookmark results: `siftd tag <id> research:<topic>`."
   }
 }
 JSON
     fi
     ;;
   query)
-    # Check if it's a drill-down (has an ID argument) or a listing
-    if echo "$COMMAND" | grep -qE "query [0-9A-Z]{6,}"; then
+    if echo "$COMMAND" | grep -qE 'query [0-9A-Z]{6,}'; then
       cat <<'JSON'
 {
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "Tip: tag this conversation for later retrieval with `siftd tag <id> <tag>`. Use prefixed tags like `decision:auth` or `research:topic`."
+    "additionalContext": "Tip: tag this conversation with `siftd tag <id> decision:<topic>` or `research:<topic>`."
   }
 }
 JSON
@@ -58,53 +69,25 @@ JSON
 {
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "Tip: drill into a specific conversation with `siftd query <full-id>`. Add `-w <workspace>` to filter by project."
+    "additionalContext": "Tip: drill into a conversation with `siftd query <full-id>`. Filter by project with `-w <workspace>`."
   }
 }
 JSON
     fi
-    ;;
-  peek)
-    cat <<'JSON'
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PostToolUse",
-    "additionalContext": "Tip: for raw text extraction, add `--last-response`. For a complete session view, use `siftd peek <id> --full`. Tag the current session with `/siftd:tag <tag>`."
-  }
-}
-JSON
     ;;
   tag)
     cat <<'JSON'
 {
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "Tip: verify the tag with `siftd query -l <tag-name>` or search within tagged conversations: `siftd search -l <tag-name> \"query\"`."
-  }
-}
-JSON
-    ;;
-  ingest)
-    cat <<'JSON'
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PostToolUse",
-    "additionalContext": "Ingest complete. If using embeddings, rebuild the index with `siftd search --index`. Any pending live tags have been applied."
-  }
-}
-JSON
-    ;;
-  export)
-    cat <<'JSON'
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PostToolUse",
-    "additionalContext": "Tip: use `siftd export --last --format markdown` for readable output, or `--format json` for machine consumption."
+    "additionalContext": "Verify: `siftd query -l <tag-name>` or `siftd search -l <tag-name> \"query\"`."
   }
 }
 JSON
     ;;
   *)
+    # No hints for peek, ingest, export, etc. — subcommand output is self-explanatory.
+    rm -f "$MARKER" 2>/dev/null  # Don't count as hinted
     exit 0
     ;;
 esac

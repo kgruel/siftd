@@ -22,12 +22,6 @@ When the user explicitly invokes `/siftd`, follow the parsing rules below and pr
 
 If the user invokes `/siftd:tag`, skip search and follow the live tagging flow in Preserving Findings.
 
-**Research intent examples** (auto-trigger, not explicit `/siftd`):
-- "What did we decide about auth?" → search for "auth decision"
-- "How was caching implemented last time?" → search for "caching implementation"
-- "Find the conversation where we discussed X" → search for X
-- "What was the rationale for Y?" → search for "rationale Y"
-
 ## Quick Search: `/siftd`
 
 When the user invokes `/siftd`, parse their arguments and run the appropriate command:

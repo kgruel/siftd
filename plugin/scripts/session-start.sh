@@ -17,6 +17,10 @@ if [ -n "$SESSION_ID" ]; then
   siftd register --session "claude_code::$SESSION_ID" --adapter claude_code --workspace "$PWD" 2>/dev/null
 fi
 
+# --- Reset per-session PostToolUse hint dedup ---
+STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/siftd/hook-hints"
+rm -f "$STATE_DIR"/* 2>/dev/null
+
 # --- Determine event reason for conditional reminder ---
 # Claude Code may send different payload shapes across versions.
 # Try the documented field first, then fall back to alternatives.

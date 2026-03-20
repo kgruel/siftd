@@ -1,14 +1,16 @@
 #!/bin/bash
-# When user mentions siftd or expresses research intent, suggest loading the skill.
+# When user explicitly mentions siftd or past conversations, suggest loading the skill.
+#
+# Design: high-precision, low-recall. False negatives are cheap (user says /siftd).
+# False positives are annoying. Only fire on unambiguous research signals.
 
 INPUT=$(cat)
 PROMPT=$(echo "$INPUT" | jq -r '.prompt // empty')
 
-# Exit early if no prompt text
 [ -z "$PROMPT" ] && exit 0
 
-# Check for explicit siftd mention
-if echo "$PROMPT" | grep -qi "siftd"; then
+# Explicit siftd mention — always fire
+if echo "$PROMPT" | grep -qi '\bsiftd\b'; then
   cat <<'EOF'
 {
   "hookSpecificOutput": {
@@ -20,39 +22,18 @@ EOF
   exit 0
 fi
 
-# Check for research intent patterns (case-insensitive)
-# These suggest the user wants to look up past work
-RESEARCH_PATTERNS=(
-  "past conversation"
-  "previous session"
-  "search history"
-  "what did we"
-  "when did we"
-  "how did we"
-  "why did we"
-  "last time"
-  "earlier session"
-  "previous discussion"
-  "conversation where"
-  "session where"
-  "find the conversation"
-  "look up.*conversation"
-  "search.*past"
-  "search.*previous"
-)
-
-for pattern in "${RESEARCH_PATTERNS[@]}"; do
-  if echo "$PROMPT" | grep -qiE "$pattern"; then
-    cat <<'EOF'
+# High-confidence signals only: phrases that unambiguously reference past sessions.
+# Intentionally excludes "what did we", "how did we", "last time" — too generic.
+if echo "$PROMPT" | grep -qiE '\b(past (session|conversation)|earlier (session|conversation)|previous (session|conversation)|search (my |our )?(past |previous )?(session|conversation))\b'; then
+  cat <<'EOF'
 {
   "hookSpecificOutput": {
     "hookEventName": "UserPromptSubmit",
-    "additionalContext": "This looks like a research question. siftd can search past conversations. Load the skill with: Skill tool with skill: \"siftd\""
+    "additionalContext": "siftd can search past conversations. Use `/siftd \"query\"` or load the full skill: Skill tool with skill: \"siftd\""
   }
 }
 EOF
-    exit 0
-  fi
-done
+  exit 0
+fi
 
 exit 0

@@ -8,15 +8,17 @@ argument-hint: "<tag> [tag...] or <conversation-id> <tag> [tag...]"
 
 Tags the current session (or a specific conversation) for later retrieval.
 
-## Session status
+## Pre-flight
 
-!`siftd session-id 2>/dev/null && echo "✓ Session registered — tags will queue for this session" || echo "⚠ No active session detected — will tag most recent conversation instead"`
+!`command -v siftd >/dev/null 2>&1 && echo "✓ siftd installed" || echo "✗ siftd not found in PATH — install with: uv pip install siftd"`
+
+!`siftd session-id 2>/dev/null && echo "✓ Session registered — tags will queue for this session" || echo "⚠ No active session — will tag most recent ingested conversation"`
 
 ## Applying tags
 
 !`siftd tag --current $ARGUMENTS 2>&1`
 
-## Verify
+## Next steps
 
-!`echo "Retrieve later with: siftd query -l <tag-name>"`
-!`echo "Search within tagged: siftd search -l <tag-name> \"query\""`
+!`echo "Retrieve later: siftd query -l <tag-name>"`
+!`echo "Search within:  siftd search -l <tag-name> \"query\""`
