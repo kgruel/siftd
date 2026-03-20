@@ -280,6 +280,9 @@ CREATE INDEX idx_tool_calls_status ON tool_calls(status);
 CREATE INDEX idx_prompt_content_prompt ON prompt_content(prompt_id);
 CREATE INDEX idx_response_content_response ON response_content(response_id);
 
+-- Covers the cache_read_input_tokens lookup used in list_conversations cost calc
+CREATE INDEX idx_response_attributes_key ON response_attributes(key, response_id, value);
+
 --------------------------------------------------------------------------------
 -- CONTENT-ADDRESSABLE STORAGE
 -- Deduplicated blob storage for large content (tool_calls.result)

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from siftd.paths import db_path as default_db_path
+from siftd.storage.conversation_stats import has_conversation_stats_table
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.filters import tag_condition as _tag_condition
 from siftd.storage.queries import (
@@ -256,68 +257,107 @@ def _list_conversations_impl(
     order = "ASC" if oldest_first else "DESC"
     limit_clause = f"LIMIT {limit}" if limit > 0 else ""
 
-    cache_join = (
-        "LEFT JOIN ("
-        "SELECT response_id, MAX(CAST(value AS INTEGER)) AS cache_read "
-        "FROM response_attributes "
-        "WHERE key = 'cache_read_input_tokens' "
-        "GROUP BY response_id"
-        ") ra_cache_read "
-        "ON ra_cache_read.response_id = r.id"
-    )
-    billable_input_expr = (
-        "CASE "
-        "WHEN COALESCE(r.input_tokens, 0) - COALESCE(ra_cache_read.cache_read, 0) < 0 "
-        "THEN 0 "
-        "ELSE COALESCE(r.input_tokens, 0) - COALESCE(ra_cache_read.cache_read, 0) "
-        "END"
-    )
-    cost_expr = (
-        f"""ROUND(SUM(
-            {billable_input_expr} * COALESCE(pr.input_per_mtok, 0)
-            + COALESCE(r.output_tokens, 0) * COALESCE(pr.output_per_mtok, 0)
-        ) / 1000000.0, 4)"""
-        if has_pricing
-        else "NULL"
-    )
-    pricing_join = (
-        "LEFT JOIN pricing pr ON pr.model_id = r.model_id AND pr.provider_id = r.provider_id"
-        if has_pricing
-        else ""
-    )
-
-    sql = f"""
-        SELECT
-            c.id AS conversation_id,
-            w.path AS workspace,
-            (SELECT m2.name FROM responses r2
-             LEFT JOIN models m2 ON m2.id = r2.model_id
-             WHERE r2.conversation_id = c.id
-             GROUP BY m2.name
-             ORDER BY COUNT(*) DESC
-             LIMIT 1) AS model,
-            c.started_at,
-            (SELECT COUNT(*) FROM prompts WHERE conversation_id = c.id) AS prompts,
-            COUNT(DISTINCT r.id) AS responses,
-            COALESCE(SUM(r.input_tokens), 0) + COALESCE(SUM(r.output_tokens), 0) AS tokens,
-            {cost_expr} AS cost
+    # Phase 1: Identify the target conversations quickly.
+    # WhereBuilder tracks which JOINs its filters actually need, so we only
+    # join responses/models when a filter (e.g. --model) requires them.
+    phase1_joins = wb.joins_sql()
+    group_by = "GROUP BY c.id" if wb.needs_group_by else ""
+    id_sql = f"""
+        SELECT c.id
         FROM conversations c
-        LEFT JOIN workspaces w ON w.id = c.workspace_id
-        LEFT JOIN responses r ON r.conversation_id = c.id
-        LEFT JOIN models m ON m.id = r.model_id
-        LEFT JOIN providers pv ON pv.id = r.provider_id
-        {pricing_join}
-        {cache_join}
+        {phase1_joins}
         {where}
-        GROUP BY c.id
+        {group_by}
         ORDER BY c.started_at {order}
         {limit_clause}
     """
+    id_rows = conn.execute(id_sql, params).fetchall()
+    conv_ids = [row["id"] for row in id_rows]
 
-    rows = conn.execute(sql, params).fetchall()
+    if not conv_ids:
+        return []
 
-    # Bulk-fetch tags for returned conversations (single query, no N+1)
-    conv_ids = [row["conversation_id"] for row in rows]
+    placeholders = ",".join("?" * len(conv_ids))
+    use_stats = has_conversation_stats_table(conn)
+
+    if use_stats:
+        # Fast path: read precomputed stats from conversation_stats table.
+        # COALESCEs to live subqueries for any rows missing from the stats
+        # table (e.g. conversations inserted since the last ingest rebuild).
+        rows = conn.execute(
+            f"""SELECT c.id AS conversation_id, w.path AS workspace,
+                    c.started_at,
+                    COALESCE(cs.prompt_count,
+                        (SELECT COUNT(*) FROM prompts WHERE conversation_id = c.id)
+                    ) AS prompts,
+                    COALESCE(cs.response_count,
+                        (SELECT COUNT(*) FROM responses WHERE conversation_id = c.id)
+                    ) AS responses,
+                    COALESCE(cs.total_tokens,
+                        (SELECT COALESCE(SUM(input_tokens),0) + COALESCE(SUM(output_tokens),0)
+                         FROM responses WHERE conversation_id = c.id)
+                    ) AS tokens,
+                    COALESCE(cs.model_name,
+                        (SELECT m2.name FROM responses r2
+                         LEFT JOIN models m2 ON m2.id = r2.model_id
+                         WHERE r2.conversation_id = c.id
+                         GROUP BY m2.name ORDER BY COUNT(*) DESC LIMIT 1)
+                    ) AS model,
+                    cs.cost
+                FROM conversations c
+                LEFT JOIN workspaces w ON w.id = c.workspace_id
+                LEFT JOIN conversation_stats cs ON cs.conversation_id = c.id
+                WHERE c.id IN ({placeholders})
+                ORDER BY c.started_at {order}""",
+            conv_ids,
+        ).fetchall()
+    else:
+        # Fallback: compute from source tables (before first ingest rebuilds
+        # the stats table, or if the table was dropped).
+        cost_subquery = (
+            """(SELECT ROUND(SUM(
+                CASE
+                    WHEN COALESCE(r2.input_tokens, 0) - COALESCE(
+                        (SELECT MAX(CAST(ra.value AS INTEGER))
+                         FROM response_attributes ra
+                         WHERE ra.response_id = r2.id
+                           AND ra.key = 'cache_read_input_tokens'), 0) < 0
+                    THEN 0
+                    ELSE COALESCE(r2.input_tokens, 0) - COALESCE(
+                        (SELECT MAX(CAST(ra.value AS INTEGER))
+                         FROM response_attributes ra
+                         WHERE ra.response_id = r2.id
+                           AND ra.key = 'cache_read_input_tokens'), 0)
+                END * COALESCE(pr.input_per_mtok, 0)
+                + COALESCE(r2.output_tokens, 0) * COALESCE(pr.output_per_mtok, 0)
+            ) / 1000000.0, 4)
+            FROM responses r2
+            LEFT JOIN pricing pr ON pr.model_id = r2.model_id
+                                 AND pr.provider_id = r2.provider_id
+            WHERE r2.conversation_id = c.id)"""
+            if has_pricing
+            else "NULL"
+        )
+        rows = conn.execute(
+            f"""SELECT c.id AS conversation_id, w.path AS workspace,
+                    (SELECT m2.name FROM responses r2
+                     LEFT JOIN models m2 ON m2.id = r2.model_id
+                     WHERE r2.conversation_id = c.id
+                     GROUP BY m2.name ORDER BY COUNT(*) DESC LIMIT 1) AS model,
+                    c.started_at,
+                    (SELECT COUNT(*) FROM prompts WHERE conversation_id = c.id) AS prompts,
+                    (SELECT COUNT(*) FROM responses WHERE conversation_id = c.id) AS responses,
+                    (SELECT COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0)
+                     FROM responses WHERE conversation_id = c.id) AS tokens,
+                    {cost_subquery} AS cost
+                FROM conversations c
+                LEFT JOIN workspaces w ON w.id = c.workspace_id
+                WHERE c.id IN ({placeholders})
+                ORDER BY c.started_at {order}""",
+            conv_ids,
+        ).fetchall()
+
+    # Bulk-fetch tags
     tags_by_conv = fetch_tags_for_conversations(conn, conv_ids)
 
     return [

@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-03-20
+
+### Added
+
+- **Multi-harness skill install** — `siftd install skill` now supports `--harness` to install the siftd skill/instructions for different agents: Claude Code (default), Pi Agent, Codex CLI, Gemini CLI, Copilot CLI, Aider. Claude Code and Pi get the structured skill (SKILL.md + reference/); other harnesses get a rendered plain-markdown instructions file.
+- **`siftd install skill`** — Lightweight alternative to the full plugin. Installs just the /siftd decision tree and reference docs without hooks or commands.
+- **`/siftd:query` and `/siftd:peek` commands** — New slash commands for browsing conversations and viewing live sessions.
+- **Stop hook** — Auto-runs `siftd ingest -a claude_code` on session exit (~0.7s) to apply pending tags queued during the session.
+- **Per-session hint dedup** — PostToolUse hints fire once per subcommand per session via marker files, reset on SessionStart.
+- **Bare `siftd install`** — Shows available components and supported harnesses instead of an argparse error.
+
+### Fixed
+
+- **Live tagging bug** — `session-start.sh` now registers sessions unconditionally (not gated on `reason` field detection, which was fragile across Claude Code versions). Added DB fallback in `--current` session detection with stderr feedback when falling back to `--last 1`.
+- **Subagent pending tags** — Tags queued against a parent session ID now apply to subagent conversations. When a subagent conversation is ingested, `_apply_pending_tags` falls back to the parent session ID (strips `::agent::` suffix) if no tags match the subagent's own external_id.
+- **Single-scope harness defaulting** — Harnesses with exactly one supported scope (copilot_cli, aider) auto-default to it instead of failing when `--scope user` is the implicit default.
+- **Symlink cleanup on plugin install** — Plugin install now removes symlinked standalone skills (was skipping them, causing duplicate /siftd entries).
+- **`conversation_stats` commit convention** — `ensure_conversation_stats_table` and `rebuild_conversation_stats` now follow the project `commit=False` convention.
+
+### Changed
+
+- **Slimmed SKILL.md** — Reduced from 305 to 70 lines. SKILL.md is now a decision tree; exhaustive flag lists live in `reference/*.md`.
+- **Tightened hook sensitivity** — Removed 16 generic patterns from UserPromptSubmit (false-positive-prone phrases like "what did we", "last time"). Kept only explicit "siftd" mentions and "past/earlier/previous session/conversation".
+- **Commands stripped of static hints** — No more "Next steps" boilerplate in command output; PostToolUse hook provides contextual, deduplicated hints.
+- **Plugin version** — Bumped to 1.1.0.
+
+## [0.5.3] - 2026-03-20
+
+### Fixed
+
+- **`siftd query` is ~50× faster** — `siftd query` dropped from ~3.5s to ~70ms. Several compounding issues fixed:
+  - Added covering index on `response_attributes(key, response_id, value)`, eliminating a full 479K-row table scan on every query
+  - Rewrote `list_conversations` as a two-phase query: Phase 1 identifies conversation IDs cheaply; Phase 2 computes stats only for matched rows
+  - `WhereBuilder` now tracks which JOINs each filter actually needs — the default query (no `--model`) no longer scans 363K response rows
+  - `--model` filter rewritten from a JOIN to an `EXISTS` subquery that stops at first match
+  - Added `conversation_stats` materialized table, rebuilt at the end of each `siftd ingest`. Query reads precomputed counts, tokens, model, and cost from a single row per conversation instead of aggregating the responses table on the fly. `siftd query --limit 0 --since 30d` (1600+ conversations) dropped from ~3s to ~46ms.
+
 ## [0.5.2] - 2026-03-19
 
 ### Fixed

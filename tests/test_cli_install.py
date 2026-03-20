@@ -1,15 +1,19 @@
-"""Tests for 'siftd install plugin' command."""
+"""Tests for 'siftd install plugin' and 'siftd install skill' commands."""
 
 import os
 import stat
 from argparse import Namespace
 from pathlib import Path
 
-from siftd.cli_install import _find_plugin_source, _install_plugin
+from siftd.cli_install import _find_plugin_source, _install_plugin, _install_skill
 
 
 def _make_args(dry_run=False, scope="user") -> Namespace:
     return Namespace(extra="plugin", dry_run=dry_run, scope=scope)
+
+
+def _make_skill_args(dry_run=False, scope="user", harness=None) -> Namespace:
+    return Namespace(extra="skill", dry_run=dry_run, scope=scope, harness=harness)
 
 
 class TestPluginBundled:
@@ -143,3 +147,141 @@ class TestInstallPluginCLI:
 
         assert rc == 0
         assert (fake_home / ".claude" / "plugins" / "siftd" / ".claude-plugin" / "plugin.json").exists()
+
+
+class TestInstallSkill:
+    """Install skill-only (no hooks, no commands)."""
+
+    def test_copies_skill_to_user_scope(self, tmp_path, monkeypatch):
+        """Skill files are copied to ~/.claude/skills/siftd/."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = _install_skill(_make_skill_args())
+
+        assert rc == 0
+        target = fake_home / ".claude" / "skills" / "siftd"
+        assert target.is_dir()
+        assert (target / "SKILL.md").exists()
+        assert (target / "reference" / "search.md").exists()
+        assert (target / "reference" / "query.md").exists()
+        assert (target / "reference" / "tags.md").exists()
+
+    def test_no_hooks_or_commands(self, tmp_path, monkeypatch):
+        """Skill install does not include plugin artifacts."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        _install_skill(_make_skill_args())
+
+        target = fake_home / ".claude" / "skills" / "siftd"
+        assert not (target / "hooks").exists()
+        assert not (target / "scripts").exists()
+        assert not (target / "commands").exists()
+        assert not (target / ".claude-plugin").exists()
+
+    def test_copies_skill_to_project_scope(self, tmp_path, monkeypatch):
+        """--scope project installs to cwd/.claude/skills/siftd/."""
+        monkeypatch.chdir(tmp_path)
+
+        rc = _install_skill(_make_skill_args(scope="project"))
+
+        assert rc == 0
+        target = tmp_path / ".claude" / "skills" / "siftd"
+        assert (target / "SKILL.md").exists()
+
+    def test_dry_run_no_write(self, tmp_path, monkeypatch, capsys):
+        """--dry-run shows plan without writing."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = _install_skill(_make_skill_args(dry_run=True))
+
+        assert rc == 0
+        assert not (fake_home / ".claude" / "skills" / "siftd").exists()
+        captured = capsys.readouterr()
+        assert "Source:" in captured.out
+
+    def test_plugin_install_removes_standalone_skill(self, tmp_path, monkeypatch):
+        """Installing plugin removes standalone skill to avoid duplicates."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        # Install skill first
+        _install_skill(_make_skill_args())
+        skill_target = fake_home / ".claude" / "skills" / "siftd"
+        assert skill_target.exists()
+
+        # Install plugin — should clean up the standalone skill
+        _install_plugin(_make_args())
+        assert not skill_target.exists()
+        assert (fake_home / ".claude" / "plugins" / "siftd" / ".claude-plugin" / "plugin.json").exists()
+
+    def test_install_skill_via_main(self, tmp_path, monkeypatch):
+        """siftd install skill works end-to-end through CLI dispatch."""
+        from siftd.cli import main
+
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = main(["install", "skill"])
+
+        assert rc == 0
+        assert (fake_home / ".claude" / "skills" / "siftd" / "SKILL.md").exists()
+
+    def test_install_codex_cli_renders_instructions(self, tmp_path, monkeypatch):
+        """Codex CLI gets a rendered plain-markdown file, not SKILL.md."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = _install_skill(_make_skill_args(harness="codex_cli"))
+
+        assert rc == 0
+        target = fake_home / ".codex" / "siftd.md"
+        assert target.exists()
+        content = target.read_text()
+        # Should have quick reference, not Claude Code frontmatter
+        assert "skill-interface-version" not in content
+        assert "siftd search" in content
+        assert "siftd query" in content
+        assert "Tag conventions" in content
+
+    def test_install_gemini_cli(self, tmp_path, monkeypatch):
+        """Gemini CLI gets instructions in ~/.gemini/."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = _install_skill(_make_skill_args(harness="gemini_cli"))
+
+        assert rc == 0
+        assert (fake_home / ".gemini" / "siftd.md").exists()
+
+    def test_install_pi_agent_gets_skill(self, tmp_path, monkeypatch):
+        """Pi Agent gets structured SKILL.md + reference/."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = _install_skill(_make_skill_args(harness="pi_agent"))
+
+        assert rc == 0
+        target = fake_home / ".pi" / "agent" / "skills" / "siftd"
+        assert (target / "SKILL.md").exists()
+        assert (target / "reference" / "search.md").exists()
+
+    def test_install_unknown_harness_fails(self, tmp_path, monkeypatch):
+        """Unknown harness returns error."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = _install_skill(_make_skill_args(harness="nonexistent"))
+
+        assert rc == 1

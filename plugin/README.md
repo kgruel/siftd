@@ -55,19 +55,22 @@ Direct-execution commands for manual workflows:
 | Command | Description |
 |---------|-------------|
 | `/siftd:search "query"` | Run search and see raw output |
+| `/siftd:query [id]` | List conversations or drill into one |
+| `/siftd:peek [id]` | View live/recent sessions (bypasses DB) |
 | `/siftd:tag <tag>` | Tag current session or conversation |
 
 Commands run siftd directly and show output without agent interpretation. Use these when you want to drive the workflow yourself.
 
 ### Hooks
 
-Three hooks support the research workflow:
+Four hooks support the research workflow:
 
 | Hook | Trigger | Behavior |
 |------|---------|----------|
-| `SessionStart` | Session start/resume | Reminds agent that siftd is available |
-| `UserPromptSubmit` | User mentions "siftd" | Suggests loading the skill |
-| `PostToolUse` | Agent runs `siftd` in Bash | Suggests refinements based on the command run |
+| `SessionStart` | Session start/resume/compact | Registers session for live tagging; reminds agent on compact/resume |
+| `Stop` | Session exit | Runs `siftd ingest -a claude_code` to apply pending tags |
+| `UserPromptSubmit` | User mentions "siftd" or past sessions | Suggests loading the skill (high-precision patterns only) |
+| `PostToolUse` | Agent runs `siftd` in Bash | Contextual tips, once per subcommand per session |
 
 ## Structure
 
@@ -78,12 +81,15 @@ plugin/
 ├── hooks/
 │   └── hooks.json        # Hook definitions
 ├── scripts/
-│   ├── session-start.sh
-│   ├── skill-reminder.sh
-│   └── post-siftd.sh
+│   ├── session-start.sh  # Register session + remind on compact/resume
+│   ├── stop.sh           # Auto-ingest on session exit (applies pending tags)
+│   ├── skill-reminder.sh # Detect research intent in user prompts
+│   └── post-siftd.sh     # Contextual tips after siftd commands
 ├── commands/
-│   ├── siftd:search.md
-│   └── siftd:tag.md
+│   ├── siftd:search.md   # Direct search execution
+│   ├── siftd:query.md    # List/drill-down conversations
+│   ├── siftd:peek.md     # Live session inspection
+│   └── siftd:tag.md      # Tag with session detection feedback
 └── skills/
     └── siftd/
         ├── SKILL.md

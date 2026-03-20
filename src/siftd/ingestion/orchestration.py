@@ -523,6 +523,11 @@ def ingest_all(
                 conn, source, adapter, file_path, str(e), stats, on_file, emit_event
             )
 
+    # Rebuild materialized stats table for fast list_conversations queries.
+    from siftd.storage.conversation_stats import rebuild_conversation_stats
+
+    rebuild_conversation_stats(conn, commit=True)
+
     return stats
 
 
@@ -682,9 +687,29 @@ def _apply_pending_tags(
     session_id = conversation.external_id
     pending = consume_pending_tags(conn, session_id)
 
+    # For subagent conversations (external_id contains ::agent::),
+    # also check for tags queued against the parent session.
+    # This handles the case where a user tags during a subagent session —
+    # the tag targets the parent session ID, but the subagent conversation
+    # has a different external_id.
+    #
+    # Ingest-order note: if the parent conversation is ingested first in the
+    # same run, it will consume the tags itself (correct — both belong to the
+    # same session). The subagent fallback only fires when the subagent is
+    # ingested before the parent, or when the parent file was skipped
+    # (unchanged since last ingest). Either way, the tag lands on exactly one
+    # conversation in the session, which is the intended "tag this session"
+    # semantic.
+    parent_id = None
+    if not pending and "::agent::" in session_id:
+        parent_id = session_id.split("::agent::")[0]
+        pending = consume_pending_tags(conn, parent_id)
+
     if not pending:
         # No pending tags, but still unregister the session
         unregister_session(conn, session_id)
+        if parent_id:
+            unregister_session(conn, parent_id)
         return 0
 
     applied = 0
@@ -714,8 +739,10 @@ def _apply_pending_tags(
                     f"tag '{pt.tag_name}' not applied"
                 )
 
-    # Unregister the session
+    # Unregister the session (and parent if subagent)
     unregister_session(conn, session_id)
+    if parent_id:
+        unregister_session(conn, parent_id)
     return applied
 
 

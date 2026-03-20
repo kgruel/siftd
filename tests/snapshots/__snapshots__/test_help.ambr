@@ -231,25 +231,33 @@
 # name: TestHelpSnapshots.test_subcommand_help[install]
   '''
   usage: siftd install [-h] [--dry-run] [--scope {user,project}]
-                       {embed,serve,plugin}
+                       [--harness NAME]
+                       [{embed,serve,skill,plugin}]
   
   positional arguments:
-    {embed,serve,plugin}  Component to install (embed: semantic search, serve:
-                          HTTP server, plugin: Claude Code plugin)
+    {embed,serve,skill,plugin}
+                          Component to install (skill: search workflow, plugin:
+                          skill + hooks + commands, embed: semantic search,
+                          serve: HTTP server)
   
   options:
     -h, --help            show this help message and exit
     --dry-run             Show what would be run without executing
     --scope {user,project}
-                          Plugin install scope: user (~/.claude/plugins/) or
-                          project (.claude/plugins/)
+                          Install scope: user (home dir) or project (current
+                          dir)
+    --harness NAME        Target harness for skill install (claude_code,
+                          codex_cli, gemini_cli, pi_agent, copilot_cli, aider)
   
   examples:
-    siftd install embed             # install semantic search dependencies
-    siftd install serve             # install HTTP server dependencies
-    siftd install embed --dry-run   # show what would be installed
-    siftd install plugin            # install Claude Code plugin (user scope)
-    siftd install plugin --scope project  # install for current project only
+    siftd install skill                         # Claude Code skill (default)
+    siftd install skill --harness codex_cli     # Codex CLI instructions
+    siftd install skill --harness gemini_cli    # Gemini CLI instructions
+    siftd install skill --harness pi_agent      # Pi Agent skill
+    siftd install plugin                        # full Claude Code plugin
+    siftd install plugin --scope project        # plugin for current project only
+    siftd install embed                         # semantic search dependencies
+    siftd install serve                         # HTTP server dependencies
   
   '''
 # ---
