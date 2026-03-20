@@ -11,30 +11,59 @@ def tag_condition(tag_value: str) -> tuple[str, str]:
     return "tg.name = ?", tag_value
 
 
+# Available JOIN clauses, keyed by alias.
+# Phase-1 ID queries include only the joins their filters actually need.
+JOINS: dict[str, str] = {
+    "w": "LEFT JOIN workspaces w ON w.id = c.workspace_id",
+    "r": "LEFT JOIN responses r ON r.conversation_id = c.id",
+    "m": "LEFT JOIN models m ON m.id = r.model_id",
+}
+
+# Dependency edges: requesting 'm' also requires 'r'.
+_JOIN_DEPS: dict[str, list[str]] = {
+    "m": ["r"],
+}
+
+
 class WhereBuilder:
     """Accumulates WHERE conditions and params for conversation queries.
 
     Handles the filter patterns shared by list_conversations and
     filter_conversations: workspace, model, date range, and tag booleans.
+
+    Tracks which JOINs are needed so callers can build minimal queries.
     """
 
     def __init__(self) -> None:
         self.conditions: list[str] = []
         self.params: list[str] = []
+        self._joins: set[str] = set()
 
     def add(self, condition: str, *params: str) -> None:
         """Append a raw condition with positional params."""
         self.conditions.append(condition)
         self.params.extend(params)
 
+    def require_join(self, *aliases: str) -> None:
+        """Declare that one or more table aliases are needed.
+
+        Transitive dependencies (e.g. m → r) are resolved automatically.
+        """
+        for alias in aliases:
+            self._joins.add(alias)
+            for dep in _JOIN_DEPS.get(alias, []):
+                self._joins.add(dep)
+
     # -- common filter patterns --
 
     def workspace(self, value: str | None) -> None:
         if value:
+            self.require_join("w")
             self.add("(w.path LIKE ? OR w.git_remote LIKE ?)", f"%{value}%", f"%{value}%")
 
     def model(self, value: str | None) -> None:
         if value:
+            self.require_join("m")
             self.add("(m.raw_name LIKE ? OR m.name LIKE ?)", f"%{value}%", f"%{value}%")
 
     def since(self, value: str | None) -> None:
@@ -86,6 +115,17 @@ class WhereBuilder:
             f"c.id NOT IN (SELECT ct.conversation_id FROM conversation_tags ct"
             f" JOIN tags tg ON tg.id = ct.tag_id WHERE {clause})"
         )
+
+    def joins_sql(self) -> str:
+        """Return JOIN clauses for all required tables, in dependency order."""
+        # Stable order: w, r, m (respects FK dependencies)
+        ordered = [alias for alias in ("w", "r", "m") if alias in self._joins]
+        return "\n        ".join(JOINS[a] for a in ordered)
+
+    @property
+    def needs_group_by(self) -> bool:
+        """True when JOINs introduce duplicates that require GROUP BY c.id."""
+        return "r" in self._joins
 
     def where_sql(self) -> str:
         """Return 'WHERE ...' string, or empty string if no conditions."""
