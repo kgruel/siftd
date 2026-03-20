@@ -12,8 +12,8 @@ def _make_args(dry_run=False, scope="user") -> Namespace:
     return Namespace(extra="plugin", dry_run=dry_run, scope=scope)
 
 
-def _make_skill_args(dry_run=False, scope="user") -> Namespace:
-    return Namespace(extra="skill", dry_run=dry_run, scope=scope)
+def _make_skill_args(dry_run=False, scope="user", harness=None) -> Namespace:
+    return Namespace(extra="skill", dry_run=dry_run, scope=scope, harness=harness)
 
 
 class TestPluginBundled:
@@ -233,3 +233,55 @@ class TestInstallSkill:
 
         assert rc == 0
         assert (fake_home / ".claude" / "skills" / "siftd" / "SKILL.md").exists()
+
+    def test_install_codex_cli_renders_instructions(self, tmp_path, monkeypatch):
+        """Codex CLI gets a rendered plain-markdown file, not SKILL.md."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = _install_skill(_make_skill_args(harness="codex_cli"))
+
+        assert rc == 0
+        target = fake_home / ".codex" / "siftd.md"
+        assert target.exists()
+        content = target.read_text()
+        # Should have quick reference, not Claude Code frontmatter
+        assert "skill-interface-version" not in content
+        assert "siftd search" in content
+        assert "siftd query" in content
+        assert "Tag conventions" in content
+
+    def test_install_gemini_cli(self, tmp_path, monkeypatch):
+        """Gemini CLI gets instructions in ~/.gemini/."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = _install_skill(_make_skill_args(harness="gemini_cli"))
+
+        assert rc == 0
+        assert (fake_home / ".gemini" / "siftd.md").exists()
+
+    def test_install_pi_agent_gets_skill(self, tmp_path, monkeypatch):
+        """Pi Agent gets structured SKILL.md + reference/."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = _install_skill(_make_skill_args(harness="pi_agent"))
+
+        assert rc == 0
+        target = fake_home / ".pi" / "agent" / "skills" / "siftd"
+        assert (target / "SKILL.md").exists()
+        assert (target / "reference" / "search.md").exists()
+
+    def test_install_unknown_harness_fails(self, tmp_path, monkeypatch):
+        """Unknown harness returns error."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        rc = _install_skill(_make_skill_args(harness="nonexistent"))
+
+        assert rc == 1

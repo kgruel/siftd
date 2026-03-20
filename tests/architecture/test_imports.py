@@ -77,6 +77,7 @@ MODULE_GROUPS: dict[str, str] = {
     "model_names": "utilities",
     "git": "utilities",
     "plugin_discovery": "utilities",
+    "skill_gen": "utilities",
     "tool_query": "utilities",
     "dateparse": "utilities",
     "__init__": "api",

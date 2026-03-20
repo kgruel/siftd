@@ -280,12 +280,14 @@ def _find_plugin_source() -> Path | None:
 
 
 def _install_skill(args) -> int:
-    """Install the /siftd skill (no hooks, no commands).
+    """Install the /siftd skill for the specified harness.
 
-    Provides the decision tree and reference docs.
-    Lightweight alternative to the full plugin for users who just
-    want the search workflow without hooks on every prompt/tool use.
+    Supports multiple harnesses. Claude Code and Pi get the structured
+    skill (SKILL.md + reference/). Other harnesses get a rendered
+    plain-markdown instructions file.
     """
+    from siftd.skill_gen import HARNESS_INFO, render_instructions
+
     source_path = _find_plugin_source()
     if source_path is None:
         print("Error: Bundled plugin files not found in this installation.", file=sys.stderr)
@@ -296,45 +298,89 @@ def _install_skill(args) -> int:
         print("Error: Skill directory not found in bundled plugin.", file=sys.stderr)
         return 1
 
+    harness = getattr(args, "harness", None) or "claude_code"
     scope = getattr(args, "scope", "user")
-    if scope == "project":
-        target = Path.cwd() / ".claude" / "skills" / "siftd"
-    else:
-        target = Path.home() / ".claude" / "skills" / "siftd"
 
-    if args.dry_run:
-        print(f"Source: {skill_source}")
-        print(f"Target: {target}")
-        print(f"Scope:  {scope}")
-        return 0
-
-    if target.is_symlink():
-        target.unlink()
-    elif target.exists():
-        shutil.rmtree(target)
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(skill_source, target)
-
-    # Verify
-    if not (target / "SKILL.md").exists():
-        print("Warning: Skill copied but SKILL.md not found.", file=sys.stderr)
+    if harness not in HARNESS_INFO:
+        print(f"Unknown harness: {harness}", file=sys.stderr)
+        print(f"Available: {', '.join(HARNESS_INFO)}", file=sys.stderr)
         return 1
 
-    # Check if plugin is also installed and warn about overlap
-    plugin_user = Path.home() / ".claude" / "plugins" / "siftd"
-    plugin_project = Path.cwd() / ".claude" / "plugins" / "siftd"
-    if plugin_user.exists() or plugin_project.exists():
-        print("Note: the plugin is also installed and already includes this skill.", file=sys.stderr)
-        print("You may want to remove one to avoid duplicate /siftd skill entries.", file=sys.stderr)
+    info = HARNESS_INFO[harness]
+    scope_dirs = info.get("scope_dirs", {})
 
-    print(f"Installed skill to {target}")
-    print(f"Scope: {scope}")
-    print()
-    print("Available as: /siftd")
-    print()
-    print("For hooks (live tagging, auto-ingest, contextual tips):")
-    print("  siftd install plugin")
+    if scope not in scope_dirs:
+        available = ", ".join(scope_dirs)
+        print(f"{info['display_name']} only supports scope: {available}", file=sys.stderr)
+        return 1
+
+    raw_target = scope_dirs[scope]
+    if raw_target.startswith("~"):
+        # Use Path.home() so monkeypatching works in tests
+        base = Path.home() / raw_target[2:]  # strip ~/
+    elif raw_target.startswith("/"):
+        base = Path(raw_target)
+    else:
+        # Relative path — resolve against cwd
+        base = Path.cwd() / raw_target
+
+    fmt = info.get("format", "instructions")
+
+    if fmt == "skill":
+        # Structured: copy SKILL.md + reference/ directory
+        target = base
+
+        if args.dry_run:
+            print(f"Harness: {info['display_name']}")
+            print(f"Source:  {skill_source}")
+            print(f"Target:  {target}")
+            print(f"Scope:   {scope}")
+            return 0
+
+        if target.is_symlink():
+            target.unlink()
+        elif target.exists():
+            shutil.rmtree(target)
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(skill_source, target)
+
+        if not (target / "SKILL.md").exists():
+            print("Warning: Skill copied but SKILL.md not found.", file=sys.stderr)
+            return 1
+
+        # Check for Claude Code plugin overlap
+        if harness == "claude_code":
+            plugin_user = Path.home() / ".claude" / "plugins" / "siftd"
+            plugin_project = Path.cwd() / ".claude" / "plugins" / "siftd"
+            if plugin_user.exists() or plugin_project.exists():
+                print("Note: the plugin is also installed and already includes this skill.", file=sys.stderr)
+                print("You may want to remove one to avoid duplicate /siftd skill entries.", file=sys.stderr)
+
+        print(f"Installed skill to {target}")
+        print(f"Harness: {info['display_name']}")
+
+    else:
+        # Instructions: render plain markdown to a single file
+        filename = info.get("filename", "siftd.md")
+        target = base / filename
+
+        reference_dir = skill_source / "reference"
+
+        if args.dry_run:
+            print(f"Harness: {info['display_name']}")
+            print(f"Target:  {target}")
+            print(f"Scope:   {scope}")
+            return 0
+
+        content = render_instructions(reference_dir)
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+
+        print(f"Installed instructions to {target}")
+        print(f"Harness: {info['display_name']}")
+
     return 0
 
 
@@ -389,13 +435,23 @@ def _install_plugin(args) -> int:
 def cmd_install(args) -> int:
     """Install optional dependencies or bundled components."""
     if not args.extra:
+        from siftd.skill_gen import HARNESS_INFO
+
         print("Available components:\n")
-        print("  skill    /siftd skill only (lightweight, no hooks)")
-        print("  plugin   Full plugin: skill + hooks + commands")
+        print("  skill    Teach your agent to use siftd (supports multiple harnesses)")
+        print("  plugin   Full Claude Code plugin: skill + hooks + commands")
         print("  embed    Semantic search dependencies")
         print("  serve    HTTP server dependencies")
         print()
-        print("Usage: siftd install <component> [--scope user|project] [--dry-run]")
+        print("Supported harnesses for 'skill':")
+        for key, info in HARNESS_INFO.items():
+            print(f"  {key:<14} {info['display_name']}")
+        print()
+        print("Usage:")
+        print("  siftd install skill                          # Claude Code (default)")
+        print("  siftd install skill --harness codex_cli      # Codex CLI")
+        print("  siftd install skill --harness gemini_cli     # Gemini CLI")
+        print("  siftd install plugin                         # Full Claude Code plugin")
         return 0
 
     if args.extra == "embed":
@@ -419,12 +475,14 @@ def build_install_parser(subparsers) -> None:
         help="Install optional dependencies or bundled components",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  siftd install skill             # install skill only (lightweight, no hooks)
-  siftd install plugin            # install full plugin (hooks + commands + skill)
-  siftd install plugin --scope project  # install for current project only
-  siftd install embed             # install semantic search dependencies
-  siftd install serve             # install HTTP server dependencies
-  siftd install embed --dry-run   # show what would be installed""",
+  siftd install skill                         # Claude Code skill (default)
+  siftd install skill --harness codex_cli     # Codex CLI instructions
+  siftd install skill --harness gemini_cli    # Gemini CLI instructions
+  siftd install skill --harness pi_agent      # Pi Agent skill
+  siftd install plugin                        # full Claude Code plugin
+  siftd install plugin --scope project        # plugin for current project only
+  siftd install embed                         # semantic search dependencies
+  siftd install serve                         # HTTP server dependencies""",
     )
     p_install.add_argument(
         "extra",
@@ -442,6 +500,12 @@ def build_install_parser(subparsers) -> None:
         "--scope",
         choices=["user", "project"],
         default="user",
-        help="Install scope: user (~/.claude/) or project (.claude/)",
+        help="Install scope: user (home dir) or project (current dir)",
+    )
+    p_install.add_argument(
+        "--harness",
+        default=None,
+        metavar="NAME",
+        help="Target harness for skill install (claude_code, codex_cli, gemini_cli, pi_agent, copilot_cli, aider)",
     )
     p_install.set_defaults(func=cmd_install)
