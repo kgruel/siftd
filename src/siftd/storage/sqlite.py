@@ -83,6 +83,7 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         _ensure_git_remote_index(conn)
         _ensure_tag_indexes(conn)
         _ensure_response_attributes_key_index(conn)
+        _ensure_conversation_stats_table(conn)
 
         # Stamp schema version after successful migrations
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -487,6 +488,13 @@ def _ensure_response_attributes_key_index(conn: sqlite3.Connection) -> None:
         " ON response_attributes(key, response_id, value)"
     )
     conn.commit()
+
+
+def _ensure_conversation_stats_table(conn: sqlite3.Connection) -> None:
+    """Create the conversation_stats materialized table. Idempotent."""
+    from siftd.storage.conversation_stats import ensure_conversation_stats_table
+
+    ensure_conversation_stats_table(conn)
 
 
 def ensure_push_log_table(conn: sqlite3.Connection) -> None:

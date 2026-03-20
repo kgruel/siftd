@@ -523,6 +523,11 @@ def ingest_all(
                 conn, source, adapter, file_path, str(e), stats, on_file, emit_event
             )
 
+    # Rebuild materialized stats table for fast list_conversations queries.
+    from siftd.storage.conversation_stats import rebuild_conversation_stats
+
+    rebuild_conversation_stats(conn)
+
     return stats
 
 

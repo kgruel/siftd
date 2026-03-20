@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from siftd.paths import db_path as default_db_path
+from siftd.storage.conversation_stats import has_conversation_stats_table
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.filters import tag_condition as _tag_condition
 from siftd.storage.queries import (
@@ -276,114 +277,89 @@ def _list_conversations_impl(
     if not conv_ids:
         return []
 
-    # Phase 2: Compute stats using bulk GROUP BY queries (one scan each),
-    # then assemble in Python.  Much faster than correlated subqueries for
-    # large result sets because each query does a single sorted index scan.
     placeholders = ",".join("?" * len(conv_ids))
+    use_stats = has_conversation_stats_table(conn)
 
-    # Conversation metadata + workspace (indexed, trivial)
-    base_rows = conn.execute(
-        f"""SELECT c.id AS conversation_id, w.path AS workspace, c.started_at
-            FROM conversations c
-            LEFT JOIN workspaces w ON w.id = c.workspace_id
-            WHERE c.id IN ({placeholders})
-            ORDER BY c.started_at {order}""",
-        conv_ids,
-    ).fetchall()
-
-    # Response counts + token totals (idx_responses_conversation)
-    resp_rows = conn.execute(
-        f"""SELECT conversation_id,
-                COUNT(*) AS responses,
-                COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) AS tokens
-            FROM responses
-            WHERE conversation_id IN ({placeholders})
-            GROUP BY conversation_id""",
-        conv_ids,
-    ).fetchall()
-    resp_stats: dict[str, tuple[int, int]] = {
-        r["conversation_id"]: (r["responses"], r["tokens"]) for r in resp_rows
-    }
-
-    # Prompt counts (idx_prompts_conversation)
-    prompt_rows = conn.execute(
-        f"""SELECT conversation_id, COUNT(*) AS prompts
-            FROM prompts
-            WHERE conversation_id IN ({placeholders})
-            GROUP BY conversation_id""",
-        conv_ids,
-    ).fetchall()
-    prompt_stats: dict[str, int] = {
-        r["conversation_id"]: r["prompts"] for r in prompt_rows
-    }
-
-    # Dominant model per conversation (window function, single scan)
-    model_rows = conn.execute(
-        f"""SELECT conversation_id, name FROM (
-                SELECT r.conversation_id, m.name,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY r.conversation_id
-                        ORDER BY COUNT(*) DESC
-                    ) AS rn
-                FROM responses r
-                LEFT JOIN models m ON m.id = r.model_id
-                WHERE r.conversation_id IN ({placeholders})
-                GROUP BY r.conversation_id, m.name
-            ) WHERE rn = 1""",
-        conv_ids,
-    ).fetchall()
-    model_by_conv: dict[str, str | None] = {
-        r["conversation_id"]: r["name"] for r in model_rows
-    }
-
-    # Cost (only when pricing table exists; uses covering index for cache_read)
-    cost_by_conv: dict[str, float | None] = {}
-    if has_pricing:
-        cost_rows = conn.execute(
-            f"""SELECT r.conversation_id,
-                    ROUND(SUM(
-                        CASE
-                            WHEN COALESCE(r.input_tokens, 0) - COALESCE(
-                                (SELECT MAX(CAST(ra.value AS INTEGER))
-                                 FROM response_attributes ra
-                                 WHERE ra.response_id = r.id
-                                   AND ra.key = 'cache_read_input_tokens'), 0) < 0
-                            THEN 0
-                            ELSE COALESCE(r.input_tokens, 0) - COALESCE(
-                                (SELECT MAX(CAST(ra.value AS INTEGER))
-                                 FROM response_attributes ra
-                                 WHERE ra.response_id = r.id
-                                   AND ra.key = 'cache_read_input_tokens'), 0)
-                        END * COALESCE(pr.input_per_mtok, 0)
-                        + COALESCE(r.output_tokens, 0) * COALESCE(pr.output_per_mtok, 0)
-                    ) / 1000000.0, 4) AS cost
-                FROM responses r
-                LEFT JOIN pricing pr ON pr.model_id = r.model_id
-                                     AND pr.provider_id = r.provider_id
-                WHERE r.conversation_id IN ({placeholders})
-                GROUP BY r.conversation_id""",
+    if use_stats:
+        # Fast path: read precomputed stats from conversation_stats table.
+        # Single query with one lightweight JOIN — no response table scan.
+        rows = conn.execute(
+            f"""SELECT c.id AS conversation_id, w.path AS workspace,
+                    c.started_at,
+                    COALESCE(cs.prompt_count, 0) AS prompts,
+                    COALESCE(cs.response_count, 0) AS responses,
+                    COALESCE(cs.total_tokens, 0) AS tokens,
+                    cs.model_name AS model,
+                    cs.cost
+                FROM conversations c
+                LEFT JOIN workspaces w ON w.id = c.workspace_id
+                LEFT JOIN conversation_stats cs ON cs.conversation_id = c.id
+                WHERE c.id IN ({placeholders})
+                ORDER BY c.started_at {order}""",
             conv_ids,
         ).fetchall()
-        cost_by_conv = {r["conversation_id"]: r["cost"] for r in cost_rows}
+    else:
+        # Fallback: compute from source tables (before first ingest rebuilds
+        # the stats table, or if the table was dropped).
+        cost_subquery = (
+            """(SELECT ROUND(SUM(
+                CASE
+                    WHEN COALESCE(r2.input_tokens, 0) - COALESCE(
+                        (SELECT MAX(CAST(ra.value AS INTEGER))
+                         FROM response_attributes ra
+                         WHERE ra.response_id = r2.id
+                           AND ra.key = 'cache_read_input_tokens'), 0) < 0
+                    THEN 0
+                    ELSE COALESCE(r2.input_tokens, 0) - COALESCE(
+                        (SELECT MAX(CAST(ra.value AS INTEGER))
+                         FROM response_attributes ra
+                         WHERE ra.response_id = r2.id
+                           AND ra.key = 'cache_read_input_tokens'), 0)
+                END * COALESCE(pr.input_per_mtok, 0)
+                + COALESCE(r2.output_tokens, 0) * COALESCE(pr.output_per_mtok, 0)
+            ) / 1000000.0, 4)
+            FROM responses r2
+            LEFT JOIN pricing pr ON pr.model_id = r2.model_id
+                                 AND pr.provider_id = r2.provider_id
+            WHERE r2.conversation_id = c.id)"""
+            if has_pricing
+            else "NULL"
+        )
+        rows = conn.execute(
+            f"""SELECT c.id AS conversation_id, w.path AS workspace,
+                    (SELECT m2.name FROM responses r2
+                     LEFT JOIN models m2 ON m2.id = r2.model_id
+                     WHERE r2.conversation_id = c.id
+                     GROUP BY m2.name ORDER BY COUNT(*) DESC LIMIT 1) AS model,
+                    c.started_at,
+                    (SELECT COUNT(*) FROM prompts WHERE conversation_id = c.id) AS prompts,
+                    (SELECT COUNT(*) FROM responses WHERE conversation_id = c.id) AS responses,
+                    (SELECT COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0)
+                     FROM responses WHERE conversation_id = c.id) AS tokens,
+                    {cost_subquery} AS cost
+                FROM conversations c
+                LEFT JOIN workspaces w ON w.id = c.workspace_id
+                WHERE c.id IN ({placeholders})
+                ORDER BY c.started_at {order}""",
+            conv_ids,
+        ).fetchall()
 
-    # Tags (single bulk query)
+    # Bulk-fetch tags
     tags_by_conv = fetch_tags_for_conversations(conn, conv_ids)
 
-    # Assemble results
-    _empty_resp = (0, 0)
     return [
         ConversationSummary(
             id=row["conversation_id"],
             workspace_path=row["workspace"],
-            model=model_by_conv.get(row["conversation_id"]),
+            model=row["model"],
             started_at=row["started_at"],
-            prompt_count=prompt_stats.get(row["conversation_id"], 0),
-            response_count=resp_stats.get(row["conversation_id"], _empty_resp)[0],
-            total_tokens=resp_stats.get(row["conversation_id"], _empty_resp)[1],
-            cost=cost_by_conv.get(row["conversation_id"]),
+            prompt_count=row["prompts"],
+            response_count=row["responses"],
+            total_tokens=row["tokens"],
+            cost=row["cost"],
             tags=tags_by_conv.get(row["conversation_id"], []),
         )
-        for row in base_rows
+        for row in rows
     ]
 
 
