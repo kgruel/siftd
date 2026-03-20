@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-03-20
+
+### Fixed
+
+- **`siftd query` is ~50× faster** — `siftd query` dropped from ~3.5s to ~70ms. Several compounding issues fixed:
+  - Added covering index on `response_attributes(key, response_id, value)`, eliminating a full 479K-row table scan on every query
+  - Rewrote `list_conversations` as a two-phase query: Phase 1 identifies conversation IDs cheaply; Phase 2 computes stats only for matched rows
+  - `WhereBuilder` now tracks which JOINs each filter actually needs — the default query (no `--model`) no longer scans 363K response rows
+  - `--model` filter rewritten from a JOIN to an `EXISTS` subquery that stops at first match
+  - Added `conversation_stats` materialized table, rebuilt at the end of each `siftd ingest`. Query reads precomputed counts, tokens, model, and cost from a single row per conversation instead of aggregating the responses table on the fly. `siftd query --limit 0 --since 30d` (1600+ conversations) dropped from ~3s to ~46ms.
+
 ## [0.5.2] - 2026-03-19
 
 ### Fixed
