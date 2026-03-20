@@ -27,15 +27,41 @@ _TAG_SUBCOMMANDS = frozenset({"list", "rename", "delete"})
 
 
 def _detect_current_session() -> str | None:
-    """Return the session ID for the current workspace, or None."""
+    """Return the session ID for the current workspace, or None.
+
+    Checks two sources:
+    1. Session ID file (~/.local/state/siftd/sessions/<hash>/session-id)
+    2. Active sessions table in the database (fallback)
+    """
     import os
 
     workspace_path = str(Path(os.getcwd()).resolve())
+
+    # Primary: check session-id file (written by session-start hook)
     sid_file = session_id_file(workspace_path)
     if sid_file.exists():
         session_id = sid_file.read_text().strip()
         if session_id:
             return session_id
+
+    # Fallback: check active_sessions table
+    try:
+        from siftd.api import open_database
+        from siftd.api.sessions import find_active_session
+        from siftd.paths import db_path
+
+        db = db_path()
+        if db.exists():
+            conn = open_database(db, read_only=True)
+            try:
+                session_id = find_active_session(conn, workspace_path)
+                if session_id:
+                    return session_id
+            finally:
+                conn.close()
+    except Exception:
+        pass
+
     return None
 
 
@@ -339,8 +365,11 @@ def cmd_tag(args) -> int:
     session_id = getattr(args, "session", None)
     if getattr(args, "current", False) and not session_id:
         session_id = _detect_current_session()
-        if not session_id:
+        if session_id:
+            print(f"Detected session: {session_id[:20]}...", file=sys.stderr)
+        else:
             # No active session — fall back to --last 1
+            print("No active session detected, falling back to --last 1", file=sys.stderr)
             if args.last is None:
                 args.last = 1
 

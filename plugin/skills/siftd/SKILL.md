@@ -1,13 +1,13 @@
 ---
 skill-interface-version: 1
 name: siftd
-description: "Search and research past conversations from CLI coding sessions. Use when researching past decisions, design rationale, project history, or finding where an idea originated. Also use when the user mentions siftd, siftd search, or searching past conversations."
+description: "Search and research past conversations from CLI coding sessions. Use when researching past decisions, design rationale, project history, or finding where an idea originated. Also use when the user mentions siftd, searching past conversations, or asks about previous sessions/decisions."
 argument-hint: "[query] or [--recent] or [--genesis query]"
 ---
 
 # siftd — Search past coding conversations
 
-siftd searches your past coding conversations (Claude Code, Codex, Gemini CLI) to find decisions, trace how ideas evolved, and retrieve context.
+siftd searches your past coding conversations (Claude Code, Codex, Gemini CLI, Pi, Aider, VSCode, Copilot CLI, OpenCode) to find decisions, trace how ideas evolved, and retrieve context.
 
 ## Auto-trigger guidance (research intent)
 
@@ -21,6 +21,12 @@ When this skill is auto-loaded by research-intent detection (user did not type `
 When the user explicitly invokes `/siftd`, follow the parsing rules below and present the command output directly.
 
 If the user invokes `/siftd:tag`, skip search and follow the live tagging flow in Preserving Findings.
+
+**Research intent examples** (auto-trigger, not explicit `/siftd`):
+- "What did we decide about auth?" → search for "auth decision"
+- "How was caching implemented last time?" → search for "caching implementation"
+- "Find the conversation where we discussed X" → search for X
+- "What was the rationale for Y?" → search for "rationale Y"
 
 ## Quick Search: `/siftd`
 
@@ -184,11 +190,19 @@ Tagging turns one-off research into reusable memory. Tags are queued immediately
 ```
 
 **How it works:**
-1. SessionStart hook registers the session (`claude_code::<sessionId>`).
-2. `/siftd:tag` resolves the session via `siftd session-id`; `--exchange` uses `siftd peek` to find the latest exchange.
-3. Tags are queued with `siftd tag --session ...` and applied at ingest.
+1. SessionStart hook automatically registers the session (`claude_code::<sessionId>`) on every start/resume/compact.
+2. `/siftd:tag` resolves the session via `siftd tag --current`, which reads the session ID file for this workspace.
+3. Tags are queued as "pending" and applied when the conversation is ingested (`siftd ingest`).
 
-If no session ID is found, ask the user to confirm the session-start hook is installed.
+**If `--current` can't find the session** (no session ID file), it automatically falls back to tagging the most recent conversation (`--last 1`). The `/siftd:tag` command output will indicate which path was taken.
+
+**Troubleshooting:** If live tagging isn't working:
+- Verify the plugin is installed: check that `session-start.sh` fires on session start
+- Check session registration: `siftd session-id` should print the current session ID
+- If `siftd session-id` returns nothing, the hook may not have fired — re-register manually:
+  ```bash
+  siftd register --session "claude_code::<sessionId>" --adapter claude_code
+  ```
 
 ### Tag → retrieve loop
 

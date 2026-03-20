@@ -55,6 +55,8 @@ Direct-execution commands for manual workflows:
 | Command | Description |
 |---------|-------------|
 | `/siftd:search "query"` | Run search and see raw output |
+| `/siftd:query [id]` | List conversations or drill into one |
+| `/siftd:peek [id]` | View live/recent sessions (bypasses DB) |
 | `/siftd:tag <tag>` | Tag current session or conversation |
 
 Commands run siftd directly and show output without agent interpretation. Use these when you want to drive the workflow yourself.
@@ -78,12 +80,14 @@ plugin/
 ├── hooks/
 │   └── hooks.json        # Hook definitions
 ├── scripts/
-│   ├── session-start.sh
-│   ├── skill-reminder.sh
-│   └── post-siftd.sh
+│   ├── session-start.sh  # Register session + remind on compact/resume
+│   ├── skill-reminder.sh # Detect research intent in user prompts
+│   └── post-siftd.sh     # Contextual tips after siftd commands
 ├── commands/
-│   ├── siftd:search.md
-│   └── siftd:tag.md
+│   ├── siftd:search.md   # Direct search execution
+│   ├── siftd:query.md    # List/drill-down conversations
+│   ├── siftd:peek.md     # Live session inspection
+│   └── siftd:tag.md      # Tag with session detection feedback
 └── skills/
     └── siftd/
         ├── SKILL.md
