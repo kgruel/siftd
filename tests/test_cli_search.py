@@ -767,7 +767,7 @@ class TestByTimeWarning:
         captured = capsys.readouterr()
 
         assert result == 0
-        assert "--by-time has no effect in conversation mode" in captured.err
+        assert "--by-time has no effect in conversations mode" in captured.err
 
     def test_by_time_with_thread_warns(self, indexed_db, capsys):
         """--by-time with --thread prints warning to stderr."""
@@ -785,8 +785,8 @@ class TestByTimeWarning:
         assert result == 0
         assert "--by-time has no effect in thread mode" in captured.err
 
-    def test_by_time_with_json_warns(self, indexed_db, capsys):
-        """--by-time with --json prints warning to stderr."""
+    def test_by_time_with_json_no_warning(self, indexed_db, capsys):
+        """--by-time with --json sorts chunks by time (compatible, no warning)."""
         args = make_args(
             query=["error"],
             db=str(indexed_db["db_path"]),
@@ -799,7 +799,7 @@ class TestByTimeWarning:
         captured = capsys.readouterr()
 
         assert result == 0
-        assert "--by-time has no effect in json mode" in captured.err
+        assert "--by-time has no effect" not in captured.err
 
     def test_by_time_with_verbose_no_warning(self, indexed_db, capsys):
         """--by-time with --verbose (compatible mode) has no warning."""
