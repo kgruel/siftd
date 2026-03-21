@@ -44,7 +44,7 @@ class Operation:
 
 # Keys that are serve routing, not fn kwargs.
 # Filtered by execute() so the params dict can serve both contexts.
-_SERVE_ONLY_KEYS = frozenset({"action"})
+_SERVE_ONLY_KEYS = frozenset({"action", "embeddings_only"})
 
 
 def execute(op: Operation) -> Any:

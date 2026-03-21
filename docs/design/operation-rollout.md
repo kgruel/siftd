@@ -31,7 +31,7 @@ output = render(result, op, fmt=select_format(...))
 | `query <id>` | `get_conversation` | `detail` | **Done.** Fidelity-dependent; --json delegates |
 | `export` | `export_conversations` | `detail` | **Done.** Multiple conversations; --json delegates |
 | `tool-search` | `search_tool_calls` | `raw` | **Done.** Returns (query_obj, results) tuple |
-| `search` | `hybrid_search` | `search` | **Deferred.** Multi-step pipeline (filter→FTS5→embed→rerank) needs `hybrid_search()` API extraction first |
+| `search` | `hybrid_search` | `search` | **Done.** hybrid_search() extracted; cmd_search uses Operation + try_serve/execute |
 
 ### Tier 3 — writes (tag apply/remove/rename, all done)
 

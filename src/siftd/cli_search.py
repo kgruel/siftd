@@ -388,48 +388,58 @@ def cmd_search(args) -> int:
     elif args.first or args.conversations:
         widened_limit = max(args.limit * 10, 100)
 
-    # Try serve delegation first (warm caches, embeddings loaded)
+    from painted import Fidelity
+
+    from siftd.api.dispatch import Operation, execute
+    from siftd.api.search import hybrid_search
+    from siftd.serve.delegation import try_serve
+
+    rerank = "mmr" if not args.no_diversity else "relevance"
+
+    op = Operation(
+        path="/v1/search",
+        method="GET",
+        fn=hybrid_search,
+        params={
+            "query": query,
+            "db_path": db,
+            "embed_db": embed_db,
+            "limit": widened_limit,
+            "mode": search_mode,
+            "workspace": filters.workspace,
+            "model": filters.model,
+            "since": filters.since,
+            "before": filters.before,
+            "tags": filters.tags,
+            "all_tags": filters.all_tags,
+            "exclude_tags": filters.exclude_tags,
+            "exclude_active": not args.no_exclude_active,
+            "include_derivative": args.include_derivative,
+            "recall": args.recall,
+            "rerank": rerank,
+            "lambda_": args.lambda_,
+            "recency": args.recency,
+            "recency_half_life": args.recency_half_life,
+            "recency_max_boost": args.recency_max_boost,
+            "backend_name": args.backend,
+            # Serve-only: route uses embeddings_only instead of mode
+            "embeddings_only": search_mode == "semantic",
+        },
+        render_method="search",
+        fidelity=Fidelity(),
+        db=db,
+    )
+
+    # Try serve delegation (warm caches, embeddings loaded)
+    # Skip for FTS mode (serve does hybrid/semantic) and custom --embed-db
     results: list[dict] | None = None
     if search_mode != "fts" and _can_delegate_to_serve(args, db=db, embed_db=embed_db):
-        results = _delegate_search_via_serve(
-            args,
-            query=query,
-            n=widened_limit,
-            filters=filters,
-            embeddings_only=search_mode == "semantic",
-            rerank="mmr" if not args.no_diversity else "relevance",
-            exclude_active=not args.no_exclude_active,
-            db=db,
-        )
+        results = try_serve(op)
 
-    # Local execution via hybrid_search
+    # Local execution
     if results is None:
-        from siftd.api.search import hybrid_search
-
         try:
-            results = hybrid_search(
-                query,
-                db_path=db,
-                embed_db=embed_db,
-                limit=widened_limit,
-                mode=search_mode,
-                workspace=filters.workspace,
-                model=filters.model,
-                since=filters.since,
-                before=filters.before,
-                tags=filters.tags,
-                all_tags=filters.all_tags,
-                exclude_tags=filters.exclude_tags,
-                exclude_active=not args.no_exclude_active,
-                include_derivative=args.include_derivative,
-                recall=args.recall,
-                rerank="mmr" if not args.no_diversity else "relevance",
-                lambda_=args.lambda_,
-                recency=args.recency,
-                recency_half_life=args.recency_half_life,
-                recency_max_boost=args.recency_max_boost,
-                backend_name=args.backend,
-            )
+            results = execute(op)
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1

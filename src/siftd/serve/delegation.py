@@ -215,6 +215,8 @@ _SERVE_PARAM_MAP: dict[str, str] = {
     "tags": "tag",
     "exclude_tags": "no_tag",
     "oldest_first": "oldest",
+    "lambda_": "lambda",
+    "backend_name": "backend",
 }
 
 
