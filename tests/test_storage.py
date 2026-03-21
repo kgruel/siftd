@@ -29,7 +29,7 @@ def _conv(**kw):
         external_id="conv-1", workspace_path="/test/project",
         started_at="2024-01-01T10:00:00Z", ended_at="2024-01-01T11:00:00Z",
         branch="main",
-        harness=Harness(name="test_harness", source="test", log_format="jsonl"),
+        harness=Harness(name="test_harness", source="test", log_format="jsonl", display_name="Test Harness"),
         prompts=[Prompt(
             external_id="p1", timestamp="2024-01-01T10:00:00Z",
             content=[ContentBlock(block_type="text", content={"text": "Write a Python function"})],
@@ -120,9 +120,13 @@ class TestToolCallBlobs:
         c, r = _scaffold(db)
         sq.insert_tool_call(db, r, c, None, "tc1", '{}', '{"i":1}', "s", "2024-01-01T10:00:01Z", dedupe_result=False)
         sq.insert_tool_call(db, r, c, None, "tc2", '{}', None, "s", "2024-01-01T10:00:02Z")
+        # Non-JSON result with filter_binary=True → hits except path
+        sq.insert_tool_call(db, r, c, None, "tc3", '{}', 'not-json', "s", "2024-01-01T10:00:03Z")
         db.commit()
         row = db.execute("SELECT result, result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
         assert row["result"] == '{"i":1}' and row["result_hash"] is None
+        # Non-JSON was still stored (filter_binary exception path leaves it as-is)
+        assert db.execute("SELECT result_hash FROM tool_calls WHERE external_id='tc3'").fetchone()["result_hash"] is not None
 
     def test_shared_blob_cascade(self, db):
         h = sq.get_or_create_harness(db, "test", source="test")
@@ -217,6 +221,16 @@ class TestVocabulary:
         sq.ensure_canonical_tools(db)
         sq.ensure_tool_aliases(db, h, {"Read": "file.read"})
         assert db.execute("SELECT tool_id FROM tool_aliases WHERE raw_name='Read' AND harness_id=?", (h,)).fetchone() is not None
+        # Clear caches and re-lookup: hits the "found in DB, not in cache" paths
+        sq.clear_vocabulary_caches()
+        assert sq.get_or_create_harness(db, "t") == sq.get_or_create_harness(db, "t")
+        assert sq.get_or_create_provider(db, "a") == sq.get_or_create_provider(db, "a")
+        assert sq.get_or_create_model(db, "claude-3-opus-20240229") == mid
+        assert sq.get_or_create_tool_by_alias(db, "Read", h) == tid
+        # Tag cache: create, clear, re-lookup
+        tag_id = tags.get_or_create_tag(db, "vocab_test")
+        sq.clear_vocabulary_caches()
+        assert tags.get_or_create_tag(db, "vocab_test") == tag_id
 
 
 # === Conversation ops ===
@@ -259,6 +273,9 @@ class TestFileDedup:
         assert sq.get_ingested_file_info(db, "/b.jsonl")["error"] == "parse error"
         sq.clear_ingested_file_error(db, "/b.jsonl")
         assert not sq.check_file_ingested(db, "/b.jsonl")
+        # Record with nonexistent conversation
+        with pytest.raises(ValueError, match="Conversation not found"):
+            sq.record_ingested_file(db, "/x.jsonl", "h", "nonexistent", commit=True)
 
 
 # === FTS ===
@@ -276,6 +293,12 @@ class TestFTS:
         assert fts.fts5_best_hit_for_conversation(conn, "xyznonexistent", conversation_id=cid) is None
         # OR fallback
         assert fts.fts5_recall_details(conn, "Python function", min_and_hits=999).mode in ("or", "none")
+        # Short tokens → _fts5_or_rewrite returns None → mode="none"
+        r_short = fts.fts5_recall_conversations(conn, "ab cd")
+        assert r_short[1] == "none"
+        # Malformed FTS → exception in AND phase → falls through to OR
+        r_bad = fts.fts5_recall_conversations(conn, "NOT AND OR")
+        assert r_bad[1] in ("or", "none")
 
     def test_recall_empty_db(self, db):
         ids, mode = fts.fts5_recall_conversations(db, "xyznonexistent")
@@ -336,6 +359,10 @@ class TestWhereBuilder:
         assert not wb.needs_group_by
         wb.require_join("r")
         assert wb.needs_group_by
+        # Transitive deps: m → r
+        wb2 = WhereBuilder()
+        wb2.require_join("m")
+        assert "responses" in wb2.joins_sql() and "models" in wb2.joins_sql()
 
     def test_empty_and_none(self):
         wb = WhereBuilder()
@@ -551,6 +578,9 @@ class TestQueries:
         assert q.fetch_tags_for_conversations(db, []) == {}
         assert q.fetch_conversation_timestamps(db, []) == {}
         assert q.fetch_prompt_timestamps(db, []) == {}
+        # Empty DB edge cases
+        assert q.fetch_conversation_time_window(db) == (None, None)
+        assert q.fetch_last_ingest_time(db) is None
 
 
 # === Conversation stats ===
@@ -587,6 +617,7 @@ class TestToolSearch:
         assert ts._extract_arg({"query": "q"}) == "q" and ts._extract_arg({}) is None
         assert ts._extract_result_snippet({"error": "e"}) == "e" and ts._extract_result_snippet({}) is None
         assert ts._loads_dict(None) == {} and ts._loads_dict("bad") == {} and ts._loads_dict('"s"') == {}
+        assert ts._normalize_tool_tokens(None) is None and ts._normalize_tool_tokens("file.read") is not None
 
 
 # === Database ops ===
