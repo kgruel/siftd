@@ -33,13 +33,13 @@ output = render(result, op, fmt=select_format(...))
 | `tool-search` | `search_tool_calls` | `raw` | **Done.** Returns (query_obj, results) tuple |
 | `search` | `hybrid_search` | `search` | **Deferred.** Multi-step pipeline (filter→FTS5→embed→rerank) needs `hybrid_search()` API extraction first |
 
-### Tier 3 — writes (tag apply/remove/rename)
+### Tier 3 — writes (tag apply/remove/rename, all done)
 
 | Command | fn | method | Notes |
 |---------|-----|--------|-------|
-| `tag apply` | apply_tag loop | POST | Already delegates via try_delegate_post |
-| `tag remove` | remove_tag loop | POST | Same route, different action |
-| `tag rename` | rename_tag | POST | Already delegates |
+| `tag apply` | apply_tag | POST | **Done.** Operation for intent + try_serve; local loop stays procedural |
+| `tag remove` | remove_tag | POST | **Done.** Same pattern, action="remove" |
+| `tag rename` | rename_tag | POST | **Done.** rename_tag adapted for db_path |
 
 ### Not migrating
 

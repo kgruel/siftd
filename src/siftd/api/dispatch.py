@@ -42,9 +42,20 @@ class Operation:
     db: Path
 
 
+# Keys that are serve routing, not fn kwargs.
+# Filtered by execute() so the params dict can serve both contexts.
+_SERVE_ONLY_KEYS = frozenset({"action"})
+
+
 def execute(op: Operation) -> Any:
-    """Call the API function with params."""
-    return op.fn(**op.params)
+    """Call the API function with params.
+
+    Strips serve-only routing keys (e.g. ``action``) that the fn
+    doesn't accept.  These keys are used by try_serve for HTTP
+    dispatch but aren't API function kwargs.
+    """
+    params = {k: v for k, v in op.params.items() if k not in _SERVE_ONLY_KEYS}
+    return op.fn(**params)
 
 
 def render(result: Any, op: Operation, *, fmt: Any) -> Any:

@@ -174,18 +174,20 @@ def remove_tag(
 
 
 def rename_tag(
-    conn: sqlite3.Connection,
-    old_name: str,
-    new_name: str,
+    conn: sqlite3.Connection | None = None,
+    old_name: str = "",
+    new_name: str = "",
     *,
+    db_path: Path | None = None,
     commit: bool = False,
 ) -> bool:
     """Rename a tag.
 
     Args:
-        conn: Database connection.
+        conn: Database connection. Opened from db_path if not provided.
         old_name: Current tag name.
         new_name: New tag name.
+        db_path: Path to database. Ignored if conn provided.
         commit: Whether to commit the transaction.
 
     Returns:
@@ -194,7 +196,17 @@ def rename_tag(
     Raises:
         ValueError: If new_name already exists.
     """
-    return _rename_tag(conn, old_name, new_name, commit=commit)
+    should_close = False
+    if conn is None:
+        db = db_path or _db_path()
+        conn = _open_database(db)
+        should_close = True
+        commit = True  # auto-commit when we own the connection
+    try:
+        return _rename_tag(conn, old_name, new_name, commit=commit)
+    finally:
+        if should_close:
+            conn.close()
 
 
 def delete_tag(

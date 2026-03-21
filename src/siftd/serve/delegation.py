@@ -235,12 +235,13 @@ def try_serve(op: Any) -> Any | None:
     """
     try:
         raw = {k: v for k, v in op.params.items() if k != "db_path"}
-        params = _remap_params(raw)
 
         if op.method == "GET":
-            return try_delegate(op.path, params, db=op.db)
+            # GET query params use HTTP conventions (n, tag, id)
+            return try_delegate(op.path, _remap_params(raw), db=op.db)
         elif op.method == "POST":
-            return try_delegate_post(op.path, params, db=op.db)
+            # POST bodies use API conventions (tags, entity_id) — no remapping
+            return try_delegate_post(op.path, raw, db=op.db)
     except Exception:
         pass
     return None

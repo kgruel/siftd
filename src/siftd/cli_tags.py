@@ -294,35 +294,48 @@ def _cmd_tag_rename(args, db: Path) -> int:
 
     old_name, new_name = positional[1], positional[2]
 
+    from painted import Fidelity
+
+    from siftd.api.dispatch import Operation, execute
+    from siftd.serve.delegation import try_serve
+
+    op = Operation(
+        path="/v1/tag",
+        method="POST",
+        fn=rename_tag,
+        params={
+            "action": "rename",
+            "old_name": old_name,
+            "new_name": new_name,
+            "db_path": db,
+        },
+        render_method="raw",
+        fidelity=Fidelity(),
+        db=db,
+    )
+
     # Try serve delegation
+    result = try_serve(op)
+    if result is not None and isinstance(result, dict) and result.get("status") == "renamed":
+        print(f"Renamed '{old_name}' \u2192 '{new_name}'")
+        return 0
+
+    # Local execution
     try:
-        from siftd.serve.delegation import try_delegate_post
-
-        result = try_delegate_post("/v1/tag", {"action": "rename", "old_name": old_name, "new_name": new_name}, db=db)
-        if result is not None and result.get("status") == "renamed":
-            print(f"Renamed '{old_name}' \u2192 '{new_name}'")
-            return 0
-    except Exception:
-        pass
-
-    if not db.exists():
+        success = execute(op)
+    except FileNotFoundError:
         print(f"Database not found: {db}")
         print("Run 'siftd ingest' to create it.")
         return 1
-
-    conn = open_database(db)
-    try:
-        if rename_tag(conn, old_name, new_name, commit=True):
-            print(f"Renamed '{old_name}' \u2192 '{new_name}'")
-        else:
-            print(f"Tag not found: {old_name}")
-            conn.close()
-            return 1
     except ValueError as e:
         print(f"Error: {e}")
-        conn.close()
         return 1
-    conn.close()
+
+    if success:
+        print(f"Renamed '{old_name}' \u2192 '{new_name}'")
+    else:
+        print(f"Tag not found: {old_name}")
+        return 1
     return 0
 
 
@@ -439,46 +452,55 @@ def cmd_tag(args) -> int:
 
     removing = args.remove
 
-    # Try delegating tag writes to serve when running
-    try:
-        from siftd.serve.delegation import try_delegate_post
+    # Normalize args into a POST body for delegation
+    from painted import Fidelity
 
-        body: dict = {"action": "remove" if removing else "apply"}
+    from siftd.api.dispatch import Operation
+    from siftd.serve.delegation import try_serve
 
-        if args.last is not None:
-            n = args.last
-            if isinstance(n, str):
-                try:
-                    n = int(n)
-                except ValueError:
-                    positional = [str(n)] + positional
-                    n = 1
-            body["last"] = n
-            body["tags"] = [str(t) for t in positional]
-        elif positional:
-            parsed = _parse_tag_args(positional)
-            if parsed:
-                entity_type, entity_id, tag_names_parsed = parsed
-                body["entity_type"] = entity_type
-                body["entity_id"] = entity_id
-                body["tags"] = tag_names_parsed
+    body: dict = {"action": "remove" if removing else "apply"}
 
-        if "tags" in body:
-            result = try_delegate_post("/v1/tag", body, db=db)
-            if result is not None and "error" not in result:
-                for r in result.get("results", []):
-                    tag = r["tag"]
-                    status = r["status"]
-                    count = r.get("count", 0)
-                    if status == "not_found":
-                        print(f"Tag '{tag}' not found")
-                    elif status == "applied":
-                        print(f"Applied tag '{tag}' to {count} conversation(s)")
-                    elif status == "removed":
-                        print(f"Removed tag '{tag}' from {count} conversation(s)")
-                return 0
-    except Exception:
-        pass
+    if args.last is not None:
+        n = args.last
+        if isinstance(n, str):
+            try:
+                n = int(n)
+            except ValueError:
+                positional = [str(n)] + positional
+                n = 1
+        body["last"] = n
+        body["tags"] = [str(t) for t in positional]
+    elif positional:
+        parsed = _parse_tag_args(positional)
+        if parsed:
+            entity_type, entity_id, tag_names_parsed = parsed
+            body["entity_type"] = entity_type
+            body["entity_id"] = entity_id
+            body["tags"] = tag_names_parsed
+
+    if "tags" in body:
+        op = Operation(
+            path="/v1/tag",
+            method="POST",
+            fn=remove_tag if removing else apply_tag,
+            params={**body, "db_path": db},
+            render_method="raw",
+            fidelity=Fidelity(),
+            db=db,
+        )
+        result = try_serve(op)
+        if result is not None and isinstance(result, dict) and "error" not in result:
+            for r in result.get("results", []):
+                tag = r["tag"]
+                status = r["status"]
+                count = r.get("count", 0)
+                if status == "not_found":
+                    print(f"Tag '{tag}' not found")
+                elif status == "applied":
+                    print(f"Applied tag '{tag}' to {count} conversation(s)")
+                elif status == "removed":
+                    print(f"Removed tag '{tag}' from {count} conversation(s)")
+            return 0
 
     conn = open_database(db)
 
