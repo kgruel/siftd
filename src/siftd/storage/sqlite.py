@@ -56,6 +56,7 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
         conn.execute("PRAGMA mmap_size = 268435456")  # 256MB mmap
+        conn.execute("PRAGMA temp_store = MEMORY")
 
     # Clear in-process vocabulary caches when opening a new connection
     # to prevent stale IDs from a previous connection
