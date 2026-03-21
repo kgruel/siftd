@@ -9,26 +9,29 @@ from conftest import FIXTURES_DIR
 from siftd.adapters import vscode
 from siftd.domain.source import Source
 
+S = Source
 
-def _vscode_src(tmp_path, fixture, ws="/test/workspace"):
+
+def _src(tmp_path, fixture, ws="/test/workspace"):
     """Set up VSCode dir structure with fixture. Returns Source."""
     cs = tmp_path / "h" / "chatSessions"
-    cs.mkdir(parents=True)
+    cs.mkdir(parents=True, exist_ok=True)
     shutil.copy(FIXTURES_DIR / fixture, cs / Path(fixture).name)
     if ws:
         (cs.parent / "workspace.json").write_text(json.dumps({"folder": f"file://{ws}"}))
-    return Source(kind="file", location=cs / Path(fixture).name)
+    return S(kind="file", location=cs / Path(fixture).name)
 
 
-class TestVscodeAdapter:
+class TestVscode:
     def test_can_handle(self):
-        assert vscode.can_handle(Source(kind="file", location=Path("/mock/chatSessions/test.json")))
-        assert vscode.can_handle(Source(kind="file", location=Path("/mock/chatSessions/test.jsonl")))
-        assert not vscode.can_handle(Source(kind="file", location=FIXTURES_DIR / "vscode_minimal.json"))
-        assert not vscode.can_handle(Source(kind="directory", location=Path("/mock/chatSessions")))
+        assert vscode.can_handle(S(kind="file", location=Path("/m/chatSessions/t.json")))
+        assert vscode.can_handle(S(kind="file", location=Path("/m/chatSessions/t.jsonl")))
+        assert not vscode.can_handle(S(kind="file", location=Path("/m/chatSessions/t.txt")))
+        assert not vscode.can_handle(S(kind="file", location=FIXTURES_DIR / "vscode_minimal.json"))
+        assert not vscode.can_handle(S(kind="directory", location=Path("/m/chatSessions")))
 
-    def test_parse_json_full(self, tmp_path):
-        conv = list(vscode.parse(_vscode_src(tmp_path, "vscode_minimal.json")))[0]
+    def test_parse_json(self, tmp_path):
+        conv = list(vscode.parse(_src(tmp_path, "vscode_minimal.json")))[0]
         assert conv.workspace_path == "/test/workspace" and conv.harness.name == "vscode"
         assert conv.started_at and "2024-02-15" in conv.started_at and conv.ended_at and len(conv.prompts) == 2
         assert "read a file" in conv.prompts[0].content[0].content["text"]
@@ -38,29 +41,35 @@ class TestVscodeAdapter:
         assert tc.tool_name == "listFiles" and tc.result == {"files": ["README.md", "src/", "tests/"]}
         assert [b for b in conv.prompts[1].responses[0].content if b.block_type == "text_edit"]
 
-    def test_parse_jsonl_full(self, tmp_path):
-        conv = list(vscode.parse(_vscode_src(tmp_path, "vscode_minimal.jsonl")))[0]
+    def test_parse_jsonl(self, tmp_path):
+        conv = list(vscode.parse(_src(tmp_path, "vscode_minimal.jsonl")))[0]
         assert conv.workspace_path == "/test/workspace" and "2024-02-15" in conv.started_at
         assert len(conv.prompts) == 2 and conv.prompts[1].responses[0].tool_calls[0].tool_name == "listFiles"
 
-    def test_parse_edge_cases(self, tmp_path):
+    def test_parse_edges(self, tmp_path):
         cs = tmp_path / "nw" / "chatSessions"
         cs.mkdir(parents=True)
         shutil.copy(FIXTURES_DIR / "vscode_minimal.json", cs / "t.json")
-        assert list(vscode.parse(Source(kind="file", location=cs / "t.json")))[0].workspace_path is None
+        assert list(vscode.parse(S(kind="file", location=cs / "t.json")))[0].workspace_path is None
         cs2 = tmp_path / "e" / "chatSessions"
         cs2.mkdir(parents=True)
         empty = {"version": 3, "sessionId": "e", "creationDate": 1708012345678, "requests": []}
         (cs2 / "e.json").write_text(json.dumps(empty))
         (cs2 / "e.jsonl").write_text(json.dumps({"kind": 0, "v": empty}) + "\n")
-        assert list(vscode.parse(Source(kind="file", location=cs2 / "e.json"))) == []
-        assert list(vscode.parse(Source(kind="file", location=cs2 / "e.jsonl"))) == []
-        (cs2 / "s.json").write_text(json.dumps({**empty, "sessionId": "s",
-            "requests": [{"requestId": "r1", "message": {"text": "Hello"}, "timestamp": 1708012345678,
-                "modelId": "gpt-4o", "response": [{"kind": "markdownContent", "content": {"value": "Hi"}}], "responseId": "r1"}]}))
-        assert list(vscode.parse(Source(kind="file", location=cs2 / "s.json")))
+        assert list(vscode.parse(S(kind="file", location=cs2 / "e.json"))) == []
+        assert list(vscode.parse(S(kind="file", location=cs2 / "e.jsonl"))) == []
+        req = {"requestId": "r1", "message": {"text": "Hi"}, "timestamp": 1708012345678,
+            "modelId": "m", "response": [{"kind": "markdownContent", "content": {"value": "ok"}}],
+            "responseId": "r1"}
+        (cs2 / "s.json").write_text(json.dumps({**empty, "sessionId": "s", "requests": [req]}))
+        assert list(vscode.parse(S(kind="file", location=cs2 / "s.json")))
+        # workspace.json with plain path (no file://) and empty folder
+        (cs2.parent / "workspace.json").write_text(json.dumps({"folder": "/plain"}))
+        assert list(vscode.parse(S(kind="file", location=cs2 / "s.json")))[0].workspace_path == "/plain"
+        (cs2.parent / "workspace.json").write_text(json.dumps({"folder": ""}))
+        assert list(vscode.parse(S(kind="file", location=cs2 / "s.json")))[0].workspace_path is None
 
-    def test_replay_path_helpers(self):
+    def test_path_helpers(self):
         obj = {"requests": [{"response": [], "result": None}]}
         vscode._set_at_path(obj, ["requests", 0, "result"], {"ok": True})
         vscode._append_at_path(obj, ["requests", 0, "response"], [{"kind": "text"}])
@@ -69,8 +78,18 @@ class TestVscodeAdapter:
         vscode._append_at_path(obj2, ["requests"], [{"id": "r1"}])
         vscode._set_at_path(obj2, ["requests", 99, "result"], "v")
         assert len(obj2["requests"]) == 1
+        # Traversal guards: dict missing key, non-traversable, valid list index set
+        vscode._set_at_path({"a": None}, ["a", "b"], "v")
+        vscode._set_at_path({"a": "str"}, ["a", "b", "c"], "v")
+        lst = [1, 2, 3]
+        vscode._set_at_path(lst, [1], 99)
+        assert lst[1] == 99
+        # _append_at_path guards: missing key, non-traversable, out-of-range list
+        vscode._append_at_path({"a": None}, ["a", "b"], [1])
+        vscode._append_at_path({"a": "str"}, ["a", "b"], [1])
+        vscode._append_at_path([[]], [5], [1])
 
-    def test_peek_and_normalizer(self, tmp_path):
+    def test_peek_normalizer_discover(self, tmp_path):
         cs = tmp_path / "ws" / "chatSessions"
         cs.mkdir(parents=True)
         shutil.copy(FIXTURES_DIR / "vscode_minimal.json", cs / "test.json")
@@ -84,14 +103,26 @@ class TestVscodeAdapter:
         n = vscode.normalize_record
         assert n({"_kind": "user", "_ts": "T", "message": {"text": "hi"}}).content_blocks[0]["text"] == "hi"
         nr = n({"_kind": "assistant", "_ts": "T", "modelId": "m", "response": [
-            {"kind": "markdownContent", "content": {"value": "ok"}}, {"kind": "toolInvocationSerialized", "toolName": "f"}]})
+            {"kind": "markdownContent", "content": {"value": "ok"}},
+            {"kind": "toolInvocationSerialized", "toolName": "f"}]})
         assert nr.kind == "assistant" and len(nr.content_blocks) == 2
         assert n({"_kind": "unknown"}) is None
+        assert list(vscode.discover(locations=[str(tmp_path)]))
 
-    def test_parse_errors(self, tmp_path):
+    def test_replay_and_parse_errors(self, tmp_path):
         cs = tmp_path / "chatSessions"
-        cs.mkdir()
+        cs.mkdir(parents=True)
+        sess = {"version": 3, "sessionId": "j", "creationDate": 1708012345678, "requests": [
+            {"requestId": "r1", "message": "Hi", "timestamp": 1708012345678,
+             "modelId": "m", "response": [{"kind": "markdownContent", "content": {"value": "ok"}}],
+             "responseId": "r1"}]}
+        lines = [json.dumps({"kind": 1, "v": "before-init"}),
+            json.dumps({"kind": 0, "v": sess}), "",
+            json.dumps({"kind": 1, "k": [], "v": "x"}),
+            json.dumps({"kind": 2, "k": [], "v": []})]
+        (cs / "j.jsonl").write_text("\n".join(lines) + "\n")
+        assert list(vscode.parse(S(kind="file", location=cs / "j.jsonl")))
         (cs / "bad.json").write_bytes(b'\xff\xfe bad')
-        assert list(vscode.parse(Source(kind="file", location=cs / "bad.json"))) == []
+        assert list(vscode.parse(S(kind="file", location=cs / "bad.json"))) == []
         (cs / "b.jsonl").write_text('not json\n{"kind":0,"v":null}\n')
-        assert list(vscode.parse(Source(kind="file", location=cs / "b.jsonl"))) == []
+        assert list(vscode.parse(S(kind="file", location=cs / "b.jsonl"))) == []

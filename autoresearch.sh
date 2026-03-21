@@ -71,6 +71,11 @@ else
     EFFICIENCY=$(.venv/bin/python -c "print(round($TEST_LOC * $TEST_TIME / $COVERED, 2))")
 fi
 
+# Pass/fail logic:
+#   Normal zone (<90% coverage): efficiency must improve
+#   Edge zone (>=90%): pass if coverage improved >=1% even if efficiency regressed up to 25%
+ZONE=$(.venv/bin/python -c "print('edge' if $PCT >= 90 else 'normal')")
+
 echo ""
 echo "=== VSCode Adapter Coverage Efficiency ==="
 echo "Test LOC:       $TEST_LOC"
@@ -79,9 +84,11 @@ echo "Covered lines:  $COVERED / $TOTAL"
 echo "Coverage:       ${PCT}%"
 echo "Missing lines:  $MISSING"
 echo "Efficiency:     $EFFICIENCY"
+echo "Zone:           $ZONE (normal <90%, edge >=90%)"
 echo ""
 echo "METRIC efficiency=$EFFICIENCY"
 echo "METRIC coverage_pct=$PCT"
 echo "METRIC test_time_s=$TEST_TIME"
 echo "METRIC test_loc=$TEST_LOC"
 echo "METRIC covered_lines=$COVERED"
+echo "METRIC zone_is_edge=$( [ "$ZONE" = "edge" ] && echo 1 || echo 0 )"

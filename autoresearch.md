@@ -16,6 +16,15 @@ optimized without interference. The benchmark measures aggregate efficiency acro
   - `test_loc` — lines of test code (lower per coverage = better)
   - `covered_lines` — absolute count of covered source lines (higher = better)
 
+## Keep/Discard Rules
+Two zones based on coverage percentage:
+
+- **Normal zone** (<90% coverage): efficiency must improve to keep
+- **Edge zone** (≥90% coverage): keep if coverage improved ≥1% even if efficiency
+  regressed up to 25%. This avoids penalizing tests that close hard-to-reach
+  edge-case gaps — the lines that matter most.
+- **Always discard**: efficiency regressed AND coverage didn't improve
+
 ## How to Run
 `./autoresearch.sh` — runs median-of-5 timing, outputs `METRIC name=number` lines.
 
