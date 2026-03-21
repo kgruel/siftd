@@ -692,6 +692,18 @@ class TestQueries:
         assert isinstance(fetch_tool_tags_by_prefix(conn, "shell:"), list)
         assert isinstance(fetch_tool_tags_by_workspace(conn, "shell:"), list)
 
+    def test_last_ingest_time(self, populated_db):
+        from siftd.storage.queries import fetch_last_ingest_time
+        conn, cid = populated_db
+        record_ingested_file(conn, "/f.jsonl", "h", cid, commit=True)
+        assert fetch_last_ingest_time(conn) is not None
+
+    def test_exchanges_no_filters(self, populated_db):
+        """fetch_exchanges with no filters returns all."""
+        conn, cid = populated_db
+        ex = fetch_exchanges(conn)
+        assert len(ex) >= 1
+
     def test_empty_queries(self, db):
         assert fetch_response_content_blocks(db, []) == {}
         assert fetch_tags_for_conversations(db, []) == {}
