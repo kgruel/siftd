@@ -121,6 +121,27 @@ def render_stats(stats: Any, fidelity: Fidelity, **context: Any) -> dict:
     return serialize_stats(stats)
 
 
+def render_workspaces(rows: list, fidelity: Fidelity, **context: Any) -> dict:
+    """Render workspace list as a dict."""
+    from siftd.serialization.serve_fmt import render_workspaces as _impl
+
+    return _impl(rows, fidelity)
+
+
+def render_tags(tags: list, fidelity: Fidelity, **context: Any) -> dict:
+    """Render tag list as a dict."""
+    from siftd.serialization.serve_fmt import render_tags as _impl
+
+    return _impl(tags, fidelity)
+
+
+def render_tool_search(result: Any, fidelity: Fidelity, **context: Any) -> dict:
+    """Render tool search results as a dict."""
+    from siftd.serialization.serve_fmt import render_tool_search as _impl
+
+    return _impl(result, fidelity)
+
+
 def _json_chunk_list(results: list) -> list[dict]:
     """Build JSON-safe list of chunk dicts."""
     from siftd.search import ScoreBreakdown

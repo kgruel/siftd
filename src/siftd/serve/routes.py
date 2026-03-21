@@ -3,11 +3,35 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from litestar import Request, get, post
 from litestar.params import Parameter
 from litestar.response import Response
+
+
+def _dispatch(
+    path: str, method: str, fn: Callable, params: dict[str, Any],
+    render_method: str, db: Path,
+) -> Any:
+    """Build an Operation and dispatch it through the format protocol.
+
+    Shared helper for simple routes: extract params → execute → render.
+    Uses serve_fmt (serialization layer) instead of output/json_fmt
+    to respect the architecture boundary (serve cannot import output).
+    """
+    from painted import Fidelity
+
+    from siftd.api.dispatch import Operation, dispatch
+    from siftd.serialization import serve_fmt
+
+    op = Operation(
+        path=path, method=method, fn=fn, params=params,
+        render_method=render_method, fidelity=Fidelity(), db=db,
+    )
+    return dispatch(op, fmt=serve_fmt)
 
 
 @get("/", opt={"no_auth": True})
@@ -60,10 +84,9 @@ async def health(db_path: Path) -> dict:
 @get("/v1/stats")
 async def stats_route(db_path: Path) -> dict:
     """Return database statistics. Server has DB warm, so this is fast."""
-    from siftd.api.stats import _stats_to_dict, get_stats
+    from siftd.api.stats import get_stats
 
-    stats = get_stats(db_path=db_path)
-    return _stats_to_dict(stats)
+    return _dispatch("/v1/stats", "GET", get_stats, {"db_path": db_path}, "stats", db_path)
 
 
 @get("/v1/workspaces")
@@ -73,19 +96,8 @@ async def workspaces_route(
 ) -> dict:
     """List workspaces with conversation counts."""
     from siftd.api.stats import list_workspaces
-    from siftd.storage.sqlite import open_database
 
-    conn = open_database(db_path, read_only=True)
-    try:
-        rows = list_workspaces(conn, n=n)
-    finally:
-        conn.close()
-    return {
-        "workspaces": [
-            {"path": r["path"], "conversations": r["convs"], "last_activity": r["last_activity"]}
-            for r in rows
-        ]
-    }
+    return _dispatch("/v1/workspaces", "GET", list_workspaces, {"db_path": db_path, "n": n}, "workspaces", db_path)
 
 
 @get("/v1/tools")
@@ -129,26 +141,9 @@ async def tags_route(
     before: str | None = Parameter(query="before", default=None),
 ) -> dict:
     """List tags with usage counts."""
-    from siftd.storage.sqlite import open_database
-    from siftd.storage.tags import list_tags
+    from siftd.api.tags import list_tags
 
-    conn = open_database(db_path, read_only=True)
-    try:
-        tags = list_tags(conn, since=since, before=before)
-    finally:
-        conn.close()
-    return {
-        "tags": [
-            {
-                "name": t["name"],
-                "conversation_count": t["conversation_count"],
-                "workspace_count": t["workspace_count"],
-                "tool_call_count": t["tool_call_count"],
-                "prompt_count": t["prompt_count"],
-            }
-            for t in tags
-        ]
-    }
+    return _dispatch("/v1/tags", "GET", list_tags, {"db_path": db_path, "since": since, "before": before}, "tags", db_path)
 
 
 @post("/v1/tag")
@@ -258,42 +253,13 @@ async def tool_search_route(
     """Search tool calls via FTS."""
     from siftd.api.tool_search import search_tool_calls
 
-    query_obj, results = search_tool_calls(
-        q,
-        db_path=db_path,
-        n=n,
-        workspace=workspace,
-        model=model,
-        since=since,
-        before=before,
-        tag=tag,
-        all_tags=all_tags,
-        no_tag=no_tag,
-        tool=tool,
-        tool_tag=tool_tag,
+    return _dispatch(
+        "/v1/tool-search", "GET", search_tool_calls,
+        {"q": q, "db_path": db_path, "n": n, "workspace": workspace, "model": model,
+         "since": since, "before": before, "tag": tag, "all_tags": all_tags,
+         "no_tag": no_tag, "tool": tool, "tool_tag": tool_tag},
+        "tool_search", db_path,
     )
-    return {
-        "query": q,
-        "result_count": len(results),
-        "results": [
-            {
-                "tool_call_id": r.tool_call_id,
-                "conversation_id": r.conversation_id,
-                "timestamp": r.timestamp,
-                "tool_name": r.tool_name,
-                "tool_family": r.tool_family,
-                "status": r.status,
-                "path": r.path,
-                "basename": r.basename,
-                "command": r.command,
-                "command_verb": r.command_verb,
-                "result_snippet": r.result_snippet,
-                "workspace_path": r.workspace_path,
-                "rank": r.rank,
-            }
-            for r in results
-        ],
-    }
 
 
 @get("/v1/export")
