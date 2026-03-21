@@ -284,39 +284,82 @@ def cmd_query(args) -> int:
         return _query_detail(args)
 
     from siftd.api import list_conversations
+    from siftd.api.conversations import ConversationSummary
 
     db = Path(args.db) if args.db else None
+    effective_db = db or resolve_db(args)
 
+    conversations = None
+
+    # Try serve delegation (avoids cold-open on large DBs)
     try:
-        conversations = list_conversations(
-            db_path=db,
-            workspace=args.workspace,
-            model=args.model,
-            since=args.since,
-            before=args.before,
-            tool=args.tool,
-            tags=args.tag,
-            all_tags=getattr(args, "all_tags", None),
-            exclude_tags=getattr(args, "no_tag", None),
-            tool_tag=getattr(args, "tool_tag", None),
-            limit=args.limit,
-            oldest_first=args.oldest,
-        )
-    except FileNotFoundError as e:
-        print(str(e))
-        print("Run 'siftd ingest' to create it.")
-        return 1
-    except sqlite3.OperationalError as e:
-        err_msg = str(e).lower()
-        if "no such table" in err_msg and "fts" in err_msg:
-            print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
-        elif "fts5" in err_msg or "syntax" in err_msg:
-            print(f"Invalid search query: {e}", file=sys.stderr)
-            print("Tip: Check your search query for syntax errors.", file=sys.stderr)
-        else:
-            print(f"Database error: {e}", file=sys.stderr)
-            print("Tip: Run 'siftd doctor' to check database health.", file=sys.stderr)
-        return 1
+        from siftd.serve.delegation import try_delegate
+
+        params: dict[str, object] = {
+            "workspace": args.workspace,
+            "model": args.model,
+            "since": args.since,
+            "before": args.before,
+            "tool": args.tool,
+            "tag": args.tag,
+            "all_tags": getattr(args, "all_tags", None),
+            "no_tag": getattr(args, "no_tag", None),
+            "tool_tag": getattr(args, "tool_tag", None),
+            "n": args.limit,
+            "oldest": args.oldest,
+        }
+        params = {k: v for k, v in params.items() if v is not None and v is not False}
+
+        result = try_delegate("/v1/query", params=params, db=effective_db)
+        if result is not None and "conversations" in result:
+            conversations = [
+                ConversationSummary(
+                    id=c["id"],
+                    workspace_path=c.get("workspace_path"),
+                    model=c.get("model"),
+                    started_at=c.get("started_at"),
+                    prompt_count=c.get("prompt_count", 0),
+                    response_count=c.get("response_count", 0),
+                    total_tokens=c.get("total_tokens", 0),
+                    cost=c.get("cost"),
+                    tags=c.get("tags", []),
+                )
+                for c in result["conversations"]
+            ]
+    except Exception:
+        pass
+
+    if conversations is None:
+        try:
+            conversations = list_conversations(
+                db_path=db,
+                workspace=args.workspace,
+                model=args.model,
+                since=args.since,
+                before=args.before,
+                tool=args.tool,
+                tags=args.tag,
+                all_tags=getattr(args, "all_tags", None),
+                exclude_tags=getattr(args, "no_tag", None),
+                tool_tag=getattr(args, "tool_tag", None),
+                limit=args.limit,
+                oldest_first=args.oldest,
+            )
+        except FileNotFoundError as e:
+            print(str(e))
+            print("Run 'siftd ingest' to create it.")
+            return 1
+        except sqlite3.OperationalError as e:
+            err_msg = str(e).lower()
+            if "no such table" in err_msg and "fts" in err_msg:
+                print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
+            elif "fts5" in err_msg or "syntax" in err_msg:
+                print(f"Invalid search query: {e}", file=sys.stderr)
+                print("Tip: Check your search query for syntax errors.", file=sys.stderr)
+            else:
+                print(f"Database error: {e}", file=sys.stderr)
+                print("Tip: Run 'siftd doctor' to check database health.", file=sys.stderr)
+            return 1
 
     if not conversations:
         if args.json:

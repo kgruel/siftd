@@ -22,6 +22,7 @@ async def index() -> dict:
             {"method": "GET", "path": "/v1/query", "description": "List or detail conversations"},
             {"method": "GET", "path": "/v1/search", "description": "Semantic + FTS search"},
             {"method": "GET", "path": "/v1/stats", "description": "Database statistics"},
+            {"method": "GET", "path": "/v1/workspaces", "description": "List workspaces"},
         ],
     }
 
@@ -58,6 +59,28 @@ async def stats_route(db_path: Path) -> dict:
 
     stats = get_stats(db_path=db_path)
     return _stats_to_dict(stats)
+
+
+@get("/v1/workspaces")
+async def workspaces_route(
+    db_path: Path,
+    n: int = Parameter(query="n", default=10000),
+) -> dict:
+    """List workspaces with conversation counts."""
+    from siftd.api.stats import list_workspaces
+    from siftd.storage.sqlite import open_database
+
+    conn = open_database(db_path, read_only=True)
+    try:
+        rows = list_workspaces(conn, limit=n)
+    finally:
+        conn.close()
+    return {
+        "workspaces": [
+            {"path": r["path"], "conversations": r["convs"], "last_activity": r["last_activity"]}
+            for r in rows
+        ]
+    }
 
 
 @post("/v1/push")
@@ -161,8 +184,13 @@ async def query(
     before: str | None = Parameter(query="before", default=None),
     model: str | None = Parameter(query="model", default=None),
     tag: list[str] | None = Parameter(query="tag", default=None),
+    all_tags: list[str] | None = Parameter(query="all_tags", default=None),
+    no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    tool: str | None = Parameter(query="tool", default=None),
+    tool_tag: str | None = Parameter(query="tool_tag", default=None),
     search: str | None = Parameter(query="search", default=None),
     n: int = Parameter(query="n", default=20),
+    oldest: bool = Parameter(query="oldest", default=False),
     id: str | None = Parameter(query="id", default=None),
 ) -> dict:
     """List or detail conversations."""
@@ -185,8 +213,13 @@ async def query(
         since=since,
         before=before,
         search=search,
+        tool=tool,
         tags=tag,
+        all_tags=all_tags,
+        exclude_tags=no_tag,
+        tool_tag=tool_tag,
         limit=n,
+        oldest_first=oldest,
     )
     return {"conversations": [dataclasses.asdict(r) for r in rows]}
 

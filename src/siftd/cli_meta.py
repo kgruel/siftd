@@ -196,18 +196,34 @@ def cmd_workspaces(args) -> int:
     db = resolve_db(args)
     from siftd.output import fmt_timestamp, fmt_workspace
 
-    if not db.exists():
-        if args.json:
-            print("[]")
-            return 0
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
-        return 1
-
-    conn = open_database(db, read_only=True)
+    rows = None
     limit = args.limit if args.limit > 0 else 10000
-    rows = list_workspaces(conn, limit=limit)
-    conn.close()
+
+    # Try serve delegation
+    try:
+        from siftd.serve.delegation import try_delegate
+
+        result = try_delegate("/v1/workspaces", {"n": limit}, db=db)
+        if result is not None and "workspaces" in result:
+            rows = [
+                {"path": w["path"], "convs": w["conversations"], "last_activity": w.get("last_activity")}
+                for w in result["workspaces"]
+            ]
+    except Exception:
+        pass
+
+    if rows is None:
+        if not db.exists():
+            if args.json:
+                print("[]")
+                return 0
+            print(f"Database not found: {db}")
+            print("Run 'siftd ingest' to create it.")
+            return 1
+
+        conn = open_database(db, read_only=True)
+        rows = list_workspaces(conn, limit=limit)
+        conn.close()
 
     if args.json:
         out = [
