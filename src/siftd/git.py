@@ -302,3 +302,13 @@ def get_canonical_workspace_identity(path: str) -> tuple[str | None, str]:
         current = current.parent
 
     return (None, canonical_path)
+
+
+def clear_git_caches() -> None:
+    """Clear all git-related LRU caches.
+
+    Call between test scenarios that modify the filesystem (e.g., creating
+    git repos) to ensure fresh lookups. Not needed in production since
+    workspace state doesn't change during an ingest run.
+    """
+    get_canonical_workspace_path.cache_clear()

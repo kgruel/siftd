@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-03-20
+
+### Changed
+
+- **Ingest is ~3× faster** — Full fresh ingest dropped from ~115s to ~38s (67% reduction) across ~6,400 files. Optimizations:
+  - Cache workspace identity lookups to avoid repeated `git remote` subprocess calls
+  - SQLite WAL mode with tuned pragmas (`synchronous=OFF` during bulk ingest, 64MB cache, 256MB mmap, deferred foreign keys)
+  - In-process vocabulary caches for harness/provider/model/tool/tag lookups
+  - Batched `os.urandom()` and unrolled encoding for ULID generation
+  - `hashlib.file_digest()` for file hashing (Python 3.11+)
+  - `INSERT OR IGNORE` for tag application instead of SELECT+INSERT
+  - Early `len()` check in binary content filter to skip regex on short strings
+
 ## [0.5.4] - 2026-03-20
 
 ### Added

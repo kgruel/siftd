@@ -8,10 +8,16 @@ import hashlib
 import sqlite3
 from datetime import datetime
 
+_sha256 = hashlib.sha256
+
 
 def compute_content_hash(content: str) -> str:
     """Compute SHA256 hash of content string."""
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return _sha256(content.encode("utf-8")).hexdigest()
+
+
+# Shared timestamp for batch operations — avoids datetime.now() per call
+_batch_timestamp: str | None = None
 
 
 def store_content(
@@ -33,8 +39,10 @@ def store_content(
     Returns:
         SHA256 hash of the content
     """
-    content_hash = compute_content_hash(content)
-    created_at = datetime.now().isoformat()
+    global _batch_timestamp
+    content_hash = _sha256(content.encode("utf-8")).hexdigest()
+    if _batch_timestamp is None:
+        _batch_timestamp = datetime.now().isoformat()
 
     conn.execute(
         """
@@ -42,7 +50,7 @@ def store_content(
         VALUES (?, ?, 1, ?)
         ON CONFLICT(hash) DO UPDATE SET ref_count = ref_count + 1
         """,
-        (content_hash, content, created_at),
+        (content_hash, content, _batch_timestamp),
     )
 
     if commit:

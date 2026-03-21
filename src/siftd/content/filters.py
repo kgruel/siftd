@@ -73,6 +73,10 @@ def has_large_base64(content: str) -> bool:
     """
     if not isinstance(content, str):
         return False
+    # Quick length check: content must be at least 500 chars to contain
+    # a 500+ char base64 string
+    if len(content) < 500:
+        return False
     return bool(BASE64_PATTERN.search(content))
 
 
