@@ -379,7 +379,7 @@ class TestSearchServeDelegation:
         assert out is None
 
     def test_resolves_default_url_from_serve_port_config(self, monkeypatch, tmp_path):
-        from siftd.cli_search import _resolve_serve_base_url
+        from siftd.serve.delegation import resolve_serve_url as _resolve_serve_base_url
 
         monkeypatch.delenv("SIFTD_SERVE_URL", raising=False)
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -394,7 +394,7 @@ class TestSearchServeDelegation:
 
     def test_resolves_url_from_serve_state_file(self, monkeypatch, tmp_path):
         """CLI discovers serve port from runtime state file."""
-        from siftd.cli_search import _resolve_serve_base_url
+        from siftd.serve.delegation import resolve_serve_url as _resolve_serve_base_url
         import json
         import os
 
@@ -420,7 +420,7 @@ class TestSearchServeDelegation:
 
     def test_serve_port_config_takes_precedence_over_state_file(self, monkeypatch, tmp_path):
         """serve.port config should win over a live state file."""
-        from siftd.cli_search import _resolve_serve_base_url
+        from siftd.serve.delegation import resolve_serve_url as _resolve_serve_base_url
         import json
         import os
 

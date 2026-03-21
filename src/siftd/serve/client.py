@@ -104,3 +104,12 @@ def search(
 ) -> dict[str, Any]:
     """Call the serve search endpoint and return parsed JSON body."""
     return _get_json(base_url, "/v1/search", params=params, timeout_s=timeout_s)
+
+
+def stats(
+    *,
+    base_url: str,
+    timeout_s: float = 1.0,
+) -> dict[str, Any]:
+    """Call the serve stats endpoint and return parsed JSON body."""
+    return _get_json(base_url, "/v1/stats", timeout_s=timeout_s)

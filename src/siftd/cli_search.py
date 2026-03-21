@@ -7,11 +7,9 @@ Supports three modes:
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 from typing import cast
-from urllib.parse import urlparse
 
 from siftd.cli_common import apply_config_defaults, resolve_db
 from siftd.paths import embeddings_db_path
@@ -42,101 +40,11 @@ def _print_empty_json_results(args, query: str, db: Path) -> None:
         print(result)
 
 
-def _parse_bool_like(value: str | None) -> bool | None:
-    if value is None:
-        return None
-    v = value.strip().lower()
-    if v in ("1", "true", "yes", "y", "on"):
-        return True
-    if v in ("0", "false", "no", "n", "off"):
-        return False
-    return None
-
-
-def _serve_delegation_enabled() -> bool:
-    env = _parse_bool_like(os.environ.get("SIFTD_SERVE_DELEGATE"))
-    if env is not None:
-        return env
-
-    try:
-        from siftd.config import get_config
-    except Exception:
-        return True
-
-    cfg = _parse_bool_like(get_config("search.serve_delegate"))
-    return True if cfg is None else cfg
-
-
-def _is_loopback_url(base_url: str) -> bool:
-    try:
-        host = (urlparse(base_url).hostname or "").lower()
-    except Exception:
-        return False
-    return host in ("127.0.0.1", "localhost", "::1")
-
-
-def _resolve_serve_base_url() -> tuple[str, bool]:
-    """Resolve siftd-serve base URL.
-
-    Returns (base_url, explicit) where explicit means it came from SIFTD_SERVE_URL
-    or config `serve.url` (as opposed to the localhost default fallback).
-    """
-    try:
-        from siftd.config import get_config
-    except Exception:
-        get_config = None  # type: ignore[assignment]
-
-    env_url = os.environ.get("SIFTD_SERVE_URL")
-    if env_url:
-        return env_url, True
-
-    if get_config is not None:
-        cfg_url = get_config("serve.url")
-        if cfg_url:
-            return cfg_url, True
-
-    port = 8484
-    port_from_config = False
-    if get_config is not None:
-        port_cfg = get_config("serve.port")
-        if port_cfg:
-            try:
-                port = int(port_cfg)
-                port_from_config = True
-            except (ValueError, TypeError):
-                pass
-
-    # Runtime fallback: only consult the state file when serve.port is NOT
-    # configured, so config remains authoritative over stale/other state files.
-    if not port_from_config:
-        import json
-
-        from siftd.paths import state_dir
-
-        serve_state = state_dir() / "serve.json"
-        try:
-            data = json.loads(serve_state.read_text())
-            pid = data.get("pid")
-            if isinstance(pid, int):
-                os.kill(pid, 0)  # raises OSError if process doesn't exist
-                state_port = data.get("port")
-                if isinstance(state_port, int):
-                    port = state_port
-        except (OSError, json.JSONDecodeError, KeyError, TypeError):
-            pass
-
-    return f"http://127.0.0.1:{port}", False
-
-
 def _can_delegate_to_serve(args, *, db: Path, embed_db: Path) -> bool:
     """Conservatively decide whether it's safe to delegate to siftd-serve."""
-    if not _serve_delegation_enabled():
-        return False
+    from siftd.serve.delegation import can_delegate
 
-    base_url, explicit = _resolve_serve_base_url()
-
-    # Only auto-delegate to loopback to keep the cold-path probe bounded (<10ms).
-    if not explicit and not _is_loopback_url(base_url):
+    if not can_delegate(db=db):
         return False
 
     # Embeddings DB overrides are not supported over HTTP.
@@ -158,7 +66,9 @@ def _delegate_search_via_serve(
     db: Path,
 ) -> list[dict] | None:
     """Try to run semantic/hybrid search via siftd-serve; return results or None."""
-    base_url, explicit = _resolve_serve_base_url()
+    from siftd.serve.delegation import resolve_serve_url
+
+    base_url, explicit = resolve_serve_url()
 
     from siftd.serve.client import probe_health
     from siftd.serve.client import search as serve_search

@@ -181,6 +181,35 @@ class TestQuery:
         assert body["conversation"]["id"] == conv_id
 
 
+class TestStats:
+    def test_stats_returns_counts(self, tmp_path):
+        team_db = _make_team_db(
+            tmp_path / "team.db",
+            conversations=[{"external_id": "c1"}, {"external_id": "c2"}],
+        )
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/v1/stats")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["counts"]["conversations"] == 2
+        assert body["counts"]["prompts"] == 2
+        assert body["counts"]["responses"] == 2
+        assert "models" in body
+        assert "top_workspaces" in body
+        assert "token_coverage" in body
+
+    def test_stats_on_empty_db(self, tmp_path):
+        db = tmp_path / "team.db"
+        create_database(db)
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/v1/stats")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["counts"]["conversations"] == 0
+
+
 class TestSearch:
     def test_search_without_embeddings_returns_501(self, tmp_path):
         """Search endpoint returns 501 when embeddings not installed."""

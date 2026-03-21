@@ -21,6 +21,7 @@ async def index() -> dict:
             {"method": "GET", "path": "/v1/pull", "description": "Pull a filtered database slice"},
             {"method": "GET", "path": "/v1/query", "description": "List or detail conversations"},
             {"method": "GET", "path": "/v1/search", "description": "Semantic + FTS search"},
+            {"method": "GET", "path": "/v1/stats", "description": "Database statistics"},
         ],
     }
 
@@ -50,6 +51,15 @@ async def health(db_path: Path) -> dict:
     }
 
 
+@get("/v1/stats")
+async def stats_route(db_path: Path) -> dict:
+    """Return database statistics. Server has DB warm, so this is fast."""
+    from siftd.api.stats import _stats_to_dict, get_stats
+
+    stats = get_stats(db_path=db_path)
+    return _stats_to_dict(stats)
+
+
 @post("/v1/push")
 async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | dict:
     """Receive a pushed slice and merge into team DB."""
@@ -72,6 +82,14 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
         # Attribution: record push in push_log
         identity = _get_push_identity(request)
         _record_push_log(db_path, identity, result["conversations"], len(body), request)
+
+        # Refresh stats cache (server has DB warm from the merge)
+        try:
+            from siftd.api.stats import get_stats, write_stats_cache
+
+            write_stats_cache(get_stats(db_path=db_path))
+        except Exception:
+            pass  # Cache refresh failure is never fatal
 
         status_code = 201 if result["status"] == "created" else 200
         return Response(

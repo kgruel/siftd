@@ -13,16 +13,36 @@ from siftd.paths import cache_dir, config_dir, config_file, data_dir, db_path
 def cmd_status(args) -> int:
     """Show database status and statistics."""
     from siftd.api import get_stats
+    from siftd.api.stats import _dict_to_stats, read_stats_cache
     from siftd.output import fmt_timestamp
 
     db = Path(args.db) if args.db else None
+    effective_db = db or db_path()
 
+    stats = None
+
+    # Tier 1: delegate to running server (DB already warm)
     try:
-        stats = get_stats(db_path=db)
-    except FileNotFoundError as e:
-        print(str(e))
-        print("Run 'siftd ingest' to create it.")
-        return 1
+        from siftd.serve.delegation import try_delegate
+
+        result = try_delegate("/v1/stats", db=effective_db)
+        if result is not None:
+            stats = _dict_to_stats(result)
+    except Exception:
+        pass
+
+    # Tier 2: read from cache (avoids 1.5s cold-open on large DBs)
+    if stats is None:
+        stats = read_stats_cache(db_path=db)
+
+    # Tier 3: live computation (cold-open fallback)
+    if stats is None:
+        try:
+            stats = get_stats(db_path=db)
+        except FileNotFoundError as e:
+            print(str(e))
+            print("Run 'siftd ingest' to create it.")
+            return 1
 
     # JSON output
     if args.json:
