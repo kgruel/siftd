@@ -17,11 +17,6 @@ def cmd_export(args) -> int:
 
     db = resolve_db(args)
 
-    if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
-        return 1
-
     # Determine what to export
     conversation_ids = [args.conversation_id] if args.conversation_id else None
     last = args.last
@@ -29,6 +24,39 @@ def cmd_export(args) -> int:
     # Default: if no ID and no --last specified, export last 1
     if not conversation_ids and last is None:
         last = 1
+
+    # Try serve delegation for --json export
+    if getattr(args, "json", False):
+        try:
+            from siftd.serve.delegation import try_delegate
+
+            params: dict[str, object] = {
+                "id": conversation_ids,
+                "workspace": args.workspace,
+                "since": args.since,
+                "before": args.before,
+                "tag": args.tag,
+                "no_tag": getattr(args, "no_tag", None),
+                "n": last or 0,
+            }
+            params = {k: v for k, v in params.items() if v is not None}
+            result = try_delegate("/v1/export", params=params, db=db)
+            if result is not None and "conversations" in result:
+                output = json.dumps(result["conversations"], indent=2)
+                if args.output:
+                    output_path = Path(args.output)
+                    output_path.write_text(output)
+                    print(f"Exported {len(result['conversations'])} session(s) to {output_path}")
+                else:
+                    print(output)
+                return 0
+        except Exception:
+            pass
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'siftd ingest' to create it.")
+        return 1
 
     from siftd.cli_common import fidelity_from_args
 

@@ -35,7 +35,7 @@ def serialize_conversation_list(conversations: list[ConversationSummary]) -> lis
 
 
 def serialize_conversation_detail(
-    detail: ConversationDetail,
+    detail: ConversationDetail | Any,
     *,
     fidelity: Fidelity | None = None,
 ) -> dict[str, Any]:

@@ -22,6 +22,35 @@ def cmd_tool_search(args) -> int:
         return 1
 
     db = Path(args.db) if args.db else None
+
+    # Try serve delegation for --json output
+    if args.json and not args.rebuild_index:
+        try:
+            from siftd.cli_common import resolve_db
+            from siftd.serve.delegation import try_delegate
+
+            effective_db = db or resolve_db(args)
+            params: dict[str, object] = {
+                "q": query,
+                "n": args.limit,
+                "workspace": filters.workspace,
+                "model": filters.model,
+                "since": filters.since,
+                "before": filters.before,
+                "tool": filters.tool,
+                "tool_tag": filters.tool_tag,
+                "tag": filters.tags,
+                "all_tags": filters.all_tags,
+                "no_tag": filters.exclude_tags,
+            }
+            params = {k: v for k, v in params.items() if v is not None}
+            result = try_delegate("/v1/tool-search", params=params, db=effective_db)
+            if result is not None:
+                print(json.dumps(result, indent=2))
+                return 0
+        except Exception:
+            pass
+
     try:
         parsed, results = search_tool_calls(
             query,

@@ -207,7 +207,35 @@ def _cmd_tag_list(args, db: Path) -> int:
     # Default: list tags
     since = getattr(args, "since", None)
     before = getattr(args, "before", None)
-    tags = list_tags(conn=conn, since=since, before=before)
+
+    # Try serve delegation for tag listing
+    tags = None
+    try:
+        from siftd.api.tags import TagInfo
+        from siftd.serve.delegation import try_delegate
+
+        params: dict[str, object] = {"since": since, "before": before}
+        params = {k: v for k, v in params.items() if v is not None}
+        result = try_delegate("/v1/tags", params=params, db=db)
+        if result is not None and "tags" in result:
+            conn.close()
+            tags = [
+                TagInfo(
+                    name=t["name"],
+                    description=t.get("description"),
+                    created_at=t.get("created_at", ""),
+                    conversation_count=t.get("conversation_count", 0),
+                    workspace_count=t.get("workspace_count", 0),
+                    tool_call_count=t.get("tool_call_count", 0),
+                    prompt_count=t.get("prompt_count", 0),
+                )
+                for t in result["tags"]
+            ]
+    except Exception:
+        pass
+
+    if tags is None:
+        tags = list_tags(conn=conn, since=since, before=before)
 
     if not tags:
         if since or before:

@@ -1,7 +1,6 @@
 """CLI handlers for query commands (query, tools)."""
 
 import argparse
-import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -14,12 +13,42 @@ from siftd.paths import queries_dir
 
 def cmd_tools(args) -> int:
     """Show tool usage summary by category."""
+    import json
+
     from siftd.config import get_tools_defaults
 
     apply_config_defaults(args, get_tools_defaults, {"limit": 20})
     from siftd.api import get_tool_tag_summary, get_tool_tags_by_workspace
 
     db = resolve_db(args)
+    prefix = args.prefix or "shell:"
+
+    # Try serve delegation
+    try:
+        from siftd.serve.delegation import try_delegate
+
+        params: dict[str, object] = {"prefix": prefix, "by_workspace": args.by_workspace, "n": args.limit}
+        params = {k: v for k, v in params.items() if v is not None and v is not False}
+        result = try_delegate("/v1/tools", params=params, db=db)
+        if result is not None:
+            if args.json:
+                print(json.dumps(result, indent=2))
+            elif args.by_workspace and "workspaces" in result:
+                for ws in result["workspaces"]:
+                    ws_display = fmt_workspace(ws["workspace"])
+                    print(f"\n{ws_display} ({ws['total']} total)")
+                    for tag in ws["tags"]:
+                        category = tag["name"][len(prefix):] if tag["name"].startswith(prefix) else tag["name"]
+                        print(f"  {category}: {tag['count']}")
+            elif "tags" in result:
+                total = result.get("total", 0)
+                print(f"Tool call tags ({prefix}*): {total} total\n")
+                for tag in result["tags"]:
+                    category = tag["name"][len(prefix):] if tag["name"].startswith(prefix) else tag["name"]
+                    print(f"  {category}: {tag['count']} ({tag.get('percentage', 0)}%)")
+            return 0
+    except Exception:
+        pass
 
     if not db.exists():
         if args.json:
@@ -28,8 +57,6 @@ def cmd_tools(args) -> int:
         print(f"Database not found: {db}")
         print("Run 'siftd ingest' to create it.")
         return 1
-
-    prefix = args.prefix or "shell:"
 
     # By-workspace mode
     if args.by_workspace:
@@ -136,6 +163,7 @@ def _query_detail(args) -> int:
         return 1
 
     db = Path(args.db) if args.db else None
+    effective_db = db or resolve_db(args)
 
     fidelity = fidelity_from_args(args)
     tool_chars = tool_chars_from_args(args, fidelity)
@@ -146,6 +174,21 @@ def _query_detail(args) -> int:
     tool_filter = None
     if tools_flag is not None and tools_flag != "all":
         tool_filter = tools_flag
+
+    # For --json output, delegate to serve if available (avoids cold-open
+    # entirely — server returns the canonical JSON shape directly)
+    if getattr(args, "json", False) and not getattr(args, "summary", False):
+        try:
+            from siftd.serve.delegation import try_delegate
+
+            result = try_delegate("/v1/query", {"id": args.conversation_id}, db=effective_db)
+            if result is not None and "conversation" in result:
+                import json
+
+                print(json.dumps(result["conversation"], indent=2))
+                return 0
+        except Exception:
+            pass
 
     try:
         detail = get_conversation(

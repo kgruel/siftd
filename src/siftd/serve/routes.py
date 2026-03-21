@@ -23,6 +23,10 @@ async def index() -> dict:
             {"method": "GET", "path": "/v1/search", "description": "Semantic + FTS search"},
             {"method": "GET", "path": "/v1/stats", "description": "Database statistics"},
             {"method": "GET", "path": "/v1/workspaces", "description": "List workspaces"},
+            {"method": "GET", "path": "/v1/tools", "description": "Tool tag usage summary"},
+            {"method": "GET", "path": "/v1/tags", "description": "List tags with counts"},
+            {"method": "GET", "path": "/v1/tool-search", "description": "Search tool calls"},
+            {"method": "GET", "path": "/v1/export", "description": "Export full conversations"},
         ],
     }
 
@@ -80,6 +84,157 @@ async def workspaces_route(
             {"path": r["path"], "conversations": r["convs"], "last_activity": r["last_activity"]}
             for r in rows
         ]
+    }
+
+
+@get("/v1/tools")
+async def tools_route(
+    db_path: Path,
+    prefix: str = Parameter(query="prefix", default="shell:"),
+    by_workspace: bool = Parameter(query="by_workspace", default=False),
+    n: int = Parameter(query="n", default=20),
+) -> dict:
+    """Tool tag usage summary."""
+    from siftd.api.tools import get_tool_tag_summary, get_tool_tags_by_workspace
+
+    if by_workspace:
+        results = get_tool_tags_by_workspace(db_path=db_path, prefix=prefix, limit=n)
+        return {
+            "workspaces": [
+                {
+                    "workspace": ws.workspace,
+                    "total": ws.total,
+                    "tags": [{"name": t.name, "count": t.count} for t in ws.tags],
+                }
+                for ws in results
+            ]
+        }
+
+    tags = get_tool_tag_summary(db_path=db_path, prefix=prefix)
+    total = sum(t.count for t in tags)
+    return {
+        "total": total,
+        "tags": [
+            {"name": t.name, "count": t.count, "percentage": round((t.count / total) * 100, 1) if total else 0}
+            for t in tags
+        ],
+    }
+
+
+@get("/v1/tags")
+async def tags_route(
+    db_path: Path,
+    since: str | None = Parameter(query="since", default=None),
+    before: str | None = Parameter(query="before", default=None),
+) -> dict:
+    """List tags with usage counts."""
+    from siftd.storage.sqlite import open_database
+    from siftd.storage.tags import list_tags
+
+    conn = open_database(db_path, read_only=True)
+    try:
+        tags = list_tags(conn, since=since, before=before)
+    finally:
+        conn.close()
+    return {
+        "tags": [
+            {
+                "name": t["name"],
+                "conversation_count": t["conversation_count"],
+                "workspace_count": t["workspace_count"],
+                "tool_call_count": t["tool_call_count"],
+                "prompt_count": t["prompt_count"],
+            }
+            for t in tags
+        ]
+    }
+
+
+@get("/v1/tool-search")
+async def tool_search_route(
+    db_path: Path,
+    q: str = Parameter(query="q"),
+    workspace: str | None = Parameter(query="workspace", default=None),
+    model: str | None = Parameter(query="model", default=None),
+    since: str | None = Parameter(query="since", default=None),
+    before: str | None = Parameter(query="before", default=None),
+    tool: str | None = Parameter(query="tool", default=None),
+    tool_tag: str | None = Parameter(query="tool_tag", default=None),
+    tag: list[str] | None = Parameter(query="tag", default=None),
+    all_tags: list[str] | None = Parameter(query="all_tags", default=None),
+    no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    n: int = Parameter(query="n", default=20),
+) -> dict:
+    """Search tool calls via FTS."""
+    from siftd.api.tool_search import search_tool_calls
+
+    query_obj, results = search_tool_calls(
+        q,
+        db_path=db_path,
+        limit=n,
+        workspace=workspace,
+        model=model,
+        since=since,
+        before=before,
+        tags=tag,
+        all_tags=all_tags,
+        exclude_tags=no_tag,
+        tool=tool,
+        tool_tag=tool_tag,
+    )
+    return {
+        "query": q,
+        "result_count": len(results),
+        "results": [
+            {
+                "tool_call_id": r.tool_call_id,
+                "conversation_id": r.conversation_id,
+                "timestamp": r.timestamp,
+                "tool_name": r.tool_name,
+                "tool_family": r.tool_family,
+                "status": r.status,
+                "path": r.path,
+                "basename": r.basename,
+                "command": r.command,
+                "command_verb": r.command_verb,
+                "result_snippet": r.result_snippet,
+                "workspace_path": r.workspace_path,
+                "rank": r.rank,
+            }
+            for r in results
+        ],
+    }
+
+
+@get("/v1/export")
+async def export_route(
+    db_path: Path,
+    id: list[str] | None = Parameter(query="id", default=None),
+    workspace: str | None = Parameter(query="workspace", default=None),
+    since: str | None = Parameter(query="since", default=None),
+    before: str | None = Parameter(query="before", default=None),
+    tag: list[str] | None = Parameter(query="tag", default=None),
+    no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    n: int = Parameter(query="n", default=0),
+) -> dict:
+    """Export full conversation data."""
+    from siftd.api.export import export_conversations
+    from siftd.serialization.conversations import serialize_conversation_detail
+
+    conversations = export_conversations(
+        conversation_ids=id,
+        workspace=workspace,
+        since=since,
+        before=before,
+        tags=tag,
+        exclude_tags=no_tag,
+        db_path=db_path,
+    )
+    if n > 0:
+        conversations = conversations[:n]
+
+    return {
+        "conversations": [serialize_conversation_detail(c) for c in conversations],
     }
 
 
