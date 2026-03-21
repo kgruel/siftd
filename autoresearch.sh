@@ -1,36 +1,28 @@
 #!/bin/bash
 set -euo pipefail
 
-# Adapter coverage efficiency benchmark
+# VSCode adapter coverage efficiency benchmark
 # Metric: test_LOC × test_time_s / covered_lines (lower = better)
 # Uses median-of-5 timing (all with coverage) for stability
 
-# Quick pre-check: syntax errors in test files
+# Quick pre-check: syntax errors
 .venv/bin/python -c "
-import py_compile, sys, pathlib
-for f in pathlib.Path('tests/adapters').glob('test_*.py'):
-    try:
-        py_compile.compile(str(f), doraise=True)
-    except py_compile.PyCompileError as e:
-        print(f'Syntax error: {e}', file=sys.stderr)
-        sys.exit(1)
+import py_compile, sys
+py_compile.compile('tests/adapters/test_vscode.py', doraise=True)
 "
 
-# Coverage source files (excluding __init__.py, template.py)
-INCLUDE="src/siftd/adapters/_jsonl.py,src/siftd/adapters/aider.py,src/siftd/adapters/claude_code.py,src/siftd/adapters/codex_cli.py,src/siftd/adapters/copilot_cli.py,src/siftd/adapters/gemini_cli.py,src/siftd/adapters/opencode.py,src/siftd/adapters/pi_agent.py,src/siftd/adapters/registry.py,src/siftd/adapters/sdk.py,src/siftd/adapters/validation.py,src/siftd/adapters/vscode.py"
+INCLUDE="src/siftd/adapters/vscode.py"
+TEST_FILE="tests/adapters/test_vscode.py"
 
-# Test directory
-TEST_DIR="tests/adapters"
-
-# Count test LOC (non-empty, non-comment lines across all test files)
-TEST_LOC=$(cat $TEST_DIR/test_*.py 2>/dev/null | grep -v '^\s*$' | grep -v '^\s*#' | wc -l | tr -d ' ')
+# Count test LOC (non-empty, non-comment lines)
+TEST_LOC=$(grep -v '^\s*$' "$TEST_FILE" | grep -v '^\s*#' | wc -l | tr -d ' ')
 
 # Helper: run once with coverage, print elapsed time
 time_one_run() {
     local start end
     start=$(.venv/bin/python -c "import time; print(time.monotonic())")
     .venv/bin/python -m coverage run --include="$INCLUDE" \
-        -m pytest $TEST_DIR -x -q --tb=short -p no:xdist \
+        -m pytest "$TEST_FILE" -x -q --tb=short -p no:xdist \
         --override-ini="addopts=" -m "not embeddings and not serve" > /dev/null 2>&1
     end=$(.venv/bin/python -c "import time; print(time.monotonic())")
     .venv/bin/python -c "print(round($end - $start, 4))"
@@ -39,7 +31,7 @@ time_one_run() {
 # Run 1 — show output (for pass/fail detection)
 START1=$(.venv/bin/python -c "import time; print(time.monotonic())")
 .venv/bin/python -m coverage run --include="$INCLUDE" \
-    -m pytest $TEST_DIR -x -q --tb=short -p no:xdist \
+    -m pytest "$TEST_FILE" -x -q --tb=short -p no:xdist \
     --override-ini="addopts=" -m "not embeddings and not serve" 2>&1 | tail -5
 END1=$(.venv/bin/python -c "import time; print(time.monotonic())")
 T1=$(.venv/bin/python -c "print(round($END1 - $START1, 4))")
@@ -56,7 +48,7 @@ times = sorted([$T1, $T2, $T3, $T4, $T5])
 print(round(times[2], 3))
 ")
 
-# Extract coverage stats (from last run's .coverage file)
+# Extract coverage stats
 COVERAGE_TMPFILE=$(mktemp)
 .venv/bin/python -m coverage json -o "$COVERAGE_TMPFILE" --include="$INCLUDE" 2>/dev/null
 COVERAGE_JSON=$(cat "$COVERAGE_TMPFILE")
@@ -64,6 +56,13 @@ rm -f "$COVERAGE_TMPFILE"
 COVERED=$( echo "$COVERAGE_JSON" | .venv/bin/python -c "import json,sys; d=json.load(sys.stdin); print(d['totals']['covered_lines'])")
 TOTAL=$(   echo "$COVERAGE_JSON" | .venv/bin/python -c "import json,sys; d=json.load(sys.stdin); print(d['totals']['num_statements'])")
 PCT=$(     echo "$COVERAGE_JSON" | .venv/bin/python -c "import json,sys; d=json.load(sys.stdin); print(round(d['totals']['percent_covered'], 1))")
+MISSING=$( echo "$COVERAGE_JSON" | .venv/bin/python -c "
+import json,sys
+d=json.load(sys.stdin)
+for f in d['files'].values():
+    lines = f.get('missing_lines', [])
+    print(','.join(str(l) for l in lines) if lines else 'none')
+")
 
 # Compute primary metric: test_LOC * test_time / covered_lines
 if [ "$COVERED" -eq 0 ]; then
@@ -73,11 +72,12 @@ else
 fi
 
 echo ""
-echo "=== Adapter Coverage Efficiency ==="
+echo "=== VSCode Adapter Coverage Efficiency ==="
 echo "Test LOC:       $TEST_LOC"
 echo "Test time:      ${TEST_TIME}s (median of 5: $T1, $T2, $T3, $T4, $T5)"
 echo "Covered lines:  $COVERED / $TOTAL"
 echo "Coverage:       ${PCT}%"
+echo "Missing lines:  $MISSING"
 echo "Efficiency:     $EFFICIENCY"
 echo ""
 echo "METRIC efficiency=$EFFICIENCY"
