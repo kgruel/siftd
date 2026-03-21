@@ -1,9 +1,9 @@
-# Operation IR Rollout Plan
+# Operation IR — Status & Next Steps
 
-Operation IR proven on `cmd_query` list mode (commit bc94b8c). This plan
-covers migrating remaining commands to the pattern.
+## Current state
 
-## Pattern per command
+All 12 CLI commands migrated to the Operation IR pattern. Every command
+builds an Operation and uses `try_serve(op)` / `execute(op)`.
 
 ```python
 op = Operation(path=..., method=..., fn=..., params={...},
@@ -12,34 +12,28 @@ result = try_serve(op) or execute(op)
 output = render(result, op, fmt=select_format(...))
 ```
 
-## Commands to migrate
+### Operations inventory
 
-### Tier 1 — straightforward, same shape as query list (all done)
+| Path | Method | fn | render | Module |
+|------|--------|----|--------|--------|
+| `/v1/stats` | GET | `get_stats` | stats | cli_meta |
+| `/v1/workspaces` | GET | `list_workspaces` | raw | cli_meta |
+| `/v1/tools` | GET | `get_tool_tag_summary` | raw | cli_query |
+| `/v1/tools` | GET | `get_tool_tags_by_workspace` | raw | cli_query |
+| `/v1/query` | GET | `get_conversation` | detail | cli_query |
+| `/v1/query` | GET | `list_conversations` | list | cli_query |
+| `/v1/search` | GET | `hybrid_search` | search | cli_search |
+| `/v1/tool-search` | GET | `search_tool_calls` | raw | cli_tool_search |
+| `/v1/tags` | GET | `list_tags` | raw | cli_tags |
+| `/v1/tag` | POST | `rename_tag` | raw | cli_tags |
+| `/v1/tag` | POST | `apply_tag`/`remove_tag` | raw | cli_tags |
+| `/v1/export` | GET | `export_conversations` | detail | cli_export |
 
-| Command | fn | render_method | Notes |
-|---------|-----|---------------|-------|
-| `db stats` | `get_stats` | `stats` | **Done.** 3-tier fallback via Operation |
-| `db workspaces` | `list_workspaces` | `raw` | **Done.** list_workspaces adapted for db_path |
-| `tools` (summary) | `get_tool_tag_summary` | `raw` | **Done.** Two modes, two Operations |
-| `tools` (by-ws) | `get_tool_tags_by_workspace` | `raw` | **Done.** Same command, different fn |
-| `tag list` | `list_tags` | `raw` | **Done.** Simple listing; drill-down stays as-is |
+### Infrastructure
 
-### Tier 2 — need minor adaptation
-
-| Command | fn | render_method | Notes |
-|---------|-----|---------------|-------|
-| `query <id>` | `get_conversation` | `detail` | **Done.** Fidelity-dependent; --json delegates |
-| `export` | `export_conversations` | `detail` | **Done.** Multiple conversations; --json delegates |
-| `tool-search` | `search_tool_calls` | `raw` | **Done.** Returns (query_obj, results) tuple |
-| `search` | `hybrid_search` | `search` | **Done.** hybrid_search() extracted; cmd_search uses Operation + try_serve/execute |
-
-### Tier 3 — writes (tag apply/remove/rename, all done)
-
-| Command | fn | method | Notes |
-|---------|-----|--------|-------|
-| `tag apply` | apply_tag | POST | **Done.** Operation for intent + try_serve; local loop stays procedural |
-| `tag remove` | remove_tag | POST | **Done.** Same pattern, action="remove" |
-| `tag rename` | rename_tag | POST | **Done.** rename_tag adapted for db_path |
+- `api/dispatch.py` — Operation dataclass, `execute()`, `render()`, `dispatch()`
+- `serve/delegation.py` — `try_serve()` with `_SERVE_PARAM_MAP` (GET remaps, POST doesn't)
+- `_SERVE_ONLY_KEYS` = `{action, embeddings_only}` — stripped by `execute()`
 
 ### Not migrating
 
@@ -50,42 +44,119 @@ output = render(result, op, fmt=select_format(...))
 - `db vacuum/backup/restore` — infrastructure ops
 - `db push/pull/send/receive` — sync ops with binary I/O
 
-## Serve route convergence
+---
 
-When migrating serve routes, replace hand-wired `list_conversations(...)`
-calls with `execute(op)` + `render(result, op, fmt=json_fmt)`. This makes
-routes use the same path as CLI, just with JSON format selected.
+## Next steps — dependency graph
 
-For routes that currently use `serialize_conversation_list()` directly,
-the render path through json_fmt already delegates to serialization —
-so the behavior is identical, just expressed through the Operation pattern.
+```
+                    ┌──────────────────┐
+                    │ param alignment   │  ← independent
+                    └──────────────────┘
 
-## Serve param remapping
+┌─────────────┐     ┌──────────────────┐     ┌──────────────┐
+│   fidelity   │───▸│  render methods   │───▸│   dispatch()  │
+└─────────────┘     └──────────────────┘     └──────────────┘
+                                                     │
+                                              ┌──────▼───────┐
+                                              │  route gen    │
+                                              └──────────────┘
+```
 
-Operation params use API fn kwargs (`limit`, `tags`, `conversation_id`).
-Serve routes use HTTP conventions (`n`, `tag`, `id`). `try_serve()` remaps
-via `_SERVE_PARAM_MAP` in `serve/delegation.py`:
+Sequential: fidelity → render methods → dispatch → route generation.
+Independent: param alignment (can happen anytime).
 
-    limit → n, last → n, conversation_id → id, conversation_ids → id,
-    query → q, tags → tag, exclude_tags → no_tag, oldest_first → oldest
+### Phase 1: Fidelity audit
 
-Unknown params (e.g. `include_thinking`) pass through harmlessly — serve
-routes ignore unrecognized query params.
+7 of 12 Operations use `Fidelity()` placeholder. Audit which actually
+benefit from depth/visibility controls vs which are truly passthrough:
 
-## FilterArgs migration
+| render_method | Operations | Fidelity needed? |
+|---------------|-----------|-----------------|
+| `raw` (7) | tools, workspaces, tag list, tool-search, tag writes | Probably not — flat data |
+| `detail` (2) | query detail, export | Yes — already wired |
+| `list` (1) | query list | Yes — already wired |
+| `search` (1) | search | Yes — already wired |
+| `stats` (1) | db stats | Maybe — depth could control section visibility |
 
-Move FilterArgs to `domain/` layer so both CLI and serve can import it.
-Currently in `cli_filters.py` (CLI layer). The `from_query_params()`
-classmethod was added but serve can't import it yet due to layer boundary.
+The `raw` Operations may never need fidelity. The question is whether
+`raw` dissolves into specific render methods (e.g. `render_tools`,
+`render_tags`) or stays as passthrough forever.
 
-Alternative: keep FilterArgs in CLI, add a parallel constructor in the
-serve route that builds the same dict shape. The Operation params dict
-is the real shared type, not FilterArgs itself.
+### Phase 2: Render methods on format protocol
 
-## Verification
+Move rendering from scattered `print()` in each CLI module into format
+protocol methods. For each `raw` Operation, either:
 
-After each command migration:
-1. `./dev check` passes
-2. Arch tests pass (no new import violations)
-3. `siftd serve &` + command works (delegation path)
-4. Without serve, command works (local path)
+1. Add `render_{name}` to the format protocol (terminal_fmt, json_fmt, markdown_fmt)
+2. Keep `raw` — the data is simple enough that the CLI prints it directly
+
+Candidates for format protocol:
+- `render_stats` — already exists on json_fmt; add to terminal_fmt
+- `render_tools` — summary + by-workspace modes
+- `render_workspaces` — workspace list
+- `render_tags` — tag list with counts
+- `render_tool_search` — grouped/ungrouped results
+
+This is where CLI modules shrink. cmd_status goes from 80 lines of
+print statements to `dispatch(op, fmt=fmt)`.
+
+### Phase 3: Use dispatch()
+
+Once render methods work, the per-command pattern simplifies:
+
+```python
+result = try_serve(op)
+if result is not None:
+    # deserialize serve response to domain objects
+    ...
+else:
+    result = dispatch(op, fmt=select_format(...))
+```
+
+Or for commands where serve returns pre-rendered JSON:
+```python
+result = try_serve(op) or dispatch(op, fmt=fmt)
+```
+
+### Phase 4: Serve route generation
+
+Derive routes from Operation definitions. A route becomes:
+
+```python
+@operation_route("/v1/query", method="GET")
+async def query(params) -> dict:
+    op = Operation.from_http(params)
+    return dispatch(op, fmt=json_fmt)
+```
+
+Depends on:
+- dispatch() working end-to-end (Phase 3)
+- Content negotiation design (Accept header → format selection)
+- FilterArgs layer placement (domain/ so serve can import it)
+
+### Independent: Param alignment
+
+`_SERVE_PARAM_MAP` has 10 entries bridging API kwargs ↔ HTTP conventions:
+
+    limit → n, query → q, tags → tag, exclude_tags → no_tag,
+    conversation_id → id, conversation_ids → id, last → n,
+    oldest_first → oldest, lambda_ → lambda, backend_name → backend
+
+`_SERVE_ONLY_KEYS` has 2 entries: `{action, embeddings_only}`
+
+Options:
+1. **Standardize route params** to match API kwargs — dissolves the map
+   but is a breaking HTTP API change
+2. **Accept the mapping** as the cost of HTTP conventions — it's
+   explicit, centralized, and only grows when new params diverge
+3. **Move to POST bodies for complex queries** — POST bodies already
+   skip remapping. Complex filter sets could POST instead of GET.
+
+Current friction is low. Revisit if the map exceeds ~15 entries.
+
+## Remaining cleanup
+
+- `_search_fts_only` — ~80 lines, called for explicit `--fts` flag.
+  Could dissolve into `hybrid_search(mode="fts")` + main render path
+  once FTS-specific rendering (unsupported-flag warnings, `mode="fts5"`
+  JSON annotation) moves to the format protocol.
