@@ -424,3 +424,126 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
         activity_window=activity_window,
         last_ingest_at=last_ingest_at,
     )
+
+
+@dataclass
+class UsageSummary:
+    """Aggregated token/cost stats."""
+
+    total_conversations: int
+    total_input_tokens: int
+    total_output_tokens: int
+    total_cost: float
+
+
+@dataclass
+class GroupUsage:
+    """Token/cost breakdown for a single group (model or workspace)."""
+
+    name: str
+    conversations: int
+    input_tokens: int
+    output_tokens: int
+    cost: float
+
+
+def get_usage_summary(*, db_path: Path | None = None) -> UsageSummary:
+    """Get aggregate token/cost totals across all conversations."""
+    from siftd.storage.sqlite import open_database
+
+    path = db_path or default_db_path()
+    conn = open_database(path, read_only=True)
+    try:
+        row = conn.execute(
+            "SELECT COUNT(DISTINCT c.id) AS n,"
+            " COALESCE(SUM(r.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(r.output_tokens), 0) AS out"
+            " FROM conversations c"
+            " LEFT JOIN responses r ON r.conversation_id = c.id"
+        ).fetchone()
+        # Cost is per-conversation in conversation_stats, sum separately
+        cost_row = conn.execute(
+            "SELECT COALESCE(SUM(cost), 0) AS cost FROM conversation_stats"
+        ).fetchone()
+        return UsageSummary(
+            total_conversations=row["n"],
+            total_input_tokens=row["inp"],
+            total_output_tokens=row["out"],
+            total_cost=cost_row["cost"],
+        )
+    finally:
+        conn.close()
+
+
+def get_usage_by_model(*, db_path: Path | None = None) -> list[GroupUsage]:
+    """Get token/cost breakdown grouped by model."""
+    from siftd.storage.sqlite import open_database
+
+    path = db_path or default_db_path()
+    conn = open_database(path, read_only=True)
+    try:
+        # Tokens from responses grouped by model
+        token_rows = conn.execute(
+            "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
+            " COUNT(DISTINCT r.conversation_id) AS convs,"
+            " COALESCE(SUM(r.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(r.output_tokens), 0) AS out"
+            " FROM responses r"
+            " LEFT JOIN models m ON r.model_id = m.id"
+            " GROUP BY m.raw_name"
+        ).fetchall()
+        cost_by_model: dict[str, float] = {}
+        results = [
+            GroupUsage(
+                name=r["name"], conversations=r["convs"],
+                input_tokens=r["inp"], output_tokens=r["out"],
+                cost=cost_by_model.get(r["name"], 0),
+            )
+            for r in token_rows
+        ]
+        results.sort(key=lambda g: g.input_tokens + g.output_tokens, reverse=True)
+        return results
+    finally:
+        conn.close()
+
+
+def get_usage_by_workspace(*, db_path: Path | None = None) -> list[GroupUsage]:
+    """Get token/cost breakdown grouped by workspace."""
+    from siftd.storage.sqlite import open_database
+
+    path = db_path or default_db_path()
+    conn = open_database(path, read_only=True)
+    try:
+        # Tokens from responses grouped by workspace
+        token_rows = conn.execute(
+            "SELECT COALESCE(w.path, '') AS name,"
+            " COUNT(DISTINCT c.id) AS convs,"
+            " COALESCE(SUM(r.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(r.output_tokens), 0) AS out"
+            " FROM conversations c"
+            " LEFT JOIN workspaces w ON c.workspace_id = w.id"
+            " LEFT JOIN responses r ON r.conversation_id = c.id"
+            " GROUP BY w.path"
+        ).fetchall()
+        # Cost from conversation_stats grouped by workspace
+        cost_rows = conn.execute(
+            "SELECT COALESCE(w.path, '') AS name,"
+            " COALESCE(SUM(cs.cost), 0) AS cost"
+            " FROM conversation_stats cs"
+            " JOIN conversations c ON cs.conversation_id = c.id"
+            " LEFT JOIN workspaces w ON c.workspace_id = w.id"
+            " GROUP BY w.path"
+        ).fetchall()
+        cost_by_ws = {r["name"]: r["cost"] for r in cost_rows}
+        results = [
+            GroupUsage(
+                name=r["name"], conversations=r["convs"],
+                input_tokens=r["inp"], output_tokens=r["out"],
+                cost=cost_by_ws.get(r["name"], 0),
+            )
+            for r in token_rows
+        ]
+        results.sort(key=lambda g: g.cost, reverse=True)
+        return results
+    finally:
+        conn.close()

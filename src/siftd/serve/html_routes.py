@@ -545,8 +545,7 @@ async def ui_stats(db_path: Path) -> Response:
     """Render cost/token dashboard as HTML fragment."""
     from html import escape
 
-    from siftd.api.conversations import list_conversations
-    from siftd.api.stats import get_stats
+    from siftd.api.stats import get_stats, get_usage_by_model, get_usage_by_workspace, get_usage_summary
     from siftd.output.common import fmt_tokens, fmt_workspace
 
     parts: list[str] = ['<article class="stats-dashboard">']
@@ -589,89 +588,84 @@ async def ui_stats(db_path: Path) -> Response:
         )
     parts.append("</div>")
 
-    # Cost/tokens by recent conversations (last 100)
-    rows = list_conversations(db_path=db_path, limit=100)
-    if rows:
-        total_tokens = sum(r.total_tokens for r in rows)
-        total_cost = sum(r.cost or 0 for r in rows)
+    # Aggregate token/cost totals (full database)
+    try:
+        usage = get_usage_summary(db_path=db_path)
+        total_tokens = usage.total_input_tokens + usage.total_output_tokens
 
         parts.append('<div class="stats-grid">')
         parts.append(
             f'<div class="stat-card">'
             f'<div class="stat-value">{fmt_tokens(total_tokens)}</div>'
-            f'<div class="stat-label">Tokens (last {len(rows)})</div></div>'
+            f'<div class="stat-label">Total tokens</div></div>'
         )
         parts.append(
             f'<div class="stat-card">'
-            f'<div class="stat-value">${total_cost:.2f}</div>'
-            f'<div class="stat-label">Cost (last {len(rows)})</div></div>'
+            f'<div class="stat-value">${usage.total_cost:.2f}</div>'
+            f'<div class="stat-label">Total cost</div></div>'
         )
-        if total_cost > 0:
-            avg_cost = total_cost / len(rows)
+        if usage.total_cost > 0 and usage.total_conversations > 0:
+            avg_cost = usage.total_cost / usage.total_conversations
             parts.append(
                 f'<div class="stat-card">'
                 f'<div class="stat-value">${avg_cost:.4f}</div>'
                 f'<div class="stat-label">Avg cost/conversation</div></div>'
             )
         parts.append("</div>")
+    except Exception:
+        pass
 
-        # By model
-        model_tokens: dict[str, int] = {}
-        model_cost: dict[str, float] = {}
-        model_count: dict[str, int] = {}
-        for r in rows:
-            m = r.model or "unknown"
-            model_tokens[m] = model_tokens.get(m, 0) + r.total_tokens
-            model_cost[m] = model_cost.get(m, 0) + (r.cost or 0)
-            model_count[m] = model_count.get(m, 0) + 1
-
-        parts.append("<h3>By model</h3>")
-        parts.append('<table class="conversation-list">')
-        parts.append(
-            "<thead><tr>"
-            "<th>Model</th><th>Conversations</th>"
-            "<th>Tokens</th><th>Cost</th>"
-            "</tr></thead><tbody>"
-        )
-        for m in sorted(model_tokens, key=lambda k: model_cost[k], reverse=True):
+    # By model (full database)
+    try:
+        by_model = get_usage_by_model(db_path=db_path)
+        if by_model:
+            parts.append("<h3>By model</h3>")
+            parts.append('<table class="conversation-list">')
             parts.append(
-                f"<tr>"
-                f'<td class="model">{escape(m)}</td>'
-                f'<td class="metric">{model_count[m]}</td>'
-                f'<td class="metric">{fmt_tokens(model_tokens[m])}</td>'
-                f'<td class="metric">${model_cost[m]:.4f}</td>'
-                f"</tr>"
+                "<thead><tr>"
+                "<th>Model</th><th>Conversations</th>"
+                "<th>Tokens</th><th>Cost</th>"
+                "</tr></thead><tbody>"
             )
-        parts.append("</tbody></table>")
+            for g in by_model:
+                tok = g.input_tokens + g.output_tokens
+                parts.append(
+                    f"<tr>"
+                    f'<td class="model">{escape(g.name)}</td>'
+                    f'<td class="metric">{g.conversations:,}</td>'
+                    f'<td class="metric">{fmt_tokens(tok)}</td>'
+                    f'<td class="metric">${g.cost:.4f}</td>'
+                    f"</tr>"
+                )
+            parts.append("</tbody></table>")
+    except Exception:
+        pass
 
-        # By workspace
-        ws_tokens: dict[str, int] = {}
-        ws_cost: dict[str, float] = {}
-        ws_count: dict[str, int] = {}
-        for r in rows:
-            w = fmt_workspace(r.workspace_path)
-            ws_tokens[w] = ws_tokens.get(w, 0) + r.total_tokens
-            ws_cost[w] = ws_cost.get(w, 0) + (r.cost or 0)
-            ws_count[w] = ws_count.get(w, 0) + 1
-
-        parts.append("<h3>By workspace</h3>")
-        parts.append('<table class="conversation-list">')
-        parts.append(
-            "<thead><tr>"
-            "<th>Workspace</th><th>Conversations</th>"
-            "<th>Tokens</th><th>Cost</th>"
-            "</tr></thead><tbody>"
-        )
-        for w in sorted(ws_tokens, key=lambda k: ws_cost[k], reverse=True):
+    # By workspace (full database)
+    try:
+        by_ws = get_usage_by_workspace(db_path=db_path)
+        if by_ws:
+            parts.append("<h3>By workspace</h3>")
+            parts.append('<table class="conversation-list">')
             parts.append(
-                f"<tr>"
-                f'<td class="workspace">{escape(w)}</td>'
-                f'<td class="metric">{ws_count[w]}</td>'
-                f'<td class="metric">{fmt_tokens(ws_tokens[w])}</td>'
-                f'<td class="metric">${ws_cost[w]:.4f}</td>'
-                f"</tr>"
+                "<thead><tr>"
+                "<th>Workspace</th><th>Conversations</th>"
+                "<th>Tokens</th><th>Cost</th>"
+                "</tr></thead><tbody>"
             )
-        parts.append("</tbody></table>")
+            for g in by_ws:
+                tok = g.input_tokens + g.output_tokens
+                parts.append(
+                    f"<tr>"
+                    f'<td class="workspace">{escape(fmt_workspace(g.name))}</td>'
+                    f'<td class="metric">{g.conversations:,}</td>'
+                    f'<td class="metric">{fmt_tokens(tok)}</td>'
+                    f'<td class="metric">${g.cost:.4f}</td>'
+                    f"</tr>"
+                )
+            parts.append("</tbody></table>")
+    except Exception:
+        pass
 
     # Top tools
     if stats.top_tools:
