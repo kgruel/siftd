@@ -8,10 +8,9 @@ import hashlib
 import json
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from siftd.adapters._jsonl import now_iso
-from siftd.adapters.sdk import build_harness, canonicalize_tool_name
+from siftd.adapters.sdk import NormalizedRecord, build_harness, make_peek_hooks
 from siftd.domain import (
     ContentBlock,
     Conversation,
@@ -21,9 +20,6 @@ from siftd.domain import (
     ToolCall,
     Usage,
 )
-
-if TYPE_CHECKING:
-    from siftd.domain.peek import PeekExchange, PeekScanResult
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
@@ -273,141 +269,122 @@ def hash_path(path: str) -> str:
 
 
 # =============================================================================
-# Peek hooks — optional live session inspection
+# Record normalization — enables SDK-derived peek support
 # =============================================================================
 
 
-def peek_scan(path: Path) -> "PeekScanResult | None":
-    """Extract lightweight metadata for session listing.
+def iter_gemini_records(path: Path) -> Iterator[dict]:
+    """Iterate synthetic records from a Gemini CLI session JSON file.
 
-    Gemini CLI stores sessions as single JSON files with a messages array.
+    Yields a metadata record (session-level fields), then each message
+    from the messages array as-is (they already have a "type" field).
     """
-    from siftd.domain.peek import PeekScanResult
-
     try:
         data = _load_json(path)
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return None
+        return
 
     if not data or "messages" not in data:
-        return None
+        return
 
-    session_id = data.get("sessionId", path.stem)
     project_hash = data.get("projectHash")
-    start_time = data.get("startTime")
-    last_updated = data.get("lastUpdated")
+    yield {
+        "_kind": "metadata",
+        "sessionId": data.get("sessionId", path.stem),
+        "startTime": data.get("startTime"),
+        "lastUpdated": data.get("lastUpdated"),
+        "projectHash": project_hash,
+    }
 
-    # Try to resolve workspace path from project hash
-    workspace_path = None
-    if project_hash:
-        workspace_path = _resolve_workspace_from_hash(project_hash)
-
-    # Count user messages as exchanges
-    exchange_count = 0
-    model: str | None = None
-
-    for message in data.get("messages", []):
-        if message.get("type") == "user":
-            exchange_count += 1
-        elif message.get("type") == "gemini":
-            model = model or message.get("model")
-
-    if exchange_count == 0:
-        return None
-
-    return PeekScanResult(
-        session_id=session_id,
-        workspace_path=workspace_path,
-        model=model,
-        exchange_count=exchange_count,
-        started_at=start_time,
-        last_activity_at=last_updated,
-    )
+    yield from data.get("messages", [])
 
 
-def peek_exchanges(
-    path: Path,
-    last_n: int = 5,
-    *,
-    include_thinking: bool = False,
-) -> list["PeekExchange"]:
-    """Extract recent exchanges for session detail view."""
-    from siftd.domain.peek import PeekExchange, PeekNarrativeBlock, PeekToolCall
+def normalize_record(raw: dict) -> NormalizedRecord | None:
+    """Map a Gemini CLI record to NormalizedRecord.
 
-    if last_n < 1:
-        last_n = 1
+    Record types:
+        "_kind": "metadata" → metadata (sessionId, workspace from projectHash)
+        "type": "user"      → user (prompt text)
+        "type": "gemini"    → assistant (response text, thoughts, tool calls, usage)
+    """
+    # Synthetic metadata record from iter_gemini_records
+    if raw.get("_kind") == "metadata":
+        workspace = None
+        project_hash = raw.get("projectHash")
+        if project_hash:
+            workspace = _resolve_workspace_from_hash(project_hash)
+        return NormalizedRecord(
+            kind="metadata",
+            timestamp=raw.get("startTime"),
+            session_id=raw.get("sessionId"),
+            workspace_path=workspace,
+            extra={"lastUpdated": raw.get("lastUpdated")},
+        )
 
-    try:
-        data = _load_json(path)
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return []
+    msg_type = raw.get("type")
+    timestamp = raw.get("timestamp", "")
 
-    if not data or "messages" not in data:
-        return []
+    if msg_type == "user":
+        content_text = raw.get("content", "")
+        content_blocks = [{"type": "text", "text": content_text}] if content_text else []
+        return NormalizedRecord(
+            kind="user",
+            timestamp=timestamp,
+            content_blocks=content_blocks,
+        )
 
-    exchanges: list[PeekExchange] = []
-    current_exchange: PeekExchange | None = None
+    if msg_type == "gemini":
+        content_blocks: list[dict] = []
 
-    for message in data.get("messages", []):
-        msg_type = message.get("type")
-        timestamp = message.get("timestamp", "")
-        content_text = message.get("content", "")
+        # Thinking blocks from thoughts array
+        for thought in raw.get("thoughts", []):
+            subject = thought.get("subject")
+            description = thought.get("description")
+            if subject and description:
+                text = f"{subject}: {description}"
+            else:
+                text = description or subject or ""
+            if text:
+                content_blocks.append({"type": "thinking", "text": text})
 
-        if msg_type == "user":
-            current_exchange = PeekExchange(
-                timestamp=timestamp,
-                prompt_text=content_text if content_text else None,
-            )
-            exchanges.append(current_exchange)
+        # Main text content
+        content_text = raw.get("content", "")
+        if content_text:
+            content_blocks.append({"type": "text", "text": content_text})
 
-        elif msg_type == "gemini" and current_exchange is not None:
-            tokens_data = message.get("tokens", {})
-            current_exchange.input_tokens += tokens_data.get("input", 0)
-            current_exchange.output_tokens += tokens_data.get("output", 0)
+        # Tool calls as tool_use blocks
+        for tc in raw.get("toolCalls", []):
+            content_blocks.append({
+                "type": "tool_use",
+                "name": tc.get("name", "unknown"),
+                "input": tc.get("args", {}),
+            })
 
-            response_parts: list[str] = []
-            narrative: list[PeekNarrativeBlock] = []
-            if include_thinking:
-                for thought in message.get("thoughts", []):
-                    subject = thought.get("subject")
-                    description = thought.get("description")
-                    if subject and description:
-                        text = f"{subject}: {description}"
-                    else:
-                        text = description or subject or ""
-                    if text:
-                        response_parts.append(f"[thinking] {text}")
-                        narrative.append(PeekNarrativeBlock(block_type="thinking", content=text))
-            if content_text:
-                response_parts.append(content_text)
-                narrative.append(PeekNarrativeBlock(block_type="text", content=content_text))
-            current_exchange.response_text = "\n".join(response_parts) if response_parts else None
+        tokens = raw.get("tokens") or {}
+        return NormalizedRecord(
+            kind="assistant",
+            timestamp=timestamp,
+            content_blocks=content_blocks,
+            model=raw.get("model"),
+            input_tokens=tokens.get("input", 0) or 0,
+            output_tokens=tokens.get("output", 0) or 0,
+        )
 
-            # Collect tool calls
-            tool_calls: dict[str, int] = {}
-            tool_details: list[PeekToolCall] = []
-            for tool_call_data in message.get("toolCalls", []):
-                tool_name = tool_call_data.get("name", "unknown")
-                tool_name = canonicalize_tool_name(tool_name, TOOL_ALIASES)
-                tool_calls[tool_name] = tool_calls.get(tool_name, 0) + 1
-                hint = tool_call_data.get("description") or tool_call_data.get("query") or tool_call_data.get("pattern")
-                tool_details.append(PeekToolCall(tool_name=tool_name, input=hint))
+    return None
 
-            if tool_calls:
-                current_exchange.tool_calls = list(tool_calls.items())
-            if narrative or tool_details:
-                if tool_details:
-                    narrative.append(PeekNarrativeBlock(block_type="tool_calls", tool_calls=tool_details))
-                current_exchange.narrative.extend(narrative)
 
-    return exchanges[-last_n:] if len(exchanges) > last_n else exchanges
+# Peek hooks — derived from normalizer with custom JSON iterator
+peek_scan, peek_exchanges, _peek_tail = make_peek_hooks(
+    normalize_record,
+    tool_aliases=TOOL_ALIASES,
+    record_iterator=iter_gemini_records,
+)
 
 
 def peek_tail(path: Path, lines: int = 20) -> Iterator[dict]:
-    """Yield last N messages from the session file.
+    """Yield last N messages from the session JSON.
 
-    Gemini CLI uses a single JSON file, so we return the last N messages
-    from the messages array.
+    Custom tail since Gemini uses a single JSON file, not JSONL.
     """
     try:
         data = _load_json(path)
