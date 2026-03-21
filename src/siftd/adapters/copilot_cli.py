@@ -10,11 +10,10 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from siftd.adapters._jsonl import load_jsonl, now_iso
-from siftd.adapters.sdk import discover_files
+from siftd.adapters.sdk import NormalizedRecord, build_harness, discover_files, flush_pending_calls, make_peek_hooks
 from siftd.domain import (
     ContentBlock,
     Conversation,
-    Harness,
     Prompt,
     Response,
     Source,
@@ -103,12 +102,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 ended_at = ts
 
     # Build harness
-    harness = Harness(
-        name=NAME,
-        source=HARNESS_SOURCE,
-        log_format=HARNESS_LOG_FORMAT,
-        display_name=HARNESS_DISPLAY_NAME,
-    )
+    harness = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
     external_id = f"{NAME}::{session_id or path.parent.name}"
 
@@ -202,15 +196,86 @@ def parse(source: Source) -> Iterable[Conversation]:
                 resp.tool_calls.append(tool_call)
 
     # Handle pending tool calls that never got results
-    for call_id, (resp, tool_name, input_data) in pending_calls.items():
-        tool_call = ToolCall(
-            tool_name=tool_name,
-            input=input_data,
-            result=None,
-            status="pending",
-            external_id=call_id,
-            timestamp=None,
-        )
-        resp.tool_calls.append(tool_call)
+    flush_pending_calls(pending_calls)
 
     yield conversation
+
+
+# =============================================================================
+# Record normalization — enables SDK-derived peek support
+# =============================================================================
+
+
+def normalize_record(raw: dict) -> NormalizedRecord | None:
+    """Map a Copilot CLI native record to NormalizedRecord.
+
+    Copilot CLI event types:
+        "session.start"        → metadata (sessionId, cwd, branch)
+        "session.model_change" → metadata (newModel)
+        "user.message"         → user
+        "assistant.message"    → assistant
+        "tool.execution_complete" → tool_result (skip for exchange counting)
+    """
+    event_type = raw.get("type")
+    ts = raw.get("timestamp")
+    data = raw.get("data", {})
+
+    if event_type == "session.start":
+        context = data.get("context", {})
+        return NormalizedRecord(
+            kind="metadata",
+            timestamp=ts,
+            session_id=data.get("sessionId"),
+            workspace_path=context.get("cwd"),
+        )
+
+    if event_type == "session.model_change":
+        return NormalizedRecord(
+            kind="metadata",
+            timestamp=ts,
+            model=data.get("newModel"),
+        )
+
+    if event_type == "user.message":
+        content_text = data.get("content", "")
+        content_blocks = (
+            [{"type": "text", "text": content_text}] if content_text else []
+        )
+        return NormalizedRecord(
+            kind="user",
+            timestamp=ts,
+            content_blocks=content_blocks,
+        )
+
+    if event_type == "assistant.message":
+        content_blocks: list[dict] = []
+        content_text = data.get("content", "")
+        if content_text:
+            content_blocks.append({"type": "text", "text": content_text})
+        reasoning = data.get("reasoningText")
+        if reasoning:
+            content_blocks.append({"type": "thinking", "text": reasoning})
+        # Include tool requests as tool_use blocks
+        for req in data.get("toolRequests", []):
+            content_blocks.append({
+                "type": "tool_use",
+                "name": req.get("name", "unknown"),
+                "input": req.get("arguments", {}),
+            })
+        return NormalizedRecord(
+            kind="assistant",
+            timestamp=ts,
+            content_blocks=content_blocks,
+        )
+
+    if event_type == "tool.execution_complete":
+        return NormalizedRecord(kind="tool_result", timestamp=ts)
+
+    return None
+
+
+# Peek hooks — derived from normalizer
+peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
+    normalize_record,
+    tool_aliases=TOOL_ALIASES,
+)

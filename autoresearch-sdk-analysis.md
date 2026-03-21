@@ -161,30 +161,59 @@ skeleton if given a record normalizer.
 
 ## Recommended refactors (ordered by impact)
 
-### Phase 1: Low-hanging fruit (no new abstractions)
-1. **claude_code, codex_cli**: use `discover_files()` instead of custom discover
-2. **codex_cli**: use `peek_jsonl_scan()` — needs the SDK to support a `metadata_extractor`
-   callback alongside the existing type-based scanning
+### Phase 1: Low-hanging fruit (no new abstractions) — DONE
+1. ~~**claude_code, codex_cli**: use `discover_files()` instead of custom discover~~
+2. ~~**All 7 non-vscode adapters**: use `build_harness()` instead of inline Harness()~~
+3. ~~**4 adapters**: use `flush_pending_calls()` SDK helper~~
 
-### Phase 2: Record normalization (new abstraction)
-3. Add `NormalizedRecord` + `normalize_record` callback pattern to SDK
-4. Rewrite `peek_jsonl_scan` and `peek_jsonl_exchanges` to use normalizers
-5. Provide normalizers for claude_code and codex_cli
-6. Test builders generate records → normalize → assert
+### Phase 2: Record normalization (new abstraction) — DONE
+4. ~~Add `NormalizedRecord` + `normalize_record` callback pattern to SDK~~
+5. ~~Add `peek_scan_from_records` / `peek_exchanges_from_records` (format-agnostic)~~
+6. ~~Provide normalizers for all 4 JSONL adapters (claude_code, codex_cli, pi_agent, copilot_cli)~~
+7. ~~pi_agent, copilot_cli gain peek support for free via `make_peek_hooks`~~
+8. ~~claude_code, codex_cli peek migrated to `make_peek_hooks` (eliminated ~345 lines)~~
+9. ~~Subagent detection promoted to SDK (`extra["agent_id"]` + `SUBAGENT_PATH_MARKER`)~~
+10. ~~Peek scanner/reader auto-derive hooks from `normalize_record`~~
+
+### Phase 2.5: Test builder unification (next)
+11. One `SessionBuilder` parameterized by normalizer/format
+12. Builder generates normalized records, format object serializes to native format
+13. Autoresearch can write format-agnostic integration tests
 
 ### Phase 3: Parse skeleton (stretch goal)
-7. Extract common parse skeleton into SDK
-8. Adapters provide record normalizer + metadata extractor
-9. Only truly custom parse logic (subagents, SQLite, markdown) stays in adapters
+14. Extract common parse skeleton into SDK
+15. Adapters provide record normalizer + metadata extractor
+16. Only truly custom parse logic (subagents, SQLite, markdown) stays in adapters
+
+### Phase 4: Non-JSONL peek (opportunistic)
+17. Add normalizers for vscode (JSON), gemini_cli (JSON — already has custom peek)
+18. Add normalizers for aider (markdown), opencode (SQLite) — needs custom record iterators
 
 ## Impact on test builders
 
 Today: `ClaudeSession`, `CodexSession`, `PeekSession` — three builders, three formats.
 
-After Phase 2: One `SessionBuilder` parameterized by normalizer/format:
+After Phase 2.5: One `SessionBuilder` parameterized by normalizer/format:
 ```python
 session = SessionBuilder(tmp_path, format=CodexFormat(), exchanges=2).with_tools(["shell"]).build()
 ```
 
 Or even simpler — the builder generates normalized records, and the format object
 serializes them to the adapter's native format.
+
+## What was eliminated (branch: refactor/sdk-adapter-consolidation)
+
+| Change | Lines removed | Lines added |
+|--------|-------------|------------|
+| discover_files() swap | -18 | +2 |
+| NormalizedRecord + SDK peek infrastructure | — | +350 |
+| pi_agent, copilot_cli normalizers + peek | — | +115 |
+| claude_code, codex_cli normalizers | — | +130 |
+| claude_code peek → make_peek_hooks | -160 | +3 |
+| codex_cli peek → make_peek_hooks | -185 | +3 |
+| build_harness() across 7 adapters | -28 | +7 |
+| flush_pending_calls across 4 adapters | -40 | +4 |
+| **Total** | **-431** | **+614** |
+
+Net +183 lines, but the SDK gained ~500 lines of reusable infrastructure that
+5 adapters now share. The per-adapter surface area dropped significantly.

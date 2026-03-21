@@ -4,18 +4,19 @@ Pure parser: reads JSONL files and yields Conversation domain objects.
 No storage coupling.
 """
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from siftd.adapters._jsonl import load_jsonl, now_iso, parse_block
 from siftd.adapters.sdk import (
-    peek_jsonl_exchanges,
-    peek_jsonl_tail,
+    NormalizedRecord,
+    build_harness,
+    discover_files,
+    flush_pending_calls,
+    make_peek_hooks,
 )
 from siftd.domain import (
     Conversation,
-    Harness,
     Prompt,
     Response,
     Source,
@@ -23,15 +24,13 @@ from siftd.domain import (
     Usage,
 )
 
-if TYPE_CHECKING:
-    from siftd.domain.peek import PeekExchange, PeekScanResult
-
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
 NAME = "claude_code"
 DEFAULT_LOCATIONS = ["~/.claude/projects", "~/.config/claude/projects"]
 DEDUP_STRATEGY = "file"  # one conversation per file
 SUPPORTS_LIVE_REGISTRATION = True  # supports tagging during active sessions
+SUBAGENT_PATH_MARKER = "/subagents/"  # path marker for subagent detection
 
 # Harness metadata
 HARNESS_SOURCE = "anthropic"
@@ -75,13 +74,7 @@ TOOL_ALIASES: dict[str, str] = {
 
 def discover(locations=None) -> Iterable[Source]:
     """Yield Source objects for all Claude Code session files."""
-    for location in (locations or DEFAULT_LOCATIONS):
-        base = Path(location).expanduser()
-        if not base.exists():
-            continue
-        # Claude Code stores files as: ~/.claude/projects/{project}/*.jsonl
-        for jsonl_file in base.glob("**/*.jsonl"):
-            yield Source(kind="file", location=jsonl_file)
+    yield from discover_files(locations, DEFAULT_LOCATIONS, ["**/*.jsonl"])
 
 
 def can_handle(source: Source) -> bool:
@@ -137,12 +130,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                     ended_at = ts
 
     # Build harness
-    harness = Harness(
-        name=NAME,
-        source=HARNESS_SOURCE,
-        log_format=HARNESS_LOG_FORMAT,
-        display_name=HARNESS_DISPLAY_NAME,
-    )
+    harness = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
     # Build external_id (include agentId for subagent files)
     if agent_id:
@@ -268,16 +256,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 current_prompt.responses.append(response)
 
     # Handle any pending tool calls that never got results
-    for tool_use_id, (response, tool_name, input_dict) in pending_tool_uses.items():
-        tool_call = ToolCall(
-            tool_name=tool_name,
-            input=input_dict,
-            result=None,
-            status="pending",
-            external_id=tool_use_id,
-            timestamp=None,
-        )
-        response.tool_calls.append(tool_call)
+    flush_pending_calls(pending_tool_uses)
 
     # Skip sessions with no messages (opened and immediately canceled)
     if not conversation.prompts:
@@ -304,166 +283,73 @@ def _normalize_content(content) -> list:
 
 
 # =============================================================================
-# Peek hooks — optional live session inspection
+# Record normalization — general pattern for SDK integration
 # =============================================================================
 
 
-def _is_tool_result(record: dict) -> bool:
-    """Check if a user record is a tool_result (not a real exchange)."""
-    msg = record.get("message") or {}
+def normalize_record(raw: dict) -> NormalizedRecord | None:
+    """Map a Claude Code native record to NormalizedRecord.
+
+    Claude Code record types:
+        "user"      → user (or tool_result if content has tool_result blocks)
+        "assistant" → assistant (with content blocks, usage, model)
+    """
+    record_type = raw.get("type")
+    ts = raw.get("timestamp")
+
+    if record_type not in ("user", "assistant"):
+        return None
+
+    msg = raw.get("message") or {}
     content = msg.get("content")
-    if not isinstance(content, list):
-        return False
-    return any(
-        isinstance(b, dict) and b.get("type") == "tool_result" for b in content
-    )
-
-
-def _get_content_blocks(record: dict) -> list:
-    """Extract content blocks from a Claude Code record."""
-    msg = record.get("message") or {}
-    return _normalize_content(msg.get("content"))
-
-
-def _get_usage(record: dict) -> tuple[int, int]:
-    """Extract (input_tokens, output_tokens) from a Claude Code record."""
-    msg = record.get("message") or {}
-    usage = msg.get("usage") or {}
-    return (usage.get("input_tokens", 0), usage.get("output_tokens", 0))
-
-
-def peek_scan(path: Path) -> "PeekScanResult | None":
-    """Extract lightweight metadata for session listing.
-
-    Called per-file during list_active_sessions().
-
-    For subagents (detected via agentId field or /subagents/ path):
-    - session_id is synthesized as "{sessionId}:{agentId}" for uniqueness
-    - parent_session_id is the sessionId from records (which is parent's ID)
-
-    For main sessions:
-    - session_id is the sessionId from records
-    - parent_session_id is None
-    """
-    import json
-
-    from siftd.domain.peek import PeekScanResult
-
-    session_id = path.stem
-    workspace_path: str | None = None
-    model: str | None = None
-    exchange_count = 0
-    started_at: str | None = None
-    last_activity_at: str | None = None
-    agent_id: str | None = None
-    session_id_from_record: str | None = None
-    saw_user = False
-
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-
-                record_type = record.get("type")
-                ts = record.get("timestamp")
-
-                # Track timestamp bounds
-                if ts:
-                    if started_at is None or ts < started_at:
-                        started_at = ts
-                    if last_activity_at is None or ts > last_activity_at:
-                        last_activity_at = ts
-
-                if record_type == "user":
-                    # Check if it's a tool_result (not a real exchange)
-                    if _is_tool_result(record):
-                        continue
-
-                    exchange_count += 1
-                    saw_user = True
-
-                    # Extract metadata from first user record
-                    if workspace_path is None:
-                        workspace_path = record.get("cwd")
-                        session_id_from_record = record.get("sessionId")
-                        agent_id = record.get("agentId")
-
-                elif record_type == "assistant":
-                    if exchange_count == 0 and not saw_user:
-                        exchange_count = 1
-                    # Extract model
-                    msg = record.get("message") or {}
-                    if isinstance(msg, dict):
-                        m = msg.get("model")
-                        if m and isinstance(m, str):
-                            model = m
-
-    except (OSError, UnicodeDecodeError):
-        return None
-
-    if exchange_count == 0 or not saw_user:
-        return None
-
-    # Determine if this is a subagent
-    is_subagent = agent_id is not None or "/subagents/" in str(path)
-
-    if is_subagent and agent_id:
-        # Subagent: synthesize unique ID, use sessionId as parent
-        session_id = f"{session_id_from_record or path.stem}:{agent_id}"
-        parent_session_id = session_id_from_record
-    elif session_id_from_record:
-        # Main session: use sessionId from record
-        session_id = session_id_from_record
-        parent_session_id = None
+    # Normalize content to list
+    if content is None:
+        content_blocks = []
+    elif isinstance(content, str):
+        content_blocks = [{"type": "text", "text": content}]
+    elif isinstance(content, list):
+        content_blocks = content
     else:
-        # Fallback: use filename stem
-        parent_session_id = None
+        content_blocks = []
 
-    return PeekScanResult(
-        session_id=session_id,
-        workspace_path=workspace_path,
-        model=model,
-        exchange_count=exchange_count,
-        started_at=started_at,
-        last_activity_at=last_activity_at,
-        parent_session_id=parent_session_id,
+    if record_type == "user":
+        # Check if this is a tool_result message
+        has_tool_result = any(
+            isinstance(b, dict) and b.get("type") == "tool_result"
+            for b in content_blocks
+        )
+        if has_tool_result:
+            return NormalizedRecord(kind="tool_result", timestamp=ts)
+
+        extra: dict = {}
+        agent_id = raw.get("agentId")
+        if agent_id is not None:
+            extra["agent_id"] = agent_id
+
+        return NormalizedRecord(
+            kind="user",
+            timestamp=ts,
+            content_blocks=content_blocks,
+            session_id=raw.get("sessionId"),
+            workspace_path=raw.get("cwd"),
+            extra=extra,
+        )
+
+    # assistant
+    usage = msg.get("usage") or {}
+    return NormalizedRecord(
+        kind="assistant",
+        timestamp=ts,
+        content_blocks=content_blocks,
+        model=msg.get("model"),
+        input_tokens=usage.get("input_tokens", 0) or 0,
+        output_tokens=usage.get("output_tokens", 0) or 0,
     )
 
 
-def peek_exchanges(
-    path: Path,
-    last_n: int = 5,
-    *,
-    include_thinking: bool = False,
-) -> list["PeekExchange"]:
-    """Extract recent exchanges for session detail view.
-
-    Called by read_session_detail().
-    """
-    return peek_jsonl_exchanges(
-        path,
-        last_n,
-        user_type="user",
-        assistant_type="assistant",
-        type_key="type",
-        timestamp_key="timestamp",
-        get_content_blocks=_get_content_blocks,
-        get_usage=_get_usage,
-        is_tool_result=_is_tool_result,
-        tool_aliases=TOOL_ALIASES,
-        include_thinking=include_thinking,
-    )
-
-
-def peek_tail(path: Path, lines: int = 20) -> Iterator[dict]:
-    """Yield last N raw records from the session file.
-
-    Called by tail_session().
-    """
-    yield from peek_jsonl_tail(path, lines, parse_json=True)
+# Peek hooks — derived from normalizer
+peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
+    normalize_record,
+    tool_aliases=TOOL_ALIASES,
+    subagent_path_marker=SUBAGENT_PATH_MARKER,
+)

@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from siftd.adapters._jsonl import now_iso
-from siftd.adapters.sdk import open_external_db
+from siftd.adapters.sdk import build_harness, open_external_db
 from siftd.domain import (
     ContentBlock,
     Conversation,
@@ -62,12 +62,7 @@ def parse(source: Source) -> Iterable[Conversation]:
     if not path.exists():
         return
 
-    harness = Harness(
-        name=NAME,
-        source=HARNESS_SOURCE,
-        log_format=HARNESS_LOG_FORMAT,
-        display_name=HARNESS_DISPLAY_NAME,
-    )
+    harness = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
     try:
         conn = open_external_db(path)

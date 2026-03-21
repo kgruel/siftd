@@ -663,6 +663,118 @@ class CodexSession(_BaseJSONLSession):
         return self._write()
 
 
+class PiAgentSession(_BaseJSONLSession):
+    """Build a Pi Agent session JSONL file.
+
+    Usage:
+        f = PiAgentSession(tmp_path).build()
+        f = PiAgentSession(tmp_path, exchanges=2).with_tools(["shell"]).build()
+    """
+
+    def __init__(self, tmp_path, *, exchanges=1, name="session.jsonl",
+                 session_id=None, cwd=None, model=None):
+        super().__init__(tmp_path, exchanges=exchanges, name=name)
+        self._sid = session_id or f"sess-{_rand_word(6)}"
+        self._cwd = cwd or f"/project/{_rand_word(6)}"
+        self._model = model or "claude-3-opus"
+        self._tools = []
+
+    def with_tools(self, tool_names):
+        self._tools = tool_names
+        return self
+
+    def build(self):
+        seq = 0
+        # Session header
+        self._records.append({"type": "session", "id": self._sid, "cwd": self._cwd,
+                               "timestamp": _rand_ts(seq)})
+        self._records.append({"type": "model_change", "modelId": self._model,
+                               "timestamp": _rand_ts(seq + 1)})
+        seq += 2
+        for i in range(self._exchanges):
+            ts_u, ts_a = _rand_ts(seq), _rand_ts(seq + 1)
+            seq += 2
+            # User message
+            self._records.append({"type": "message", "timestamp": ts_u,
+                "message": {"role": "user",
+                             "content": [{"type": "text", "text": _rand_sentence()}]}})
+            # Assistant message with optional tool calls
+            content = [{"type": "text", "text": _rand_sentence()}]
+            for tn in self._tools:
+                cid = f"call-{i}-{tn}"
+                content.append({"type": "toolCall", "id": cid, "name": tn,
+                                "arguments": {"cmd": _rand_word()}})
+            self._records.append({"type": "message", "timestamp": ts_a,
+                "message": {"role": "assistant", "model": self._model,
+                             "content": content,
+                             "usage": {"input": random.randint(50, 500),
+                                       "output": random.randint(10, 200)}}})
+            # Tool results
+            for tn in self._tools:
+                cid = f"call-{i}-{tn}"
+                self._records.append({"type": "message", "timestamp": _rand_ts(seq),
+                    "message": {"role": "toolResult", "toolCallId": cid,
+                                 "toolName": tn, "content": [{"type": "text", "text": _rand_sentence()}]}})
+                seq += 1
+        return self._write()
+
+
+class CopilotSession(_BaseJSONLSession):
+    """Build a Copilot CLI session JSONL file.
+
+    Usage:
+        f = CopilotSession(tmp_path).build()
+        f = CopilotSession(tmp_path, exchanges=2).with_tools(["run_command"]).build()
+    """
+
+    def __init__(self, tmp_path, *, exchanges=1, name="events.jsonl",
+                 session_id=None, cwd=None, model=None, branch=None):
+        super().__init__(tmp_path, exchanges=exchanges, name=name)
+        self._sid = session_id or f"sess-{_rand_word(6)}"
+        self._cwd = cwd or f"/project/{_rand_word(6)}"
+        self._model = model or "gpt-4o"
+        self._branch = branch or "main"
+        self._tools = []
+
+    def with_tools(self, tool_names):
+        self._tools = tool_names
+        return self
+
+    def build(self):
+        seq = 0
+        # Session start
+        self._records.append({"type": "session.start", "timestamp": _rand_ts(seq),
+            "data": {"sessionId": self._sid,
+                      "context": {"cwd": self._cwd, "branch": self._branch}}})
+        self._records.append({"type": "session.model_change", "timestamp": _rand_ts(seq + 1),
+            "data": {"newModel": self._model}})
+        seq += 2
+        for i in range(self._exchanges):
+            ts_u, ts_a = _rand_ts(seq), _rand_ts(seq + 1)
+            seq += 2
+            # User message
+            self._records.append({"type": "user.message", "timestamp": ts_u,
+                "data": {"content": _rand_sentence()}})
+            # Assistant message with optional tool requests
+            tool_requests = []
+            for tn in self._tools:
+                cid = f"call-{i}-{tn}"
+                tool_requests.append({"toolCallId": cid, "name": tn,
+                                       "arguments": json.dumps({"cmd": _rand_word()})})
+            self._records.append({"type": "assistant.message", "timestamp": ts_a,
+                "data": {"content": _rand_sentence(),
+                          "toolRequests": tool_requests}})
+            # Tool results
+            for tn in self._tools:
+                cid = f"call-{i}-{tn}"
+                self._records.append({"type": "tool.execution_complete",
+                    "timestamp": _rand_ts(seq),
+                    "data": {"toolCallId": cid, "success": True,
+                              "result": {"output": _rand_sentence()}}})
+                seq += 1
+        return self._write()
+
+
 class PeekSession(_BaseJSONLSession):
     """Build a generic SDK-format peek session.
 

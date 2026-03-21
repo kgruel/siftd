@@ -9,7 +9,7 @@ import json
 import sqlite3
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -262,6 +262,33 @@ class ToolCallLinker:
             for tool_id, use_data in self._uses.items()
             if tool_id not in self._results
         ]
+
+
+def flush_pending_calls(
+    pending_calls: dict,
+) -> None:
+    """Finalize tool calls that never received results.
+
+    Iterates pending_calls and appends a ToolCall with status="pending"
+    to each response. Adapters call this at the end of parse() to handle
+    tool uses that were cut off (session ended mid-tool-call).
+
+    Args:
+        pending_calls: Dict of call_id -> (response, tool_name, input_data).
+            This is the standard pending tracking dict used by adapters.
+    """
+    from siftd.domain import ToolCall
+
+    for call_id, (response, tool_name, input_data) in pending_calls.items():
+        tool_call = ToolCall(
+            tool_name=tool_name,
+            input=input_data if isinstance(input_data, dict) else {"raw": input_data},
+            result=None,
+            status="pending",
+            external_id=call_id,
+            timestamp=None,
+        )
+        response.tool_calls.append(tool_call)
 
 
 # =============================================================================
@@ -719,3 +746,382 @@ def peek_jsonl_tail(
                 yield line
         else:
             yield line
+
+
+# =============================================================================
+# Record normalization — the general pattern for adapter peek support
+# =============================================================================
+#
+# Adapters that provide a normalize_record() function get peek_scan,
+# peek_exchanges, and peek_tail for free. The normalizer maps native
+# records to NormalizedRecord, and the SDK provides the scan/exchange logic.
+
+
+@dataclass
+class NormalizedRecord:
+    """A record normalized to a common form for SDK peek helpers.
+
+    Adapters produce these from their native record format. The SDK
+    consumes them to implement peek_scan, peek_exchanges, etc.
+
+    kind values:
+        "user"        — A real user prompt (counts as an exchange).
+        "assistant"   — An assistant response.
+        "tool_result" — A tool result that looks like a user message
+                        but should not count as an exchange.
+        "tool_use"    — A tool invocation (separate from assistant content,
+                        e.g., Codex function_call records).
+        "metadata"    — Session metadata (session_id, workspace, model).
+        "usage"       — Standalone usage/token record.
+    """
+
+    kind: str
+    timestamp: str | None = None
+    content_blocks: list[dict] = field(default_factory=list)
+    session_id: str | None = None
+    workspace_path: str | None = None
+    model: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    tool_name: str | None = None
+    extra: dict = field(default_factory=dict)
+
+
+def iter_jsonl(path: Path) -> Iterator[dict]:
+    """Iterate parsed JSON records from a JSONL file.
+
+    Skips blank lines and unparseable lines silently.
+
+    Args:
+        path: Path to JSONL file.
+
+    Yields:
+        Parsed dicts, one per valid JSONL line.
+    """
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+    except (OSError, UnicodeDecodeError):
+        return
+
+
+def peek_scan_from_records(
+    records: Iterable[dict],
+    normalize: Callable[[dict], NormalizedRecord | None],
+    *,
+    default_session_id: str,
+    subagent_path_marker: str | None = None,
+    file_path: Path | None = None,
+) -> PeekScanResult | None:
+    """Build PeekScanResult from an iterable of raw records and a normalizer.
+
+    This is the format-agnostic core. Callers provide records however they
+    are loaded (JSONL lines, JSON array, SQLite rows, etc.).
+
+    Subagent detection: if a record's extra dict contains "agent_id", or
+    if the file_path contains subagent_path_marker, the session is treated
+    as a subagent. The session_id is synthesized as "{session_id}:{agent_id}"
+    and parent_session_id is set to the original session_id.
+
+    Args:
+        records: Iterable of raw record dicts.
+        normalize: Maps a raw record to NormalizedRecord, or None to skip.
+        default_session_id: Fallback session ID (typically path.stem).
+        subagent_path_marker: Path substring that indicates a subagent file
+            (e.g., "/subagents/"). None to disable path-based detection.
+        file_path: Path to the file being scanned (used for path-based
+            subagent detection).
+
+    Returns:
+        PeekScanResult or None if no exchanges found.
+    """
+    from siftd.domain.peek import PeekScanResult
+
+    session_id = default_session_id
+    workspace_path: str | None = None
+    model: str | None = None
+    exchange_count = 0
+    saw_user = False
+    started_at: str | None = None
+    last_activity_at: str | None = None
+    agent_id: str | None = None
+    session_id_from_record: str | None = None
+
+    for raw in records:
+        nr = normalize(raw)
+        if nr is None:
+            continue
+
+        # Track timestamp bounds
+        if nr.timestamp:
+            if started_at is None or nr.timestamp < started_at:
+                started_at = nr.timestamp
+            if last_activity_at is None or nr.timestamp > last_activity_at:
+                last_activity_at = nr.timestamp
+
+        if nr.kind == "user":
+            exchange_count += 1
+            saw_user = True
+            # First user record wins for metadata
+            if workspace_path is None:
+                workspace_path = nr.workspace_path or workspace_path
+                if nr.session_id:
+                    session_id = nr.session_id
+                    session_id_from_record = nr.session_id
+                # Subagent detection from record extra
+                if nr.extra.get("agent_id") and agent_id is None:
+                    agent_id = nr.extra["agent_id"]
+
+        elif nr.kind == "assistant":
+            if exchange_count == 0 and not saw_user:
+                exchange_count = 1
+            model = nr.model or model
+
+        elif nr.kind == "metadata":
+            if nr.session_id:
+                session_id = nr.session_id
+                session_id_from_record = nr.session_id
+            workspace_path = nr.workspace_path or workspace_path
+            model = nr.model or model
+
+    if exchange_count == 0 or not saw_user:
+        return None
+
+    # Subagent detection: record-level or path-level
+    is_subagent = agent_id is not None
+    if (
+        not is_subagent
+        and subagent_path_marker
+        and file_path
+        and subagent_path_marker in str(file_path)
+    ):
+        is_subagent = True
+
+    parent_session_id: str | None = None
+    if is_subagent and agent_id:
+        session_id = f"{session_id_from_record or default_session_id}:{agent_id}"
+        parent_session_id = session_id_from_record
+    elif is_subagent:
+        # Path-based subagent without agent_id — use session_id as-is
+        parent_session_id = session_id_from_record
+
+    return PeekScanResult(
+        session_id=session_id,
+        workspace_path=workspace_path,
+        model=model,
+        exchange_count=exchange_count,
+        started_at=started_at,
+        last_activity_at=last_activity_at,
+        parent_session_id=parent_session_id,
+    )
+
+
+def peek_exchanges_from_records(
+    records: Iterable[dict],
+    normalize: Callable[[dict], NormalizedRecord | None],
+    last_n: int,
+    *,
+    tool_aliases: dict[str, str] | None = None,
+    include_thinking: bool = False,
+) -> list[PeekExchange]:
+    """Build PeekExchange list from an iterable of raw records and a normalizer.
+
+    Format-agnostic core for exchange extraction.
+
+    Args:
+        records: Iterable of raw record dicts.
+        normalize: Maps a raw record to NormalizedRecord, or None to skip.
+        last_n: Number of most recent exchanges to return (minimum 1).
+        tool_aliases: Optional mapping of raw tool names to canonical names.
+        include_thinking: Include thinking/reasoning blocks in narrative.
+
+    Returns:
+        List of PeekExchange objects.
+    """
+    from siftd.domain.peek import PeekExchange, PeekNarrativeBlock, PeekToolCall
+
+    if last_n < 1:
+        last_n = 1
+
+    exchanges: list[PeekExchange] = []
+    current_exchange: PeekExchange | None = None
+    tool_counter: Counter[str] = Counter()
+
+    for raw in records:
+        nr = normalize(raw)
+        if nr is None:
+            continue
+
+        if nr.kind == "user":
+            current_exchange = PeekExchange(
+                timestamp=nr.timestamp,
+                prompt_text=extract_text_with_placeholders(nr.content_blocks),
+            )
+            exchanges.append(current_exchange)
+            tool_counter = Counter()
+
+        elif nr.kind == "assistant":
+            if current_exchange is None:
+                current_exchange = PeekExchange(
+                    timestamp=nr.timestamp,
+                    prompt_text=None,
+                )
+                exchanges.append(current_exchange)
+                tool_counter = Counter()
+
+            # Accumulate usage
+            current_exchange.input_tokens += nr.input_tokens
+            current_exchange.output_tokens += nr.output_tokens
+
+            # First non-empty response text wins
+            text = extract_text_with_placeholders(
+                nr.content_blocks,
+                include_thinking=include_thinking,
+            )
+            if text and not current_exchange.response_text:
+                if _is_tool_placeholder_only(text):
+                    text = None
+            if text and not current_exchange.response_text:
+                current_exchange.response_text = text
+
+            # Build narrative blocks and track tool calls
+            pending_tool_blocks: list[PeekToolCall] = []
+            for block in nr.content_blocks:
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type")
+                if block_type == "text":
+                    text_val = block.get("text", "")
+                    if text_val:
+                        current_exchange.narrative.append(
+                            PeekNarrativeBlock(block_type="text", content=text_val)
+                        )
+                elif block_type == "thinking":
+                    if include_thinking:
+                        text_val = block.get("thinking") or block.get("text") or ""
+                        if text_val:
+                            current_exchange.narrative.append(
+                                PeekNarrativeBlock(
+                                    block_type="thinking", content=text_val
+                                )
+                            )
+                elif block_type == "tool_use":
+                    tool_name = block.get("name", "unknown")
+                    if tool_aliases:
+                        tool_name = canonicalize_tool_name(tool_name, tool_aliases)
+                    tool_counter[tool_name] += 1
+                    input_dict = (
+                        block.get("input")
+                        if isinstance(block.get("input"), dict)
+                        else {}
+                    )
+                    hint = None
+                    if input_dict:
+                        hint = (
+                            str(
+                                input_dict.get("description")
+                                or input_dict.get("command")
+                                or input_dict.get("file_path")
+                                or input_dict.get("path")
+                                or input_dict.get("pattern")
+                                or ""
+                            )
+                            or None
+                        )
+                    pending_tool_blocks.append(
+                        PeekToolCall(tool_name=tool_name, input=hint)
+                    )
+            if pending_tool_blocks:
+                current_exchange.narrative.append(
+                    PeekNarrativeBlock(
+                        block_type="tool_calls", tool_calls=pending_tool_blocks
+                    )
+                )
+            if tool_counter:
+                current_exchange.tool_calls = list(tool_counter.most_common())
+
+        elif nr.kind == "tool_use":
+            # Standalone tool invocation (e.g., Codex function_call records)
+            if current_exchange is not None and nr.tool_name:
+                tool_name = nr.tool_name
+                if tool_aliases:
+                    tool_name = canonicalize_tool_name(tool_name, tool_aliases)
+                tool_counter[tool_name] += 1
+                current_exchange.tool_calls = list(tool_counter.most_common())
+
+        elif nr.kind == "usage":
+            # Standalone usage record (e.g., Codex event_msg token_count)
+            if current_exchange is not None:
+                current_exchange.input_tokens += nr.input_tokens
+                current_exchange.output_tokens += nr.output_tokens
+
+    return exchanges[-last_n:] if len(exchanges) > last_n else exchanges
+
+
+def make_peek_hooks(
+    normalize: Callable[[dict], NormalizedRecord | None],
+    *,
+    tool_aliases: dict[str, str] | None = None,
+    log_format: str = "jsonl",
+    subagent_path_marker: str | None = None,
+    record_iterator: Callable[[Path], Iterator[dict]] | None = None,
+) -> tuple[
+    Callable[[Path], PeekScanResult | None],
+    Callable[..., list[PeekExchange]],
+    Callable[[Path, int], Iterator[dict | str]],
+]:
+    """Generate peek_scan, peek_exchanges, peek_tail from a normalizer.
+
+    This is the convenience function adapters use to get full peek support.
+    Returns three callables with the standard peek hook signatures.
+
+    Args:
+        normalize: Record normalizer function.
+        tool_aliases: Optional tool name canonicalization mapping.
+        log_format: File format ("jsonl" for line-oriented JSON).
+        subagent_path_marker: Path substring for subagent detection
+            (e.g., "/subagents/"). Passed to peek_scan_from_records.
+        record_iterator: Custom function to iterate records from a file.
+            Defaults to iter_jsonl. Use for non-JSONL formats (e.g., JSON).
+
+    Returns:
+        Tuple of (peek_scan, peek_exchanges, peek_tail) functions.
+    """
+    iter_records = record_iterator or iter_jsonl
+
+    def peek_scan(path: Path) -> PeekScanResult | None:
+        return peek_scan_from_records(
+            iter_records(path),
+            normalize,
+            default_session_id=path.stem,
+            subagent_path_marker=subagent_path_marker,
+            file_path=path,
+        )
+
+    def peek_exchanges(
+        path: Path,
+        last_n: int = 5,
+        *,
+        include_thinking: bool = False,
+    ) -> list[PeekExchange]:
+        return peek_exchanges_from_records(
+            iter_records(path),
+            normalize,
+            last_n,
+            tool_aliases=tool_aliases,
+            include_thinking=include_thinking,
+        )
+
+    def peek_tail(
+        path: Path, lines: int = 20
+    ) -> Iterator[dict | str]:
+        yield from peek_jsonl_tail(path, lines, parse_json=True)
+
+    return peek_scan, peek_exchanges, peek_tail
