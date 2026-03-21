@@ -43,11 +43,13 @@ async def index() -> dict:
             {"method": "GET", "path": "/v1/health", "description": "Health check and DB status"},
             {"method": "POST", "path": "/v1/push", "description": "Push a database slice"},
             {"method": "GET", "path": "/v1/pull", "description": "Pull a filtered database slice"},
-            {"method": "GET", "path": "/v1/query", "description": "List or detail conversations"},
+            {"method": "GET", "path": "/v1/conversations", "description": "List conversations"},
+            {"method": "GET", "path": "/v1/conversations/{id}", "description": "Get conversation detail"},
             {"method": "GET", "path": "/v1/search", "description": "Semantic + FTS search"},
             {"method": "GET", "path": "/v1/stats", "description": "Database statistics"},
             {"method": "GET", "path": "/v1/workspaces", "description": "List workspaces"},
             {"method": "GET", "path": "/v1/tools", "description": "Tool tag usage summary"},
+            {"method": "GET", "path": "/v1/tools/workspaces", "description": "Tool tags by workspace"},
             {"method": "GET", "path": "/v1/tags", "description": "List tags with counts"},
             {"method": "GET", "path": "/v1/tool-search", "description": "Search tool calls"},
             {"method": "GET", "path": "/v1/export", "description": "Export full conversations"},
@@ -104,34 +106,29 @@ async def workspaces_route(
 async def tools_route(
     db_path: Path,
     prefix: str = Parameter(query="prefix", default="shell:"),
-    by_workspace: bool = Parameter(query="by_workspace", default=False),
-    n: int = Parameter(query="n", default=20),
 ) -> dict:
     """Tool tag usage summary."""
-    from siftd.api.tools import get_tool_tag_summary, get_tool_tags_by_workspace
+    from siftd.api.tools import get_tool_tag_summary
 
-    if by_workspace:
-        results = get_tool_tags_by_workspace(db_path=db_path, prefix=prefix, n=n)
-        return {
-            "workspaces": [
-                {
-                    "workspace": ws.workspace,
-                    "total": ws.total,
-                    "tags": [{"name": t.name, "count": t.count} for t in ws.tags],
-                }
-                for ws in results
-            ]
-        }
+    return _dispatch(
+        "/v1/tools", "GET", get_tool_tag_summary,
+        {"db_path": db_path, "prefix": prefix}, "tools", db_path,
+    )
 
-    tags = get_tool_tag_summary(db_path=db_path, prefix=prefix)
-    total = sum(t.count for t in tags)
-    return {
-        "total": total,
-        "tags": [
-            {"name": t.name, "count": t.count, "percentage": round((t.count / total) * 100, 1) if total else 0}
-            for t in tags
-        ],
-    }
+
+@get("/v1/tools/workspaces")
+async def tools_by_workspace_route(
+    db_path: Path,
+    prefix: str = Parameter(query="prefix", default="shell:"),
+    n: int = Parameter(query="n", default=20),
+) -> dict:
+    """Tool tag usage broken down by workspace."""
+    from siftd.api.tools import get_tool_tags_by_workspace
+
+    return _dispatch(
+        "/v1/tools/workspaces", "GET", get_tool_tags_by_workspace,
+        {"db_path": db_path, "prefix": prefix, "n": n}, "tools_by_workspace", db_path,
+    )
 
 
 @get("/v1/tags")
@@ -387,8 +384,19 @@ async def pull(
         )
 
 
-@get("/v1/query")
-async def query(
+@get("/v1/conversations/{id:str}")
+async def conversation_detail(db_path: Path, id: str) -> dict:
+    """Get a single conversation by ID (supports prefix match)."""
+    from siftd.api.conversations import get_conversation
+
+    return _dispatch(
+        "/v1/conversations", "GET", get_conversation,
+        {"id": id, "db_path": db_path}, "detail", db_path,
+    )
+
+
+@get("/v1/conversations")
+async def conversation_list(
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
     since: str | None = Parameter(query="since", default=None),
@@ -402,26 +410,18 @@ async def query(
     search: str | None = Parameter(query="search", default=None),
     n: int = Parameter(query="n", default=20),
     oldest: bool = Parameter(query="oldest", default=False),
-    id: str | None = Parameter(query="id", default=None),
 ) -> dict:
-    """List or detail conversations."""
-    from siftd.api.conversations import get_conversation, list_conversations
-    from siftd.serialization import serialize_conversation_detail, serialize_conversation_list
+    """List conversations with filtering."""
+    from siftd.api.conversations import list_conversations
 
-    if id is not None:
-        detail = get_conversation(id, db_path=db_path)
-        if detail is None:
-            return {"error": f"conversation not found: {id}"}
-        return {"conversation": serialize_conversation_detail(detail)}
-
-    rows = list_conversations(
-        db_path=db_path,
-        workspace=workspace, model=model, since=since, before=before,
-        search=search, tool=tool, tag=tag, all_tags=all_tags,
-        no_tag=no_tag, tool_tag=tool_tag,
-        n=n, oldest=oldest,
+    return _dispatch(
+        "/v1/conversations", "GET", list_conversations,
+        {"db_path": db_path, "workspace": workspace, "model": model,
+         "since": since, "before": before, "search": search, "tool": tool,
+         "tag": tag, "all_tags": all_tags, "no_tag": no_tag,
+         "tool_tag": tool_tag, "n": n, "oldest": oldest},
+        "list", db_path,
     )
-    return {"conversations": serialize_conversation_list(rows)}
 
 
 @get("/v1/search")

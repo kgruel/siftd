@@ -23,7 +23,7 @@ class Operation:
     """Normalized intent — the IR between input and output contexts.
 
     Attributes:
-        path: API endpoint path (e.g. "/v1/query"). Used for serve delegation.
+        path: API endpoint path (e.g. "/v1/conversations"). Used for serve delegation.
         method: HTTP method — "GET" for reads, "POST" for writes.
         fn: The API function to call (e.g. list_conversations).
         params: kwargs for fn (filters, limits, db_path, etc.).

@@ -10,17 +10,19 @@ from litestar.di import Provide
 
 from siftd.serve.html_routes import ui_query, ui_search, ui_shell
 from siftd.serve.routes import (
+    conversation_detail,
+    conversation_list,
     export_route,
     health,
     index,
     pull,
     push,
-    query,
     search_route,
     stats_route,
     tag_write_route,
     tags_route,
     tool_search_route,
+    tools_by_workspace_route,
     tools_route,
     workspaces_route,
 )
@@ -54,9 +56,9 @@ def create_app(
 
     return Litestar(
         route_handlers=[
-            index, health, stats_route, workspaces_route, tools_route,
+            index, health, stats_route, workspaces_route, tools_route, tools_by_workspace_route,
             tag_write_route, tags_route, tool_search_route, export_route,
-            push, pull, query, search_route,
+            push, pull, conversation_detail, conversation_list, search_route,
             ui_shell, ui_query, ui_search,
         ],
         dependencies={

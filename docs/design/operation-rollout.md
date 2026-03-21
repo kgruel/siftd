@@ -19,9 +19,9 @@ output = render(result, op, fmt=select_format(...))
 | `/v1/stats` | GET | `get_stats` | stats | cli_meta |
 | `/v1/workspaces` | GET | `list_workspaces` | raw | cli_meta |
 | `/v1/tools` | GET | `get_tool_tag_summary` | raw | cli_query |
-| `/v1/tools` | GET | `get_tool_tags_by_workspace` | raw | cli_query |
-| `/v1/query` | GET | `get_conversation` | detail | cli_query |
-| `/v1/query` | GET | `list_conversations` | list | cli_query |
+| `/v1/tools/workspaces` | GET | `get_tool_tags_by_workspace` | raw | cli_query |
+| `/v1/conversations/{id}` | GET | `get_conversation` | detail | cli_query |
+| `/v1/conversations` | GET | `list_conversations` | list | cli_query |
 | `/v1/search` | GET | `hybrid_search` | search | cli_search |
 | `/v1/tool-search` | GET | `search_tool_calls` | raw | cli_tool_search |
 | `/v1/tags` | GET | `list_tags` | raw | cli_tags |

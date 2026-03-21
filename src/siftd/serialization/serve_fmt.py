@@ -73,3 +73,45 @@ def render_tool_search(result: Any, fidelity: Fidelity) -> dict:
             for r in results
         ],
     }
+
+
+def render_tools(tags: list, fidelity: Fidelity) -> dict:
+    """Serialize tool tag summary to JSON-safe dict."""
+    total = sum(t.count for t in tags)
+    return {
+        "total": total,
+        "tags": [
+            {"name": t.name, "count": t.count, "percentage": round((t.count / total) * 100, 1) if total else 0}
+            for t in tags
+        ],
+    }
+
+
+def render_tools_by_workspace(results: list, fidelity: Fidelity) -> dict:
+    """Serialize per-workspace tool tag usage to JSON-safe dict."""
+    return {
+        "workspaces": [
+            {
+                "workspace": ws.workspace,
+                "total": ws.total,
+                "tags": [{"name": t.name, "count": t.count} for t in ws.tags],
+            }
+            for ws in results
+        ]
+    }
+
+
+def render_detail(detail: Any, fidelity: Fidelity) -> dict:
+    """Serialize ConversationDetail to JSON-safe dict."""
+    from siftd.serialization.conversations import serialize_conversation_detail
+
+    if detail is None:
+        return {"error": "conversation not found"}
+    return {"conversation": serialize_conversation_detail(detail)}
+
+
+def render_list(summaries: list, fidelity: Fidelity) -> dict:
+    """Serialize conversation list to JSON-safe dict."""
+    from siftd.serialization.conversations import serialize_conversation_list
+
+    return {"conversations": serialize_conversation_list(summaries)}
