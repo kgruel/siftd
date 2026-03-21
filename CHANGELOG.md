@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Adapter SDK: record normalizer pattern** — Adapters that implement `normalize_record()` get `peek_scan`, `peek_exchanges`, and `peek_tail` for free via `make_peek_hooks()`. Replaces per-adapter custom peek implementations with a single SDK code path.
+- **Peek coverage: 3/8 → 7/8 adapters** — Pi Agent, Copilot CLI, and VSCode gain peek support. Claude Code, Codex CLI, and Gemini CLI migrated from custom peek to normalizer-derived.
+- **Adapter boilerplate reduction** — All adapters now use `build_harness()`, `flush_pending_calls()`, and `discover_files()` from the SDK. Net ~580 lines removed from adapters.
+- **Subagent detection promoted to SDK** — `SUBAGENT_PATH_MARKER` and `extra["agent_id"]` in `NormalizedRecord` enable any adapter to support session hierarchy, not just Claude Code.
+
+### Added
+
+- `NormalizedRecord` dataclass, `peek_scan_from_records()`, `peek_exchanges_from_records()`, `make_peek_hooks()`, `iter_jsonl()`, `flush_pending_calls()` in adapter SDK
+- `PiAgentSession` and `CopilotSession` test session builders
+- 50 cross-format normalizer validation tests (`test_normalizers.py`)
+
 ## [0.5.5] - 2026-03-20
 
 ### Changed
