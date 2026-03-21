@@ -619,3 +619,29 @@ class TestNormalizerCoverage:
         from siftd.adapters.pi_agent import _extract_text, _parse_block
         assert _parse_block("s").block_type == "text" and _parse_block({"type": "img"}).block_type == "img"
         assert _extract_text([{"type": "text", "text": "a"}]) == "a" and _extract_text([]) is None
+
+    def test_aider_analytics_and_tool_before_response(self, tmp_path):
+        assert aider.can_handle(Source(kind="file", location=Path("/home/.aider/analytics.jsonl")))
+        assert not aider.can_handle(Source(kind="file", location=Path("/random/analytics.jsonl")))
+        d = tmp_path / ".aider"
+        d.mkdir()
+        (d / "analytics.jsonl").write_text('{"event": "test"}\n')
+        assert list(aider.discover(locations=[str(d)]))
+        md = "# aider chat started at 2025-01-01 00:00:00\n\n#### do it\n\n> Applied edit to main.py\n\nDone\n"
+        (tmp_path / ".aider.chat.history.md").write_text(md)
+        conv = list(aider.parse(Source(kind="file", location=tmp_path / ".aider.chat.history.md")))[0]
+        assert conv.prompts[0].responses and any(b.block_type == "tool_output" for r in conv.prompts[0].responses for b in r.content)
+
+    def test_vscode_normalizer_and_parse_errors(self, tmp_path):
+        n = vscode.normalize_record
+        assert n({"_kind": "user", "_ts": "T", "message": {"text": "hi"}}).content_blocks[0]["text"] == "hi"
+        nr = n({"_kind": "assistant", "_ts": "T", "modelId": "m", "response": [
+            {"kind": "markdownContent", "content": {"value": "ok"}}, {"kind": "toolInvocationSerialized", "toolName": "f"}]})
+        assert nr.kind == "assistant" and len(nr.content_blocks) == 2
+        assert n({"_kind": "unknown"}) is None
+        cs = tmp_path / "chatSessions"
+        cs.mkdir()
+        (cs / "bad.json").write_bytes(b'\xff\xfe bad')
+        assert list(vscode.parse(Source(kind="file", location=cs / "bad.json"))) == []
+        (cs / "b.jsonl").write_text('not json\n{"kind":0,"v":null}\n')
+        assert list(vscode.parse(Source(kind="file", location=cs / "b.jsonl"))) == []
