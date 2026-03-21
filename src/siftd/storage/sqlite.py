@@ -1180,11 +1180,8 @@ def delete_conversation(conn: sqlite3.Connection, conversation_id: str) -> None:
 
 def compute_file_hash(path: Path) -> str:
     """Compute SHA-256 hash of a file."""
-    sha256 = hashlib.sha256()
     with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            sha256.update(chunk)
-    return sha256.hexdigest()
+        return hashlib.file_digest(f, "sha256").hexdigest()
 
 
 def check_file_ingested(conn: sqlite3.Connection, path: str) -> bool:
