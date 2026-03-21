@@ -445,31 +445,23 @@ class TestSDK:
         assert all(isinstance(r, str) for r in sdk.peek_jsonl_tail(f, 2, parse_json=False))
 
     def test_peek_scan_exchanges_hooks(self, tmp_path):
-
-        # Scan: Claude 2 exchanges, Codex with metadata, empty, subagent
-        recs = list(sdk.iter_jsonl(ClaudeSession(tmp_path, exchanges=2).build()))
-        assert sdk.peek_scan_from_records(recs, claude_norm, default_session_id="test").exchange_count == 2
-        recs2 = list(sdk.iter_jsonl(CodexSession(tmp_path, exchanges=1, cwd="/proj", model="gpt-4", name="cx.jsonl").build()))
-        r2 = sdk.peek_scan_from_records(recs2, codex_norm, default_session_id="fb")
+        def _recs(f):
+            return list(sdk.iter_jsonl(f))
+        assert sdk.peek_scan_from_records(_recs(ClaudeSession(tmp_path, exchanges=2).build()), claude_norm, default_session_id="test").exchange_count == 2
+        r2 = sdk.peek_scan_from_records(_recs(CodexSession(tmp_path, exchanges=1, cwd="/proj", model="gpt-4", name="cx.jsonl").build()), codex_norm, default_session_id="fb")
         assert r2.workspace_path == "/proj" and r2.model == "gpt-4"
         assert sdk.peek_scan_from_records([], claude_norm, default_session_id="x") is None
-        recs3 = list(sdk.iter_jsonl(ClaudeSession(tmp_path, name="sub.jsonl").with_subagent("sub-1").build()))
-        assert sdk.peek_scan_from_records(recs3, claude_norm, default_session_id="m").parent_session_id is not None
-        # Exchanges: Claude with tools, Codex with usage, assistant-first, thinking
-        recs4 = list(sdk.iter_jsonl(ClaudeSession(tmp_path, exchanges=3, name="t.jsonl").with_tools(["Read"]).build()))
-        ex = sdk.peek_exchanges_from_records(recs4, claude_norm, last_n=2, tool_aliases={"Read": "file.read"})
+        assert sdk.peek_scan_from_records(_recs(ClaudeSession(tmp_path, name="sub.jsonl").with_subagent("sub-1").build()), claude_norm, default_session_id="m").parent_session_id is not None
+        ex = sdk.peek_exchanges_from_records(_recs(ClaudeSession(tmp_path, exchanges=3, name="t.jsonl").with_tools(["Read"]).build()), claude_norm, last_n=2, tool_aliases={"Read": "file.read"})
         assert len(ex) == 2 and ex[0].prompt_text and len(ex[0].tool_calls) >= 1
-        recs5 = list(sdk.iter_jsonl(CodexSession(tmp_path, exchanges=1, name="cu.jsonl").with_tools(["shell"]).with_usage().build()))
-        assert sdk.peek_exchanges_from_records(recs5, codex_norm, last_n=5, tool_aliases={"shell": "shell.execute"})[0].input_tokens > 0
-        ex3 = sdk.peek_exchanges_from_records([{"type": "assistant", "timestamp": "T1", "message": {"role": "assistant", "model": "m", "content": [{"type": "text", "text": "init"}]}}], claude_norm, last_n=5)
-        assert len(ex3) == 1 and ex3[0].prompt_text is None
+        assert sdk.peek_exchanges_from_records(_recs(CodexSession(tmp_path, exchanges=1, name="cu.jsonl").with_tools(["shell"]).with_usage().build()), codex_norm, last_n=5, tool_aliases={"shell": "shell.execute"})[0].input_tokens > 0
+        assert sdk.peek_exchanges_from_records([{"type": "assistant", "timestamp": "T1", "message": {"role": "assistant", "model": "m", "content": [{"type": "text", "text": "init"}]}}], claude_norm, last_n=5)[0].prompt_text is None
         ex4 = sdk.peek_exchanges_from_records([
             {"type": "user", "timestamp": "T1", "message": {"role": "user", "content": [{"type": "text", "text": "go"}]}},
             {"type": "assistant", "timestamp": "T2", "message": {"role": "assistant", "model": "m",
                 "content": [{"type": "thinking", "thinking": "hmm"}, {"type": "text", "text": "done"}]}},
         ], claude_norm, last_n=5, include_thinking=True)
         assert any(b.block_type == "thinking" for b in ex4[0].narrative)
-        # make_peek_hooks
         scan, exchanges, tail = sdk.make_peek_hooks(claude_norm, tool_aliases={"Read": "file.read"})
         f = ClaudeSession(tmp_path, exchanges=2, name="h.jsonl").with_tools(["Read"]).build()
         assert scan(f).exchange_count == 2 and len(exchanges(f, last_n=1)) == 1 and list(tail(f, 1))
@@ -512,14 +504,12 @@ class TestRegistryAndDiscover:
 
 class TestCodexCliParseEdgeCases:
     def test_custom_and_function_tools(self, tmp_path):
-        # Custom tool_call/output
+        def _tcs(c):
+            return [tc for p in c.prompts for r in p.responses for tc in r.tool_calls]
         conv = list(codex_cli.parse(Source(kind="file", location=CodexSession(tmp_path, exchanges=1).with_custom_tools(["my_tool"]).build())))[0]
-        tcs = [tc for p in conv.prompts for r in p.responses for tc in r.tool_calls]
-        assert any(tc.tool_name == "my_tool" and tc.status == "success" for tc in tcs)
-        # function_call/output
+        assert any(tc.tool_name == "my_tool" and tc.status == "success" for tc in _tcs(conv))
         conv2 = list(codex_cli.parse(Source(kind="file", location=CodexSession(tmp_path, exchanges=1, name="f.jsonl").with_tools(["shell"]).build())))[0]
-        tcs2 = [tc for p in conv2.prompts for r in p.responses for tc in r.tool_calls]
-        assert any(tc.tool_name == "shell" and tc.status == "success" for tc in tcs2)
+        assert any(tc.tool_name == "shell" and tc.status == "success" for tc in _tcs(conv2))
 
     def test_can_handle_and_usage(self, tmp_path):
         d = tmp_path / "sessions" / "2024"
@@ -527,18 +517,12 @@ class TestCodexCliParseEdgeCases:
         (d / "s.jsonl").write_text("{}\n")
         assert codex_cli.can_handle(Source(kind="file", location=d / "s.jsonl"))
         assert not codex_cli.can_handle(Source(kind="file", location=tmp_path / "other.jsonl"))
-        # Usage with cached/reasoning tokens
-        records = [
-            {"type": "session_meta", "timestamp": "T0", "payload": {"id": "s1", "cwd": "/p"}},
+        records = [{"type": "session_meta", "timestamp": "T0", "payload": {"id": "s1", "cwd": "/p"}},
             {"type": "turn_context", "timestamp": "T1", "payload": {"model": "gpt-4"}},
-            {"type": "response_item", "timestamp": "T2", "payload": {"type": "message", "role": "user",
-                "content": [{"type": "input_text", "text": "hi"}]}},
-            {"type": "response_item", "timestamp": "T3", "payload": {"type": "message", "role": "assistant",
-                "content": [{"type": "output_text", "text": "hello"}]}},
+            {"type": "response_item", "timestamp": "T2", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}},
+            {"type": "response_item", "timestamp": "T3", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hello"}]}},
             {"type": "event_msg", "timestamp": "T4", "payload": {"type": "token_count",
-                "info": {"last_token_usage": {"input_tokens": 100, "output_tokens": 50,
-                    "cached_input_tokens": 30, "reasoning_output_tokens": 10}}}},
-        ]
+                "info": {"last_token_usage": {"input_tokens": 100, "output_tokens": 50, "cached_input_tokens": 30, "reasoning_output_tokens": 10}}}}]
         resp = list(codex_cli.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0].prompts[0].responses[0]
         assert resp.usage.input_tokens == 100 and resp.attributes.get("cached_input_tokens") == "30"
 
