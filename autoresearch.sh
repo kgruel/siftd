@@ -20,10 +20,7 @@ for f in ['tests/test_blobs.py', 'tests/test_storage.py']:
 INCLUDE="src/siftd/storage/blobs.py,src/siftd/storage/conversation_stats.py,src/siftd/storage/filters.py,src/siftd/storage/fts.py,src/siftd/storage/queries.py,src/siftd/storage/sessions.py,src/siftd/storage/sql_helpers.py,src/siftd/storage/sqlite.py,src/siftd/storage/tags.py,src/siftd/storage/tool_search.py"
 
 # Test files to measure LOC for
-TEST_FILES="tests/test_blobs.py"
-if [ -f tests/test_storage.py ]; then
-    TEST_FILES="$TEST_FILES tests/test_storage.py"
-fi
+TEST_FILES="tests/test_storage.py"
 
 # Count test LOC (non-empty, non-comment lines)
 TEST_LOC=$(cat $TEST_FILES 2>/dev/null | grep -v '^\s*$' | grep -v '^\s*#' | wc -l | tr -d ' ')

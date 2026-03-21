@@ -3,6 +3,7 @@
 import pytest
 
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall, Usage
+from siftd.storage import compute_content_hash, get_content, get_ref_count, release_content, store_content
 from siftd.storage.conversation_stats import (
     ensure_conversation_stats_table,
     has_conversation_stats_table,
@@ -80,6 +81,10 @@ from siftd.storage.sqlite import (
     get_or_create_provider,
     get_or_create_tool_by_alias,
     get_or_create_workspace,
+    insert_conversation,
+    insert_prompt,
+    insert_response,
+    insert_tool_call,
     open_database,
     record_empty_file,
     record_failed_file,
@@ -155,6 +160,186 @@ def _conv(**kw):
 def populated_db(db):
     conv_id = store_conversation(db, _conv(), commit=True)
     return db, conv_id
+
+
+def _scaffold(conn):
+    """Create minimal conversation scaffold, return (conv_id, response_id)."""
+    h = get_or_create_harness(conn, "test", source="test")
+    w = get_or_create_workspace(conn, "/test", "2024-01-01T10:00:00Z")
+    c = insert_conversation(conn, "c1", h, w, "2024-01-01T10:00:00Z")
+    p = insert_prompt(conn, c, "p1", "2024-01-01T10:00:00Z")
+    r = insert_response(conn, c, p, None, None, "r1", "2024-01-01T10:00:01Z")
+    return c, r
+
+
+# === Blob storage ===
+
+class TestBlobStorage:
+    def test_store_returns_hash(self, db):
+        assert store_content(db, "Hello!", commit=True) == compute_content_hash("Hello!")
+
+    def test_get_retrieves(self, db):
+        h = store_content(db, "Test", commit=True)
+        assert get_content(db, h) == "Test"
+
+    def test_get_unknown(self, db):
+        assert get_content(db, "nonexistent") is None
+
+    def test_same_hash(self, db):
+        assert store_content(db, "det") == store_content(db, "det")
+
+    def test_different_hash(self, db):
+        assert store_content(db, "A") != store_content(db, "B")
+
+
+class TestDeduplication:
+    def test_dup_increments_ref(self, db):
+        h = store_content(db, "D", commit=True)
+        assert get_ref_count(db, h) == 1
+        store_content(db, "D", commit=True)
+        assert get_ref_count(db, h) == 2
+
+    def test_dup_single_blob(self, db):
+        for _ in range(5):
+            store_content(db, "m")
+        db.commit()
+        assert db.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0] == 1
+
+    def test_different_separate(self, db):
+        for s in ("A", "B", "C"):
+            store_content(db, s)
+        db.commit()
+        assert db.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0] == 3
+
+
+class TestRefCounting:
+    def test_release_decrements(self, db):
+        h = store_content(db, "r")
+        store_content(db, "r")
+        db.commit()
+        release_content(db, h, commit=True)
+        assert get_ref_count(db, h) == 1
+
+    def test_release_deletes(self, db):
+        h = store_content(db, "g", commit=True)
+        release_content(db, h, commit=True)
+        assert get_content(db, h) is None
+
+    def test_release_preserves(self, db):
+        h = store_content(db, "k")
+        store_content(db, "k")
+        store_content(db, "k")
+        db.commit()
+        release_content(db, h, commit=True)
+        assert get_ref_count(db, h) == 2
+
+    def test_nonexistent_zero(self, db):
+        assert get_ref_count(db, "nope") == 0
+
+
+class TestBlobEdgeCases:
+    def test_empty_string(self, db):
+        h = store_content(db, "", commit=True)
+        assert get_content(db, h) == ""
+
+    def test_large(self, db):
+        big = "x" * (1024 * 1024)
+        assert get_content(db, store_content(db, big, commit=True)) == big
+
+    def test_unicode(self, db):
+        s = "Hello 世界 🌍"
+        assert get_content(db, store_content(db, s, commit=True)) == s
+
+    def test_json(self, db):
+        s = '{"path": "/t.py", "content": "pass"}'
+        assert get_content(db, store_content(db, s, commit=True)) == s
+
+
+class TestToolCallBlobs:
+    def test_dedupes(self, db):
+        c, r = _scaffold(db)
+        insert_tool_call(db, r, c, None, "tc1", '{}', '{"c":"f"}', "success", "2024-01-01T10:00:01Z")
+        db.commit()
+        row = db.execute("SELECT result, result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
+        assert row["result"] is None and row["result_hash"] is not None
+
+    def test_dedupe_disabled(self, db):
+        c, r = _scaffold(db)
+        insert_tool_call(db, r, c, None, "tc1", '{}', '{"i":1}', "s", "2024-01-01T10:00:01Z", dedupe_result=False)
+        db.commit()
+        row = db.execute("SELECT result, result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
+        assert row["result"] == '{"i":1}' and row["result_hash"] is None
+
+    def test_shared_blob(self, db):
+        c, r = _scaffold(db)
+        for i in range(3):
+            insert_tool_call(db, r, c, None, f"tc{i}", '{}', '{"s":1}', "s", f"2024-01-01T10:0{i}:00Z")
+        db.commit()
+        assert db.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0] == 1
+
+    def test_null_no_blob(self, db):
+        c, r = _scaffold(db)
+        insert_tool_call(db, r, c, None, "tc1", '{}', None, "s", "2024-01-01T10:00:01Z")
+        db.commit()
+        assert db.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0] == 0
+
+
+class TestDeleteCascadeBlobs:
+    def test_releases_blob(self, db):
+        c, r = _scaffold(db)
+        insert_tool_call(db, r, c, None, "tc1", '{}', '{"o":1}', "s", "2024-01-01T10:00:01Z")
+        db.commit()
+        delete_conversation(db, c)
+        db.commit()
+        assert get_ref_count(db, compute_content_hash('{"o":1}')) == 0
+
+    def test_preserves_shared(self, db):
+        h = get_or_create_harness(db, "test", source="test")
+        ws = get_or_create_workspace(db, "/test", "2024-01-01T10:00:00Z")
+        result = '{"s":1}'
+        ids = []
+        for i in range(2):
+            c = insert_conversation(db, f"c{i}", h, ws, f"2024-01-0{i+1}T10:00:00Z")
+            p = insert_prompt(db, c, f"p{i}", f"2024-01-0{i+1}T10:00:00Z")
+            r = insert_response(db, c, p, None, None, f"r{i}", f"2024-01-0{i+1}T10:00:01Z")
+            insert_tool_call(db, r, c, None, f"tc{i}", '{}', result, "s", f"2024-01-0{i+1}T10:00:01Z")
+            ids.append(c)
+        db.commit()
+        delete_conversation(db, ids[0])
+        db.commit()
+        assert get_ref_count(db, compute_content_hash(result)) == 1
+
+
+class TestBlobMigration:
+    def test_count_pending(self, db):
+        from siftd.storage.migrate_blobs import count_pending_migrations
+        c, r = _scaffold(db)
+        for i in range(3):
+            insert_tool_call(db, r, c, None, f"tc{i}", '{}', f'{{"n":{i}}}', "s", None, dedupe_result=False)
+        db.commit()
+        assert count_pending_migrations(db)["total"] == 3
+
+    def test_migrate(self, db):
+        from siftd.storage.migrate_blobs import migrate_existing_results, verify_migration
+        c, r = _scaffold(db)
+        for ext, val in [("tc1", '{"a":1}'), ("tc2", '{"a":1}'), ("tc3", '{"b":2}')]:
+            insert_tool_call(db, r, c, None, ext, '{}', val, "s", None, dedupe_result=False)
+        db.commit()
+        s = migrate_existing_results(db)
+        assert s["migrated"] == 3 and s["blobs_created"] == 2
+        assert verify_migration(db)["pending"] == 0
+
+    def test_migrate_empty(self, db):
+        from siftd.storage.migrate_blobs import migrate_existing_results
+        assert migrate_existing_results(db)["migrated"] == 0
+
+    def test_migrate_preserves(self, db):
+        from siftd.storage.migrate_blobs import migrate_existing_results
+        c, r = _scaffold(db)
+        insert_tool_call(db, r, c, None, "new", '{}', '{"s":1}', "s", None, dedupe_result=True)
+        insert_tool_call(db, r, c, None, "old", '{}', '{"s":1}', "s", None, dedupe_result=False)
+        db.commit()
+        assert migrate_existing_results(db)["blobs_reused"] == 1
 
 
 # === store_conversation ===
