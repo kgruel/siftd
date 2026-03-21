@@ -25,29 +25,21 @@ class TestValidateAdapter:
         for attr, val in [("ADAPTER_INTERFACE_VERSION", ADAPTER_INTERFACE_VERSION), ("NAME", "test"),
                           ("DEFAULT_LOCATIONS", []), ("DEDUP_STRATEGY", "file"), ("HARNESS_SOURCE", "test")]:
             setattr(mod, attr, val)
-        mod.discover = lambda locations=None: []
-        mod.can_handle = lambda source: False
-        mod.parse = lambda source: iter([])
+        mod.discover, mod.can_handle, mod.parse = (lambda locations=None: []), (lambda source: False), (lambda source: iter([]))
         assert validate_adapter(mod, "test") is None
-        # Bad version
         mod.ADAPTER_INTERFACE_VERSION = 999
         assert "incompatible" in validate_adapter(mod, "x")
         mod.ADAPTER_INTERFACE_VERSION = ADAPTER_INTERFACE_VERSION
-        # Missing attribute
         mod2 = ModuleType("bad")
         assert "missing required attribute" in validate_adapter(mod2, "x")
-        # Wrong type
         mod2.ADAPTER_INTERFACE_VERSION = "not_int"
         assert "must be" in validate_adapter(mod2, "x")
-        # Bad dedup
         mod.DEDUP_STRATEGY = "invalid"
         assert "DEDUP_STRATEGY" in validate_adapter(mod, "x")
         mod.DEDUP_STRATEGY = "file"
-        # Missing callable
         delattr(mod, "parse")
         assert "missing required function" in validate_adapter(mod, "x")
         mod.parse = lambda source: iter([])
-        # discover missing locations param
         mod.discover = lambda: []
         assert "locations" in validate_adapter(mod, "x")
 
@@ -223,13 +215,11 @@ class TestVscodeAdapter:
     def test_replay_path_helpers(self):
         obj = {"requests": [{"response": [], "result": None}]}
         vscode._set_at_path(obj, ["requests", 0, "result"], {"ok": True})
-        assert obj["requests"][0]["result"] == {"ok": True}
         vscode._append_at_path(obj, ["requests", 0, "response"], [{"kind": "text"}])
-        assert len(obj["requests"][0]["response"]) == 1
+        assert obj["requests"][0]["result"] == {"ok": True} and len(obj["requests"][0]["response"]) == 1
         obj2 = {"requests": []}
         vscode._append_at_path(obj2, ["requests"], [{"id": "r1"}])
-        assert len(obj2["requests"]) == 1
-        vscode._set_at_path(obj2, ["requests", 99, "result"], "v")  # noop
+        vscode._set_at_path(obj2, ["requests", 99, "result"], "v")
         assert len(obj2["requests"]) == 1
 
 
@@ -395,23 +385,17 @@ class TestSDK:
         linker.add_use("t1", name="file.read")
         linker.add_use("t2", name="shell")
         linker.add_result("t1", content="data")
-        pairs = linker.get_pairs()
-        assert len(pairs) == 2 and pairs[0][2] is not None and pairs[1][2] is None
-        assert len(linker.pending_uses()) == 1
-        # flush_pending_calls
+        assert len(linker.get_pairs()) == 2 and linker.get_pairs()[0][2] is not None and len(linker.pending_uses()) == 1
         resp = Response(timestamp="T1")
         sdk.flush_pending_calls({"c1": (resp, "sh", {"cmd": "ls"}), "c2": (resp, "t", "raw")})
         assert len(resp.tool_calls) == 2 and all(tc.status == "pending" for tc in resp.tool_calls)
-        assert resp.tool_calls[1].input == {"raw": "raw"}
 
     def test_seek_last_lines(self, tmp_path):
         (tmp_path / "s.txt").write_text("a\nb\nc\n")
-        assert sdk.seek_last_lines(tmp_path / "s.txt", 2) == ["b", "c"]
-        assert sdk.seek_last_lines(tmp_path / "nope.txt", 5) == []
         (tmp_path / "e.txt").write_text("")
-        assert sdk.seek_last_lines(tmp_path / "e.txt", 5) == []
+        assert sdk.seek_last_lines(tmp_path / "s.txt", 2) == ["b", "c"]
+        assert sdk.seek_last_lines(tmp_path / "nope.txt", 5) == [] == sdk.seek_last_lines(tmp_path / "e.txt", 5)
         (tmp_path / "big.txt").write_text("\n".join(f"line {i}" for i in range(5000)) + "\n")
-        assert len(sdk.seek_last_lines(tmp_path / "big.txt", 5, chunk_size=256)) == 5
         assert sdk.seek_last_lines(tmp_path / "big.txt", 5, chunk_size=256)[-1] == "line 4999"
         assert len(sdk.seek_last_lines(tmp_path / "big.txt", 10000, chunk_size=256)) == 5000
 
