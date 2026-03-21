@@ -67,12 +67,21 @@ def rebuild_conversation_stats(conn: sqlite3.Connection, *, commit: bool = False
                      FROM response_attributes ra
                      WHERE ra.response_id = r.id
                        AND ra.key = 'cache_read_input_tokens'), 0)
-            END * COALESCE(pr.input_per_mtok, 0)
-            + COALESCE(r.output_tokens, 0) * COALESCE(pr.output_per_mtok, 0)
+            END * pr.input_per_mtok
+            + COALESCE(r.output_tokens, 0) * pr.output_per_mtok
         ) / 1000000.0, 4)"""
+        # Route pricing through harness source when responses.provider_id is NULL.
+        # COALESCE(r.provider_id, p_fallback.id) means: use the response's explicit
+        # provider if set, otherwise fall back to the harness source's provider.
+        # Removing COALESCE on per_mtok values lets NULL propagate when pricing is
+        # absent, so missing pricing yields NULL cost instead of 0.0.
         cost_join = (
+            "LEFT JOIN conversations c2 ON c2.id = r.conversation_id "
+            "LEFT JOIN harnesses h2 ON h2.id = c2.harness_id "
+            "LEFT JOIN providers p_fallback ON p_fallback.name = h2.source "
             "LEFT JOIN pricing pr "
-            "ON pr.model_id = r.model_id AND pr.provider_id = r.provider_id"
+            "ON pr.model_id = r.model_id "
+            "AND pr.provider_id = COALESCE(r.provider_id, p_fallback.id)"
         )
 
     conn.execute(f"""

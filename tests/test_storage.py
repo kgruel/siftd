@@ -640,6 +640,78 @@ class TestConversationStats:
         cstats.ensure_conversation_stats_table(db, commit=True)
         assert cstats.has_conversation_stats_table(db)
 
+    def test_cost_null_when_no_pricing(self, populated_db):
+        """When pricing is absent, cost should be NULL (not 0.0)."""
+        conn, cid = populated_db
+        cstats.rebuild_conversation_stats(conn, commit=True)
+        row = conn.execute(
+            "SELECT cost FROM conversation_stats WHERE conversation_id=?", (cid,)
+        ).fetchone()
+        # No pricing rows exist for test-model → cost must be NULL, not 0.0
+        assert row["cost"] is None
+
+    def test_cost_via_harness_fallback(self, db):
+        """Cost is calculated via harness source when responses.provider_id is NULL."""
+        # Set up: provider "anthropic", model, harness with source="anthropic"
+        provider_id = sq.get_or_create_provider(db, "anthropic")
+        model_id = sq.get_or_create_model(db, "claude-test-model")
+        harness_id = sq.get_or_create_harness(db, "claude_code", source="anthropic", log_format="jsonl")
+        ws_id = sq.get_or_create_workspace(db, "/proj", "2024-01-01T10:00:00Z")
+
+        # Insert pricing for this model
+        db.execute(
+            "INSERT INTO pricing (id, model_id, provider_id, input_per_mtok, output_per_mtok) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("pr-1", model_id, provider_id, 3.0, 15.0),
+        )
+
+        # Insert conversation with response that has provider_id=NULL (the common bug)
+        conv_id = sq.insert_conversation(db, "c1", harness_id, ws_id, "2024-01-01T10:00:00Z")
+        prompt_id = sq.insert_prompt(db, conv_id, "p1", "2024-01-01T10:00:00Z")
+        sq.insert_response(
+            db, conv_id, prompt_id,
+            model_id=model_id,
+            provider_id=None,  # NULL provider_id — triggers harness fallback
+            external_id="r1",
+            timestamp="2024-01-01T10:00:01Z",
+            input_tokens=1_000_000,
+            output_tokens=0,
+        )
+        db.commit()
+
+        cstats.rebuild_conversation_stats(db, commit=True)
+        row = db.execute(
+            "SELECT cost FROM conversation_stats WHERE conversation_id=?", (conv_id,)
+        ).fetchone()
+        # 1M input tokens * $3/Mtok = $3.00
+        assert row["cost"] is not None
+        assert abs(row["cost"] - 3.0) < 0.001
+
+    def test_cost_null_not_zero_for_missing_pricing(self, db):
+        """When pricing join fails, cost is NULL not 0.0 (regression test for COALESCE bug)."""
+        model_id = sq.get_or_create_model(db, "unpriced-model")
+        harness_id = sq.get_or_create_harness(db, "some_tool", source="unknown_provider", log_format="jsonl")
+        ws_id = sq.get_or_create_workspace(db, "/proj", "2024-01-01T10:00:00Z")
+
+        conv_id = sq.insert_conversation(db, "c1", harness_id, ws_id, "2024-01-01T10:00:00Z")
+        prompt_id = sq.insert_prompt(db, conv_id, "p1", "2024-01-01T10:00:00Z")
+        sq.insert_response(
+            db, conv_id, prompt_id,
+            model_id=model_id,
+            provider_id=None,
+            external_id="r1",
+            timestamp="2024-01-01T10:00:01Z",
+            input_tokens=1_000,
+            output_tokens=500,
+        )
+        db.commit()
+
+        cstats.rebuild_conversation_stats(db, commit=True)
+        row = db.execute(
+            "SELECT cost FROM conversation_stats WHERE conversation_id=?", (conv_id,)
+        ).fetchone()
+        assert row["cost"] is None, f"Expected NULL cost for unpriced model, got {row['cost']}"
+
 
 # === Tool search ===
 

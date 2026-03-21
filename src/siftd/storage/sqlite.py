@@ -392,8 +392,28 @@ def _migrate_add_cascade_deletes(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
 
 
+# Known model prices (input_per_mtok, output_per_mtok) in USD per million tokens.
+# Prices are seeded at DB open time when the matching model+provider already exist.
+# Sourced from published API pricing pages.
+_PRICING_SEED: list[tuple[str, str, float, float]] = [
+    # Anthropic
+    ("claude-opus-4-5", "anthropic", 15.0, 75.0),
+    ("claude-sonnet-4-5", "anthropic", 3.0, 15.0),
+    ("claude-haiku-4-5", "anthropic", 0.80, 4.0),
+    ("claude-opus-4-6", "anthropic", 15.0, 75.0),
+    ("claude-sonnet-4-6", "anthropic", 3.0, 15.0),
+    # OpenAI
+    ("gpt-5.3", "openai", 10.0, 30.0),
+    ("gpt-5.4", "openai", 15.0, 60.0),
+    ("gpt-5.3-codex", "openai", 10.0, 30.0),
+    # Google
+    ("gemini-2.5-pro", "google", 1.25, 10.0),
+    ("gemini-2.5-flash", "google", 0.075, 0.30),
+]
+
+
 def ensure_pricing_table(conn: sqlite3.Connection) -> None:
-    """Create the pricing table if it doesn't exist. Idempotent."""
+    """Create the pricing table if it doesn't exist, then seed known prices. Idempotent."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS pricing (
             id              TEXT PRIMARY KEY,
@@ -404,6 +424,17 @@ def ensure_pricing_table(conn: sqlite3.Connection) -> None:
             UNIQUE (model_id, provider_id)
         )
     """)
+    for model_name, provider_name, input_per_mtok, output_per_mtok in _PRICING_SEED:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO pricing (id, model_id, provider_id, input_per_mtok, output_per_mtok)
+            SELECT ?, m.id, p.id, ?, ?
+            FROM models m
+            JOIN providers p ON p.name = ?
+            WHERE m.name = ?
+            """,
+            (_ulid(), input_per_mtok, output_per_mtok, provider_name, model_name),
+        )
 
 
 def ensure_tool_call_tags_table(conn: sqlite3.Connection) -> None:

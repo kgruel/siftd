@@ -344,6 +344,66 @@ class PricingGapsCheck:
         return findings
 
 
+class CostCoverageCheck:
+    """Flags when significant token volume has no cost data."""
+
+    name = "cost-coverage"
+    description = "Conversations with tokens but missing cost data"
+    has_fix = False
+    requires_db = True
+    requires_embed_db = False
+    cost: CheckCost = "fast"
+
+    _WARNING_THRESHOLD = 0.25  # warn if fewer than 25% of token-bearing convs have cost
+
+    def run(self, ctx: CheckContext) -> list[Finding]:
+        conn = ctx.get_db_conn()
+
+        has_stats = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
+        ).fetchone()[0]
+        if not has_stats:
+            return []
+
+        row = conn.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE total_tokens > 0) AS with_tokens,
+                COUNT(*) FILTER (WHERE cost > 0) AS with_cost,
+                COUNT(*) FILTER (WHERE total_tokens > 0 AND cost IS NULL) AS null_cost
+            FROM conversation_stats
+        """).fetchone()
+
+        with_tokens = row["with_tokens"] or 0
+        with_cost = row["with_cost"] or 0
+        null_cost = row["null_cost"] or 0
+
+        if with_tokens == 0:
+            return []
+
+        pct_covered = (with_cost / with_tokens) * 100
+
+        if pct_covered < self._WARNING_THRESHOLD * 100:
+            return [
+                Finding(
+                    check=self.name,
+                    severity="warning",
+                    message=(
+                        f"Only {pct_covered:.0f}% of {with_tokens} conversations have cost data "
+                        f"({null_cost} missing pricing, run siftd ingest to rebuild stats)"
+                    ),
+                    fix_available=False,
+                    context={
+                        "with_tokens": with_tokens,
+                        "with_cost": with_cost,
+                        "null_cost": null_cost,
+                        "pct_covered": round(pct_covered, 1),
+                    },
+                )
+            ]
+
+        return []
+
+
 class DropInsValidCheck:
     """Validates drop-in adapters, formatters, and queries can load."""
 
@@ -1113,6 +1173,7 @@ BUILTIN_CHECKS: list[Check] = [
     EmbeddingsStaleCheck(),
     OrphanedChunksCheck(),
     PricingGapsCheck(),
+    CostCoverageCheck(),
     DropInsValidCheck(),
     FreelistCheck(),
     SchemaCurrentCheck(),

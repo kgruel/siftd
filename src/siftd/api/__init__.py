@@ -73,11 +73,13 @@ from siftd.api.slice import (
     slice_database,
 )
 from siftd.api.stats import (
+    CostCoverage,
     DatabaseStats,
     HarnessInfo,
     TableCounts,
     ToolStats,
     WorkspaceStats,
+    get_cost_coverage,
     get_stats,
     list_workspaces,
 )
@@ -201,11 +203,13 @@ __all__ = [
     "first_mention",
     "build_index",
     # stats
+    "CostCoverage",
     "DatabaseStats",
     "TableCounts",
     "HarnessInfo",
     "WorkspaceStats",
     "ToolStats",
+    "get_cost_coverage",
     "get_stats",
     "list_workspaces",
     # merge

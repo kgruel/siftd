@@ -12,6 +12,7 @@ from siftd.api import (
 from siftd.doctor.checks import (
     CheckContext,
     ConfigValidCheck,
+    CostCoverageCheck,
     DropInsValidCheck,
     EmbeddingsStaleCheck,
     FreelistCheck,
@@ -268,6 +269,95 @@ class TestPricingGapsCheck:
             assert f.check == "pricing-gaps"
             assert f.severity == "warning"
             assert f.fix_available is False
+
+
+class TestCostCoverageCheck:
+    """Tests for the cost-coverage check."""
+
+    def test_no_stats_table_returns_empty(self, tmp_path):
+        """Returns no findings when conversation_stats table does not exist."""
+        from siftd.storage.sqlite import create_database
+
+        db_path = tmp_path / "bare.db"
+        conn = create_database(db_path)
+        # Drop the stats table so the check has nothing to query
+        conn.execute("DROP TABLE IF EXISTS conversation_stats")
+        conn.commit()
+        conn.close()
+
+        embed_db = tmp_path / "embeddings.db"
+        ctx = CheckContext(
+            db_path=db_path,
+            embed_db_path=embed_db,
+            adapters_dir=tmp_path / "adapters",
+            formatters_dir=tmp_path / "formatters",
+            queries_dir=tmp_path / "queries",
+        )
+        for d in [tmp_path / "adapters", tmp_path / "formatters", tmp_path / "queries"]:
+            d.mkdir()
+
+        check = CostCoverageCheck()
+        findings = check.run(ctx)
+        ctx.close()
+        assert findings == []
+
+    def _make_ctx_with_stats(self, tmp_path, rows):
+        """Create a CheckContext pre-populated with given conversation_stats rows."""
+        from siftd.storage.sqlite import create_database
+
+        db_path = tmp_path / "cost_test.db"
+        conn = create_database(db_path)
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.executemany(
+            "INSERT INTO conversation_stats "
+            "(conversation_id, prompt_count, response_count, total_tokens, cost) "
+            "VALUES (?, 1, 1, 100, ?)",
+            rows,
+        )
+        conn.commit()
+        conn.close()
+
+        for d in [tmp_path / "adapters", tmp_path / "formatters", tmp_path / "queries"]:
+            d.mkdir(exist_ok=True)
+        return CheckContext(
+            db_path=db_path,
+            embed_db_path=tmp_path / "embeddings.db",
+            adapters_dir=tmp_path / "adapters",
+            formatters_dir=tmp_path / "formatters",
+            queries_dir=tmp_path / "queries",
+        )
+
+    def test_no_findings_when_coverage_adequate(self, tmp_path):
+        """No findings when cost coverage is above threshold."""
+        ctx = self._make_ctx_with_stats(
+            tmp_path, [("c1", 0.5), ("c2", 1.0), ("c3", 1.5)]
+        )
+        check = CostCoverageCheck()
+        findings = check.run(ctx)
+        ctx.close()
+        assert findings == []
+
+    def test_warning_when_coverage_low(self, tmp_path):
+        """Warning finding when fewer than 25% of conversations have cost."""
+        # 1 with cost, 9 without (10% coverage — below 25% threshold)
+        rows = [("c1", 0.5)] + [(f"c{i}", None) for i in range(2, 11)]
+        ctx = self._make_ctx_with_stats(tmp_path, rows)
+        check = CostCoverageCheck()
+        findings = check.run(ctx)
+        ctx.close()
+
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.check == "cost-coverage"
+        assert f.severity == "warning"
+        assert f.fix_available is False
+        assert "10%" in f.message or "10" in f.message
+
+    def test_registered_in_builtin_checks(self):
+        """CostCoverageCheck is in the BUILTIN_CHECKS registry."""
+        checks = list_checks()
+        names = {c.name for c in checks}
+        assert "cost-coverage" in names
 
 
 class TestDropInsValidCheck:

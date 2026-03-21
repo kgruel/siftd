@@ -8,10 +8,12 @@ from conftest import make_conversation
 from siftd.api import (
     ConversationDetail,
     ConversationSummary,
+    CostCoverage,
     DatabaseStats,
     TagUsage,
     WorkspaceTagUsage,
     get_conversation,
+    get_cost_coverage,
     get_stats,
     get_tool_tag_summary,
     get_tool_tags_by_workspace,
@@ -62,6 +64,85 @@ class TestGetStats:
     def test_raises_for_missing_db(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             get_stats(db_path=tmp_path / "nonexistent.db")
+
+
+class TestGetCostCoverage:
+    def test_returns_cost_coverage(self, test_db):
+        from siftd.api.database import open_database
+        from siftd.storage.conversation_stats import rebuild_conversation_stats
+
+        conn = open_database(test_db)
+        rebuild_conversation_stats(conn, commit=True)
+        result = get_cost_coverage(conn)
+        conn.close()
+        # test_db has 2 conversations with tokens but no pricing → NULL cost
+        assert isinstance(result, CostCoverage)
+        assert result.total_with_tokens == 2
+        assert result.with_positive_cost == 0
+        assert result.pct_covered == 0.0
+
+    def test_none_when_no_stats_table(self, tmp_path):
+        from siftd.storage.sqlite import create_database
+
+        conn = create_database(tmp_path / "bare.db")
+        conn.execute("DROP TABLE IF EXISTS conversation_stats")
+        conn.commit()
+        result = get_cost_coverage(conn)
+        conn.close()
+        assert result is None
+
+    def test_positive_cost_counted(self, tmp_path):
+        from siftd.storage.sqlite import (
+            create_database,
+            get_or_create_harness,
+            get_or_create_model,
+            get_or_create_provider,
+            get_or_create_workspace,
+            insert_conversation,
+            insert_prompt,
+            insert_response,
+        )
+        from siftd.storage.conversation_stats import rebuild_conversation_stats
+
+        conn = create_database(tmp_path / "t.db")
+        provider_id = get_or_create_provider(conn, "anthropic")
+        model_id = get_or_create_model(conn, "claude-test-model")
+        harness_id = get_or_create_harness(conn, "test", source="anthropic")
+        ws_id = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+
+        # Insert pricing so c1 gets a real cost
+        conn.execute(
+            "INSERT INTO pricing (id, model_id, provider_id, input_per_mtok, output_per_mtok) "
+            "VALUES ('pr1', ?, ?, 3.0, 15.0)",
+            (model_id, provider_id),
+        )
+
+        def _add_conv(ext, with_pricing):
+            cid = insert_conversation(conn, ext, harness_id, ws_id, "2024-01-01T00:00:00Z")
+            pid = insert_prompt(conn, cid, f"p-{ext}", "2024-01-01T00:00:00Z")
+            insert_response(
+                conn, cid, pid,
+                model_id=model_id if with_pricing else None,
+                provider_id=provider_id if with_pricing else None,
+                external_id=f"r-{ext}",
+                timestamp="2024-01-01T00:00:01Z",
+                input_tokens=1_000_000,
+                output_tokens=0,
+            )
+            return cid
+
+        _add_conv("c1", with_pricing=True)   # should get cost > 0
+        _add_conv("c2", with_pricing=False)  # model_id=None → NULL cost
+        conn.commit()
+
+        rebuild_conversation_stats(conn, commit=True)
+        result = get_cost_coverage(conn)
+        conn.close()
+
+        assert result.total_with_tokens == 2
+        assert result.with_positive_cost == 1   # c1 has cost > 0
+        assert result.with_null_cost == 1        # c2 is NULL
+        assert result.pct_covered == 50.0
 
 
 class TestListConversations:
