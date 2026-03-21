@@ -103,13 +103,22 @@ def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> str:
 
     if detail and not no_header:
         detail_id = getattr(detail, "id", "") or ""
+
+        # Breadcrumb: workspace > date > ID
+        ws = fmt_workspace(getattr(detail, "workspace_path", None))
+        ts_date = fmt_timestamp(getattr(detail, "started_at", None))
+        crumbs = []
+        if ws:
+            crumbs.append(f'<span class="workspace">{escape(ws)}</span>')
+        if ts_date:
+            crumbs.append(f'<span class="temporal">{escape(ts_date.split(" ")[0])}</span>')
+        crumbs.append(f'<span class="identifier">{escape(detail_id[:12])}</span>')
+        breadcrumb = '<nav class="breadcrumb">' + " ".join(crumbs) + "</nav>"
+
         parts.append('<header class="conversation-header">')
-        parts.append(f'<h2 class="identifier">{escape(detail_id[:12])}</h2>')
+        parts.append(breadcrumb)
 
         meta = []
-        ws = fmt_workspace(getattr(detail, "workspace_path", None))
-        if ws:
-            meta.append(f'<span class="workspace">{escape(ws)}</span>')
         ts = fmt_timestamp(getattr(detail, "started_at", None))
         if ts:
             meta.append(f'<span class="temporal">{escape(ts)}</span>')
@@ -149,7 +158,7 @@ def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> str:
         if prompt_text:
             parts.append('<div class="prompt">')
             parts.append(
-                f'<h3>User{f" <span class=temporal>{escape(ts)}</span>" if ts else ""}</h3>'
+                f'<h3><span class="role-label">User</span>{f" <span class=temporal>{escape(ts)}</span>" if ts else ""}</h3>'
             )
             text = prompt_text.strip()
             if fidelity.chars > 0 and len(text) > fidelity.chars:
@@ -161,7 +170,7 @@ def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> str:
         if narrative:
             parts.append('<div class="assistant">')
             parts.append(
-                f'<h3>Assistant{f" <span class=temporal>{escape(ts)}</span>" if ts else ""}</h3>'
+                f'<h3><span class="role-label">Assistant</span>{f" <span class=temporal>{escape(ts)}</span>" if ts else ""}</h3>'
             )
             emitter = HtmlEmitter()
             walk_narrative(narrative, emitter, fidelity=fidelity, tool_chars=tool_chars)
@@ -185,7 +194,7 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
 
     if not summaries:
-        return '<p class="empty">No conversations found.</p>'
+        return '<div class="empty-state"><div class="empty-icon">&#x2205;</div><p>No conversations found</p><p class="empty-hint">Try adjusting your filters</p></div>'
 
     detail_base = context.get("detail_base", "")
     shell_base = context.get("shell_base", "")

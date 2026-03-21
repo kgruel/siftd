@@ -131,7 +131,11 @@ class DatabaseStats:
     last_ingest_at: str | None
 
 
-def get_cost_coverage(conn: sqlite3.Connection) -> CostCoverage | None:
+def get_cost_coverage(
+    conn: sqlite3.Connection | None = None,
+    *,
+    db_path: Path | None = None,
+) -> CostCoverage | None:
     """Get cost coverage statistics from conversation_stats.
 
     Returns None if the conversation_stats table does not exist.
@@ -141,6 +145,12 @@ def get_cost_coverage(conn: sqlite3.Connection) -> CostCoverage | None:
     have no pricing data available; conversations with cost = 0.0 have tokens
     but were priced at zero (indicates stale stats — run siftd ingest to rebuild).
     """
+    if conn is None:
+        from siftd.storage.sqlite import open_database
+
+        path = db_path or default_db_path()
+        conn = open_database(path, read_only=True)
+
     has_stats = conn.execute(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
     ).fetchone()[0]
@@ -425,22 +435,6 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
         last_ingest_at=last_ingest_at,
     )
 
-
-def get_cost_coverage(*, db_path: Path | None = None) -> int:
-    """Return percentage of conversations with cost data."""
-    from siftd.storage.sqlite import open_database
-
-    path = db_path or default_db_path()
-    conn = open_database(path, read_only=True)
-    try:
-        r = conn.execute(
-            "SELECT COUNT(*) AS total,"
-            " SUM(CASE WHEN cost IS NOT NULL AND cost > 0 THEN 1 ELSE 0 END) AS has_cost"
-            " FROM conversation_stats"
-        ).fetchone()
-        return round(r["has_cost"] / r["total"] * 100) if r["total"] else 0
-    finally:
-        conn.close()
 
 
 @dataclass

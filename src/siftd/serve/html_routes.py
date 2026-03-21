@@ -85,7 +85,7 @@ def _page_shell(
         detail_content = '<p class="empty">Loading...</p>'
     else:
         detail_attr = ""
-        detail_content = '<p class="empty">Select a conversation</p>'
+        detail_content = '<div class="empty-state"><div class="empty-icon">&#x2139;</div><p>Select a conversation from the list</p><p class="empty-hint">or search with the bar above</p></div>'
 
     return f"""\
 <!DOCTYPE html>
@@ -94,6 +94,9 @@ def _page_shell(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>siftd</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 <link rel="stylesheet" href="/static/siftd.css">
 </head>
@@ -104,12 +107,10 @@ def _page_shell(
     hx-get="/ui/search" hx-target="#list" hx-trigger="keyup changed delay:300ms"
     hx-include="this">
   <a href="/ui" hx-get="/ui/query" hx-target="#list" hx-push-url="/ui"
-    hx-on::before-request="document.querySelectorAll('#filters select,#filters input').forEach(e=>e.value='')"
-    style="color:var(--accent);text-decoration:none">Recent</a>
-  <a href="#" hx-get="/ui/peek" hx-target="#list"
-    style="color:var(--accent);text-decoration:none">Live</a>
-  <a href="#" hx-get="/ui/stats" hx-target="#detail" hx-swap="innerHTML"
-    style="color:var(--accent);text-decoration:none">Stats</a>
+    hx-on::before-request="document.querySelectorAll('#filters select,#filters input').forEach(e=>e.value='')">Recent</a>
+  <a href="#" hx-get="/ui/peek" hx-target="#list">Live</a>
+  <a href="#" hx-get="/ui/stats" hx-target="#detail" hx-swap="innerHTML">Stats</a>
+  <button class="density-toggle" onclick="document.body.classList.toggle('compact')" title="Toggle compact mode">Compact</button>
 </nav>
 <main>
   <div id="list-pane">
@@ -552,7 +553,8 @@ async def ui_stats(db_path: Path) -> Response:
         """Return percentage of conversations with cost data."""
         from siftd.api.stats import get_cost_coverage
 
-        return get_cost_coverage(db_path=db)
+        result = get_cost_coverage(db_path=db)
+        return round(result.pct_covered) if result else 0
 
     parts: list[str] = ['<article class="stats-dashboard">']
     parts.append("<h2>Stats</h2>")
