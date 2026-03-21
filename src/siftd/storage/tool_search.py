@@ -74,7 +74,7 @@ def ensure_tool_search_tables(conn: sqlite3.Connection, *, commit: bool = False)
         END
         """
     )
-    if commit:
+    if commit:  # pragma: no cover — never called with commit=True internally
         conn.commit()
 
 

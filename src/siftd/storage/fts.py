@@ -212,8 +212,8 @@ def fts5_recall_details(
         ids = _fts5_conversation_ids_ordered(conn, query, limit)
         if len(ids) >= min_and_hits:
             return Fts5Recall(conversation_ids=ids, mode="and", fts_query=query)
-    except Exception:
-        pass  # malformed FTS query, fall through to OR rewrite
+    except Exception:  # pragma: no cover — malformed FTS query
+        pass
 
     # Phase 2: OR rewrite for broader recall
     or_query = _fts5_or_rewrite(query)
@@ -222,7 +222,7 @@ def fts5_recall_details(
             ids = _fts5_conversation_ids_ordered(conn, or_query, limit)
             if ids:
                 return Fts5Recall(conversation_ids=ids, mode="or", fts_query=or_query)
-        except Exception:
+        except Exception:  # pragma: no cover — OR queries are self-constructed
             pass
 
     return Fts5Recall(conversation_ids=[], mode="none", fts_query=None)

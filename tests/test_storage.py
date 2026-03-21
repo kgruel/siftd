@@ -122,6 +122,10 @@ class TestToolCallBlobs:
         sq.insert_tool_call(db, r, c, None, "tc2", '{}', None, "s", "2024-01-01T10:00:02Z")
         # Non-JSON result with filter_binary=True → hits except path
         sq.insert_tool_call(db, r, c, None, "tc3", '{}', 'not-json', "s", "2024-01-01T10:00:03Z")
+        # Large base64 in result → filter_binary modifies data, hits json.dumps path
+        import base64
+        big_b64 = base64.b64encode(b"x" * 10000).decode()
+        sq.insert_tool_call(db, r, c, None, "tc4", '{}', f'{{"content": "{big_b64}"}}', "s", "2024-01-01T10:00:04Z")
         db.commit()
         row = db.execute("SELECT result, result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
         assert row["result"] == '{"i":1}' and row["result_hash"] is None
@@ -192,6 +196,34 @@ class TestStoreConversation:
         db.commit()
         assert "/test/project" in cache
         assert db.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0] == 1
+
+    def test_workspace_git_remote(self, db, tmp_path):
+        """Workspace dedup by git remote and branch detection."""
+        import subprocess
+        # Create a real git repo with a remote
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", str(repo)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/test/repo.git"], capture_output=True, check=True)
+        # First workspace creation with git remote
+        ws1 = sq.get_or_create_workspace(db, str(repo), "2024-01-01T00:00:00Z")
+        # Same repo path → deduped by remote
+        ws2 = sq.get_or_create_workspace(db, str(repo), "2024-02-01T00:00:00Z")
+        assert ws1 == ws2
+        # Workspace exists by path without remote → update git_remote on re-access
+        no_remote = tmp_path / "no_remote"
+        no_remote.mkdir()
+        ws3 = sq.get_or_create_workspace(db, str(no_remote), "2024-01-01T00:00:00Z")
+        # Now add a git remote to the same path
+        subprocess.run(["git", "init", str(no_remote)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(no_remote), "remote", "add", "origin", "https://github.com/test/other.git"], capture_output=True, check=True)
+        ws4 = sq.get_or_create_workspace(db, str(no_remote), "2024-02-01T00:00:00Z")
+        assert ws3 == ws4  # same workspace, now with remote updated
+        assert db.execute("SELECT git_remote FROM workspaces WHERE id=?", (ws3,)).fetchone()[0] is not None
+        # store_conversation with branch=None triggers get_worktree_branch
+        conv = _conv(external_id="git-conv", workspace_path=str(repo), branch=None)
+        cid = sq.store_conversation(db, conv, commit=True)
+        assert cid is not None
 
     def test_derivative_tagging(self, db):
         conv = _conv(
@@ -293,6 +325,8 @@ class TestFTS:
         ids, mode = fts.fts5_recall_conversations(conn, "Python")
         assert cid in ids and mode in ("and", "or")
         assert fts.fts5_recall_details(conn, "Python function").fts_query is not None
+        # AND return path (min_and_hits=1 so 1 result is enough)
+        assert fts.fts5_recall_details(conn, "Python", min_and_hits=1).mode == "and"
         assert fts.fts5_best_hit_for_conversation(conn, "Python", conversation_id=cid) is not None
         assert fts.fts5_best_hit_for_conversation(conn, "xyznonexistent", conversation_id=cid) is None
         # OR fallback

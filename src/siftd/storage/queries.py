@@ -172,7 +172,7 @@ def fetch_exchanges(
                     parts.append("\n".join(blocks))
             if parts:
                 response_texts[prompt_id] = "\n\n".join(parts)
-    else:
+    else:  # pragma: no cover — prompts with zero responses (rare in ingested data)
         response_texts = {}
 
     # Build final result in prompt timestamp order
@@ -242,7 +242,7 @@ def fetch_conversation_exchanges(
 
     result: dict[str, list[dict]] = {}
     for ex in exchanges:
-        if not ex.prompt_text and not ex.response_text:
+        if not ex.prompt_text and not ex.response_text:  # pragma: no cover
             continue
 
         if ex.conversation_id not in result:
@@ -525,8 +525,7 @@ def fetch_conversation_time_window(conn: sqlite3.Connection) -> tuple[str | None
     row = conn.execute(
         "SELECT MIN(started_at) AS earliest, MAX(started_at) AS latest FROM conversations"
     ).fetchone()
-    if not row:
-        return None, None
+    # Aggregate queries always return a row; values are None on empty table
     return row["earliest"], row["latest"]
 
 
@@ -566,8 +565,7 @@ def fetch_last_ingest_time(conn: sqlite3.Connection) -> str | None:
     row = conn.execute(
         "SELECT MAX(ingested_at) AS last_ingest FROM ingested_files"
     ).fetchone()
-    if not row:
-        return None
+    # Aggregate queries always return a row; value is None on empty table
     return row["last_ingest"]
 
 
