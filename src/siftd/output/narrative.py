@@ -151,13 +151,20 @@ class HtmlEmitter:
         self.parts: list[str] = []
 
     def text(self, content: str) -> None:
-        paragraphs = content.split("\n\n")
-        for p in paragraphs:
-            stripped = p.strip()
-            if stripped:
-                self.parts.append(
-                    f'<p class="narrative-text">{self._escape(stripped)}</p>'
-                )
+        try:
+            import mistune
+
+            rendered = mistune.html(content)
+            self.parts.append(f'<div class="narrative-text">{rendered}</div>')
+        except ImportError:
+            # Fallback: escaped text when mistune not installed
+            paragraphs = content.split("\n\n")
+            for p in paragraphs:
+                stripped = p.strip()
+                if stripped:
+                    self.parts.append(
+                        f'<p class="narrative-text">{self._escape(stripped)}</p>'
+                    )
 
     def thinking(self, content: str) -> None:
         self.parts.append(
@@ -182,6 +189,33 @@ class HtmlEmitter:
             items.append(f'<span class="{css}">{label}</span>')
         self.parts.append(f'<div class="tool-summary">{" ".join(items)}</div>')
 
+    @staticmethod
+    def _lang_from_path(path: str) -> str:
+        """Infer Prism language class from a file path."""
+        ext_map = {
+            ".py": "python", ".js": "javascript", ".ts": "typescript",
+            ".tsx": "tsx", ".jsx": "jsx", ".rs": "rust", ".go": "go",
+            ".rb": "ruby", ".java": "java", ".sh": "bash", ".zsh": "bash",
+            ".bash": "bash", ".json": "json", ".yaml": "yaml", ".yml": "yaml",
+            ".toml": "toml", ".md": "markdown", ".html": "markup",
+            ".css": "css", ".sql": "sql", ".c": "c", ".cpp": "cpp",
+            ".h": "c", ".hpp": "cpp", ".swift": "swift", ".kt": "kotlin",
+            ".xml": "markup", ".lua": "lua", ".zig": "zig",
+        }
+        for ext, lang in ext_map.items():
+            if path.endswith(ext):
+                return lang
+        return ""
+
+    @staticmethod
+    def _lang_for_tool(name: str) -> str:
+        """Default language for a tool's output."""
+        if name in ("shell.execute", "bash", "Bash"):
+            return "bash"
+        if name in ("search.grep", "grep", "Grep", "file.glob", "glob", "Glob"):
+            return ""
+        return ""
+
     def tool_content(
         self,
         name: str,
@@ -198,6 +232,13 @@ class HtmlEmitter:
         count_suffix = f" &times;{count}" if count > 1 else ""
         status_css = " tool-error" if status and status != "success" else ""
 
+        # Infer language from tool name or file path in headline
+        lang = self._lang_for_tool(name)
+        if not lang and name in ("file.read", "read", "Read", "file.edit", "edit", "Edit",
+                                  "file.write", "write", "Write"):
+            lang = self._lang_from_path(pres.headline)
+        lang_attr = f' class="language-{lang}"' if lang else ""
+
         parts = [f'<div class="tool-call{status_css}">']
         parts.append(f'<div class="tool-name">{e(name)}{count_suffix}</div>')
 
@@ -208,11 +249,16 @@ class HtmlEmitter:
         if pres.meta:
             parts.append(f'<span class="tool-meta">{e(pres.meta)}</span>')
 
-        # Diff content (file.edit)
-        if pres.removed is not None:
-            parts.append(f'<pre class="tool-removed">{e(pres.removed)}</pre>')
-        if pres.added is not None:
-            parts.append(f'<pre class="tool-added">{e(pres.added)}</pre>')
+        # Diff content (file.edit) — side-by-side when both present
+        if pres.removed is not None and pres.added is not None:
+            parts.append('<div class="diff-pair">')
+            parts.append(f'<pre class="tool-diff tool-removed"><code{lang_attr}>{e(pres.removed)}</code></pre>')
+            parts.append(f'<pre class="tool-diff tool-added"><code{lang_attr}>{e(pres.added)}</code></pre>')
+            parts.append('</div>')
+        elif pres.removed is not None:
+            parts.append(f'<pre class="tool-diff tool-removed"><code{lang_attr}>{e(pres.removed)}</code></pre>')
+        elif pres.added is not None:
+            parts.append(f'<pre class="tool-diff tool-added"><code{lang_attr}>{e(pres.added)}</code></pre>')
 
         # Checklist (ui.todo)
         if pres.tasks:
@@ -224,7 +270,7 @@ class HtmlEmitter:
 
         # Output preview
         if pres.output:
-            parts.append(f'<pre class="tool-result">{e(pres.output)}</pre>')
+            parts.append(f'<pre class="tool-result"><code{lang_attr}>{e(pres.output)}</code></pre>')
             if pres.overflow:
                 parts.append(
                     f'<span class="tool-overflow">... +{pres.overflow} more lines</span>'

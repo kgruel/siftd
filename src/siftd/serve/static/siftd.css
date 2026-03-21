@@ -401,6 +401,205 @@ table.conversation-list tr.htmx-request {
   color: var(--border-active);
 }
 
+/* Rendered markdown in narrative text */
+.narrative-text h1,
+.narrative-text h2,
+.narrative-text h3,
+.narrative-text h4 {
+  font-family: var(--sans);
+  color: var(--fg);
+  margin: var(--space-lg) 0 var(--space-sm);
+}
+
+.narrative-text h1 { font-size: 1.2em; }
+.narrative-text h2 { font-size: 1.1em; }
+.narrative-text h3 { font-size: 1em; }
+.narrative-text h4 { font-size: 0.95em; }
+
+.narrative-text p {
+  margin: var(--space-sm) 0;
+  max-width: 80ch;
+}
+
+.narrative-text ul,
+.narrative-text ol {
+  padding-left: var(--space-xl);
+  margin: var(--space-sm) 0;
+  max-width: 80ch;
+}
+
+.narrative-text li {
+  margin: var(--space-xs) 0;
+}
+
+.narrative-text code {
+  background: var(--bg-recessed);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  font-size: 0.9em;
+  border: 1px solid var(--border);
+}
+
+.narrative-text pre {
+  background: var(--bg-recessed);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-md);
+  margin: var(--space-sm) 0;
+  overflow-x: auto;
+  max-width: 80ch;
+}
+
+.narrative-text pre code {
+  background: none;
+  padding: 0;
+  border: none;
+  font-size: 0.85em;
+}
+
+.narrative-text blockquote {
+  border-left: 2px solid var(--border-active);
+  padding-left: var(--space-md);
+  margin: var(--space-sm) 0;
+  color: var(--fg-secondary);
+}
+
+.narrative-text strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.narrative-text a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.narrative-text a:hover {
+  text-decoration: underline;
+}
+
+.narrative-text table {
+  border-collapse: collapse;
+  margin: var(--space-sm) 0;
+  font-size: 0.9em;
+}
+
+.narrative-text th,
+.narrative-text td {
+  border: 1px solid var(--border);
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.narrative-text th {
+  background: var(--bg-surface);
+  font-weight: 500;
+  text-align: left;
+}
+
+.narrative-text hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: var(--space-lg) 0;
+}
+
+/* Prism overrides — match our palette */
+code[class*="language-"],
+pre[class*="language-"] {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: var(--bg-recessed);
+  color: var(--fg);
+}
+
+pre[class*="language-"] {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* Tool output code blocks — keep our card styling */
+.tool-call pre {
+  background: var(--bg);
+}
+
+.tool-call pre code {
+  font-size: inherit;
+  background: none;
+  padding: 0;
+  border: none;
+}
+
+/* Diff — side-by-side layout */
+.diff-pair {
+  display: flex;
+  gap: 2px;
+  margin: var(--space-xs) 0;
+}
+
+.diff-pair .tool-diff {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.tool-diff {
+  position: relative;
+}
+
+.tool-diff.tool-removed {
+  border-left: 3px solid var(--error);
+}
+
+.tool-diff.tool-added {
+  border-left: 3px solid var(--teal);
+}
+
+.tool-diff.tool-removed code {
+  color: var(--error);
+  opacity: 0.9;
+}
+
+.tool-diff.tool-added code {
+  color: var(--teal);
+}
+
+/* Line numbers via CSS counters */
+.tool-diff code {
+  counter-reset: diff-line;
+}
+
+.tool-diff code::before {
+  display: none;
+}
+
+/* Diff label badges */
+.diff-pair .tool-removed::before {
+  content: "old";
+  position: absolute;
+  top: var(--space-xs);
+  right: var(--space-sm);
+  font-family: var(--sans);
+  font-size: 0.65em;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--error);
+  opacity: 0.6;
+}
+
+.diff-pair .tool-added::before {
+  content: "new";
+  position: absolute;
+  top: var(--space-xs);
+  right: var(--space-sm);
+  font-family: var(--sans);
+  font-size: 0.65em;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--teal);
+  opacity: 0.6;
+}
+
 /* Turn structure */
 .turn {
   margin-bottom: var(--space-xl);
@@ -499,13 +698,9 @@ table.conversation-list tr.htmx-request {
   opacity: 0.9;
 }
 
-.tool-call .tool-removed::before { content: "- "; font-weight: 600; }
-
 .tool-call .tool-added {
   color: var(--teal);
 }
-
-.tool-call .tool-added::before { content: "+ "; font-weight: 600; }
 
 .tool-call .tool-overflow {
   color: var(--muted);
