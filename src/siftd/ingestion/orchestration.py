@@ -242,10 +242,11 @@ def ingest_all(
 
     stats = IngestStats()
 
-    # Use OFF synchronous during bulk ingest for faster commits.
-    # Safe against process crashes (WAL protects data), but not
-    # against OS crashes/power loss during a commit.
+    # Performance pragmas for bulk ingest:
+    # - synchronous=OFF: skip fsync on commits (safe with WAL against process crashes)
+    # - defer_foreign_keys: skip FK checks until commit (faster inserts)
     conn.execute("PRAGMA synchronous = OFF")
+    conn.execute("PRAGMA defer_foreign_keys = ON")
 
     sources = list(discover_all(adapters))
     stats.files_found = len(sources)
@@ -537,8 +538,9 @@ def ingest_all(
 
     rebuild_conversation_stats(conn, commit=True)
 
-    # Restore normal synchronous mode after bulk ingest
+    # Restore normal settings after bulk ingest
     conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA defer_foreign_keys = OFF")
 
     return stats
 
