@@ -22,14 +22,13 @@ from siftd.storage.queries import (
 )
 
 if TYPE_CHECKING:
-    from siftd.search import SearchResult, apply_temporal_weight, hybrid_search
+    from siftd.search import SearchResult, apply_temporal_weight
     from siftd.storage.embeddings import IndexCompatError
 
 # Lazy re-exports — resolved on first access to avoid eager numpy import.
 _LAZY_IMPORTS = {
     "SearchResult": "siftd.search",
     "apply_temporal_weight": "siftd.search",
-    "hybrid_search": "siftd.search",
     "IndexCompatError": "siftd.storage.embeddings",
 }
 
@@ -372,3 +371,180 @@ def build_index(
         verbose=verbose,
     )
     return {"chunks_added": stats.chunks_added, "total_chunks": stats.total_chunks}
+
+
+def hybrid_search(
+    query: str,
+    *,
+    db_path: Path,
+    embed_db: Path | None = None,
+    limit: int = 10,
+    mode: str = "hybrid",
+    # Filters
+    workspace: str | None = None,
+    model: str | None = None,
+    since: str | None = None,
+    before: str | None = None,
+    tags: list[str] | None = None,
+    all_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+    exclude_active: bool = True,
+    include_derivative: bool = False,
+    # FTS5 tuning
+    recall: int = 80,
+    # Reranking
+    rerank: str = "mmr",
+    lambda_: float = 0.7,
+    # Recency
+    recency: bool = False,
+    recency_half_life: float = 30.0,
+    recency_max_boost: float = 1.15,
+    # Backend
+    backend_name: str | None = None,
+) -> list[dict]:
+    """Unified search pipeline — FTS5, semantic, or hybrid.
+
+    Args:
+        query: Search query string.
+        db_path: Path to main database.
+        embed_db: Path to embeddings database. Required for hybrid/semantic modes.
+        limit: Desired result count after all processing.
+        mode: "hybrid" (FTS5 + semantic), "fts" (keyword only), "semantic" (embeddings only).
+        rerank: "mmr" for diversity reranking, "relevance" for pure score order.
+        backend_name: Preferred embedding backend (ollama, fastembed).
+
+    Returns:
+        List of result dicts with: conversation_id, score, text, chunk_type,
+        source_ids, breakdown (ScoreBreakdown or None), file_refs.
+
+    Raises:
+        FileNotFoundError: If database doesn't exist.
+        ValueError: If query is empty or search fails.
+        RuntimeError: If embedding backend unavailable.
+    """
+    from siftd.search import ScoreBreakdown, mmr_rerank, resolve_candidates
+    from siftd.storage.sqlite import open_database
+
+    # --- FTS-only mode ---
+    if mode == "fts":
+        candidate_ids = resolve_candidates(
+            db_path,
+            workspace=workspace, model=model, since=since, before=before,
+            tags=tags, all_tags=all_tags, exclude_tags=exclude_tags,
+            exclude_active=exclude_active, include_derivative=include_derivative,
+        )
+        conn = open_database(db_path, read_only=True)
+        try:
+            raw = fts5_search_content(conn, query, limit=limit * 5)
+            if candidate_ids is not None:
+                raw = [r for r in raw if r["conversation_id"] in candidate_ids]
+            raw = raw[:limit]
+            return [
+                {
+                    "conversation_id": r["conversation_id"],
+                    "score": abs(r["rank"]),
+                    "text": r["snippet"],
+                    "chunk_type": r["side"],
+                    "source_ids": [],
+                    "file_refs": [],
+                }
+                for r in raw
+            ]
+        finally:
+            conn.close()
+
+    # --- Hybrid / semantic modes need embeddings ---
+    from siftd.embeddings import SCHEMA_VERSION, get_backend
+    from siftd.paths import embeddings_db_path as default_embed_db
+    from siftd.search import apply_temporal_weight
+
+    effective_embed_db = embed_db or default_embed_db()
+    backend = get_backend(preferred=backend_name, verbose=False)
+    embeddings_only = mode == "semantic"
+
+    candidate_ids = resolve_candidates(
+        db_path,
+        workspace=workspace, model=model, since=since, before=before,
+        tags=tags, all_tags=all_tags, exclude_tags=exclude_tags,
+        exclude_active=exclude_active, include_derivative=include_derivative,
+    )
+
+    # FTS5 recall (hybrid mode only — narrows candidates before embeddings)
+    fts5_ids: set[str] | None = None
+    fts5_mode: str | None = None
+    if not embeddings_only:
+        conn = open_database(db_path, read_only=True)
+        try:
+            fts5_ids, fts5_mode = fts5_recall_conversations(conn, query, limit=recall)
+        finally:
+            conn.close()
+
+        if fts5_ids:
+            if candidate_ids is not None:
+                intersected = fts5_ids & candidate_ids
+                candidate_ids = intersected if intersected else candidate_ids
+            else:
+                candidate_ids = fts5_ids
+
+    if candidate_ids is not None and not candidate_ids:
+        return []
+
+    # Embed query and search
+    use_mmr = rerank == "mmr"
+    query_embedding = backend.embed_one(query)
+    embed_conn = open_embeddings_db(effective_embed_db, read_only=True)
+
+    try:
+        validate_index_compat(
+            embed_conn,
+            backend_name=backend.name,
+            backend_model=backend.model,
+            backend_dimension=backend.dimension,
+            current_schema_version=SCHEMA_VERSION,
+        )
+
+        # Widen for MMR to have candidates to diversify from
+        search_limit = max(limit * 3, limit) if use_mmr else limit
+
+        results = search_similar(
+            embed_conn,
+            query_embedding,
+            limit=search_limit,
+            conversation_ids=candidate_ids,
+            include_embeddings=use_mmr,
+        )
+    finally:
+        embed_conn.close()
+
+    if not results:
+        return []
+
+    # Mark FTS5 recall matches in breakdown
+    for r in results:
+        if "breakdown" in r and isinstance(r["breakdown"], ScoreBreakdown):
+            bd = r["breakdown"]
+            if fts5_ids:
+                bd.fts5_matched = r["conversation_id"] in fts5_ids
+                bd.fts5_mode = fts5_mode if bd.fts5_matched else None
+            else:
+                bd.fts5_matched = False
+                bd.fts5_mode = None
+
+    # Temporal weighting (before MMR so it affects reranking)
+    if recency and results:
+        conv_ids_for_ts = list({r["conversation_id"] for r in results})
+        ts_conn = open_database(db_path, read_only=True)
+        try:
+            timestamps = fetch_conversation_timestamps(ts_conn, conv_ids_for_ts)
+        finally:
+            ts_conn.close()
+        results = apply_temporal_weight(
+            results, timestamps,
+            half_life_days=recency_half_life, max_boost=recency_max_boost,
+        )
+
+    # MMR diversity reranking
+    if use_mmr and results:
+        results = mmr_rerank(results, query_embedding, lambda_=lambda_, limit=limit)
+
+    return results
