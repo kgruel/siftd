@@ -499,62 +499,44 @@ class TestFTS:
 # === Filters ===
 
 class TestWhereBuilder:
-    def test_workspace(self):
+    def test_filters(self):
         wb = WhereBuilder()
         wb.workspace("proj")
         assert "w.path LIKE" in wb.where_sql() and len(wb.params) == 2
+        wb2 = WhereBuilder()
+        wb2.model("claude")
+        assert "models" in wb2.where_sql().lower() or "m.raw_name" in wb2.where_sql()
+        wb3 = WhereBuilder()
+        wb3.since("2024-01-01")
+        wb3.before("2024-02-01")
+        assert "c.started_at >=" in wb3.where_sql()
 
-    def test_model(self):
-        wb = WhereBuilder()
-        wb.model("claude")
-        assert "m.raw_name" in wb.where_sql() or "models" in wb.where_sql().lower()
-
-    def test_dates(self):
-        wb = WhereBuilder()
-        wb.since("2024-01-01")
-        wb.before("2024-02-01")
-        assert "c.started_at >=" in wb.where_sql() and "c.started_at <" in wb.where_sql()
-
-    def test_tags_any(self):
+    def test_tags(self):
         wb = WhereBuilder()
         wb.tags_any(["bug", "feat"])
         assert "OR" in wb.where_sql()
-
-    def test_tags_all(self):
-        wb = WhereBuilder()
-        wb.tags_all(["a", "b"])
-        assert wb.where_sql().count("IN (SELECT") == 2
-
-    def test_tags_none(self):
-        wb = WhereBuilder()
-        wb.tags_none(["spam"])
-        assert "NOT IN" in wb.where_sql()
-
-    def test_tag_prefix(self):
+        wb2 = WhereBuilder()
+        wb2.tags_all(["a", "b"])
+        assert wb2.where_sql().count("IN (SELECT") == 2
+        wb3 = WhereBuilder()
+        wb3.tags_none(["spam"])
+        assert "NOT IN" in wb3.where_sql()
         sql, val = tag_condition("research:")
         assert "LIKE" in sql and val == "research:%"
+        sql2, val2 = tag_condition("bugfix")
+        assert "=" in sql2 and val2 == "bugfix"
 
-    def test_tag_exact(self):
-        sql, val = tag_condition("bugfix")
-        assert "=" in sql and val == "bugfix"
-
-    def test_joins(self):
+    def test_joins_and_groupby(self):
         wb = WhereBuilder()
         wb.workspace("p")
         assert "workspaces" in wb.joins_sql()
-
-    def test_group_by(self):
-        wb = WhereBuilder()
         assert not wb.needs_group_by
         wb.require_join("r")
         assert wb.needs_group_by
 
-    def test_empty(self):
+    def test_empty_and_none(self):
         wb = WhereBuilder()
         assert wb.where_sql() == "" and wb.joins_sql() == ""
-
-    def test_none_skips(self):
-        wb = WhereBuilder()
         wb.workspace(None)
         wb.model(None)
         wb.since(None)
@@ -568,35 +550,24 @@ class TestWhereBuilder:
 # === SQL helpers ===
 
 class TestSqlHelpers:
-    def test_placeholders(self):
+    def test_pure_helpers(self):
         assert placeholders(3) == "?, ?, ?" and placeholders(1) == "?"
-
-    def test_in_clause(self):
         ph, vals = in_clause([1, 2, 3])
         assert ph == "?, ?, ?" and vals == [1, 2, 3]
 
-    def test_fetchall_dicts(self, db):
-        get_or_create_harness(db, "t", source="l")
-        db.commit()
-        rows = fetchall_dicts(db, "SELECT name FROM harnesses WHERE name=?", ("t",))
+    def test_db_helpers(self, populated_db):
+        conn, cid = populated_db
+        get_or_create_harness(conn, "t2", source="l")
+        conn.commit()
+        rows = fetchall_dicts(conn, "SELECT name FROM harnesses WHERE name=?", ("t2",))
         assert len(rows) >= 1 and isinstance(rows[0], dict)
-
-    def test_batched_in_query(self, populated_db):
-        conn, cid = populated_db
         assert len(batched_in_query(conn, "SELECT id FROM conversations WHERE id IN ({placeholders})", [cid])) == 1
-
-    def test_batched_in_empty(self, db):
-        assert batched_in_query(db, "SELECT 1 WHERE 1 IN ({placeholders})", []) == []
-
-    def test_batched_execute(self, populated_db):
-        conn, cid = populated_db
+        assert batched_in_query(conn, "SELECT 1 WHERE 1 IN ({placeholders})", []) == []
         tid = get_or_create_tag(conn, "t")
         apply_tag(conn, "conversation", cid, tid)
         conn.commit()
         assert batched_execute(conn, "DELETE FROM conversation_tags WHERE conversation_id IN ({placeholders})", [cid]) >= 1
-
-    def test_batched_execute_empty(self, db):
-        assert batched_execute(db, "DELETE FROM tags WHERE id IN ({placeholders})", []) == 0
+        assert batched_execute(conn, "DELETE FROM tags WHERE id IN ({placeholders})", []) == 0
 
 
 # === Sessions ===
@@ -638,72 +609,54 @@ class TestSessions:
 # === Tags ===
 
 class TestTags:
-    def test_get_or_create(self, db):
+    def test_crud(self, db):
         tid = get_or_create_tag(db, "t", "desc")
         assert tid == get_or_create_tag(db, "t")
         assert get_tag_id(db, "t") == tid
         assert get_tag_id(db, "nope") is None
+        get_or_create_tag(db, "old")
+        assert rename_tag(db, "old", "new", commit=True)
+        assert not rename_tag(db, "nope", "x")
+        get_or_create_tag(db, "a2")
+        get_or_create_tag(db, "b2")
+        with pytest.raises(ValueError, match="already exists"):
+            rename_tag(db, "a2", "b2")
 
-    def test_apply_remove(self, populated_db):
+    def test_apply_remove_all_entities(self, populated_db):
         conn, cid = populated_db
         tid = get_or_create_tag(conn, "r")
         assert apply_tag(conn, "conversation", cid, tid, commit=True) is not None
         assert apply_tag(conn, "conversation", cid, tid) is None
         assert remove_tag(conn, "conversation", cid, tid, commit=True)
         assert not remove_tag(conn, "conversation", cid, tid)
-
-    def test_workspace_tag(self, db):
-        ws = get_or_create_workspace(db, "/t", "2024-01-01T10:00:00Z")
-        tid = get_or_create_tag(db, "wt")
-        assert apply_tag(db, "workspace", ws, tid, commit=True) is not None
-        assert remove_tag(db, "workspace", ws, tid, commit=True)
-
-    def test_tool_call_tag(self, populated_db):
-        conn, _ = populated_db
+        # Workspace
+        ws = get_or_create_workspace(conn, "/t2", "2024-01-01T10:00:00Z")
+        wt = get_or_create_tag(conn, "wt")
+        assert apply_tag(conn, "workspace", ws, wt, commit=True) is not None
+        assert remove_tag(conn, "workspace", ws, wt, commit=True)
+        # Tool call
         tc = conn.execute("SELECT id FROM tool_calls LIMIT 1").fetchone()["id"]
-        tid = get_or_create_tag(conn, "tt")
-        assert apply_tag(conn, "tool_call", tc, tid, commit=True) is not None
-        assert remove_tag(conn, "tool_call", tc, tid, commit=True)
-
-    def test_prompt_tag(self, populated_db):
-        conn, _ = populated_db
+        tt = get_or_create_tag(conn, "tt")
+        assert apply_tag(conn, "tool_call", tc, tt, commit=True) is not None
+        assert remove_tag(conn, "tool_call", tc, tt, commit=True)
+        # Prompt
         pid = conn.execute("SELECT id FROM prompts LIMIT 1").fetchone()["id"]
-        tid = get_or_create_tag(conn, "pt")
-        assert apply_tag(conn, "prompt", pid, tid, commit=True) is not None
-        assert remove_tag(conn, "prompt", pid, tid, commit=True)
+        pt = get_or_create_tag(conn, "pt")
+        assert apply_tag(conn, "prompt", pid, pt, commit=True) is not None
+        assert remove_tag(conn, "prompt", pid, pt, commit=True)
 
-    def test_rename(self, db):
-        get_or_create_tag(db, "old")
-        assert rename_tag(db, "old", "new", commit=True)
-        assert not rename_tag(db, "nope", "x")
-
-    def test_rename_conflict(self, db):
-        get_or_create_tag(db, "a")
-        get_or_create_tag(db, "b")
-        with pytest.raises(ValueError, match="already exists"):
-            rename_tag(db, "a", "b")
-
-    def test_delete(self, populated_db):
+    def test_delete_and_list(self, populated_db):
         conn, cid = populated_db
         tid = get_or_create_tag(conn, "del")
         apply_tag(conn, "conversation", cid, tid)
         conn.commit()
         assert delete_tag(conn, "del", commit=True) >= 1
         assert delete_tag(conn, "nope") == -1
-
-    def test_list(self, populated_db):
-        conn, cid = populated_db
-        tid = get_or_create_tag(conn, "listed")
-        apply_tag(conn, "conversation", cid, tid)
+        tid2 = get_or_create_tag(conn, "listed")
+        apply_tag(conn, "conversation", cid, tid2)
         conn.commit()
         assert "listed" in [t["name"] for t in list_tags(conn)]
-
-    def test_list_time_filter(self, populated_db):
-        conn, cid = populated_db
-        tid = get_or_create_tag(conn, "tf")
-        apply_tag(conn, "conversation", cid, tid)
-        conn.commit()
-        assert "tf" in [t["name"] for t in list_tags(conn, since="2024-01-01", before="2025-01-01")]
+        assert "listed" in [t["name"] for t in list_tags(conn, since="2024-01-01", before="2025-01-01")]
 
     def test_unsupported_entity(self, db):
         tid = get_or_create_tag(db, "x")
@@ -735,52 +688,38 @@ class TestQueries:
         conn, cid = populated_db
         ex = fetch_exchanges(conn, conversation_id=cid)
         assert len(ex) == 1 and "Python" in ex[0].prompt_text
-
-    def test_exchanges_empty(self, db):
-        assert fetch_exchanges(db, prompt_ids=[]) == []
-
-    def test_exchanges_exclude(self, populated_db):
-        conn, cid = populated_db
         assert fetch_exchanges(conn, exclude_conversation_ids={cid}) == []
+        assert fetch_exchanges(conn, prompt_ids=[]) == []
+        assert len(fetch_exchanges(conn)) >= 1  # no filters
 
-    def test_conversation_by_prefix(self, populated_db):
+    def test_conversation_detail(self, populated_db):
         conn, cid = populated_db
         assert fetch_conversation_by_id_or_prefix(conn, cid[:8])["id"] == cid
-
-    def test_model(self, populated_db):
-        assert fetch_conversation_model(populated_db[0], populated_db[1]) is not None
-
-    def test_tokens(self, populated_db):
-        inp, out = fetch_conversation_token_totals(populated_db[0], populated_db[1])
+        assert fetch_conversation_model(conn, cid) is not None
+        inp, out = fetch_conversation_token_totals(conn, cid)
         assert inp == 100 and out == 200
-
-    def test_prompts_content(self, populated_db):
-        conn, cid = populated_db
         ps = fetch_prompts_for_conversation(conn, cid)
         assert len(ps) == 1 and len(fetch_prompt_text_content(conn, ps[0]["id"])) >= 1
-
-    def test_responses_content(self, populated_db):
-        conn, cid = populated_db
         rs = fetch_responses_for_conversation(conn, cid)
-        assert len(rs) == 1
-        assert len(fetch_response_text_content(conn, rs[0]["id"])) >= 1
+        assert len(rs) == 1 and len(fetch_response_text_content(conn, rs[0]["id"])) >= 1
         assert len(fetch_response_content_blocks(conn, [rs[0]["id"]])) >= 1
-
-    def test_tool_calls(self, populated_db):
-        conn, cid = populated_db
         assert len(fetch_tool_calls_for_conversation(conn, cid)) == 2
         assert len(fetch_tool_calls_for_conversation(conn, cid, include_content=True)) == 2
 
-    def test_tags(self, populated_db):
+    def test_tags_and_exchanges(self, populated_db):
         conn, cid = populated_db
         tid = get_or_create_tag(conn, "qt")
         apply_tag(conn, "conversation", cid, tid)
         conn.commit()
         assert "qt" in fetch_conversation_tags(conn, cid)
         assert cid in fetch_tags_for_conversations(conn, [cid])
+        r = fetch_conversation_exchanges(conn, conversation_id=cid)
+        assert cid in r and len(r[cid]) >= 1
+        pids = [r["id"] for r in conn.execute("SELECT id FROM prompts WHERE conversation_id=?", (cid,)).fetchall()]
+        assert len(fetch_prompt_response_texts(conn, pids)) >= 1
 
     def test_stats(self, populated_db):
-        conn, _ = populated_db
+        conn, cid = populated_db
         assert fetch_table_count(conn, "conversations") >= 1
         assert len(fetch_harnesses(conn)) >= 1
         assert len(fetch_top_workspaces(conn)) >= 1
@@ -790,49 +729,20 @@ class TestQueries:
         assert len(fetch_top_tools(conn)) >= 1
         assert fetch_response_token_coverage(conn)[0] >= 1
         assert len(fetch_token_coverage_by_harness(conn)) >= 1
-
-    def test_conversation_exchanges(self, populated_db):
-        conn, cid = populated_db
-        r = fetch_conversation_exchanges(conn, conversation_id=cid)
-        assert cid in r and len(r[cid]) >= 1
-
-    def test_prompt_response_texts(self, populated_db):
-        conn, cid = populated_db
-        pids = [r["id"] for r in conn.execute("SELECT id FROM prompts WHERE conversation_id=?", (cid,)).fetchall()]
-        assert len(fetch_prompt_response_texts(conn, pids)) >= 1
-
-    def test_all_ids(self, populated_db):
-        conn, cid = populated_db
-        assert cid in fetch_all_conversation_ids(conn)
-
-    def test_timestamps(self, populated_db):
-        conn, cid = populated_db
-        assert cid in fetch_conversation_timestamps(conn, [cid])
-        pids = [r["id"] for r in conn.execute("SELECT id FROM prompts WHERE conversation_id=?", (cid,)).fetchall()]
-        assert len(fetch_prompt_timestamps(conn, pids)) >= 1
-
-    def test_pricing_table(self, db):
-        assert has_pricing_table(db)
-
-    def test_top_conversation_tags(self, populated_db):
-        assert isinstance(fetch_top_conversation_tags(populated_db[0]), list)
-
-    def test_tool_tags(self, populated_db):
-        conn, _ = populated_db
+        assert has_pricing_table(conn)
+        assert isinstance(fetch_top_conversation_tags(conn), list)
         assert isinstance(fetch_tool_tags_by_prefix(conn, "shell:"), list)
         assert isinstance(fetch_tool_tags_by_workspace(conn, "shell:"), list)
 
-    def test_last_ingest_time(self, populated_db):
+    def test_ids_and_timestamps(self, populated_db):
         from siftd.storage.queries import fetch_last_ingest_time
         conn, cid = populated_db
+        assert cid in fetch_all_conversation_ids(conn)
+        assert cid in fetch_conversation_timestamps(conn, [cid])
+        pids = [r["id"] for r in conn.execute("SELECT id FROM prompts WHERE conversation_id=?", (cid,)).fetchall()]
+        assert len(fetch_prompt_timestamps(conn, pids)) >= 1
         record_ingested_file(conn, "/f.jsonl", "h", cid, commit=True)
         assert fetch_last_ingest_time(conn) is not None
-
-    def test_exchanges_no_filters(self, populated_db):
-        """fetch_exchanges with no filters returns all."""
-        conn, cid = populated_db
-        ex = fetch_exchanges(conn)
-        assert len(ex) >= 1
 
     def test_empty_queries(self, db):
         assert fetch_response_content_blocks(db, []) == {}
@@ -880,31 +790,24 @@ class TestToolSearch:
 # === Database ops ===
 
 class TestDatabaseOps:
-    def test_creates_schema(self, tmp_path):
+    def test_open_and_backup(self, tmp_path):
         conn = open_database(tmp_path / "new.db")
         tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         assert "conversations" in tables and "prompts" in tables
         conn.close()
-
-    def test_read_only(self, tmp_path):
-        open_database(tmp_path / "ro.db").close()
-        conn = open_database(tmp_path / "ro.db", read_only=True)
+        # Read-only
+        conn = open_database(tmp_path / "new.db", read_only=True)
         assert "conversations" in [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         conn.close()
-
-    def test_read_only_missing(self, tmp_path):
-        with pytest.raises(FileNotFoundError):
-            open_database(tmp_path / "nope.db", read_only=True)
-
-    def test_create_empty(self, tmp_path):
+        # Backup
+        backup_database(tmp_path / "new.db", tmp_path / "bak" / "d.db")
+        assert (tmp_path / "bak" / "d.db").exists()
+        # Empty
         create_empty_database(tmp_path / "e.db")
         assert (tmp_path / "e.db").exists()
 
-    def test_backup(self, tmp_path):
-        open_database(tmp_path / "src.db").close()
-        backup_database(tmp_path / "src.db", tmp_path / "bak" / "d.db")
-        assert (tmp_path / "bak" / "d.db").exists()
-
-    def test_backup_missing(self, tmp_path):
+    def test_errors(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            open_database(tmp_path / "nope.db", read_only=True)
         with pytest.raises(FileNotFoundError):
             backup_database(tmp_path / "missing.db", tmp_path / "d.db")
