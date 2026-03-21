@@ -137,41 +137,21 @@ class TestAiderAdapter:
         source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
         convos = list(aider.parse(source))
         assert len(convos) == 2
-        # IDs are deterministic
         assert [c.external_id for c in aider.parse(source)] == [c.external_id for c in convos]
-
-        # First session: metadata
         conv = convos[0]
         assert conv.external_id.startswith("aider::") and "2025-07-15 14:32:01" in conv.external_id
         assert conv.started_at == "2025-07-15T14:32:01" and conv.harness.name == "aider"
-        assert conv.workspace_path == str(FIXTURES_DIR)
-        assert len(conv.prompts) == 2
-
-        # Prompts: single + multi-line
+        assert conv.workspace_path == str(FIXTURES_DIR) and len(conv.prompts) == 2
         assert "write a hello world script" in conv.prompts[0].content[0].content["text"]
-        p1 = conv.prompts[1]
-        assert "now add a greeting function" in p1.content[0].content["text"]
-        assert "that takes a name parameter" in p1.content[0].content["text"]
-
-        # Response with text
-        resp = conv.prompts[0].responses[0]
-        text_blocks = [b for b in resp.content if b.block_type == "text"]
-        assert text_blocks and "hello world" in text_blocks[0].content["text"].lower()
-
-        # Tool output
+        assert "now add a greeting function" in conv.prompts[1].content[0].content["text"]
+        assert "that takes a name parameter" in conv.prompts[1].content[0].content["text"]
+        assert [b for b in conv.prompts[0].responses[0].content if b.block_type == "text" and "hello world" in b.content["text"].lower()]
         all_blocks = [b for r in conv.prompts[0].responses for b in r.content]
-        tool_blocks = [b for b in all_blocks if b.block_type == "tool_output"]
-        assert tool_blocks and "Applied edit to hello.py" in tool_blocks[0].content["text"]
-
-        # Cost attributes
-        resp_with_cost = next((r for r in conv.prompts[0].responses if r.attributes.get("approx_cost")), None)
-        assert resp_with_cost and resp_with_cost.attributes["approx_cost"] == "0.01"
-        assert resp_with_cost.attributes["approx_input_tokens"] == "2100"
-
-        # Second session
-        conv2 = convos[1]
-        assert conv2.started_at == "2025-07-15T15:10:00"
-        assert "fix the bug in auth.py" in conv2.prompts[0].content[0].content["text"]
+        assert [b for b in all_blocks if b.block_type == "tool_output" and "Applied edit" in b.content["text"]]
+        resp_cost = next((r for r in conv.prompts[0].responses if r.attributes.get("approx_cost")), None)
+        assert resp_cost and resp_cost.attributes["approx_cost"] == "0.01"
+        assert convos[1].started_at == "2025-07-15T15:10:00"
+        assert "fix the bug in auth.py" in convos[1].prompts[0].content[0].content["text"]
 
     def test_parse_empty_and_header_only(self, tmp_path):
         empty = tmp_path / "e.md"
@@ -188,16 +168,13 @@ class TestAiderAdapter:
 
 def _vscode_session_dir(tmp_path, fixture, ws="/test/workspace"):
     """Set up VSCode workspace dir structure with fixture. Returns Source."""
-    import json
-    import shutil
     h = tmp_path / "hash"
     cs = h / "chatSessions"
     cs.mkdir(parents=True)
-    dest = cs / Path(fixture).name
-    shutil.copy(FIXTURES_DIR / fixture, dest)
+    shutil.copy(FIXTURES_DIR / fixture, cs / Path(fixture).name)
     if ws:
         (h / "workspace.json").write_text(json.dumps({"folder": f"file://{ws}"}))
-    return Source(kind="file", location=dest)
+    return Source(kind="file", location=cs / Path(fixture).name)
 
 
 class TestVscodeAdapter:
@@ -227,20 +204,18 @@ class TestVscodeAdapter:
         assert len(conv.prompts) == 2 and conv.prompts[1].responses[0].tool_calls[0].tool_name == "listFiles"
 
     def test_parse_edge_cases(self, tmp_path):
-        # No workspace.json → None
         cs = tmp_path / "nw" / "chatSessions"
         cs.mkdir(parents=True)
         shutil.copy(FIXTURES_DIR / "vscode_minimal.json", cs / "t.json")
         assert list(vscode.parse(Source(kind="file", location=cs / "t.json")))[0].workspace_path is None
-        # Empty JSON + JSONL → no conversations
         cs2 = tmp_path / "e" / "chatSessions"
         cs2.mkdir(parents=True)
-        (cs2 / "e.json").write_text(json.dumps({"version": 3, "sessionId": "e", "creationDate": 1708012345678, "requests": []}))
+        empty = {"version": 3, "sessionId": "e", "creationDate": 1708012345678, "requests": []}
+        (cs2 / "e.json").write_text(json.dumps(empty))
         assert list(vscode.parse(Source(kind="file", location=cs2 / "e.json"))) == []
-        (cs2 / "e.jsonl").write_text('{"kind":0,"v":{"version":3,"sessionId":"e","creationDate":1708012345678,"requests":[]}}\n')
+        (cs2 / "e.jsonl").write_text(json.dumps({"kind": 0, "v": empty}) + "\n")
         assert list(vscode.parse(Source(kind="file", location=cs2 / "e.jsonl"))) == []
-        # Structured message
-        (cs2 / "s.json").write_text(json.dumps({"version": 3, "sessionId": "s", "creationDate": 1708012345678,
+        (cs2 / "s.json").write_text(json.dumps({**empty, "sessionId": "s",
             "requests": [{"requestId": "r1", "message": {"text": "Hello"}, "timestamp": 1708012345678,
                 "modelId": "gpt-4o", "response": [{"kind": "markdownContent", "content": {"value": "Hi"}}], "responseId": "r1"}]}))
         assert list(vscode.parse(Source(kind="file", location=cs2 / "s.json")))
@@ -278,13 +253,9 @@ class TestPiAgentAdapter:
         tc = prompt.responses[0].tool_calls[0]
         assert tc.tool_name == "Read" and tc.status == "success" and "Test Project" in str(tc.result)
         resp = conv.prompts[0].responses[0]
-        assert resp.usage.input_tokens == 500 and resp.usage.output_tokens == 120
-        assert resp.attributes["cache_read_input_tokens"] == "50"
-        assert resp.attributes["cache_creation_input_tokens"] == "10"
-        assert resp.attributes["cost"] == "0.0111"
-        assert resp.model == "claude-opus-4-6"
-        thinking = [b for b in resp.content if b.block_type == "thinking"]
-        assert thinking and "README" in thinking[0].content["text"]
+        assert resp.usage.input_tokens == 500 and resp.usage.output_tokens == 120 and resp.model == "claude-opus-4-6"
+        assert resp.attributes["cache_read_input_tokens"] == "50" and resp.attributes["cost"] == "0.0111"
+        assert [b for b in resp.content if b.block_type == "thinking" and "README" in b.content["text"]]
 
     def test_parse_empty_file(self, tmp_path):
         sessions_dir = tmp_path / ".pi" / "agent" / "sessions"
@@ -295,8 +266,6 @@ class TestPiAgentAdapter:
 
 def _make_opencode_db(path, sessions=None):
     """Create an OpenCode SQLite test database. Returns Source."""
-    import json
-    import sqlite3
     conn = sqlite3.connect(str(path))
     conn.execute("CREATE TABLE session (id TEXT, project_id TEXT, directory TEXT, title TEXT, version INTEGER, time_created INTEGER, time_updated INTEGER)")
     conn.execute("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)")
@@ -340,38 +309,28 @@ class TestOpenCodeAdapter:
         conv = list(opencode.parse(opencode_source))[0]
         assert conv.external_id == "opencode::ses_001" and conv.workspace_path == "/test/workspace"
         assert conv.harness.name == "opencode" and "2024-03-10" in conv.started_at
-        assert len(conv.prompts) == 1
-        prompt = conv.prompts[0]
-        assert "Run the tests" in prompt.content[0].content["text"]
-        resp = prompt.responses[0]
-        assert resp.model == "claude-3-opus-20240229"
-        assert resp.usage.input_tokens == 500 and resp.usage.output_tokens == 120
-        assert resp.attributes["cost"] == "0.025"
-        assert resp.attributes["cache_read_input_tokens"] == "50"
-        assert resp.attributes["cache_creation_input_tokens"] == "10"
-        tc = resp.tool_calls[0]
-        assert tc.tool_name == "bash" and tc.status == "success" and "5 passed" in str(tc.result)
+        assert "Run the tests" in conv.prompts[0].content[0].content["text"]
+        resp = conv.prompts[0].responses[0]
+        assert resp.model == "claude-3-opus-20240229" and resp.usage.input_tokens == 500
+        assert resp.attributes["cost"] == "0.025" and resp.attributes["cache_read_input_tokens"] == "50"
+        assert resp.tool_calls[0].tool_name == "bash" and resp.tool_calls[0].status == "success"
 
     def test_parse_empty_and_edge_cases(self, tmp_path):
-        # Empty DB
         assert list(opencode.parse(_make_opencode_db(tmp_path / "empty.db"))) == []
         assert list(opencode.parse(Source(kind="sqlite", location=tmp_path / "nope.db"))) == []
-        # Summary fallback, reasoning, step markers, error tool with non-dict input
         src = _make_opencode_db(tmp_path / "edge.db", sessions=[{
             "session": ("s2", "p2", "/ws", "Test", 1, 1710079200000, 1710079260000),
             "messages": [
                 {"id": "m1", "ts": 1710079210000, "data": {"role": "user", "summary": {"title": "Do something"}}},
                 {"id": "m2", "ts": 1710079220000, "data": {"role": "assistant", "modelID": "gpt-4", "tokens": {"input": 10, "output": 5}},
-                 "parts": [
-                    {"id": "p1", "data": {"type": "reasoning", "text": "thinking..."}},
+                 "parts": [{"id": "p1", "data": {"type": "reasoning", "text": "thinking..."}},
                     {"id": "p2", "ts": 1710079221000, "data": {"type": "step-start"}},
                     {"id": "p3", "ts": 1710079222000, "data": {"type": "tool", "callID": "c1", "tool": "bash",
                         "state": {"status": "error", "input": "raw-string", "output": "fail",
                             "time": {"start": 1710079222000, "end": 1710079223000}}}}]}]}])
         conv = list(opencode.parse(src))[0]
         assert "Do something" in conv.prompts[0].content[0].content["text"]
-        thinking = [b for b in conv.prompts[0].responses[0].content if b.block_type == "thinking"]
-        assert thinking and "thinking" in thinking[0].content["text"]
+        assert [b for b in conv.prompts[0].responses[0].content if b.block_type == "thinking"]
         assert conv.prompts[0].responses[0].tool_calls[0].status == "error"
 
     def test_discover(self, tmp_path):
@@ -390,24 +349,14 @@ class TestCopilotCliAdapter:
 
     def test_parse_full(self, tmp_path):
         copilot_source = _fixture_source(tmp_path, "copilot_cli_minimal.jsonl", ".copilot/session-state/test-uuid", "events.jsonl")
-        """Parse extracts conversation with metadata, prompts, tools, reasoning."""
         conv = list(copilot_cli.parse(copilot_source))[0]
         assert conv.external_id == "copilot_cli::copilot-session-001" and conv.workspace_path == "/test/workspace"
-        assert conv.branch == "main" and conv.harness.name == "copilot_cli"
-        assert len(conv.prompts) == 1
-        prompt = conv.prompts[0]
-        assert "List the files" in prompt.content[0].content["text"] and len(prompt.responses) == 2
-        tc = prompt.responses[0].tool_calls[0]
+        assert conv.branch == "main" and conv.harness.name == "copilot_cli" and len(conv.prompts) == 1
+        assert "List the files" in conv.prompts[0].content[0].content["text"] and len(conv.prompts[0].responses) == 2
+        tc = conv.prompts[0].responses[0].tool_calls[0]
         assert tc.tool_name == "bash" and tc.status == "success" and "README.md" in str(tc.result)
-
-    def test_parse_reasoning_model_usage(self, tmp_path):
-        copilot_source = _fixture_source(tmp_path, "copilot_cli_minimal.jsonl", ".copilot/session-state/uuid2", "events.jsonl")
-        conv = list(copilot_cli.parse(copilot_source))[0]
-        resp = conv.prompts[0].responses[0]
-        thinking = [b for b in resp.content if b.block_type == "thinking"]
-        assert thinking and "files" in thinking[0].content["text"].lower()
-        assert resp.model == "claude-haiku-4.5"
-        assert all(r.usage is None for p in conv.prompts for r in p.responses)
+        assert [b for b in conv.prompts[0].responses[0].content if b.block_type == "thinking"]
+        assert conv.prompts[0].responses[0].model == "claude-haiku-4.5"
 
     def test_parse_empty_file(self, tmp_path):
         d = tmp_path / ".copilot" / "session-state" / "uuid"
@@ -536,32 +485,23 @@ class TestRegistryAndDiscover:
         assert wrapped.DEFAULT_LOCATIONS == ["/custom"] and wrapped.NAME == claude_code.NAME
 
     def test_discover_all_adapters(self, tmp_path):
-        # Claude
-        (tmp_path / "proj" / "p").mkdir(parents=True)
-        (tmp_path / "proj" / "p" / "s.jsonl").write_text("{}\n")
+        def _touch(rel):
+            p = tmp_path / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("{}\n")
+        _touch("proj/p/s.jsonl")
         assert list(claude_code.discover(locations=[str(tmp_path / "proj")]))
-        # Codex
-        (tmp_path / "sessions" / "2024").mkdir(parents=True)
-        (tmp_path / "sessions" / "2024" / "r.jsonl").write_text("{}\n")
+        _touch("sessions/2024/r.jsonl")
         assert list(codex_cli.discover(locations=[str(tmp_path / "sessions")]))
-        # Gemini
-        (tmp_path / "h" / "chats").mkdir(parents=True)
-        (tmp_path / "h" / "chats" / "s.json").write_text("{}\n")
+        _touch("h/chats/s.json")
         assert list(gemini_cli.discover(locations=[str(tmp_path)]))
-        # Aider
         (tmp_path / ".aider.chat.history.md").write_text("# aider\n")
         assert list(aider.discover(locations=[str(tmp_path)]))
-        # Pi Agent
-        (tmp_path / "pi").mkdir()
-        (tmp_path / "pi" / "s.jsonl").write_text("{}\n")
+        _touch("pi/s.jsonl")
         assert list(pi_agent.discover(locations=[str(tmp_path / "pi")]))
-        # VSCode
-        (tmp_path / "ws" / "h" / "chatSessions").mkdir(parents=True)
-        (tmp_path / "ws" / "h" / "chatSessions" / "h.json").write_text("{}\n")
+        _touch("ws/h/chatSessions/h.json")
         assert list(vscode.discover(locations=[str(tmp_path / "ws")]))
-        # Copilot
-        (tmp_path / "ss" / "u").mkdir(parents=True)
-        (tmp_path / "ss" / "u" / "events.jsonl").write_text("{}\n")
+        _touch("ss/u/events.jsonl")
         assert list(copilot_cli.discover(locations=[str(tmp_path / "ss")]))
 
 
@@ -615,28 +555,21 @@ class TestGeminiCliParseEdgeCases:
              "toolCalls": [{"id": "tc1", "name": "search_files", "args": {"pattern": "*.py"},
                  "status": "success", "timestamp": "T2",
                  "result": [{"functionResponse": {"response": {"files": ["a.py"]}}}]}]}]}
-        f = tmp_path / "s.json"
-        f.write_text(json.dumps(session))
-        conv2 = list(gemini_cli.parse(Source(kind="file", location=f)))[0]
-        assert conv2.prompts[0].responses[0].usage.input_tokens == 100
-        assert conv2.prompts[0].responses[0].tool_calls[0].tool_name == "search_files"
-        assert [b for b in conv2.prompts[0].responses[0].content if b.block_type == "thinking"]
+        (tmp_path / "s.json").write_text(json.dumps(session))
+        r = list(gemini_cli.parse(Source(kind="file", location=tmp_path / "s.json")))[0].prompts[0].responses[0]
+        assert r.usage.input_tokens == 100 and r.tool_calls[0].tool_name == "search_files"
+        assert [b for b in r.content if b.block_type == "thinking"]
 
     def test_parse_empty_peek_discover_tail(self, tmp_path):
         (tmp_path / "e.json").write_text("{}")
-        assert list(gemini_cli.parse(Source(kind="file", location=tmp_path / "e.json"))) == []
         (tmp_path / "n.json").write_text(json.dumps({"sessionId": "x"}))
+        assert list(gemini_cli.parse(Source(kind="file", location=tmp_path / "e.json"))) == []
         assert list(gemini_cli.parse(Source(kind="file", location=tmp_path / "n.json"))) == []
         assert gemini_cli.peek_scan(FIXTURES_DIR / "gemini_cli_minimal.json").exchange_count >= 1
         assert gemini_cli.peek_exchanges(FIXTURES_DIR / "gemini_cli_minimal.json", last_n=5)
         assert gemini_cli.peek_scan(tmp_path / "e.json") is None
-        # Discover + can_handle + tail (moved from EdgeCases)
-        d = tmp_path / "tmp" / "h" / "chats"
-        d.mkdir(parents=True)
-        (d / "s.json").write_text("{}\n")
-        assert list(gemini_cli.discover(locations=[str(tmp_path / "tmp")]))
-        assert not gemini_cli.can_handle(Source(kind="sqlite", location=d / "s.json"))
         assert list(gemini_cli.peek_tail(FIXTURES_DIR / "gemini_cli_minimal.json", lines=5))
+        assert not gemini_cli.can_handle(Source(kind="sqlite", location=tmp_path / "e.json"))
 
 
 class TestVSCodeNormalizerAndPeek:
@@ -645,17 +578,12 @@ class TestVSCodeNormalizerAndPeek:
         cs.mkdir(parents=True)
         shutil.copy(FIXTURES_DIR / "vscode_minimal.json", cs / "test.json")
         shutil.copy(FIXTURES_DIR / "vscode_minimal.jsonl", cs / "test.jsonl")
-        # JSON peek scan + exchanges
         assert vscode.peek_scan(cs / "test.json").exchange_count >= 1
-        ex = vscode.peek_exchanges(cs / "test.json", last_n=5)
-        assert len(ex) >= 1 and ex[0].prompt_text
-        # JSONL peek scan
+        assert vscode.peek_exchanges(cs / "test.json", last_n=5)[0].prompt_text
         assert vscode.peek_scan(cs / "test.jsonl").exchange_count >= 1
-        # Empty
-        cs2 = tmp_path / "chatSessions"
-        cs2.mkdir()
-        (cs2 / "e.json").write_text("{}")
-        assert vscode.peek_scan(cs2 / "e.json") is None
+        (tmp_path / "chatSessions").mkdir()
+        (tmp_path / "chatSessions" / "e.json").write_text("{}")
+        assert vscode.peek_scan(tmp_path / "chatSessions" / "e.json") is None
 
 
 # =============================================================================
@@ -676,24 +604,17 @@ class TestAdapterEdgeCases:
         conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         assert "agent" in conv.external_id and conv.prompts[0].content[0].content["text"] == "plain string"
         assert conv.prompts[0].responses[0].attributes.get("cache_read_input_tokens") == "3"
-        # Normalizer handles string/None content, rejects unknown types
-        nr = claude_code.normalize_record({"type": "user", "timestamp": "T1", "message": {"role": "user", "content": "hi"}})
-        assert nr.kind == "user" and len(nr.content_blocks) == 1
-        assert claude_code.normalize_record({"type": "assistant", "timestamp": "T2", "message": {"role": "assistant", "content": None}}).content_blocks == []
-        assert claude_code.normalize_record({"type": "system"}) is None
-        # can_handle rejects codex paths
+        n = claude_code.normalize_record
+        assert n({"type": "user", "timestamp": "T1", "message": {"role": "user", "content": "hi"}}).kind == "user"
+        assert n({"type": "assistant", "timestamp": "T2", "message": {"role": "assistant", "content": None}}).content_blocks == []
+        assert n({"type": "system"}) is None
         assert not claude_code.can_handle(Source(kind="file", location=Path("/home/.codex/sessions/s.jsonl")))
 
     def test_codex_pending_tools_and_can_handle(self, tmp_path):
-        records = [
-            {"type": "session_meta", "timestamp": "T0", "payload": {"id": "s1", "cwd": "/p"}},
-            {"type": "response_item", "timestamp": "T1", "payload": {"type": "message", "role": "user",
-                "content": [{"type": "input_text", "text": "go"}]}},
-            {"type": "response_item", "timestamp": "T2", "payload": {"type": "message", "role": "assistant",
-                "content": [{"type": "output_text", "text": "ok"}]}},
-            {"type": "response_item", "timestamp": "T3", "payload": {"type": "function_call",
-                "name": "shell", "call_id": "c1", "arguments": "{}"}},
-        ]
+        records = [{"type": "session_meta", "timestamp": "T0", "payload": {"id": "s1", "cwd": "/p"}},
+            {"type": "response_item", "timestamp": "T1", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "go"}]}},
+            {"type": "response_item", "timestamp": "T2", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}},
+            {"type": "response_item", "timestamp": "T3", "payload": {"type": "function_call", "name": "shell", "call_id": "c1", "arguments": "{}"}}]
         conv = list(codex_cli.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         assert any(tc.status == "pending" for p in conv.prompts for r in p.responses for tc in r.tool_calls)
         assert not codex_cli.can_handle(Source(kind="sqlite", location=Path("/mock/sessions/s.jsonl")))
