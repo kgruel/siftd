@@ -548,6 +548,12 @@ async def ui_stats(db_path: Path) -> Response:
     from siftd.api.stats import get_stats, get_usage_by_model, get_usage_by_workspace, get_usage_summary
     from siftd.output.common import fmt_tokens, fmt_workspace
 
+    def cost_coverage_pct(db: Path) -> int:
+        """Return percentage of conversations with cost data."""
+        from siftd.api.stats import get_cost_coverage
+
+        return get_cost_coverage(db_path=db)
+
     parts: list[str] = ['<article class="stats-dashboard">']
     parts.append("<h2>Stats</h2>")
 
@@ -601,16 +607,21 @@ async def ui_stats(db_path: Path) -> Response:
         )
         parts.append(
             f'<div class="stat-card">'
-            f'<div class="stat-value">${usage.total_cost:.2f}</div>'
-            f'<div class="stat-label">Total cost</div></div>'
+            f'<div class="stat-value">{fmt_tokens(usage.total_input_tokens)}</div>'
+            f'<div class="stat-label">Input tokens</div></div>'
         )
-        if usage.total_cost > 0 and usage.total_conversations > 0:
-            avg_cost = usage.total_cost / usage.total_conversations
-            parts.append(
-                f'<div class="stat-card">'
-                f'<div class="stat-value">${avg_cost:.4f}</div>'
-                f'<div class="stat-label">Avg cost/conversation</div></div>'
-            )
+        parts.append(
+            f'<div class="stat-card">'
+            f'<div class="stat-value">{fmt_tokens(usage.total_output_tokens)}</div>'
+            f'<div class="stat-label">Output tokens</div></div>'
+        )
+        # Cost coverage caveat
+        cost_coverage = cost_coverage_pct(db_path)
+        parts.append(
+            f'<div class="stat-card">'
+            f'<div class="stat-value">${usage.total_cost:.2f}</div>'
+            f'<div class="stat-label">Cost tracked ({cost_coverage}% coverage)</div></div>'
+        )
         parts.append("</div>")
     except Exception:
         pass
@@ -624,7 +635,7 @@ async def ui_stats(db_path: Path) -> Response:
             parts.append(
                 "<thead><tr>"
                 "<th>Model</th><th>Conversations</th>"
-                "<th>Tokens</th><th>Cost</th>"
+                "<th>Input</th><th>Output</th><th>Total</th>"
                 "</tr></thead><tbody>"
             )
             for g in by_model:
@@ -633,8 +644,9 @@ async def ui_stats(db_path: Path) -> Response:
                     f"<tr>"
                     f'<td class="model">{escape(g.name)}</td>'
                     f'<td class="metric">{g.conversations:,}</td>'
+                    f'<td class="metric">{fmt_tokens(g.input_tokens)}</td>'
+                    f'<td class="metric">{fmt_tokens(g.output_tokens)}</td>'
                     f'<td class="metric">{fmt_tokens(tok)}</td>'
-                    f'<td class="metric">${g.cost:.4f}</td>'
                     f"</tr>"
                 )
             parts.append("</tbody></table>")
