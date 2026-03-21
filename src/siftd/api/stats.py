@@ -122,19 +122,31 @@ class DatabaseStats:
 
 
 def list_workspaces(
-    conn: sqlite3.Connection,
+    conn: sqlite3.Connection | None = None,
     limit: int = 10,
+    *,
+    db_path: Path | None = None,
 ) -> list[sqlite3.Row]:
     """List workspaces with conversation counts.
 
     Args:
-        conn: Database connection.
+        conn: Database connection. Opened from db_path if not provided.
         limit: Maximum workspaces to return.
+        db_path: Path to database. Ignored if conn provided.
 
     Returns:
         Rows with 'path' and 'convs' keys.
     """
-    return fetch_top_workspaces(conn, limit=limit)
+    should_close = False
+    if conn is None:
+        db = db_path or default_db_path()
+        conn = open_database(db, read_only=True)
+        should_close = True
+    try:
+        return fetch_top_workspaces(conn, limit=limit)
+    finally:
+        if should_close:
+            conn.close()
 
 
 def stats_cache_path() -> Path:

@@ -15,72 +15,82 @@ def cmd_tools(args) -> int:
     """Show tool usage summary by category."""
     import json
 
+    from painted import Fidelity
+
+    from siftd.api import get_tool_tag_summary, get_tool_tags_by_workspace
+    from siftd.api.dispatch import Operation, execute
     from siftd.config import get_tools_defaults
+    from siftd.serve.delegation import try_serve
 
     apply_config_defaults(args, get_tools_defaults, {"limit": 20})
-    from siftd.api import get_tool_tag_summary, get_tool_tags_by_workspace
 
     db = resolve_db(args)
     prefix = args.prefix or "shell:"
 
+    # Build Operation based on mode
+    if args.by_workspace:
+        op = Operation(
+            path="/v1/tools",
+            method="GET",
+            fn=get_tool_tags_by_workspace,
+            params={"db_path": db, "prefix": prefix, "limit": args.limit},
+            render_method="raw",
+            fidelity=Fidelity(),
+            db=db,
+        )
+    else:
+        op = Operation(
+            path="/v1/tools",
+            method="GET",
+            fn=get_tool_tag_summary,
+            params={"db_path": db, "prefix": prefix},
+            render_method="raw",
+            fidelity=Fidelity(),
+            db=db,
+        )
+
     # Try serve delegation
-    try:
-        from siftd.serve.delegation import try_delegate
+    result = try_serve(op)
 
-        params: dict[str, object] = {"prefix": prefix, "by_workspace": args.by_workspace, "n": args.limit}
-        params = {k: v for k, v in params.items() if v is not None and v is not False}
-        result = try_delegate("/v1/tools", params=params, db=db)
-        if result is not None:
-            if args.json:
-                print(json.dumps(result, indent=2))
-            elif args.by_workspace and "workspaces" in result:
-                for ws in result["workspaces"]:
-                    ws_display = fmt_workspace(ws["workspace"])
-                    print(f"\n{ws_display} ({ws['total']} total)")
-                    for tag in ws["tags"]:
-                        category = tag["name"][len(prefix):] if tag["name"].startswith(prefix) else tag["name"]
-                        print(f"  {category}: {tag['count']}")
-            elif "tags" in result:
-                total = result.get("total", 0)
-                print(f"Tool call tags ({prefix}*): {total} total\n")
-                for tag in result["tags"]:
+    if result is not None and isinstance(result, dict):
+        if args.json:
+            print(json.dumps(result, indent=2))
+        elif args.by_workspace and "workspaces" in result:
+            for ws in result["workspaces"]:
+                ws_display = fmt_workspace(ws["workspace"])
+                print(f"\n{ws_display} ({ws['total']} total)")
+                for tag in ws["tags"]:
                     category = tag["name"][len(prefix):] if tag["name"].startswith(prefix) else tag["name"]
-                    print(f"  {category}: {tag['count']} ({tag.get('percentage', 0)}%)")
-            return 0
-    except Exception:
-        pass
+                    print(f"  {category}: {tag['count']}")
+        elif "tags" in result:
+            total = result.get("total", 0)
+            print(f"Tool call tags ({prefix}*): {total} total\n")
+            for tag in result["tags"]:
+                category = tag["name"][len(prefix):] if tag["name"].startswith(prefix) else tag["name"]
+                print(f"  {category}: {tag['count']} ({tag.get('percentage', 0)}%)")
+        return 0
 
-    if not db.exists():
+    # Local execution
+    try:
+        data = execute(op)
+    except FileNotFoundError as e:
         if args.json:
             print("[]")
             return 0
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        print(str(e))
+        if not args.by_workspace:
+            print("Run 'siftd ingest' to create it.")
         return 1
 
-    # By-workspace mode
+    # By-workspace rendering
     if args.by_workspace:
-        try:
-            results = get_tool_tags_by_workspace(
-                db_path=db,
-                prefix=prefix,
-                limit=args.limit,
-            )
-        except FileNotFoundError as e:
-            if args.json:
-                print("[]")
-                return 0
-            print(str(e))
-            return 1
-
-        if not results:
+        if not data:
             if args.json:
                 print("[]")
                 return 0
             print(f"No tool calls with '{prefix}*' tags found.")
             return 0
 
-        # JSON output for by-workspace mode
         if args.json:
             out = [
                 {
@@ -91,32 +101,22 @@ def cmd_tools(args) -> int:
                         for tag in ws_usage.tags
                     ],
                 }
-                for ws_usage in results
+                for ws_usage in data
             ]
             print(json.dumps(out, indent=2))
             return 0
 
-        for ws_usage in results:
+        for ws_usage in data:
             ws_display = fmt_workspace(ws_usage.workspace)
             print(f"\n{ws_display} ({ws_usage.total} total)")
             for tag in ws_usage.tags:
-                # Strip prefix for display
                 category = tag.name[len(prefix):] if tag.name.startswith(prefix) else tag.name
                 print(f"  {category}: {tag.count}")
 
         return 0
 
-    # Default: summary mode
-    try:
-        tags = get_tool_tag_summary(db_path=db, prefix=prefix)
-    except FileNotFoundError as e:
-        if args.json:
-            print("[]")
-            return 0
-        print(str(e))
-        return 1
-
-    if not tags:
+    # Summary rendering
+    if not data:
         if args.json:
             print("[]")
             return 0
@@ -124,25 +124,23 @@ def cmd_tools(args) -> int:
         print("Run 'siftd backfill --shell-tags' to categorize shell commands.")
         return 0
 
-    # JSON output for summary mode
     if args.json:
-        total = sum(t.count for t in tags)
+        total = sum(t.count for t in data)
         out = [
             {
                 "name": tag.name,
                 "count": tag.count,
                 "percentage": round((tag.count / total) * 100, 1) if total > 0 else 0,
             }
-            for tag in tags
+            for tag in data
         ]
         print(json.dumps(out, indent=2))
         return 0
 
-    total = sum(t.count for t in tags)
+    total = sum(t.count for t in data)
     print(f"Tool call tags ({prefix}*): {total} total\n")
 
-    for tag in tags:
-        # Strip prefix for display
+    for tag in data:
         category = tag.name[len(prefix):] if tag.name.startswith(prefix) else tag.name
         pct = (tag.count / total) * 100 if total > 0 else 0
         print(f"  {category}: {tag.count} ({pct:.1f}%)")

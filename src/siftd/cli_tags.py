@@ -208,41 +208,51 @@ def _cmd_tag_list(args, db: Path) -> int:
     since = getattr(args, "since", None)
     before = getattr(args, "before", None)
 
-    # Try serve delegation for tag listing
-    tags = None
-    try:
-        from siftd.api.tags import TagInfo
-        from siftd.serve.delegation import try_delegate
+    from painted import Fidelity
 
-        params: dict[str, object] = {"since": since, "before": before}
-        params = {k: v for k, v in params.items() if v is not None}
-        result = try_delegate("/v1/tags", params=params, db=db)
-        if result is not None and "tags" in result:
-            conn.close()
-            tags = [
-                TagInfo(
-                    name=t["name"],
-                    description=t.get("description"),
-                    created_at=t.get("created_at", ""),
-                    conversation_count=t.get("conversation_count", 0),
-                    workspace_count=t.get("workspace_count", 0),
-                    tool_call_count=t.get("tool_call_count", 0),
-                    prompt_count=t.get("prompt_count", 0),
-                )
-                for t in result["tags"]
-            ]
-    except Exception:
-        pass
+    from siftd.api.dispatch import Operation, execute
+    from siftd.serve.delegation import try_serve
+
+    op = Operation(
+        path="/v1/tags",
+        method="GET",
+        fn=list_tags,
+        params={"db_path": db, "since": since, "before": before},
+        render_method="raw",
+        fidelity=Fidelity(),
+        db=db,
+    )
+
+    tags = None
+
+    # Try serve delegation
+    result = try_serve(op)
+    if result is not None and isinstance(result, dict) and "tags" in result:
+        from siftd.api.tags import TagInfo
+
+        conn.close()
+        tags = [
+            TagInfo(
+                name=t["name"],
+                description=t.get("description"),
+                created_at=t.get("created_at", ""),
+                conversation_count=t.get("conversation_count", 0),
+                workspace_count=t.get("workspace_count", 0),
+                tool_call_count=t.get("tool_call_count", 0),
+                prompt_count=t.get("prompt_count", 0),
+            )
+            for t in result["tags"]
+        ]
 
     if tags is None:
-        tags = list_tags(conn=conn, since=since, before=before)
+        conn.close()
+        tags = execute(op)
 
     if not tags:
         if since or before:
             print("No tags found in the specified time range.")
         else:
             print("No tags defined.")
-        conn.close()
         return 0
 
     # When filtering temporally, hide tags with zero counts in the window
@@ -250,7 +260,6 @@ def _cmd_tag_list(args, db: Path) -> int:
         tags = [t for t in tags if t.conversation_count or t.tool_call_count or t.workspace_count]
         if not tags:
             print("No tags found in the specified time range.")
-            conn.close()
             return 0
 
     prefix = getattr(args, "prefix", None)
@@ -258,7 +267,6 @@ def _cmd_tag_list(args, db: Path) -> int:
         tags = [t for t in tags if t.name.startswith(prefix)]
         if not tags:
             print(f"No tags found with prefix: {prefix}")
-            conn.close()
             return 0
 
     for tag in tags:
@@ -273,7 +281,6 @@ def _cmd_tag_list(args, db: Path) -> int:
         desc = f" - {tag.description}" if tag.description else ""
         print(f"  {tag.name}{desc}{count_str}")
 
-    conn.close()
     return 0
 
 
