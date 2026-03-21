@@ -17,6 +17,8 @@ example of converting from monkeypatch-stdout to callback collection.
 """
 
 import json
+import random
+import string
 from pathlib import Path
 
 import pytest
@@ -34,6 +36,7 @@ from siftd.storage.sqlite import (
     create_database,
     get_or_create_harness,
     get_or_create_model,
+    get_or_create_provider,
     get_or_create_tool,
     get_or_create_workspace,
     insert_conversation,
@@ -44,7 +47,6 @@ from siftd.storage.sqlite import (
     insert_tool_call,
     record_ingested_file,
 )
-from siftd.storage.sqlite import get_or_create_provider
 from siftd.storage.tags import apply_tag, get_or_create_tag
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -486,3 +488,210 @@ def test_db_with_ingested_files(tmp_path):
         "inactive_conv_id": inactive_conv_id,
         "active2_conv_id": active2_conv_id,
     }
+
+
+# =============================================================================
+# Session file builders — generate valid adapter-format files with random data
+#
+# Each builder produces a complete session file. Data is randomized by default;
+# override only what your test cares about.
+#
+#   f = ClaudeSession(tmp_path).build()                     # 1-exchange session
+#   f = ClaudeSession(tmp_path, exchanges=3).build()        # 3 exchanges
+#   f = ClaudeSession(tmp_path).with_tools(["Read"]).build()
+#   f = CodexSession(tmp_path).with_tools(["shell"]).with_usage().build()
+#   f = PeekSession(tmp_path, exchanges=2).build()          # generic SDK format
+# =============================================================================
+
+
+def _rand_word(n=8):
+    return "".join(random.choices(string.ascii_lowercase, k=n))
+
+
+def _rand_sentence():
+    return " ".join(_rand_word(random.randint(3, 10)) for _ in range(random.randint(4, 12)))
+
+
+def _rand_ts(i):
+    return f"2024-01-{1 + i // 24:02d}T{i % 24:02d}:{random.randint(0, 59):02d}:00Z"
+
+
+class _BaseJSONLSession:
+    """Base for JSONL session builders."""
+
+    def __init__(self, tmp_path, *, exchanges=1, name="session.jsonl"):
+        self._tmp = tmp_path
+        self._exchanges = exchanges
+        self._name = name
+        self._records = []
+
+    def _write(self):
+        f = self._tmp / self._name
+        f.write_text("\n".join(json.dumps(r) for r in self._records) + "\n")
+        return f
+
+
+class ClaudeSession(_BaseJSONLSession):
+    """Build a Claude Code session JSONL file.
+
+    Usage:
+        f = ClaudeSession(tmp_path).build()
+        f = ClaudeSession(tmp_path, exchanges=3, model="claude-3.5-sonnet").build()
+        f = ClaudeSession(tmp_path).with_tools(["Read", "Bash"]).build()
+        f = ClaudeSession(tmp_path).with_subagent("sub-1").build()
+    """
+
+    def __init__(self, tmp_path, *, exchanges=1, name="session.jsonl",
+                 session_id=None, cwd=None, model=None):
+        super().__init__(tmp_path, exchanges=exchanges, name=name)
+        self._sid = session_id or f"sess-{_rand_word(6)}"
+        self._cwd = cwd or f"/project/{_rand_word(6)}"
+        self._model = model or "claude-3-opus-20240229"
+        self._tools = []
+        self._agent_id = None
+
+    def with_tools(self, tool_names):
+        self._tools = tool_names
+        return self
+
+    def with_subagent(self, agent_id="sub-1"):
+        self._agent_id = agent_id
+        return self
+
+    def build(self):
+        seq = 0
+        for i in range(self._exchanges):
+            ts_u, ts_a = _rand_ts(seq), _rand_ts(seq + 1)
+            seq += 2
+            user = {"type": "user", "sessionId": self._sid, "cwd": self._cwd,
+                    "timestamp": ts_u, "uuid": f"u-{i}",
+                    "message": {"role": "user", "content": [{"type": "text", "text": _rand_sentence()}]}}
+            if self._agent_id:
+                user["agentId"] = self._agent_id
+            self._records.append(user)
+
+            content = [{"type": "text", "text": _rand_sentence()}]
+            for tn in self._tools:
+                tid = f"tool-{i}-{tn}"
+                content.append({"type": "tool_use", "id": tid, "name": tn,
+                                "input": {"path": f"/{_rand_word()}.py"}})
+            asst = {"type": "assistant", "sessionId": self._sid, "timestamp": ts_a,
+                    "uuid": f"a-{i}",
+                    "message": {"role": "assistant", "model": self._model, "content": content,
+                                "usage": {"input_tokens": random.randint(50, 500),
+                                          "output_tokens": random.randint(10, 200)}}}
+            if self._agent_id:
+                asst["agentId"] = self._agent_id
+            self._records.append(asst)
+
+            for tn in self._tools:
+                tid = f"tool-{i}-{tn}"
+                self._records.append(
+                    {"type": "user", "sessionId": self._sid, "timestamp": _rand_ts(seq),
+                     "uuid": f"tr-{i}-{tn}",
+                     "message": {"role": "user", "content": [
+                         {"type": "tool_result", "tool_use_id": tid, "content": _rand_sentence()}]}})
+                seq += 1
+        return self._write()
+
+
+class CodexSession(_BaseJSONLSession):
+    """Build a Codex CLI session JSONL file.
+
+    Usage:
+        f = CodexSession(tmp_path).build()
+        f = CodexSession(tmp_path, exchanges=2).with_tools(["shell"]).with_usage().build()
+    """
+
+    def __init__(self, tmp_path, *, exchanges=1, name="session.jsonl",
+                 session_id=None, cwd=None, model=None):
+        super().__init__(tmp_path, exchanges=exchanges, name=name)
+        self._sid = session_id or f"sess-{_rand_word(6)}"
+        self._cwd = cwd or f"/project/{_rand_word(6)}"
+        self._model = model or "codex-1"
+        self._tools = []
+        self._custom_tools = []
+        self._usage = False
+
+    def with_tools(self, tool_names):
+        self._tools = tool_names
+        return self
+
+    def with_custom_tools(self, tool_names):
+        """Add custom_tool_call / custom_tool_call_output records."""
+        self._custom_tools = tool_names
+        return self
+
+    def with_usage(self):
+        self._usage = True
+        return self
+
+    def build(self):
+        seq = 0
+        self._records.append({"type": "session_meta", "timestamp": _rand_ts(seq),
+                               "payload": {"id": self._sid, "cwd": self._cwd}})
+        self._records.append({"type": "turn_context", "timestamp": _rand_ts(seq + 1),
+                               "payload": {"model": self._model}})
+        seq += 2
+        for i in range(self._exchanges):
+            self._records.append({"type": "response_item", "timestamp": _rand_ts(seq),
+                "payload": {"type": "message", "role": "user",
+                             "content": [{"type": "input_text", "text": _rand_sentence()}]}})
+            self._records.append({"type": "response_item", "timestamp": _rand_ts(seq + 1),
+                "payload": {"type": "message", "role": "assistant",
+                             "content": [{"type": "output_text", "text": _rand_sentence()}]}})
+            if self._usage:
+                self._records.append({"type": "event_msg", "timestamp": _rand_ts(seq + 2),
+                    "payload": {"type": "token_count", "info": {"last_token_usage": {
+                        "input_tokens": random.randint(50, 500),
+                        "output_tokens": random.randint(10, 200)}}}})
+            for tn in self._tools:
+                cid = f"call-{i}-{tn}"
+                self._records.append({"type": "response_item", "timestamp": _rand_ts(seq + 3),
+                    "payload": {"type": "function_call", "name": tn, "call_id": cid, "arguments": "{}"}})
+                self._records.append({"type": "response_item", "timestamp": _rand_ts(seq + 4),
+                    "payload": {"type": "function_call_output", "call_id": cid, "output": _rand_sentence()}})
+            for tn in self._custom_tools:
+                cid = f"custom-{i}-{tn}"
+                self._records.append({"type": "response_item", "timestamp": _rand_ts(seq + 5),
+                    "payload": {"type": "custom_tool_call", "name": tn, "call_id": cid,
+                                 "input": {"arg": _rand_word()}}})
+                self._records.append({"type": "response_item", "timestamp": _rand_ts(seq + 6),
+                    "payload": {"type": "custom_tool_call_output", "call_id": cid,
+                                 "output": _rand_sentence()}})
+            seq += 7
+        return self._write()
+
+
+class PeekSession(_BaseJSONLSession):
+    """Build a generic SDK-format peek session.
+
+    Usage:
+        f = PeekSession(tmp_path, exchanges=2).build()
+        f = PeekSession(tmp_path, model="gpt-4o").build()
+    """
+
+    def __init__(self, tmp_path, *, exchanges=1, name="session.jsonl", model=None):
+        super().__init__(tmp_path, exchanges=exchanges, name=name)
+        self._model = model or "test-model"
+
+    def build(self):
+        for i in range(self._exchanges):
+            self._records.append({"type": "user", "timestamp": _rand_ts(i * 2), "cwd": "/test",
+                "message": {"content": [{"type": "text", "text": _rand_sentence()}]}})
+            self._records.append({"type": "assistant", "timestamp": _rand_ts(i * 2 + 1),
+                "message": {"model": self._model,
+                             "content": [{"type": "text", "text": _rand_sentence()}]}})
+        return self._write()
+
+
+def write_jsonl(tmp_path, records, name="session.jsonl"):
+    """Low-level: write raw dicts as JSONL file, return path."""
+    f = tmp_path / name
+    f.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+    return f
+
+
+def get_message_content_blocks(record):
+    """Extract content blocks from a standard message record."""
+    return record.get("message", {}).get("content", [])
