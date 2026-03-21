@@ -2,19 +2,10 @@
 
 from pathlib import Path
 
-from conftest import FIXTURES_DIR
+from conftest import FIXTURES_DIR, fixture_source
 
 from siftd.adapters import pi_agent
 from siftd.domain.source import Source
-
-
-def _fixture_source(tmp_path, fixture, subdir, dest_name=None):
-    """Copy a fixture into a subdirectory and return a Source."""
-    d = tmp_path / subdir
-    d.mkdir(parents=True, exist_ok=True)
-    dest = d / (dest_name or Path(fixture).name)
-    dest.write_text((FIXTURES_DIR / fixture).read_text())
-    return Source(kind="file", location=dest)
 
 
 class TestPiAgentAdapter:
@@ -25,7 +16,7 @@ class TestPiAgentAdapter:
         assert not pi_agent.can_handle(Source(kind="directory", location=Path("/mock/.pi/agent/sessions")))
 
     def test_parse_full(self, tmp_path):
-        pi_source = _fixture_source(tmp_path, "pi_agent_minimal.jsonl", ".pi/agent/sessions/--test--")
+        pi_source = fixture_source(tmp_path, "pi_agent_minimal.jsonl", ".pi/agent/sessions/--test--")
         conv = list(pi_agent.parse(pi_source))[0]
         assert conv.external_id == "pi_agent::pi-session-001" and conv.workspace_path == "/test/workspace"
         assert conv.harness.name == "pi_agent" and conv.harness.source == "multi"

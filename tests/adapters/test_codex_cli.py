@@ -2,19 +2,10 @@
 
 from pathlib import Path
 
-from conftest import FIXTURES_DIR, CodexSession, write_jsonl
+from conftest import FIXTURES_DIR, CodexSession, fixture_source, write_jsonl
 
 from siftd.adapters import codex_cli
 from siftd.domain.source import Source
-
-
-def _fixture_source(tmp_path, fixture, subdir, dest_name=None):
-    """Copy a fixture into a subdirectory and return a Source."""
-    d = tmp_path / subdir
-    d.mkdir(parents=True, exist_ok=True)
-    dest = d / (dest_name or Path(fixture).name)
-    dest.write_text((FIXTURES_DIR / fixture).read_text())
-    return Source(kind="file", location=dest)
 
 
 class TestCodexCliAdapter:
@@ -24,7 +15,7 @@ class TestCodexCliAdapter:
         assert not codex_cli.can_handle(Source(kind="file", location=FIXTURES_DIR / "codex_cli_minimal.jsonl"))
 
     def test_parse_full(self, tmp_path):
-        codex_source = _fixture_source(tmp_path, "codex_cli_minimal.jsonl", "sessions")
+        codex_source = fixture_source(tmp_path, "codex_cli_minimal.jsonl", "sessions")
         conv = list(codex_cli.parse(codex_source))[0]
         assert conv.external_id == "codex_cli::codex-session-1" and conv.workspace_path == "/test/workspace"
         assert conv.harness.name == "codex_cli" and conv.harness.source == "openai"

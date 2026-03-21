@@ -52,6 +52,17 @@ from siftd.storage.tags import apply_tag, get_or_create_tag
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
+def fixture_source(tmp_path, fixture, subdir, dest_name=None):
+    """Copy a fixture into a subdirectory and return a Source."""
+    from siftd.domain.source import Source
+
+    d = tmp_path / subdir
+    d.mkdir(parents=True, exist_ok=True)
+    dest = d / (dest_name or Path(fixture).name)
+    dest.write_text((FIXTURES_DIR / fixture).read_text())
+    return Source(kind="file", location=dest)
+
+
 def make_db(
     path,
     *,

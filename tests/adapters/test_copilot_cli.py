@@ -2,19 +2,10 @@
 
 from pathlib import Path
 
-from conftest import FIXTURES_DIR
+from conftest import FIXTURES_DIR, fixture_source
 
 from siftd.adapters import copilot_cli
 from siftd.domain.source import Source
-
-
-def _fixture_source(tmp_path, fixture, subdir, dest_name=None):
-    """Copy a fixture into a subdirectory and return a Source."""
-    d = tmp_path / subdir
-    d.mkdir(parents=True, exist_ok=True)
-    dest = d / (dest_name or Path(fixture).name)
-    dest.write_text((FIXTURES_DIR / fixture).read_text())
-    return Source(kind="file", location=dest)
 
 
 class TestCopilotCliAdapter:
@@ -25,7 +16,7 @@ class TestCopilotCliAdapter:
         assert not copilot_cli.can_handle(Source(kind="directory", location=Path("/mock/.copilot/session-state")))
 
     def test_parse_full(self, tmp_path):
-        copilot_source = _fixture_source(tmp_path, "copilot_cli_minimal.jsonl", ".copilot/session-state/test-uuid", "events.jsonl")
+        copilot_source = fixture_source(tmp_path, "copilot_cli_minimal.jsonl", ".copilot/session-state/test-uuid", "events.jsonl")
         conv = list(copilot_cli.parse(copilot_source))[0]
         assert conv.external_id == "copilot_cli::copilot-session-001" and conv.workspace_path == "/test/workspace"
         assert conv.branch == "main" and conv.harness.name == "copilot_cli" and len(conv.prompts) == 1

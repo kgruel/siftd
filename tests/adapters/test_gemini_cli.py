@@ -3,19 +3,10 @@
 import json
 from pathlib import Path
 
-from conftest import FIXTURES_DIR
+from conftest import FIXTURES_DIR, fixture_source
 
 from siftd.adapters import gemini_cli
 from siftd.domain.source import Source
-
-
-def _fixture_source(tmp_path, fixture, subdir, dest_name=None):
-    """Copy a fixture into a subdirectory and return a Source."""
-    d = tmp_path / subdir
-    d.mkdir(parents=True, exist_ok=True)
-    dest = d / (dest_name or Path(fixture).name)
-    dest.write_text((FIXTURES_DIR / fixture).read_text())
-    return Source(kind="file", location=dest)
 
 
 class TestGeminiCliAdapter:
@@ -25,7 +16,7 @@ class TestGeminiCliAdapter:
         assert not gemini_cli.can_handle(Source(kind="file", location=FIXTURES_DIR / "gemini_cli_minimal.json"))
 
     def test_parse_full(self, tmp_path):
-        gemini_source = _fixture_source(tmp_path, "gemini_cli_minimal.json", "chats")
+        gemini_source = fixture_source(tmp_path, "gemini_cli_minimal.json", "chats")
         conv = list(gemini_cli.parse(gemini_source))[0]
         assert conv.external_id == "gemini_cli::gemini-session-1"
         assert conv.harness.name == "gemini_cli" and conv.harness.source == "google"
