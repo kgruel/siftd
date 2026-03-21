@@ -11,11 +11,11 @@ Supports two storage formats:
 
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-from siftd.adapters.sdk import build_harness, discover_files
+from siftd.adapters.sdk import NormalizedRecord, build_harness, discover_files, make_peek_hooks
 from siftd.domain import (
     ContentBlock,
     Conversation,
@@ -297,3 +297,107 @@ def _last_timestamp(requests: list[dict]) -> str | None:
         if ts is not None and (latest is None or ts > latest):
             latest = ts
     return _ms_to_iso(latest) if latest is not None else None
+
+
+# =============================================================================
+# Record normalization — enables SDK-derived peek support
+# =============================================================================
+
+
+def _load_session(path: Path) -> dict | None:
+    """Load a VSCode session from JSON or JSONL format."""
+    try:
+        if path.suffix == ".jsonl":
+            return _replay_jsonl(path)
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+
+def iter_vscode_records(path: Path) -> Iterator[dict]:
+    """Iterate synthetic records from a VSCode session file.
+
+    VSCode stores each session as a single JSON object with a requests array.
+    This iterator yields synthetic records: one metadata record, then for each
+    request, a user record followed by an assistant record.
+    """
+    data = _load_session(path)
+    if not data:
+        return
+
+    creation_date = data.get("creationDate")
+    yield {
+        "_kind": "metadata",
+        "sessionId": data.get("sessionId", path.stem),
+        "creationDate": creation_date,
+        "_path": str(path),
+    }
+
+    for request in data.get("requests", []):
+        ts = request.get("timestamp")
+        yield {"_kind": "user", **request, "_ts": _ms_to_iso(ts) if ts else None}
+        yield {"_kind": "assistant", **request, "_ts": _ms_to_iso(ts) if ts else None}
+
+
+def normalize_record(raw: dict) -> NormalizedRecord | None:
+    """Map a VSCode synthetic record to NormalizedRecord.
+
+    Synthetic record kinds (produced by iter_vscode_records):
+        "_kind": "metadata"   → metadata (sessionId, workspace via path)
+        "_kind": "user"       → user (prompt text from request.message)
+        "_kind": "assistant"  → assistant (response parts from request.response)
+    """
+    kind = raw.get("_kind")
+    ts = raw.get("_ts")
+
+    if kind == "metadata":
+        creation_date = raw.get("creationDate")
+        return NormalizedRecord(
+            kind="metadata",
+            timestamp=_ms_to_iso(creation_date) if creation_date else None,
+            session_id=raw.get("sessionId"),
+            workspace_path=_resolve_workspace(Path(raw["_path"])) if raw.get("_path") else None,
+        )
+
+    if kind == "user":
+        message = raw.get("message", "")
+        if isinstance(message, dict):
+            message = message.get("text", str(message))
+        content_blocks = [{"type": "text", "text": message}] if message else []
+        return NormalizedRecord(
+            kind="user",
+            timestamp=ts,
+            content_blocks=content_blocks,
+        )
+
+    if kind == "assistant":
+        content_blocks: list[dict] = []
+        for part in raw.get("response") or []:
+            part_kind = part.get("kind", "")
+            if part_kind == "markdownContent":
+                value = part.get("content", {}).get("value", "")
+                if value:
+                    content_blocks.append({"type": "text", "text": value})
+            elif part_kind == "toolInvocationSerialized":
+                content_blocks.append({
+                    "type": "tool_use",
+                    "name": part.get("toolName") or part.get("name", "unknown"),
+                    "input": part.get("input", {}),
+                })
+        return NormalizedRecord(
+            kind="assistant",
+            timestamp=ts,
+            model=raw.get("modelId"),
+            content_blocks=content_blocks,
+        )
+
+    return None
+
+
+PEEK_GLOB_PATTERNS = ["*/chatSessions/*.json", "*/chatSessions/*.jsonl"]
+
+# Peek hooks — derived from normalizer with custom JSON iterator
+peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
+    normalize_record,
+    record_iterator=iter_vscode_records,
+)

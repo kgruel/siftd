@@ -1071,6 +1071,7 @@ def make_peek_hooks(
     tool_aliases: dict[str, str] | None = None,
     log_format: str = "jsonl",
     subagent_path_marker: str | None = None,
+    record_iterator: Callable[[Path], Iterator[dict]] | None = None,
 ) -> tuple[
     Callable[[Path], PeekScanResult | None],
     Callable[..., list[PeekExchange]],
@@ -1087,14 +1088,17 @@ def make_peek_hooks(
         log_format: File format ("jsonl" for line-oriented JSON).
         subagent_path_marker: Path substring for subagent detection
             (e.g., "/subagents/"). Passed to peek_scan_from_records.
+        record_iterator: Custom function to iterate records from a file.
+            Defaults to iter_jsonl. Use for non-JSONL formats (e.g., JSON).
 
     Returns:
         Tuple of (peek_scan, peek_exchanges, peek_tail) functions.
     """
+    iter_records = record_iterator or iter_jsonl
 
     def peek_scan(path: Path) -> PeekScanResult | None:
         return peek_scan_from_records(
-            iter_jsonl(path),
+            iter_records(path),
             normalize,
             default_session_id=path.stem,
             subagent_path_marker=subagent_path_marker,
@@ -1108,7 +1112,7 @@ def make_peek_hooks(
         include_thinking: bool = False,
     ) -> list[PeekExchange]:
         return peek_exchanges_from_records(
-            iter_jsonl(path),
+            iter_records(path),
             normalize,
             last_n,
             tool_aliases=tool_aliases,
