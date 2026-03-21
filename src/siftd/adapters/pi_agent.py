@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from siftd.adapters._jsonl import load_jsonl, now_iso
-from siftd.adapters.sdk import discover_files
+from siftd.adapters.sdk import NormalizedRecord, discover_files, make_peek_hooks
 from siftd.domain import (
     ContentBlock,
     Conversation,
@@ -246,3 +246,74 @@ def _extract_text(content_blocks: list) -> str | None:
             if text:
                 parts.append(text)
     return "\n".join(parts) if parts else None
+
+
+# =============================================================================
+# Record normalization — enables SDK-derived peek support
+# =============================================================================
+
+
+def normalize_record(raw: dict) -> NormalizedRecord | None:
+    """Map a Pi Agent native record to NormalizedRecord.
+
+    Pi Agent record types:
+        "session"      → metadata (id, cwd)
+        "model_change" → metadata (modelId)
+        "message" with role "user"       → user
+        "message" with role "assistant"  → assistant
+        "message" with role "toolResult" → tool_result (skip for exchange counting)
+    """
+    record_type = raw.get("type")
+    ts = raw.get("timestamp")
+
+    if record_type == "session":
+        return NormalizedRecord(
+            kind="metadata",
+            timestamp=ts,
+            session_id=raw.get("id"),
+            workspace_path=raw.get("cwd"),
+        )
+
+    if record_type == "model_change":
+        return NormalizedRecord(
+            kind="metadata",
+            timestamp=ts,
+            model=raw.get("modelId"),
+        )
+
+    if record_type != "message":
+        return None
+
+    msg = raw.get("message", {})
+    role = msg.get("role")
+    content_blocks = msg.get("content", [])
+
+    if role == "user":
+        return NormalizedRecord(
+            kind="user",
+            timestamp=ts,
+            content_blocks=content_blocks,
+        )
+
+    if role == "assistant":
+        usage = msg.get("usage") or {}
+        return NormalizedRecord(
+            kind="assistant",
+            timestamp=ts,
+            content_blocks=content_blocks,
+            model=msg.get("model"),
+            input_tokens=usage.get("input", 0) or 0,
+            output_tokens=usage.get("output", 0) or 0,
+        )
+
+    if role == "toolResult":
+        return NormalizedRecord(kind="tool_result", timestamp=ts)
+
+    return None
+
+
+# Peek hooks — derived from normalizer
+peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
+    normalize_record,
+    tool_aliases=TOOL_ALIASES,
+)

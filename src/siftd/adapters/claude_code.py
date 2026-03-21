@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 from siftd.adapters._jsonl import load_jsonl, now_iso, parse_block
 from siftd.adapters.sdk import (
+    NormalizedRecord,
+    discover_files,
     peek_jsonl_exchanges,
     peek_jsonl_tail,
 )
@@ -32,6 +34,7 @@ NAME = "claude_code"
 DEFAULT_LOCATIONS = ["~/.claude/projects", "~/.config/claude/projects"]
 DEDUP_STRATEGY = "file"  # one conversation per file
 SUPPORTS_LIVE_REGISTRATION = True  # supports tagging during active sessions
+SUBAGENT_PATH_MARKER = "/subagents/"  # path marker for subagent detection
 
 # Harness metadata
 HARNESS_SOURCE = "anthropic"
@@ -75,13 +78,7 @@ TOOL_ALIASES: dict[str, str] = {
 
 def discover(locations=None) -> Iterable[Source]:
     """Yield Source objects for all Claude Code session files."""
-    for location in (locations or DEFAULT_LOCATIONS):
-        base = Path(location).expanduser()
-        if not base.exists():
-            continue
-        # Claude Code stores files as: ~/.claude/projects/{project}/*.jsonl
-        for jsonl_file in base.glob("**/*.jsonl"):
-            yield Source(kind="file", location=jsonl_file)
+    yield from discover_files(locations, DEFAULT_LOCATIONS, ["**/*.jsonl"])
 
 
 def can_handle(source: Source) -> bool:
@@ -301,6 +298,71 @@ def _normalize_content(content) -> list:
     if isinstance(content, list):
         return content
     return []
+
+
+# =============================================================================
+# Record normalization — general pattern for SDK integration
+# =============================================================================
+
+
+def normalize_record(raw: dict) -> NormalizedRecord | None:
+    """Map a Claude Code native record to NormalizedRecord.
+
+    Claude Code record types:
+        "user"      → user (or tool_result if content has tool_result blocks)
+        "assistant" → assistant (with content blocks, usage, model)
+    """
+    record_type = raw.get("type")
+    ts = raw.get("timestamp")
+
+    if record_type not in ("user", "assistant"):
+        return None
+
+    msg = raw.get("message") or {}
+    content = msg.get("content")
+    # Normalize content to list
+    if content is None:
+        content_blocks = []
+    elif isinstance(content, str):
+        content_blocks = [{"type": "text", "text": content}]
+    elif isinstance(content, list):
+        content_blocks = content
+    else:
+        content_blocks = []
+
+    if record_type == "user":
+        # Check if this is a tool_result message
+        has_tool_result = any(
+            isinstance(b, dict) and b.get("type") == "tool_result"
+            for b in content_blocks
+        )
+        if has_tool_result:
+            return NormalizedRecord(kind="tool_result", timestamp=ts)
+
+        extra: dict = {}
+        agent_id = raw.get("agentId")
+        if agent_id is not None:
+            extra["agent_id"] = agent_id
+
+        return NormalizedRecord(
+            kind="user",
+            timestamp=ts,
+            content_blocks=content_blocks,
+            session_id=raw.get("sessionId"),
+            workspace_path=raw.get("cwd"),
+            extra=extra,
+        )
+
+    # assistant
+    usage = msg.get("usage") or {}
+    return NormalizedRecord(
+        kind="assistant",
+        timestamp=ts,
+        content_blocks=content_blocks,
+        model=msg.get("model"),
+        input_tokens=usage.get("input_tokens", 0) or 0,
+        output_tokens=usage.get("output_tokens", 0) or 0,
+    )
 
 
 # =============================================================================

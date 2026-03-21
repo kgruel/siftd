@@ -11,7 +11,9 @@ from typing import TYPE_CHECKING
 
 from siftd.adapters._jsonl import load_jsonl, now_iso
 from siftd.adapters.sdk import (
+    NormalizedRecord,
     canonicalize_tool_name,
+    discover_files,
     peek_jsonl_tail,
 )
 from siftd.domain import (
@@ -52,13 +54,7 @@ TOOL_ALIASES: dict[str, str] = {
 
 def discover(locations=None) -> Iterable[Source]:
     """Yield Source objects for all Codex CLI session files."""
-    for location in (locations or DEFAULT_LOCATIONS):
-        base = Path(location).expanduser()
-        if not base.exists():
-            continue
-        # Codex stores files as: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
-        for jsonl_file in base.glob("**/*.jsonl"):
-            yield Source(kind="file", location=jsonl_file)
+    yield from discover_files(locations, DEFAULT_LOCATIONS, ["**/*.jsonl"])
 
 
 def can_handle(source: Source) -> bool:
@@ -319,6 +315,98 @@ def _get_or_create_response(
     if current_prompt is not None:
         current_prompt.responses.append(response)
     return response
+
+
+# =============================================================================
+# Record normalization — general pattern for SDK integration
+# =============================================================================
+
+
+def normalize_record(raw: dict) -> NormalizedRecord | None:
+    """Map a Codex CLI native record to NormalizedRecord.
+
+    Codex CLI record types:
+        "session_meta"  → metadata (id, cwd)
+        "turn_context"  → metadata (model)
+        "response_item" with payload.type "message" → user or assistant
+        "response_item" with payload.type "function_call"/"custom_tool_call" → tool_use
+        "event_msg" with payload.type "token_count" → usage
+    """
+    record_type = raw.get("type")
+    ts = raw.get("timestamp")
+
+    if record_type == "session_meta":
+        payload = raw.get("payload", {})
+        return NormalizedRecord(
+            kind="metadata",
+            timestamp=ts,
+            session_id=payload.get("id"),
+            workspace_path=payload.get("cwd"),
+        )
+
+    if record_type == "turn_context":
+        payload = raw.get("payload", {})
+        return NormalizedRecord(
+            kind="metadata",
+            timestamp=ts,
+            model=payload.get("model"),
+        )
+
+    if record_type == "event_msg":
+        payload = raw.get("payload") or {}
+        if payload.get("type") == "token_count":
+            info = payload.get("info") or {}
+            last_usage = info.get("last_token_usage") or {}
+            return NormalizedRecord(
+                kind="usage",
+                timestamp=ts,
+                input_tokens=last_usage.get("input_tokens", 0) or 0,
+                output_tokens=last_usage.get("output_tokens", 0) or 0,
+            )
+        return None
+
+    if record_type == "response_item":
+        payload = raw.get("payload", {})
+        item_type = payload.get("type")
+
+        if item_type == "message":
+            role = payload.get("role")
+            content_blocks = payload.get("content", [])
+            # Normalize Codex block types to standard
+            normalized_blocks = []
+            for block in content_blocks:
+                if isinstance(block, dict):
+                    bt = block.get("type", "")
+                    if bt in ("input_text", "output_text"):
+                        normalized_blocks.append(
+                            {"type": "text", "text": block.get("text", "")}
+                        )
+                    else:
+                        normalized_blocks.append(block)
+                elif isinstance(block, str):
+                    normalized_blocks.append({"type": "text", "text": block})
+
+            if role == "user":
+                return NormalizedRecord(
+                    kind="user",
+                    timestamp=ts,
+                    content_blocks=normalized_blocks,
+                )
+            if role == "assistant":
+                return NormalizedRecord(
+                    kind="assistant",
+                    timestamp=ts,
+                    content_blocks=normalized_blocks,
+                )
+
+        elif item_type in ("function_call", "custom_tool_call"):
+            return NormalizedRecord(
+                kind="tool_use",
+                timestamp=ts,
+                tool_name=payload.get("name", "unknown"),
+            )
+
+    return None
 
 
 # =============================================================================

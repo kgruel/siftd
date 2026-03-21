@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from siftd.adapters._jsonl import load_jsonl, now_iso
-from siftd.adapters.sdk import discover_files
+from siftd.adapters.sdk import NormalizedRecord, discover_files, make_peek_hooks
 from siftd.domain import (
     ContentBlock,
     Conversation,
@@ -214,3 +214,83 @@ def parse(source: Source) -> Iterable[Conversation]:
         resp.tool_calls.append(tool_call)
 
     yield conversation
+
+
+# =============================================================================
+# Record normalization — enables SDK-derived peek support
+# =============================================================================
+
+
+def normalize_record(raw: dict) -> NormalizedRecord | None:
+    """Map a Copilot CLI native record to NormalizedRecord.
+
+    Copilot CLI event types:
+        "session.start"        → metadata (sessionId, cwd, branch)
+        "session.model_change" → metadata (newModel)
+        "user.message"         → user
+        "assistant.message"    → assistant
+        "tool.execution_complete" → tool_result (skip for exchange counting)
+    """
+    event_type = raw.get("type")
+    ts = raw.get("timestamp")
+    data = raw.get("data", {})
+
+    if event_type == "session.start":
+        context = data.get("context", {})
+        return NormalizedRecord(
+            kind="metadata",
+            timestamp=ts,
+            session_id=data.get("sessionId"),
+            workspace_path=context.get("cwd"),
+        )
+
+    if event_type == "session.model_change":
+        return NormalizedRecord(
+            kind="metadata",
+            timestamp=ts,
+            model=data.get("newModel"),
+        )
+
+    if event_type == "user.message":
+        content_text = data.get("content", "")
+        content_blocks = (
+            [{"type": "text", "text": content_text}] if content_text else []
+        )
+        return NormalizedRecord(
+            kind="user",
+            timestamp=ts,
+            content_blocks=content_blocks,
+        )
+
+    if event_type == "assistant.message":
+        content_blocks: list[dict] = []
+        content_text = data.get("content", "")
+        if content_text:
+            content_blocks.append({"type": "text", "text": content_text})
+        reasoning = data.get("reasoningText")
+        if reasoning:
+            content_blocks.append({"type": "thinking", "text": reasoning})
+        # Include tool requests as tool_use blocks
+        for req in data.get("toolRequests", []):
+            content_blocks.append({
+                "type": "tool_use",
+                "name": req.get("name", "unknown"),
+                "input": req.get("arguments", {}),
+            })
+        return NormalizedRecord(
+            kind="assistant",
+            timestamp=ts,
+            content_blocks=content_blocks,
+        )
+
+    if event_type == "tool.execution_complete":
+        return NormalizedRecord(kind="tool_result", timestamp=ts)
+
+    return None
+
+
+# Peek hooks — derived from normalizer
+peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
+    normalize_record,
+    tool_aliases=TOOL_ALIASES,
+)
