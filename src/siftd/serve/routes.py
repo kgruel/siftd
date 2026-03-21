@@ -194,17 +194,14 @@ async def query(
     id: str | None = Parameter(query="id", default=None),
 ) -> dict:
     """List or detail conversations."""
-    import dataclasses
-
     from siftd.api.conversations import get_conversation, list_conversations
+    from siftd.serialization import serialize_conversation_detail, serialize_conversation_list
 
     if id is not None:
         detail = get_conversation(id, db_path=db_path)
         if detail is None:
             return {"error": f"conversation not found: {id}"}
-        d = dataclasses.asdict(detail)
-        d.pop("exchanges", None)  # property, not serializable
-        return {"conversation": d}
+        return {"conversation": serialize_conversation_detail(detail)}
 
     rows = list_conversations(
         db_path=db_path,
@@ -221,7 +218,7 @@ async def query(
         limit=n,
         oldest_first=oldest,
     )
-    return {"conversations": [dataclasses.asdict(r) for r in rows]}
+    return {"conversations": serialize_conversation_list(rows)}
 
 
 @get("/v1/search")
@@ -291,7 +288,7 @@ async def search_route(
 
     import dataclasses
 
-    serialized = [dataclasses.asdict(r) for r in results]
+    serialized = [dataclasses.asdict(r) for r in results]  # arch: allow-asdict — search has its own parser
     return {
         "query": q,
         "result_count": len(serialized),

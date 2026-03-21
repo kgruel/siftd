@@ -275,6 +275,56 @@ def find_sql_execute_calls(file_path: Path) -> list[tuple[int, str]]:
     return results
 
 
+# =============================================================================
+# 6. Serve Routes Must Use Formatters, Not dataclasses.asdict
+# =============================================================================
+
+
+def _find_dataclasses_asdict_calls(file_path: Path) -> list[int]:
+    """Find lines with dataclasses.asdict() calls."""
+    source = file_path.read_text()
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    lines = source.splitlines()
+    results = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "asdict":
+                line = node.lineno
+                if 0 < line <= len(lines) and "arch: allow-asdict" in lines[line - 1]:
+                    continue
+                results.append(line)
+    return results
+
+
+class TestServeRoutesSerialization:
+    """Serve routes must use json_fmt formatters, not dataclasses.asdict.
+
+    Rationale: The json_fmt module is the canonical JSON serialization.
+    Using dataclasses.asdict in routes creates a second, divergent shape
+    that doesn't match --json CLI output or external consumers.
+
+    Suppress with ``# arch: allow-asdict`` on the offending line.
+    """
+
+    def test_no_asdict_in_serve_routes(self, src_dir):
+        """serve/routes.py should not use dataclasses.asdict."""
+        routes_file = src_dir / "serve" / "routes.py"
+        if not routes_file.exists():
+            pytest.skip("serve/routes.py not found")
+
+        violations = _find_dataclasses_asdict_calls(routes_file)
+        if violations:
+            lines = [f"  line {ln}" for ln in violations]
+            pytest.fail(
+                "serve/routes.py uses dataclasses.asdict() — "
+                "use json_fmt.render_* instead:\n" + "\n".join(lines)
+            )
+
+
 def test_no_raw_sql_in_cli_modules(src_dir):
     """CLI modules should not execute raw SQL directly."""
     violations = []

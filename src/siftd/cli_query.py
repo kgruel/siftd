@@ -315,12 +315,12 @@ def cmd_query(args) -> int:
             conversations = [
                 ConversationSummary(
                     id=c["id"],
-                    workspace_path=c.get("workspace_path"),
+                    workspace_path=c.get("workspace"),
                     model=c.get("model"),
                     started_at=c.get("started_at"),
-                    prompt_count=c.get("prompt_count", 0),
-                    response_count=c.get("response_count", 0),
-                    total_tokens=c.get("total_tokens", 0),
+                    prompt_count=c.get("prompts", 0),
+                    response_count=c.get("responses", 0),
+                    total_tokens=c.get("tokens", 0),
                     cost=c.get("cost"),
                     tags=c.get("tags", []),
                 )
