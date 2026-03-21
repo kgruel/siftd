@@ -21,6 +21,7 @@ from siftd.domain import (
     ToolCall,
     Usage,
 )
+from siftd.safecall import epoch_ms_to_iso
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
@@ -90,8 +91,8 @@ def _parse_sessions(conn: sqlite3.Connection, harness: Harness) -> Iterable[Conv
         time_created = session["time_created"]
         time_updated = session["time_updated"]
 
-        started_at = _epoch_ms_to_iso(time_created)
-        ended_at = _epoch_ms_to_iso(time_updated)
+        started_at = epoch_ms_to_iso(time_created)
+        ended_at = epoch_ms_to_iso(time_updated)
 
         external_id = f"{NAME}::{session_id}"
 
@@ -120,7 +121,7 @@ def _parse_sessions(conn: sqlite3.Connection, harness: Harness) -> Iterable[Conv
                 continue
 
             role = msg_data.get("role")
-            msg_time = _epoch_ms_to_iso(message["time_created"])
+            msg_time = epoch_ms_to_iso(message["time_created"])
 
             if role == "user":
                 current_prompt = Prompt(timestamp=msg_time or now_iso())
@@ -272,7 +273,7 @@ def _part_to_tool_call(part_data: dict) -> ToolCall | None:
     if isinstance(time_data, dict):
         end_time = time_data.get("end")
         if end_time:
-            timestamp = _epoch_ms_to_iso(end_time)
+            timestamp = epoch_ms_to_iso(end_time)
 
     return ToolCall(
         tool_name=tool_name,
@@ -295,14 +296,3 @@ def _parse_json(data: str | None) -> dict | None:
         return None
 
 
-def _epoch_ms_to_iso(epoch_ms) -> str | None:
-    """Convert epoch milliseconds to ISO 8601 string."""
-    if epoch_ms is None:
-        return None
-    try:
-        from datetime import UTC, datetime
-
-        ts = int(epoch_ms) / 1000
-        return datetime.fromtimestamp(ts, tz=UTC).isoformat()
-    except (ValueError, TypeError, OSError):
-        return None

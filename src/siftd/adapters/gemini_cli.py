@@ -5,7 +5,6 @@ No storage coupling.
 """
 
 import hashlib
-import json
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
@@ -223,10 +222,11 @@ def parse(source: Source) -> Iterable[Conversation]:
     yield conversation
 
 
-def _load_json(path: Path) -> dict:
-    """Load JSON file."""
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+def _load_json(path: Path) -> dict | None:
+    """Load JSON file, returning None on error."""
+    from siftd.safecall import load_json
+
+    return load_json(path, context="gemini_cli")
 
 
 def _resolve_workspace_from_hash(project_hash: str) -> str | None:
@@ -279,11 +279,7 @@ def iter_gemini_records(path: Path) -> Iterator[dict]:
     Yields a metadata record (session-level fields), then each message
     from the messages array as-is (they already have a "type" field).
     """
-    try:
-        data = _load_json(path)
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return
-
+    data = _load_json(path)
     if not data or "messages" not in data:
         return
 
@@ -386,11 +382,7 @@ def peek_tail(path: Path, lines: int = 20) -> Iterator[dict]:
 
     Custom tail since Gemini uses a single JSON file, not JSONL.
     """
-    try:
-        data = _load_json(path)
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return
-
+    data = _load_json(path)
     if not data or "messages" not in data:
         return
 

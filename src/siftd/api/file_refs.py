@@ -1,10 +1,11 @@
 """File reference queries for search results."""
 
-import json
 import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+
+from siftd.safecall import parse_json
 
 
 @dataclass
@@ -27,11 +28,7 @@ def _extract_file_content(result_json: str | None) -> str | None:
     if not result_json:
         return None
 
-    try:
-        result = json.loads(result_json)
-    except (json.JSONDecodeError, TypeError):
-        return None
-
+    result = parse_json(result_json)
     if not isinstance(result, dict):
         return None
 
@@ -91,10 +88,7 @@ def fetch_file_refs(
     op_map = {"file.read": "r", "file.write": "w", "file.edit": "e"}
 
     for row in rows:
-        try:
-            input_data = json.loads(row["input_json"]) if row["input_json"] else {}
-        except (json.JSONDecodeError, TypeError):
-            input_data = {}
+        input_data = parse_json(row["input_json"], fallback={}) if row["input_json"] else {}
 
         path = input_data.get("file_path")
         if not path:

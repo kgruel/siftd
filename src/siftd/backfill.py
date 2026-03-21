@@ -13,6 +13,7 @@ from siftd.domain.shell_categories import (
     categorize_shell_command,
 )
 from siftd.model_names import parse_model_name
+from siftd.safecall import parse_json
 from siftd.storage.sqlite import get_or_create_provider, insert_response_attribute
 from siftd.storage.tags import (
     DERIVATIVE_TAG,
@@ -119,10 +120,10 @@ def backfill_shell_tags(conn: sqlite3.Connection) -> dict[str, int]:
         raw_input = row["input"]
 
         # Extract command from JSON input
-        try:
-            data = json.loads(raw_input)
+        data = parse_json(raw_input)
+        if isinstance(data, dict):
             cmd = data.get("command") or data.get("cmd") or ""
-        except (json.JSONDecodeError, TypeError):
+        else:
             cmd = raw_input or ""
 
         # Categorize
@@ -267,9 +268,8 @@ def backfill_derivative_tags(conn: sqlite3.Connection) -> int:
             continue
 
         raw_input = row["input"]
-        try:
-            data = json.loads(raw_input) if isinstance(raw_input, str) else raw_input
-        except (json.JSONDecodeError, TypeError):
+        data = parse_json(raw_input) if isinstance(raw_input, str) else raw_input
+        if data is None:
             continue
 
         if is_derivative_tool_call(row["tool_name"], data):
@@ -322,32 +322,31 @@ def backfill_filter_binary(conn: sqlite3.Connection, *, dry_run: bool = False) -
         old_hash = row["hash"]
         content = row["content"]
 
-        try:
-            data = json.loads(content)
-            filtered_data = filter_tool_result_binary(data)
-
-            # Check if anything changed
-            if filtered_data is data:
-                stats["skipped"] += 1
-                continue
-
-            filtered_json = json.dumps(filtered_data)
-            new_hash = compute_content_hash(filtered_json)
-
-            if new_hash == old_hash:
-                stats["skipped"] += 1
-                continue
-
-            if not dry_run:
-                # Store the filtered content
-                store_content(conn, filtered_json)
-                hash_mapping[old_hash] = new_hash
-
-            stats["filtered"] += 1
-
-        except (json.JSONDecodeError, TypeError):
+        data = parse_json(content)
+        if not isinstance(data, dict):
             stats["errors"] += 1
             continue
+
+        filtered_data = filter_tool_result_binary(data)
+
+        # Check if anything changed
+        if filtered_data is data:
+            stats["skipped"] += 1
+            continue
+
+        filtered_json = json.dumps(filtered_data)
+        new_hash = compute_content_hash(filtered_json)
+
+        if new_hash == old_hash:
+            stats["skipped"] += 1
+            continue
+
+        if not dry_run:
+            # Store the filtered content
+            store_content(conn, filtered_json)
+            hash_mapping[old_hash] = new_hash
+
+        stats["filtered"] += 1
 
     # Update tool_calls to point to new hashes, adjusting ref_counts properly
     if not dry_run and hash_mapping:

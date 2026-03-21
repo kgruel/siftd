@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from siftd.domain.sync import PullResult, PushResult, SyncRemote
+from siftd.safecall import parse_json
 
 
 class SyncError(Exception):
@@ -221,8 +222,8 @@ def _friendly_remote_error(host: str, path: str, stderr: str) -> str:
         return f"siftd is not installed on {host}. Install with: uv tool install siftd (or pipx install siftd)"
 
     # Try parsing structured JSON error from cmd_db_receive
-    try:
-        err = json.loads(stderr)
+    err = parse_json(stderr)
+    if isinstance(err, dict):
         error_type = err.get("error_type", "")
         error_msg = err.get("error", stderr)
         if error_type == "database_locked":
@@ -231,8 +232,6 @@ def _friendly_remote_error(host: str, path: str, stderr: str) -> str:
                 f"{path} on {host}. Wait and retry."
             )
         return f"Remote error: {error_msg}"
-    except (json.JSONDecodeError, ValueError):
-        pass
 
     # Fall back to first line of raw stderr
     first_line = stderr.split("\n", 1)[0]
@@ -588,8 +587,7 @@ def _parse_send_metadata(stderr_text: str) -> dict:
     for line in reversed(stderr_text.splitlines()):
         line = line.strip()
         if line.startswith("{"):
-            try:
-                return json.loads(line)
-            except (json.JSONDecodeError, ValueError):
-                continue
+            result = parse_json(line)
+            if isinstance(result, dict):
+                return result
     return {}

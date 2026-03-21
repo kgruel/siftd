@@ -4,7 +4,6 @@ Pure parser: reads JSONL session files and yields Conversation domain objects.
 No storage coupling.
 """
 
-import json
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -19,6 +18,7 @@ from siftd.domain import (
     ToolCall,
     Usage,
 )
+from siftd.safecall import parse_json_args
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
@@ -163,12 +163,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 if block_type == "toolCall":
                     call_id = block.get("id")
                     tool_name = block.get("name", "unknown")
-                    arguments = block.get("arguments", {})
-                    if isinstance(arguments, str):
-                        try:
-                            arguments = json.loads(arguments)
-                        except (json.JSONDecodeError, TypeError):
-                            arguments = {"raw": arguments}
+                    arguments = parse_json_args(block.get("arguments", {}))
 
                     response.content.append(ContentBlock(
                         block_type="tool_use",

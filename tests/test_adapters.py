@@ -1,1156 +1,704 @@
-"""Tests for conversation log adapters.
+"""Tests for conversation log adapters."""
 
-Each test uses a minimal fixture file to verify:
-- can_handle() recognizes the file format
-- parse() yields Conversation with expected structure
-- Prompts, responses, and tool calls are extracted correctly
-"""
-
+import json
+import shutil
+import sqlite3
 from pathlib import Path
 from types import ModuleType
 
 import pytest
-from conftest import FIXTURES_DIR
+from conftest import FIXTURES_DIR, ClaudeSession, CodexSession, write_jsonl
 
+import siftd.adapters.sdk as sdk
 from siftd.adapters import aider, claude_code, codex_cli, copilot_cli, gemini_cli, opencode, pi_agent, vscode
+from siftd.adapters.claude_code import normalize_record as claude_norm
+from siftd.adapters.codex_cli import normalize_record as codex_norm
+from siftd.adapters.registry import load_all_adapters, load_builtin_adapters, load_dropin_adapters, wrap_adapter_paths
 from siftd.adapters.validation import ADAPTER_INTERFACE_VERSION, validate_adapter
+from siftd.domain import Response
 from siftd.domain.source import Source
 
 
 class TestValidateAdapter:
-    """Tests for adapter validation logic."""
+    def test_validation(self):
+        mod = ModuleType("test_adapter")
+        for attr, val in [("ADAPTER_INTERFACE_VERSION", ADAPTER_INTERFACE_VERSION), ("NAME", "test"),
+                          ("DEFAULT_LOCATIONS", []), ("DEDUP_STRATEGY", "file"), ("HARNESS_SOURCE", "test")]:
+            setattr(mod, attr, val)
+        mod.discover = lambda locations=None: []
+        mod.can_handle = lambda source: False
+        mod.parse = lambda source: iter([])
+        assert validate_adapter(mod, "test") is None
+        # Bad version
+        mod.ADAPTER_INTERFACE_VERSION = 999
+        assert "incompatible" in validate_adapter(mod, "x")
+        mod.ADAPTER_INTERFACE_VERSION = ADAPTER_INTERFACE_VERSION
+        # Missing attribute
+        mod2 = ModuleType("bad")
+        assert "missing required attribute" in validate_adapter(mod2, "x")
+        # Wrong type
+        mod2.ADAPTER_INTERFACE_VERSION = "not_int"
+        assert "must be" in validate_adapter(mod2, "x")
+        # Bad dedup
+        mod.DEDUP_STRATEGY = "invalid"
+        assert "DEDUP_STRATEGY" in validate_adapter(mod, "x")
+        mod.DEDUP_STRATEGY = "file"
+        # Missing callable
+        delattr(mod, "parse")
+        assert "missing required function" in validate_adapter(mod, "x")
+        mod.parse = lambda source: iter([])
+        # discover missing locations param
+        mod.discover = lambda: []
+        assert "locations" in validate_adapter(mod, "x")
 
-    def _make_valid_adapter(self, version: int = ADAPTER_INTERFACE_VERSION) -> ModuleType:
-        """Create a mock adapter module with all required attributes."""
-        module = ModuleType("test_adapter")
-        module.ADAPTER_INTERFACE_VERSION = version
-        module.NAME = "test"
-        module.DEFAULT_LOCATIONS = []
-        module.DEDUP_STRATEGY = "file"
-        module.HARNESS_SOURCE = "test"
-        module.discover = lambda locations=None: []
-        module.can_handle = lambda source: False
-        module.parse = lambda source: iter([])
-        return module
 
-    def test_valid_adapter_passes(self):
-        """Adapter with correct version passes validation."""
-        module = self._make_valid_adapter(ADAPTER_INTERFACE_VERSION)
-        assert validate_adapter(module, "test") is None
-
-    def test_version_mismatch_returns_error(self):
-        """Adapter with wrong version returns error."""
-        module = self._make_valid_adapter(version=999)
-        error = validate_adapter(module, "test-adapter")
-        assert error is not None
-        assert "incompatible interface version 999" in error
-        assert f"expected {ADAPTER_INTERFACE_VERSION}" in error
-
-    def test_version_zero_returns_error(self):
-        """Adapter with version 0 returns error."""
-        module = self._make_valid_adapter(version=0)
-        error = validate_adapter(module, "old-adapter")
-        assert error is not None
-        assert "incompatible interface version 0" in error
-
-    def test_future_version_returns_error(self):
-        """Adapter with future version returns error."""
-        future_version = ADAPTER_INTERFACE_VERSION + 1
-        module = self._make_valid_adapter(version=future_version)
-        error = validate_adapter(module, "future-adapter")
-        assert error is not None
-        assert f"incompatible interface version {future_version}" in error
+def _fixture_source(tmp_path, fixture, subdir, dest_name=None):
+    """Copy a fixture into a subdirectory and return a Source."""
+    d = tmp_path / subdir
+    d.mkdir(parents=True, exist_ok=True)
+    dest = d / (dest_name or Path(fixture).name)
+    dest.write_text((FIXTURES_DIR / fixture).read_text())
+    return Source(kind="file", location=dest)
 
 
 class TestClaudeCodeAdapter:
-    """Tests for the Claude Code adapter."""
 
-    def test_can_handle_jsonl(self):
-        """Adapter handles .jsonl files."""
-        source = Source(kind="file", location=FIXTURES_DIR / "claude_code_minimal.jsonl")
-        assert claude_code.can_handle(source)
+    def test_can_handle(self):
+        assert claude_code.can_handle(Source(kind="file", location=FIXTURES_DIR / "claude_code_minimal.jsonl"))
+        assert not claude_code.can_handle(Source(kind="file", location=FIXTURES_DIR / "gemini_cli_minimal.json"))
 
-    def test_can_handle_rejects_json(self):
-        """Adapter rejects non-jsonl files."""
-        source = Source(kind="file", location=FIXTURES_DIR / "gemini_cli_minimal.json")
-        assert not claude_code.can_handle(source)
-
-    def test_parse_extracts_conversation(self):
-        """Parse yields a conversation with correct metadata."""
-        source = Source(kind="file", location=FIXTURES_DIR / "claude_code_minimal.jsonl")
-        convos = list(claude_code.parse(source))
-
-        assert len(convos) == 1
-        conv = convos[0]
-
-        assert conv.external_id == "claude_code::test-session-1"
-        assert conv.workspace_path == "/test/workspace"
-        assert conv.harness.name == "claude_code"
-        assert conv.harness.source == "anthropic"
-
-    def test_parse_extracts_prompts_and_responses(self):
-        """Parse extracts prompts with their responses."""
-        source = Source(kind="file", location=FIXTURES_DIR / "claude_code_minimal.jsonl")
-        conv = list(claude_code.parse(source))[0]
-
-        # Should have 1 user prompt (tool_result is not a separate prompt)
+    def test_parse_full(self):
+        conv = list(claude_code.parse(Source(kind="file", location=FIXTURES_DIR / "claude_code_minimal.jsonl")))[0]
+        assert conv.external_id == "claude_code::test-session-1" and conv.workspace_path == "/test/workspace"
+        assert conv.harness.name == "claude_code" and conv.harness.source == "anthropic"
         assert len(conv.prompts) == 1
-
         prompt = conv.prompts[0]
-        assert len(prompt.content) == 1
-        assert prompt.content[0].block_type == "text"
-        assert "Hello" in prompt.content[0].content.get("text", "")
-
-        # Prompt should have 2 responses
-        assert len(prompt.responses) == 2
-
-    def test_parse_extracts_tool_calls(self):
-        """Parse extracts tool calls with results."""
-        source = Source(kind="file", location=FIXTURES_DIR / "claude_code_minimal.jsonl")
-        conv = list(claude_code.parse(source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert len(response.tool_calls) == 1
-
-        tool_call = response.tool_calls[0]
-        assert tool_call.tool_name == "Read"
-        assert tool_call.input.get("file_path") == "/test/workspace/README.md"
-        assert tool_call.status == "success"
-        assert "Test Project" in str(tool_call.result)
-
-    def test_parse_extracts_usage(self):
-        """Parse extracts token usage."""
-        source = Source(kind="file", location=FIXTURES_DIR / "claude_code_minimal.jsonl")
-        conv = list(claude_code.parse(source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert response.usage is not None
-        assert response.usage.input_tokens == 100
-        assert response.usage.output_tokens == 50
-
-    def test_parse_extracts_cache_tokens(self):
-        """Parse extracts cache token attributes."""
-        source = Source(kind="file", location=FIXTURES_DIR / "claude_code_minimal.jsonl")
-        conv = list(claude_code.parse(source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert response.attributes.get("cache_creation_input_tokens") == "10"
+        assert "Hello" in prompt.content[0].content["text"] and len(prompt.responses) == 2
+        resp = prompt.responses[0]
+        tc = resp.tool_calls[0]
+        assert tc.tool_name == "Read" and tc.status == "success" and "Test Project" in str(tc.result)
+        assert resp.usage.input_tokens == 100 and resp.usage.output_tokens == 50
+        assert resp.attributes.get("cache_creation_input_tokens") == "10"
 
 
 class TestCodexCliAdapter:
-    """Tests for the Codex CLI adapter."""
 
-    @pytest.fixture
-    def codex_source(self, tmp_path):
-        """Copy codex fixture to a path with 'sessions' in it (required by adapter)."""
-        sessions_dir = tmp_path / "sessions"
-        sessions_dir.mkdir()
-        dest = sessions_dir / "test.jsonl"
-        dest.write_text((FIXTURES_DIR / "codex_cli_minimal.jsonl").read_text())
-        return Source(kind="file", location=dest)
+    def test_can_handle(self):
+        assert codex_cli.can_handle(Source(kind="file", location=Path("/mock/sessions/test.jsonl")))
+        assert not codex_cli.can_handle(Source(kind="file", location=FIXTURES_DIR / "codex_cli_minimal.jsonl"))
 
-    def test_can_handle_jsonl_in_sessions(self):
-        """Adapter handles .jsonl files in sessions path."""
-        source = Source(kind="file", location=Path("/mock/sessions/test.jsonl"))
-        assert codex_cli.can_handle(source)
-
-    def test_can_handle_rejects_non_sessions(self):
-        """Adapter rejects jsonl not in sessions path."""
-        source = Source(kind="file", location=FIXTURES_DIR / "codex_cli_minimal.jsonl")
-        assert not codex_cli.can_handle(source)
-
-    def test_parse_extracts_conversation(self, codex_source):
-        """Parse yields a conversation with correct metadata."""
-        convos = list(codex_cli.parse(codex_source))
-
-        assert len(convos) == 1
-        conv = convos[0]
-
-        assert conv.external_id == "codex_cli::codex-session-1"
-        assert conv.workspace_path == "/test/workspace"
-        assert conv.harness.name == "codex_cli"
-        assert conv.harness.source == "openai"
-
-    def test_parse_extracts_prompts_and_responses(self, codex_source):
-        """Parse extracts prompts with their responses."""
+    def test_parse_full(self, tmp_path):
+        codex_source = _fixture_source(tmp_path, "codex_cli_minimal.jsonl", "sessions")
+        """Parse extracts conversation with metadata, prompts, tools, usage."""
         conv = list(codex_cli.parse(codex_source))[0]
-
+        assert conv.external_id == "codex_cli::codex-session-1" and conv.workspace_path == "/test/workspace"
+        assert conv.harness.name == "codex_cli" and conv.harness.source == "openai"
         assert len(conv.prompts) == 1
-
         prompt = conv.prompts[0]
-        assert len(prompt.content) == 1
-        assert "Run ls" in prompt.content[0].content.get("text", "")
-
-        assert len(prompt.responses) == 1
-
-    def test_parse_extracts_tool_calls(self, codex_source):
-        """Parse extracts tool calls with results."""
-        conv = list(codex_cli.parse(codex_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert len(response.tool_calls) == 1
-
-        tool_call = response.tool_calls[0]
-        assert tool_call.tool_name == "shell_command"
-        assert tool_call.input.get("command") == "ls -la"
-        assert tool_call.status == "success"
-        assert "README.md" in str(tool_call.result)
-
-    def test_parse_extracts_usage(self, codex_source):
-        """Parse extracts token usage when token_count events are present."""
-        conv = list(codex_cli.parse(codex_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert response.usage is not None
-        assert response.usage.input_tokens == 120
-        assert response.usage.output_tokens == 45
-        assert response.attributes.get("cache_read_input_tokens") == "10"
+        assert "Run ls" in prompt.content[0].content["text"] and len(prompt.responses) == 1
+        resp = prompt.responses[0]
+        tc = resp.tool_calls[0]
+        assert tc.tool_name == "shell_command" and tc.status == "success" and "README.md" in str(tc.result)
+        assert resp.usage.input_tokens == 120 and resp.usage.output_tokens == 45
+        assert resp.attributes.get("cache_read_input_tokens") == "10"
 
 
 class TestGeminiCliAdapter:
-    """Tests for the Gemini CLI adapter."""
 
-    def test_can_handle_json_in_chats(self):
-        """Adapter handles .json files in chats directory."""
-        source = Source(kind="file", location=Path("/mock/chats/test.json"))
-        assert gemini_cli.can_handle(source)
+    def test_can_handle(self):
+        assert gemini_cli.can_handle(Source(kind="file", location=Path("/mock/chats/test.json")))
+        assert not gemini_cli.can_handle(Source(kind="file", location=FIXTURES_DIR / "gemini_cli_minimal.json"))
 
-    def test_can_handle_rejects_non_chats(self):
-        """Adapter rejects json not in chats directory."""
-        source = Source(kind="file", location=FIXTURES_DIR / "gemini_cli_minimal.json")
-        assert not gemini_cli.can_handle(source)
-
-    @pytest.fixture
-    def gemini_source(self, tmp_path):
-        """Copy gemini fixture to a path with 'chats' in it (required by adapter)."""
-        chats_dir = tmp_path / "chats"
-        chats_dir.mkdir()
-        dest = chats_dir / "test.json"
-        dest.write_text((FIXTURES_DIR / "gemini_cli_minimal.json").read_text())
-        return Source(kind="file", location=dest)
-
-    def test_parse_extracts_conversation(self, gemini_source):
-        """Parse yields a conversation with correct metadata."""
-        convos = list(gemini_cli.parse(gemini_source))
-
-        assert len(convos) == 1
-        conv = convos[0]
-
+    def test_parse_full(self, tmp_path):
+        gemini_source = _fixture_source(tmp_path, "gemini_cli_minimal.json", "chats")
+        """Parse extracts conversation with metadata, prompts, tools, usage, thinking."""
+        conv = list(gemini_cli.parse(gemini_source))[0]
         assert conv.external_id == "gemini_cli::gemini-session-1"
-        assert conv.harness.name == "gemini_cli"
-        assert conv.harness.source == "google"
-
-    def test_parse_extracts_prompts_and_responses(self, gemini_source):
-        """Parse extracts prompts with their responses."""
-        conv = list(gemini_cli.parse(gemini_source))[0]
-
+        assert conv.harness.name == "gemini_cli" and conv.harness.source == "google"
         assert len(conv.prompts) == 1
-
         prompt = conv.prompts[0]
-        assert len(prompt.content) == 1
-        assert "List the files" in prompt.content[0].content.get("text", "")
-
-        assert len(prompt.responses) == 1
-        response = prompt.responses[0]
-        assert response.model == "gemini-2.0-flash"
-
-    def test_parse_extracts_tool_calls(self, gemini_source):
-        """Parse extracts tool calls with results."""
-        conv = list(gemini_cli.parse(gemini_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert len(response.tool_calls) == 1
-
-        tool_call = response.tool_calls[0]
-        assert tool_call.tool_name == "list_files"
-        assert tool_call.input.get("path") == "."
-        assert tool_call.status == "success"
-
-    def test_parse_extracts_usage(self, gemini_source):
-        """Parse extracts token usage."""
-        conv = list(gemini_cli.parse(gemini_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert response.usage is not None
-        assert response.usage.input_tokens == 50
-        assert response.usage.output_tokens == 30
-
-    def test_parse_extracts_thinking(self, gemini_source):
-        """Parse extracts thinking/thoughts blocks."""
-        conv = list(gemini_cli.parse(gemini_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        thinking_blocks = [b for b in response.content if b.block_type == "thinking"]
-        assert len(thinking_blocks) == 1
-        assert thinking_blocks[0].content.get("subject") == "Planning"
+        assert "List the files" in prompt.content[0].content["text"]
+        resp = prompt.responses[0]
+        assert resp.model == "gemini-2.0-flash"
+        assert resp.tool_calls[0].tool_name == "list_files" and resp.tool_calls[0].status == "success"
+        assert resp.usage.input_tokens == 50 and resp.usage.output_tokens == 30
+        thinking = [b for b in resp.content if b.block_type == "thinking"]
+        assert thinking[0].content["subject"] == "Planning"
 
 
 class TestAiderAdapter:
-    """Tests for the Aider adapter."""
 
-    def test_can_handle_chat_history(self):
-        """Adapter handles .aider.chat.history.md files."""
-        source = Source(kind="file", location=Path("/project/.aider.chat.history.md"))
-        assert aider.can_handle(source)
+    def test_can_handle(self):
+        assert aider.can_handle(Source(kind="file", location=Path("/project/.aider.chat.history.md")))
+        assert not aider.can_handle(Source(kind="file", location=Path("/project/README.md")))
+        assert not aider.can_handle(Source(kind="directory", location=Path("/project")))
 
-    def test_can_handle_rejects_other_md(self):
-        """Adapter rejects non-aider markdown files."""
-        source = Source(kind="file", location=Path("/project/README.md"))
-        assert not aider.can_handle(source)
-
-    def test_can_handle_rejects_non_file(self):
-        """Adapter rejects non-file sources."""
-        source = Source(kind="directory", location=Path("/project"))
-        assert not aider.can_handle(source)
-
-    def test_parse_yields_multiple_sessions(self):
-        """Parse yields one conversation per session header."""
+    def test_parse_full(self):
         source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
         convos = list(aider.parse(source))
-
         assert len(convos) == 2
+        # IDs are deterministic
+        assert [c.external_id for c in aider.parse(source)] == [c.external_id for c in convos]
 
-    def test_parse_first_session_metadata(self):
-        """First session has correct metadata."""
-        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
-        conv = list(aider.parse(source))[0]
-
-        assert conv.external_id.startswith("aider::")
-        assert "2025-07-15 14:32:01" in conv.external_id
-        assert conv.started_at == "2025-07-15T14:32:01"
-        assert conv.harness.name == "aider"
-        assert conv.harness.source == "multi"
-        # workspace_path is the fixture directory
+        # First session: metadata
+        conv = convos[0]
+        assert conv.external_id.startswith("aider::") and "2025-07-15 14:32:01" in conv.external_id
+        assert conv.started_at == "2025-07-15T14:32:01" and conv.harness.name == "aider"
         assert conv.workspace_path == str(FIXTURES_DIR)
-
-    def test_parse_extracts_prompts(self):
-        """Parse extracts user prompts from #### lines."""
-        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
-        conv = list(aider.parse(source))[0]
-
         assert len(conv.prompts) == 2
 
-        # First prompt: single line
-        p0 = conv.prompts[0]
-        assert len(p0.content) == 1
-        assert "write a hello world script" in p0.content[0].content["text"]
-
-        # Second prompt: multi-line (joined from two #### lines)
+        # Prompts: single + multi-line
+        assert "write a hello world script" in conv.prompts[0].content[0].content["text"]
         p1 = conv.prompts[1]
         assert "now add a greeting function" in p1.content[0].content["text"]
         assert "that takes a name parameter" in p1.content[0].content["text"]
 
-    def test_parse_extracts_responses(self):
-        """Parse extracts assistant responses."""
-        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
-        conv = list(aider.parse(source))[0]
-
-        # First prompt should have a response
-        p0 = conv.prompts[0]
-        assert len(p0.responses) >= 1
-        resp = p0.responses[0]
+        # Response with text
+        resp = conv.prompts[0].responses[0]
         text_blocks = [b for b in resp.content if b.block_type == "text"]
-        assert len(text_blocks) >= 1
-        assert "hello world" in text_blocks[0].content["text"].lower()
+        assert text_blocks and "hello world" in text_blocks[0].content["text"].lower()
 
-    def test_parse_extracts_tool_output(self):
-        """Parse extracts tool output from > lines."""
-        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
-        conv = list(aider.parse(source))[0]
-
-        # First prompt's response chain should have tool_output blocks
-        p0 = conv.prompts[0]
-        all_blocks = []
-        for resp in p0.responses:
-            all_blocks.extend(resp.content)
+        # Tool output
+        all_blocks = [b for r in conv.prompts[0].responses for b in r.content]
         tool_blocks = [b for b in all_blocks if b.block_type == "tool_output"]
-        assert len(tool_blocks) >= 1
-        tool_text = tool_blocks[0].content["text"]
-        assert "Applied edit to hello.py" in tool_text
+        assert tool_blocks and "Applied edit to hello.py" in tool_blocks[0].content["text"]
 
-    def test_parse_extracts_cost_attributes(self):
-        """Parse extracts approximate cost from token/cost lines."""
-        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
-        conv = list(aider.parse(source))[0]
-
-        # Find a response with cost attributes
-        p0 = conv.prompts[0]
-        resp_with_cost = None
-        for resp in p0.responses:
-            if resp.attributes.get("approx_cost"):
-                resp_with_cost = resp
-                break
-
-        assert resp_with_cost is not None
-        assert resp_with_cost.attributes["approx_cost"] == "0.01"
+        # Cost attributes
+        resp_with_cost = next((r for r in conv.prompts[0].responses if r.attributes.get("approx_cost")), None)
+        assert resp_with_cost and resp_with_cost.attributes["approx_cost"] == "0.01"
         assert resp_with_cost.attributes["approx_input_tokens"] == "2100"
-        assert resp_with_cost.attributes["approx_output_tokens"] == "256"
 
-    def test_parse_second_session(self):
-        """Second session is parsed independently."""
-        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
-        convos = list(aider.parse(source))
+        # Second session
         conv2 = convos[1]
-
-        assert "2025-07-15 15:10:00" in conv2.external_id
         assert conv2.started_at == "2025-07-15T15:10:00"
-        assert len(conv2.prompts) == 1
         assert "fix the bug in auth.py" in conv2.prompts[0].content[0].content["text"]
 
-    def test_parse_empty_file(self, tmp_path):
-        """Parse yields nothing for an empty file."""
-        empty = tmp_path / ".aider.chat.history.md"
+    def test_parse_empty_and_header_only(self, tmp_path):
+        empty = tmp_path / "e.md"
         empty.write_text("")
-        source = Source(kind="file", location=empty)
-        assert list(aider.parse(source)) == []
+        assert list(aider.parse(Source(kind="file", location=empty))) == []
+        header = tmp_path / "h.md"
+        header.write_text("\n# aider chat started at 2025-01-01 00:00:00\n\n")
+        assert list(aider.parse(Source(kind="file", location=header))) == []
 
-    def test_parse_session_with_no_messages(self, tmp_path):
-        """Parse skips sessions that have only a header and no messages."""
-        f = tmp_path / ".aider.chat.history.md"
-        f.write_text("\n# aider chat started at 2025-01-01 00:00:00\n\n")
-        source = Source(kind="file", location=f)
-        assert list(aider.parse(source)) == []
+    def test_parse_token_count_helper(self):
+        for raw, expected in [("4.5k", 4500), ("1.2k", 1200), ("256", 256), ("1.5M", 1_500_000), ("bad", None)]:
+            assert aider._parse_token_count(raw) == expected
 
-    def test_external_id_stable_across_calls(self):
-        """External IDs are deterministic for the same file."""
-        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
-        ids1 = [c.external_id for c in aider.parse(source)]
-        ids2 = [c.external_id for c in aider.parse(source)]
-        assert ids1 == ids2
 
-    @pytest.mark.parametrize(
-        "raw,expected",
-        [
-            ("4.5k", 4500),
-            ("1.2k", 1200),
-            ("256", 256),
-            ("1.5M", 1_500_000),
-            ("bad", None),
-        ],
-        ids=["4.5k", "1.2k", "plain-256", "1.5M", "bad-input"],
-    )
-    def test_parse_token_count_helper(self, raw, expected):
-        """Token count parser handles k/m suffixes."""
-        assert aider._parse_token_count(raw) == expected
+def _vscode_session_dir(tmp_path, fixture, ws="/test/workspace"):
+    """Set up VSCode workspace dir structure with fixture. Returns Source."""
+    import json
+    import shutil
+    h = tmp_path / "hash"
+    cs = h / "chatSessions"
+    cs.mkdir(parents=True)
+    dest = cs / Path(fixture).name
+    shutil.copy(FIXTURES_DIR / fixture, dest)
+    if ws:
+        (h / "workspace.json").write_text(json.dumps({"folder": f"file://{ws}"}))
+    return Source(kind="file", location=dest)
 
 
 class TestVscodeAdapter:
-    """Tests for the VSCode adapter."""
+    def test_can_handle(self):
+        assert vscode.can_handle(Source(kind="file", location=Path("/mock/chatSessions/test.json")))
+        assert vscode.can_handle(Source(kind="file", location=Path("/mock/chatSessions/test.jsonl")))
+        assert not vscode.can_handle(Source(kind="file", location=FIXTURES_DIR / "vscode_minimal.json"))
+        assert not vscode.can_handle(Source(kind="directory", location=Path("/mock/chatSessions")))
 
-    @pytest.fixture
-    def vscode_dir(self, tmp_path):
-        """Set up VSCode workspace directory structure with fixture."""
-        import json
-        import shutil
-
-        hash_dir = tmp_path / "abc123hash"
-        chat_dir = hash_dir / "chatSessions"
-        chat_dir.mkdir(parents=True)
-
-        shutil.copy(FIXTURES_DIR / "vscode_minimal.json", chat_dir / "a1b2c3d4.json")
-
-        workspace_json = hash_dir / "workspace.json"
-        workspace_json.write_text(json.dumps({"folder": "file:///test/workspace"}))
-
-        return Source(kind="file", location=chat_dir / "a1b2c3d4.json")
-
-    def test_can_handle_json_in_chat_sessions(self):
-        """Adapter handles .json files in chatSessions directory."""
-        source = Source(kind="file", location=Path("/mock/chatSessions/test.json"))
-        assert vscode.can_handle(source)
-
-    def test_can_handle_rejects_non_chat_sessions(self):
-        """Adapter rejects json not in chatSessions directory."""
-        source = Source(kind="file", location=FIXTURES_DIR / "vscode_minimal.json")
-        assert not vscode.can_handle(source)
-
-    def test_can_handle_rejects_non_json(self):
-        """Adapter rejects non-json files."""
-        source = Source(kind="file", location=Path("/mock/chatSessions/test.txt"))
-        assert not vscode.can_handle(source)
-
-    def test_can_handle_rejects_non_file(self):
-        """Adapter rejects non-file sources."""
-        source = Source(kind="directory", location=Path("/mock/chatSessions"))
-        assert not vscode.can_handle(source)
-
-    def test_parse_extracts_conversation(self, vscode_dir):
-        """Parse yields a conversation with correct metadata."""
-        convos = list(vscode.parse(vscode_dir))
-        assert len(convos) == 1
-        conv = convos[0]
-
-        assert conv.external_id == "vscode::a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-        assert conv.workspace_path == "/test/workspace"
-        assert conv.harness.name == "vscode"
-        assert conv.harness.source == "multi"
-
-    def test_parse_extracts_timestamps(self, vscode_dir):
-        """Parse converts unix ms timestamps to ISO."""
-        conv = list(vscode.parse(vscode_dir))[0]
-        assert conv.started_at is not None
-        assert "2024-02-15" in conv.started_at
-        assert conv.ended_at is not None
-
-    def test_parse_extracts_prompts_and_responses(self, vscode_dir):
-        """Parse extracts prompts with their responses."""
-        conv = list(vscode.parse(vscode_dir))[0]
+    def test_parse_json_full(self, tmp_path):
+        conv = list(vscode.parse(_vscode_session_dir(tmp_path, "vscode_minimal.json")))[0]
+        assert conv.workspace_path == "/test/workspace" and conv.harness.name == "vscode"
+        assert conv.started_at and "2024-02-15" in conv.started_at and conv.ended_at
         assert len(conv.prompts) == 2
+        assert "read a file" in conv.prompts[0].content[0].content["text"]
+        assert conv.prompts[0].responses[0].model == "gpt-4o"
+        r0_text = [b for b in conv.prompts[0].responses[0].content if b.block_type == "text"]
+        assert r0_text and "open()" in r0_text[0].content["text"]
+        tc = conv.prompts[1].responses[0].tool_calls[0]
+        assert tc.tool_name == "listFiles" and tc.result == {"files": ["README.md", "src/", "tests/"]}
+        assert [b for b in conv.prompts[1].responses[0].content if b.block_type == "text_edit"]
+        assert all(r.usage is None for p in conv.prompts for r in p.responses)
 
-        p0 = conv.prompts[0]
-        assert "read a file" in p0.content[0].content["text"]
-        assert len(p0.responses) == 1
-        assert p0.responses[0].model == "gpt-4o"
+    def test_parse_jsonl_full(self, tmp_path):
+        conv = list(vscode.parse(_vscode_session_dir(tmp_path, "vscode_minimal.jsonl")))[0]
+        assert conv.workspace_path == "/test/workspace" and "2024-02-15" in conv.started_at
+        assert len(conv.prompts) == 2 and conv.prompts[1].responses[0].tool_calls[0].tool_name == "listFiles"
 
-        p1 = conv.prompts[1]
-        assert "List the files" in p1.content[0].content["text"]
-        assert len(p1.responses) == 1
-        assert p1.responses[0].model == "claude-3.5-sonnet"
+    def test_parse_edge_cases(self, tmp_path):
+        # No workspace.json → None
+        cs = tmp_path / "nw" / "chatSessions"
+        cs.mkdir(parents=True)
+        shutil.copy(FIXTURES_DIR / "vscode_minimal.json", cs / "t.json")
+        assert list(vscode.parse(Source(kind="file", location=cs / "t.json")))[0].workspace_path is None
+        # Empty JSON + JSONL → no conversations
+        cs2 = tmp_path / "e" / "chatSessions"
+        cs2.mkdir(parents=True)
+        (cs2 / "e.json").write_text(json.dumps({"version": 3, "sessionId": "e", "creationDate": 1708012345678, "requests": []}))
+        assert list(vscode.parse(Source(kind="file", location=cs2 / "e.json"))) == []
+        (cs2 / "e.jsonl").write_text('{"kind":0,"v":{"version":3,"sessionId":"e","creationDate":1708012345678,"requests":[]}}\n')
+        assert list(vscode.parse(Source(kind="file", location=cs2 / "e.jsonl"))) == []
+        # Structured message
+        (cs2 / "s.json").write_text(json.dumps({"version": 3, "sessionId": "s", "creationDate": 1708012345678,
+            "requests": [{"requestId": "r1", "message": {"text": "Hello"}, "timestamp": 1708012345678,
+                "modelId": "gpt-4o", "response": [{"kind": "markdownContent", "content": {"value": "Hi"}}], "responseId": "r1"}]}))
+        assert list(vscode.parse(Source(kind="file", location=cs2 / "s.json")))
 
-    def test_parse_extracts_markdown_content(self, vscode_dir):
-        """Parse converts markdownContent parts to text blocks."""
-        conv = list(vscode.parse(vscode_dir))[0]
-        response = conv.prompts[0].responses[0]
-        text_blocks = [b for b in response.content if b.block_type == "text"]
-        assert len(text_blocks) == 1
-        assert "open()" in text_blocks[0].content["text"]
-
-    def test_parse_extracts_tool_calls(self, vscode_dir):
-        """Parse extracts tool calls from toolInvocationSerialized parts."""
-        conv = list(vscode.parse(vscode_dir))[0]
-        response = conv.prompts[1].responses[0]
-        assert len(response.tool_calls) == 1
-
-        tc = response.tool_calls[0]
-        assert tc.tool_name == "listFiles"
-        assert tc.input == {"path": "."}
-        assert tc.result == {"files": ["README.md", "src/", "tests/"]}
-        assert tc.status == "success"
-
-    def test_parse_extracts_text_edit_blocks(self, vscode_dir):
-        """Parse preserves textEditGroup as content blocks."""
-        conv = list(vscode.parse(vscode_dir))[0]
-        response = conv.prompts[1].responses[0]
-        edit_blocks = [b for b in response.content if b.block_type == "text_edit"]
-        assert len(edit_blocks) == 1
-
-    def test_parse_no_usage(self, vscode_dir):
-        """Parse sets usage to None (not available in VSCode format)."""
-        conv = list(vscode.parse(vscode_dir))[0]
-        for prompt in conv.prompts:
-            for response in prompt.responses:
-                assert response.usage is None
-
-    def test_parse_workspace_missing_workspace_json(self, tmp_path):
-        """Parse sets workspace_path=None when workspace.json missing."""
-        import shutil
-
-        hash_dir = tmp_path / "nohash"
-        chat_dir = hash_dir / "chatSessions"
-        chat_dir.mkdir(parents=True)
-        shutil.copy(FIXTURES_DIR / "vscode_minimal.json", chat_dir / "test.json")
-
-        source = Source(kind="file", location=chat_dir / "test.json")
-        conv = list(vscode.parse(source))[0]
-        assert conv.workspace_path is None
-
-    def test_parse_empty_requests(self, tmp_path):
-        """Parse yields nothing for session with no requests."""
-        import json
-
-        hash_dir = tmp_path / "empty"
-        chat_dir = hash_dir / "chatSessions"
-        chat_dir.mkdir(parents=True)
-
-        session = {"version": 3, "sessionId": "empty-1", "creationDate": 1708012345678, "requests": []}
-        (chat_dir / "empty.json").write_text(json.dumps(session))
-
-        source = Source(kind="file", location=chat_dir / "empty.json")
-        assert list(vscode.parse(source)) == []
-
-    def test_parse_structured_message(self, tmp_path):
-        """Parse handles structured message objects (IParsedChatRequest)."""
-        import json
-
-        hash_dir = tmp_path / "structured"
-        chat_dir = hash_dir / "chatSessions"
-        chat_dir.mkdir(parents=True)
-
-        session = {
-            "version": 3,
-            "sessionId": "struct-1",
-            "creationDate": 1708012345678,
-            "requests": [{
-                "requestId": "r1",
-                "message": {"text": "Hello from structured"},
-                "variableData": {},
-                "timestamp": 1708012345678,
-                "modelId": "gpt-4o",
-                "response": [{"kind": "markdownContent", "content": {"value": "Hi"}}],
-                "responseId": "resp-1",
-            }],
-        }
-        (chat_dir / "struct.json").write_text(json.dumps(session))
-
-        source = Source(kind="file", location=chat_dir / "struct.json")
-        conv = list(vscode.parse(source))[0]
-        assert "Hello from structured" in conv.prompts[0].content[0].content["text"]
-
-
-class TestVscodeAdapterJsonl:
-    """Tests for VSCode adapter JSONL (patch-based) format."""
-
-    @pytest.fixture
-    def vscode_jsonl_dir(self, tmp_path):
-        """Set up VSCode workspace directory structure with JSONL fixture."""
-        import json
-        import shutil
-
-        hash_dir = tmp_path / "abc123hash"
-        chat_dir = hash_dir / "chatSessions"
-        chat_dir.mkdir(parents=True)
-
-        shutil.copy(FIXTURES_DIR / "vscode_minimal.jsonl", chat_dir / "session.jsonl")
-
-        workspace_json = hash_dir / "workspace.json"
-        workspace_json.write_text(json.dumps({"folder": "file:///test/workspace"}))
-
-        return Source(kind="file", location=chat_dir / "session.jsonl")
-
-    def test_can_handle_jsonl_in_chat_sessions(self):
-        """Adapter handles .jsonl files in chatSessions directory."""
-        source = Source(kind="file", location=Path("/mock/chatSessions/test.jsonl"))
-        assert vscode.can_handle(source)
-
-    def test_can_handle_rejects_jsonl_outside_chat_sessions(self):
-        """Adapter rejects .jsonl not in chatSessions directory."""
-        source = Source(kind="file", location=FIXTURES_DIR / "vscode_minimal.jsonl")
-        assert not vscode.can_handle(source)
-
-    def test_parse_jsonl_extracts_conversation(self, vscode_jsonl_dir):
-        """Parse reconstructs conversation from JSONL patches."""
-        convos = list(vscode.parse(vscode_jsonl_dir))
-        assert len(convos) == 1
-        conv = convos[0]
-
-        assert conv.external_id == "vscode::jsonl-session-1234"
-        assert conv.workspace_path == "/test/workspace"
-        assert conv.harness.name == "vscode"
-
-    def test_parse_jsonl_extracts_timestamps(self, vscode_jsonl_dir):
-        """JSONL parse converts unix ms timestamps to ISO."""
-        conv = list(vscode.parse(vscode_jsonl_dir))[0]
-        assert conv.started_at is not None
-        assert "2024-02-15" in conv.started_at
-        assert conv.ended_at is not None
-
-    def test_parse_jsonl_extracts_prompts(self, vscode_jsonl_dir):
-        """JSONL parse reconstructs prompts from appended requests."""
-        conv = list(vscode.parse(vscode_jsonl_dir))[0]
-        assert len(conv.prompts) == 2
-
-        p0 = conv.prompts[0]
-        assert "read a file" in p0.content[0].content["text"]
-        assert p0.responses[0].model == "gpt-4o"
-
-        p1 = conv.prompts[1]
-        assert "List the files" in p1.content[0].content["text"]
-        assert p1.responses[0].model == "claude-3.5-sonnet"
-
-    def test_parse_jsonl_appends_response_parts(self, vscode_jsonl_dir):
-        """JSONL parse accumulates response parts from multiple patches."""
-        conv = list(vscode.parse(vscode_jsonl_dir))[0]
-
-        # First request: initial mcpServersStarting + appended markdownContent
-        r0 = conv.prompts[0].responses[0]
-        text_blocks = [b for b in r0.content if b.block_type == "text"]
-        assert len(text_blocks) == 1
-        assert "open()" in text_blocks[0].content["text"]
-
-    def test_parse_jsonl_extracts_tool_calls(self, vscode_jsonl_dir):
-        """JSONL parse extracts tool calls from appended response parts."""
-        conv = list(vscode.parse(vscode_jsonl_dir))[0]
-        r1 = conv.prompts[1].responses[0]
-        assert len(r1.tool_calls) == 1
-
-        tc = r1.tool_calls[0]
-        assert tc.tool_name == "listFiles"
-        assert tc.input == {"path": "."}
-        assert tc.result == {"files": ["README.md", "src/"]}
-
-    def test_parse_jsonl_empty_session(self, tmp_path):
-        """JSONL with no requests yields nothing."""
-        hash_dir = tmp_path / "empty"
-        chat_dir = hash_dir / "chatSessions"
-        chat_dir.mkdir(parents=True)
-
-        content = '{"kind":0,"v":{"version":3,"sessionId":"empty","creationDate":1708012345678,"requests":[]}}\n'
-        (chat_dir / "empty.jsonl").write_text(content)
-
-        source = Source(kind="file", location=chat_dir / "empty.jsonl")
-        assert list(vscode.parse(source)) == []
-
-    def test_replay_set_at_path(self):
-        """_set_at_path sets nested values correctly."""
+    def test_replay_path_helpers(self):
         obj = {"requests": [{"response": [], "result": None}]}
         vscode._set_at_path(obj, ["requests", 0, "result"], {"ok": True})
         assert obj["requests"][0]["result"] == {"ok": True}
-
-    def test_replay_append_at_path(self):
-        """_append_at_path extends arrays correctly."""
-        obj = {"requests": [{"response": []}]}
         vscode._append_at_path(obj, ["requests", 0, "response"], [{"kind": "text"}])
         assert len(obj["requests"][0]["response"]) == 1
-
-    def test_replay_append_to_root_array(self):
-        """_append_at_path works for top-level arrays like requests."""
-        obj = {"requests": []}
-        vscode._append_at_path(obj, ["requests"], [{"requestId": "r1"}])
-        assert len(obj["requests"]) == 1
-        assert obj["requests"][0]["requestId"] == "r1"
-
-    def test_replay_set_invalid_path_is_noop(self):
-        """_set_at_path silently ignores invalid paths."""
-        obj = {"requests": []}
-        vscode._set_at_path(obj, ["requests", 99, "result"], "value")
-        assert obj == {"requests": []}
+        obj2 = {"requests": []}
+        vscode._append_at_path(obj2, ["requests"], [{"id": "r1"}])
+        assert len(obj2["requests"]) == 1
+        vscode._set_at_path(obj2, ["requests", 99, "result"], "v")  # noop
+        assert len(obj2["requests"]) == 1
 
 
 class TestPiAgentAdapter:
-    """Tests for the Pi Coding Agent adapter."""
 
-    @pytest.fixture
-    def pi_source(self, tmp_path):
-        """Copy Pi Agent fixture to a path with .pi/agent/sessions in it."""
-        sessions_dir = tmp_path / ".pi" / "agent" / "sessions" / "--test--"
-        sessions_dir.mkdir(parents=True)
-        dest = sessions_dir / "20240310_test.jsonl"
-        dest.write_text((FIXTURES_DIR / "pi_agent_minimal.jsonl").read_text())
-        return Source(kind="file", location=dest)
+    def test_can_handle(self):
+        assert pi_agent.can_handle(Source(kind="file", location=Path("/mock/.pi/agent/sessions/test.jsonl")))
+        assert not pi_agent.can_handle(Source(kind="file", location=FIXTURES_DIR / "pi_agent_minimal.jsonl"))
+        assert not pi_agent.can_handle(Source(kind="directory", location=Path("/mock/.pi/agent/sessions")))
 
-    def test_can_handle_jsonl_in_pi_sessions(self):
-        """Adapter handles .jsonl files in .pi/agent/sessions path."""
-        source = Source(kind="file", location=Path("/mock/.pi/agent/sessions/test.jsonl"))
-        assert pi_agent.can_handle(source)
-
-    def test_can_handle_rejects_non_pi_path(self):
-        """Adapter rejects jsonl not in .pi/agent/sessions path."""
-        source = Source(kind="file", location=FIXTURES_DIR / "pi_agent_minimal.jsonl")
-        assert not pi_agent.can_handle(source)
-
-    def test_can_handle_rejects_non_jsonl(self):
-        """Adapter rejects non-jsonl files."""
-        source = Source(kind="file", location=Path("/mock/.pi/agent/sessions/test.json"))
-        assert not pi_agent.can_handle(source)
-
-    def test_can_handle_rejects_non_file(self):
-        """Adapter rejects non-file sources."""
-        source = Source(kind="directory", location=Path("/mock/.pi/agent/sessions"))
-        assert not pi_agent.can_handle(source)
-
-    def test_parse_extracts_conversation(self, pi_source):
-        """Parse yields a conversation with correct metadata."""
-        convos = list(pi_agent.parse(pi_source))
-
-        assert len(convos) == 1
-        conv = convos[0]
-
-        assert conv.external_id == "pi_agent::pi-session-001"
-        assert conv.workspace_path == "/test/workspace"
-        assert conv.harness.name == "pi_agent"
-        assert conv.harness.source == "multi"
-
-    def test_parse_extracts_prompts_and_responses(self, pi_source):
-        """Parse extracts prompts with their responses."""
+    def test_parse_full(self, tmp_path):
+        pi_source = _fixture_source(tmp_path, "pi_agent_minimal.jsonl", ".pi/agent/sessions/--test--")
+        """Parse extracts conversation with metadata, prompts, tools, usage."""
         conv = list(pi_agent.parse(pi_source))[0]
-
+        assert conv.external_id == "pi_agent::pi-session-001" and conv.workspace_path == "/test/workspace"
+        assert conv.harness.name == "pi_agent" and conv.harness.source == "multi"
         assert len(conv.prompts) == 1
-
         prompt = conv.prompts[0]
-        assert len(prompt.content) == 1
-        assert "Read the README" in prompt.content[0].content.get("text", "")
-
-        # Should have 2 responses (one with tool call, one final)
+        assert "Read the README" in prompt.content[0].content["text"]
         assert len(prompt.responses) == 2
-
-    def test_parse_extracts_tool_calls(self, pi_source):
-        """Parse extracts tool calls with results."""
-        conv = list(pi_agent.parse(pi_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert len(response.tool_calls) == 1
-
-        tool_call = response.tool_calls[0]
-        assert tool_call.tool_name == "Read"
-        assert tool_call.input.get("file_path") == "/test/workspace/README.md"
-        assert tool_call.status == "success"
-        assert "Test Project" in str(tool_call.result)
-
-    def test_parse_extracts_usage(self, pi_source):
-        """Parse extracts token usage."""
-        conv = list(pi_agent.parse(pi_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert response.usage is not None
-        assert response.usage.input_tokens == 500
-        assert response.usage.output_tokens == 120
-
-    def test_parse_extracts_cache_tokens(self, pi_source):
-        """Parse extracts cache token attributes."""
-        conv = list(pi_agent.parse(pi_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert response.attributes.get("cache_read_input_tokens") == "50"
-        assert response.attributes.get("cache_creation_input_tokens") == "10"
-
-    def test_parse_extracts_cost(self, pi_source):
-        """Parse extracts cost as attribute."""
-        conv = list(pi_agent.parse(pi_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert response.attributes.get("cost") == "0.0111"
-
-    def test_parse_extracts_thinking(self, pi_source):
-        """Parse extracts thinking blocks."""
-        conv = list(pi_agent.parse(pi_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        thinking_blocks = [b for b in response.content if b.block_type == "thinking"]
-        assert len(thinking_blocks) == 1
-        assert "README" in thinking_blocks[0].content.get("text", "")
-
-    def test_parse_extracts_model(self, pi_source):
-        """Parse extracts model from model_change event."""
-        conv = list(pi_agent.parse(pi_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert response.model == "claude-opus-4-6"
+        tc = prompt.responses[0].tool_calls[0]
+        assert tc.tool_name == "Read" and tc.status == "success" and "Test Project" in str(tc.result)
+        resp = conv.prompts[0].responses[0]
+        assert resp.usage.input_tokens == 500 and resp.usage.output_tokens == 120
+        assert resp.attributes["cache_read_input_tokens"] == "50"
+        assert resp.attributes["cache_creation_input_tokens"] == "10"
+        assert resp.attributes["cost"] == "0.0111"
+        assert resp.model == "claude-opus-4-6"
+        thinking = [b for b in resp.content if b.block_type == "thinking"]
+        assert thinking and "README" in thinking[0].content["text"]
 
     def test_parse_empty_file(self, tmp_path):
-        """Parse yields nothing for an empty file."""
         sessions_dir = tmp_path / ".pi" / "agent" / "sessions"
         sessions_dir.mkdir(parents=True)
-        empty = sessions_dir / "empty.jsonl"
-        empty.write_text("")
-        source = Source(kind="file", location=empty)
-        assert list(pi_agent.parse(source)) == []
+        (sessions_dir / "empty.jsonl").write_text("")
+        assert list(pi_agent.parse(Source(kind="file", location=sessions_dir / "empty.jsonl"))) == []
+
+
+def _make_opencode_db(path, sessions=None):
+    """Create an OpenCode SQLite test database. Returns Source."""
+    import json
+    import sqlite3
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE session (id TEXT, project_id TEXT, directory TEXT, title TEXT, version INTEGER, time_created INTEGER, time_updated INTEGER)")
+    conn.execute("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)")
+    conn.execute("CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)")
+    if sessions:
+        for s in sessions:
+            conn.execute("INSERT INTO session VALUES (?,?,?,?,?,?,?)", s["session"])
+            for m in s.get("messages", []):
+                conn.execute("INSERT INTO message VALUES (?,?,?,?,?)", (m["id"], s["session"][0], m["ts"], m["ts"], json.dumps(m["data"])))
+                for p in m.get("parts", []):
+                    conn.execute("INSERT INTO part VALUES (?,?,?,?,?,?)", (p["id"], m["id"], s["session"][0], p.get("ts", m["ts"]), p.get("ts", m["ts"]), json.dumps(p["data"])))
+    conn.commit()
+    conn.close()
+    return Source(kind="sqlite", location=path)
 
 
 class TestOpenCodeAdapter:
-    """Tests for the OpenCode adapter."""
-
     @pytest.fixture
     def opencode_source(self, tmp_path):
-        """Create a minimal OpenCode SQLite database for testing."""
-        import json
-        import sqlite3
+        return _make_opencode_db(tmp_path / "opencode.db", sessions=[{
+            "session": ("ses_001", "proj_001", "/test/workspace", "Test", 1, 1710079200000, 1710079260000),
+            "messages": [
+                {"id": "m1", "ts": 1710079210000, "data": {"role": "user", "summary": {"title": "Run the tests"}},
+                 "parts": [{"id": "p1", "data": {"type": "text", "text": "Run the tests please"}}]},
+                {"id": "m2", "ts": 1710079220000, "data": {"role": "assistant", "modelID": "claude-3-opus-20240229",
+                    "providerID": "anthropic", "cost": 0.025,
+                    "tokens": {"total": 680, "input": 500, "output": 120, "reasoning": 60, "cache": {"read": 50, "write": 10}},
+                    "finish": "tool-calls"},
+                 "parts": [
+                    {"id": "p2", "data": {"type": "text", "text": "I'll run the tests for you."}},
+                    {"id": "p3", "ts": 1710079225000, "data": {"type": "tool", "callID": "c1", "tool": "bash",
+                        "state": {"status": "completed", "input": {"command": "pytest"}, "output": "5 passed, 0 failed",
+                            "time": {"start": 1710079225000, "end": 1710079228000}}}}]}]}])
 
-        db_path = tmp_path / "opencode.db"
-        conn = sqlite3.connect(str(db_path))
+    def test_can_handle(self):
+        assert opencode.can_handle(Source(kind="sqlite", location=Path("/mock/opencode.db")))
+        assert not opencode.can_handle(Source(kind="sqlite", location=Path("/mock/other.db")))
+        assert not opencode.can_handle(Source(kind="file", location=Path("/mock/opencode.db")))
 
-        conn.execute("""CREATE TABLE session (
-            id TEXT PRIMARY KEY,
-            project_id TEXT,
-            directory TEXT,
-            title TEXT,
-            version INTEGER,
-            time_created INTEGER,
-            time_updated INTEGER
-        )""")
-        conn.execute("""CREATE TABLE message (
-            id TEXT PRIMARY KEY,
-            session_id TEXT,
-            time_created INTEGER,
-            time_updated INTEGER,
-            data TEXT
-        )""")
-        conn.execute("""CREATE TABLE part (
-            id TEXT PRIMARY KEY,
-            message_id TEXT,
-            session_id TEXT,
-            time_created INTEGER,
-            time_updated INTEGER,
-            data TEXT
-        )""")
-
-        # Insert session
-        conn.execute(
-            "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("ses_001", "proj_001", "/test/workspace", "Test Session", 1, 1710079200000, 1710079260000),
-        )
-
-        # Insert user message
-        user_data = json.dumps({
-            "role": "user",
-            "time": {"created": 1710079210000},
-            "summary": {"title": "Run the tests"},
-        })
-        conn.execute(
-            "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
-            ("msg_001", "ses_001", 1710079210000, 1710079210000, user_data),
-        )
-
-        # Insert user part (text)
-        user_part_data = json.dumps({"type": "text", "text": "Run the tests please"})
-        conn.execute(
-            "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)",
-            ("part_001", "msg_001", "ses_001", 1710079210000, 1710079210000, user_part_data),
-        )
-
-        # Insert assistant message
-        assistant_data = json.dumps({
-            "role": "assistant",
-            "time": {"created": 1710079220000, "completed": 1710079230000},
-            "modelID": "claude-3-opus-20240229",
-            "providerID": "anthropic",
-            "cost": 0.025,
-            "tokens": {"total": 680, "input": 500, "output": 120, "reasoning": 60,
-                       "cache": {"read": 50, "write": 10}},
-            "finish": "tool-calls",
-        })
-        conn.execute(
-            "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
-            ("msg_002", "ses_001", 1710079220000, 1710079230000, assistant_data),
-        )
-
-        # Insert assistant text part
-        text_part_data = json.dumps({"type": "text", "text": "I'll run the tests for you."})
-        conn.execute(
-            "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)",
-            ("part_002", "msg_002", "ses_001", 1710079220000, 1710079220000, text_part_data),
-        )
-
-        # Insert assistant tool part
-        tool_part_data = json.dumps({
-            "type": "tool",
-            "callID": "call-001",
-            "tool": "bash",
-            "state": {
-                "status": "completed",
-                "input": {"command": "pytest", "description": "Run tests"},
-                "output": "5 passed, 0 failed",
-                "title": "Run tests",
-                "time": {"start": 1710079225000, "end": 1710079228000},
-            },
-        })
-        conn.execute(
-            "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)",
-            ("part_003", "msg_002", "ses_001", 1710079225000, 1710079228000, tool_part_data),
-        )
-
-        conn.commit()
-        conn.close()
-
-        return Source(kind="sqlite", location=db_path)
-
-    def test_can_handle_sqlite(self):
-        """Adapter handles opencode.db SQLite sources."""
-        source = Source(kind="sqlite", location=Path("/mock/opencode.db"))
-        assert opencode.can_handle(source)
-
-    def test_can_handle_rejects_other_db(self):
-        """Adapter rejects non-opencode SQLite databases."""
-        source = Source(kind="sqlite", location=Path("/mock/other.db"))
-        assert not opencode.can_handle(source)
-
-    def test_can_handle_rejects_non_sqlite(self):
-        """Adapter rejects non-sqlite sources."""
-        source = Source(kind="file", location=Path("/mock/opencode.db"))
-        assert not opencode.can_handle(source)
-
-    def test_parse_extracts_conversation(self, opencode_source):
-        """Parse yields a conversation with correct metadata."""
-        convos = list(opencode.parse(opencode_source))
-
-        assert len(convos) == 1
-        conv = convos[0]
-
-        assert conv.external_id == "opencode::ses_001"
-        assert conv.workspace_path == "/test/workspace"
-        assert conv.harness.name == "opencode"
-        assert conv.harness.source == "multi"
-
-    def test_parse_extracts_timestamps(self, opencode_source):
-        """Parse converts epoch ms to ISO timestamps."""
+    def test_parse_full(self, opencode_source):
         conv = list(opencode.parse(opencode_source))[0]
-        assert conv.started_at is not None
-        assert "2024-03-10" in conv.started_at
-
-    def test_parse_extracts_prompts_and_responses(self, opencode_source):
-        """Parse extracts prompts with their responses."""
-        conv = list(opencode.parse(opencode_source))[0]
-
+        assert conv.external_id == "opencode::ses_001" and conv.workspace_path == "/test/workspace"
+        assert conv.harness.name == "opencode" and "2024-03-10" in conv.started_at
         assert len(conv.prompts) == 1
-
         prompt = conv.prompts[0]
-        assert len(prompt.content) == 1
-        assert "Run the tests" in prompt.content[0].content.get("text", "")
+        assert "Run the tests" in prompt.content[0].content["text"]
+        resp = prompt.responses[0]
+        assert resp.model == "claude-3-opus-20240229"
+        assert resp.usage.input_tokens == 500 and resp.usage.output_tokens == 120
+        assert resp.attributes["cost"] == "0.025"
+        assert resp.attributes["cache_read_input_tokens"] == "50"
+        assert resp.attributes["cache_creation_input_tokens"] == "10"
+        tc = resp.tool_calls[0]
+        assert tc.tool_name == "bash" and tc.status == "success" and "5 passed" in str(tc.result)
 
-        assert len(prompt.responses) == 1
+    def test_parse_empty_and_edge_cases(self, tmp_path):
+        # Empty DB
+        assert list(opencode.parse(_make_opencode_db(tmp_path / "empty.db"))) == []
+        assert list(opencode.parse(Source(kind="sqlite", location=tmp_path / "nope.db"))) == []
+        # Summary fallback, reasoning, step markers, error tool with non-dict input
+        src = _make_opencode_db(tmp_path / "edge.db", sessions=[{
+            "session": ("s2", "p2", "/ws", "Test", 1, 1710079200000, 1710079260000),
+            "messages": [
+                {"id": "m1", "ts": 1710079210000, "data": {"role": "user", "summary": {"title": "Do something"}}},
+                {"id": "m2", "ts": 1710079220000, "data": {"role": "assistant", "modelID": "gpt-4", "tokens": {"input": 10, "output": 5}},
+                 "parts": [
+                    {"id": "p1", "data": {"type": "reasoning", "text": "thinking..."}},
+                    {"id": "p2", "ts": 1710079221000, "data": {"type": "step-start"}},
+                    {"id": "p3", "ts": 1710079222000, "data": {"type": "tool", "callID": "c1", "tool": "bash",
+                        "state": {"status": "error", "input": "raw-string", "output": "fail",
+                            "time": {"start": 1710079222000, "end": 1710079223000}}}}]}]}])
+        conv = list(opencode.parse(src))[0]
+        assert "Do something" in conv.prompts[0].content[0].content["text"]
+        thinking = [b for b in conv.prompts[0].responses[0].content if b.block_type == "thinking"]
+        assert thinking and "thinking" in thinking[0].content["text"]
+        assert conv.prompts[0].responses[0].tool_calls[0].status == "error"
 
-    def test_parse_extracts_tool_calls(self, opencode_source):
-        """Parse extracts tool calls from tool parts."""
-        conv = list(opencode.parse(opencode_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert len(response.tool_calls) == 1
-
-        tool_call = response.tool_calls[0]
-        assert tool_call.tool_name == "bash"
-        assert tool_call.input.get("command") == "pytest"
-        assert tool_call.status == "success"
-        assert "5 passed" in str(tool_call.result)
-
-    def test_parse_extracts_usage(self, opencode_source):
-        """Parse extracts token usage."""
-        conv = list(opencode.parse(opencode_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert response.usage is not None
-        assert response.usage.input_tokens == 500
-        assert response.usage.output_tokens == 120
-
-    def test_parse_extracts_cache_tokens(self, opencode_source):
-        """Parse extracts cache token attributes."""
-        conv = list(opencode.parse(opencode_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert response.attributes.get("cache_read_input_tokens") == "50"
-        assert response.attributes.get("cache_creation_input_tokens") == "10"
-
-    def test_parse_extracts_cost(self, opencode_source):
-        """Parse extracts cost as attribute."""
-        conv = list(opencode.parse(opencode_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert response.attributes.get("cost") == "0.025"
-
-    def test_parse_extracts_model(self, opencode_source):
-        """Parse extracts model from message data."""
-        conv = list(opencode.parse(opencode_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert response.model == "claude-3-opus-20240229"
-
-    def test_parse_empty_db(self, tmp_path):
-        """Parse yields nothing for an empty database."""
-        import sqlite3
-
-        db_path = tmp_path / "opencode.db"
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT, version INTEGER, time_created INTEGER, time_updated INTEGER)")
-        conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)")
-        conn.execute("CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)")
-        conn.commit()
-        conn.close()
-
-        source = Source(kind="sqlite", location=db_path)
-        assert list(opencode.parse(source)) == []
+    def test_discover(self, tmp_path):
+        d = tmp_path / "opencode"
+        d.mkdir()
+        sqlite3.connect(str(d / "opencode.db")).close()
+        assert list(opencode.discover(locations=[str(d)])) and list(opencode.discover(locations=[str(tmp_path / "nope")])) == []
 
 
 class TestCopilotCliAdapter:
-    """Tests for the Copilot CLI adapter."""
 
-    @pytest.fixture
-    def copilot_source(self, tmp_path):
-        """Copy Copilot CLI fixture to a path with .copilot/session-state in it."""
-        session_dir = tmp_path / ".copilot" / "session-state" / "test-uuid"
-        session_dir.mkdir(parents=True)
-        dest = session_dir / "events.jsonl"
-        dest.write_text((FIXTURES_DIR / "copilot_cli_minimal.jsonl").read_text())
-        return Source(kind="file", location=dest)
+    def test_can_handle(self):
+        assert copilot_cli.can_handle(Source(kind="file", location=Path("/mock/.copilot/session-state/uuid/events.jsonl")))
+        assert not copilot_cli.can_handle(Source(kind="file", location=FIXTURES_DIR / "copilot_cli_minimal.jsonl"))
+        assert not copilot_cli.can_handle(Source(kind="directory", location=Path("/mock/.copilot/session-state")))
 
-    def test_can_handle_events_jsonl_in_session_state(self):
-        """Adapter handles events.jsonl files in .copilot/session-state path."""
-        source = Source(kind="file", location=Path("/mock/.copilot/session-state/uuid/events.jsonl"))
-        assert copilot_cli.can_handle(source)
-
-    def test_can_handle_rejects_non_copilot_path(self):
-        """Adapter rejects events.jsonl not in .copilot/session-state path."""
-        source = Source(kind="file", location=FIXTURES_DIR / "copilot_cli_minimal.jsonl")
-        assert not copilot_cli.can_handle(source)
-
-    def test_can_handle_rejects_non_events_file(self):
-        """Adapter rejects non-events.jsonl files even in correct path."""
-        source = Source(kind="file", location=Path("/mock/.copilot/session-state/uuid/other.jsonl"))
-        assert not copilot_cli.can_handle(source)
-
-    def test_can_handle_rejects_non_file(self):
-        """Adapter rejects non-file sources."""
-        source = Source(kind="directory", location=Path("/mock/.copilot/session-state"))
-        assert not copilot_cli.can_handle(source)
-
-    def test_parse_extracts_conversation(self, copilot_source):
-        """Parse yields a conversation with correct metadata."""
-        convos = list(copilot_cli.parse(copilot_source))
-
-        assert len(convos) == 1
-        conv = convos[0]
-
-        assert conv.external_id == "copilot_cli::copilot-session-001"
-        assert conv.workspace_path == "/test/workspace"
-        assert conv.harness.name == "copilot_cli"
-        assert conv.harness.source == "multi"
-
-    def test_parse_extracts_branch(self, copilot_source):
-        """Parse extracts branch from session.start context."""
+    def test_parse_full(self, tmp_path):
+        copilot_source = _fixture_source(tmp_path, "copilot_cli_minimal.jsonl", ".copilot/session-state/test-uuid", "events.jsonl")
+        """Parse extracts conversation with metadata, prompts, tools, reasoning."""
         conv = list(copilot_cli.parse(copilot_source))[0]
-        assert conv.branch == "main"
-
-    def test_parse_extracts_prompts_and_responses(self, copilot_source):
-        """Parse extracts prompts with their responses."""
-        conv = list(copilot_cli.parse(copilot_source))[0]
-
+        assert conv.external_id == "copilot_cli::copilot-session-001" and conv.workspace_path == "/test/workspace"
+        assert conv.branch == "main" and conv.harness.name == "copilot_cli"
         assert len(conv.prompts) == 1
-
         prompt = conv.prompts[0]
-        assert len(prompt.content) == 1
-        assert "List the files" in prompt.content[0].content.get("text", "")
+        assert "List the files" in prompt.content[0].content["text"] and len(prompt.responses) == 2
+        tc = prompt.responses[0].tool_calls[0]
+        assert tc.tool_name == "bash" and tc.status == "success" and "README.md" in str(tc.result)
 
-        # Should have 2 responses (one with tool call, one final)
-        assert len(prompt.responses) == 2
-
-    def test_parse_extracts_tool_calls(self, copilot_source):
-        """Parse extracts tool calls with results."""
+    def test_parse_reasoning_model_usage(self, tmp_path):
+        copilot_source = _fixture_source(tmp_path, "copilot_cli_minimal.jsonl", ".copilot/session-state/uuid2", "events.jsonl")
         conv = list(copilot_cli.parse(copilot_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert len(response.tool_calls) == 1
-
-        tool_call = response.tool_calls[0]
-        assert tool_call.tool_name == "bash"
-        assert tool_call.input.get("command") == "ls -la"
-        assert tool_call.status == "success"
-        assert "README.md" in str(tool_call.result)
-
-    def test_parse_extracts_reasoning(self, copilot_source):
-        """Parse extracts reasoning text as thinking blocks."""
-        conv = list(copilot_cli.parse(copilot_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        thinking_blocks = [b for b in response.content if b.block_type == "thinking"]
-        assert len(thinking_blocks) == 1
-        assert "files" in thinking_blocks[0].content.get("text", "").lower()
-
-    def test_parse_extracts_model(self, copilot_source):
-        """Parse extracts model from session.model_change event."""
-        conv = list(copilot_cli.parse(copilot_source))[0]
-
-        response = conv.prompts[0].responses[0]
-        assert response.model == "claude-haiku-4.5"
-
-    def test_parse_no_usage(self, copilot_source):
-        """Parse sets usage to None (not available in Copilot CLI format)."""
-        conv = list(copilot_cli.parse(copilot_source))[0]
-        for prompt in conv.prompts:
-            for response in prompt.responses:
-                assert response.usage is None
+        resp = conv.prompts[0].responses[0]
+        thinking = [b for b in resp.content if b.block_type == "thinking"]
+        assert thinking and "files" in thinking[0].content["text"].lower()
+        assert resp.model == "claude-haiku-4.5"
+        assert all(r.usage is None for p in conv.prompts for r in p.responses)
 
     def test_parse_empty_file(self, tmp_path):
-        """Parse yields nothing for an empty file."""
-        session_dir = tmp_path / ".copilot" / "session-state" / "uuid"
-        session_dir.mkdir(parents=True)
-        empty = session_dir / "events.jsonl"
-        empty.write_text("")
-        source = Source(kind="file", location=empty)
-        assert list(copilot_cli.parse(source)) == []
+        d = tmp_path / ".copilot" / "session-state" / "uuid"
+        d.mkdir(parents=True)
+        (d / "events.jsonl").write_text("")
+        assert list(copilot_cli.parse(Source(kind="file", location=d / "events.jsonl"))) == []
+
+
+# =============================================================================
+# SDK utility + peek tests
+# =============================================================================
+
+
+class TestSDK:
+    def test_discover_and_build(self, tmp_path):
+        d = tmp_path / "logs"
+        d.mkdir()
+        for name in ("a.jsonl", "b.jsonl"):
+            (d / name).write_text("{}\n")
+        assert len(list(sdk.discover_files(None, [str(d)], ["*.jsonl"]))) == 2
+        assert list(sdk.discover_files(None, ["/nonexistent"], ["*.jsonl"])) == []
+        h = sdk.build_harness("test", "src", "jsonl")
+        assert h.display_name == "Test" and h.name == "test"
+        assert sdk.build_harness("t", "s", "j", display_name="X").display_name == "X"
+
+    def test_timestamp_bounds_and_load_jsonl(self, tmp_path):
+        assert sdk.timestamp_bounds([{"timestamp": "C"}, {"timestamp": "A"}]) == ("A", "C")
+        assert sdk.timestamp_bounds([]) == (None, None)
+        f = tmp_path / "data.jsonl"
+        f.write_text('{"a":1}\nbad\n{"b":2}\n\n')
+        records, errors = sdk.load_jsonl(f)
+        assert len(records) == 2 and len(errors) == 1 and errors[0].line_number == 2
+
+    def test_tool_call_linker_and_flush(self):
+        linker = sdk.ToolCallLinker()
+        linker.add_use("t1", name="file.read")
+        linker.add_use("t2", name="shell")
+        linker.add_result("t1", content="data")
+        pairs = linker.get_pairs()
+        assert len(pairs) == 2 and pairs[0][2] is not None and pairs[1][2] is None
+        assert len(linker.pending_uses()) == 1
+        # flush_pending_calls
+        resp = Response(timestamp="T1")
+        sdk.flush_pending_calls({"c1": (resp, "sh", {"cmd": "ls"}), "c2": (resp, "t", "raw")})
+        assert len(resp.tool_calls) == 2 and all(tc.status == "pending" for tc in resp.tool_calls)
+        assert resp.tool_calls[1].input == {"raw": "raw"}
+
+    def test_seek_last_lines(self, tmp_path):
+        (tmp_path / "s.txt").write_text("a\nb\nc\n")
+        assert sdk.seek_last_lines(tmp_path / "s.txt", 2) == ["b", "c"]
+        assert sdk.seek_last_lines(tmp_path / "nope.txt", 5) == []
+        (tmp_path / "e.txt").write_text("")
+        assert sdk.seek_last_lines(tmp_path / "e.txt", 5) == []
+        (tmp_path / "big.txt").write_text("\n".join(f"line {i}" for i in range(5000)) + "\n")
+        assert len(sdk.seek_last_lines(tmp_path / "big.txt", 5, chunk_size=256)) == 5
+        assert sdk.seek_last_lines(tmp_path / "big.txt", 5, chunk_size=256)[-1] == "line 4999"
+        assert len(sdk.seek_last_lines(tmp_path / "big.txt", 10000, chunk_size=256)) == 5000
+
+    def test_text_helpers(self):
+        blocks = [{"type": "text", "text": "hi"}, {"type": "image"}, {"type": "tool_use", "name": "f"},
+                  {"type": "tool_result"}, {"type": "thinking", "thinking": "hmm"}, {"type": "other"}, "str"]
+        r = sdk.extract_text_with_placeholders(blocks)
+        assert all(s in r for s in ["hi", "[image]", "[tool: f]", "[tool result]", "[thinking]"])
+        assert "[thinking] hmm" in sdk.extract_text_with_placeholders(blocks, include_thinking=True)
+        assert "[thinking] t" in sdk.extract_text_with_placeholders([{"type": "thinking", "text": "t"}], include_thinking=True)
+        assert sdk.extract_text_with_placeholders([{"type": "thinking"}], include_thinking=True) == "[thinking]"
+        assert sdk.extract_text_with_placeholders([]) is None
+        assert sdk._is_tool_placeholder_only("[tool: f]\n[tool: g]") and not sdk._is_tool_placeholder_only("")
+
+    def test_extract_tool_hint(self):
+        hints = {"file.read": ["file_path"], "shell.execute": ["command"]}
+        assert sdk.extract_tool_hint("file.read", {"file_path": "/a/b/c/d/e.py"}, hints) == "d/e.py"
+        assert sdk.extract_tool_hint("shell.execute", {"command": "ls"}, hints) == "ls"
+        assert sdk.extract_tool_hint("unknown", {}, hints) is None
+        assert sdk.extract_tool_hint("shell.execute", {"command": "x" * 100}, hints).endswith("...")
+        assert sdk.extract_tool_hint("file.read", {"file_path": 123}, hints) is None
+        assert sdk.extract_tool_hint("shell.execute", {"command": ""}, hints) is None
+
+    def test_iter_jsonl_and_tail(self, tmp_path):
+        f = write_jsonl(tmp_path, [{"a": 1}, {"b": 2}, {"c": 3}])
+        assert len(list(sdk.iter_jsonl(f))) == 3
+        assert list(sdk.iter_jsonl(tmp_path / "nope.jsonl")) == []
+        (tmp_path / "bad.jsonl").write_text('{"ok":1}\nnot json\n')
+        assert len(list(sdk.iter_jsonl(tmp_path / "bad.jsonl"))) == 1
+        assert list(sdk.peek_jsonl_tail(f, 2))[-1] == {"c": 3}
+        assert all(isinstance(r, str) for r in sdk.peek_jsonl_tail(f, 2, parse_json=False))
+
+    def test_peek_scan_exchanges_hooks(self, tmp_path):
+
+        # Scan: Claude 2 exchanges, Codex with metadata, empty, subagent
+        recs = list(sdk.iter_jsonl(ClaudeSession(tmp_path, exchanges=2).build()))
+        assert sdk.peek_scan_from_records(recs, claude_norm, default_session_id="test").exchange_count == 2
+        recs2 = list(sdk.iter_jsonl(CodexSession(tmp_path, exchanges=1, cwd="/proj", model="gpt-4", name="cx.jsonl").build()))
+        r2 = sdk.peek_scan_from_records(recs2, codex_norm, default_session_id="fb")
+        assert r2.workspace_path == "/proj" and r2.model == "gpt-4"
+        assert sdk.peek_scan_from_records([], claude_norm, default_session_id="x") is None
+        recs3 = list(sdk.iter_jsonl(ClaudeSession(tmp_path, name="sub.jsonl").with_subagent("sub-1").build()))
+        assert sdk.peek_scan_from_records(recs3, claude_norm, default_session_id="m").parent_session_id is not None
+        # Exchanges: Claude with tools, Codex with usage, assistant-first, thinking
+        recs4 = list(sdk.iter_jsonl(ClaudeSession(tmp_path, exchanges=3, name="t.jsonl").with_tools(["Read"]).build()))
+        ex = sdk.peek_exchanges_from_records(recs4, claude_norm, last_n=2, tool_aliases={"Read": "file.read"})
+        assert len(ex) == 2 and ex[0].prompt_text and len(ex[0].tool_calls) >= 1
+        recs5 = list(sdk.iter_jsonl(CodexSession(tmp_path, exchanges=1, name="cu.jsonl").with_tools(["shell"]).with_usage().build()))
+        assert sdk.peek_exchanges_from_records(recs5, codex_norm, last_n=5, tool_aliases={"shell": "shell.execute"})[0].input_tokens > 0
+        ex3 = sdk.peek_exchanges_from_records([{"type": "assistant", "timestamp": "T1", "message": {"role": "assistant", "model": "m", "content": [{"type": "text", "text": "init"}]}}], claude_norm, last_n=5)
+        assert len(ex3) == 1 and ex3[0].prompt_text is None
+        ex4 = sdk.peek_exchanges_from_records([
+            {"type": "user", "timestamp": "T1", "message": {"role": "user", "content": [{"type": "text", "text": "go"}]}},
+            {"type": "assistant", "timestamp": "T2", "message": {"role": "assistant", "model": "m",
+                "content": [{"type": "thinking", "thinking": "hmm"}, {"type": "text", "text": "done"}]}},
+        ], claude_norm, last_n=5, include_thinking=True)
+        assert any(b.block_type == "thinking" for b in ex4[0].narrative)
+        # make_peek_hooks
+        scan, exchanges, tail = sdk.make_peek_hooks(claude_norm, tool_aliases={"Read": "file.read"})
+        f = ClaudeSession(tmp_path, exchanges=2, name="h.jsonl").with_tools(["Read"]).build()
+        assert scan(f).exchange_count == 2 and len(exchanges(f, last_n=1)) == 1 and list(tail(f, 1))
+
+
+class TestRegistryAndDiscover:
+    def test_load_adapters(self, tmp_path):
+        builtins = load_builtin_adapters()
+        assert len(builtins) >= 8 and "claude_code" in {p.name for p in builtins}
+        assert load_dropin_adapters(tmp_path) == []
+        assert len(load_all_adapters(dropin_path=tmp_path)) >= 8
+        wrapped = wrap_adapter_paths(claude_code, ["/custom"])
+        assert wrapped.DEFAULT_LOCATIONS == ["/custom"] and wrapped.NAME == claude_code.NAME
+
+    def test_discover_all_adapters(self, tmp_path):
+        # Claude
+        (tmp_path / "proj" / "p").mkdir(parents=True)
+        (tmp_path / "proj" / "p" / "s.jsonl").write_text("{}\n")
+        assert list(claude_code.discover(locations=[str(tmp_path / "proj")]))
+        # Codex
+        (tmp_path / "sessions" / "2024").mkdir(parents=True)
+        (tmp_path / "sessions" / "2024" / "r.jsonl").write_text("{}\n")
+        assert list(codex_cli.discover(locations=[str(tmp_path / "sessions")]))
+        # Gemini
+        (tmp_path / "h" / "chats").mkdir(parents=True)
+        (tmp_path / "h" / "chats" / "s.json").write_text("{}\n")
+        assert list(gemini_cli.discover(locations=[str(tmp_path)]))
+        # Aider
+        (tmp_path / ".aider.chat.history.md").write_text("# aider\n")
+        assert list(aider.discover(locations=[str(tmp_path)]))
+        # Pi Agent
+        (tmp_path / "pi").mkdir()
+        (tmp_path / "pi" / "s.jsonl").write_text("{}\n")
+        assert list(pi_agent.discover(locations=[str(tmp_path / "pi")]))
+        # VSCode
+        (tmp_path / "ws" / "h" / "chatSessions").mkdir(parents=True)
+        (tmp_path / "ws" / "h" / "chatSessions" / "h.json").write_text("{}\n")
+        assert list(vscode.discover(locations=[str(tmp_path / "ws")]))
+        # Copilot
+        (tmp_path / "ss" / "u").mkdir(parents=True)
+        (tmp_path / "ss" / "u" / "events.jsonl").write_text("{}\n")
+        assert list(copilot_cli.discover(locations=[str(tmp_path / "ss")]))
+
+
+# =============================================================================
+# Additional adapter parse edge cases
+# =============================================================================
+
+
+class TestCodexCliParseEdgeCases:
+    def test_custom_and_function_tools(self, tmp_path):
+        # Custom tool_call/output
+        conv = list(codex_cli.parse(Source(kind="file", location=CodexSession(tmp_path, exchanges=1).with_custom_tools(["my_tool"]).build())))[0]
+        tcs = [tc for p in conv.prompts for r in p.responses for tc in r.tool_calls]
+        assert any(tc.tool_name == "my_tool" and tc.status == "success" for tc in tcs)
+        # function_call/output
+        conv2 = list(codex_cli.parse(Source(kind="file", location=CodexSession(tmp_path, exchanges=1, name="f.jsonl").with_tools(["shell"]).build())))[0]
+        tcs2 = [tc for p in conv2.prompts for r in p.responses for tc in r.tool_calls]
+        assert any(tc.tool_name == "shell" and tc.status == "success" for tc in tcs2)
+
+    def test_can_handle_and_usage(self, tmp_path):
+        d = tmp_path / "sessions" / "2024"
+        d.mkdir(parents=True)
+        (d / "s.jsonl").write_text("{}\n")
+        assert codex_cli.can_handle(Source(kind="file", location=d / "s.jsonl"))
+        assert not codex_cli.can_handle(Source(kind="file", location=tmp_path / "other.jsonl"))
+        # Usage with cached/reasoning tokens
+        records = [
+            {"type": "session_meta", "timestamp": "T0", "payload": {"id": "s1", "cwd": "/p"}},
+            {"type": "turn_context", "timestamp": "T1", "payload": {"model": "gpt-4"}},
+            {"type": "response_item", "timestamp": "T2", "payload": {"type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": "hi"}]}},
+            {"type": "response_item", "timestamp": "T3", "payload": {"type": "message", "role": "assistant",
+                "content": [{"type": "output_text", "text": "hello"}]}},
+            {"type": "event_msg", "timestamp": "T4", "payload": {"type": "token_count",
+                "info": {"last_token_usage": {"input_tokens": 100, "output_tokens": 50,
+                    "cached_input_tokens": 30, "reasoning_output_tokens": 10}}}},
+        ]
+        resp = list(codex_cli.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0].prompts[0].responses[0]
+        assert resp.usage.input_tokens == 100 and resp.attributes.get("cached_input_tokens") == "30"
+
+
+class TestGeminiCliParseEdgeCases:
+    def test_parse_with_tools_and_thinking(self, tmp_path):
+        conv = list(gemini_cli.parse(Source(kind="file", location=FIXTURES_DIR / "gemini_cli_minimal.json")))[0]
+        assert conv.external_id.startswith("gemini_cli::") and conv.prompts[0].responses[0].model
+        session = {"sessionId": "gem-1", "startTime": "T1", "lastUpdated": "T2", "messages": [
+            {"type": "user", "id": "u1", "timestamp": "T1", "content": "search"},
+            {"type": "gemini", "id": "g1", "timestamp": "T2", "model": "gemini-2.5", "content": "Found",
+             "tokens": {"input": 100, "output": 50},
+             "thoughts": [{"subject": "Planning", "description": "need to search"}],
+             "toolCalls": [{"id": "tc1", "name": "search_files", "args": {"pattern": "*.py"},
+                 "status": "success", "timestamp": "T2",
+                 "result": [{"functionResponse": {"response": {"files": ["a.py"]}}}]}]}]}
+        f = tmp_path / "s.json"
+        f.write_text(json.dumps(session))
+        conv2 = list(gemini_cli.parse(Source(kind="file", location=f)))[0]
+        assert conv2.prompts[0].responses[0].usage.input_tokens == 100
+        assert conv2.prompts[0].responses[0].tool_calls[0].tool_name == "search_files"
+        assert [b for b in conv2.prompts[0].responses[0].content if b.block_type == "thinking"]
+
+    def test_parse_empty_peek_discover_tail(self, tmp_path):
+        (tmp_path / "e.json").write_text("{}")
+        assert list(gemini_cli.parse(Source(kind="file", location=tmp_path / "e.json"))) == []
+        (tmp_path / "n.json").write_text(json.dumps({"sessionId": "x"}))
+        assert list(gemini_cli.parse(Source(kind="file", location=tmp_path / "n.json"))) == []
+        assert gemini_cli.peek_scan(FIXTURES_DIR / "gemini_cli_minimal.json").exchange_count >= 1
+        assert gemini_cli.peek_exchanges(FIXTURES_DIR / "gemini_cli_minimal.json", last_n=5)
+        assert gemini_cli.peek_scan(tmp_path / "e.json") is None
+        # Discover + can_handle + tail (moved from EdgeCases)
+        d = tmp_path / "tmp" / "h" / "chats"
+        d.mkdir(parents=True)
+        (d / "s.json").write_text("{}\n")
+        assert list(gemini_cli.discover(locations=[str(tmp_path / "tmp")]))
+        assert not gemini_cli.can_handle(Source(kind="sqlite", location=d / "s.json"))
+        assert list(gemini_cli.peek_tail(FIXTURES_DIR / "gemini_cli_minimal.json", lines=5))
+
+
+class TestVSCodeNormalizerAndPeek:
+    def test_peek_json_and_jsonl(self, tmp_path):
+        cs = tmp_path / "ws" / "chatSessions"
+        cs.mkdir(parents=True)
+        shutil.copy(FIXTURES_DIR / "vscode_minimal.json", cs / "test.json")
+        shutil.copy(FIXTURES_DIR / "vscode_minimal.jsonl", cs / "test.jsonl")
+        # JSON peek scan + exchanges
+        assert vscode.peek_scan(cs / "test.json").exchange_count >= 1
+        ex = vscode.peek_exchanges(cs / "test.json", last_n=5)
+        assert len(ex) >= 1 and ex[0].prompt_text
+        # JSONL peek scan
+        assert vscode.peek_scan(cs / "test.jsonl").exchange_count >= 1
+        # Empty
+        cs2 = tmp_path / "chatSessions"
+        cs2.mkdir()
+        (cs2 / "e.json").write_text("{}")
+        assert vscode.peek_scan(cs2 / "e.json") is None
+
+
+# =============================================================================
+# Final edge case coverage
+# =============================================================================
+
+
+class TestAdapterEdgeCases:
+
+    def test_claude_code_string_content_and_subagent(self, tmp_path):
+        records = [
+            {"type": "user", "sessionId": "s1", "agentId": "sub-1", "cwd": "/ws", "timestamp": "T1",
+             "uuid": "u1", "message": {"role": "user", "content": "plain string"}},
+            {"type": "assistant", "sessionId": "s1", "timestamp": "T2", "uuid": "a1",
+             "message": {"role": "assistant", "model": "claude-3", "content": None,
+                 "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 3}}},
+        ]
+        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        assert "agent" in conv.external_id and conv.prompts[0].content[0].content["text"] == "plain string"
+        assert conv.prompts[0].responses[0].attributes.get("cache_read_input_tokens") == "3"
+        # Normalizer handles string/None content, rejects unknown types
+        nr = claude_code.normalize_record({"type": "user", "timestamp": "T1", "message": {"role": "user", "content": "hi"}})
+        assert nr.kind == "user" and len(nr.content_blocks) == 1
+        assert claude_code.normalize_record({"type": "assistant", "timestamp": "T2", "message": {"role": "assistant", "content": None}}).content_blocks == []
+        assert claude_code.normalize_record({"type": "system"}) is None
+        # can_handle rejects codex paths
+        assert not claude_code.can_handle(Source(kind="file", location=Path("/home/.codex/sessions/s.jsonl")))
+
+    def test_codex_pending_tools_and_can_handle(self, tmp_path):
+        records = [
+            {"type": "session_meta", "timestamp": "T0", "payload": {"id": "s1", "cwd": "/p"}},
+            {"type": "response_item", "timestamp": "T1", "payload": {"type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": "go"}]}},
+            {"type": "response_item", "timestamp": "T2", "payload": {"type": "message", "role": "assistant",
+                "content": [{"type": "output_text", "text": "ok"}]}},
+            {"type": "response_item", "timestamp": "T3", "payload": {"type": "function_call",
+                "name": "shell", "call_id": "c1", "arguments": "{}"}},
+        ]
+        conv = list(codex_cli.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        assert any(tc.status == "pending" for p in conv.prompts for r in p.responses for tc in r.tool_calls)
+        assert not codex_cli.can_handle(Source(kind="sqlite", location=Path("/mock/sessions/s.jsonl")))
+
+    def test_aider_discover(self, tmp_path):
+        (tmp_path / ".aider.chat.history.md").write_text("# aider\n")
+        assert list(aider.discover(locations=[str(tmp_path)]))
+        assert list(aider.discover(locations=[str(tmp_path / "nope")])) == []

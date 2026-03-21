@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from siftd.output.common import fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
+from siftd.safecall import parse_json
 
 if TYPE_CHECKING:
     from painted import Align, Block, Fidelity, Line, Style
@@ -128,11 +129,8 @@ def _parse_json_safe(raw: str | None) -> dict | None:
     """Parse raw JSON string to dict, returning None on failure."""
     if not raw:
         return None
-    try:
-        obj = json.loads(raw) if isinstance(raw, str) else raw
-        return obj if isinstance(obj, dict) else None
-    except (json.JSONDecodeError, TypeError):
-        return None
+    obj = parse_json(raw) if isinstance(raw, str) else raw
+    return obj if isinstance(obj, dict) else None
 
 
 def _output_preview_lines(

@@ -15,6 +15,8 @@ import subprocess
 from functools import lru_cache
 from pathlib import Path
 
+from siftd.safecall import read_text
+
 
 def _is_submodule_gitdir(gitdir_path: Path) -> bool:
     """Check if gitdir path indicates a submodule (not a worktree).
@@ -66,10 +68,10 @@ def _get_worktree_gitdir(path: str | Path) -> Path | None:
         return None
 
     # .git is a file - parse it
-    try:
-        content = git_path.read_text().strip()
-    except (OSError, UnicodeDecodeError):
+    content = read_text(git_path, context="git worktree")
+    if content is None:
         return None
+    content = content.strip()
 
     if not content.startswith("gitdir:"):
         return None
@@ -137,10 +139,10 @@ def get_worktree_branch(path: str | Path) -> str | None:
         return None
 
     head_path = gitdir_path / "HEAD"
-    try:
-        head = head_path.read_text().strip()
-    except (OSError, UnicodeDecodeError):
+    head = read_text(head_path, context="git HEAD")
+    if head is None:
         return None
+    head = head.strip()
 
     if not head:
         return None

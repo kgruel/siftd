@@ -11,6 +11,7 @@ from pathlib import Path
 from siftd.adapters.registry import load_all_adapters
 from siftd.peek.scanner import DiscoveredFile, _discover_files, _scan_session_file
 from siftd.peek.types import SessionDetail
+from siftd.safecall import parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -339,9 +340,9 @@ def _fallback_tail(path: Path, lines: int, raw: bool) -> list[str]:
             result.append(line)
         else:
             # Try to pretty-print
-            try:
-                record = json.loads(line)
+            record = parse_json(line)
+            if record is not None:
                 result.append(json.dumps(record, indent=2))
-            except (json.JSONDecodeError, ValueError):
+            else:
                 result.append(line)
     return result

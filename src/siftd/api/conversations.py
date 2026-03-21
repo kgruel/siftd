@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from siftd.paths import db_path as default_db_path
+from siftd.safecall import parse_json
 from siftd.storage.conversation_stats import has_conversation_stats_table
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.filters import tag_condition as _tag_condition
@@ -378,12 +379,9 @@ def _list_conversations_impl(
 
 def _extract_text(raw: str) -> str:
     """Extract plain text from a content block (may be JSON-wrapped)."""
-    try:
-        obj = json.loads(raw)
-        if isinstance(obj, dict) and "text" in obj:
-            return obj["text"]
-    except (json.JSONDecodeError, TypeError):
-        pass
+    obj = parse_json(raw)
+    if isinstance(obj, dict) and "text" in obj:
+        return obj["text"]
     return raw
 
 
@@ -712,74 +710,53 @@ def _build_narrative(
 
 def _extract_thinking(raw: str) -> str:
     """Extract thinking text from a content block."""
-    try:
-        if isinstance(raw, dict):
-            obj = raw
-        else:
-            obj = json.loads(raw)
-        if isinstance(obj, dict):
-            if "thinking" in obj:
-                return obj.get("thinking", "")
-            if "text" in obj:
-                return obj.get("text", "")
-            if "description" in obj or "subject" in obj:
-                subject = obj.get("subject")
-                description = obj.get("description")
-                if subject and description:
-                    return f"{subject}: {description}"
-                return description or subject or ""
-    except (json.JSONDecodeError, TypeError):
-        pass
+    obj = raw if isinstance(raw, dict) else parse_json(raw)
+    if isinstance(obj, dict):
+        if "thinking" in obj:
+            return obj.get("thinking", "")
+        if "text" in obj:
+            return obj.get("text", "")
+        if "description" in obj or "subject" in obj:
+            subject = obj.get("subject")
+            description = obj.get("description")
+            if subject and description:
+                return f"{subject}: {description}"
+            return description or subject or ""
     return raw
 
 
 def _extract_tool_use_id(raw: str) -> str | None:
     """Extract tool_use id from a content block."""
-    try:
-        if isinstance(raw, dict):
-            return raw.get("id") or raw.get("tool_use_id") or raw.get("call_id")
-        obj = json.loads(raw)
-        if isinstance(obj, dict):
-            return obj.get("id") or obj.get("tool_use_id") or obj.get("call_id")
-    except (json.JSONDecodeError, TypeError):
-        pass
+    obj = raw if isinstance(raw, dict) else parse_json(raw)
+    if isinstance(obj, dict):
+        return obj.get("id") or obj.get("tool_use_id") or obj.get("call_id")
     return None
 
 
 def _extract_tool_result(raw: str) -> str:
     """Extract display text from a tool_result/tool_output block."""
-    try:
-        if isinstance(raw, dict):
-            for key in ("text", "content", "output", "result"):
-                if key in raw:
-                    val = raw[key]
-                    if isinstance(val, str):
-                        return val
+    obj = raw if isinstance(raw, dict) else parse_json(raw)
+    if isinstance(obj, dict):
+        for key in ("text", "content", "output", "result"):
+            if key in obj:
+                val = obj[key]
+                if isinstance(val, str):
+                    return val
+                if isinstance(val, dict):
+                    if "text" in val and isinstance(val["text"], str):
+                        return val["text"]
                     return json.dumps(val)
-        obj = json.loads(raw)
-        if isinstance(obj, dict):
-            for key in ("text", "content", "output", "result"):
-                if key in obj:
-                    val = obj[key]
-                    if isinstance(val, str):
-                        return val
-                    if isinstance(val, dict):
-                        if "text" in val and isinstance(val["text"], str):
-                            return val["text"]
-                        return json.dumps(val)
-                    if isinstance(val, list):
-                        parts = []
-                        for item in val:
-                            if isinstance(item, str):
-                                parts.append(item)
-                            elif isinstance(item, dict) and "text" in item:
-                                parts.append(str(item["text"]))
-                            else:
-                                parts.append(json.dumps(item))
-                        return "\n".join(parts)
-                    return str(val)
-    except (json.JSONDecodeError, TypeError):
-        pass
+                if isinstance(val, list):
+                    parts = []
+                    for item in val:
+                        if isinstance(item, str):
+                            parts.append(item)
+                        elif isinstance(item, dict) and "text" in item:
+                            parts.append(str(item["text"]))
+                        else:
+                            parts.append(json.dumps(item))
+                    return "\n".join(parts)
+                return str(val)
     return raw
 
 

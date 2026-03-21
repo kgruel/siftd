@@ -24,6 +24,7 @@ from siftd.domain import (
     Source,
     ToolCall,
 )
+from siftd.safecall import epoch_ms_to_iso
 
 log = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ def _session_to_conversation(data: dict, path: Path) -> Iterable[Conversation]:
     creation_date = data.get("creationDate")
     workspace_path = _resolve_workspace(path)
 
-    started_at = _ms_to_iso(creation_date) if creation_date else None
+    started_at = epoch_ms_to_iso(creation_date)
     ended_at = _last_timestamp(requests)
 
     harness = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
@@ -218,7 +219,7 @@ def _parse_request(request: dict) -> Prompt | None:
         message = message.get("text", str(message))
 
     timestamp_ms = request.get("timestamp")
-    timestamp = _ms_to_iso(timestamp_ms) if timestamp_ms else None
+    timestamp = epoch_ms_to_iso(timestamp_ms)
 
     prompt = Prompt(
         timestamp=timestamp or datetime.now(UTC).isoformat(),
@@ -284,10 +285,6 @@ def _resolve_workspace(session_path: Path) -> str | None:
     return folder or None
 
 
-def _ms_to_iso(ms: int | float) -> str:
-    """Convert Unix milliseconds to ISO 8601 timestamp."""
-    return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
-
 
 def _last_timestamp(requests: list[dict]) -> str | None:
     """Extract the latest timestamp from requests."""
@@ -296,7 +293,7 @@ def _last_timestamp(requests: list[dict]) -> str | None:
         ts = req.get("timestamp")
         if ts is not None and (latest is None or ts > latest):
             latest = ts
-    return _ms_to_iso(latest) if latest is not None else None
+    return epoch_ms_to_iso(latest)
 
 
 # =============================================================================
@@ -306,12 +303,11 @@ def _last_timestamp(requests: list[dict]) -> str | None:
 
 def _load_session(path: Path) -> dict | None:
     """Load a VSCode session from JSON or JSONL format."""
-    try:
-        if path.suffix == ".jsonl":
-            return _replay_jsonl(path)
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return None
+    from siftd.safecall import load_json
+
+    if path.suffix == ".jsonl":
+        return _replay_jsonl(path)
+    return load_json(path, context="vscode")
 
 
 def iter_vscode_records(path: Path) -> Iterator[dict]:
@@ -335,8 +331,8 @@ def iter_vscode_records(path: Path) -> Iterator[dict]:
 
     for request in data.get("requests", []):
         ts = request.get("timestamp")
-        yield {"_kind": "user", **request, "_ts": _ms_to_iso(ts) if ts else None}
-        yield {"_kind": "assistant", **request, "_ts": _ms_to_iso(ts) if ts else None}
+        yield {"_kind": "user", **request, "_ts": epoch_ms_to_iso(ts)}
+        yield {"_kind": "assistant", **request, "_ts": epoch_ms_to_iso(ts)}
 
 
 def normalize_record(raw: dict) -> NormalizedRecord | None:
@@ -354,7 +350,7 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
         creation_date = raw.get("creationDate")
         return NormalizedRecord(
             kind="metadata",
-            timestamp=_ms_to_iso(creation_date) if creation_date else None,
+            timestamp=epoch_ms_to_iso(creation_date),
             session_id=raw.get("sessionId"),
             workspace_path=_resolve_workspace(Path(raw["_path"])) if raw.get("_path") else None,
         )
