@@ -101,6 +101,26 @@ def render_tools_by_workspace(results: list, fidelity: Fidelity) -> dict:
     }
 
 
+def render_search(results: list, fidelity: Fidelity) -> dict:
+    """Serialize SearchResult list to JSON-safe dict."""
+    import dataclasses
+
+    serialized = [dataclasses.asdict(r) for r in results]
+    return {
+        "result_count": len(serialized),
+        "results": serialized,
+    }
+
+
+def render_export(conversations: list, fidelity: Fidelity) -> dict:
+    """Serialize exported conversations to JSON-safe dict."""
+    from siftd.serialization.conversations import serialize_conversation_detail
+
+    return {
+        "conversations": [serialize_conversation_detail(c) for c in conversations],
+    }
+
+
 def render_detail(detail: Any, fidelity: Fidelity) -> dict:
     """Serialize ConversationDetail to JSON-safe dict."""
     from siftd.serialization.conversations import serialize_conversation_detail

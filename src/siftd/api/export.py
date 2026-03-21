@@ -33,6 +33,7 @@ def export_conversations(
     *,
     id: list[str] | None = None,
     last: int | None = None,
+    n: int = 0,
     workspace: str | None = None,
     tag: list[str] | None = None,
     no_tag: list[str] | None = None,
@@ -85,6 +86,8 @@ def export_conversations(
         if detail:
             results.append(_detail_to_export(detail))
 
+    if n > 0:
+        results = results[:n]
     return results
 
 

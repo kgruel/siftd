@@ -272,23 +272,13 @@ async def export_route(
 ) -> dict:
     """Export full conversation data."""
     from siftd.api.export import export_conversations
-    from siftd.serialization.conversations import serialize_conversation_detail
 
-    conversations = export_conversations(
-        id=id,
-        workspace=workspace,
-        since=since,
-        before=before,
-        tag=tag,
-        no_tag=no_tag,
-        db_path=db_path,
+    return _dispatch(
+        "/v1/export", "GET", export_conversations,
+        {"id": id, "workspace": workspace, "since": since, "before": before,
+         "tag": tag, "no_tag": no_tag, "n": n, "db_path": db_path},
+        "export", db_path,
     )
-    if n > 0:
-        conversations = conversations[:n]
-
-    return {
-        "conversations": [serialize_conversation_detail(c) for c in conversations],
-    }
 
 
 @post("/v1/push")
@@ -458,45 +448,24 @@ async def search_route(
         )
 
     try:
-        results = hybrid_search(
-            q,
-            db_path=db_path,
-            n=n,
-            recall=recall,
-            embeddings_only=embeddings_only,
-            workspace=workspace,
-            model=model,
-            since=since,
-            before=before,
-            backend=backend,
-            exclude_active=exclude_active,
-            rerank=rerank,
-            lambda_=lambda_,
-            recency=recency,
-            recency_half_life=recency_half_life,
-            recency_max_boost=recency_max_boost,
-            tag=tag,
-            all_tags=all_tags,
-            no_tag=no_tag,
-            include_derivative=include_derivative,
+        return _dispatch(
+            "/v1/search", "GET", hybrid_search,
+            {"q": q, "db_path": db_path, "n": n, "recall": recall,
+             "embeddings_only": embeddings_only, "workspace": workspace,
+             "model": model, "since": since, "before": before,
+             "backend": backend, "exclude_active": exclude_active,
+             "rerank": rerank, "lambda_": lambda_, "recency": recency,
+             "recency_half_life": recency_half_life,
+             "recency_max_boost": recency_max_boost,
+             "threshold": threshold, "tag": tag, "all_tags": all_tags,
+             "no_tag": no_tag, "include_derivative": include_derivative},
+            "search", db_path,
         )
     except Exception as e:
         return Response(
             content={"error": f"search failed: {e}"},
             status_code=501,
         )
-
-    if threshold > 0:
-        results = [r for r in results if r.score >= threshold]
-
-    import dataclasses
-
-    serialized = [dataclasses.asdict(r) for r in results]  # arch: allow-asdict — search has its own parser
-    return {
-        "query": q,
-        "result_count": len(serialized),
-        "results": serialized,
-    }
 
 
 # ---------------------------------------------------------------------------

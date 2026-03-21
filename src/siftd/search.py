@@ -296,6 +296,7 @@ def hybrid_search(
     recency: bool = False,
     recency_half_life: float = 30.0,
     recency_max_boost: float = 1.15,
+    threshold: float = 0.0,
     fts5_passthrough: bool = False,
 ) -> list[SearchResult]:
     """Run hybrid FTS5+embeddings search, return structured results.
@@ -620,6 +621,9 @@ def hybrid_search(
             source_ids=r.get("source_ids"),
             breakdown=breakdown_dict,
         ))
+
+    if threshold > 0:
+        results = [r for r in results if r.score >= threshold]
 
     return results
 
