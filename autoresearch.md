@@ -1,75 +1,67 @@
-# Autoresearch: Ingest Performance
+# Autoresearch: Storage Layer Test Coverage Efficiency
 
 ## Objective
-Optimize the wall-clock time of a full fresh `siftd ingest` — parsing conversation logs from all adapters (Claude Code, Gemini CLI, Pi Agent, Codex CLI, etc.) and storing them into a fresh SQLite database.
+Optimize the **test coverage efficiency** of the `src/siftd/storage/` package. The metric
+rewards writing concise, fast tests that cover more source lines — encouraging clean
+integration tests over bloated or trivial ones.
 
-The workload is ~6,400 files → ~6,150 conversations → ~145k responses → ~111k tool calls, producing a ~790MB SQLite database. Baseline is ~138 seconds.
+The storage layer (1,204 stmts after excluding embeddings/migrations) sits at ~19% coverage
+with ~715 LOC of tests (`tests/test_blobs.py`). The goal is to lower the composite metric
+by: increasing covered source lines, reducing test LOC bloat, and keeping test execution fast.
 
 ## Metrics
-- **Primary**: `ingest_s` (seconds, lower is better)
-- **Secondary**: `conversations` (count, should remain constant — correctness check)
+- **Primary**: `efficiency` (lower is better) = `test_LOC × test_time_s / covered_lines`
+- **Secondary**:
+  - `coverage_pct` — percentage of storage lines covered (higher = better, watch for progress)
+  - `test_time_s` — seconds to run storage tests (lower = better, watch for regression)
+  - `test_loc` — lines of test code (lower per coverage = better)
+  - `covered_lines` — absolute count of covered source lines (higher = better)
 
 ## How to Run
 `./autoresearch.sh` — outputs `METRIC name=number` lines.
 
-## Profiling Summary (baseline)
-From cProfile of the baseline (134s):
+## Scope
+Coverage is measured over these storage files (excluding embeddings/migrations which can't
+be tested without extra infra):
 
-| Bottleneck | Time | Root cause |
-|---|---|---|
-| Git subprocess calls | 45s (34%) | `get_git_remote_url()` spawns 7,101 subprocess calls to `git remote get-url origin` |
-| SQLite execute | 24.9s (19%) | 1.47M individual `conn.execute()` calls |
-| SQLite commits | 13.6s (10%) | 6,419 individual `conn.commit()` — one per file |
-| File hashing (SHA-256) | 13.8s (10%) | `compute_file_hash()` for all source files |
-| ULID generation | 7.1s (5%) | 793k `ulid()` calls with `os.urandom()` per ID |
-| JSON encode/decode | 13.8s (10%) | 604k `json.loads` + 408k `json.dumps` |
-| Content blob hashing | 3.9s | `store_content()` SHA-256 for every tool result |
-| Binary content filter | 3.9s | regex on every tool result (`has_large_base64`) |
+- `src/siftd/storage/blobs.py` (28 stmts) — content-addressable blob storage, ref counting
+- `src/siftd/storage/conversation_stats.py` (24 stmts) — materialized stats rebuild
+- `src/siftd/storage/filters.py` (69 stmts) — WhereBuilder for dynamic SQL conditions
+- `src/siftd/storage/fts.py` (65 stmts) — FTS5 full-text search operations
+- `src/siftd/storage/queries.py` (185 stmts) — read queries (exchanges, stats, tags)
+- `src/siftd/storage/sessions.py` (92 stmts) — live session tracking, pending tags
+- `src/siftd/storage/sql_helpers.py` (40 stmts) — SQL utility functions
+- `src/siftd/storage/sqlite.py` (463 stmts) — connection, migrations, vocabulary, inserts, store_conversation
+- `src/siftd/storage/tags.py` (133 stmts) — tag CRUD, shell command tagging, derivative detection
+- `src/siftd/storage/tool_search.py` (102 stmts) — tool search projection and FTS index
 
-## Files in Scope
-- `src/siftd/ingestion/orchestration.py` — main ingest loop, per-file processing
-- `src/siftd/storage/sqlite.py` — `store_conversation()`, all `insert_*` functions, `compute_file_hash()`
-- `src/siftd/storage/blobs.py` — content-addressable blob storage (`store_content`)
-- `src/siftd/storage/fts.py` — FTS5 index inserts
-- `src/siftd/storage/conversation_stats.py` — materialized stats rebuild
-- `src/siftd/ids.py` — ULID generation
-- `src/siftd/git.py` — `get_canonical_workspace_identity()`, `get_git_remote_url()`
-- `src/siftd/content/filters.py` — binary content detection
-- `src/siftd/adapters/*.py` — individual adapter parsers
-- `src/siftd/domain/models.py` — domain model classes
-- `src/siftd/model_names.py` — model name parsing
+Total: ~1,204 statements (excluding `__init__.py`, `embeddings.py`, `migrate_blobs.py`, `migrate_workspaces.py`)
 
-## Off Limits
-- Test files (must not modify tests)
-- Schema SQL file (schema.sql)
-- CLI layer (cli.py, cli_data.py, cli_*.py)
-- Domain model definitions (domain/*.py)
+## Files in Scope (may modify)
+- `tests/test_storage.py` — **NEW** focused storage layer tests (create and extend)
+- `tests/test_blobs.py` — existing blob storage tests (may refactor for efficiency)
+- `tests/conftest.py` — shared fixtures (may add storage-specific fixtures)
+
+## Off Limits (must NOT modify)
+- All source files under `src/siftd/` — we're testing, not changing the implementation
+- `src/siftd/storage/schema.sql` — database schema
+- Other test files — don't break existing tests
+- No new external dependencies
 
 ## Constraints
-- All existing tests must pass (`./dev test`)
-- Ingested conversation count must remain unchanged (correctness)
-- No new external dependencies
-- Database output must be compatible (same schema, same data)
+- All existing tests must still pass (`./dev test`)
+- Tests must have meaningful assertions (no `assert True` padding)
+- Each test function must contain at least one `assert` statement
+- Tests should exercise real behavior through the public API, not mock internals
+- Coverage is measured with `--source=src/siftd/storage` and `--include` to exclude
+  embeddings/migration files
+
+## Key Patterns from Existing Tests
+- `open_database(tmp_path / "test.db")` creates a fresh DB with full schema
+- `conftest.py` has `make_db()` and `make_conversation()` helpers
+- Functions use `conn: sqlite3.Connection` with `commit=False` default
+- Tests close connections explicitly
+- The `test_db` fixture provides 2 conversations with prompts/responses
 
 ## What's Been Tried
-### Wins (cumulative: 115s → 38s, -67%)
-1. **Cache workspace identity** (115→77s): LRU cache on `get_canonical_workspace_identity` via workspace_cache dict passed through ingest
-2. **WAL mode + SYNCHRONOUS=NORMAL** (77→56s): SQLite journal_mode=WAL, synchronous=NORMAL
-3. **ULID optimization** (56→56s): Batch random bytes, unrolled encoding loops
-4. **Binary filter length check** (small win): Skip regex for strings <500 chars
-5. **Blob storage timestamp** (small win): Share timestamp across batch
-6. **Vocabulary caching** (56→53s): Cache harness/provider/model/tool/tag lookups in-process
-7. **SQLite cache + mmap** (53→48s): cache_size=-64000 (64MB), mmap_size=256MB
-8. **hashlib.file_digest** (48→46s): Faster file hashing via Python 3.11+ API
-9. **temp_store=MEMORY** (46→45s): In-memory temp tables
-10. **SYNCHRONOUS=OFF during ingest** (45→39s): Skip fsync during bulk operations
-11. **Deferred FK checks** (39→38s): defer_foreign_keys=ON during ingest
-
-### Tried and Discarded
-- Batch commits with savepoints: correct but slower due to savepoint overhead
-- Batch commits without savepoints: fast but loses data on errors
-- 1MB hash buffer for file hashing: no improvement
-- Inline insert functions: in noise range
-- Disable WAL autocheckpoint: WAL grows too large, final checkpoint slow
-- 8KB page size: in noise range
-- Tool/model caching per-conversation: in noise range
+(none yet — starting fresh)
