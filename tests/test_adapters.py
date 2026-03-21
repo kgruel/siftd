@@ -591,3 +591,31 @@ class TestAdapterEdgeCases:
         (tmp_path / ".aider.chat.history.md").write_text("# aider\n")
         assert list(aider.discover(locations=[str(tmp_path)]))
         assert list(aider.discover(locations=[str(tmp_path / "nope")])) == []
+
+
+class TestNormalizerCoverage:
+    """Direct normalizer tests — no file I/O, covers normalize_record functions."""
+
+    def test_copilot_normalizer(self):
+        n = copilot_cli.normalize_record
+        assert n({"type": "session.start", "timestamp": "T", "data": {"sessionId": "s", "context": {"cwd": "/w"}}}).session_id == "s"
+        assert n({"type": "session.model_change", "timestamp": "T", "data": {"newModel": "m"}}).model == "m"
+        assert n({"type": "user.message", "timestamp": "T", "data": {"content": "hi"}}).content_blocks[0]["text"] == "hi"
+        assert n({"type": "user.message", "timestamp": "T", "data": {"content": ""}}).content_blocks == []
+        nr = n({"type": "assistant.message", "timestamp": "T", "data": {"content": "ok", "reasoningText": "think", "toolRequests": [{"name": "sh"}]}})
+        assert nr.kind == "assistant" and len(nr.content_blocks) == 3 and nr.content_blocks[1]["type"] == "thinking"
+        assert n({"type": "tool.execution_complete", "timestamp": "T"}).kind == "tool_result"
+        assert n({"type": "unknown"}) is None
+
+    def test_pi_normalizer_and_helpers(self):
+        n = pi_agent.normalize_record
+        assert n({"type": "session", "timestamp": "T", "id": "s", "cwd": "/w"}).session_id == "s"
+        assert n({"type": "model_change", "timestamp": "T", "modelId": "m"}).model == "m"
+        assert n({"type": "message", "message": {"role": "user", "content": [{"type": "text", "text": "q"}]}}).kind == "user"
+        nr = n({"type": "message", "timestamp": "T", "message": {"role": "assistant", "model": "m", "content": [], "usage": {"input": 5, "output": 3}}})
+        assert nr.kind == "assistant" and nr.input_tokens == 5
+        assert n({"type": "message", "message": {"role": "toolResult"}}).kind == "tool_result"
+        assert n({"type": "x"}) is None and n({"type": "message", "message": {"role": "system"}}) is None
+        from siftd.adapters.pi_agent import _extract_text, _parse_block
+        assert _parse_block("s").block_type == "text" and _parse_block({"type": "img"}).block_type == "img"
+        assert _extract_text([{"type": "text", "text": "a"}]) == "a" and _extract_text([]) is None
