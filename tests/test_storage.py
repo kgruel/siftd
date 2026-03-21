@@ -631,6 +631,10 @@ class TestToolSearch:
 # === Database ops ===
 
 class TestDatabaseOps:
+    def test_ensure_tables(self, db):
+        sq.ensure_push_log_table(db)
+        assert db.execute("SELECT 1 FROM sqlite_master WHERE name='push_log'").fetchone() is not None
+
     def test_open_and_backup(self, tmp_path):
         conn = open_database(tmp_path / "new.db")
         tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]

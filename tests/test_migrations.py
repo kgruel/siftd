@@ -213,6 +213,19 @@ class TestMigrateAddCascadeDeletes:
         assert "ON DELETE CASCADE" in _table_ddl(conn, "prompts")
         conn.close()
 
+    def test_skips_missing_tables(self, tmp_path):
+        """Migration skips tables that don't exist (e.g., partial schema)."""
+        from siftd.storage.sqlite import _migrate_add_cascade_deletes
+        # Schema with prompts but without some optional tables
+        conn = _legacy_db(tmp_path, schema_sql=_NO_CASCADE_SCHEMA)
+        conn.execute("DROP TABLE IF EXISTS tool_call_attributes")
+        conn.execute("DROP TABLE IF EXISTS prompt_attributes")
+        conn.commit()
+        _migrate_add_cascade_deletes(conn)
+        assert "ON DELETE CASCADE" in _table_ddl(conn, "prompts")
+        assert "tool_call_attributes" not in _table_names(conn)
+        conn.close()
+
     def test_noop_when_no_prompts_table(self, tmp_path):
         from siftd.storage.sqlite import _migrate_add_cascade_deletes
         conn = _legacy_db(tmp_path, schema_sql="CREATE TABLE x (id TEXT PRIMARY KEY);")
