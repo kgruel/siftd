@@ -271,6 +271,9 @@ def ingest_all(
             conn.commit()
         registered_harnesses.add(harness_name)
 
+    # Cache workspace identity lookups to avoid repeated git subprocess calls
+    _workspace_cache: dict[str, str] = {}
+
     for source, adapter in sources:
         file_path = str(source.location)
         harness_name = adapter.NAME
@@ -357,7 +360,8 @@ def ingest_all(
 
                     # Re-ingest and update the record
                     conv = _reingest_file(
-                        conn, source, adapter, file_path, current_hash, st, stats, filter_binary
+                        conn, source, adapter, file_path, current_hash, st, stats, filter_binary,
+                        _workspace_cache=_workspace_cache,
                     )
                     if on_file:
                         on_file(source, "updated")
@@ -365,7 +369,7 @@ def ingest_all(
                     continue
 
                 # New file - ingest normally
-                conv = _ingest_file(conn, source, adapter, file_path, stats, filter_binary)
+                conv = _ingest_file(conn, source, adapter, file_path, stats, filter_binary, _workspace_cache=_workspace_cache)
                 if on_file:
                     on_file(source, "ingested")
                 emit_event("ingested", conversation=conv)
@@ -420,7 +424,7 @@ def ingest_all(
                     if _compare_timestamps(conversation.ended_at, existing["ended_at"]):
                         # New is newer, replace
                         delete_conversation(conn, existing["id"])
-                        conv_id = store_conversation(conn, conversation, filter_binary=filter_binary)
+                        conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
 
                         # Record file ingestion
                         location = source.as_path
@@ -456,7 +460,7 @@ def ingest_all(
                         emit_event("skipped (older)")
                 else:
                     # New conversation
-                    conv_id = store_conversation(conn, conversation, filter_binary=filter_binary)
+                    conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
 
                     location = source.as_path
                     st = location.stat()
@@ -570,6 +574,8 @@ def _ingest_file(
     file_path: str,
     stats: IngestStats,
     filter_binary: bool,
+    *,
+    _workspace_cache: dict | None = None,
 ) -> object | None:
     """Ingest a single file (file-based dedup strategy)."""
     harness_name = adapter.NAME
@@ -591,7 +597,7 @@ def _ingest_file(
         stats.files_ingested += 1
         return None
 
-    conv_id = store_conversation(conn, conversation, filter_binary=filter_binary)
+    conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
     _update_stats_for_conversation(stats, harness_name, conversation)
     record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=st.st_mtime, file_size=st.st_size)
 
@@ -612,6 +618,8 @@ def _reingest_file(
     file_stat: os.stat_result,
     stats: IngestStats,
     filter_binary: bool,
+    *,
+    _workspace_cache: dict | None = None,
 ) -> object | None:
     """Re-ingest a file that has changed (file-based dedup strategy).
 
@@ -638,7 +646,7 @@ def _reingest_file(
         stats.by_harness[harness_name]["replaced"] += 1
         return None
 
-    conv_id = store_conversation(conn, conversation, filter_binary=filter_binary)
+    conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
     _update_stats_for_conversation(stats, harness_name, conversation)
     record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=file_stat.st_mtime, file_size=file_stat.st_size)
 

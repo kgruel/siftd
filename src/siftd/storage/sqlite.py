@@ -904,6 +904,7 @@ def store_conversation(
     *,
     commit: bool = False,
     filter_binary: bool = True,
+    _workspace_cache: dict | None = None,
 ) -> str:
     """Store a complete Conversation domain object.
 
@@ -916,6 +917,9 @@ def store_conversation(
         commit: Whether to commit the transaction (default: False)
         filter_binary: If True (default), filter binary content (images, base64)
             from tool results before storage.
+        _workspace_cache: Optional dict for caching workspace identity lookups
+            across multiple calls. Pass the same dict to batch store_conversation
+            calls to avoid repeated git subprocess calls.
     """
     # Get or create harness
     harness_kwargs = {}
@@ -942,9 +946,15 @@ def store_conversation(
         branch = get_worktree_branch(conversation.workspace_path)
 
     if conversation.workspace_path:
-        workspace_id = get_or_create_workspace(
-            conn, conversation.workspace_path, conversation.started_at
-        )
+        ws_path = conversation.workspace_path
+        if _workspace_cache is not None and ws_path in _workspace_cache:
+            workspace_id = _workspace_cache[ws_path]
+        else:
+            workspace_id = get_or_create_workspace(
+                conn, ws_path, conversation.started_at
+            )
+            if _workspace_cache is not None:
+                _workspace_cache[ws_path] = workspace_id
 
     # Create conversation
     conversation_id = insert_conversation(
