@@ -21,52 +21,49 @@ def cmd_tool_search(args) -> int:
         print("       siftd tool-search --rebuild-index")
         return 1
 
+    from siftd.cli_common import resolve_db
+
     db = Path(args.db) if args.db else None
+    effective_db = db or resolve_db(args)
+
+    from painted import Fidelity
+
+    from siftd.api.dispatch import Operation, execute
+    from siftd.serve.delegation import try_serve
+
+    op = Operation(
+        path="/v1/tool-search",
+        method="GET",
+        fn=search_tool_calls,
+        params={
+            "query": query,
+            "db_path": db,
+            "limit": args.limit,
+            "rebuild_index": args.rebuild_index,
+            "workspace": filters.workspace,
+            "model": filters.model,
+            "since": filters.since,
+            "before": filters.before,
+            "tags": filters.tags,
+            "all_tags": filters.all_tags,
+            "exclude_tags": filters.exclude_tags,
+            "tool": filters.tool,
+            "tool_tag": filters.tool_tag,
+        },
+        render_method="raw",
+        fidelity=Fidelity(),
+        db=effective_db,
+    )
 
     # Try serve delegation for --json output
     if args.json and not args.rebuild_index:
-        try:
-            from siftd.cli_common import resolve_db
-            from siftd.serve.delegation import try_delegate
-
-            effective_db = db or resolve_db(args)
-            params: dict[str, object] = {
-                "q": query,
-                "n": args.limit,
-                "workspace": filters.workspace,
-                "model": filters.model,
-                "since": filters.since,
-                "before": filters.before,
-                "tool": filters.tool,
-                "tool_tag": filters.tool_tag,
-                "tag": filters.tags,
-                "all_tags": filters.all_tags,
-                "no_tag": filters.exclude_tags,
-            }
-            params = {k: v for k, v in params.items() if v is not None}
-            result = try_delegate("/v1/tool-search", params=params, db=effective_db)
-            if result is not None:
-                print(json.dumps(result, indent=2))
-                return 0
-        except Exception:
-            pass
+        result = try_serve(op)
+        if result is not None and isinstance(result, dict):
+            print(json.dumps(result, indent=2))
+            return 0
 
     try:
-        parsed, results = search_tool_calls(
-            query,
-            db_path=db,
-            limit=args.limit,
-            rebuild_index=args.rebuild_index,
-            workspace=filters.workspace,
-            model=filters.model,
-            since=filters.since,
-            before=filters.before,
-            tags=filters.tags,
-            all_tags=filters.all_tags,
-            exclude_tags=filters.exclude_tags,
-            tool=filters.tool,
-            tool_tag=filters.tool_tag,
-        )
+        parsed, results = execute(op)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1

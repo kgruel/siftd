@@ -14,24 +14,24 @@ output = render(result, op, fmt=select_format(...))
 
 ## Commands to migrate
 
-### Tier 1 — straightforward, same shape as query list
+### Tier 1 — straightforward, same shape as query list (all done)
 
 | Command | fn | render_method | Notes |
 |---------|-----|---------------|-------|
-| `db stats` | `get_stats` | `stats` | Already has 3-tier fallback; refactor to Operation |
-| `db workspaces` | `list_workspaces` | `raw` | Simple list, render passthrough |
-| `tools` (summary) | `get_tool_tag_summary` | `raw` | Two modes (summary/by-workspace) |
-| `tools` (by-ws) | `get_tool_tags_by_workspace` | `raw` | Same command, different fn |
-| `tag list` | `list_tags` | `raw` | Tag listing with optional drill-down |
+| `db stats` | `get_stats` | `stats` | **Done.** 3-tier fallback via Operation |
+| `db workspaces` | `list_workspaces` | `raw` | **Done.** list_workspaces adapted for db_path |
+| `tools` (summary) | `get_tool_tag_summary` | `raw` | **Done.** Two modes, two Operations |
+| `tools` (by-ws) | `get_tool_tags_by_workspace` | `raw` | **Done.** Same command, different fn |
+| `tag list` | `list_tags` | `raw` | **Done.** Simple listing; drill-down stays as-is |
 
 ### Tier 2 — need minor adaptation
 
 | Command | fn | render_method | Notes |
 |---------|-----|---------------|-------|
-| `query <id>` | `get_conversation` | `detail` | Fidelity-dependent; --json can delegate fully |
-| `export` | `export_conversations` | `detail` | Multiple conversations; --json delegates |
-| `tool-search` | `search_tool_calls` | `raw` | Returns (query_obj, results) tuple |
-| `search` | `hybrid_search` | `search` | Already delegates; refactor to Operation shape |
+| `query <id>` | `get_conversation` | `detail` | **Done.** Fidelity-dependent; --json delegates |
+| `export` | `export_conversations` | `detail` | **Done.** Multiple conversations; --json delegates |
+| `tool-search` | `search_tool_calls` | `raw` | **Done.** Returns (query_obj, results) tuple |
+| `search` | `hybrid_search` | `search` | **Deferred.** Multi-step pipeline (filter→FTS5→embed→rerank) needs `hybrid_search()` API extraction first |
 
 ### Tier 3 — writes (tag apply/remove/rename)
 
@@ -59,6 +59,18 @@ routes use the same path as CLI, just with JSON format selected.
 For routes that currently use `serialize_conversation_list()` directly,
 the render path through json_fmt already delegates to serialization —
 so the behavior is identical, just expressed through the Operation pattern.
+
+## Serve param remapping
+
+Operation params use API fn kwargs (`limit`, `tags`, `conversation_id`).
+Serve routes use HTTP conventions (`n`, `tag`, `id`). `try_serve()` remaps
+via `_SERVE_PARAM_MAP` in `serve/delegation.py`:
+
+    limit → n, last → n, conversation_id → id, conversation_ids → id,
+    query → q, tags → tag, exclude_tags → no_tag, oldest_first → oldest
+
+Unknown params (e.g. `include_thinking`) pass through harmlessly — serve
+routes ignore unrecognized query params.
 
 ## FilterArgs migration
 

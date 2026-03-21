@@ -205,15 +205,37 @@ def try_delegate_post(
         return None
 
 
+# API fn kwarg → serve route query param.  Identity mappings omitted.
+_SERVE_PARAM_MAP: dict[str, str] = {
+    "limit": "n",
+    "last": "n",
+    "conversation_id": "id",
+    "conversation_ids": "id",
+    "query": "q",
+    "tags": "tag",
+    "exclude_tags": "no_tag",
+    "oldest_first": "oldest",
+}
+
+
+def _remap_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Remap API fn kwargs to serve route query param names."""
+    return {_SERVE_PARAM_MAP.get(k, k): v for k, v in params.items()}
+
+
 def try_serve(op: Any) -> Any | None:
     """Try delegating an Operation to siftd-serve.
 
     Accepts an Operation (from api.dispatch) and delegates based on
     its path, method, params, and db. Returns the raw serve response
     on success, None on any failure.
+
+    Params are remapped from API fn kwargs to HTTP conventions
+    (e.g. limit→n, tags→tag) via _SERVE_PARAM_MAP.
     """
     try:
-        params = {k: v for k, v in op.params.items() if k != "db_path"}
+        raw = {k: v for k, v in op.params.items() if k != "db_path"}
+        params = _remap_params(raw)
 
         if op.method == "GET":
             return try_delegate(op.path, params, db=op.db)

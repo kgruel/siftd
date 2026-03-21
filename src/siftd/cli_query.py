@@ -152,7 +152,9 @@ def cmd_tools(args) -> int:
 def _query_detail(args) -> int:
     """Show conversation detail timeline."""
     from siftd.api import get_conversation
+    from siftd.api.dispatch import Operation, execute
     from siftd.cli_common import fidelity_from_args, tool_chars_from_args
+    from siftd.serve.delegation import try_serve
 
     # Validate --exchanges
     exchanges_n = getattr(args, "exchanges", None)
@@ -173,29 +175,34 @@ def _query_detail(args) -> int:
     if tools_flag is not None and tools_flag != "all":
         tool_filter = tools_flag
 
+    op = Operation(
+        path="/v1/query",
+        method="GET",
+        fn=get_conversation,
+        params={
+            "conversation_id": args.conversation_id,
+            "db_path": db,
+            "include_thinking": include_thinking,
+            "include_tool_content": include_tool_content,
+            "tool_filter": tool_filter,
+        },
+        render_method="detail",
+        fidelity=fidelity,
+        db=effective_db,
+    )
+
     # For --json output, delegate to serve if available (avoids cold-open
     # entirely — server returns the canonical JSON shape directly)
     if getattr(args, "json", False) and not getattr(args, "summary", False):
-        try:
-            from siftd.serve.delegation import try_delegate
+        result = try_serve(op)
+        if result is not None and isinstance(result, dict) and "conversation" in result:
+            import json
 
-            result = try_delegate("/v1/query", {"id": args.conversation_id}, db=effective_db)
-            if result is not None and "conversation" in result:
-                import json
-
-                print(json.dumps(result["conversation"], indent=2))
-                return 0
-        except Exception:
-            pass
+            print(json.dumps(result["conversation"], indent=2))
+            return 0
 
     try:
-        detail = get_conversation(
-            args.conversation_id,
-            db_path=db,
-            include_thinking=include_thinking,
-            include_tool_content=include_tool_content,
-            tool_filter=tool_filter,
-        )
+        detail = execute(op)
     except FileNotFoundError as e:
         print(str(e))
         print("Run 'siftd ingest' to create it.")
