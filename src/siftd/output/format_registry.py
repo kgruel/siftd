@@ -56,9 +56,9 @@ def _get_name(module: ModuleType) -> str:
 
 def _load_builtin_formats() -> list[PluginInfo]:
     """Load built-in output format modules."""
-    from siftd.output import json_fmt, markdown_fmt, terminal_fmt
+    from siftd.output import html_fmt, json_fmt, markdown_fmt, terminal_fmt
 
-    builtins = [terminal_fmt, markdown_fmt, json_fmt]
+    builtins = [terminal_fmt, markdown_fmt, json_fmt, html_fmt]
     return [
         PluginInfo(
             name=getattr(m, "name", m.__name__.split(".")[-1]),

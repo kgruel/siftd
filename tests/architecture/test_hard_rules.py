@@ -219,6 +219,93 @@ class TestFormatterRegistry:
 # =============================================================================
 
 
+# =============================================================================
+# 5. Serve Route Boundary (v1 JSON API <-> UI HTML fragments)
+# =============================================================================
+
+
+class TestServeRouteBoundary:
+    """JSON API routes (/v1/) and UI HTML routes (/ui/) must not cross-reference.
+
+    Rationale: The output layer (html_fmt) must be route-agnostic — it receives
+    detail_base as a context parameter rather than hardcoding paths. JSON API
+    routes must not reference /ui/ paths and vice versa.
+    """
+
+    def test_output_formatters_no_hardcoded_routes(self, src_dir):
+        """Output formatters must not contain /ui/ or /v1/ route paths."""
+        import re
+
+        output_dir = src_dir / "output"
+        route_re = re.compile(r'["\'](/(?:ui|v1)/[^"\']*)["\']')
+
+        violations = []
+        for py_file in output_dir.rglob("*.py"):
+            for i, line in enumerate(py_file.read_text().splitlines(), 1):
+                # Skip comments and docstrings (heuristic: lines with # or triple-quote context)
+                stripped = line.lstrip()
+                if stripped.startswith("#"):
+                    continue
+                for m in route_re.finditer(line):
+                    # Allow in docstrings/comments (crude: if line has >>> or e.g.)
+                    if "e.g." in line or ">>>" in line or "example" in line.lower():
+                        continue
+                    rel = py_file.relative_to(src_dir.parent.parent)
+                    violations.append(f"{rel}:{i}: hardcoded route {m.group(1)!r}")
+
+        if violations:
+            pytest.fail(
+                "Output formatters must not hardcode serve routes.\n"
+                "Use detail_base context parameter instead:\n"
+                + "\n".join(violations)
+            )
+
+    def test_json_routes_no_ui_references(self, src_dir):
+        """JSON API routes (routes.py) must not reference /ui/ paths."""
+        import re
+
+        routes_file = src_dir / "serve" / "routes.py"
+        if not routes_file.exists():
+            pytest.skip("No serve/routes.py")
+
+        ui_re = re.compile(r'["\']/ui/')
+        violations = []
+        for i, line in enumerate(routes_file.read_text().splitlines(), 1):
+            if ui_re.search(line):
+                violations.append(f"serve/routes.py:{i}: references /ui/ path")
+
+        if violations:
+            pytest.fail(
+                "JSON API routes must not reference UI paths:\n"
+                + "\n".join(violations)
+            )
+
+    def test_html_routes_no_v1_references(self, src_dir):
+        """HTML UI routes (html_routes.py) must not reference /v1/ paths."""
+        import re
+
+        html_routes_file = src_dir / "serve" / "html_routes.py"
+        if not html_routes_file.exists():
+            pytest.skip("No serve/html_routes.py")
+
+        v1_re = re.compile(r'["\']/v1/')
+        violations = []
+        for i, line in enumerate(html_routes_file.read_text().splitlines(), 1):
+            if v1_re.search(line):
+                violations.append(f"serve/html_routes.py:{i}: references /v1/ path")
+
+        if violations:
+            pytest.fail(
+                "HTML UI routes must not reference JSON API paths:\n"
+                + "\n".join(violations)
+            )
+
+
+# =============================================================================
+# 6. Raw SQL in CLI Modules
+# =============================================================================
+
+
 _SQL_KEYWORDS = (
     "SELECT",
     "INSERT",

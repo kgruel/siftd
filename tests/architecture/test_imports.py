@@ -38,7 +38,7 @@ ALLOWED_DEPS: dict[str, list[str]] = {
     "search": ["domain", "storage", "embeddings", "peek", "utilities"],
     "output": ["domain", "storage", "search", "serialization", "utilities", "content"],
     "doctor": ["domain", "storage", "adapters", "embeddings", "output", "utilities"],
-    "serve": ["domain", "storage", "search", "serialization", "api", "utilities"],
+    "serve": ["domain", "storage", "search", "serialization", "api", "output", "utilities"],
     "api": [
         "domain",
         "storage",

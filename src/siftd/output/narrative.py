@@ -87,3 +87,161 @@ class MarkdownEmitter:
     def tool_output(self, block_type: str, content: str) -> None:
         self.lines.append(f"```\n{content}\n```")
         self.lines.append("")
+
+
+
+class JsonEmitter:
+    """Emits narrative as JSON-serializable dicts.
+
+    Accumulates into self.blocks: list[dict].
+    """
+
+    def __init__(self) -> None:
+        self.blocks: list[dict] = []
+
+    def text(self, content: str) -> None:
+        self.blocks.append({"type": "text", "content": content})
+
+    def thinking(self, content: str) -> None:
+        self.blocks.append({"type": "thinking", "content": content})
+
+    def thinking_placeholder(self) -> None:
+        self.blocks.append({"type": "thinking"})
+
+    def tool_summary(self, tools: list[tuple[str, int, str | None]]) -> None:
+        self.blocks.append({
+            "type": "tool_calls",
+            "tools": [
+                {"name": name, "count": count, **({"status": status} if status else {})}
+                for name, count, status in tools
+            ],
+        })
+
+    def tool_content(
+        self,
+        name: str,
+        count: int,
+        raw_input: str | None,
+        raw_result: str | None,
+        status: str | None,
+    ) -> None:
+        d: dict = {"name": name, "count": count}
+        if status:
+            d["status"] = status
+        if raw_input:
+            d["input"] = raw_input
+        if raw_result:
+            d["result"] = raw_result
+        self.blocks.append({"type": "tool_call", **d})
+
+    def tool_output(self, block_type: str, content: str) -> None:
+        self.blocks.append({"type": block_type, "content": content})
+
+
+class HtmlEmitter:
+    """Emits narrative blocks as HTML fragments.
+
+    Accumulates into self.parts: list[str].
+    """
+
+    def __init__(self) -> None:
+        from html import escape
+
+        self._escape = escape
+        self.parts: list[str] = []
+
+    def text(self, content: str) -> None:
+        paragraphs = content.split("\n\n")
+        for p in paragraphs:
+            stripped = p.strip()
+            if stripped:
+                self.parts.append(
+                    f'<p class="narrative-text">{self._escape(stripped)}</p>'
+                )
+
+    def thinking(self, content: str) -> None:
+        self.parts.append(
+            f'<details class="thinking" open>'
+            f"<summary>Thinking</summary>"
+            f"<pre>{self._escape(content)}</pre>"
+            f"</details>"
+        )
+
+    def thinking_placeholder(self) -> None:
+        self.parts.append('<span class="thinking placeholder">[thinking]</span>')
+
+    def tool_summary(self, tools: list[tuple[str, int, str | None]]) -> None:
+        items = []
+        for tool_name, count, status in tools:
+            label = self._escape(tool_name)
+            if count > 1:
+                label += f"&nbsp;&times;{count}"
+            css = "tool-name"
+            if status and status != "success":
+                css += " tool-error"
+            items.append(f'<span class="{css}">{label}</span>')
+        self.parts.append(f'<div class="tool-summary">{" ".join(items)}</div>')
+
+    def tool_content(
+        self,
+        name: str,
+        count: int,
+        raw_input: str | None,
+        raw_result: str | None,
+        status: str | None,
+    ) -> None:
+        from siftd.output.tool_presenters import extract_tool_presentation
+
+        e = self._escape
+        pres = extract_tool_presentation(name, raw_input, raw_result, status)
+
+        count_suffix = f" &times;{count}" if count > 1 else ""
+        status_css = " tool-error" if status and status != "success" else ""
+
+        parts = [f'<div class="tool-call{status_css}">']
+        parts.append(f'<div class="tool-name">{e(name)}{count_suffix}</div>')
+
+        # Headline — always present
+        parts.append(f'<code class="tool-headline">{e(pres.headline)}</code>')
+
+        # Meta — optional secondary info
+        if pres.meta:
+            parts.append(f'<span class="tool-meta">{e(pres.meta)}</span>')
+
+        # Diff content (file.edit)
+        if pres.removed is not None:
+            parts.append(f'<pre class="tool-removed">{e(pres.removed)}</pre>')
+        if pres.added is not None:
+            parts.append(f'<pre class="tool-added">{e(pres.added)}</pre>')
+
+        # Checklist (ui.todo)
+        if pres.tasks:
+            parts.append('<ul class="tool-tasks">')
+            for text, done in pres.tasks:
+                marker = "done" if done else "pending"
+                parts.append(f'<li class="task-{marker}">{e(text)}</li>')
+            parts.append("</ul>")
+
+        # Output preview
+        if pres.output:
+            parts.append(f'<pre class="tool-result">{e(pres.output)}</pre>')
+            if pres.overflow:
+                parts.append(
+                    f'<span class="tool-overflow">... +{pres.overflow} more lines</span>'
+                )
+
+        # Error
+        if pres.error:
+            parts.append(f'<pre class="tool-error">{e(pres.error)}</pre>')
+
+        parts.append("</div>")
+        self.parts.append("\n".join(parts))
+
+    def tool_output(self, block_type: str, content: str) -> None:
+        self.parts.append(
+            f'<pre class="tool-result">{self._escape(content)}</pre>'
+        )
+
+    def to_html(self) -> str:
+        return "\n".join(self.parts)
+
