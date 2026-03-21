@@ -9,11 +9,8 @@ set -euo pipefail
 import ast, sys, pathlib
 
 errors = []
-for f in ['tests/test_adapters.py']:
-    p = pathlib.Path(f)
-    if not p.exists():
-        continue
-    tree = ast.parse(p.read_text())
+for f in pathlib.Path('tests/adapters').glob('test_*.py'):
+    tree = ast.parse(f.read_text())
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith('test_'):
             has_assert = any(
@@ -23,7 +20,6 @@ for f in ['tests/test_adapters.py']:
                  n.value.func.attr.startswith('assert'))
                 for n in ast.walk(node)
             )
-            # Also count pytest.raises as valid assertion
             has_raises = any(
                 isinstance(n, ast.Call) and
                 (hasattr(n.func, 'attr') and n.func.attr == 'raises')
@@ -40,4 +36,4 @@ if errors:
 "
 
 # Lint check
-.venv/bin/python -m ruff check src/siftd/adapters/ tests/test_adapters.py 2>&1 | tail -20
+.venv/bin/python -m ruff check src/siftd/adapters/ tests/adapters/ 2>&1 | tail -20

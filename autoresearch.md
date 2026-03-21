@@ -5,10 +5,8 @@ Optimize the **test coverage efficiency** of the `src/siftd/adapters/` package. 
 rewards writing concise, fast tests that cover more source lines — encouraging clean
 integration tests over bloated or trivial ones.
 
-The adapter layer (1,721 stmts after excluding __init__.py and template.py) sits at ~16%
-coverage with ~704 LOC of tests (`tests/test_adapters.py`). The goal is to lower the
-composite metric by: increasing covered source lines, reducing test LOC bloat, and keeping
-test execution fast.
+Tests are split per-adapter under `tests/adapters/` so each adapter can be independently
+optimized without interference. The benchmark measures aggregate efficiency across all files.
 
 ## Metrics
 - **Primary**: `efficiency` (lower is better) = `test_LOC × test_time_s / covered_lines`
@@ -19,10 +17,10 @@ test execution fast.
   - `covered_lines` — absolute count of covered source lines (higher = better)
 
 ## How to Run
-`./autoresearch.sh` — outputs `METRIC name=number` lines.
+`./autoresearch.sh` — runs median-of-5 timing, outputs `METRIC name=number` lines.
 
 ## Scope
-Coverage is measured over these adapter files (excluding __init__.py and template.py):
+Coverage is measured over adapter source files (excluding __init__.py and template.py):
 
 - `src/siftd/adapters/_jsonl.py` (21 stmts) — JSONL helper utilities
 - `src/siftd/adapters/aider.py` (158 stmts) — Aider log parser
@@ -39,13 +37,27 @@ Coverage is measured over these adapter files (excluding __init__.py and templat
 
 Total: ~1,721 statements
 
+## Test Structure
+```
+tests/adapters/
+├── test_infra.py        — validation, registry, SDK (shared adapter infra)
+├── test_claude_code.py  — Claude Code adapter
+├── test_codex_cli.py    — Codex CLI adapter
+├── test_gemini_cli.py   — Gemini CLI adapter
+├── test_aider.py        — Aider adapter
+├── test_vscode.py       — VS Code adapter
+├── test_pi_agent.py     — Pi Agent adapter
+├── test_opencode.py     — OpenCode adapter
+└── test_copilot_cli.py  — Copilot CLI adapter
+```
+
 ## Files in Scope (may modify)
-- `tests/test_adapters.py` — adapter tests (extend and optimize)
+- `tests/adapters/test_*.py` — per-adapter test files (extend and optimize)
 - `tests/conftest.py` — shared fixtures (may add adapter-specific fixtures)
 
 ## Off Limits (must NOT modify)
 - All source files under `src/siftd/` — we're testing, not changing the implementation
-- Other test files — don't break existing tests
+- Other test files outside `tests/adapters/` — don't break existing tests
 - No new external dependencies
 
 ## Constraints
@@ -53,15 +65,10 @@ Total: ~1,721 statements
 - Tests must have meaningful assertions (no `assert True` padding)
 - Each test function must contain at least one `assert` statement
 - Tests should exercise real behavior through the public API, not mock internals
-- Coverage is measured with `--include` to target only adapter files (excluding __init__.py
-  and template.py)
-
-## Key Patterns from Existing Tests
-- Adapter tests create fixture data inline (JSON strings, fake file structures)
-- `can_handle()` tests verify path matching
-- `parse()` tests verify full conversation extraction
-- SDK tests use `tmp_path` for file-based fixtures
-- Each adapter class gets its own `Test*Adapter` class
 
 ## What's Been Tried
-(none yet — restarting fresh after refactoring adapter code for testability)
+- LOC compression (merged assertions, removed redundant imports): 567→502 LOC
+- Normalizer tests for copilot/pi_agent: +47 coverage at zero time cost
+- Aider analytics path + vscode error path tests: +17 coverage
+- Median-of-5 timing to stabilize time measurement (~8% variance vs ~40% before)
+- Split monolith test_adapters.py → per-adapter files under tests/adapters/

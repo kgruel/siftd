@@ -5,33 +5,32 @@ set -euo pipefail
 # Metric: test_LOC × test_time_s / covered_lines (lower = better)
 # Uses median-of-5 timing (all with coverage) for stability
 
-# Quick pre-check: syntax errors in test file
+# Quick pre-check: syntax errors in test files
 .venv/bin/python -c "
-import py_compile, sys
-for f in ['tests/test_adapters.py']:
+import py_compile, sys, pathlib
+for f in pathlib.Path('tests/adapters').glob('test_*.py'):
     try:
-        py_compile.compile(f, doraise=True)
-    except (py_compile.PyCompileError, FileNotFoundError) as e:
-        if 'FileNotFoundError' not in type(e).__name__:
-            print(f'Syntax error: {e}', file=sys.stderr)
-            sys.exit(1)
+        py_compile.compile(str(f), doraise=True)
+    except py_compile.PyCompileError as e:
+        print(f'Syntax error: {e}', file=sys.stderr)
+        sys.exit(1)
 "
 
 # Coverage source files (excluding __init__.py, template.py)
 INCLUDE="src/siftd/adapters/_jsonl.py,src/siftd/adapters/aider.py,src/siftd/adapters/claude_code.py,src/siftd/adapters/codex_cli.py,src/siftd/adapters/copilot_cli.py,src/siftd/adapters/gemini_cli.py,src/siftd/adapters/opencode.py,src/siftd/adapters/pi_agent.py,src/siftd/adapters/registry.py,src/siftd/adapters/sdk.py,src/siftd/adapters/validation.py,src/siftd/adapters/vscode.py"
 
-# Test files to measure LOC for
-TEST_FILES="tests/test_adapters.py"
+# Test directory
+TEST_DIR="tests/adapters"
 
-# Count test LOC (non-empty, non-comment lines)
-TEST_LOC=$(cat $TEST_FILES 2>/dev/null | grep -v '^\s*$' | grep -v '^\s*#' | wc -l | tr -d ' ')
+# Count test LOC (non-empty, non-comment lines across all test files)
+TEST_LOC=$(cat $TEST_DIR/test_*.py 2>/dev/null | grep -v '^\s*$' | grep -v '^\s*#' | wc -l | tr -d ' ')
 
 # Helper: run once with coverage, print elapsed time
 time_one_run() {
     local start end
     start=$(.venv/bin/python -c "import time; print(time.monotonic())")
     .venv/bin/python -m coverage run --include="$INCLUDE" \
-        -m pytest tests/test_adapters.py -x -q --tb=short -p no:xdist \
+        -m pytest $TEST_DIR -x -q --tb=short -p no:xdist \
         --override-ini="addopts=" -m "not embeddings and not serve" > /dev/null 2>&1
     end=$(.venv/bin/python -c "import time; print(time.monotonic())")
     .venv/bin/python -c "print(round($end - $start, 4))"
@@ -40,7 +39,7 @@ time_one_run() {
 # Run 1 — show output (for pass/fail detection)
 START1=$(.venv/bin/python -c "import time; print(time.monotonic())")
 .venv/bin/python -m coverage run --include="$INCLUDE" \
-    -m pytest tests/test_adapters.py -x -q --tb=short -p no:xdist \
+    -m pytest $TEST_DIR -x -q --tb=short -p no:xdist \
     --override-ini="addopts=" -m "not embeddings and not serve" 2>&1 | tail -5
 END1=$(.venv/bin/python -c "import time; print(time.monotonic())")
 T1=$(.venv/bin/python -c "print(round($END1 - $START1, 4))")
