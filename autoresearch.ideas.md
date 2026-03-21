@@ -1,23 +1,33 @@
 # Autoresearch Ideas
 
-## Storage Coverage Efficiency (current target: 0.48, down from 6.87)
+## Storage Coverage Efficiency (current: 0.74, baseline: 6.87)
 
-### Further LOC compression
-- The import block is ~100 lines (17% of total). Could use `from siftd.storage import sqlite as sq` style to shorten
-- The `_conv()` factory is 20 lines — could be shortened
-- Some test classes with single methods could be flattened
+### Remaining 36 uncovered lines
 
-### Remaining uncovered lines (105 lines, mostly sqlite.py)
-- **sqlite.py:225-392** (168 lines): `_migrate_add_cascade_deletes` — requires creating a legacy DB without CASCADE. Complex but would add ~168 covered lines
-- **sqlite.py:159-176**: `_migrate_labels_to_tags` — requires old-style labels table
-- **sqlite.py:73-76**: schema version check — requires DB with future version
-- **fts.py:214-216, 225-226**: exception handling in FTS recall — need malformed FTS query
-- **queries.py:176,246**: edge cases (no responses, empty exchange text)
-- **sessions.py:41-43**: migration adding last_seen_at column
+**Dead code (can't be covered):**
+- queries.py:529 — `return None, None` after aggregate query (fetchone always returns Row)
+- queries.py:570 — same pattern for `fetch_last_ingest_time`
+- queries.py:176 — likely same pattern (responses empty branch)
+- queries.py:246 — exchange with no text (would need prompt+response with zero text blocks)
 
-### Test speed optimization
-- The `populated_db` fixture calls `store_conversation` which does many inserts. Consider a lighter fixture for tests that don't need full conversation data
-- Could skip `open_database` migrations for test DBs by caching a template DB and copying it
+**Require external infra/mocking (git, filesystem):**
+- sqlite.py:603-621 — workspace git_remote lookup/update (needs real git repo)
+- sqlite.py:1012-1014 — `get_worktree_branch` call (needs git worktree)
+
+**Low-value internal paths:**
+- sqlite.py:365 — `continue` in cascade migration for missing tables
+- sqlite.py:512 — `ensure_push_log_table` (server-only feature)
+- sqlite.py:556-557, 562-563 — `except (ImportError, AttributeError)` in cache clearing
+- sqlite.py:686-697 — `get_or_create_tool` with kwargs (used internally, tested indirectly)
+- sqlite.py:786 — `continue` when canonical tool not found in ensure_tool_aliases
+- sqlite.py:939 — `json.dumps(filtered_data)` when filter_binary modifies data (needs base64 content)
+- fts.py:214, 225-226 — `except Exception: pass` in recall (both AND and OR phases)
+- tool_search.py:78 — `conn.commit()` in ensure_tool_search_tables (never called with commit=True)
+
+### LOC compression opportunities
+- Migration test schemas are bulky (~350 LOC for 12 tests). Could share a common base schema dict
+- The LEGACY_SCHEMA constant in TestMigrateAddCascadeDeletes is ~80 lines
+- Full migration integration test recreates most of the schema (~60 lines of CREATE TABLE)
 
 ## Non-storage ideas (future targets)
 - Apply same metric to adapters/ (13% coverage, 1904 stmts)

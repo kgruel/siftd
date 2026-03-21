@@ -309,9 +309,13 @@ class TestFTS:
         assert len(fts.search_content(populated_db[0], "Python")) > 0
 
     def test_ensure_fts(self, db, tmp_path):
-        fts.ensure_fts_table(db)
+        # Table exists with porter → no-op
         fts.ensure_fts_table(db)
         assert db.execute("SELECT 1 FROM sqlite_master WHERE name='content_fts'").fetchone() is not None
+        # Table missing → create from scratch
+        db.execute("DROP TABLE IF EXISTS content_fts")
+        fts.ensure_fts_table(db)
+        assert "porter" in (db.execute("SELECT sql FROM sqlite_master WHERE name='content_fts'").fetchone()[0] or "").lower()
         # Recreate without porter
         conn = open_database(tmp_path / "t.db")
         conn.execute("DROP TABLE IF EXISTS content_fts")
