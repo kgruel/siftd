@@ -10,3 +10,4 @@
 {"run":16,"commit":"9be1853","metric":45.225,"metrics":{"conversations":6150},"status":"keep","description":"Add PRAGMA temp_store=MEMORY for faster temp table operations (46s→45s)","timestamp":1774061879241,"segment":0}
 {"run":10,"commit":"60de341","metric":41.927,"metrics":{"conversations":6150},"status":"keep","description":"Fix lint (ULID semicolons), reset blob timestamp on new connection, prune ideas. Cleanup only — no perf change.","timestamp":1774063226517,"segment":0}
 {"type":"config","name":"Storage layer test coverage efficiency","metricName":"efficiency","metricUnit":"","bestDirection":"lower"}
+{"run":1,"commit":"f5c1ff9","metric":6.87,"metrics":{"coverage_pct":18.4,"test_time_s":2.854,"test_loc":532,"covered_lines":221},"status":"keep","description":"Baseline: 532 test LOC, 2.85s, 221/1201 lines covered (18.4%). Efficiency=6.87","timestamp":1774070767839,"segment":0}

@@ -31,10 +31,10 @@ TEST_LOC=$(cat $TEST_FILES 2>/dev/null | grep -v '^\s*$' | grep -v '^\s*#' | wc 
 # Run tests with coverage, capture timing
 START=$(.venv/bin/python -c "import time; print(time.monotonic())")
 .venv/bin/python -m coverage run \
-    --source=src/siftd/storage \
     --include="$INCLUDE" \
     -m pytest tests/test_blobs.py tests/test_storage.py \
-    -x -q --tb=short -m "not embeddings and not serve" 2>&1 | tail -5
+    -x -q --tb=short -p no:xdist --override-ini="addopts=" \
+    -m "not embeddings and not serve" 2>&1 | tail -5
 END=$(.venv/bin/python -c "import time; print(time.monotonic())")
 
 TEST_TIME=$(.venv/bin/python -c "print(round($END - $START, 3))")
