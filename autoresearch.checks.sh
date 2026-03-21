@@ -9,7 +9,7 @@ set -euo pipefail
 import ast, sys, pathlib
 
 errors = []
-for f in ['tests/test_blobs.py', 'tests/test_storage.py', 'tests/test_migrations.py']:
+for f in ['tests/test_adapters.py']:
     p = pathlib.Path(f)
     if not p.exists():
         continue
@@ -40,4 +40,4 @@ if errors:
 "
 
 # Lint check
-.venv/bin/python -m ruff check src/siftd/storage/ tests/test_blobs.py tests/test_storage.py tests/test_migrations.py 2>&1 | tail -20
+.venv/bin/python -m ruff check src/siftd/adapters/ tests/test_adapters.py 2>&1 | tail -20
