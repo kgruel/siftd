@@ -143,128 +143,51 @@ def stats_cache_path() -> Path:
 
 
 def _stats_to_dict(stats: DatabaseStats) -> dict:
-    """Serialize DatabaseStats to a JSON-safe dict."""
-    return {
-        "db_path": str(stats.db_path),
-        "db_size_bytes": stats.db_size_bytes,
-        "counts": {
-            "conversations": stats.counts.conversations,
-            "prompts": stats.counts.prompts,
-            "responses": stats.counts.responses,
-            "tool_calls": stats.counts.tool_calls,
-            "harnesses": stats.counts.harnesses,
-            "workspaces": stats.counts.workspaces,
-            "tools": stats.counts.tools,
-            "models": stats.counts.models,
-            "ingested_files": stats.counts.ingested_files,
-        },
-        "harnesses": [
-            {"name": h.name, "source": h.source, "log_format": h.log_format}
-            for h in stats.harnesses
-        ],
-        "harness_counts": [
-            {"name": hc.name, "conversation_count": hc.conversation_count}
-            for hc in stats.harness_counts
-        ],
-        "top_workspaces": [
-            {
-                "path": w.path,
-                "conversation_count": w.conversation_count,
-                "last_activity": w.last_activity,
-            }
-            for w in stats.top_workspaces
-        ],
-        "models": stats.models,
-        "top_tools": [
-            {"name": t.name, "usage_count": t.usage_count}
-            for t in stats.top_tools
-        ],
-        "top_tags": [
-            {"name": t.name, "count": t.count} for t in stats.top_tags
-        ],
-        "token_coverage": {
-            "responses": stats.token_coverage.responses,
-            "with_tokens": stats.token_coverage.with_tokens,
-            "pct_with_tokens": stats.token_coverage.pct_with_tokens,
-            "by_harness": [
-                {
-                    "name": h.name,
-                    "responses": h.responses,
-                    "with_tokens": h.with_tokens,
-                    "pct_with_tokens": h.pct_with_tokens,
-                }
-                for h in stats.token_coverage.by_harness
-            ],
-        },
-        "activity_window": list(stats.activity_window),
-        "last_ingest_at": stats.last_ingest_at,
-    }
+    """Serialize DatabaseStats to a JSON-safe dict.
+
+    Delegates to serialization.stats.serialize_stats — the canonical
+    serializer. This wrapper kept for backward compatibility.
+    """
+    from siftd.serialization.stats import serialize_stats
+
+    return serialize_stats(stats)
+
 
 
 def _dict_to_stats(data: dict) -> DatabaseStats:
     """Deserialize a JSON dict back to DatabaseStats."""
     c = data["counts"]
-    counts = TableCounts(
-        conversations=c["conversations"],
-        prompts=c["prompts"],
-        responses=c["responses"],
-        tool_calls=c["tool_calls"],
-        harnesses=c["harnesses"],
-        workspaces=c["workspaces"],
-        tools=c["tools"],
-        models=c["models"],
-        ingested_files=c["ingested_files"],
-    )
-    harnesses = [
-        HarnessInfo(name=h["name"], source=h.get("source"), log_format=h.get("log_format"))
-        for h in data["harnesses"]
-    ]
-    harness_counts = [
-        HarnessCount(name=hc["name"], conversation_count=hc["conversation_count"])
-        for hc in data["harness_counts"]
-    ]
-    top_workspaces = [
-        WorkspaceStats(
-            path=w["path"],
-            conversation_count=w["conversation_count"],
-            last_activity=w.get("last_activity"),
-        )
-        for w in data["top_workspaces"]
-    ]
-    top_tools = [
-        ToolStats(name=t["name"], usage_count=t["usage_count"])
-        for t in data["top_tools"]
-    ]
-    top_tags = [
-        TagStats(name=t["name"], count=t["count"]) for t in data["top_tags"]
-    ]
     tc = data["token_coverage"]
-    token_coverage = TokenCoverage(
-        responses=tc["responses"],
-        with_tokens=tc["with_tokens"],
-        pct_with_tokens=tc["pct_with_tokens"],
-        by_harness=[
-            TokenCoverageByHarness(
-                name=h["name"],
-                responses=h["responses"],
-                with_tokens=h["with_tokens"],
-                pct_with_tokens=h["pct_with_tokens"],
-            )
-            for h in tc["by_harness"]
-        ],
-    )
     aw = data["activity_window"]
+
     return DatabaseStats(
         db_path=Path(data["db_path"]),
         db_size_bytes=data["db_size_bytes"],
-        counts=counts,
-        harnesses=harnesses,
-        harness_counts=harness_counts,
-        top_workspaces=top_workspaces,
+        counts=TableCounts(**c),
+        harnesses=[
+            HarnessInfo(name=h["name"], source=h.get("source"), log_format=h.get("log_format"))
+            for h in data["harnesses"]
+        ],
+        harness_counts=[
+            HarnessCount(name=hc["name"], conversation_count=hc["conversation_count"])
+            for hc in data["harness_counts"]
+        ],
+        top_workspaces=[
+            WorkspaceStats(path=w["path"], conversation_count=w["conversation_count"], last_activity=w.get("last_activity"))
+            for w in data["top_workspaces"]
+        ],
         models=data["models"],
-        top_tools=top_tools,
-        top_tags=top_tags,
-        token_coverage=token_coverage,
+        top_tools=[ToolStats(name=t["name"], usage_count=t["usage_count"]) for t in data["top_tools"]],
+        top_tags=[TagStats(name=t["name"], count=t["count"]) for t in data["top_tags"]],
+        token_coverage=TokenCoverage(
+            responses=tc["responses"],
+            with_tokens=tc["with_tokens"],
+            pct_with_tokens=tc["pct_with_tokens"],
+            by_harness=[
+                TokenCoverageByHarness(name=h["name"], responses=h["responses"], with_tokens=h["with_tokens"], pct_with_tokens=h["pct_with_tokens"])
+                for h in tc["by_harness"]
+            ],
+        ),
         activity_window=(aw[0], aw[1]),
         last_ingest_at=data.get("last_ingest_at"),
     )

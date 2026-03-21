@@ -114,6 +114,13 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
     return output
 
 
+def render_stats(stats: Any, fidelity: Fidelity, **context: Any) -> dict:
+    """Render database stats as a dict."""
+    from siftd.serialization.stats import serialize_stats
+
+    return serialize_stats(stats)
+
+
 def _json_chunk_list(results: list) -> list[dict]:
     """Build JSON-safe list of chunk dicts."""
     from siftd.search import ScoreBreakdown

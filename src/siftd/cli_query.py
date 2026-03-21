@@ -326,68 +326,55 @@ def cmd_query(args) -> int:
     if args.conversation_id:
         return _query_detail(args)
 
+    from dataclasses import asdict
+
     from siftd.api import list_conversations
-    from siftd.api.conversations import ConversationSummary
+    from siftd.api.dispatch import Operation, execute
+    from siftd.cli_filters import extract_filter_args
+    from siftd.serve.delegation import try_serve
 
-    db = Path(args.db) if args.db else None
-    effective_db = db or resolve_db(args)
+    db = resolve_db(args)
+    filters = extract_filter_args(args)
+    fidelity = fidelity_from_args(args)
 
-    conversations = None
+    op = Operation(
+        path="/v1/query",
+        method="GET",
+        fn=list_conversations,
+        params={
+            "db_path": db,
+            **{k: v for k, v in asdict(filters).items() if v is not None},
+            "limit": args.limit,
+            "oldest_first": args.oldest,
+        },
+        render_method="list",
+        fidelity=fidelity,
+        db=db,
+    )
 
-    # Try serve delegation (avoids cold-open on large DBs)
-    try:
-        from siftd.serve.delegation import try_delegate
+    # Try serve, fall back to local execution
+    conversations = try_serve(op)
+    if conversations is not None and isinstance(conversations, dict):
+        # Server returned serialized list — deserialize back to domain objects
+        from siftd.api.conversations import ConversationSummary
 
-        params: dict[str, object] = {
-            "workspace": args.workspace,
-            "model": args.model,
-            "since": args.since,
-            "before": args.before,
-            "tool": args.tool,
-            "tag": args.tag,
-            "all_tags": getattr(args, "all_tags", None),
-            "no_tag": getattr(args, "no_tag", None),
-            "tool_tag": getattr(args, "tool_tag", None),
-            "n": args.limit,
-            "oldest": args.oldest,
-        }
-        params = {k: v for k, v in params.items() if v is not None and v is not False}
-
-        result = try_delegate("/v1/query", params=params, db=effective_db)
-        if result is not None and "conversations" in result:
-            conversations = [
-                ConversationSummary(
-                    id=c["id"],
-                    workspace_path=c.get("workspace"),
-                    model=c.get("model"),
-                    started_at=c.get("started_at"),
-                    prompt_count=c.get("prompts", 0),
-                    response_count=c.get("responses", 0),
-                    total_tokens=c.get("tokens", 0),
-                    cost=c.get("cost"),
-                    tags=c.get("tags", []),
-                )
-                for c in result["conversations"]
-            ]
-    except Exception:
-        pass
-
-    if conversations is None:
-        try:
-            conversations = list_conversations(
-                db_path=db,
-                workspace=args.workspace,
-                model=args.model,
-                since=args.since,
-                before=args.before,
-                tool=args.tool,
-                tags=args.tag,
-                all_tags=getattr(args, "all_tags", None),
-                exclude_tags=getattr(args, "no_tag", None),
-                tool_tag=getattr(args, "tool_tag", None),
-                limit=args.limit,
-                oldest_first=args.oldest,
+        conversations = [
+            ConversationSummary(
+                id=c["id"],
+                workspace_path=c.get("workspace"),
+                model=c.get("model"),
+                started_at=c.get("started_at"),
+                prompt_count=c.get("prompts", 0),
+                response_count=c.get("responses", 0),
+                total_tokens=c.get("tokens", 0),
+                cost=c.get("cost"),
+                tags=c.get("tags", []),
             )
+            for c in conversations.get("conversations", [])
+        ]
+    else:
+        try:
+            conversations = execute(op)
         except FileNotFoundError as e:
             print(str(e))
             print("Run 'siftd ingest' to create it.")

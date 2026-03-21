@@ -203,3 +203,22 @@ def try_delegate_post(
         return _post_json(base_url, endpoint, body=body, timeout_s=timeout_s)
     except Exception:
         return None
+
+
+def try_serve(op: Any) -> Any | None:
+    """Try delegating an Operation to siftd-serve.
+
+    Accepts an Operation (from api.dispatch) and delegates based on
+    its path, method, params, and db. Returns the raw serve response
+    on success, None on any failure.
+    """
+    try:
+        params = {k: v for k, v in op.params.items() if k != "db_path"}
+
+        if op.method == "GET":
+            return try_delegate(op.path, params, db=op.db)
+        elif op.method == "POST":
+            return try_delegate_post(op.path, params, db=op.db)
+    except Exception:
+        pass
+    return None

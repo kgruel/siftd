@@ -450,18 +450,10 @@ async def query(
 
     rows = list_conversations(
         db_path=db_path,
-        workspace=workspace,
-        model=model,
-        since=since,
-        before=before,
-        search=search,
-        tool=tool,
-        tags=tag,
-        all_tags=all_tags,
-        exclude_tags=no_tag,
-        tool_tag=tool_tag,
-        limit=n,
-        oldest_first=oldest,
+        workspace=workspace, model=model, since=since, before=before,
+        search=search, tool=tool, tags=tag, all_tags=all_tags,
+        exclude_tags=no_tag, tool_tag=tool_tag,
+        limit=n, oldest_first=oldest,
     )
     return {"conversations": serialize_conversation_list(rows)}
 
