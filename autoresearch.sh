@@ -7,7 +7,7 @@ set -euo pipefail
 # Quick pre-check: syntax errors in test files
 .venv/bin/python -c "
 import py_compile, sys
-for f in ['tests/test_blobs.py', 'tests/test_storage.py']:
+for f in ['tests/test_blobs.py', 'tests/test_storage.py', 'tests/test_migrations.py']:
     try:
         py_compile.compile(f, doraise=True)
     except (py_compile.PyCompileError, FileNotFoundError) as e:
@@ -20,7 +20,7 @@ for f in ['tests/test_blobs.py', 'tests/test_storage.py']:
 INCLUDE="src/siftd/storage/blobs.py,src/siftd/storage/conversation_stats.py,src/siftd/storage/filters.py,src/siftd/storage/fts.py,src/siftd/storage/queries.py,src/siftd/storage/sessions.py,src/siftd/storage/sql_helpers.py,src/siftd/storage/sqlite.py,src/siftd/storage/tags.py,src/siftd/storage/tool_search.py"
 
 # Test files to measure LOC for
-TEST_FILES="tests/test_storage.py"
+TEST_FILES="tests/test_storage.py tests/test_migrations.py"
 
 # Count test LOC (non-empty, non-comment lines)
 TEST_LOC=$(cat $TEST_FILES 2>/dev/null | grep -v '^\s*$' | grep -v '^\s*#' | wc -l | tr -d ' ')
@@ -29,7 +29,7 @@ TEST_LOC=$(cat $TEST_FILES 2>/dev/null | grep -v '^\s*$' | grep -v '^\s*#' | wc 
 START=$(.venv/bin/python -c "import time; print(time.monotonic())")
 .venv/bin/python -m coverage run \
     --include="$INCLUDE" \
-    -m pytest tests/test_blobs.py tests/test_storage.py \
+    -m pytest tests/test_blobs.py tests/test_storage.py tests/test_migrations.py \
     -x -q --tb=short -p no:xdist --override-ini="addopts=" \
     -m "not embeddings and not serve" 2>&1 | tail -5
 END=$(.venv/bin/python -c "import time; print(time.monotonic())")

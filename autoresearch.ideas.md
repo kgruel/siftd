@@ -1,38 +1,24 @@
 # Autoresearch Ideas
 
-## Ingest performance (current target: 38s, down from 115s)
+## Storage Coverage Efficiency (current target: 0.48, down from 6.87)
 
-### Batch commits (high potential, complex)
-- 6,419 individual commits cost ~5.5s even with sync=OFF
-- Batch N files per commit (e.g., 100-200) would reduce to ~32-64 commits
-- Challenge: errors in one file roll back the whole batch
-- Tried savepoints: overhead negated the savings
-- Possible approach: use Python 3.12+ autocommit mode with explicit BEGIN/COMMIT,
-  catch errors per-file and re-execute just the failed file's rollback via savepoint
+### Further LOC compression
+- The import block is ~100 lines (17% of total). Could use `from siftd.storage import sqlite as sq` style to shorten
+- The `_conv()` factory is 20 lines — could be shortened
+- Some test classes with single methods could be flattened
 
-### Reduce JSON round-trips
-- Adapters parse JSONL → Python dicts, then `store_conversation` re-encodes with `json.dumps`
-- 605k json.loads (5.2s) + 408k json.dumps (1.5s) = 6.7s total
-- Could pass raw JSON strings through for content blocks instead of parse→re-encode
-- Requires adapter interface change (return raw JSON for blocks)
+### Remaining uncovered lines (105 lines, mostly sqlite.py)
+- **sqlite.py:225-392** (168 lines): `_migrate_add_cascade_deletes` — requires creating a legacy DB without CASCADE. Complex but would add ~168 covered lines
+- **sqlite.py:159-176**: `_migrate_labels_to_tags` — requires old-style labels table
+- **sqlite.py:73-76**: schema version check — requires DB with future version
+- **fts.py:214-216, 225-226**: exception handling in FTS recall — need malformed FTS query
+- **queries.py:176,246**: edge cases (no responses, empty exchange text)
+- **sessions.py:41-43**: migration adding last_seen_at column
 
-### Streaming JSONL parser
-- `load_jsonl` reads entire file then parses each line
-- For large files, a streaming approach could overlap I/O and parsing
-- Most files are small though, so benefit may be marginal
+### Test speed optimization
+- The `populated_db` fixture calls `store_conversation` which does many inserts. Consider a lighter fixture for tests that don't need full conversation data
+- Could skip `open_database` migrations for test DBs by caching a template DB and copying it
 
-### executemany for bulk inserts
-- Currently each row is a separate `conn.execute()` call (1M total, 8.8s)
-- Could collect rows per table and use `executemany` for prompt_content,
-  response_content, content_fts, tool_calls
-- Requires restructuring store_conversation to collect-then-flush
-
-### Skip file hashing for unchanged mtime+size
-- Currently hash every file even when mtime matches
-- Could trust mtime+size pair as "unchanged" signal and skip SHA-256
-- Risk: rare cases where content changes without mtime change (e.g., NFS)
-
-## Non-ingest ideas (future targets)
-- **Query startup**: lazy-import adapters only for ingest/peek commands (~20-30ms)
-- **Denormalize conversation stats**: add prompt_count, response_count, total_tokens
-  columns to conversations table to avoid response table scan on listing
+## Non-storage ideas (future targets)
+- Apply same metric to adapters/ (13% coverage, 1904 stmts)
+- Apply same metric to api/ (23% coverage, 1709 stmts)
