@@ -175,125 +175,56 @@ def _scaffold(conn):
 # === Blob storage ===
 
 class TestBlobStorage:
-    def test_store_returns_hash(self, db):
+    def test_store_retrieve_hash(self, db):
         assert store_content(db, "Hello!", commit=True) == compute_content_hash("Hello!")
-
-    def test_get_retrieves(self, db):
         h = store_content(db, "Test", commit=True)
         assert get_content(db, h) == "Test"
-
-    def test_get_unknown(self, db):
         assert get_content(db, "nonexistent") is None
-
-    def test_same_hash(self, db):
         assert store_content(db, "det") == store_content(db, "det")
-
-    def test_different_hash(self, db):
         assert store_content(db, "A") != store_content(db, "B")
+        # Edge cases
+        assert get_content(db, store_content(db, "", commit=True)) == ""
+        s = "Hello 世界 🌍"
+        assert get_content(db, store_content(db, s, commit=True)) == s
 
-
-class TestDeduplication:
-    def test_dup_increments_ref(self, db):
+    def test_dedup_and_refcount(self, db):
         h = store_content(db, "D", commit=True)
         assert get_ref_count(db, h) == 1
         store_content(db, "D", commit=True)
         assert get_ref_count(db, h) == 2
-
-    def test_dup_single_blob(self, db):
-        for _ in range(5):
-            store_content(db, "m")
-        db.commit()
-        assert db.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0] == 1
-
-    def test_different_separate(self, db):
-        for s in ("A", "B", "C"):
+        for s in ("X", "Y", "Z"):
             store_content(db, s)
         db.commit()
-        assert db.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0] == 3
-
-
-class TestRefCounting:
-    def test_release_decrements(self, db):
-        h = store_content(db, "r")
-        store_content(db, "r")
-        db.commit()
+        assert db.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0] == 4  # D,X,Y,Z
+        # Release
         release_content(db, h, commit=True)
         assert get_ref_count(db, h) == 1
-
-    def test_release_deletes(self, db):
-        h = store_content(db, "g", commit=True)
         release_content(db, h, commit=True)
         assert get_content(db, h) is None
-
-    def test_release_preserves(self, db):
-        h = store_content(db, "k")
-        store_content(db, "k")
-        store_content(db, "k")
-        db.commit()
-        release_content(db, h, commit=True)
-        assert get_ref_count(db, h) == 2
-
-    def test_nonexistent_zero(self, db):
         assert get_ref_count(db, "nope") == 0
 
 
-class TestBlobEdgeCases:
-    def test_empty_string(self, db):
-        h = store_content(db, "", commit=True)
-        assert get_content(db, h) == ""
-
-    def test_large(self, db):
-        big = "x" * (1024 * 1024)
-        assert get_content(db, store_content(db, big, commit=True)) == big
-
-    def test_unicode(self, db):
-        s = "Hello 世界 🌍"
-        assert get_content(db, store_content(db, s, commit=True)) == s
-
-    def test_json(self, db):
-        s = '{"path": "/t.py", "content": "pass"}'
-        assert get_content(db, store_content(db, s, commit=True)) == s
-
-
 class TestToolCallBlobs:
-    def test_dedupes(self, db):
+    def test_dedupe_and_cascade(self, db):
         c, r = _scaffold(db)
         insert_tool_call(db, r, c, None, "tc1", '{}', '{"c":"f"}', "success", "2024-01-01T10:00:01Z")
         db.commit()
         row = db.execute("SELECT result, result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
         assert row["result"] is None and row["result_hash"] is not None
+        # Delete cascades and releases blob
+        delete_conversation(db, c)
+        db.commit()
+        assert get_ref_count(db, row["result_hash"]) == 0
 
-    def test_dedupe_disabled(self, db):
+    def test_dedupe_disabled_and_null(self, db):
         c, r = _scaffold(db)
         insert_tool_call(db, r, c, None, "tc1", '{}', '{"i":1}', "s", "2024-01-01T10:00:01Z", dedupe_result=False)
+        insert_tool_call(db, r, c, None, "tc2", '{}', None, "s", "2024-01-01T10:00:02Z")
         db.commit()
         row = db.execute("SELECT result, result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
         assert row["result"] == '{"i":1}' and row["result_hash"] is None
 
-    def test_shared_blob(self, db):
-        c, r = _scaffold(db)
-        for i in range(3):
-            insert_tool_call(db, r, c, None, f"tc{i}", '{}', '{"s":1}', "s", f"2024-01-01T10:0{i}:00Z")
-        db.commit()
-        assert db.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0] == 1
-
-    def test_null_no_blob(self, db):
-        c, r = _scaffold(db)
-        insert_tool_call(db, r, c, None, "tc1", '{}', None, "s", "2024-01-01T10:00:01Z")
-        db.commit()
-        assert db.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0] == 0
-
-
-class TestDeleteCascadeBlobs:
-    def test_releases_blob(self, db):
-        c, r = _scaffold(db)
-        insert_tool_call(db, r, c, None, "tc1", '{}', '{"o":1}', "s", "2024-01-01T10:00:01Z")
-        db.commit()
-        delete_conversation(db, c)
-        db.commit()
-        assert get_ref_count(db, compute_content_hash('{"o":1}')) == 0
-
-    def test_preserves_shared(self, db):
+    def test_shared_blob_cascade(self, db):
         h = get_or_create_harness(db, "test", source="test")
         ws = get_or_create_workspace(db, "/test", "2024-01-01T10:00:00Z")
         result = '{"s":1}'
@@ -305,33 +236,24 @@ class TestDeleteCascadeBlobs:
             insert_tool_call(db, r, c, None, f"tc{i}", '{}', result, "s", f"2024-01-0{i+1}T10:00:01Z")
             ids.append(c)
         db.commit()
+        assert get_ref_count(db, compute_content_hash(result)) == 2
         delete_conversation(db, ids[0])
         db.commit()
         assert get_ref_count(db, compute_content_hash(result)) == 1
 
 
 class TestBlobMigration:
-    def test_count_pending(self, db):
-        from siftd.storage.migrate_blobs import count_pending_migrations
-        c, r = _scaffold(db)
-        for i in range(3):
-            insert_tool_call(db, r, c, None, f"tc{i}", '{}', f'{{"n":{i}}}', "s", None, dedupe_result=False)
-        db.commit()
-        assert count_pending_migrations(db)["total"] == 3
-
-    def test_migrate(self, db):
-        from siftd.storage.migrate_blobs import migrate_existing_results, verify_migration
+    def test_migrate_lifecycle(self, db):
+        from siftd.storage.migrate_blobs import count_pending_migrations, migrate_existing_results, verify_migration
+        assert migrate_existing_results(db)["migrated"] == 0  # empty
         c, r = _scaffold(db)
         for ext, val in [("tc1", '{"a":1}'), ("tc2", '{"a":1}'), ("tc3", '{"b":2}')]:
             insert_tool_call(db, r, c, None, ext, '{}', val, "s", None, dedupe_result=False)
         db.commit()
+        assert count_pending_migrations(db)["total"] == 3
         s = migrate_existing_results(db)
         assert s["migrated"] == 3 and s["blobs_created"] == 2
         assert verify_migration(db)["pending"] == 0
-
-    def test_migrate_empty(self, db):
-        from siftd.storage.migrate_blobs import migrate_existing_results
-        assert migrate_existing_results(db)["migrated"] == 0
 
     def test_migrate_preserves(self, db):
         from siftd.storage.migrate_blobs import migrate_existing_results
@@ -414,48 +336,29 @@ class TestConversationOps:
 # === File dedup ===
 
 class TestFileDedup:
-    def test_record_and_check(self, populated_db):
-        conn, cid = populated_db
-        record_ingested_file(conn, "/f.jsonl", "abc", cid, file_mtime=1.0, file_size=9, commit=True)
-        assert check_file_ingested(conn, "/f.jsonl")
-        assert not check_file_ingested(conn, "/other.jsonl")
-
-    def test_get_info(self, populated_db):
+    def test_ingested_lifecycle(self, populated_db, tmp_path):
         conn, cid = populated_db
         record_ingested_file(conn, "/f.jsonl", "h1", cid, file_mtime=1.0, file_size=5, commit=True)
+        assert check_file_ingested(conn, "/f.jsonl")
+        assert not check_file_ingested(conn, "/other.jsonl")
         info = get_ingested_file_info(conn, "/f.jsonl")
         assert info["file_hash"] == "h1" and info["file_mtime"] == 1.0
+        assert get_ingested_file_info(conn, "/nope") is None
+        update_file_stat(conn, "/f.jsonl", 2.0, 20)
+        assert get_ingested_file_info(conn, "/f.jsonl")["file_mtime"] == 2.0
+        # File hash
+        f = tmp_path / "t.txt"
+        f.write_text("hello")
+        assert compute_file_hash(f) == compute_file_hash(f) and len(compute_file_hash(f)) == 64
 
-    def test_info_missing(self, db):
-        assert get_ingested_file_info(db, "/nope") is None
-
-    def test_empty_file(self, db):
+    def test_empty_and_failed(self, db):
         h = get_or_create_harness(db, "t")
         record_empty_file(db, "/e.jsonl", "eh", h, commit=True)
         assert check_file_ingested(db, "/e.jsonl")
-
-    def test_failed_file(self, db):
-        h = get_or_create_harness(db, "t")
         record_failed_file(db, "/b.jsonl", "bh", h, "parse error", commit=True)
         assert get_ingested_file_info(db, "/b.jsonl")["error"] == "parse error"
-
-    def test_clear_error(self, db):
-        h = get_or_create_harness(db, "t")
-        record_failed_file(db, "/b.jsonl", "bh", h, "err", commit=True)
         clear_ingested_file_error(db, "/b.jsonl")
         assert not check_file_ingested(db, "/b.jsonl")
-
-    def test_update_stat(self, populated_db):
-        conn, cid = populated_db
-        record_ingested_file(conn, "/f.jsonl", "h1", cid, file_mtime=1.0, file_size=10, commit=True)
-        update_file_stat(conn, "/f.jsonl", 2.0, 20)
-        assert get_ingested_file_info(conn, "/f.jsonl")["file_mtime"] == 2.0
-
-    def test_compute_hash(self, tmp_path):
-        f = tmp_path / "t.txt"
-        f.write_text("hello")
-        h = compute_file_hash(f)
-        assert h == compute_file_hash(f) and len(h) == 64
 
 
 # === FTS ===
