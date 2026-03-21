@@ -65,60 +65,68 @@ output = render(result, op, fmt=select_format(...))
 Sequential: fidelity → render methods → dispatch → route generation.
 Independent: param alignment (can happen anytime).
 
-### Phase 1: Fidelity audit
+### Phase 1: Fidelity audit ✓
 
-7 of 12 Operations use `Fidelity()` placeholder. Audit which actually
-benefit from depth/visibility controls vs which are truly passthrough:
+**Done.** Results:
 
-| render_method | Operations | Fidelity needed? |
+| render_method | Operations | Fidelity status |
 |---------------|-----------|-----------------|
-| `raw` (7) | tools, workspaces, tag list, tool-search, tag writes | Probably not — flat data |
-| `detail` (2) | query detail, export | Yes — already wired |
-| `list` (1) | query list | Yes — already wired |
-| `search` (1) | search | Yes — already wired |
-| `stats` (1) | db stats | Maybe — depth could control section visibility |
+| `raw` (7) | tools, workspaces, tag list, tool-search, tag writes | Placeholder — correct, fidelity unused |
+| `detail` (2) | query detail, export | Real fidelity from args — correct |
+| `list` (1) | query list | Real fidelity from args — correct |
+| `search` (1) | search | Fixed: was placeholder, now real fidelity flows through Operation |
+| `stats` (1) | db stats | Placeholder — escalate to render method if complexity warrants |
 
-The `raw` Operations may never need fidelity. The question is whether
-`raw` dissolves into specific render methods (e.g. `render_tools`,
-`render_tags`) or stays as passthrough forever.
+**Decision:** `raw` is a legitimate render method (identity function). Don't promote
+to format protocol render methods unless output complexity warrants it. Stats and
+tool-search are escalation candidates if needed later.
 
-### Phase 2: Render methods on format protocol
+### Phase 2: Render methods — dissolved
 
-Move rendering from scattered `print()` in each CLI module into format
-protocol methods. For each `raw` Operation, either:
+Phase 2 dissolves. The three render methods that matter (`detail`, `list`, `search`)
+already exist and are wired correctly. `raw` stays as-is — the data is simple enough
+that CLI modules handle their own output. Escalate individual Operations to format
+protocol methods when their output complexity justifies it (stats, tool-search are
+candidates).
 
-1. Add `render_{name}` to the format protocol (terminal_fmt, json_fmt, markdown_fmt)
-2. Keep `raw` — the data is simple enough that the CLI prints it directly
+### Phase 3: Use dispatch() — dissolved
 
-Candidates for format protocol:
-- `render_stats` — already exists on json_fmt; add to terminal_fmt
-- `render_tools` — summary + by-workspace modes
-- `render_workspaces` — workspace list
-- `render_tags` — tag list with counts
-- `render_tool_search` — grouped/ungrouped results
+**Finding:** Every CLI command has meaningful post-processing between
+`execute()` and render — threshold filtering, aggregation, enrichment,
+mode branches, stderr hints. `dispatch()` (execute + render) is too
+simple for any CLI command.
 
-This is where CLI modules shrink. cmd_status goes from 80 lines of
-print statements to `dispatch(op, fmt=fmt)`.
+This is correct by design. The two contexts have different patterns:
 
-### Phase 3: Use dispatch()
+- **CLI:** `try_serve(op) → execute(op) → post-process → render`
+- **Serve:** `Operation.from_http(params) → dispatch(op, fmt=json_fmt)`
 
-Once render methods work, the per-command pattern simplifies:
+`dispatch()` is the serve-side shortcut. HTTP handlers don't do CLI
+post-processing. CLI commands are already using the right pattern.
 
-```python
-result = try_serve(op)
-if result is not None:
-    # deserialize serve response to domain objects
-    ...
-else:
-    result = dispatch(op, fmt=select_format(...))
-```
+`dispatch()` stays in `api/dispatch.py` for Phase 4 consumption.
 
-Or for commands where serve returns pre-rendered JSON:
-```python
-result = try_serve(op) or dispatch(op, fmt=fmt)
-```
+### Phase 4: Param alignment
 
-### Phase 4: Serve route generation
+**Done.** Unified CLI/HTTP/API param names. One name per concept flows
+through all three contexts:
+
+| Unified | Replaces | Notes |
+|---------|----------|-------|
+| `n` | `limit`, `last` | `limit` and `last` are CLI sugar |
+| `q` | `query` | positional in CLI |
+| `tag` | `tags` | list param, `--tag X --tag Y` |
+| `no_tag` | `exclude_tags` | `--no-tag X` |
+| `id` | `conversation_id`, `conversation_ids` | positional or `--id` |
+| `oldest` | `oldest_first` | boolean flag |
+| `backend` | `backend_name` | `--backend ollama` |
+
+`_SERVE_PARAM_MAP` reduced from 10 entries to 1: `lambda_` → `lambda`
+(Python keyword — only survivor).
+
+`_SERVE_ONLY_KEYS` unchanged: `{action, embeddings_only}`
+
+### Phase 5: Serve route generation
 
 Derive routes from Operation definitions. A route becomes:
 
@@ -130,29 +138,9 @@ async def query(params) -> dict:
 ```
 
 Depends on:
-- dispatch() working end-to-end (Phase 3)
+- Param alignment decision (Phase 4)
 - Content negotiation design (Accept header → format selection)
 - FilterArgs layer placement (domain/ so serve can import it)
-
-### Independent: Param alignment
-
-`_SERVE_PARAM_MAP` has 10 entries bridging API kwargs ↔ HTTP conventions:
-
-    limit → n, query → q, tags → tag, exclude_tags → no_tag,
-    conversation_id → id, conversation_ids → id, last → n,
-    oldest_first → oldest, lambda_ → lambda, backend_name → backend
-
-`_SERVE_ONLY_KEYS` has 2 entries: `{action, embeddings_only}`
-
-Options:
-1. **Standardize route params** to match API kwargs — dissolves the map
-   but is a breaking HTTP API change
-2. **Accept the mapping** as the cost of HTTP conventions — it's
-   explicit, centralized, and only grows when new params diverge
-3. **Move to POST bodies for complex queries** — POST bodies already
-   skip remapping. Complex filter sets could POST instead of GET.
-
-Current friction is low. Revisit if the map exceeds ~15 entries.
 
 ## Remaining cleanup
 

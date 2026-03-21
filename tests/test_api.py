@@ -78,12 +78,12 @@ class TestListConversations:
         assert conversations[0].started_at > conversations[1].started_at
 
     def test_oldest_first_sort(self, test_db):
-        conversations = list_conversations(db_path=test_db, oldest_first=True)
+        conversations = list_conversations(db_path=test_db, oldest=True)
 
         assert conversations[0].started_at < conversations[1].started_at
 
     def test_limit_parameter(self, test_db):
-        conversations = list_conversations(db_path=test_db, limit=1)
+        conversations = list_conversations(db_path=test_db, n=1)
 
         assert len(conversations) == 1
 
@@ -112,7 +112,7 @@ class TestListConversations:
         assert "2024-01-15" in conversations[0].started_at
 
     def test_conversation_summary_fields(self, test_db):
-        conversations = list_conversations(db_path=test_db, limit=1)
+        conversations = list_conversations(db_path=test_db, n=1)
         conv = conversations[0]
 
         assert conv.id is not None
@@ -131,7 +131,7 @@ class TestListConversations:
 class TestGetConversation:
     def test_returns_conversation_detail(self, test_db):
         # First get a conversation ID
-        conversations = list_conversations(db_path=test_db, limit=1)
+        conversations = list_conversations(db_path=test_db, n=1)
         conv_id = conversations[0].id
 
         detail = get_conversation(conv_id, db_path=test_db)
@@ -140,7 +140,7 @@ class TestGetConversation:
         assert detail.id == conv_id
 
     def test_supports_prefix_match(self, test_db):
-        conversations = list_conversations(db_path=test_db, limit=1)
+        conversations = list_conversations(db_path=test_db, n=1)
         conv_id = conversations[0].id
         # Use enough prefix characters to be unique
         prefix = conv_id[:12]
@@ -155,7 +155,7 @@ class TestGetConversation:
         assert detail is None
 
     def test_detail_has_exchanges(self, test_db):
-        conversations = list_conversations(db_path=test_db, limit=1)
+        conversations = list_conversations(db_path=test_db, n=1)
         detail = get_conversation(conversations[0].id, db_path=test_db)
 
         assert len(detail.exchanges) > 0
@@ -163,7 +163,7 @@ class TestGetConversation:
         assert exchange.prompt_text is not None or exchange.response_text is not None
 
     def test_detail_token_counts(self, test_db):
-        conversations = list_conversations(db_path=test_db, limit=1)
+        conversations = list_conversations(db_path=test_db, n=1)
         detail = get_conversation(conversations[0].id, db_path=test_db)
 
         assert detail.total_input_tokens > 0
@@ -481,7 +481,7 @@ class TestGetToolTagsByWorkspace:
         assert "shell:vcs" in tag_names
 
     def test_respects_limit(self, test_db_with_tool_tags):
-        results = get_tool_tags_by_workspace(db_path=test_db_with_tool_tags, limit=1)
+        results = get_tool_tags_by_workspace(db_path=test_db_with_tool_tags, n=1)
 
         assert len(results) == 1
 

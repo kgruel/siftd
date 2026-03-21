@@ -123,7 +123,7 @@ class DatabaseStats:
 
 def list_workspaces(
     conn: sqlite3.Connection | None = None,
-    limit: int = 10,
+    n: int = 10,
     *,
     db_path: Path | None = None,
 ) -> list[sqlite3.Row]:
@@ -131,7 +131,7 @@ def list_workspaces(
 
     Args:
         conn: Database connection. Opened from db_path if not provided.
-        limit: Maximum workspaces to return.
+        n: Maximum workspaces to return.
         db_path: Path to database. Ignored if conn provided.
 
     Returns:
@@ -143,7 +143,7 @@ def list_workspaces(
         conn = open_database(db, read_only=True)
         should_close = True
     try:
-        return fetch_top_workspaces(conn, limit=limit)
+        return fetch_top_workspaces(conn, limit=n)
     finally:
         if should_close:
             conn.close()

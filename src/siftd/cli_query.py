@@ -33,7 +33,7 @@ def cmd_tools(args) -> int:
             path="/v1/tools",
             method="GET",
             fn=get_tool_tags_by_workspace,
-            params={"db_path": db, "prefix": prefix, "limit": args.limit},
+            params={"db_path": db, "prefix": prefix, "n": args.limit},
             render_method="raw",
             fidelity=Fidelity(),
             db=db,
@@ -180,7 +180,7 @@ def _query_detail(args) -> int:
         method="GET",
         fn=get_conversation,
         params={
-            "conversation_id": args.conversation_id,
+            "id": args.conversation_id,
             "db_path": db,
             "include_thinking": include_thinking,
             "include_tool_content": include_tool_content,
@@ -349,8 +349,8 @@ def cmd_query(args) -> int:
         params={
             "db_path": db,
             **{k: v for k, v in asdict(filters).items() if v is not None},
-            "limit": args.limit,
-            "oldest_first": args.oldest,
+            "n": args.limit,
+            "oldest": args.oldest,
         },
         render_method="list",
         fidelity=fidelity,

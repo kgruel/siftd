@@ -63,31 +63,31 @@ class ToolSearchGroup:
 
 
 def search_tool_calls(
-    query: str,
+    q: str,
     *,
     db_path: Path | None = None,
-    limit: int = 20,
+    n: int = 20,
     rebuild_index: bool = False,
     workspace: str | None = None,
     model: str | None = None,
     since: str | None = None,
     before: str | None = None,
-    tags: list[str] | None = None,
+    tag: list[str] | None = None,
     all_tags: list[str] | None = None,
-    exclude_tags: list[str] | None = None,
+    no_tag: list[str] | None = None,
     tool: str | None = None,
     tool_tag: str | None = None,
 ) -> tuple[ToolQuery, list[ToolSearchResult]]:
     """Search tool calls using structured fields + FTS over the projection."""
     parsed = _merge_cli_filters(
-        parse_tool_query(query),
+        parse_tool_query(q),
         workspace=workspace,
         model=model,
         since=since,
         before=before,
-        tags=tags,
+        tag=tag,
         all_tags=all_tags,
-        exclude_tags=exclude_tags,
+        no_tag=no_tag,
         tool=tool,
         tool_tag=tool_tag,
     )
@@ -95,7 +95,7 @@ def search_tool_calls(
         conn = open_database(db_path, read_only=False)
         try:
             rebuild_tool_search_index(conn, commit=True)
-            results = _search_tool_calls_impl(conn, parsed, limit=limit)
+            results = _search_tool_calls_impl(conn, parsed, limit=n)
             return parsed, results
         finally:
             conn.close()
@@ -108,7 +108,7 @@ def search_tool_calls(
             conn = open_database(db_path, read_only=False)
             ensure_tool_search_tables(conn)
             rebuild_tool_search_index(conn, commit=True)
-        results = _search_tool_calls_impl(conn, parsed, limit=limit)
+        results = _search_tool_calls_impl(conn, parsed, limit=n)
         return parsed, results
     finally:
         conn.close()
@@ -252,9 +252,9 @@ def _merge_cli_filters(
     add("model", filters.get("model"))
     add("since", filters.get("since"))
     add("before", filters.get("before"))
-    add("tag", filters.get("tags"))
+    add("tag", filters.get("tag"))
     add("all_tags", filters.get("all_tags"))
-    add("no_tag", filters.get("exclude_tags"))
+    add("no_tag", filters.get("no_tag"))
     add("tool", filters.get("tool"), normalize_tool=True)
     add("tool_tag", filters.get("tool_tag"))
 

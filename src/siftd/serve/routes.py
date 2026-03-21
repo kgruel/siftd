@@ -77,7 +77,7 @@ async def workspaces_route(
 
     conn = open_database(db_path, read_only=True)
     try:
-        rows = list_workspaces(conn, limit=n)
+        rows = list_workspaces(conn, n=n)
     finally:
         conn.close()
     return {
@@ -99,7 +99,7 @@ async def tools_route(
     from siftd.api.tools import get_tool_tag_summary, get_tool_tags_by_workspace
 
     if by_workspace:
-        results = get_tool_tags_by_workspace(db_path=db_path, prefix=prefix, limit=n)
+        results = get_tool_tags_by_workspace(db_path=db_path, prefix=prefix, n=n)
         return {
             "workspaces": [
                 {
@@ -261,14 +261,14 @@ async def tool_search_route(
     query_obj, results = search_tool_calls(
         q,
         db_path=db_path,
-        limit=n,
+        n=n,
         workspace=workspace,
         model=model,
         since=since,
         before=before,
-        tags=tag,
+        tag=tag,
         all_tags=all_tags,
-        exclude_tags=no_tag,
+        no_tag=no_tag,
         tool=tool,
         tool_tag=tool_tag,
     )
@@ -312,12 +312,12 @@ async def export_route(
     from siftd.serialization.conversations import serialize_conversation_detail
 
     conversations = export_conversations(
-        conversation_ids=id,
+        id=id,
         workspace=workspace,
         since=since,
         before=before,
-        tags=tag,
-        exclude_tags=no_tag,
+        tag=tag,
+        no_tag=no_tag,
         db_path=db_path,
     )
     if n > 0:
@@ -393,7 +393,7 @@ async def pull(
             since=since,
             before=before,
             model=model,
-            tags=tag,
+            tag=tag,
             rebuild_fts=False,
         )
 
@@ -451,9 +451,9 @@ async def query(
     rows = list_conversations(
         db_path=db_path,
         workspace=workspace, model=model, since=since, before=before,
-        search=search, tool=tool, tags=tag, all_tags=all_tags,
-        exclude_tags=no_tag, tool_tag=tool_tag,
-        limit=n, oldest_first=oldest,
+        search=search, tool=tool, tag=tag, all_tags=all_tags,
+        no_tag=no_tag, tool_tag=tool_tag,
+        n=n, oldest=oldest,
     )
     return {"conversations": serialize_conversation_list(rows)}
 
@@ -495,7 +495,7 @@ async def search_route(
         results = hybrid_search(
             q,
             db_path=db_path,
-            limit=n,
+            n=n,
             recall=recall,
             embeddings_only=embeddings_only,
             workspace=workspace,
@@ -509,9 +509,9 @@ async def search_route(
             recency=recency,
             recency_half_life=recency_half_life,
             recency_max_boost=recency_max_boost,
-            tags=tag,
+            tag=tag,
             all_tags=all_tags,
-            exclude_tags=no_tag,
+            no_tag=no_tag,
             include_derivative=include_derivative,
         )
     except Exception as e:

@@ -374,20 +374,20 @@ def build_index(
 
 
 def hybrid_search(
-    query: str,
+    q: str,
     *,
     db_path: Path,
     embed_db: Path | None = None,
-    limit: int = 10,
+    n: int = 10,
     mode: str = "hybrid",
     # Filters
     workspace: str | None = None,
     model: str | None = None,
     since: str | None = None,
     before: str | None = None,
-    tags: list[str] | None = None,
+    tag: list[str] | None = None,
     all_tags: list[str] | None = None,
-    exclude_tags: list[str] | None = None,
+    no_tag: list[str] | None = None,
     exclude_active: bool = True,
     include_derivative: bool = False,
     # FTS5 tuning
@@ -400,18 +400,18 @@ def hybrid_search(
     recency_half_life: float = 30.0,
     recency_max_boost: float = 1.15,
     # Backend
-    backend_name: str | None = None,
+    backend: str | None = None,
 ) -> list[dict]:
     """Unified search pipeline — FTS5, semantic, or hybrid.
 
     Args:
-        query: Search query string.
+        q: Search query string.
         db_path: Path to main database.
         embed_db: Path to embeddings database. Required for hybrid/semantic modes.
-        limit: Desired result count after all processing.
+        n: Desired result count after all processing.
         mode: "hybrid" (FTS5 + semantic), "fts" (keyword only), "semantic" (embeddings only).
         rerank: "mmr" for diversity reranking, "relevance" for pure score order.
-        backend_name: Preferred embedding backend (ollama, fastembed).
+        backend: Preferred embedding backend (ollama, fastembed).
 
     Returns:
         List of result dicts with: conversation_id, score, text, chunk_type,
@@ -430,15 +430,15 @@ def hybrid_search(
         candidate_ids = resolve_candidates(
             db_path,
             workspace=workspace, model=model, since=since, before=before,
-            tags=tags, all_tags=all_tags, exclude_tags=exclude_tags,
+            tag=tag, all_tags=all_tags, no_tag=no_tag,
             exclude_active=exclude_active, include_derivative=include_derivative,
         )
         conn = open_database(db_path, read_only=True)
         try:
-            raw = fts5_search_content(conn, query, limit=limit * 5)
+            raw = fts5_search_content(conn, q, limit=n * 5)
             if candidate_ids is not None:
                 raw = [r for r in raw if r["conversation_id"] in candidate_ids]
-            raw = raw[:limit]
+            raw = raw[:n]
             return [
                 {
                     "conversation_id": r["conversation_id"],
@@ -459,13 +459,13 @@ def hybrid_search(
     from siftd.search import apply_temporal_weight
 
     effective_embed_db = embed_db or default_embed_db()
-    backend = get_backend(preferred=backend_name, verbose=False)
+    _backend = get_backend(preferred=backend, verbose=False)
     embeddings_only = mode == "semantic"
 
     candidate_ids = resolve_candidates(
         db_path,
         workspace=workspace, model=model, since=since, before=before,
-        tags=tags, all_tags=all_tags, exclude_tags=exclude_tags,
+        tag=tag, all_tags=all_tags, no_tag=no_tag,
         exclude_active=exclude_active, include_derivative=include_derivative,
     )
 
@@ -475,7 +475,7 @@ def hybrid_search(
     if not embeddings_only:
         conn = open_database(db_path, read_only=True)
         try:
-            fts5_ids, fts5_mode = fts5_recall_conversations(conn, query, limit=recall)
+            fts5_ids, fts5_mode = fts5_recall_conversations(conn, q, limit=recall)
         finally:
             conn.close()
 
@@ -491,20 +491,20 @@ def hybrid_search(
 
     # Embed query and search
     use_mmr = rerank == "mmr"
-    query_embedding = backend.embed_one(query)
+    query_embedding = _backend.embed_one(q)
     embed_conn = open_embeddings_db(effective_embed_db, read_only=True)
 
     try:
         validate_index_compat(
             embed_conn,
-            backend_name=backend.name,
-            backend_model=backend.model,
-            backend_dimension=backend.dimension,
+            backend_name=_backend.name,
+            backend_model=_backend.model,
+            backend_dimension=_backend.dimension,
             current_schema_version=SCHEMA_VERSION,
         )
 
         # Widen for MMR to have candidates to diversify from
-        search_limit = max(limit * 3, limit) if use_mmr else limit
+        search_limit = max(n * 3, n) if use_mmr else n
 
         results = search_similar(
             embed_conn,
@@ -545,6 +545,6 @@ def hybrid_search(
 
     # MMR diversity reranking
     if use_mmr and results:
-        results = mmr_rerank(results, query_embedding, lambda_=lambda_, limit=limit)
+        results = mmr_rerank(results, query_embedding, lambda_=lambda_, limit=n)
 
     return results

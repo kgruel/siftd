@@ -66,19 +66,19 @@ class TestExportConversations:
         assert isinstance(conversations[0], ExportedConversation)
 
     def test_export_by_id(self, test_db):
-        summaries = list_conversations(db_path=test_db, limit=1)
+        summaries = list_conversations(db_path=test_db, n=1)
         conv_id = summaries[0].id
         conversations = export_conversations(
-            conversation_ids=[conv_id], db_path=test_db
+            id=[conv_id], db_path=test_db
         )
         assert len(conversations) == 1
         assert conversations[0].id == conv_id
 
     def test_export_by_id_prefix(self, test_db):
-        summaries = list_conversations(db_path=test_db, limit=1)
+        summaries = list_conversations(db_path=test_db, n=1)
         prefix = summaries[0].id[:8]
         conversations = export_conversations(
-            conversation_ids=[prefix], db_path=test_db
+            id=[prefix], db_path=test_db
         )
         assert len(conversations) == 1
 

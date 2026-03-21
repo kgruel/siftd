@@ -419,5 +419,5 @@ def test_slice_by_tags(test_db, tmp_path):
     conn.close()
 
     target = tmp_path / "sliced.db"
-    result = slice_database(test_db, target, tags=["test-slice-tag"])
+    result = slice_database(test_db, target, tag=["test-slice-tag"])
     assert result["conversations"] == 1

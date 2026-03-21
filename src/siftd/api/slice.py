@@ -20,9 +20,9 @@ def slice_database(
     model: str | None = None,
     since: str | None = None,
     before: str | None = None,
-    tags: list[str] | None = None,
+    tag: list[str] | None = None,
     all_tags: list[str] | None = None,
-    exclude_tags: list[str] | None = None,
+    no_tag: list[str] | None = None,
     tool: str | None = None,
     tool_tag: str | None = None,
     search: str | None = None,
@@ -56,11 +56,11 @@ def slice_database(
         before=before,
         search=search,
         tool=tool,
-        tags=tags,
+        tag=tag,
         all_tags=all_tags,
-        exclude_tags=exclude_tags,
+        no_tag=no_tag,
         tool_tag=tool_tag,
-        limit=0,  # unlimited
+        n=0,  # unlimited
     )
     conv_ids = [c.id for c in conversations]
 

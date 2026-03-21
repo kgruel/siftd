@@ -277,12 +277,12 @@ def cmd_search(args) -> int:
     elif args.first or args.conversations:
         widened_limit = max(args.limit * 10, 100)
 
-    from painted import Fidelity
-
     from siftd.api.dispatch import Operation, execute
     from siftd.api.search import hybrid_search
+    from siftd.cli_common import fidelity_from_args
     from siftd.serve.delegation import try_serve
 
+    fidelity = fidelity_from_args(args)
     rerank = "mmr" if not args.no_diversity else "relevance"
 
     op = Operation(
@@ -290,18 +290,18 @@ def cmd_search(args) -> int:
         method="GET",
         fn=hybrid_search,
         params={
-            "query": query,
+            "q": query,
             "db_path": db,
             "embed_db": embed_db,
-            "limit": widened_limit,
+            "n": widened_limit,
             "mode": search_mode,
             "workspace": filters.workspace,
             "model": filters.model,
             "since": filters.since,
             "before": filters.before,
-            "tags": filters.tags,
+            "tag": filters.tag,
             "all_tags": filters.all_tags,
-            "exclude_tags": filters.exclude_tags,
+            "no_tag": filters.no_tag,
             "exclude_active": not args.no_exclude_active,
             "include_derivative": args.include_derivative,
             "recall": args.recall,
@@ -310,12 +310,12 @@ def cmd_search(args) -> int:
             "recency": args.recency,
             "recency_half_life": args.recency_half_life,
             "recency_max_boost": args.recency_max_boost,
-            "backend_name": args.backend,
+            "backend": args.backend,
             # Serve-only: route uses embeddings_only instead of mode
             "embeddings_only": search_mode == "semantic",
         },
         render_method="search",
-        fidelity=Fidelity(),
+        fidelity=fidelity,
         db=db,
     )
 
@@ -396,11 +396,9 @@ def cmd_search(args) -> int:
 
     # Select output format and determine mode
 
-    from siftd.cli_common import fidelity_from_args
     from siftd.output.common import print_refs_content
     from siftd.output.format_registry import select_format
 
-    fidelity = fidelity_from_args(args)
     try:
         fmt = select_format(
             name=getattr(args, "format", None),
@@ -453,7 +451,7 @@ def cmd_search(args) -> int:
         if context_n is not None and mode == "chunks":
             _enrich_context(main_conn, results, context_n)
 
-        output = fmt.render_search(results, fidelity, **ctx_kwargs)
+        output = fmt.render_search(results, op.fidelity, **ctx_kwargs)
         from siftd.output.painted_bridge import emit_output
 
         emit_output(output)
@@ -522,9 +520,9 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         model=filters.model,
         since=filters.since,
         before=filters.before,
-        tags=filters.tags,
+        tag=filters.tag,
         all_tags=filters.all_tags,
-        exclude_tags=filters.exclude_tags,
+        no_tag=filters.no_tag,
         exclude_active=not args.no_exclude_active,
         include_derivative=args.include_derivative,
     )

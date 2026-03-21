@@ -165,18 +165,18 @@ def _cmd_tag_list(args, db: Path) -> int:
 
         filters = extract_filter_args(args)
         # Merge the drill-down tag with any -l tags from filter args
-        filter_tags = filters.tags or []
+        filter_tags = filters.tag or []
         if tag_name not in filter_tags:
             filter_tags = [tag_name] + filter_tags
-        filters.tags = filter_tags
+        filters.tag = filter_tags
 
         limit = getattr(args, "limit", None) or 10
 
         try:
             filter_kwargs = asdict(filters)
-            filter_kwargs.pop("tags")  # pass explicitly below
+            filter_kwargs.pop("tag")  # pass explicitly below
             conversations = list_conversations(
-                db_path=db, tags=filters.tags, limit=limit, **filter_kwargs,
+                db_path=db, tag=filters.tag, n=limit, **filter_kwargs,
             )
         except FileNotFoundError as e:
             print(str(e))

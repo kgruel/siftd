@@ -217,7 +217,7 @@ def cmd_workspaces(args) -> int:
         path="/v1/workspaces",
         method="GET",
         fn=list_workspaces,
-        params={"db_path": db, "limit": limit},
+        params={"db_path": db, "n": limit},
         render_method="raw",
         fidelity=Fidelity(),
         db=db,

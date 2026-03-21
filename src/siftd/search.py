@@ -274,20 +274,20 @@ def mmr_rerank(
 
 
 def hybrid_search(
-    query: str,
+    q: str,
     *,
     db_path: Path | None = None,
     embed_db_path: Path | None = None,
-    limit: int = 10,
+    n: int = 10,
     recall: int = 80,
     embeddings_only: bool = False,
     workspace: str | None = None,
     model: str | None = None,
     since: str | None = None,
     before: str | None = None,
-    tags: list[str] | None = None,
+    tag: list[str] | None = None,
     all_tags: list[str] | None = None,
-    exclude_tags: list[str] | None = None,
+    no_tag: list[str] | None = None,
     include_derivative: bool = False,
     backend: str | None = None,
     exclude_active: bool = True,
@@ -301,19 +301,19 @@ def hybrid_search(
     """Run hybrid FTS5+embeddings search, return structured results.
 
     Args:
-        query: The search query string.
+        q: The search query string.
         db_path: Path to main SQLite DB. Defaults to XDG data path.
         embed_db_path: Path to embeddings DB. Defaults to XDG data path.
-        limit: Maximum number of results to return.
+        n: Maximum number of results to return.
         recall: Number of FTS5 candidate conversations for hybrid recall.
         embeddings_only: Skip FTS5 recall, search all embeddings directly.
         workspace: Filter to conversations from workspaces matching this substring.
         model: Filter to conversations using models matching this substring.
         since: Filter to conversations started at or after this ISO date.
         before: Filter to conversations started before this ISO date.
-        tags: OR filter — conversations with any of these tags.
+        tag: OR filter — conversations with any of these tags.
         all_tags: AND filter — conversations with all of these tags.
-        exclude_tags: NOT filter — exclude conversations with any of these tags.
+        no_tag: NOT filter — exclude conversations with any of these tags.
         include_derivative: Include derivative conversations (default False).
         backend: Preferred embedding backend name (ollama, fastembed).
         exclude_active: Auto-exclude conversations from active sessions (default True).
@@ -323,7 +323,7 @@ def hybrid_search(
         recency_half_life: Days until recency boost decays to half. Default 30.
         recency_max_boost: Maximum boost for today's results (e.g., 1.15 = 15%). Default 1.15.
         fts5_passthrough: If True, allow an FTS5-only fast-path when FTS5 can
-            supply at least `limit` results (after filters). This is an opt-in
+            supply at least `n` results (after filters). This is an opt-in
             escape hatch for structured identifier queries where semantic reranking
             may hurt exact-match relevance. Default False.
 
@@ -363,7 +363,7 @@ def hybrid_search(
     excluded: set[str] = set()
     candidate_ids: set[str] | None = None
 
-    exclude_tags_final = list(exclude_tags or [])
+    exclude_tags_final = list(no_tag or [])
     if not include_derivative and DERIVATIVE_TAG not in exclude_tags_final:
         exclude_tags_final.append(DERIVATIVE_TAG)
 
@@ -382,7 +382,7 @@ def hybrid_search(
             model=model,
             since=since,
             before=before,
-            tags=tags,
+            tags=tag,
             all_tags=all_tags,
             exclude_tags=exclude_tags_final or None,
         )
@@ -393,7 +393,7 @@ def hybrid_search(
 
         # Hybrid recall: FTS5 narrows candidates, embeddings rerank
         if not embeddings_only:
-            recall_details = fts5_recall_details(main_conn, query, limit=recall)
+            recall_details = fts5_recall_details(main_conn, q, limit=recall)
             fts5_ordered = recall_details.conversation_ids
             fts5_ids = set(fts5_ordered)
             fts5_mode = recall_details.mode
@@ -427,14 +427,14 @@ def hybrid_search(
             if candidate_ids is not None and conv_id not in candidate_ids:
                 continue
             passthrough_ids.append(conv_id)
-            if len(passthrough_ids) >= limit:
+            if len(passthrough_ids) >= n:
                 break
 
-        if len(passthrough_ids) >= limit:
+        if len(passthrough_ids) >= n:
             main_conn_fts = open_database(db, read_only=True)
             try:
                 raw_results: list[dict] = []
-                for conv_id in passthrough_ids[:limit]:
+                for conv_id in passthrough_ids[:n]:
                     hit = fts5_best_hit_for_conversation(main_conn_fts, fts5_query, conversation_id=conv_id)
                     snippet = hit["snippet"] if hit else ""
                     rank = float(hit["rank"]) if hit and hit.get("rank") is not None else 0.0
@@ -462,7 +462,7 @@ def hybrid_search(
                     "SELECT c.id, c.started_at, w.path AS workspace FROM conversations c "
                     "LEFT JOIN workspaces w ON w.id = c.workspace_id "
                     "WHERE c.id IN ({placeholders})",
-                    passthrough_ids[:limit],
+                    passthrough_ids[:n],
                 )
                 meta = {row["id"]: dict(row) for row in meta_rows}
             finally:
@@ -494,7 +494,7 @@ def hybrid_search(
     use_mmr = rerank == "mmr"
     embed_backend = get_backend(preferred=backend, verbose=False)
     try:
-        query_embedding = embed_backend.embed_one(query)
+        query_embedding = embed_backend.embed_one(q)
     except (RuntimeError, ConnectionError, OSError):
         # Cached backend may have become unavailable (e.g., ollama stopped).
         # Invalidate and retry with fallback chain.
@@ -502,10 +502,10 @@ def hybrid_search(
 
         invalidate_backend_cache()
         embed_backend = get_backend(preferred=backend, verbose=False)
-        query_embedding = embed_backend.embed_one(query)
+        query_embedding = embed_backend.embed_one(q)
 
     # Fetch wider candidate set for MMR to select from
-    search_limit = limit * 3 if use_mmr else limit
+    search_limit = n * 3 if use_mmr else n
 
     # Pass excluded conversations to search_similar for score masking —
     # this guarantees they never appear in results regardless of chunk count.
@@ -585,7 +585,7 @@ def hybrid_search(
             raw_results,
             query_embedding,
             lambda_=lambda_,
-            limit=limit,
+            limit=n,
         )
 
     # Enrich with metadata from main DB
@@ -771,9 +771,9 @@ def resolve_candidates(
     model: str | None = None,
     since: str | None = None,
     before: str | None = None,
-    tags: list[str] | None = None,
+    tag: list[str] | None = None,
     all_tags: list[str] | None = None,
-    exclude_tags: list[str] | None = None,
+    no_tag: list[str] | None = None,
     exclude_active: bool = True,
     include_derivative: bool = False,
 ) -> set[str] | None:
@@ -785,7 +785,7 @@ def resolve_candidates(
     """
     from siftd.storage.tags import DERIVATIVE_TAG
 
-    effective_exclude = list(exclude_tags or [])
+    effective_exclude = list(no_tag or [])
     if not include_derivative:
         effective_exclude.append(DERIVATIVE_TAG)
 
@@ -795,7 +795,7 @@ def resolve_candidates(
         model=model,
         since=since,
         before=before,
-        tags=tags,
+        tags=tag,
         all_tags=all_tags,
         exclude_tags=effective_exclude or None,
     )

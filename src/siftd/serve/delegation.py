@@ -205,18 +205,11 @@ def try_delegate_post(
         return None
 
 
-# API fn kwarg → serve route query param.  Identity mappings omitted.
+# API fn kwarg → serve route query param.  Only non-identity mappings.
+# After param alignment (unified CLI/HTTP/API names), only lambda_
+# remains because `lambda` is a Python keyword.
 _SERVE_PARAM_MAP: dict[str, str] = {
-    "limit": "n",
-    "last": "n",
-    "conversation_id": "id",
-    "conversation_ids": "id",
-    "query": "q",
-    "tags": "tag",
-    "exclude_tags": "no_tag",
-    "oldest_first": "oldest",
     "lambda_": "lambda",
-    "backend_name": "backend",
 }
 
 

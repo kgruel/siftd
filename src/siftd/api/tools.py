@@ -63,14 +63,14 @@ def get_tool_tags_by_workspace(
     *,
     db_path: Path | None = None,
     prefix: str = "shell:",
-    limit: int = 20,
+    n: int = 20,
 ) -> list[WorkspaceTagUsage]:
     """Get tool tag usage broken down by workspace.
 
     Args:
         db_path: Path to database. Uses default if not specified.
         prefix: Tag prefix to filter by (default: "shell:").
-        limit: Maximum workspaces to return.
+        n: Maximum workspaces to return.
 
     Returns:
         List of WorkspaceTagUsage sorted by total count descending.
@@ -105,4 +105,4 @@ def get_tool_tags_by_workspace(
         results.append(WorkspaceTagUsage(workspace=ws, tags=tags, total=total))
 
     results.sort(key=lambda x: x.total, reverse=True)
-    return results[:limit]
+    return results[:n]

@@ -372,7 +372,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("tool:shell.execute", db_path=db_path, limit=10)
+        _, results = search_tool_calls("tool:shell.execute", db_path=db_path, n=10)
 
         assert {r.tool_name for r in results} >= {"bash", "run_experiment"}
 
@@ -380,7 +380,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("tool:file.read", db_path=db_path, limit=10)
+        _, results = search_tool_calls("tool:file.read", db_path=db_path, n=10)
 
         assert [r.tool_name for r in results] == ["read"]
 
@@ -390,8 +390,8 @@ class TestApiToolSearch:
         _build_db(canonical_db)
         _build_raw_alias_db(raw_db)
 
-        _, canonical_results = search_tool_calls("tool:bash", db_path=canonical_db, limit=10)
-        _, raw_results = search_tool_calls("tool:bash", db_path=raw_db, limit=10)
+        _, canonical_results = search_tool_calls("tool:bash", db_path=canonical_db, n=10)
+        _, raw_results = search_tool_calls("tool:bash", db_path=raw_db, n=10)
 
         assert [r.tool_name for r in canonical_results] == ["shell.execute"]
         assert {r.tool_name for r in raw_results} >= {"bash", "run_experiment"}
@@ -400,7 +400,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("tool:log_experiment", db_path=db_path, limit=10)
+        _, results = search_tool_calls("tool:log_experiment", db_path=db_path, n=10)
 
         assert [r.tool_name for r in results] == ["log_experiment"]
 
@@ -408,7 +408,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("tool:shell.execute", db_path=db_path, limit=10)
+        _, results = search_tool_calls("tool:shell.execute", db_path=db_path, n=10)
 
         names = {r.tool_name for r in results}
         assert "log_experiment" not in names
@@ -418,7 +418,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("tool:init_experiment", db_path=db_path, limit=10)
+        _, results = search_tool_calls("tool:init_experiment", db_path=db_path, n=10)
 
         assert [r.tool_name for r in results] == ["init_experiment"]
 
@@ -426,7 +426,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("tool:search.web", db_path=db_path, limit=10)
+        _, results = search_tool_calls("tool:search.web", db_path=db_path, n=10)
 
         assert [r.tool_name for r in results] == ["google_web_search"]
 
@@ -444,7 +444,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls(query, db_path=db_path, limit=10)
+        _, results = search_tool_calls(query, db_path=db_path, n=10)
 
         assert results
         if expected_command is not None:
@@ -456,7 +456,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("tool:file.read path:pyproject.toml", db_path=db_path, limit=10)
+        _, results = search_tool_calls("tool:file.read path:pyproject.toml", db_path=db_path, n=10)
 
         assert len(results) == 1
         assert results[0].path == "/work/siftd/pyproject.toml"
@@ -465,7 +465,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("tool:shell.execute pytest -k tool_search", db_path=db_path, limit=10)
+        _, results = search_tool_calls("tool:shell.execute pytest -k tool_search", db_path=db_path, n=10)
 
         assert results
         assert results[0].command == "pytest -k tool_search"
@@ -474,7 +474,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("tool:file.read ... ()", db_path=db_path, limit=10)
+        _, results = search_tool_calls("tool:file.read ... ()", db_path=db_path, n=10)
 
         assert len(results) == 1
         assert results[0].tool_name == "read"
@@ -483,7 +483,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("... () :", db_path=db_path, limit=3)
+        _, results = search_tool_calls("... () :", db_path=db_path, n=3)
 
         assert len(results) == 3
         assert [r.tool_name for r in results] == ["run_experiment", "run_experiment", "run_experiment"]
@@ -492,7 +492,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("tool_search.py", db_path=db_path, limit=10)
+        _, results = search_tool_calls("tool_search.py", db_path=db_path, n=10)
 
         assert results
         assert results[0].path == "/work/siftd/src/siftd/api/tool_search.py"
@@ -501,7 +501,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("tool_name", db_path=db_path, limit=10)
+        _, results = search_tool_calls("tool_name", db_path=db_path, n=10)
 
         assert results
         assert results[0].tool_name == "search.grep"
@@ -511,7 +511,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("tool:search.grep pattern:tool_name", db_path=db_path, limit=10)
+        _, results = search_tool_calls("tool:search.grep pattern:tool_name", db_path=db_path, n=10)
 
         assert len(results) == 1
         assert results[0].pattern == "tool_name"
@@ -520,7 +520,7 @@ class TestApiToolSearch:
         db_path = tmp_path / "tool_search_raw.db"
         _build_raw_alias_db(db_path)
 
-        _, results = search_tool_calls("tool:shell.execute git", db_path=db_path, limit=10)
+        _, results = search_tool_calls("tool:shell.execute git", db_path=db_path, n=10)
 
         assert results
         assert results[0].command == "git status"
