@@ -14,10 +14,10 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
+from siftd.adapters.sdk import build_harness
 from siftd.domain import (
     ContentBlock,
     Conversation,
-    Harness,
     Prompt,
     Response,
     Source,
@@ -111,12 +111,7 @@ def _parse_chat_history(path: Path) -> Iterable[Conversation]:
     workspace_path = str(path.parent)
     path_hash = hashlib.sha256(str(path).encode()).hexdigest()[:12]
 
-    harness = Harness(
-        name=NAME,
-        source=HARNESS_SOURCE,
-        log_format=HARNESS_LOG_FORMAT,
-        display_name=HARNESS_DISPLAY_NAME,
-    )
+    harness = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
     # Split into sessions by header line
     sessions = _split_sessions(text)

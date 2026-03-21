@@ -5,30 +5,26 @@ No storage coupling.
 """
 
 import json
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from siftd.adapters._jsonl import load_jsonl, now_iso
 from siftd.adapters.sdk import (
     NormalizedRecord,
-    canonicalize_tool_name,
+    build_harness,
     discover_files,
-    peek_jsonl_tail,
+    flush_pending_calls,
+    make_peek_hooks,
 )
 from siftd.domain import (
     ContentBlock,
     Conversation,
-    Harness,
     Prompt,
     Response,
     Source,
     ToolCall,
     Usage,
 )
-
-if TYPE_CHECKING:
-    from siftd.domain.peek import PeekExchange, PeekScanResult
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
@@ -115,12 +111,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 ended_at = ts
 
     # Build harness
-    harness = Harness(
-        name=NAME,
-        source=HARNESS_SOURCE,
-        log_format=HARNESS_LOG_FORMAT,
-        display_name=HARNESS_DISPLAY_NAME,
-    )
+    harness = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
     # Build external_id
     external_id = f"{NAME}::{session_id or path.stem}"
@@ -270,16 +261,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 response.tool_calls.append(tool_call)
 
     # Handle pending tool calls that never got output
-    for call_id, (response, tool_name, input_data) in pending_calls.items():
-        tool_call = ToolCall(
-            tool_name=tool_name,
-            input=input_data if isinstance(input_data, dict) else {"raw": input_data},
-            result=None,
-            status="pending",
-            external_id=call_id,
-            timestamp=None,
-        )
-        response.tool_calls.append(tool_call)
+    flush_pending_calls(pending_calls)
 
     yield conversation
 
@@ -409,188 +391,8 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
     return None
 
 
-# =============================================================================
-# Peek hooks — optional live session inspection
-# =============================================================================
-
-
-def peek_scan(path: Path) -> "PeekScanResult | None":
-    """Extract lightweight metadata for session listing.
-
-    Codex CLI uses a different schema than Claude Code:
-    - session_meta record contains id and cwd
-    - response_item records with payload.type="message" and role="user" are exchanges
-    - turn_context contains model info
-    """
-    from siftd.domain.peek import PeekScanResult
-
-    session_id = path.stem
-    workspace_path: str | None = None
-    model: str | None = None
-    exchange_count = 0
-    started_at: str | None = None
-    last_activity_at: str | None = None
-
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-
-                record_type = record.get("type")
-                ts = record.get("timestamp")
-
-                # Track timestamp bounds
-                if ts:
-                    if started_at is None or ts < started_at:
-                        started_at = ts
-                    if last_activity_at is None or ts > last_activity_at:
-                        last_activity_at = ts
-
-                if record_type == "session_meta":
-                    payload = record.get("payload", {})
-                    session_id = payload.get("id") or session_id
-                    workspace_path = payload.get("cwd")
-
-                elif record_type == "turn_context":
-                    payload = record.get("payload", {})
-                    model = model or payload.get("model")
-
-                elif record_type == "response_item":
-                    payload = record.get("payload", {})
-                    if payload.get("type") == "message" and payload.get("role") == "user":
-                        exchange_count += 1
-
-    except (OSError, UnicodeDecodeError):
-        return None
-
-    if exchange_count == 0:
-        return None
-
-    return PeekScanResult(
-        session_id=session_id,
-        workspace_path=workspace_path,
-        model=model,
-        exchange_count=exchange_count,
-        started_at=started_at,
-        last_activity_at=last_activity_at,
-    )
-
-
-def peek_exchanges(
-    path: Path,
-    last_n: int = 5,
-    *,
-    include_thinking: bool = False,  # accepted for interface conformance; Codex has no thinking blocks
-) -> list["PeekExchange"]:
-    """Extract recent exchanges for session detail view."""
-    from siftd.domain.peek import PeekExchange
-
-    if last_n < 1:
-        last_n = 1
-
-    exchanges: list[PeekExchange] = []
-    current_exchange: PeekExchange | None = None
-    model: str | None = None
-    pending_usage = False
-
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-
-                record_type = record.get("type")
-                timestamp = record.get("timestamp")
-
-                if record_type == "turn_context":
-                    payload = record.get("payload", {})
-                    model = model or payload.get("model")
-
-                elif record_type == "event_msg":
-                    payload = record.get("payload", {})
-                    if payload.get("type") == "token_count" and pending_usage:
-                        if current_exchange is None:
-                            continue
-                        info = payload.get("info") or {}
-                        last_usage = info.get("last_token_usage") or {}
-                        input_tokens = last_usage.get("input_tokens")
-                        output_tokens = last_usage.get("output_tokens")
-                        if input_tokens is not None:
-                            current_exchange.input_tokens += input_tokens
-                        if output_tokens is not None:
-                            current_exchange.output_tokens += output_tokens
-                        pending_usage = False
-
-                elif record_type == "response_item":
-                    payload = record.get("payload", {})
-                    item_type = payload.get("type")
-
-                    if item_type == "message":
-                        role = payload.get("role")
-                        content_blocks = payload.get("content", [])
-
-                        if role == "user":
-                            current_exchange = PeekExchange(
-                                timestamp=timestamp,
-                                prompt_text=_extract_codex_text(content_blocks),
-                            )
-                            exchanges.append(current_exchange)
-                            pending_usage = False
-
-                        elif role == "assistant" and current_exchange is not None:
-                            current_exchange.response_text = _extract_codex_text(
-                                content_blocks
-                            )
-                            pending_usage = True
-
-                    elif item_type in ("function_call", "custom_tool_call"):
-                        if current_exchange is not None:
-                            tool_name = payload.get("name", "unknown")
-                            tool_name = canonicalize_tool_name(tool_name, TOOL_ALIASES)
-                            # Add to tool_calls counter
-                            existing = dict(current_exchange.tool_calls)
-                            existing[tool_name] = existing.get(tool_name, 0) + 1
-                            current_exchange.tool_calls = list(existing.items())
-                            pending_usage = True
-
-    except (OSError, UnicodeDecodeError):
-        return []
-
-    return exchanges[-last_n:] if len(exchanges) > last_n else exchanges
-
-
-def peek_tail(path: Path, lines: int = 20) -> Iterator[dict]:
-    """Yield last N raw records from the session file."""
-    yield from peek_jsonl_tail(path, lines, parse_json=True)
-
-
-def _extract_codex_text(blocks: list) -> str | None:
-    """Extract text from Codex content blocks."""
-    parts: list[str] = []
-
-    for block in blocks:
-        if isinstance(block, str):
-            parts.append(block)
-        elif isinstance(block, dict):
-            block_type = block.get("type", "")
-            if block_type in ("input_text", "output_text", "text"):
-                text = block.get("text", "")
-                if text:
-                    parts.append(text)
-            elif block_type == "image":
-                parts.append("[image]")
-            elif block_type:
-                parts.append(f"[{block_type}]")
-
-    return "\n".join(parts) if parts else None
+# Peek hooks — derived from normalizer
+peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
+    normalize_record,
+    tool_aliases=TOOL_ALIASES,
+)

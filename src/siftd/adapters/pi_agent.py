@@ -9,11 +9,10 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from siftd.adapters._jsonl import load_jsonl, now_iso
-from siftd.adapters.sdk import NormalizedRecord, discover_files, make_peek_hooks
+from siftd.adapters.sdk import NormalizedRecord, build_harness, discover_files, flush_pending_calls, make_peek_hooks
 from siftd.domain import (
     ContentBlock,
     Conversation,
-    Harness,
     Prompt,
     Response,
     Source,
@@ -98,12 +97,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 ended_at = ts
 
     # Build harness
-    harness = Harness(
-        name=NAME,
-        source=HARNESS_SOURCE,
-        log_format=HARNESS_LOG_FORMAT,
-        display_name=HARNESS_DISPLAY_NAME,
-    )
+    harness = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
     external_id = f"{NAME}::{session_id or path.stem}"
 
@@ -213,16 +207,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 resp.tool_calls.append(tool_call)
 
     # Handle pending tool calls that never got results
-    for call_id, (resp, tool_name, input_data) in pending_calls.items():
-        tool_call = ToolCall(
-            tool_name=tool_name,
-            input=input_data,
-            result=None,
-            status="pending",
-            external_id=call_id,
-            timestamp=None,
-        )
-        resp.tool_calls.append(tool_call)
+    flush_pending_calls(pending_calls)
 
     yield conversation
 

@@ -11,11 +11,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from siftd.adapters._jsonl import now_iso
-from siftd.adapters.sdk import canonicalize_tool_name
+from siftd.adapters.sdk import build_harness, canonicalize_tool_name
 from siftd.domain import (
     ContentBlock,
     Conversation,
-    Harness,
     Prompt,
     Response,
     Source,
@@ -103,12 +102,7 @@ def parse(source: Source) -> Iterable[Conversation]:
         workspace_path = _resolve_workspace_from_hash(project_hash)
 
     # Build harness
-    harness = Harness(
-        name=NAME,
-        source=HARNESS_SOURCE,
-        log_format=HARNESS_LOG_FORMAT,
-        display_name=HARNESS_DISPLAY_NAME,
-    )
+    harness = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
     # Build external_id
     external_id = f"{NAME}::{session_id}"
