@@ -1,0 +1,4 @@
+{"type":"config","name":"Optimizing siftd ingest performance","metricName":"ingest_s","metricUnit":"s","bestDirection":"lower"}
+{"run":1,"commit":"b59b901","metric":121.096,"metrics":{"conversations":6150},"status":"checks_failed","description":"Baseline: fresh ingest 121s, 6150 conversations. Checks script needs fix for numpy.","timestamp":1774058643606,"segment":0}
+{"run":2,"commit":"b59b901","metric":114.459,"metrics":{"conversations":6150},"status":"checks_failed","description":"Baseline attempt 2: 114s. Still fixing checks script (numpy tests).","timestamp":1774058785268,"segment":0}
+{"run":3,"commit":"b59b901","metric":117.194,"metrics":{"conversations":6150},"status":"checks_failed","description":"Baseline attempt 3: 117s. Fixing checks to use project test markers.","timestamp":1774058937719,"segment":0}
