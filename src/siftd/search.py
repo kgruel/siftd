@@ -762,3 +762,55 @@ def get_active_conversation_ids(db: Path) -> set[str]:
     result = {row["conversation_id"] for row in rows}
     _active_ids_cache = (now, db, result)
     return result
+
+
+def resolve_candidates(
+    db: Path,
+    *,
+    workspace: str | None = None,
+    model: str | None = None,
+    since: str | None = None,
+    before: str | None = None,
+    tags: list[str] | None = None,
+    all_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+    exclude_active: bool = True,
+    include_derivative: bool = False,
+) -> set[str] | None:
+    """Resolve candidate conversation IDs from filters + scope options.
+
+    Composes filter_conversations() with active-session exclusion and
+    the derivative-tag default. Returns None if no constraints apply
+    (search all conversations).
+    """
+    from siftd.storage.tags import DERIVATIVE_TAG
+
+    effective_exclude = list(exclude_tags or [])
+    if not include_derivative:
+        effective_exclude.append(DERIVATIVE_TAG)
+
+    candidate_ids = filter_conversations(
+        db,
+        workspace=workspace,
+        model=model,
+        since=since,
+        before=before,
+        tags=tags,
+        all_tags=all_tags,
+        exclude_tags=effective_exclude or None,
+    )
+
+    if exclude_active:
+        active_ids = get_active_conversation_ids(db)
+        if active_ids:
+            if candidate_ids is not None:
+                candidate_ids = candidate_ids - active_ids
+            else:
+                from siftd.storage.queries import fetch_all_conversation_ids
+
+                conn = open_database(db, read_only=True)
+                all_ids = set(fetch_all_conversation_ids(conn))
+                conn.close()
+                candidate_ids = all_ids - active_ids
+
+    return candidate_ids

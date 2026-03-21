@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast
 
 from siftd.cli_common import apply_config_defaults, resolve_db
+from siftd.cli_filters import extract_filter_args
 from siftd.paths import embeddings_db_path
 
 
@@ -60,12 +61,17 @@ def _delegate_search_via_serve(
     *,
     query: str,
     n: int,
+    filters: object,
     embeddings_only: bool,
     rerank: str,
     exclude_active: bool,
     db: Path,
 ) -> list[dict] | None:
-    """Try to run semantic/hybrid search via siftd-serve; return results or None."""
+    """Try to run semantic/hybrid search via siftd-serve; return results or None.
+
+    Args:
+        filters: A FilterArgs instance with standard conversation filters.
+    """
     from siftd.serve.delegation import resolve_serve_url
 
     base_url, explicit = resolve_serve_url()
@@ -88,10 +94,10 @@ def _delegate_search_via_serve(
     params: dict[str, object] = {
         "q": query,
         "n": n,
-        "workspace": getattr(args, "workspace", None),
-        "since": getattr(args, "since", None),
-        "before": getattr(args, "before", None),
-        "model": getattr(args, "model", None),
+        "workspace": getattr(filters, "workspace", None),
+        "since": getattr(filters, "since", None),
+        "before": getattr(filters, "before", None),
+        "model": getattr(filters, "model", None),
         "recall": getattr(args, "recall", 80),
         "embeddings_only": embeddings_only,
         "exclude_active": exclude_active,
@@ -101,9 +107,9 @@ def _delegate_search_via_serve(
         "recency_half_life": getattr(args, "recency_half_life", 30.0),
         "recency_max_boost": getattr(args, "recency_max_boost", 1.15),
         "backend": getattr(args, "backend", None),
-        "tag": getattr(args, "tag", None),
-        "all_tags": getattr(args, "all_tags", None),
-        "no_tag": getattr(args, "no_tag", None),
+        "tag": getattr(filters, "tags", None),
+        "all_tags": getattr(filters, "all_tags", None),
+        "no_tag": getattr(filters, "exclude_tags", None),
         "include_derivative": getattr(args, "include_derivative", False),
     }
     params = {k: v for k, v in params.items() if v is not None}
@@ -329,6 +335,9 @@ def cmd_search(args) -> int:
     if args.json and args.thread:
         print("Note: --thread is ignored with --json output", file=sys.stderr)
 
+    # Extract standard filters once for delegation and candidate resolution
+    filters = extract_filter_args(args)
+
     # Determine search mode: FTS5-only, semantic-only, or hybrid
     use_fts = getattr(args, "fts", False)
     use_semantic = getattr(args, "semantic", False)
@@ -340,7 +349,7 @@ def cmd_search(args) -> int:
 
     # --fts mode: pure FTS5, no embeddings required
     if use_fts:
-        return _search_fts_only(args, db, query)
+        return _search_fts_only(args, db, query, filters)
 
     # --semantic mode: force embeddings-only (no FTS5 recall), error if unavailable
     if use_semantic:
@@ -361,6 +370,7 @@ def cmd_search(args) -> int:
             args,
             query=query,
             n=n_for_server,
+            filters=filters,
             embeddings_only=bool(getattr(args, "embeddings_only", False)),
             rerank="mmr" if use_mmr else "relevance",
             exclude_active=not args.no_exclude_active,
@@ -391,7 +401,7 @@ def cmd_search(args) -> int:
                 print("[FTS5 mode - embeddings index not built: siftd search --index]", file=sys.stderr)
             else:
                 print("[FTS5 mode - for semantic search: siftd install embed]", file=sys.stderr)
-            return _search_fts_only(args, db, query)
+            return _search_fts_only(args, db, query, filters)
 
         # Resolve backend for query embedding
         from siftd.embeddings import get_backend
@@ -402,38 +412,20 @@ def cmd_search(args) -> int:
             return 1
 
         # Compose filters: get candidate conversation IDs from main DB
-        from siftd.api import DERIVATIVE_TAG
-        from siftd.search import filter_conversations, get_active_conversation_ids
+        from siftd.search import resolve_candidates
 
-        exclude_tags = list(getattr(args, "no_tag", None) or [])
-        if not args.include_derivative:
-            exclude_tags.append(DERIVATIVE_TAG)
-
-        candidate_ids = filter_conversations(
+        candidate_ids = resolve_candidates(
             db,
-            workspace=args.workspace,
-            model=args.model,
-            since=args.since,
-            before=args.before,
-            tags=getattr(args, "tag", None),
-            all_tags=getattr(args, "all_tags", None),
-            exclude_tags=exclude_tags or None,
+            workspace=filters.workspace,
+            model=filters.model,
+            since=filters.since,
+            before=filters.before,
+            tags=filters.tags,
+            all_tags=filters.all_tags,
+            exclude_tags=filters.exclude_tags,
+            exclude_active=not args.no_exclude_active,
+            include_derivative=args.include_derivative,
         )
-
-        # Exclude conversations from active sessions (unless opted out)
-        exclude_active_ids = set()
-        if not args.no_exclude_active:
-            exclude_active_ids = get_active_conversation_ids(db)
-            if exclude_active_ids:
-                if candidate_ids is not None:
-                    candidate_ids = candidate_ids - exclude_active_ids
-                else:
-                    from siftd.api.search import list_conversation_ids
-
-                    conn_tmp = open_database(db, read_only=True)
-                    all_ids = list_conversation_ids(conn_tmp)
-                    conn_tmp.close()
-                    candidate_ids = all_ids - exclude_active_ids
 
         # Hybrid recall: FTS5 narrows candidates, embeddings rerank
         fts5_ids: set[str] | None = None
@@ -697,13 +689,12 @@ def cmd_search(args) -> int:
     return 0
 
 
-def _search_fts_only(args, db: Path, query: str) -> int:
+def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     """FTS5-only search mode — keyword search without embeddings."""
     import sqlite3
 
-    from siftd.api import DERIVATIVE_TAG, open_database
+    from siftd.api import open_database
     from siftd.api.search import fts5_search_content
-    from siftd.search import filter_conversations, get_active_conversation_ids
 
     # Warn about flags that are ignored in FTS5-only mode
     unsupported_flags = []
@@ -731,35 +722,23 @@ def _search_fts_only(args, db: Path, query: str) -> int:
         print(f"WARNING: {flags_str} ignored in FTS5 mode (requires embeddings)", file=sys.stderr)
 
     # Compose filters
-    exclude_tags = list(getattr(args, "no_tag", None) or [])
-    if not args.include_derivative:
-        exclude_tags.append(DERIVATIVE_TAG)
+    if filters is None:
+        filters = extract_filter_args(args)
 
-    candidate_ids = filter_conversations(
+    from siftd.search import resolve_candidates
+
+    candidate_ids = resolve_candidates(
         db,
-        workspace=args.workspace,
-        model=args.model,
-        since=args.since,
-        before=args.before,
-        tags=getattr(args, "tag", None),
-        all_tags=getattr(args, "all_tags", None),
-        exclude_tags=exclude_tags or None,
+        workspace=filters.workspace,
+        model=filters.model,
+        since=filters.since,
+        before=filters.before,
+        tags=filters.tags,
+        all_tags=filters.all_tags,
+        exclude_tags=filters.exclude_tags,
+        exclude_active=not args.no_exclude_active,
+        include_derivative=args.include_derivative,
     )
-
-    # Exclude active sessions
-    exclude_active_ids = set()
-    if not args.no_exclude_active:
-        exclude_active_ids = get_active_conversation_ids(db)
-        if exclude_active_ids:
-            if candidate_ids is not None:
-                candidate_ids = candidate_ids - exclude_active_ids
-            else:
-                from siftd.api.search import list_conversation_ids
-
-                conn_tmp = open_database(db, read_only=True)
-                all_ids = list_conversation_ids(conn_tmp)
-                conn_tmp.close()
-                candidate_ids = all_ids - exclude_active_ids
 
     # Run FTS5 search
     conn = open_database(db, read_only=True)
