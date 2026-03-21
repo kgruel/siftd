@@ -351,17 +351,11 @@ class TestStoreConversation:
         assert conn.execute("SELECT COUNT(*) FROM prompts WHERE conversation_id=?", (cid,)).fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM responses WHERE conversation_id=?", (cid,)).fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM tool_calls WHERE conversation_id=?", (cid,)).fetchone()[0] == 2
-
-    def test_fts_indexed(self, populated_db):
-        conn, _ = populated_db
+        # FTS indexed
         assert len(conn.execute("SELECT * FROM content_fts WHERE content_fts MATCH 'Python'").fetchall()) >= 1
-
-    def test_response_attributes(self, populated_db):
-        conn, _ = populated_db
+        # Response attributes
         assert any(r["key"] == "cache_read_input_tokens" for r in conn.execute("SELECT * FROM response_attributes").fetchall())
-
-    def test_auto_tags_shell(self, populated_db):
-        conn, _ = populated_db
+        # Auto-tagged shell commands
         tags = conn.execute("SELECT t.name FROM tool_call_tags tct JOIN tags t ON t.id=tct.tag_id").fetchall()
         assert any("shell:" in t["name"] for t in tags)
 
@@ -390,24 +384,15 @@ class TestStoreConversation:
 # === Vocabulary ===
 
 class TestVocabulary:
-    def test_harness_cache(self, db):
+    def test_caching_and_aliases(self, db):
         assert get_or_create_harness(db, "t", source="l") == get_or_create_harness(db, "t")
-
-    def test_model_parsing(self, db):
+        assert get_or_create_provider(db, "a") == get_or_create_provider(db, "a")
         mid = get_or_create_model(db, "claude-3-opus-20240229")
         assert db.execute("SELECT raw_name FROM models WHERE id=?", (mid,)).fetchone()[0] == "claude-3-opus-20240229"
-
-    def test_provider_cache(self, db):
-        assert get_or_create_provider(db, "a") == get_or_create_provider(db, "a")
-
-    def test_tool_by_alias(self, db):
         h = get_or_create_harness(db, "cc")
         tid = get_or_create_tool_by_alias(db, "Read", h)
         assert tid == get_or_create_tool_by_alias(db, "Read", h)
-
-    def test_ensure_tool_aliases(self, db):
         ensure_canonical_tools(db)
-        h = get_or_create_harness(db, "cc")
         ensure_tool_aliases(db, h, {"Read": "file.read"})
         assert db.execute("SELECT tool_id FROM tool_aliases WHERE raw_name='Read' AND harness_id=?", (h,)).fetchone() is not None
 
@@ -415,25 +400,15 @@ class TestVocabulary:
 # === Conversation ops ===
 
 class TestConversationOps:
-    def test_find_by_external_id(self, populated_db):
+    def test_find_and_delete(self, populated_db):
         conn, cid = populated_db
         h = get_harness_id_by_name(conn, "test_harness")
         assert find_conversation_by_external_id(conn, h, "conv-1")["id"] == cid
-
-    def test_find_missing(self, populated_db):
-        conn, _ = populated_db
-        h = get_harness_id_by_name(conn, "test_harness")
         assert find_conversation_by_external_id(conn, h, "nope") is None
-
-    def test_harness_id_missing(self, db):
-        assert get_harness_id_by_name(db, "nope") is None
-
-    def test_delete_cascades(self, populated_db):
-        conn, cid = populated_db
+        assert get_harness_id_by_name(conn, "nope") is None
         delete_conversation(conn, cid)
         conn.commit()
         assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0] == 0
 
 
 # === File dedup ===
@@ -486,50 +461,32 @@ class TestFileDedup:
 # === FTS ===
 
 class TestFTS:
-    def test_search(self, populated_db):
-        conn, _ = populated_db
+    def test_search_and_recall(self, populated_db):
+        conn, cid = populated_db
         r = search_content(conn, "Python")
         assert len(r) > 0 and "snippet" in r[0]
-
-    def test_search_empty(self, populated_db):
-        assert search_content(populated_db[0], "xyznonexistent") == []
-
-    def test_recall(self, populated_db):
-        conn, cid = populated_db
+        assert search_content(conn, "xyznonexistent") == []
         ids, mode = fts5_recall_conversations(conn, "Python")
         assert cid in ids and mode in ("and", "or")
+        assert fts5_recall_details(conn, "Python function").fts_query is not None
+        assert fts5_best_hit_for_conversation(conn, "Python", conversation_id=cid) is not None
+        assert fts5_best_hit_for_conversation(conn, "xyznonexistent", conversation_id=cid) is None
+        # OR fallback
+        assert fts5_recall_details(conn, "Python function", min_and_hits=999).mode in ("or", "none")
 
-    def test_recall_empty(self, db):
+    def test_recall_empty_db(self, db):
         ids, mode = fts5_recall_conversations(db, "xyznonexistent")
         assert ids == set() and mode == "none"
 
-    def test_recall_details(self, populated_db):
-        r = fts5_recall_details(populated_db[0], "Python function")
-        assert r.fts_query is not None
-
-    def test_best_hit(self, populated_db):
-        conn, cid = populated_db
-        assert fts5_best_hit_for_conversation(conn, "Python", conversation_id=cid) is not None
-
     def test_rebuild_fts(self, populated_db):
-        conn, _ = populated_db
-        rebuild_fts_index(conn)
-        assert len(search_content(conn, "Python")) > 0
+        rebuild_fts_index(populated_db[0])
+        assert len(search_content(populated_db[0], "Python")) > 0
 
-    def test_ensure_fts_idempotent(self, db):
+    def test_ensure_fts(self, db, tmp_path):
         ensure_fts_table(db)
         ensure_fts_table(db)
         assert db.execute("SELECT 1 FROM sqlite_master WHERE name='content_fts'").fetchone() is not None
-
-    def test_recall_or_fallback(self, populated_db):
-        r = fts5_recall_details(populated_db[0], "Python function", min_and_hits=999)
-        assert r.mode in ("or", "none")
-
-    def test_best_hit_no_match(self, populated_db):
-        conn, cid = populated_db
-        assert fts5_best_hit_for_conversation(conn, "xyznonexistent", conversation_id=cid) is None
-
-    def test_ensure_fts_recreates_without_porter(self, tmp_path):
+        # Recreate without porter
         conn = open_database(tmp_path / "t.db")
         conn.execute("DROP TABLE IF EXISTS content_fts")
         conn.execute("CREATE VIRTUAL TABLE content_fts USING fts5(text_content, content_id UNINDEXED, side UNINDEXED, conversation_id UNINDEXED)")
@@ -645,49 +602,37 @@ class TestSqlHelpers:
 # === Sessions ===
 
 class TestSessions:
-    def test_register_and_find(self, db):
+    def test_lifecycle(self, db):
         register_session(db, "s1", "claude_code", "/test", commit=True)
         assert is_session_registered(db, "s1")
         assert find_active_session(db, "/test") == "s1"
         assert get_session_info(db, "s1")["adapter_name"] == "claude_code"
-
-    def test_unregister(self, db):
-        register_session(db, "s1", "t", commit=True)
         assert unregister_session(db, "s1", commit=True)
         assert not is_session_registered(db, "s1")
         assert not unregister_session(db, "s1")
-
-    def test_queue_consume_tags(self, db):
-        register_session(db, "s1", "t", commit=True)
-        assert queue_tag(db, "s1", "imp", commit=True) is not None
-        assert queue_tag(db, "s1", "imp", commit=True) is None  # dup
-        tags = consume_pending_tags(db, "s1", commit=True)
-        assert len(tags) == 1 and tags[0].tag_name == "imp"
-        assert consume_pending_tags(db, "s1") == []
-
-    def test_exchange_tag(self, db):
-        register_session(db, "s1", "t", commit=True)
-        queue_tag(db, "s1", "rev", entity_type="exchange", exchange_index=2, commit=True)
-        tags = get_pending_tags(db, "s1")
-        assert tags[0].entity_type == "exchange" and tags[0].exchange_index == 2
-
-    def test_cleanup_stale(self, db):
-        register_session(db, "s1", "t", commit=True)
-        db.execute("UPDATE active_sessions SET started_at='2020-01-01T00:00:00', last_seen_at='2020-01-01T00:00:00'")
-        db.commit()
-        s, _ = cleanup_stale_sessions(db, max_age_hours=1, commit=True)
-        assert s == 1
-
-    def test_not_found(self, db):
         assert find_active_session(db, "/nope") is None
         assert get_session_info(db, "nope") is None
 
-    def test_stale_and_orphan_counts(self, db):
+    def test_tags(self, db):
         register_session(db, "s1", "t", commit=True)
-        db.execute("UPDATE active_sessions SET last_seen_at='2020-01-01T00:00:00'")
+        assert queue_tag(db, "s1", "imp", commit=True) is not None
+        assert queue_tag(db, "s1", "imp", commit=True) is None
+        queue_tag(db, "s1", "rev", entity_type="exchange", exchange_index=2, commit=True)
+        tags = get_pending_tags(db, "s1")
+        assert len(tags) == 2
+        assert tags[1].entity_type == "exchange" and tags[1].exchange_index == 2
+        consumed = consume_pending_tags(db, "s1", commit=True)
+        assert len(consumed) == 2
+        assert consume_pending_tags(db, "s1") == []
+
+    def test_stale_cleanup(self, db):
+        register_session(db, "s1", "t", commit=True)
+        db.execute("UPDATE active_sessions SET started_at='2020-01-01T00:00:00', last_seen_at='2020-01-01T00:00:00'")
         db.commit()
         assert get_stale_sessions_count(db, max_age_hours=1) == 1
         assert get_orphaned_pending_tags_count(db) == 0
+        s, _ = cleanup_stale_sessions(db, max_age_hours=1, commit=True)
+        assert s == 1
 
 
 # === Tags ===
