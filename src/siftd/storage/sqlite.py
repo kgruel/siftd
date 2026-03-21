@@ -857,8 +857,6 @@ def insert_tool_call(
         filter_binary: If True (default), filter binary content (images, base64)
             from the result before storage.
     """
-    import json as _json
-
     from siftd.content.filters import filter_tool_result_binary
     from siftd.storage.blobs import store_content
 
@@ -868,10 +866,10 @@ def insert_tool_call(
     # Apply binary filtering if enabled
     if result_json is not None and filter_binary:
         try:
-            result_data = _json.loads(result_json)
+            result_data = json.loads(result_json)
             filtered_data = filter_tool_result_binary(result_data)
             if filtered_data is not result_data:
-                result_json = _json.dumps(filtered_data)
+                result_json = json.dumps(filtered_data)
         except (ValueError, TypeError):
             # Not valid JSON, leave as-is
             pass
