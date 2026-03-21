@@ -9,3 +9,4 @@
 {"run":15,"commit":"c465a01","metric":45.798,"metrics":{"conversations":6150},"status":"keep","description":"Use hashlib.file_digest() for faster file hashing (48s→46s)","timestamp":1774061730762,"segment":0}
 {"run":16,"commit":"9be1853","metric":45.225,"metrics":{"conversations":6150},"status":"keep","description":"Add PRAGMA temp_store=MEMORY for faster temp table operations (46s→45s)","timestamp":1774061879241,"segment":0}
 {"run":10,"commit":"60de341","metric":41.927,"metrics":{"conversations":6150},"status":"keep","description":"Fix lint (ULID semicolons), reset blob timestamp on new connection, prune ideas. Cleanup only — no perf change.","timestamp":1774063226517,"segment":0}
+{"type":"config","name":"Storage layer test coverage efficiency","metricName":"efficiency","metricUnit":"","bestDirection":"lower"}
