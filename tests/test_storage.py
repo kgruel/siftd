@@ -219,8 +219,12 @@ class TestVocabulary:
         tid = sq.get_or_create_tool_by_alias(db, "Read", h)
         assert tid == sq.get_or_create_tool_by_alias(db, "Read", h)
         sq.ensure_canonical_tools(db)
-        sq.ensure_tool_aliases(db, h, {"Read": "file.read"})
+        sq.ensure_tool_aliases(db, h, {"Read": "file.read", "NonExistent": "no.such.tool"})
         assert db.execute("SELECT tool_id FROM tool_aliases WHERE raw_name='Read' AND harness_id=?", (h,)).fetchone() is not None
+        assert db.execute("SELECT tool_id FROM tool_aliases WHERE raw_name='NonExistent' AND harness_id=?", (h,)).fetchone() is None
+        # get_or_create_tool with kwargs
+        tool_id = sq.get_or_create_tool(db, "custom.tool", category="custom", description="A custom tool")
+        assert tool_id == sq.get_or_create_tool(db, "custom.tool")  # cache hit
         # Clear caches and re-lookup: hits the "found in DB, not in cache" paths
         sq.clear_vocabulary_caches()
         assert sq.get_or_create_harness(db, "t") == sq.get_or_create_harness(db, "t")
