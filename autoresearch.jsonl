@@ -4,3 +4,4 @@
 {"run":3,"commit":"b59b901","metric":117.194,"metrics":{"conversations":6150},"status":"checks_failed","description":"Baseline attempt 3: 117s. Fixing checks to use project test markers.","timestamp":1774058937719,"segment":0}
 {"run":4,"commit":"382c732","metric":115.121,"metrics":{"conversations":6150},"status":"keep","description":"Baseline: fresh ingest 115s, 6150 conversations. All tests pass.","timestamp":1774059074591,"segment":0}
 {"run":5,"commit":"e660c3c","metric":76.983,"metrics":{"conversations":6150},"status":"keep","description":"Cache workspace identity lookups during ingest to avoid repeated git subprocess calls (115s→77s, -33%)","timestamp":1774059533536,"segment":0}
+{"run":11,"commit":"7624481","metric":53.25,"metrics":{"conversations":6150},"status":"keep","description":"Optimize binary filter (length check shortcut), blob storage (batch timestamp), import cleanup in insert_tool_call","timestamp":1774060876085,"segment":0}

@@ -55,6 +55,10 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
 
+    # Clear in-process vocabulary caches when opening a new connection
+    # to prevent stale IDs from a previous connection
+    clear_vocabulary_caches()
+
     if is_new:
         schema = SCHEMA_PATH.read_text()
         conn.executescript(schema)
@@ -523,11 +527,42 @@ create_database = open_database
 # =============================================================================
 
 
+# In-process caches for vocabulary lookups (valid within single connection lifetime)
+_harness_cache: dict[str, str] = {}
+_provider_cache: dict[str, str] = {}
+_model_cache: dict[str, str] = {}
+
+
+def clear_vocabulary_caches() -> None:
+    """Clear all in-process vocabulary caches.
+
+    Called when opening a new database connection to prevent stale IDs.
+    """
+    _harness_cache.clear()
+    _provider_cache.clear()
+    _model_cache.clear()
+    # These are defined later in the module but accessible as globals
+    if "_tool_alias_cache" in globals():
+        _tool_alias_cache.clear()
+    if "_tool_name_cache" in globals():
+        _tool_name_cache.clear()
+    # Clear tag cache from tags module
+    try:
+        from siftd.storage import tags
+        tags._tag_cache.clear()
+    except (ImportError, AttributeError):
+        pass
+
+
 def get_or_create_harness(conn: sqlite3.Connection, name: str, **kwargs) -> str:
     """Get or create harness, return id (ULID)."""
+    if name in _harness_cache:
+        return _harness_cache[name]
+
     cur = conn.execute("SELECT id FROM harnesses WHERE name = ?", (name,))
     row = cur.fetchone()
     if row:
+        _harness_cache[name] = row["id"]
         return row["id"]
 
     ulid = _ulid()
@@ -536,6 +571,7 @@ def get_or_create_harness(conn: sqlite3.Connection, name: str, **kwargs) -> str:
     placeholders = ", ".join("?" * len(vals))
     col_names = ", ".join(cols)
     conn.execute(f"INSERT INTO harnesses ({col_names}) VALUES ({placeholders})", vals)
+    _harness_cache[name] = ulid
     return ulid
 
 
@@ -591,9 +627,13 @@ def get_or_create_model(conn: sqlite3.Connection, raw_name: str, **kwargs) -> st
     family, version, variant, released) using parse_model_name().
     Explicit kwargs override parsed values.
     """
+    if raw_name in _model_cache:
+        return _model_cache[raw_name]
+
     cur = conn.execute("SELECT id FROM models WHERE raw_name = ?", (raw_name,))
     row = cur.fetchone()
     if row:
+        _model_cache[raw_name] = row["id"]
         return row["id"]
 
     parsed = parse_model_name(raw_name)
@@ -607,14 +647,19 @@ def get_or_create_model(conn: sqlite3.Connection, raw_name: str, **kwargs) -> st
     placeholders = ", ".join("?" * len(vals))
     col_names = ", ".join(cols)
     conn.execute(f"INSERT INTO models ({col_names}) VALUES ({placeholders})", vals)
+    _model_cache[raw_name] = ulid
     return ulid
 
 
 def get_or_create_provider(conn: sqlite3.Connection, name: str, **kwargs) -> str:
     """Get or create provider, return id (ULID)."""
+    if name in _provider_cache:
+        return _provider_cache[name]
+
     cur = conn.execute("SELECT id FROM providers WHERE name = ?", (name,))
     row = cur.fetchone()
     if row:
+        _provider_cache[name] = row["id"]
         return row["id"]
 
     ulid = _ulid()
@@ -623,6 +668,7 @@ def get_or_create_provider(conn: sqlite3.Connection, name: str, **kwargs) -> str
     placeholders = ", ".join("?" * len(vals))
     col_names = ", ".join(cols)
     conn.execute(f"INSERT INTO providers ({col_names}) VALUES ({placeholders})", vals)
+    _provider_cache[name] = ulid
     return ulid
 
 
@@ -642,8 +688,18 @@ def get_or_create_tool(conn: sqlite3.Connection, name: str, **kwargs) -> str:
     return ulid
 
 
+# Cache: (raw_name, harness_id) -> tool_id
+_tool_alias_cache: dict[tuple[str, str], str] = {}
+# Cache: tool_id -> canonical_name
+_tool_name_cache: dict[str, str] = {}
+
+
 def get_or_create_tool_by_alias(conn: sqlite3.Connection, raw_name: str, harness_id: str) -> str:
     """Look up tool by alias for this harness, or create with raw name as canonical."""
+    cache_key = (raw_name, harness_id)
+    if cache_key in _tool_alias_cache:
+        return _tool_alias_cache[cache_key]
+
     # Check alias first (harness-specific)
     cur = conn.execute(
         "SELECT tool_id FROM tool_aliases WHERE raw_name = ? AND harness_id = ?",
@@ -651,6 +707,7 @@ def get_or_create_tool_by_alias(conn: sqlite3.Connection, raw_name: str, harness
     )
     row = cur.fetchone()
     if row:
+        _tool_alias_cache[cache_key] = row["tool_id"]
         return row["tool_id"]
 
     # Check if tool exists with this name
@@ -669,6 +726,7 @@ def get_or_create_tool_by_alias(conn: sqlite3.Connection, raw_name: str, harness
         "INSERT OR IGNORE INTO tool_aliases (id, raw_name, harness_id, tool_id) VALUES (?, ?, ?, ?)",
         (alias_id, raw_name, harness_id, tool_id)
     )
+    _tool_alias_cache[cache_key] = tool_id
     return tool_id
 
 
@@ -1030,6 +1088,13 @@ def store_conversation(
                 tool_id = get_or_create_tool_by_alias(
                     conn, tool_call.tool_name, harness_id
                 )
+                # Cache tool canonical name to avoid per-call SELECT
+                if tool_id not in _tool_name_cache:
+                    _tool_name_cache[tool_id] = conn.execute(
+                        "SELECT name FROM tools WHERE id = ?", (tool_id,)
+                    ).fetchone()["name"]
+                canonical_name = _tool_name_cache[tool_id]
+
                 tool_call_id = insert_tool_call(
                     conn,
                     response_id=response_id,
@@ -1044,9 +1109,6 @@ def store_conversation(
                 )
 
                 # Auto-tag shell commands at ingest time
-                canonical_name = conn.execute(
-                    "SELECT name FROM tools WHERE id = ?", (tool_id,)
-                ).fetchone()["name"]
                 tag_shell_command(conn, tool_call_id, canonical_name, tool_call.input)
 
                 # Auto-tag derivative conversations (contain siftd search/query)

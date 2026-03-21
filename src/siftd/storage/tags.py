@@ -5,12 +5,20 @@ from datetime import datetime
 
 from siftd.ids import ulid as _ulid
 
+# In-process cache for tag name -> id lookups.
+# Only valid within a single connection lifetime. Cleared on module reload.
+_tag_cache: dict[str, str] = {}
+
 
 def get_or_create_tag(conn: sqlite3.Connection, name: str, description: str | None = None) -> str:
     """Get or create a tag by name, return id (ULID)."""
+    if name in _tag_cache:
+        return _tag_cache[name]
+
     cur = conn.execute("SELECT id FROM tags WHERE name = ?", (name,))
     row = cur.fetchone()
     if row:
+        _tag_cache[name] = row["id"]
         return row["id"]
 
     ulid = _ulid()
@@ -18,6 +26,7 @@ def get_or_create_tag(conn: sqlite3.Connection, name: str, description: str | No
         "INSERT INTO tags (id, name, description, created_at) VALUES (?, ?, ?, ?)",
         (ulid, name, description, datetime.now().isoformat())
     )
+    _tag_cache[name] = ulid
     return ulid
 
 
@@ -55,19 +64,14 @@ def apply_tag(
     else:
         raise ValueError(f"Unsupported entity_type: {entity_type}")
 
-    # Check if already applied
-    cur = conn.execute(
-        f"SELECT id FROM {table} WHERE {fk_col} = ? AND tag_id = ?",
-        (entity_id, tag_id)
-    )
-    if cur.fetchone():
-        return None
-
+    # Use INSERT OR IGNORE to skip duplicate check SELECT
     ulid = _ulid()
-    conn.execute(
-        f"INSERT INTO {table} (id, {fk_col}, tag_id, applied_at) VALUES (?, ?, ?, ?)",
+    cur = conn.execute(
+        f"INSERT OR IGNORE INTO {table} (id, {fk_col}, tag_id, applied_at) VALUES (?, ?, ?, ?)",
         (ulid, entity_id, tag_id, datetime.now().isoformat())
     )
+    if cur.rowcount == 0:
+        return None  # Already applied
     if commit:
         conn.commit()
     return ulid
