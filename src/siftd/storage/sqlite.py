@@ -555,6 +555,12 @@ def clear_vocabulary_caches() -> None:
         tags._tag_cache.clear()
     except (ImportError, AttributeError):
         pass
+    # Reset blob batch timestamp so new connections get fresh timestamps
+    try:
+        from siftd.storage import blobs
+        blobs._batch_timestamp = None
+    except (ImportError, AttributeError):
+        pass
 
 
 def get_or_create_harness(conn: sqlite3.Connection, name: str, **kwargs) -> str:

@@ -52,4 +52,24 @@ From cProfile of the baseline (134s):
 - Database output must be compatible (same schema, same data)
 
 ## What's Been Tried
-(Updated as experiments accumulate)
+### Wins (cumulative: 115s → 38s, -67%)
+1. **Cache workspace identity** (115→77s): LRU cache on `get_canonical_workspace_identity` via workspace_cache dict passed through ingest
+2. **WAL mode + SYNCHRONOUS=NORMAL** (77→56s): SQLite journal_mode=WAL, synchronous=NORMAL
+3. **ULID optimization** (56→56s): Batch random bytes, unrolled encoding loops
+4. **Binary filter length check** (small win): Skip regex for strings <500 chars
+5. **Blob storage timestamp** (small win): Share timestamp across batch
+6. **Vocabulary caching** (56→53s): Cache harness/provider/model/tool/tag lookups in-process
+7. **SQLite cache + mmap** (53→48s): cache_size=-64000 (64MB), mmap_size=256MB
+8. **hashlib.file_digest** (48→46s): Faster file hashing via Python 3.11+ API
+9. **temp_store=MEMORY** (46→45s): In-memory temp tables
+10. **SYNCHRONOUS=OFF during ingest** (45→39s): Skip fsync during bulk operations
+11. **Deferred FK checks** (39→38s): defer_foreign_keys=ON during ingest
+
+### Tried and Discarded
+- Batch commits with savepoints: correct but slower due to savepoint overhead
+- Batch commits without savepoints: fast but loses data on errors
+- 1MB hash buffer for file hashing: no improvement
+- Inline insert functions: in noise range
+- Disable WAL autocheckpoint: WAL grows too large, final checkpoint slow
+- 8KB page size: in noise range
+- Tool/model caching per-conversation: in noise range

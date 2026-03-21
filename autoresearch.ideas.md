@@ -1,16 +1,38 @@
 # Autoresearch Ideas
 
-## nolimit_ms (~3000ms, cold-cache bound)
-- 1644 conversations → reads most of responses table (363K rows) regardless of query shape
-- **Denormalize**: add `prompt_count`, `response_count`, `total_tokens` columns to `conversations` table. Backfill on ingest, update on insert. Eliminates response table scan for listing.
-- **SQLite page_size tuning**: larger pages (8KB/16KB) reduce page count and cache misses
-- **PRAGMA cache_size**: increase from default 2000 pages to keep more in memory between queries
+## Ingest performance (current target: 38s, down from 115s)
 
-## Import time (~30-60ms)
-- `siftd.api` imports all adapters eagerly (26ms) — not needed for query path
-- Lazy-import adapters only when `ingest` or `peek` commands run
-- Could shave 20-30ms off startup
+### Batch commits (high potential, complex)
+- 6,419 individual commits cost ~5.5s even with sync=OFF
+- Batch N files per commit (e.g., 100-200) would reduce to ~32-64 commits
+- Challenge: errors in one file roll back the whole batch
+- Tried savepoints: overhead negated the savings
+- Possible approach: use Python 3.12+ autocommit mode with explicit BEGIN/COMMIT,
+  catch errors per-file and re-execute just the failed file's rollback via savepoint
 
-## Render time (~35ms)
-- `painted` library import + table rendering is stable at ~35ms
-- Not much to optimize unless we skip painted for simple table output
+### Reduce JSON round-trips
+- Adapters parse JSONL → Python dicts, then `store_conversation` re-encodes with `json.dumps`
+- 605k json.loads (5.2s) + 408k json.dumps (1.5s) = 6.7s total
+- Could pass raw JSON strings through for content blocks instead of parse→re-encode
+- Requires adapter interface change (return raw JSON for blocks)
+
+### Streaming JSONL parser
+- `load_jsonl` reads entire file then parses each line
+- For large files, a streaming approach could overlap I/O and parsing
+- Most files are small though, so benefit may be marginal
+
+### executemany for bulk inserts
+- Currently each row is a separate `conn.execute()` call (1M total, 8.8s)
+- Could collect rows per table and use `executemany` for prompt_content,
+  response_content, content_fts, tool_calls
+- Requires restructuring store_conversation to collect-then-flush
+
+### Skip file hashing for unchanged mtime+size
+- Currently hash every file even when mtime matches
+- Could trust mtime+size pair as "unchanged" signal and skip SHA-256
+- Risk: rare cases where content changes without mtime change (e.g., NFS)
+
+## Non-ingest ideas (future targets)
+- **Query startup**: lazy-import adapters only for ingest/peek commands (~20-30ms)
+- **Denormalize conversation stats**: add prompt_count, response_count, total_tokens
+  columns to conversations table to avoid response table scan on listing
