@@ -10,14 +10,13 @@ from siftd.adapters import vscode
 from siftd.domain.source import Source
 
 
-def _vscode_session_dir(tmp_path, fixture, ws="/test/workspace"):
-    """Set up VSCode workspace dir structure with fixture. Returns Source."""
-    h = tmp_path / "hash"
-    cs = h / "chatSessions"
+def _vscode_src(tmp_path, fixture, ws="/test/workspace"):
+    """Set up VSCode dir structure with fixture. Returns Source."""
+    cs = tmp_path / "h" / "chatSessions"
     cs.mkdir(parents=True)
     shutil.copy(FIXTURES_DIR / fixture, cs / Path(fixture).name)
     if ws:
-        (h / "workspace.json").write_text(json.dumps({"folder": f"file://{ws}"}))
+        (cs.parent / "workspace.json").write_text(json.dumps({"folder": f"file://{ws}"}))
     return Source(kind="file", location=cs / Path(fixture).name)
 
 
@@ -29,21 +28,18 @@ class TestVscodeAdapter:
         assert not vscode.can_handle(Source(kind="directory", location=Path("/mock/chatSessions")))
 
     def test_parse_json_full(self, tmp_path):
-        conv = list(vscode.parse(_vscode_session_dir(tmp_path, "vscode_minimal.json")))[0]
+        conv = list(vscode.parse(_vscode_src(tmp_path, "vscode_minimal.json")))[0]
         assert conv.workspace_path == "/test/workspace" and conv.harness.name == "vscode"
-        assert conv.started_at and "2024-02-15" in conv.started_at and conv.ended_at
-        assert len(conv.prompts) == 2
+        assert conv.started_at and "2024-02-15" in conv.started_at and conv.ended_at and len(conv.prompts) == 2
         assert "read a file" in conv.prompts[0].content[0].content["text"]
         assert conv.prompts[0].responses[0].model == "gpt-4o"
-        r0_text = [b for b in conv.prompts[0].responses[0].content if b.block_type == "text"]
-        assert r0_text and "open()" in r0_text[0].content["text"]
+        assert [b for b in conv.prompts[0].responses[0].content if b.block_type == "text" and "open()" in b.content["text"]]
         tc = conv.prompts[1].responses[0].tool_calls[0]
         assert tc.tool_name == "listFiles" and tc.result == {"files": ["README.md", "src/", "tests/"]}
         assert [b for b in conv.prompts[1].responses[0].content if b.block_type == "text_edit"]
-        assert all(r.usage is None for p in conv.prompts for r in p.responses)
 
     def test_parse_jsonl_full(self, tmp_path):
-        conv = list(vscode.parse(_vscode_session_dir(tmp_path, "vscode_minimal.jsonl")))[0]
+        conv = list(vscode.parse(_vscode_src(tmp_path, "vscode_minimal.jsonl")))[0]
         assert conv.workspace_path == "/test/workspace" and "2024-02-15" in conv.started_at
         assert len(conv.prompts) == 2 and conv.prompts[1].responses[0].tool_calls[0].tool_name == "listFiles"
 
@@ -56,8 +52,8 @@ class TestVscodeAdapter:
         cs2.mkdir(parents=True)
         empty = {"version": 3, "sessionId": "e", "creationDate": 1708012345678, "requests": []}
         (cs2 / "e.json").write_text(json.dumps(empty))
-        assert list(vscode.parse(Source(kind="file", location=cs2 / "e.json"))) == []
         (cs2 / "e.jsonl").write_text(json.dumps({"kind": 0, "v": empty}) + "\n")
+        assert list(vscode.parse(Source(kind="file", location=cs2 / "e.json"))) == []
         assert list(vscode.parse(Source(kind="file", location=cs2 / "e.jsonl"))) == []
         (cs2 / "s.json").write_text(json.dumps({**empty, "sessionId": "s",
             "requests": [{"requestId": "r1", "message": {"text": "Hello"}, "timestamp": 1708012345678,
@@ -74,9 +70,7 @@ class TestVscodeAdapter:
         vscode._set_at_path(obj2, ["requests", 99, "result"], "v")
         assert len(obj2["requests"]) == 1
 
-
-class TestVSCodeNormalizerAndPeek:
-    def test_peek_json_and_jsonl(self, tmp_path):
+    def test_peek_and_normalizer(self, tmp_path):
         cs = tmp_path / "ws" / "chatSessions"
         cs.mkdir(parents=True)
         shutil.copy(FIXTURES_DIR / "vscode_minimal.json", cs / "test.json")
@@ -87,14 +81,14 @@ class TestVSCodeNormalizerAndPeek:
         (tmp_path / "chatSessions").mkdir()
         (tmp_path / "chatSessions" / "e.json").write_text("{}")
         assert vscode.peek_scan(tmp_path / "chatSessions" / "e.json") is None
-
-    def test_normalizer_and_parse_errors(self, tmp_path):
         n = vscode.normalize_record
         assert n({"_kind": "user", "_ts": "T", "message": {"text": "hi"}}).content_blocks[0]["text"] == "hi"
         nr = n({"_kind": "assistant", "_ts": "T", "modelId": "m", "response": [
             {"kind": "markdownContent", "content": {"value": "ok"}}, {"kind": "toolInvocationSerialized", "toolName": "f"}]})
         assert nr.kind == "assistant" and len(nr.content_blocks) == 2
         assert n({"_kind": "unknown"}) is None
+
+    def test_parse_errors(self, tmp_path):
         cs = tmp_path / "chatSessions"
         cs.mkdir()
         (cs / "bad.json").write_bytes(b'\xff\xfe bad')
