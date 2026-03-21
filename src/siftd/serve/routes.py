@@ -27,6 +27,7 @@ async def index() -> dict:
             {"method": "GET", "path": "/v1/tags", "description": "List tags with counts"},
             {"method": "GET", "path": "/v1/tool-search", "description": "Search tool calls"},
             {"method": "GET", "path": "/v1/export", "description": "Export full conversations"},
+            {"method": "POST", "path": "/v1/tag", "description": "Apply, remove, rename, or delete tags"},
         ],
     }
 
@@ -148,6 +149,95 @@ async def tags_route(
             for t in tags
         ]
     }
+
+
+@post("/v1/tag")
+async def tag_write_route(request: Request, db_path: Path) -> dict:
+    """Apply, remove, rename, or delete tags.
+
+    Request body (JSON):
+      action: "apply" | "remove" | "rename" | "delete"
+      tags: list[str]              — tag names (apply/remove)
+      entity_type: str             — "conversation" (default), "workspace", "tool_call"
+      entity_id: str               — target entity ID (apply/remove)
+      last: int                    — apply/remove to N most recent (alternative to entity_id)
+      old_name: str, new_name: str — for rename
+      tag_name: str                — for delete
+    """
+    import json as json_mod
+
+    from siftd.storage.sqlite import open_database
+    from siftd.storage.tags import (
+        apply_tag,
+        delete_tag,
+        get_or_create_tag,
+        get_recent_conversation_ids,
+        get_tag_id,
+        remove_tag,
+        rename_tag,
+        resolve_entity_id,
+    )
+
+    body = json_mod.loads(await request.body())
+    action = body.get("action", "apply")
+    conn = open_database(db_path)
+
+    try:
+        if action == "rename":
+            old_name = body["old_name"]
+            new_name = body["new_name"]
+            rename_tag(conn, old_name, new_name, commit=True)
+            return {"status": "renamed", "old_name": old_name, "new_name": new_name}
+
+        if action == "delete":
+            tag_name = body["tag_name"]
+            delete_tag(conn, tag_name, commit=True)
+            return {"status": "deleted", "tag_name": tag_name}
+
+        # apply or remove
+        tags = body.get("tags", [])
+        entity_type = body.get("entity_type", "conversation")
+        entity_id = body.get("entity_id")
+        last_n = body.get("last")
+
+        if last_n:
+            ids = get_recent_conversation_ids(conn, int(last_n))
+        elif entity_id:
+            resolved = resolve_entity_id(conn, entity_type, entity_id)
+            ids = [resolved] if resolved else []
+        else:
+            return {"error": "entity_id or last required"}
+
+        if not ids:
+            return {"error": "no matching entities found"}
+
+        results = []
+        for tag_name in tags:
+            if action == "remove":
+                tag_id = get_tag_id(conn, tag_name)
+                if not tag_id:
+                    results.append({"tag": tag_name, "status": "not_found"})
+                    continue
+                count = sum(1 for eid in ids if remove_tag(conn, entity_type, eid, tag_id, commit=False))
+                results.append({"tag": tag_name, "status": "removed", "count": count})
+            else:
+                tag_id = get_or_create_tag(conn, tag_name)
+                count = sum(1 for eid in ids if apply_tag(conn, entity_type, eid, tag_id, commit=False))
+                results.append({"tag": tag_name, "status": "applied", "count": count})
+
+        conn.commit()
+
+        # Refresh stats cache
+        try:
+            from siftd.api.stats import get_stats, write_stats_cache
+
+            write_stats_cache(get_stats(db_path=db_path))
+        except Exception:
+            pass
+
+        return {"action": action, "results": results}
+    finally:
+        conn.close()
 
 
 @get("/v1/tool-search")

@@ -165,3 +165,41 @@ def try_delegate(
         return _get_json(base_url, endpoint, params=params, timeout_s=timeout_s)
     except Exception:
         return None
+
+
+def try_delegate_post(
+    endpoint: str,
+    body: dict[str, Any],
+    *,
+    db: Path,
+    timeout_s: float = 1.0,
+) -> dict[str, Any] | None:
+    """Attempt to delegate a POST request to siftd-serve.
+
+    Returns parsed JSON dict on success, None on any failure.
+    """
+    if not can_delegate(db=db):
+        return None
+
+    base_url, explicit = resolve_serve_url()
+
+    from siftd.serve.client import ServeUnavailable, probe_health
+
+    try:
+        probe_timeout = 0.5 if explicit else 0.02
+        health = probe_health(base_url=base_url, timeout_s=probe_timeout)
+    except (ServeUnavailable, Exception):
+        return None
+
+    served_db_path = health.get("db_path")
+    if not isinstance(served_db_path, str):
+        return None
+    if served_db_path != str(db.resolve()):
+        return None
+
+    from siftd.serve.client import _post_json
+
+    try:
+        return _post_json(base_url, endpoint, body=body, timeout_s=timeout_s)
+    except Exception:
+        return None

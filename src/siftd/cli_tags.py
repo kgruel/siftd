@@ -287,6 +287,17 @@ def _cmd_tag_rename(args, db: Path) -> int:
 
     old_name, new_name = positional[1], positional[2]
 
+    # Try serve delegation
+    try:
+        from siftd.serve.delegation import try_delegate_post
+
+        result = try_delegate_post("/v1/tag", {"action": "rename", "old_name": old_name, "new_name": new_name}, db=db)
+        if result is not None and result.get("status") == "renamed":
+            print(f"Renamed '{old_name}' \u2192 '{new_name}'")
+            return 0
+    except Exception:
+        pass
+
     if not db.exists():
         print(f"Database not found: {db}")
         print("Run 'siftd ingest' to create it.")
@@ -419,8 +430,50 @@ def cmd_tag(args) -> int:
         print("Run 'siftd ingest' to create it.")
         return 1
 
-    conn = open_database(db)
     removing = args.remove
+
+    # Try delegating tag writes to serve when running
+    try:
+        from siftd.serve.delegation import try_delegate_post
+
+        body: dict = {"action": "remove" if removing else "apply"}
+
+        if args.last is not None:
+            n = args.last
+            if isinstance(n, str):
+                try:
+                    n = int(n)
+                except ValueError:
+                    positional = [str(n)] + positional
+                    n = 1
+            body["last"] = n
+            body["tags"] = [str(t) for t in positional]
+        elif positional:
+            parsed = _parse_tag_args(positional)
+            if parsed:
+                entity_type, entity_id, tag_names_parsed = parsed
+                body["entity_type"] = entity_type
+                body["entity_id"] = entity_id
+                body["tags"] = tag_names_parsed
+
+        if "tags" in body:
+            result = try_delegate_post("/v1/tag", body, db=db)
+            if result is not None and "error" not in result:
+                for r in result.get("results", []):
+                    tag = r["tag"]
+                    status = r["status"]
+                    count = r.get("count", 0)
+                    if status == "not_found":
+                        print(f"Tag '{tag}' not found")
+                    elif status == "applied":
+                        print(f"Applied tag '{tag}' to {count} conversation(s)")
+                    elif status == "removed":
+                        print(f"Removed tag '{tag}' from {count} conversation(s)")
+                return 0
+    except Exception:
+        pass
+
+    conn = open_database(db)
 
     # Handle --last mode
     if args.last is not None:
