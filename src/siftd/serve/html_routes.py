@@ -104,10 +104,12 @@ def _page_shell(
     hx-get="/ui/search" hx-target="#list" hx-trigger="keyup changed delay:300ms"
     hx-include="this">
   <a href="/ui" hx-get="/ui/query" hx-target="#list" hx-push-url="/ui"
-    hx-on::before-request="document.querySelectorAll('#filters select').forEach(s=>s.value='')"
+    hx-on::before-request="document.querySelectorAll('#filters select,#filters input').forEach(e=>e.value='')"
     style="color:var(--accent);text-decoration:none">Recent</a>
   <a href="#" hx-get="/ui/peek" hx-target="#list"
     style="color:var(--accent);text-decoration:none">Live</a>
+  <a href="#" hx-get="/ui/stats" hx-target="#detail" hx-swap="innerHTML"
+    style="color:var(--accent);text-decoration:none">Stats</a>
 </nav>
 <main>
   <div id="list-pane">
@@ -225,10 +227,19 @@ async def ui_meta(db_path: Path) -> Response:
     model_opts = [(m, m) for m in (stats.models if stats else [])]
     tag_opts = [(t, t) for t in tag_names]
 
+    def _date(name: str, label: str) -> str:
+        return (
+            f'<input type="date" name="{name}" title="{label}"'
+            f' hx-get="/ui/query" hx-target="#list" hx-trigger="change"'
+            f' hx-include="#filters">'
+        )
+
     parts = [
         _select("workspace", "workspaces", ws_opts),
         _select("model", "models", model_opts),
         _select("tag", "tags", tag_opts),
+        _date("since", "Since"),
+        _date("before", "Before"),
     ]
     return _html_response("".join(parts))
 
@@ -255,6 +266,8 @@ async def ui_query(
     workspace = workspace or None
     model = model or None
     search = search or None
+    since = since or None
+    before = before or None
     tag = [t for t in (tag or []) if t] or None
 
     from siftd.output.format_registry import get_format
@@ -314,25 +327,62 @@ async def ui_query(
 async def ui_search(
     db_path: Path,
     q: str = Parameter(query="q", default=""),
+    mode: str = Parameter(query="mode", default="chunks"),
 ) -> Response:
     """Search conversations, return HTML fragment.
 
     Tries semantic search (embeddings) first, falls back to FTS5.
+    Modes: chunks (default), conversations (aggregated scores).
     """
+    from html import escape
+
     from siftd.output.format_registry import get_format
 
     if not q.strip():
         return _html_response('<p class="empty">Type to search...</p>')
 
     fmt = get_format("html")
-    ctx = {"detail_base": "/ui/query", "shell_base": "/ui", "query": q}
+    ctx = {"detail_base": "/ui/query", "shell_base": "/ui", "query": q, "mode": mode}
+
+    # Mode toggle tabs
+    def _tab(label: str, m: str) -> str:
+        active = " active" if m == mode else ""
+        return (
+            f'<button class="toggle{active}"'
+            f' hx-get="/ui/search?q={escape(q)}&mode={m}"'
+            f' hx-target="#list" hx-swap="innerHTML">{label}</button>'
+        )
+
+    mode_bar = (
+        '<div class="fidelity-controls" style="padding:0.35rem 0.5rem">'
+        + _tab("Chunks", "chunks")
+        + _tab("Conversations", "conversations")
+        + "</div>"
+    )
 
     # Try semantic search if embeddings are available
     try:
-        from siftd.api.search import hybrid_search
+        from siftd.api.search import aggregate_by_conversation, hybrid_search
 
-        results = hybrid_search(q, db_path=db_path, limit=20, fts5_passthrough=True)
+        results = hybrid_search(q, db_path=db_path, limit=30, fts5_passthrough=True)
         if results:
+            if mode == "conversations":
+                convs = aggregate_by_conversation(results, limit=20)
+                conv_hits = [
+                    {
+                        "conversation_id": c.conversation_id,
+                        "max_score": c.max_score,
+                        "mean_score": c.mean_score,
+                        "chunk_count": c.chunk_count,
+                        "_workspace": c.workspace_path or "",
+                        "_started_at": c.started_at or "",
+                    }
+                    for c in convs
+                ]
+                html = fmt.render_search(conv_hits, _fidelity(), **ctx)
+                return _html_response(mode_bar + html)
+
+            # chunks mode (default)
             hits = [
                 {
                     "conversation_id": r.conversation_id,
@@ -342,10 +392,10 @@ async def ui_search(
                     "_workspace": r.workspace_path or "",
                     "_started_at": r.started_at or "",
                 }
-                for r in results
+                for r in results[:20]
             ]
             html = fmt.render_search(hits, _fidelity(), **ctx)
-            return _html_response(html)
+            return _html_response(mode_bar + html)
     except Exception:
         pass  # Embeddings not installed or DB missing — fall through to FTS
 
@@ -355,9 +405,9 @@ async def ui_search(
     rows = list_conversations(db_path=db_path, search=q, limit=20)
     if rows:
         html = fmt.render_list(rows, _fidelity(), **ctx)
-        return _html_response(html)
+        return _html_response(mode_bar + html)
 
-    return _html_response(f'<p class="empty">No results for: {q}</p>')
+    return _html_response(mode_bar + f'<p class="empty">No results for: {q}</p>')
 
 
 # ---------------------------------------------------------------------------
@@ -483,3 +533,159 @@ async def ui_follow(
         f'</article>'
     )
     return _html_response(body)
+
+
+# ---------------------------------------------------------------------------
+# Stats dashboard
+# ---------------------------------------------------------------------------
+
+
+@get("/ui/stats", opt={"no_auth": True})
+async def ui_stats(db_path: Path) -> Response:
+    """Render cost/token dashboard as HTML fragment."""
+    from html import escape
+
+    from siftd.api.conversations import list_conversations
+    from siftd.api.stats import get_stats
+    from siftd.output.common import fmt_tokens, fmt_workspace
+
+    parts: list[str] = ['<article class="stats-dashboard">']
+    parts.append("<h2>Stats</h2>")
+
+    # Overall stats from get_stats()
+    try:
+        stats = get_stats(db_path=db_path)
+    except Exception:
+        return _html_response('<p class="empty">No data available</p>')
+
+    # Summary cards
+    parts.append('<div class="stats-grid">')
+    parts.append(
+        f'<div class="stat-card">'
+        f'<div class="stat-value">{stats.counts.conversations:,}</div>'
+        f'<div class="stat-label">Conversations</div></div>'
+    )
+    parts.append(
+        f'<div class="stat-card">'
+        f'<div class="stat-value">{stats.counts.responses:,}</div>'
+        f'<div class="stat-label">Responses</div></div>'
+    )
+    parts.append(
+        f'<div class="stat-card">'
+        f'<div class="stat-value">{stats.token_coverage.pct_with_tokens:.0f}%</div>'
+        f'<div class="stat-label">Token coverage</div></div>'
+    )
+    if stats.activity_window[0]:
+        parts.append(
+            f'<div class="stat-card">'
+            f'<div class="stat-value">{escape(stats.activity_window[0][:10])}</div>'
+            f'<div class="stat-label">First activity</div></div>'
+        )
+    if stats.activity_window[1]:
+        parts.append(
+            f'<div class="stat-card">'
+            f'<div class="stat-value">{escape(stats.activity_window[1][:10])}</div>'
+            f'<div class="stat-label">Last activity</div></div>'
+        )
+    parts.append("</div>")
+
+    # Cost/tokens by recent conversations (last 100)
+    rows = list_conversations(db_path=db_path, limit=100)
+    if rows:
+        total_tokens = sum(r.total_tokens for r in rows)
+        total_cost = sum(r.cost or 0 for r in rows)
+
+        parts.append('<div class="stats-grid">')
+        parts.append(
+            f'<div class="stat-card">'
+            f'<div class="stat-value">{fmt_tokens(total_tokens)}</div>'
+            f'<div class="stat-label">Tokens (last {len(rows)})</div></div>'
+        )
+        parts.append(
+            f'<div class="stat-card">'
+            f'<div class="stat-value">${total_cost:.2f}</div>'
+            f'<div class="stat-label">Cost (last {len(rows)})</div></div>'
+        )
+        if total_cost > 0:
+            avg_cost = total_cost / len(rows)
+            parts.append(
+                f'<div class="stat-card">'
+                f'<div class="stat-value">${avg_cost:.4f}</div>'
+                f'<div class="stat-label">Avg cost/conversation</div></div>'
+            )
+        parts.append("</div>")
+
+        # By model
+        model_tokens: dict[str, int] = {}
+        model_cost: dict[str, float] = {}
+        model_count: dict[str, int] = {}
+        for r in rows:
+            m = r.model or "unknown"
+            model_tokens[m] = model_tokens.get(m, 0) + r.total_tokens
+            model_cost[m] = model_cost.get(m, 0) + (r.cost or 0)
+            model_count[m] = model_count.get(m, 0) + 1
+
+        parts.append("<h3>By model</h3>")
+        parts.append('<table class="conversation-list">')
+        parts.append(
+            "<thead><tr>"
+            "<th>Model</th><th>Conversations</th>"
+            "<th>Tokens</th><th>Cost</th>"
+            "</tr></thead><tbody>"
+        )
+        for m in sorted(model_tokens, key=lambda k: model_cost[k], reverse=True):
+            parts.append(
+                f"<tr>"
+                f'<td class="model">{escape(m)}</td>'
+                f'<td class="metric">{model_count[m]}</td>'
+                f'<td class="metric">{fmt_tokens(model_tokens[m])}</td>'
+                f'<td class="metric">${model_cost[m]:.4f}</td>'
+                f"</tr>"
+            )
+        parts.append("</tbody></table>")
+
+        # By workspace
+        ws_tokens: dict[str, int] = {}
+        ws_cost: dict[str, float] = {}
+        ws_count: dict[str, int] = {}
+        for r in rows:
+            w = fmt_workspace(r.workspace_path)
+            ws_tokens[w] = ws_tokens.get(w, 0) + r.total_tokens
+            ws_cost[w] = ws_cost.get(w, 0) + (r.cost or 0)
+            ws_count[w] = ws_count.get(w, 0) + 1
+
+        parts.append("<h3>By workspace</h3>")
+        parts.append('<table class="conversation-list">')
+        parts.append(
+            "<thead><tr>"
+            "<th>Workspace</th><th>Conversations</th>"
+            "<th>Tokens</th><th>Cost</th>"
+            "</tr></thead><tbody>"
+        )
+        for w in sorted(ws_tokens, key=lambda k: ws_cost[k], reverse=True):
+            parts.append(
+                f"<tr>"
+                f'<td class="workspace">{escape(w)}</td>'
+                f'<td class="metric">{ws_count[w]}</td>'
+                f'<td class="metric">{fmt_tokens(ws_tokens[w])}</td>'
+                f'<td class="metric">${ws_cost[w]:.4f}</td>'
+                f"</tr>"
+            )
+        parts.append("</tbody></table>")
+
+    # Top tools
+    if stats.top_tools:
+        parts.append("<h3>Top tools</h3>")
+        parts.append('<table class="conversation-list">')
+        parts.append(
+            "<thead><tr><th>Tool</th><th>Calls</th></tr></thead><tbody>"
+        )
+        for t in stats.top_tools[:15]:
+            parts.append(
+                f'<tr><td class="tool-name">{escape(t.name)}</td>'
+                f'<td class="metric">{t.usage_count:,}</td></tr>'
+            )
+        parts.append("</tbody></table>")
+
+    parts.append("</article>")
+    return _html_response("\n".join(parts))

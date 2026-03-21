@@ -9,7 +9,15 @@ from litestar import Litestar
 from litestar.di import Provide
 from litestar.static_files import create_static_files_router
 
-from siftd.serve.html_routes import ui_follow, ui_meta, ui_peek, ui_query, ui_search, ui_shell
+from siftd.serve.html_routes import (
+    ui_follow,
+    ui_meta,
+    ui_peek,
+    ui_query,
+    ui_search,
+    ui_shell,
+    ui_stats,
+)
 from siftd.serve.routes import (
     conversation_detail,
     conversation_list,
@@ -63,7 +71,7 @@ def create_app(
             index, health, stats_route, workspaces_route, tools_route, tools_by_workspace_route,
             tag_write_route, tags_route, tool_search_route, export_route,
             push, pull, conversation_detail, conversation_list, search_route,
-            ui_shell, ui_meta, ui_query, ui_search, ui_peek, ui_follow,
+            ui_shell, ui_meta, ui_query, ui_search, ui_peek, ui_follow, ui_stats,
             static_router,
         ],
         dependencies={
