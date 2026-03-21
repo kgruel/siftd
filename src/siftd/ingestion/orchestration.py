@@ -242,6 +242,11 @@ def ingest_all(
 
     stats = IngestStats()
 
+    # Use OFF synchronous during bulk ingest for faster commits.
+    # Safe against process crashes (WAL protects data), but not
+    # against OS crashes/power loss during a commit.
+    conn.execute("PRAGMA synchronous = OFF")
+
     sources = list(discover_all(adapters))
     stats.files_found = len(sources)
 
@@ -531,6 +536,9 @@ def ingest_all(
     from siftd.storage.conversation_stats import rebuild_conversation_stats
 
     rebuild_conversation_stats(conn, commit=True)
+
+    # Restore normal synchronous mode after bulk ingest
+    conn.execute("PRAGMA synchronous = NORMAL")
 
     return stats
 

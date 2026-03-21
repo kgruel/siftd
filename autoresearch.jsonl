@@ -7,3 +7,4 @@
 {"run":11,"commit":"7624481","metric":53.25,"metrics":{"conversations":6150},"status":"keep","description":"Optimize binary filter (length check shortcut), blob storage (batch timestamp), import cleanup in insert_tool_call","timestamp":1774060876085,"segment":0}
 {"run":14,"commit":"f7c4a5c","metric":48.355,"metrics":{"conversations":6150},"status":"keep","description":"Increase SQLite cache to 64MB and enable 256MB mmap for faster I/O (53s→48s)","timestamp":1774061588912,"segment":0}
 {"run":15,"commit":"c465a01","metric":45.798,"metrics":{"conversations":6150},"status":"keep","description":"Use hashlib.file_digest() for faster file hashing (48s→46s)","timestamp":1774061730762,"segment":0}
+{"run":16,"commit":"9be1853","metric":45.225,"metrics":{"conversations":6150},"status":"keep","description":"Add PRAGMA temp_store=MEMORY for faster temp table operations (46s→45s)","timestamp":1774061879241,"segment":0}
