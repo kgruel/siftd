@@ -300,6 +300,52 @@ class TestServeRouteBoundary:
                 + "\n".join(violations)
             )
 
+    def test_html_routes_use_api_layer(self, src_dir):
+        """HTML routes must import from api/output, not storage/peek/search directly.
+
+        Rationale: html_routes.py is a thin controller — it should call
+        API functions, not reach into storage or internal modules. This
+        prevents the UI from accumulating direct DB access that bypasses
+        the API's validation, connection management, and abstraction.
+        """
+        import ast
+
+        html_routes = src_dir / "serve" / "html_routes.py"
+        if not html_routes.exists():
+            pytest.skip("No serve/html_routes.py")
+
+        # html_routes may only import from these groups
+        allowed = {"api", "output", "domain", "utilities", "serve"}
+        # Forbidden top-level modules (anything not in allowed groups)
+        forbidden = {"storage", "peek", "search", "embeddings", "adapters",
+                     "ingestion", "doctor", "content"}
+
+        tree = ast.parse(html_routes.read_text())
+        violations = []
+
+        for node in ast.walk(tree):
+            module = None
+            if isinstance(node, ast.ImportFrom) and node.module:
+                module = node.module
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith("siftd."):
+                        module = alias.name
+
+            if module and module.startswith("siftd."):
+                top = module.split(".")[1]
+                if top in forbidden:
+                    violations.append(
+                        f"html_routes.py imports {module} ({top} layer)"
+                    )
+
+        if violations:
+            pytest.fail(
+                "HTML routes must go through the API layer, not import "
+                "storage/peek/search directly:\n"
+                + "\n".join(violations)
+            )
+
 
 # =============================================================================
 # 6. Raw SQL in CLI Modules

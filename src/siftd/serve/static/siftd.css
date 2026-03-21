@@ -1,0 +1,140 @@
+:root {
+  --fg: #c9d1d9; --bg: #0d1117; --bg-surface: #161b22;
+  --accent: #58a6ff; --muted: #484f58; --success: #3fb950;
+  --warning: #d29922; --error: #f85149;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 14px; line-height: 1.5;
+  color: var(--fg); background: var(--bg);
+  margin: 0; padding: 0;
+}
+nav {
+  background: var(--bg-surface); padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--muted);
+  display: flex; gap: 1rem; align-items: center;
+}
+nav .brand { color: var(--accent); font-weight: bold; }
+nav input[type="search"] {
+  background: var(--bg); color: var(--fg); border: 1px solid var(--muted);
+  padding: 0.25rem 0.5rem; border-radius: 4px; flex: 1; max-width: 400px;
+  font-family: inherit; font-size: inherit;
+}
+main { display: flex; height: calc(100vh - 41px); }
+#list-pane { width: 50%; overflow-y: auto; display: flex; flex-direction: column; }
+#divider {
+  width: 4px; cursor: col-resize; background: var(--muted); flex-shrink: 0;
+  transition: background 0.15s;
+}
+#divider:hover, #divider:active { background: var(--accent); }
+#filters {
+  display: flex; gap: 0.25rem; padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--muted); background: var(--bg-surface);
+  flex-shrink: 0;
+}
+#filters select {
+  background: var(--bg); color: var(--fg); border: 1px solid var(--muted);
+  padding: 0.15rem 0.4rem; border-radius: 3px; flex: 1;
+  font-family: inherit; font-size: 0.8em;
+  cursor: pointer; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23484f58'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 0.4rem center;
+  padding-right: 1.4rem;
+}
+#filters select:focus { border-color: var(--accent); outline: none; }
+#list { flex: 1; overflow-y: auto; }
+#detail-pane { width: 50%; overflow-y: auto; padding: 1rem; }
+
+/* Domain styles — mirror DomainStyles semantic vocabulary */
+.identifier { color: var(--accent); font-weight: bold; }
+.temporal { color: var(--muted); }
+.metric { color: var(--muted); }
+.workspace { color: var(--fg); }
+.model { color: var(--fg); opacity: 0.8; }
+.tag { color: var(--success); }
+.adapter { color: var(--muted); }
+.summary { color: var(--muted); }
+.prompt { color: var(--accent); }
+.assistant { }
+.tool-name { color: var(--accent); }
+.tool-input { color: var(--muted); }
+.tool-result { color: var(--fg); }
+.tool-error { color: var(--error); }
+.thinking { color: var(--muted); font-style: italic; }
+
+/* Table */
+table.conversation-list {
+  width: 100%; border-collapse: collapse;
+}
+table.conversation-list th {
+  text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--muted);
+  color: var(--muted); font-weight: normal; font-size: 0.85em;
+  position: sticky; top: 0; background: var(--bg-surface);
+}
+table.conversation-list td { padding: 0.4rem 0.5rem; }
+table.conversation-list tr { cursor: pointer; }
+table.conversation-list tr:hover { background: var(--bg-surface); }
+table.conversation-list tr.htmx-request { opacity: 0.6; }
+
+/* Fidelity controls */
+.fidelity-controls {
+  display: flex; gap: 0.25rem; margin-top: 0.5rem;
+}
+.fidelity-controls .toggle {
+  background: var(--bg); color: var(--muted); border: 1px solid var(--muted);
+  padding: 0.15rem 0.5rem; border-radius: 3px; cursor: pointer;
+  font-family: inherit; font-size: 0.8em;
+  transition: all 0.1s ease;
+}
+.fidelity-controls .toggle:hover { color: var(--fg); border-color: var(--fg); }
+.fidelity-controls .toggle.active {
+  color: var(--accent); border-color: var(--accent); background: var(--bg-surface);
+}
+.fidelity-controls .toggle.htmx-request { opacity: 0.5; }
+
+/* Detail */
+.conversation-detail { }
+.conversation-header { margin-bottom: 1rem; }
+.conversation-header .meta { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.turn { margin-bottom: 1.5rem; border-bottom: 1px solid var(--bg-surface); padding-bottom: 1rem; }
+.turn h3 { margin: 0.5rem 0; font-size: 0.9em; }
+.narrative-text { margin: 0.5rem 0; white-space: pre-wrap; }
+
+/* Tools */
+.tool-call { margin: 0.5rem 0; padding: 0.5rem; border-left: 2px solid var(--muted); }
+.tool-call .tool-name { font-weight: bold; font-size: 0.85em; margin-bottom: 0.15rem; }
+.tool-call .tool-headline {
+  display: block; color: var(--fg); font-size: 0.85em;
+  background: var(--bg); padding: 0.15rem 0.3rem; border-radius: 2px;
+}
+.tool-call .tool-meta { color: var(--muted); font-size: 0.8em; margin-left: 0.5rem; }
+.tool-call pre { margin: 0.25rem 0; font-size: 0.8em; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+.tool-call .tool-removed { color: var(--error); opacity: 0.8; }
+.tool-call .tool-removed::before { content: "- "; }
+.tool-call .tool-added { color: var(--success); }
+.tool-call .tool-added::before { content: "+ "; }
+.tool-call .tool-overflow { color: var(--muted); font-size: 0.8em; font-style: italic; }
+.tool-call .tool-error { color: var(--error); }
+.tool-call .tool-tasks { list-style: none; padding-left: 0.5rem; margin: 0.25rem 0; font-size: 0.85em; }
+.tool-call .task-done::before { content: "\2713 "; color: var(--success); }
+.tool-call .task-pending::before { content: "\25CB "; color: var(--muted); }
+.tool-summary { color: var(--muted); font-size: 0.85em; margin: 0.25rem 0; }
+
+/* Thinking */
+details.thinking { border-left: 2px solid var(--muted); padding-left: 0.5rem; margin: 0.5rem 0; }
+details.thinking pre { font-size: 0.85em; white-space: pre-wrap; }
+.thinking.placeholder { color: var(--muted); font-style: italic; }
+
+/* Search */
+.search-results h2 { font-size: 1.1em; margin: 0 0 1rem; }
+.search-hit { margin-bottom: 1rem; padding: 0.5rem; }
+.search-hit:hover { background: var(--bg-surface); cursor: pointer; }
+.search-hit header { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.search-hit .excerpt { margin-top: 0.25rem; white-space: pre-wrap; font-size: 0.9em; }
+
+/* Follow mode */
+.follow-mode #follow-content { border-top: 1px solid var(--muted); padding-top: 0.5rem; }
+.follow-mode .htmx-settling { opacity: 0.7; transition: opacity 0.2s ease; }
+
+.empty { color: var(--muted); padding: 2rem; text-align: center; }

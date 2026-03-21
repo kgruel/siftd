@@ -424,6 +424,7 @@ def _format_generic_result(raw: str) -> str:
 _Extractor = Callable[[str | None, str | None, str | None, int], ToolPresentation]
 
 _EXTRACTORS: dict[str, _Extractor] = {
+    # Long-form names (some adapters use these)
     "shell.execute": _extract_shell,
     "file.read": _extract_file_read,
     "file.edit": _extract_file_edit,
@@ -431,6 +432,14 @@ _EXTRACTORS: dict[str, _Extractor] = {
     "search.grep": _extract_search_grep,
     "file.glob": _extract_file_glob,
     "ui.todo": _extract_todo,
+    # Short names (as stored by Claude Code adapter)
+    "bash": _extract_shell,
+    "read": _extract_file_read,
+    "edit": _extract_file_edit,
+    "write": _extract_file_write,
+    "grep": _extract_search_grep,
+    "glob": _extract_file_glob,
+    "todo": _extract_todo,
 }
 
 

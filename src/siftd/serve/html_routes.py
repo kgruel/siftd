@@ -56,7 +56,38 @@ def _tool_chars(fidelity) -> int:
 # Page shell — the only full-page response
 # ---------------------------------------------------------------------------
 
-_PAGE_SHELL = """\
+def _page_shell(
+    *,
+    conv_id: str | None = None,
+    search_q: str | None = None,
+    follow_sid: str | None = None,
+) -> str:
+    """Build the page shell with optional initial state for deep links."""
+    from html import escape as esc
+
+    # Search bar: pre-populate if search_q provided
+    search_val = f' value="{esc(search_q)}"' if search_q else ""
+
+    # List pane: search results, peek sessions, or conversation list
+    if search_q:
+        list_url = f"/ui/search?q={esc(search_q)}"
+    elif follow_sid:
+        list_url = "/ui/peek"
+    else:
+        list_url = "/ui/query"
+
+    # Detail pane: auto-load conversation, follow session, or empty
+    if follow_sid:
+        detail_attr = f' hx-get="/ui/follow?sid={esc(follow_sid)}" hx-trigger="load" hx-swap="innerHTML"'
+        detail_content = '<p class="empty">Loading session...</p>'
+    elif conv_id:
+        detail_attr = f' hx-get="/ui/query?id={esc(conv_id)}" hx-trigger="load" hx-swap="innerHTML"'
+        detail_content = '<p class="empty">Loading...</p>'
+    else:
+        detail_attr = ""
+        detail_content = '<p class="empty">Select a conversation</p>'
+
+    return f"""\
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -64,157 +95,142 @@ _PAGE_SHELL = """\
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>siftd</title>
 <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-<style>
-:root {
-  --fg: #c9d1d9; --bg: #0d1117; --bg-surface: #161b22;
-  --accent: #58a6ff; --muted: #484f58; --success: #3fb950;
-  --warning: #d29922; --error: #f85149;
-}
-*, *::before, *::after { box-sizing: border-box; }
-body {
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  font-size: 14px; line-height: 1.5;
-  color: var(--fg); background: var(--bg);
-  margin: 0; padding: 0;
-}
-nav {
-  background: var(--bg-surface); padding: 0.5rem 1rem;
-  border-bottom: 1px solid var(--muted);
-  display: flex; gap: 1rem; align-items: center;
-}
-nav .brand { color: var(--accent); font-weight: bold; }
-nav input[type="search"] {
-  background: var(--bg); color: var(--fg); border: 1px solid var(--muted);
-  padding: 0.25rem 0.5rem; border-radius: 4px; flex: 1; max-width: 400px;
-  font-family: inherit; font-size: inherit;
-}
-main { display: flex; height: calc(100vh - 41px); }
-#list-pane { width: 50%; overflow-y: auto; border-right: 1px solid var(--muted); }
-#detail-pane { width: 50%; overflow-y: auto; padding: 1rem; }
-
-/* Domain styles — mirror DomainStyles semantic vocabulary */
-.identifier { color: var(--accent); font-weight: bold; }
-.temporal { color: var(--muted); }
-.metric { color: var(--muted); }
-.workspace { color: var(--fg); }
-.model { color: var(--fg); opacity: 0.8; }
-.tag { color: var(--success); }
-.adapter { color: var(--muted); }
-.summary { color: var(--muted); }
-.prompt { color: var(--accent); }
-.assistant { }
-.tool-name { color: var(--accent); }
-.tool-input { color: var(--muted); }
-.tool-result { color: var(--fg); }
-.tool-error { color: var(--error); }
-.thinking { color: var(--muted); font-style: italic; }
-
-/* Table */
-table.conversation-list {
-  width: 100%; border-collapse: collapse;
-}
-table.conversation-list th {
-  text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--muted);
-  color: var(--muted); font-weight: normal; font-size: 0.85em;
-  position: sticky; top: 0; background: var(--bg-surface);
-}
-table.conversation-list td { padding: 0.4rem 0.5rem; }
-table.conversation-list tr { cursor: pointer; }
-table.conversation-list tr:hover { background: var(--bg-surface); }
-table.conversation-list tr.htmx-request { opacity: 0.6; }
-
-/* Fidelity controls */
-.fidelity-controls {
-  display: flex; gap: 0.25rem; margin-top: 0.5rem;
-}
-.fidelity-controls .toggle {
-  background: var(--bg); color: var(--muted); border: 1px solid var(--muted);
-  padding: 0.15rem 0.5rem; border-radius: 3px; cursor: pointer;
-  font-family: inherit; font-size: 0.8em;
-  transition: all 0.1s ease;
-}
-.fidelity-controls .toggle:hover { color: var(--fg); border-color: var(--fg); }
-.fidelity-controls .toggle.active {
-  color: var(--accent); border-color: var(--accent); background: var(--bg-surface);
-}
-.fidelity-controls .toggle.htmx-request { opacity: 0.5; }
-
-/* Detail */
-.conversation-detail { }
-.conversation-header { margin-bottom: 1rem; }
-.conversation-header .meta { display: flex; gap: 0.75rem; flex-wrap: wrap; }
-.turn { margin-bottom: 1.5rem; border-bottom: 1px solid var(--bg-surface); padding-bottom: 1rem; }
-.turn h3 { margin: 0.5rem 0; font-size: 0.9em; }
-.narrative-text { margin: 0.5rem 0; white-space: pre-wrap; }
-
-/* Tools */
-.tool-call { margin: 0.5rem 0; padding: 0.5rem; border-left: 2px solid var(--muted); }
-.tool-call .tool-name { font-weight: bold; font-size: 0.85em; margin-bottom: 0.15rem; }
-.tool-call .tool-headline {
-  display: block; color: var(--fg); font-size: 0.85em;
-  background: var(--bg); padding: 0.15rem 0.3rem; border-radius: 2px;
-}
-.tool-call .tool-meta { color: var(--muted); font-size: 0.8em; margin-left: 0.5rem; }
-.tool-call pre { margin: 0.25rem 0; font-size: 0.8em; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
-.tool-call .tool-removed { color: var(--error); opacity: 0.8; }
-.tool-call .tool-removed::before { content: "- "; }
-.tool-call .tool-added { color: var(--success); }
-.tool-call .tool-added::before { content: "+ "; }
-.tool-call .tool-overflow { color: var(--muted); font-size: 0.8em; font-style: italic; }
-.tool-call .tool-error { color: var(--error); }
-.tool-call .tool-tasks { list-style: none; padding-left: 0.5rem; margin: 0.25rem 0; font-size: 0.85em; }
-.tool-call .task-done::before { content: "\\2713 "; color: var(--success); }
-.tool-call .task-pending::before { content: "\\25CB "; color: var(--muted); }
-.tool-summary { color: var(--muted); font-size: 0.85em; margin: 0.25rem 0; }
-
-/* Thinking */
-details.thinking { border-left: 2px solid var(--muted); padding-left: 0.5rem; margin: 0.5rem 0; }
-details.thinking pre { font-size: 0.85em; white-space: pre-wrap; }
-.thinking.placeholder { color: var(--muted); font-style: italic; }
-
-/* Search */
-.search-results h2 { font-size: 1.1em; margin: 0 0 1rem; }
-.search-hit { margin-bottom: 1rem; padding: 0.5rem; }
-.search-hit:hover { background: var(--bg-surface); cursor: pointer; }
-.search-hit header { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-.search-hit .excerpt { margin-top: 0.25rem; white-space: pre-wrap; font-size: 0.9em; }
-
-.empty { color: var(--muted); padding: 2rem; text-align: center; }
-</style>
+<link rel="stylesheet" href="/static/siftd.css">
 </head>
 <body>
 <nav>
   <span class="brand">siftd</span>
-  <input type="search" name="q" placeholder="Search..."
+  <input type="search" name="q" placeholder="Search..."{search_val}
     hx-get="/ui/search" hx-target="#list" hx-trigger="keyup changed delay:300ms"
     hx-include="this">
-  <a href="#" hx-get="/ui/query" hx-target="#list"
+  <a href="/ui" hx-get="/ui/query" hx-target="#list" hx-push-url="/ui"
+    hx-on::before-request="document.querySelectorAll('#filters select').forEach(s=>s.value='')"
     style="color:var(--accent);text-decoration:none">Recent</a>
+  <a href="#" hx-get="/ui/peek" hx-target="#list"
+    style="color:var(--accent);text-decoration:none">Live</a>
 </nav>
 <main>
   <div id="list-pane">
-    <div id="list" hx-get="/ui/query" hx-trigger="load" hx-swap="innerHTML">
+    <div id="filters" hx-get="/ui/meta" hx-trigger="load" hx-swap="innerHTML">
+    </div>
+    <div id="list" hx-get="{esc(list_url)}" hx-trigger="load" hx-swap="innerHTML"
+      hx-include="#filters">
     </div>
   </div>
+  <div id="divider"></div>
   <div id="detail-pane">
-    <div id="detail">
-      <p class="empty">Select a conversation</p>
+    <div id="detail"{detail_attr}>
+      {detail_content}
     </div>
   </div>
 </main>
+<script>
+(function() {{
+  const d = document.getElementById('divider');
+  const lp = document.getElementById('list-pane');
+  const m = document.querySelector('main');
+  let dragging = false;
+  d.addEventListener('mousedown', function(e) {{
+    dragging = true; e.preventDefault();
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }});
+  document.addEventListener('mousemove', function(e) {{
+    if (!dragging) return;
+    const pct = ((e.clientX - m.offsetLeft) / m.offsetWidth) * 100;
+    if (pct > 15 && pct < 85) {{
+      lp.style.width = pct + '%';
+      document.getElementById('detail-pane').style.width = (100 - pct) + '%';
+    }}
+  }});
+  document.addEventListener('mouseup', function() {{
+    if (dragging) {{
+      dragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }}
+  }});
+}})();
+</script>
 </body>
 </html>"""
 
 
 @get("/ui", opt={"no_auth": True})
-async def ui_shell() -> Response:
-    """Serve the page shell — the single full-page HTML response."""
-    return Response(content=_PAGE_SHELL, media_type="text/html")
+async def ui_shell(
+    id: str | None = Parameter(query="id", default=None),
+    q: str | None = Parameter(query="q", default=None),
+    follow: str | None = Parameter(query="follow", default=None),
+) -> Response:
+    """Serve the page shell — the single full-page HTML response.
+
+    Accepts optional params for deep-linkable URLs:
+        ?id=   — open a conversation
+        ?q=    — pre-populate search
+        ?follow= — follow a live session
+    """
+    return Response(
+        content=_page_shell(conv_id=id, search_q=q, follow_sid=follow),
+        media_type="text/html",
+    )
 
 
 # ---------------------------------------------------------------------------
 # Fragment endpoints — htmx swap targets
 # ---------------------------------------------------------------------------
+
+
+@get("/ui/meta", opt={"no_auth": True})
+async def ui_meta(db_path: Path) -> Response:
+    """Return filter dropdowns populated from the database."""
+    from html import escape
+
+    from siftd.api.stats import get_stats, list_workspaces
+    from siftd.api.tags import list_tags
+
+    stats = None
+    try:
+        stats = get_stats(db_path=db_path)
+    except Exception:
+        pass
+
+    ws_rows: list = []
+    try:
+        ws_rows = list_workspaces(db_path=db_path, limit=200)
+    except Exception:
+        pass
+
+    tag_names: list[str] = []
+    try:
+        tag_names = [t.name for t in list_tags(db_path=db_path)]
+    except Exception:
+        pass
+
+    def _select(name: str, label: str, options: list[tuple[str, str]]) -> str:
+        """Build a <select> from (value, display_text) tuples."""
+        opts = [f'<option value="">All {label}</option>']
+        for val, display in options:
+            if val:
+                opts.append(f'<option value="{escape(val)}">{escape(display)}</option>')
+        return (
+            f'<select name="{name}"'
+            f' hx-get="/ui/query" hx-target="#list" hx-trigger="change"'
+            f' hx-include="#filters">'
+            f'{"".join(opts)}</select>'
+        )
+
+    from siftd.output.common import fmt_workspace
+
+    ws_opts = [(r["path"], fmt_workspace(r["path"])) for r in ws_rows if r["path"]]
+    model_opts = [(m, m) for m in (stats.models if stats else [])]
+    tag_opts = [(t, t) for t in tag_names]
+
+    parts = [
+        _select("workspace", "workspaces", ws_opts),
+        _select("model", "models", model_opts),
+        _select("tag", "tags", tag_opts),
+    ]
+    return _html_response("".join(parts))
 
 
 @get("/ui/query", opt={"no_auth": True})
@@ -235,6 +251,12 @@ async def ui_query(
     brief: bool = Parameter(query="brief", default=False),
 ) -> Response:
     """List or detail conversations as HTML fragments."""
+    # Normalize empty strings to None (htmx sends "" for blank inputs)
+    workspace = workspace or None
+    model = model or None
+    search = search or None
+    tag = [t for t in (tag or []) if t] or None
+
     from siftd.output.format_registry import get_format
 
     fmt = get_format("html")
@@ -266,6 +288,7 @@ async def ui_query(
             detail=detail,
             tool_chars=tc,
             detail_base="/ui/query",
+            shell_base="/ui",
             controls={"id": id, "tools": tools, "thinking": thinking,
                       "full": full, "brief": brief},
         )
@@ -283,7 +306,7 @@ async def ui_query(
         tags=tag,
         limit=n,
     )
-    html = fmt.render_list(rows, _fidelity(), detail_base="/ui/query")
+    html = fmt.render_list(rows, _fidelity(), detail_base="/ui/query", shell_base="/ui")
     return _html_response(html)
 
 
@@ -292,20 +315,171 @@ async def ui_search(
     db_path: Path,
     q: str = Parameter(query="q", default=""),
 ) -> Response:
-    """Search conversations, return HTML fragment."""
+    """Search conversations, return HTML fragment.
+
+    Tries semantic search (embeddings) first, falls back to FTS5.
+    """
     from siftd.output.format_registry import get_format
 
     if not q.strip():
         return _html_response('<p class="empty">Type to search...</p>')
 
     fmt = get_format("html")
+    ctx = {"detail_base": "/ui/query", "shell_base": "/ui", "query": q}
 
-    # Try FTS first (always available), fall back gracefully
+    # Try semantic search if embeddings are available
+    try:
+        from siftd.api.search import hybrid_search
+
+        results = hybrid_search(q, db_path=db_path, limit=20, fts5_passthrough=True)
+        if results:
+            hits = [
+                {
+                    "conversation_id": r.conversation_id,
+                    "score": r.score,
+                    "text": r.text,
+                    "chunk_type": r.chunk_type,
+                    "_workspace": r.workspace_path or "",
+                    "_started_at": r.started_at or "",
+                }
+                for r in results
+            ]
+            html = fmt.render_search(hits, _fidelity(), **ctx)
+            return _html_response(html)
+    except Exception:
+        pass  # Embeddings not installed or DB missing — fall through to FTS
+
+    # FTS5 fallback (always available)
     from siftd.api.conversations import list_conversations
 
     rows = list_conversations(db_path=db_path, search=q, limit=20)
     if rows:
-        html = fmt.render_list(rows, _fidelity(), detail_base="/ui/query")
+        html = fmt.render_list(rows, _fidelity(), **ctx)
         return _html_response(html)
 
     return _html_response(f'<p class="empty">No results for: {q}</p>')
+
+
+# ---------------------------------------------------------------------------
+# Live session endpoints — peek/follow
+# ---------------------------------------------------------------------------
+
+
+@get("/ui/peek", opt={"no_auth": True})
+async def ui_peek() -> Response:
+    """List active sessions as HTML — the entry point for follow mode."""
+    from html import escape
+
+    from siftd.api.peek import list_active_sessions
+
+    sessions = list_active_sessions(include_inactive=False, limit=30)
+
+    if not sessions:
+        return _html_response('<p class="empty">No active sessions</p>')
+
+    parts: list[str] = ['<table class="conversation-list">']
+    parts.append(
+        "<thead><tr>"
+        '<th class="identifier">Session</th>'
+        '<th class="workspace">Workspace</th>'
+        '<th class="model">Model</th>'
+        '<th class="metric">Exchanges</th>'
+        '<th class="adapter">Adapter</th>'
+        "</tr></thead><tbody>"
+    )
+    for s in sessions:
+        ws = s.workspace_name or ""
+        if s.branch:
+            ws = f"{ws} [{s.branch}]" if ws else f"[{s.branch}]"
+        parts.append(
+            f'<tr hx-get="/ui/follow?sid={escape(s.session_id)}"'
+            f' hx-target="#detail" hx-swap="innerHTML"'
+            f' hx-push-url="/ui?follow={escape(s.session_id)}">'
+            f'<td class="identifier">{escape(s.session_id[:8])}</td>'
+            f'<td class="workspace">{escape(ws)}</td>'
+            f'<td class="model">{escape(s.model or "")}</td>'
+            f'<td class="metric">{s.exchange_count}</td>'
+            f'<td class="adapter">{escape(s.adapter_name or "")}</td>'
+            f"</tr>"
+        )
+    parts.append("</tbody></table>")
+    return _html_response("\n".join(parts))
+
+
+@get("/ui/follow", opt={"no_auth": True})
+async def ui_follow(
+    sid: str = Parameter(query="sid", default=""),
+    poll: bool = Parameter(query="poll", default=False),
+) -> Response:
+    """Follow a live session — returns the latest exchanges as HTML.
+
+    When poll=true, returns just the exchanges (for htmx polling swap).
+    On first load (poll=false), returns the session header + exchanges
+    with a polling div that auto-refreshes.
+    """
+    from html import escape
+
+    from siftd.api.peek import AmbiguousSessionError, find_session_file
+    from siftd.output.format_registry import get_format
+
+    if not sid:
+        return _html_response('<p class="empty">No session ID</p>')
+
+    try:
+        path = find_session_file(sid)
+    except AmbiguousSessionError:
+        return _html_response(f'<p class="empty">Ambiguous session ID: {escape(sid[:12])}</p>')
+    if path is None:
+        return _html_response(f'<p class="empty">Session not found: {escape(sid[:12])}</p>')
+
+    from siftd.api.peek import read_session_detail
+
+    detail = read_session_detail(path, last_n=10, include_thinking=True)
+    if detail is None:
+        return _html_response(f'<p class="empty">Cannot read session: {escape(sid[:12])}</p>')
+
+    fmt = get_format("html")
+    fidelity = _fidelity(depth=2, chars=0, tools=True, thinking=True)
+    tc = _tool_chars(fidelity)
+
+    exchanges_html = fmt.render_detail(
+        detail.exchanges,
+        fidelity,
+        no_header=True,
+        tool_chars=tc,
+        detail_base="/ui/query",
+        shell_base="/ui",
+    )
+
+    if poll:
+        return _html_response(exchanges_html)
+
+    # First load: session header + polling wrapper
+    info = detail.info
+    ws = info.workspace_name or ""
+    if info.branch:
+        ws = f"{ws} [{info.branch}]" if ws else f"[{info.branch}]"
+
+    header = (
+        f'<header class="conversation-header">'
+        f'<h2 class="identifier">{escape(info.session_id[:12])}'
+        f' <span class="adapter">[{escape(info.adapter_name or "peek")}]</span></h2>'
+        f'<div class="meta">'
+        f'<span class="workspace">{escape(ws)}</span>'
+        f'<span class="model">{escape(info.model or "")}</span>'
+        f'<span class="metric">{info.exchange_count} exchanges</span>'
+        f'</div></header>'
+    )
+
+    poll_url = f"/ui/follow?sid={escape(sid)}&poll=true"
+    body = (
+        f'<article class="conversation-detail follow-mode">'
+        f'{header}'
+        f'<div id="follow-content"'
+        f' hx-get="{poll_url}" hx-trigger="every 2s"'
+        f' hx-swap="innerHTML">'
+        f'{exchanges_html}'
+        f'</div>'
+        f'</article>'
+    )
+    return _html_response(body)

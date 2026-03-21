@@ -21,13 +21,15 @@ name = "html"
 media_type = "text/html"
 
 
-def _hx_detail(detail_base: str, conv_id: str) -> str:
+def _hx_detail(detail_base: str, conv_id: str, shell_base: str = "") -> str:
     """Build htmx attributes for a detail link, or empty string if no base."""
     if not detail_base:
         return ""
+    push = f' hx-push-url="{escape(shell_base)}?id={escape(conv_id)}"' if shell_base else ""
     return (
         f' hx-get="{escape(detail_base)}?id={escape(conv_id)}"'
         f' hx-target="#detail" hx-swap="innerHTML"'
+        f'{push}'
     )
 
 
@@ -186,6 +188,7 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
         return '<p class="empty">No conversations found.</p>'
 
     detail_base = context.get("detail_base", "")
+    shell_base = context.get("shell_base", "")
     depth = fidelity.depth
 
     parts: list[str] = ['<table class="conversation-list">']
@@ -205,7 +208,7 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     parts.append("<tbody>")
     for c in summaries:
         cid = c.id[:12] if c.id else ""
-        parts.append(f"<tr{_hx_detail(detail_base, c.id)}>")
+        parts.append(f"<tr{_hx_detail(detail_base, c.id, shell_base)}>")
         parts.append(f'<td class="identifier">{escape(cid)}</td>')
         parts.append(f'<td class="temporal">{escape(fmt_timestamp(c.started_at))}</td>')
         parts.append(f'<td class="workspace">{escape(fmt_workspace(c.workspace_path))}</td>')
@@ -238,6 +241,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
     query = context.get("query", "")
     mode = context.get("mode", "chunks")
     detail_base = context.get("detail_base", "")
+    shell_base = context.get("shell_base", "")
 
     parts: list[str] = []
 
@@ -255,7 +259,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         )
         for r in results:
             conv_id = r.get("conversation_id", "")
-            parts.append(f"<tr{_hx_detail(detail_base, conv_id)}>")
+            parts.append(f"<tr{_hx_detail(detail_base, conv_id, shell_base)}>")
             parts.append(f'<td class="identifier">{escape(conv_id[:12])}</td>')
             parts.append(f'<td class="metric">{r.get("max_score", 0.0):.3f}</td>')
             parts.append(f'<td class="metric">{r.get("mean_score", 0.0):.3f}</td>')
@@ -306,7 +310,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
                 snippet = truncate_text(r.get("text", ""), 120).replace("\n", " ")
                 parts.append(
                     f'<div class="search-hit compact"'
-                    f'{_hx_detail(detail_base, conv_id)}>'
+                    f'{_hx_detail(detail_base, conv_id, shell_base)}>'
                     f'<span class="identifier">{escape(conv_id[:12])}</span>'
                     f' <span class="metric">{score:.3f}</span>'
                     f' <span class="workspace">{escape(ws)}</span>'
@@ -331,7 +335,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
 
         parts.append(
             f'<article class="search-hit"'
-            f'{_hx_detail(detail_base, conv_id)}>'
+            f'{_hx_detail(detail_base, conv_id, shell_base)}>'
         )
         parts.append(
             f'<header>'
