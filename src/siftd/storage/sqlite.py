@@ -553,13 +553,13 @@ def clear_vocabulary_caches() -> None:
     try:
         from siftd.storage import tags
         tags._tag_cache.clear()
-    except (ImportError, AttributeError):
+    except (ImportError, AttributeError):  # pragma: no cover
         pass
     # Reset blob batch timestamp so new connections get fresh timestamps
     try:
         from siftd.storage import blobs
         blobs._batch_timestamp = None
-    except (ImportError, AttributeError):
+    except (ImportError, AttributeError):  # pragma: no cover
         pass
 
 

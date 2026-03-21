@@ -1,38 +1,34 @@
 # Autoresearch Ideas
 
-## Ingest performance (current target: 38s, down from 115s)
+## Storage Coverage Efficiency (current: 0.74, baseline: 6.87)
 
-### Batch commits (high potential, complex)
-- 6,419 individual commits cost ~5.5s even with sync=OFF
-- Batch N files per commit (e.g., 100-200) would reduce to ~32-64 commits
-- Challenge: errors in one file roll back the whole batch
-- Tried savepoints: overhead negated the savings
-- Possible approach: use Python 3.12+ autocommit mode with explicit BEGIN/COMMIT,
-  catch errors per-file and re-execute just the failed file's rollback via savepoint
+### Remaining 36 uncovered lines
 
-### Reduce JSON round-trips
-- Adapters parse JSONL → Python dicts, then `store_conversation` re-encodes with `json.dumps`
-- 605k json.loads (5.2s) + 408k json.dumps (1.5s) = 6.7s total
-- Could pass raw JSON strings through for content blocks instead of parse→re-encode
-- Requires adapter interface change (return raw JSON for blocks)
+**Dead code (can't be covered):**
+- queries.py:529 — `return None, None` after aggregate query (fetchone always returns Row)
+- queries.py:570 — same pattern for `fetch_last_ingest_time`
+- queries.py:176 — likely same pattern (responses empty branch)
+- queries.py:246 — exchange with no text (would need prompt+response with zero text blocks)
 
-### Streaming JSONL parser
-- `load_jsonl` reads entire file then parses each line
-- For large files, a streaming approach could overlap I/O and parsing
-- Most files are small though, so benefit may be marginal
+**Require external infra/mocking (git, filesystem):**
+- sqlite.py:603-621 — workspace git_remote lookup/update (needs real git repo)
+- sqlite.py:1012-1014 — `get_worktree_branch` call (needs git worktree)
 
-### executemany for bulk inserts
-- Currently each row is a separate `conn.execute()` call (1M total, 8.8s)
-- Could collect rows per table and use `executemany` for prompt_content,
-  response_content, content_fts, tool_calls
-- Requires restructuring store_conversation to collect-then-flush
+**Low-value internal paths:**
+- sqlite.py:365 — `continue` in cascade migration for missing tables
+- sqlite.py:512 — `ensure_push_log_table` (server-only feature)
+- sqlite.py:556-557, 562-563 — `except (ImportError, AttributeError)` in cache clearing
+- sqlite.py:686-697 — `get_or_create_tool` with kwargs (used internally, tested indirectly)
+- sqlite.py:786 — `continue` when canonical tool not found in ensure_tool_aliases
+- sqlite.py:939 — `json.dumps(filtered_data)` when filter_binary modifies data (needs base64 content)
+- fts.py:214, 225-226 — `except Exception: pass` in recall (both AND and OR phases)
+- tool_search.py:78 — `conn.commit()` in ensure_tool_search_tables (never called with commit=True)
 
-### Skip file hashing for unchanged mtime+size
-- Currently hash every file even when mtime matches
-- Could trust mtime+size pair as "unchanged" signal and skip SHA-256
-- Risk: rare cases where content changes without mtime change (e.g., NFS)
+### LOC compression opportunities
+- Migration test schemas are bulky (~350 LOC for 12 tests). Could share a common base schema dict
+- The LEGACY_SCHEMA constant in TestMigrateAddCascadeDeletes is ~80 lines
+- Full migration integration test recreates most of the schema (~60 lines of CREATE TABLE)
 
-## Non-ingest ideas (future targets)
-- **Query startup**: lazy-import adapters only for ingest/peek commands (~20-30ms)
-- **Denormalize conversation stats**: add prompt_count, response_count, total_tokens
-  columns to conversations table to avoid response table scan on listing
+## Non-storage ideas (future targets)
+- Apply same metric to adapters/ (13% coverage, 1904 stmts)
+- Apply same metric to api/ (23% coverage, 1709 stmts)
