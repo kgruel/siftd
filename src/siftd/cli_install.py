@@ -10,30 +10,41 @@ from importlib.metadata import distribution
 from pathlib import Path
 
 
-def detect_install_method() -> str:
-    """Detect how siftd was installed.
-
-    Returns one of: 'uv_tool', 'pipx', 'pip_venv', 'pip_user', 'editable', 'unknown'
-    """
-    # Check editable first via PEP 610 direct_url.json
+def _editable_source_url() -> str | None:
+    """Return the file:// URL from direct_url.json if this is an editable install."""
     try:
         dist = distribution("siftd")
         direct_url_text = dist.read_text("direct_url.json")
         if direct_url_text:
             data = json.loads(direct_url_text)
             if data.get("dir_info", {}).get("editable"):
-                return "editable"
+                return data.get("url", "")
     except (FileNotFoundError, TypeError, json.JSONDecodeError):
         pass
+    return None
 
-    # Check path patterns in sys.prefix
+
+def detect_install_method() -> str:
+    """Detect how siftd was installed.
+
+    Returns one of: 'uv_tool', 'uv_tool_editable', 'pipx', 'pip_venv',
+    'pip_user', 'editable', 'unknown'
+    """
+    # Check tool-managed venvs first — these need their own install flow
+    # even when the install is editable (e.g. `uv tool install -e .`)
     venv_path = sys.prefix
     if "/uv/tools/" in venv_path or "\\uv\\tools\\" in venv_path:
+        if _editable_source_url():
+            return "uv_tool_editable"
         return "uv_tool"
     if "/pipx/venvs/" in venv_path or "\\pipx\\venvs\\" in venv_path:
         return "pipx"
     if "/Cellar/" in venv_path or "/homebrew/" in venv_path.lower():
         return "brew"
+
+    # Check editable via PEP 610 direct_url.json
+    if _editable_source_url():
+        return "editable"
 
     # Regular venv vs user install
     if sys.prefix != sys.base_prefix:
@@ -80,6 +91,12 @@ def install_hint(extra: str) -> str:
     method = detect_install_method()
     pkg = f"siftd[{extra}]"
     pip = _pip_cmd()
+
+    if method == "uv_tool_editable":
+        source_url = _editable_source_url() or ""
+        source_path = source_url[7:] if source_url.startswith("file://") else "."
+        return f"uv tool install -e '{source_path}[{extra}]' --force"
+
     templates = {
         "uv_tool": f"uv tool install '{pkg}' --force",
         "pipx": f"pipx install '{pkg}' --force",
@@ -94,6 +111,7 @@ def install_hint(extra: str) -> str:
 # Human-readable labels
 METHOD_LABELS: dict[str, str] = {
     "uv_tool": "uv tool",
+    "uv_tool_editable": "uv tool (editable)",
     "pipx": "pipx",
     "brew": "Homebrew",
     "pip_venv": "pip (venv)",
@@ -102,11 +120,11 @@ METHOD_LABELS: dict[str, str] = {
 }
 
 
-def _install_commands(extra: str) -> dict[str, list[str]]:
+def _install_commands(extra: str, *, source_path: str | None = None) -> dict[str, list[str]]:
     """Build subprocess command lists for installing a given extra."""
     pkg = f"siftd[{extra}]"
     pip = _pip_cmd().split()  # ["uv", "pip"] or ["pip"]
-    return {
+    cmds: dict[str, list[str]] = {
         "uv_tool": ["uv", "tool", "install", pkg, "--force"],
         "pipx": ["pipx", "install", pkg, "--force"],
         "brew": [sys.prefix + "/bin/python", "-m", "pip", "install", pkg],
@@ -114,6 +132,9 @@ def _install_commands(extra: str) -> dict[str, list[str]]:
         "pip_user": [*pip, "install", "--user", pkg],
         "editable": [*pip, "install", "-e", f".[{extra}]"],
     }
+    if source_path:
+        cmds["uv_tool_editable"] = ["uv", "tool", "install", "-e", f"{source_path}[{extra}]", "--force"]
+    return cmds
 
 
 def _run_extra_install(args, extra: str, *, is_installed, already_msg: str, success_msg: str) -> int:
@@ -131,23 +152,17 @@ def _run_extra_install(args, extra: str, *, is_installed, already_msg: str, succ
         print(f"Try: {install_hint(extra)}")
         return 1
 
-    cmds = _install_commands(extra)
+    # Resolve source path for editable installs
+    source_url = _editable_source_url() or ""
+    source_path = source_url[7:] if source_url.startswith("file://") else None
+
+    cmds = _install_commands(extra, source_path=source_path)
     cmd = cmds[method]
 
-    # For editable installs, we need to be in the project directory
+    # For plain editable installs, we need to be in the project directory
     cwd = None
     if method == "editable":
-        try:
-            dist = distribution("siftd")
-            direct_url_text = dist.read_text("direct_url.json")
-            if direct_url_text:
-                data = json.loads(direct_url_text)
-                url = data.get("url", "")
-                if url.startswith("file://"):
-                    cwd = url[7:]  # Strip file://
-        except Exception:
-            pass
-
+        cwd = source_path
         if not cwd:
             print("Detected editable install but could not find project root.")
             print()
