@@ -1,0 +1,12 @@
+{
+  "name": "exchange-window-tool-summaries",
+  "description": "Exchange-window chunking + one tool-summary chunk per conversation (tool names, file paths, shell commands)",
+  "goal": "Improve findability for tool-usage queries by embedding tool metadata alongside text",
+  "params": {
+    "strategy": "exchange-window",
+    "target_tokens": 256,
+    "max_tokens": 512,
+    "overlap_tokens": 25,
+    "include_tool_summaries": true
+  }
+}
