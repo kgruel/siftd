@@ -2,6 +2,7 @@
 
 import argparse
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from siftd.cli.search import (
@@ -321,3 +322,122 @@ def test_cmd_search_mode_processing_and_refs(test_db, tmp_path, monkeypatch):
 
     # conversations mode branch
     assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), conversations=True)) == 0
+
+
+def test_misc_remaining_helper_branches(monkeypatch):
+    # _can_delegate_to_serve: can_delegate False
+    monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: False)
+    assert not _can_delegate_to_serve(make_args(), db=Path("/x"), embed_db=Path("/y"))
+
+    # _fetch_search_metadata: empty conv list early return
+    class _Conn:
+        def execute(self, *_a, **_k):
+            raise AssertionError("should not query for empty results")
+
+    _fetch_search_metadata(_Conn(), [])
+
+    # _enrich_context: source ids not found in prompt order
+    monkeypatch.setattr("siftd.api.search.fetch_prompt_response_texts", lambda conn, ids: [])
+
+    class _Cur:
+        def fetchall(self):
+            return [("p1",), ("p2",)]
+
+    class _Conn2:
+        def execute(self, *_a, **_k):
+            return _Cur()
+
+    rows = [{"conversation_id": "c1", "source_ids": ["not-present"]}]
+    _enrich_context(_Conn2(), rows, 1)
+    assert "_context" not in rows[0]
+
+
+def test_cmd_search_index_semantic_and_output_edges(test_db, tmp_path, monkeypatch, capsys):
+    embed = tmp_path / "embed.db"
+
+    # line 207: index path delegates to _search_build_index
+    monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
+    monkeypatch.setattr("siftd.cli.search._search_build_index", lambda *a, **k: 0)
+    assert cmd_search(make_args(db=str(test_db), index=True)) == 0
+
+    # lines 258-262: semantic requested but embed db missing
+    args = make_args(query=["x"], db=str(test_db), semantic=True, embed_db=str(embed))
+    assert cmd_search(args) == 1
+    assert "No embeddings index found" in capsys.readouterr().out
+
+    # line 224: json+thread warning
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
+    monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: False)
+    assert cmd_search(make_args(query=["x"], db=str(test_db), json=True, thread=True)) == 0
+    assert "ignored with --json output" in capsys.readouterr().err
+
+    # line 342: empty json result helper in cmd_search
+    called = []
+    monkeypatch.setattr("siftd.cli.search._print_empty_json_results", lambda *a, **k: called.append(True))
+    assert cmd_search(make_args(query=["x"], db=str(test_db), json=True)) == 0
+    assert called
+
+    # lines 354/366: non-json threshold/first no-match messages
+    monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
+    embed.write_text("x")
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [{"conversation_id": "c1", "score": 0.1, "source_ids": []}])
+    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), threshold=0.9)) == 0
+    assert "No results above threshold" in capsys.readouterr().out
+
+    monkeypatch.setattr("siftd.api.first_mention", lambda *a, **k: None)
+    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), first=True)) == 0
+    assert "No results above relevance threshold" in capsys.readouterr().out
+
+
+def test_cmd_search_delegate_and_format_error(test_db, tmp_path, monkeypatch, capsys):
+    embed = tmp_path / "embed.db"
+    embed.write_text("x")
+    monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
+    monkeypatch.setattr("siftd.cli.search._can_delegate_to_serve", lambda *a, **k: True)
+    monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: [{"conversation_id": "c1", "score": 1.0, "source_ids": [], "chunk_id": "c", "text": "t"}])
+
+    class _Conn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("siftd.api.open_database", lambda *a, **k: _Conn())
+    monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: (_ for _ in ()).throw(ValueError("bad fmt")))
+
+    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed))) == 1
+    assert "bad fmt" in capsys.readouterr().err
+
+
+def test_search_fts_only_additional_error_and_warning_branches(monkeypatch, tmp_path, capsys):
+    db = tmp_path / "db.sqlite"
+    db.write_text("x")
+
+    class _Conn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("siftd.api.open_database", lambda *a, **k: _Conn())
+    monkeypatch.setattr("siftd.search.resolve_candidates", lambda *a, **k: None)
+
+    import sqlite3
+
+    # invalid syntax branch (541-543)
+    monkeypatch.setattr("siftd.api.search.fts5_search_content", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("fts5 syntax error")))
+    assert _search_fts_only(make_args(query=["q"], db=str(db)), db, "q") == 1
+    assert "Invalid search query" in capsys.readouterr().err
+
+    # generic db error branch (545)
+    monkeypatch.setattr("siftd.api.search.fts5_search_content", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("other fail")))
+    assert _search_fts_only(make_args(query=["q"], db=str(db)), db, "q") == 1
+    assert "Database error" in capsys.readouterr().err
+
+    # warning injection in dict output branch (607)
+    args = make_args(query=["q"], db=str(db), json=True, thread=True)
+    monkeypatch.setattr(
+        "siftd.api.search.fts5_search_content",
+        lambda *a, **k: [{"conversation_id": "c1", "rank": -0.3, "snippet": "x", "side": "prompt"}],
+    )
+    monkeypatch.setattr("siftd.cli.search._fetch_search_metadata", lambda conn, results: None)
+    monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: SimpleNamespace(render_search=lambda *a, **k2: {"results": []}))
+    assert _search_fts_only(args, db, "q") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["warnings"]
