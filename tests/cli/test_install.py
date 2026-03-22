@@ -541,3 +541,104 @@ class TestInstallRemainingBranches:
         assert cmd_install(SimpleNamespace(extra="serve")) == 12
         assert cmd_install(SimpleNamespace(extra="skill")) == 13
         assert cmd_install(SimpleNamespace(extra="plugin")) == 14
+
+    def test_remaining_error_and_edge_branches(self, tmp_path, monkeypatch, capsys):
+        # detect_install_method unknown via distribution failure
+        monkeypatch.setattr("siftd.cli.install._editable_source_url", lambda: None)
+        monkeypatch.setattr("siftd.cli.install.sys.prefix", "/same")
+        monkeypatch.setattr("siftd.cli.install.sys.base_prefix", "/same")
+        monkeypatch.setattr("siftd.cli.install.distribution", lambda name: (_ for _ in ()).throw(RuntimeError("x")))
+        assert detect_install_method() == "unknown"
+
+        # import error paths
+        __import__("sys").modules.pop("fastembed", None)
+        __import__("sys").modules.pop("litestar", None)
+        from siftd.cli.install import _serve_installed, embed_installed
+
+        assert not embed_installed()
+        assert not _serve_installed()
+
+        # _run_extra_install success verify + pipx not found branch
+        monkeypatch.setattr("siftd.cli.install.detect_install_method", lambda: "pipx")
+        monkeypatch.setattr("siftd.cli.install._editable_source_url", lambda: "")
+        monkeypatch.setattr("siftd.cli.install._install_commands", lambda extra, source_path=None: {"pipx": ["pipx"]})
+        monkeypatch.setattr("siftd.cli.install.install_hint", lambda extra: "pipx install")
+
+        class _Res:
+            returncode = 0
+
+        states = {"n": 0}
+
+        def _installed():
+            states["n"] += 1
+            return states["n"] > 1
+
+        monkeypatch.setattr("siftd.cli.install.subprocess.run", lambda *a, **k: _Res())
+        assert _run_extra_install(SimpleNamespace(dry_run=False), "embed", is_installed=_installed, already_msg="a", success_msg="ok") == 0
+
+        monkeypatch.setattr("siftd.cli.install.subprocess.run", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
+        assert _run_extra_install(SimpleNamespace(dry_run=False), "embed", is_installed=lambda: False, already_msg="a", success_msg="ok") == 1
+
+        # wrapper lines
+        monkeypatch.setattr("siftd.cli.install._run_extra_install", lambda *a, **k: 3)
+        from siftd.cli.install import _install_embed, _install_serve
+
+        assert _install_embed(SimpleNamespace()) == 3
+        assert _install_serve(SimpleNamespace()) == 3
+
+        # _find_plugin_source direct success + exception fallback
+        plugin_dir = tmp_path / "pkg" / "plugin"
+        plugin_dir.mkdir(parents=True)
+        monkeypatch.setattr("siftd.cli.install.importlib.resources.as_file", lambda ref: __import__("contextlib").nullcontext(plugin_dir))
+        assert _find_plugin_source() == plugin_dir
+
+        monkeypatch.setattr("siftd.cli.install.importlib.resources.as_file", lambda ref: __import__("contextlib").nullcontext(tmp_path / "missing"))
+        monkeypatch.setattr("siftd.cli.install.detect_install_method", lambda: "editable")
+        monkeypatch.setattr("siftd.cli.install.distribution", lambda name: (_ for _ in ()).throw(RuntimeError("bad")))
+        assert _find_plugin_source() is None
+
+        # _install_skill invalid scope + symlink/exists cleanup + missing SKILL warning + dry-run instructions
+        source = tmp_path / "src"
+        (source / "skills" / "siftd" / "reference").mkdir(parents=True)
+        (source / "skills" / "siftd" / "SKILL.md").write_text("ok")
+        monkeypatch.setattr("siftd.cli.install._find_plugin_source", lambda: source)
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "siftd.skill_gen",
+            SimpleNamespace(
+                HARNESS_INFO={
+                    "skill": {"display_name": "Skill", "scope_dirs": {"user": str(tmp_path / "skill"), "project": str(tmp_path / "skillp")}, "format": "skill"},
+                    "inst": {"display_name": "Inst", "scope_dirs": {"user": str(tmp_path / "inst")}, "format": "instructions", "filename": "i.md"},
+                },
+                render_instructions=lambda ref: "x",
+            ),
+        )
+        assert _install_skill(_make_skill_args(harness="skill", scope="nope")) == 1
+
+        skill_target = tmp_path / "skill"
+        skill_target.parent.mkdir(parents=True, exist_ok=True)
+        skill_target.symlink_to(tmp_path / "other")
+        assert _install_skill(_make_skill_args(harness="skill")) == 0
+
+        real_copytree = __import__("shutil").copytree
+        monkeypatch.setattr("siftd.cli.install.shutil.copytree", lambda src, dst: Path(dst).mkdir(parents=True, exist_ok=True))
+        assert _install_skill(_make_skill_args(harness="skill")) == 1
+        monkeypatch.setattr("siftd.cli.install.shutil.copytree", real_copytree)
+
+        assert _install_skill(_make_skill_args(harness="inst", dry_run=True)) == 0
+
+        # _install_plugin manifest missing + stale skill symlink cleanup
+        plugin_src = tmp_path / "plugin_src"
+        plugin_src.mkdir()
+        monkeypatch.setattr("siftd.cli.install._find_plugin_source", lambda: plugin_src)
+        assert _install_plugin(_make_args(scope="project")) == 1
+
+        (plugin_src / ".claude-plugin").mkdir(parents=True)
+        (plugin_src / ".claude-plugin" / "plugin.json").write_text("{}")
+        monkeypatch.chdir(tmp_path)
+        stale = tmp_path / ".claude" / "skills" / "siftd"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.symlink_to(tmp_path / "z")
+        assert _install_plugin(_make_args(scope="project")) == 0
+        out = capsys.readouterr().out
+        assert "Removed standalone skill symlink" in out
