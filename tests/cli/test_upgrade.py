@@ -32,6 +32,10 @@ class TestIsNewer:
     def test_malformed_graceful(self):
         assert not _is_newer("bad", "0.5.0")
 
+    def test_fallback_tuple_compare_when_packaging_unavailable(self, monkeypatch):
+        monkeypatch.setitem(__import__("sys").modules, "packaging.version", type("M", (), {})())
+        assert _is_newer("1.2.0", "1.1.9")
+
 
 class TestCache:
     def test_write_and_read(self, tmp_path, monkeypatch):
@@ -63,6 +67,13 @@ class TestCache:
             "latest": "0.6.0",
             "checked_at": "2020-01-01T00:00:00+00:00",
         }))
+        assert not _cache_is_fresh()
+
+    def test_cache_is_fresh_none_and_invalid(self, monkeypatch):
+        monkeypatch.setattr("siftd.cli.upgrade._read_cache", lambda: None)
+        assert not _cache_is_fresh()
+
+        monkeypatch.setattr("siftd.cli.upgrade._read_cache", lambda: {"latest": "x", "checked_at": "bad"})
         assert not _cache_is_fresh()
 
 
@@ -101,6 +112,17 @@ class TestNotice:
         maybe_print_notice()
         assert capsys.readouterr().err == ""
 
+    def test_no_notice_when_config_false_or_no_cache(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr("siftd.cli.upgrade.state_dir", lambda: tmp_path)
+        monkeypatch.setattr("siftd.cli.upgrade.sys.stderr.isatty", lambda: True)
+        monkeypatch.setattr("siftd.config.get_config", lambda key: "false")
+        maybe_print_notice()
+        assert capsys.readouterr().err == ""
+
+        monkeypatch.setattr("siftd.config.get_config", lambda key: "true")
+        maybe_print_notice()
+        assert capsys.readouterr().err == ""
+
 
 class TestUpgradeCommandAndChecks:
     def test_fetch_latest_version_and_background(self, monkeypatch):
@@ -116,6 +138,9 @@ class TestUpgradeCommandAndChecks:
 
         monkeypatch.setitem(__import__("sys").modules, "urllib.request", type("M", (), {"urlopen": lambda *a, **k: _Resp()})())
         assert _fetch_latest_version() == "9.9.9"
+
+        monkeypatch.setitem(__import__("sys").modules, "urllib.request", type("M", (), {"urlopen": lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x"))})())
+        assert _fetch_latest_version() is None
 
         called = []
         monkeypatch.setattr("siftd.cli.upgrade._fetch_latest_version", lambda: "1.2.3")
