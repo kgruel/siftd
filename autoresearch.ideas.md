@@ -1,27 +1,22 @@
 # Autoresearch Ideas
 
-## Per-adapter optimization targets (by uncovered stmts, post-split)
+## Completed adapters
+- ✅ vscode.py: 100% (was 93%, +13 lines covered, extracted yield_conversation to SDK)
+- ✅ opencode.py: 99.4% (was 89%, +18 lines covered, L241 tool→None by design)
 
-### Remaining ~92 uncovered lines
-- vscode.py: 13 miss — JSONL replay edge cases, path traversal guards, workspace folder fallback
-- opencode.py: 11 miss — sqlite error paths, JSON parse errors, pending tool status
-- sdk.py: 16 miss — scattered edge cases in peek logic, small-file seek path
-- codex_cli.py: 10 miss — _parse_block string/unknown, _get_or_create_response, normalizer edges
-- gemini_cli.py: 10 miss — can_handle non-file, discover path, peek edges
-- claude_code.py: 6 miss — scattered edge cases in parse
-- copilot_cli.py: 4 miss — platform branch (win32), DEFAULT_LOCATIONS expansion
-- pi_agent.py: 3 miss — can_handle when .pi not followed by agent/sessions
-- registry.py: 4 miss — drop-in adapter loading error paths
-- aider.py: 2 miss — analytics can_handle via DEFAULT_LOCATIONS expansion, empty session skip
-- _jsonl.py: 1 miss — single edge case
+## Remaining per-adapter targets (59 uncovered lines total)
+- sdk.py: 16 miss (95%) — peek logic edges, small-file seek path, scattered helpers
+- codex_cli.py: 14 miss (93%) — _parse_block string/unknown, normalizer edges
+- gemini_cli.py: 10 miss (94%) — discover path, peek edges
+- claude_code.py: 5 miss (97%) — scattered parse edge cases
+- copilot_cli.py: 4 miss (97%) — platform branch (win32 uncoverable on macOS)
+- registry.py: 4 miss (89%) — drop-in adapter loading error paths
+- pi_agent.py: 3 miss (98%) — can_handle path edge
+- _jsonl.py: 1 miss (95%) — single edge case
+- aider.py: 1 miss (99%) — yield_conversation already handled the guard
 
-### Strategy notes
-- Normalizer tests (copilot, pi_agent) proved zero-time-cost and high-coverage — apply same to codex_cli
-- Per-adapter files mean we can now target individual adapters without bloating others
-- The `_fixture_source` helper is duplicated in codex_cli, gemini_cli, copilot_cli, pi_agent — could move to conftest
-- Platform-specific branches (copilot_cli win32 line 30) are uncoverable on macOS — accept as dead code
-- Most remaining gaps are error-handling branches requiring specific failure conditions
-
-## Future targets
-- Apply same metric to api/ (23% coverage, 1709 stmts)
-- Apply same metric to storage/ (previous experiment reached 0.74 efficiency)
+## Strategy notes
+- codex_cli has best ratio: 14 miss at only 52 LOC currently → lots of headroom
+- sdk.py tests live in test_infra.py (142 LOC) — could compress
+- Platform-specific branches (copilot_cli win32) are uncoverable on macOS
+- yield_conversation extraction pattern could apply to opencode L241 (tool→None)
