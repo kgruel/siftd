@@ -43,6 +43,7 @@ def export_conversations(
     db_path: Path | None = None,
     include_thinking: bool = True,
     include_tool_content: bool = False,
+    owner: str | None = None,
 ) -> list[ExportedConversation]:
     """Export conversations matching the specified criteria.
 
@@ -73,6 +74,7 @@ def export_conversations(
         before=before,
         search=search,
         n=n,
+        owner=owner,
     )
 
     results = []

@@ -552,6 +552,29 @@ def ensure_push_log_table(conn: sqlite3.Connection) -> None:
     """)
 
 
+def ensure_conversation_owners_table(conn: sqlite3.Connection) -> None:
+    """Create conversation_owners table for multi-tenancy. Idempotent.
+
+    Server-side only — tracks which user owns each conversation.
+    Called on-demand from the receive path, not in the open_database()
+    migration chain.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_owners (
+            conversation_id TEXT NOT NULL
+                REFERENCES conversations(id) ON DELETE CASCADE,
+            user_id         TEXT NOT NULL,
+            push_id         TEXT,
+            assigned_at     TEXT NOT NULL,
+            PRIMARY KEY (conversation_id)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_conversation_owners_user
+        ON conversation_owners(user_id)
+    """)
+
+
 # Alias for backwards compatibility
 create_database = open_database
 

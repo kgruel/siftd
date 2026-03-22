@@ -271,6 +271,7 @@ async def export_route(
     tag: list[str] | None = Parameter(query="tag", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
     n: int = Parameter(query="n", default=0),
+    owner: str | None = Parameter(query="owner", default=None),
 ) -> dict:
     """Export full conversation data."""
     from siftd.api.export import export_conversations
@@ -278,7 +279,8 @@ async def export_route(
     return _dispatch(
         "/v1/export", "GET", export_conversations,
         {"id": id, "workspace": workspace, "since": since, "before": before,
-         "tag": tag, "no_tag": no_tag, "n": n, "db_path": db_path},
+         "tag": tag, "no_tag": no_tag, "n": n, "db_path": db_path,
+         "owner": owner},
         "export", db_path,
     )
 
@@ -298,13 +300,24 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
     try:
         tmp_path.write_bytes(body)
         from siftd.api.receive import receive_database
+        from siftd.ids import ulid
+
+        identity = _get_push_identity(request)
+        push_id = ulid()
 
         rebuild_fts = fts_rebuild == "on_push"
-        result = receive_database(tmp_path, db_path, rebuild_fts=rebuild_fts)
+        result = receive_database(
+            tmp_path, db_path,
+            rebuild_fts=rebuild_fts,
+            user_id=identity,
+            push_id=push_id,
+        )
 
         # Attribution: record push in push_log
-        identity = _get_push_identity(request)
-        _record_push_log(db_path, identity, result["conversations"], len(body), request)
+        _record_push_log(
+            db_path, identity, result["conversations"], len(body), request,
+            push_id=push_id,
+        )
 
         # Refresh stats cache (server has DB warm from the merge)
         try:
@@ -335,6 +348,7 @@ async def pull(
     before: str | None = Parameter(query="before", default=None),
     model: str | None = Parameter(query="model", default=None),
     tag: list[str] | None = Parameter(query="tag", default=None),
+    owner: str | None = Parameter(query="owner", default=None),
 ) -> Response:
     """Slice and stream the team DB based on filters."""
     from siftd.api.slice import slice_database
@@ -350,6 +364,7 @@ async def pull(
             model=model,
             tag=tag,
             rebuild_fts=False,
+            owner=owner,
         )
 
         conversations = result["conversations"]
@@ -410,6 +425,7 @@ async def conversation_list(
     search: str | None = Parameter(query="search", default=None),
     n: int = Parameter(query="n", default=20),
     oldest: bool = Parameter(query="oldest", default=False),
+    owner: str | None = Parameter(query="owner", default=None),
 ) -> dict:
     """List conversations with filtering."""
     from siftd.api.conversations import list_conversations
@@ -419,7 +435,7 @@ async def conversation_list(
         {"db_path": db_path, "workspace": workspace, "model": model,
          "since": since, "before": before, "search": search, "tool": tool,
          "tag": tag, "all_tags": all_tags, "no_tag": no_tag,
-         "tool_tag": tool_tag, "n": n, "oldest": oldest},
+         "tool_tag": tool_tag, "n": n, "oldest": oldest, "owner": owner},
         "list", db_path,
     )
 
@@ -447,6 +463,7 @@ async def search_route(
     all_tags: list[str] | None = Parameter(query="all_tags", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
     include_derivative: bool = Parameter(query="include_derivative", default=False),
+    owner: str | None = Parameter(query="owner", default=None),
 ) -> dict | Response:
     """Semantic + FTS search against team DB."""
     try:
@@ -469,7 +486,8 @@ async def search_route(
              "recency_half_life": recency_half_life,
              "recency_max_boost": recency_max_boost,
              "threshold": threshold, "tag": tag, "all_tags": all_tags,
-             "no_tag": no_tag, "include_derivative": include_derivative},
+             "no_tag": no_tag, "include_derivative": include_derivative,
+             "owner": owner},
             "search", db_path,
         )
     except Exception as e:
@@ -502,6 +520,7 @@ def _get_push_identity(request: Request) -> str:
 
 def _record_push_log(
     db_path: Path, identity: str, conversations: int, size_bytes: int, request: Request,
+    *, push_id: str | None = None,
 ) -> None:
     """Record a push event in the push_log table."""
     from datetime import UTC, datetime
@@ -516,7 +535,7 @@ def _record_push_log(
             "INSERT INTO push_log (push_id, user_identity, pushed_at, conversations, size_bytes, source_ip) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (
-                ulid(),
+                push_id or ulid(),
                 identity,
                 datetime.now(UTC).isoformat(),
                 conversations,

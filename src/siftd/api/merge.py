@@ -142,13 +142,15 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
 
     # --- Step 1b: Replace stale conversations with newer source versions ---
     replaced_conversations = 0
+    replaced_conversation_ids: list[str] = []
     if replace:
-        replaced_conversations = _replace_stale_conversations(conn)
+        replaced_conversations, replaced_conversation_ids = _replace_stale_conversations(conn)
 
     # --- Step 2: Core tables with FK remapping ---
 
-    # Snapshot counts before inserts for delta stats
-    conv_before = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+    # Snapshot existing conversation IDs for diff after INSERT
+    conn.execute("CREATE TEMP TABLE _pre_merge_conv_ids AS SELECT id FROM conversations")
+
     prompt_before = conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0]
 
     # conversations — remap harness_id, workspace_id
@@ -168,8 +170,14 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
         LEFT JOIN _id_map wm ON wm.table_name = 'workspaces' AND wm.source_id = sc.workspace_id
     """)
 
-    conv_after = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
-    new_conversations = conv_after - conv_before
+    # Compute new conversation IDs via diff
+    new_conv_id_rows = conn.execute("""
+        SELECT id FROM conversations
+        WHERE id NOT IN (SELECT id FROM _pre_merge_conv_ids)
+    """).fetchall()
+    new_conversation_ids = [r[0] for r in new_conv_id_rows]
+    new_conversations = len(new_conversation_ids)
+    conn.execute("DROP TABLE _pre_merge_conv_ids")
 
     src_conv_count = conn.execute("SELECT COUNT(*) FROM src.conversations").fetchone()[0]
     skipped_conversations = src_conv_count - new_conversations
@@ -364,6 +372,8 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
         "conversations": new_conversations,
         "replaced_conversations": replaced_conversations,
         "skipped_conversations": skipped_conversations,
+        "new_conversation_ids": new_conversation_ids,
+        "replaced_conversation_ids": replaced_conversation_ids,
         "prompts": prompt_after - prompt_before,
         "responses": resp_after - resp_before,
         "tool_calls": tc_after - tc_before,
@@ -373,7 +383,7 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
     }
 
 
-def _replace_stale_conversations(conn) -> int:
+def _replace_stale_conversations(conn) -> tuple[int, list[str]]:
     """Delete target conversations that have a newer version in source.
 
     A source conversation is "newer" when it shares the same
@@ -384,12 +394,13 @@ def _replace_stale_conversations(conn) -> int:
     Deletes the stale conversation and all its children so the subsequent
     INSERT OR IGNORE picks up the source version instead of skipping it.
 
-    Returns the number of conversations replaced.
+    Returns (count_replaced, replacement_source_ids) where replacement_source_ids
+    are the source conversation IDs that will replace the stale target versions.
     """
     # Find stale target conversations: same natural key, source ULID is newer.
     # ULIDs are lexicographically time-ordered, so id comparison works.
     stale_rows = conn.execute("""
-        SELECT m.id AS target_id
+        SELECT m.id AS target_id, s.id AS source_id
         FROM src.conversations s
         JOIN main.conversations m
             ON m.harness_id = COALESCE(
@@ -401,9 +412,10 @@ def _replace_stale_conversations(conn) -> int:
     """).fetchall()
 
     if not stale_rows:
-        return 0
+        return 0, []
 
     stale_ids = [r[0] for r in stale_rows]
+    replacement_ids = [r[1] for r in stale_rows]
 
     # Build a temp table for efficient joins
     conn.execute("CREATE TEMP TABLE _stale_convs (id TEXT PRIMARY KEY)")
@@ -456,7 +468,7 @@ def _replace_stale_conversations(conn) -> int:
 
     conn.execute("DROP TABLE _stale_convs")
 
-    return len(stale_ids)
+    return len(stale_ids), replacement_ids
 
 
 def _map_vocabulary(conn, table: str, natural_key: str) -> None:

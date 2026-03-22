@@ -390,6 +390,7 @@ def hybrid_search(
     no_tag: list[str] | None = None,
     exclude_active: bool = True,
     include_derivative: bool = False,
+    owner: str | None = None,
     # FTS5 tuning
     recall: int = 80,
     # Reranking
@@ -432,6 +433,7 @@ def hybrid_search(
             workspace=workspace, model=model, since=since, before=before,
             tag=tag, all_tags=all_tags, no_tag=no_tag,
             exclude_active=exclude_active, include_derivative=include_derivative,
+            owner=owner,
         )
         conn = open_database(db_path, read_only=True)
         try:
@@ -467,6 +469,7 @@ def hybrid_search(
         workspace=workspace, model=model, since=since, before=before,
         tag=tag, all_tags=all_tags, no_tag=no_tag,
         exclude_active=exclude_active, include_derivative=include_derivative,
+        owner=owner,
     )
 
     # FTS5 recall (hybrid mode only — narrows candidates before embeddings)

@@ -157,6 +157,7 @@ def list_conversations(
     tool_tag: str | None = None,
     n: int = 10,
     oldest: bool = False,
+    owner: str | None = None,
 ) -> list[ConversationSummary]:
     """List conversations with optional filtering.
 
@@ -189,7 +190,7 @@ def list_conversations(
 
     conn = open_database(db, read_only=True)
     try:
-        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest)
+        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest, owner)
     finally:
         conn.close()
 
@@ -208,6 +209,7 @@ def _list_conversations_impl(
     tool_tag: str | None,
     n: int,
     oldest: bool,
+    owner: str | None = None,
 ) -> list[ConversationSummary]:
     """Implementation of list_conversations with connection already open."""
     # Check if pricing table exists
@@ -219,6 +221,7 @@ def _list_conversations_impl(
     wb.model(model)
     wb.since(since)
     wb.before(before)
+    wb.owner(owner)
 
     if search:
         wb.add(

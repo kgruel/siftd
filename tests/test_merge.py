@@ -683,3 +683,83 @@ def test_cli_invalid_file(tmp_path, capsys):
     rc = main(["--db", str(target), "db", "merge", str(bad_source)])
     assert rc == 1
     assert "Not a valid SQLite" in capsys.readouterr().err
+
+
+# =============================================================================
+# Conversation ID tracking
+# =============================================================================
+
+
+def test_merge_returns_new_conversation_ids(tmp_path):
+    """merge_database returns IDs of newly inserted conversations."""
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "existing"}],
+    )
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "new-a"}, {"external_id": "new-b"}],
+    )
+
+    result = merge_database(target, source)
+
+    assert result["conversations"] == 2
+    assert len(result["new_conversation_ids"]) == 2
+    assert result["replaced_conversation_ids"] == []
+
+    # Verify the returned IDs actually exist in the target
+    conn = sqlite3.connect(str(target))
+    conn.row_factory = sqlite3.Row
+    for cid in result["new_conversation_ids"]:
+        row = conn.execute("SELECT id FROM conversations WHERE id = ?", (cid,)).fetchone()
+        assert row is not None
+    conn.close()
+
+
+def test_merge_returns_replaced_conversation_ids(tmp_path):
+    """merge_database returns IDs of replacement conversations."""
+    import time
+
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Old"}],
+    )
+
+    time.sleep(0.01)
+
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "New"}],
+    )
+
+    result = merge_database(target, source)
+
+    assert result["replaced_conversations"] == 1
+    assert len(result["replaced_conversation_ids"]) == 1
+
+    # The replacement ID should be the source's conversation ID
+    replacement_id = result["replaced_conversation_ids"][0]
+    conn = sqlite3.connect(str(target))
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT id FROM conversations WHERE id = ?", (replacement_id,)).fetchone()
+    assert row is not None
+    conn.close()
+
+
+def test_merge_no_new_returns_empty_ids(tmp_path):
+    """Idempotent merge returns empty ID lists."""
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-1"}],
+    )
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-1"}],
+    )
+
+    # Second merge — same data, nothing new
+    result = merge_database(target, source, replace=False)
+
+    assert result["conversations"] == 0
+    assert result["new_conversation_ids"] == []
+    assert result["replaced_conversation_ids"] == []

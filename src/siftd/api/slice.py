@@ -27,6 +27,7 @@ def slice_database(
     tool_tag: str | None = None,
     search: str | None = None,
     rebuild_fts: bool = True,
+    owner: str | None = None,
 ) -> dict:
     """Export filtered conversations into a standalone SQLite database.
 
@@ -61,6 +62,7 @@ def slice_database(
         no_tag=no_tag,
         tool_tag=tool_tag,
         n=0,  # unlimited
+        owner=owner,
     )
     conv_ids = [c.id for c in conversations]
 
