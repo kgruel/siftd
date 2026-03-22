@@ -324,6 +324,25 @@ main {
   outline: none;
 }
 .tag-input::placeholder { color: var(--muted); }
+
+/* Export actions — right-justified inside toolbar */
+.export-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+.export-link {
+  font-size: 0.8em;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 0.15em var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: color var(--transition), border-color var(--transition);
+}
+.export-link:hover {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
 .adapter { color: var(--muted); }
 .summary { color: var(--fg-secondary); }
 .prompt { color: var(--accent); }
@@ -431,30 +450,33 @@ table.conversation-list tr.htmx-request {
 .conversation-detail { }
 
 .conversation-header {
-  margin-bottom: var(--space-xl);
-  padding-bottom: var(--space-md);
-  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-md);
 }
 
-.conversation-header h2 {
-  font-family: var(--mono);
-  font-size: 1.05em;
-  letter-spacing: 0.02em;
-  margin: 0 0 var(--space-xs);
+/* Toolbar: fidelity controls left, export right */
+.detail-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-sm);
 }
 
-.conversation-header .meta {
+/* Sticky info bar — matches list table vocabulary */
+.detail-info-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   gap: 0;
-  flex-wrap: wrap;
   align-items: baseline;
-}
-
-.conversation-header .meta span {
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   font-size: 0.85em;
 }
 
-.conversation-header .meta span + span::before {
+.detail-info-bar span + span::before {
   content: "\00b7";
   margin: 0 var(--space-sm);
   color: var(--border-active);
@@ -1054,23 +1076,6 @@ button:focus-visible {
   opacity: 0.6;
 }
 
-/* --- Breadcrumb --- */
-
-.breadcrumb {
-  display: flex;
-  align-items: baseline;
-  gap: 0;
-  font-size: 0.8em;
-  margin-bottom: var(--space-sm);
-}
-
-.breadcrumb span + span::before {
-  content: "\203A";
-  margin: 0 var(--space-sm);
-  color: var(--muted);
-  font-weight: 300;
-}
-
 /* --- Density toggle --- */
 
 .density-toggle {
@@ -1178,12 +1183,12 @@ body.compact .stat-value {
     gap: var(--space-sm);
   }
 
-  .conversation-header .meta {
-    flex-direction: column;
+  .detail-toolbar {
+    flex-wrap: wrap;
     gap: var(--space-xs);
   }
 
-  .conversation-header .meta span + span::before {
-    display: none;
+  .detail-info-bar {
+    flex-wrap: wrap;
   }
 }

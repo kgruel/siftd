@@ -10,17 +10,12 @@ from siftd.cli_common import resolve_db
 
 def cmd_export(args) -> int:
     """Export conversations as readable markdown or structured JSON."""
-    import json
-
-    from siftd.api import export_conversations
     from siftd.api.dispatch import Operation, execute
+    from siftd.api.export import export_document
     from siftd.cli_common import fidelity_from_args
-    from siftd.output.format_registry import select_format
-    from siftd.serve.delegation import try_serve
 
     db = resolve_db(args)
 
-    # Determine what to export
     conversation_ids = [args.conversation_id] if args.conversation_id else None
     last = args.last
 
@@ -30,12 +25,16 @@ def cmd_export(args) -> int:
 
     fidelity = fidelity_from_args(args)
     include_tools = fidelity.shows("tools")
+    fmt = "json" if getattr(args, "json", False) else "md"
 
     op = Operation(
         path="/v1/export",
         method="GET",
-        fn=export_conversations,
+        fn=export_document,
         params={
+            "format": fmt,
+            "fidelity": fidelity,
+            "no_header": args.no_header,
             "id": conversation_ids,
             "last": last,
             "workspace": args.workspace,
@@ -48,26 +47,13 @@ def cmd_export(args) -> int:
             "include_thinking": True,
             "include_tool_content": include_tools,
         },
-        render_method="detail",
+        render_method="raw",
         fidelity=fidelity,
-        db=db,
+        db=db or Path(),
     )
 
-    # Try serve delegation for --json export
-    if getattr(args, "json", False):
-        result = try_serve(op)
-        if result is not None and isinstance(result, dict) and "conversations" in result:
-            output = json.dumps(result["conversations"], indent=2)
-            if args.output:
-                output_path = Path(args.output)
-                output_path.write_text(output)
-                print(f"Exported {len(result['conversations'])} session(s) to {output_path}")
-            else:
-                print(output)
-            return 0
-
     try:
-        conversations = execute(op)
+        artifact = execute(op)
     except FileNotFoundError as e:
         print(str(e))
         return 1
@@ -77,38 +63,20 @@ def cmd_export(args) -> int:
             print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
         elif "fts5" in err_msg or "syntax" in err_msg:
             print(f"Invalid search query: {e}", file=sys.stderr)
-            print("Tip: Check your search query for syntax errors.", file=sys.stderr)
         else:
             print(f"Database error: {e}", file=sys.stderr)
-            print("Tip: Run 'siftd doctor' to check database health.", file=sys.stderr)
         return 1
 
-    if not conversations:
+    if artifact.count == 0:
         print("No conversations found matching criteria.")
         return 1
 
-    # Export always uses markdown or JSON, never terminal
-    fmt = select_format(json_mode=getattr(args, "json", False), is_tty=False)
-    no_header = args.no_header
-
-    sections = []
-    for conv in conversations:
-        sections.append(
-            fmt.render_detail(conv.turns, fidelity, detail=conv, no_header=no_header)
-        )
-
-    if fmt.media_type == "application/json":
-        output = json.dumps(sections, indent=2)
-    else:
-        output = "\n".join(sections)
-
-    # Write to file or stdout
     if args.output:
         output_path = Path(args.output)
-        output_path.write_text(output)
-        print(f"Exported {len(conversations)} session(s) to {output_path}")
+        output_path.write_text(artifact.content)
+        print(f"Exported {artifact.count} session(s) to {output_path}")
     else:
-        print(output)
+        print(artifact.content)
 
     return 0
 

@@ -316,6 +316,7 @@ async def ui_query(
                 "interactive_tags": True,
                 "tag_action_url": "/ui/tag",
                 "tag_suggest_url": "/ui/tags/suggest",
+                "export_base_url": "/ui/export",
             },
         )
         detail = execute(op)
@@ -685,3 +686,50 @@ async def ui_tags_suggest(
         if not prefix or t.name.lower().startswith(prefix)
     ]
     return _html_response("".join(options[:20]))
+
+
+# ---------------------------------------------------------------------------
+# Export
+# ---------------------------------------------------------------------------
+
+
+@get("/ui/export", opt={"no_auth": True})
+async def ui_export(
+    db_path: Path,
+    id: str = Parameter(query="id", default=""),
+    format: str = Parameter(query="format", default="md"),
+) -> Response:
+    """Export a conversation as a downloadable file."""
+    from siftd.api.dispatch import Operation, execute
+    from siftd.api.export import export_document
+
+    if not id:
+        return _html_response('<p class="empty">No conversation ID specified</p>')
+
+    op = Operation(
+        path="/v1/export",
+        method="GET",
+        fn=export_document,
+        params={
+            "format": format,
+            "id": [id],
+            "db_path": db_path,
+            "include_thinking": True,
+            "include_tool_content": True,
+        },
+        render_method="raw",
+        fidelity=_fidelity(),
+        db=db_path,
+    )
+
+    artifact = execute(op)
+    if artifact.count == 0:
+        return _html_response(f'<p class="empty">Not found: {id[:12]}</p>')
+
+    return Response(
+        content=artifact.content.encode(),
+        media_type=artifact.media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{artifact.filename}"',
+        },
+    )

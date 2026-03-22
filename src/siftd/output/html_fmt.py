@@ -38,11 +38,11 @@ def _hx_detail(detail_base: str, conv_id: str, shell_base: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
-def _render_controls(controls: dict, detail_base: str) -> str:
-    """Render fidelity toggle buttons for the detail view.
+def _render_controls(controls: dict, detail_base: str, export_base: str = "") -> str:
+    """Render toolbar: fidelity toggles (left) + export links (right).
 
-    Each button represents a target fidelity state — clicking it re-fetches
-    the conversation with those params. Active buttons show current state.
+    Fidelity order: Brief | Tools | Thinking | Full.
+    Tools + Thinking both on → auto-selects Full.
     """
     conv_id = controls.get("id", "")
     tools = controls.get("tools", False)
@@ -51,7 +51,6 @@ def _render_controls(controls: dict, detail_base: str) -> str:
     brief = controls.get("brief", False)
 
     def _qs(**params: str | bool) -> str:
-        """Build query string from non-falsy params."""
         parts = []
         for k, v in sorted(params.items()):
             if v and v is not False:
@@ -68,18 +67,40 @@ def _render_controls(controls: dict, detail_base: str) -> str:
             f"{label}</button>"
         )
 
+    # Tools+Thinking both on → promote to Full
+    next_tools = not tools
+    next_thinking = not thinking
+    if next_tools and thinking:
+        tools_qs = _qs(id=conv_id, full=True)
+    else:
+        tools_qs = _qs(id=conv_id, tools=next_tools, thinking=thinking)
+    if tools and next_thinking:
+        thinking_qs = _qs(id=conv_id, full=True)
+    else:
+        thinking_qs = _qs(id=conv_id, tools=tools, thinking=next_thinking)
+
     buttons = [
-        # Tools: toggle, preserve thinking
-        _btn("Tools", _qs(id=conv_id, tools=not tools, thinking=thinking), tools),
-        # Thinking: toggle, preserve tools
-        _btn("Thinking", _qs(id=conv_id, tools=tools, thinking=not thinking), thinking),
-        # Brief preset
         _btn("Brief", _qs(id=conv_id, brief=True), brief),
-        # Full preset (everything on)
+        _btn("Tools", tools_qs, tools),
+        _btn("Thinking", thinking_qs, thinking),
         _btn("Full", _qs(id=conv_id, full=True), full),
     ]
 
-    return '<div class="fidelity-controls">' + "".join(buttons) + "</div>"
+    parts = ['<div class="detail-toolbar">']
+    parts.append('<div class="fidelity-controls">' + "".join(buttons) + "</div>")
+
+    if export_base:
+        parts.append(
+            f'<div class="export-actions">'
+            f'<a href="{escape(export_base)}?id={escape(conv_id)}&format=md"'
+            f' class="export-link" download>.md</a>'
+            f'<a href="{escape(export_base)}?id={escape(conv_id)}&format=json"'
+            f' class="export-link" download>.json</a>'
+            f'</div>'
+        )
+
+    parts.append("</div>")
+    return "\n".join(parts)
 
 
 def _render_tag_section(
@@ -126,7 +147,8 @@ def _render_tag_section(
             f' list="{escape(list_id)}" class="tag-input"'
             f' placeholder="add tag\u2026"'
             f' autocomplete="off"'
-            f' hx-get="{escape(tag_suggest_url)}" hx-trigger="focus, keyup changed delay:200ms"'
+            f' hx-get="{escape(tag_suggest_url)}"'
+            f' hx-trigger="focus, keyup[key!=\'Enter\'] changed delay:200ms"'
             f' hx-target="#{escape(list_id)}" hx-swap="innerHTML"'
             f' hx-include="this">'
             f'<datalist id="{escape(list_id)}"></datalist>'
@@ -183,21 +205,17 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
 
     if detail and not no_header:
         detail_id = getattr(detail, "id", "") or ""
-
-        # Breadcrumb: workspace > date > ID
-        ws = fmt_workspace(getattr(detail, "workspace_path", None))
-        ts_date = fmt_timestamp(getattr(detail, "started_at", None))
-        crumbs = []
-        if ws:
-            crumbs.append(f'<span class="workspace">{escape(ws)}</span>')
-        if ts_date:
-            crumbs.append(f'<span class="temporal">{escape(ts_date.split(" ")[0])}</span>')
-        crumbs.append(f'<span class="identifier">{escape(detail_id[:12])}</span>')
-        breadcrumb = '<nav class="breadcrumb">' + " ".join(crumbs) + "</nav>"
+        detail_base = context.get("detail_base", "")
+        export_base = context.get("export_base_url", "")
 
         parts.append('<header class="conversation-header">')
-        parts.append(breadcrumb)
 
+        # Row 1: toolbar — fidelity controls (left) + export (right)
+        if controls:
+            parts.append(_render_controls(controls, detail_base, export_base))
+
+        # Row 2: sticky info bar — date · model · tokens · id
+        # Matches list table column vocabulary
         meta = []
         ts = fmt_timestamp(getattr(detail, "started_at", None))
         if ts:
@@ -216,10 +234,11 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
             meta.append(
                 f'<span class="metric">{escape(fmt_tokens(total_tokens))} tokens</span>'
             )
+        meta.append(f'<span class="identifier">{escape(detail_id[:12])}</span>')
 
-        if meta:
-            parts.append(f'<div class="meta">{" ".join(meta)}</div>')
+        parts.append(f'<div class="detail-info-bar">{" ".join(meta)}</div>')
 
+        # Row 3: tags
         tags = getattr(detail, "tags", None) or []
         interactive = context.get("interactive_tags", False)
         parts.append(_render_tag_section(
@@ -227,9 +246,7 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
             tag_action_url=context.get("tag_action_url", ""),
             tag_suggest_url=context.get("tag_suggest_url", ""),
         ))
-        if controls:
-            detail_base = context.get("detail_base", "")
-            parts.append(_render_controls(controls, detail_base))
+
         parts.append("</header>")
 
     for turn in turns:

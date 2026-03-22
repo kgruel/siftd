@@ -39,8 +39,10 @@ from siftd.api.doctor import (
     run_checks,
 )
 from siftd.api.export import (
+    ExportArtifact,
     ExportedConversation,
     export_conversations,
+    export_document,
 )
 from siftd.api.file_refs import (
     FileRef,
@@ -249,6 +251,8 @@ __all__ = [
     "group_tool_search_results",
     "search_tool_calls",
     # export
+    "ExportArtifact",
     "ExportedConversation",
     "export_conversations",
+    "export_document",
 ]
