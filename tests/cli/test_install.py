@@ -4,8 +4,19 @@ import os
 import stat
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 
-from siftd.cli.install import _find_plugin_source, _install_plugin, _install_skill
+from siftd.cli.install import (
+    _editable_source_url,
+    _find_plugin_source,
+    _install_commands,
+    _install_plugin,
+    _install_skill,
+    _run_extra_install,
+    cmd_install,
+    detect_install_method,
+    install_hint,
+)
 
 
 def _make_args(dry_run=False, scope="user") -> Namespace:
@@ -285,3 +296,132 @@ class TestInstallSkill:
         rc = _install_skill(_make_skill_args(harness="nonexistent"))
 
         assert rc == 1
+
+
+class TestInstallHelpers:
+    def test_editable_source_url_parsing(self, monkeypatch):
+        class _Dist:
+            def read_text(self, name):
+                assert name == "direct_url.json"
+                return '{"url":"file:///tmp/src","dir_info":{"editable":true}}'
+
+        monkeypatch.setattr("siftd.cli.install.distribution", lambda name: _Dist())
+        assert _editable_source_url() == "file:///tmp/src"
+
+        class _BadDist:
+            def read_text(self, name):
+                return "{bad"
+
+        monkeypatch.setattr("siftd.cli.install.distribution", lambda name: _BadDist())
+        assert _editable_source_url() is None
+
+    def test_detect_install_method_variants(self, monkeypatch):
+        monkeypatch.setattr("siftd.cli.install._editable_source_url", lambda: None)
+        monkeypatch.setattr("siftd.cli.install.sys.prefix", "/x/uv/tools/y")
+        assert detect_install_method() == "uv_tool"
+
+        monkeypatch.setattr("siftd.cli.install._editable_source_url", lambda: "file:///src")
+        assert detect_install_method() == "uv_tool_editable"
+
+        monkeypatch.setattr("siftd.cli.install.sys.prefix", "/x/pipx/venvs/y")
+        monkeypatch.setattr("siftd.cli.install._editable_source_url", lambda: None)
+        assert detect_install_method() == "pipx"
+
+        monkeypatch.setattr("siftd.cli.install.sys.prefix", "/opt/homebrew/Cellar/siftd")
+        assert detect_install_method() == "brew"
+
+    def test_install_hint_and_commands(self, monkeypatch):
+        monkeypatch.setattr("siftd.cli.install.detect_install_method", lambda: "editable")
+        monkeypatch.setattr("siftd.cli.install._pip_cmd", lambda: "pip")
+        assert "pip install -e" in install_hint("embed")
+
+        monkeypatch.setattr("siftd.cli.install.detect_install_method", lambda: "uv_tool_editable")
+        monkeypatch.setattr("siftd.cli.install._editable_source_url", lambda: "file:///tmp/src")
+        assert "uv tool install -e '/tmp/src[embed]'" in install_hint("embed")
+
+        cmds = _install_commands("serve", source_path="/tmp/src")
+        assert "uv_tool_editable" in cmds
+        assert cmds["pip_user"][0] in {"uv", "pip"}
+
+    def test_run_extra_install_paths(self, monkeypatch, capsys):
+        args = SimpleNamespace(dry_run=False)
+
+        rc = _run_extra_install(
+            args,
+            "embed",
+            is_installed=lambda: True,
+            already_msg="already",
+            success_msg="ok",
+        )
+        assert rc == 0
+
+        monkeypatch.setattr("siftd.cli.install.detect_install_method", lambda: "unknown")
+        rc = _run_extra_install(
+            args,
+            "embed",
+            is_installed=lambda: False,
+            already_msg="already",
+            success_msg="ok",
+        )
+        assert rc == 1
+
+        monkeypatch.setattr("siftd.cli.install.detect_install_method", lambda: "editable")
+        monkeypatch.setattr("siftd.cli.install._editable_source_url", lambda: "")
+        rc = _run_extra_install(
+            args,
+            "embed",
+            is_installed=lambda: False,
+            already_msg="already",
+            success_msg="ok",
+        )
+        assert rc == 1
+
+        monkeypatch.setattr("siftd.cli.install.detect_install_method", lambda: "pip_venv")
+        monkeypatch.setattr("siftd.cli.install.install_hint", lambda extra: "pip install x")
+        monkeypatch.setattr("siftd.cli.install._install_commands", lambda extra, source_path=None: {"pip_venv": ["pip", "install", "x"]})
+
+        class _Res:
+            returncode = 2
+
+        monkeypatch.setattr("siftd.cli.install.subprocess.run", lambda *a, **k: _Res())
+        rc = _run_extra_install(
+            args,
+            "embed",
+            is_installed=lambda: False,
+            already_msg="already",
+            success_msg="ok",
+        )
+        assert rc == 2
+
+        monkeypatch.setattr("siftd.cli.install.subprocess.run", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
+        monkeypatch.setattr("siftd.cli.install._install_commands", lambda extra, source_path=None: {"pip_venv": ["uv"]})
+        rc = _run_extra_install(
+            args,
+            "embed",
+            is_installed=lambda: False,
+            already_msg="already",
+            success_msg="ok",
+        )
+        assert rc == 1
+        assert "not found" in capsys.readouterr().out
+
+    def test_cmd_install_help_and_unknown(self, capsys):
+        rc = cmd_install(SimpleNamespace(extra=None))
+        assert rc == 0
+        assert "Available components" in capsys.readouterr().out
+
+        rc = cmd_install(SimpleNamespace(extra="nope"))
+        assert rc == 1
+
+    def test_find_plugin_source_editable_fallback(self, monkeypatch, tmp_path):
+        fake_repo = tmp_path / "repo"
+        (fake_repo / "plugin").mkdir(parents=True)
+
+        class _Dist:
+            def read_text(self, name):
+                return '{"url":"file://' + str(fake_repo) + '"}'
+
+        monkeypatch.setattr("siftd.cli.install.detect_install_method", lambda: "editable")
+        monkeypatch.setattr("siftd.cli.install.distribution", lambda name: _Dist())
+        monkeypatch.setattr("siftd.cli.install.importlib.resources.as_file", lambda ref: __import__("contextlib").nullcontext(tmp_path / "missing"))
+        assert _find_plugin_source() == fake_repo / "plugin"
