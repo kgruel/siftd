@@ -1,53 +1,34 @@
-# Autoresearch Ideas — Current State (CLI sweep)
+# Autoresearch Ideas — Current State
 
-## Recently completed
+## Recently completed (100%)
 
-### `api/sync.py` — ✅ 100%
-- 296/296 covered, miss 0
-
-### `cli/db.py` — ✅ 100%
-- 398/398 covered, miss 0
-
-### `cli/search.py` (no-embed benchmark scope) — ✅ 100%
-- 400/400 covered, miss 0
-
-### `cli/data.py` — ✅ 100%
-- 674/674 covered, miss 0
-
-### `cli/install.py` — ✅ 100%
-- 303/303 covered, miss 0
-
-### `cli/meta.py` — ✅ 100%
-- 229/229 covered, miss 0
-
-### `cli/query.py` — ✅ 100%
-- 287/287 covered, miss 0
-
-### `cli/peek.py` — ✅ 100%
-- 214/214 covered, miss 0
-
-### `cli/tool_search.py` — ✅ 100%
-- 157/157 covered, miss 0
-
-### `cli/upgrade.py` — ✅ 100%
-- 135/135 covered, miss 0
+- `api/sync.py` (296/296)
+- `cli/db.py` (398/398)
+- `cli/search.py` no-embed lane (400/400)
+- `cli/data.py` (674/674)
+- `cli/install.py` (303/303)
+- `cli/meta.py` (229/229)
+- `cli/query.py` (287/287)
+- `cli/peek.py` (214/214)
+- `cli/tool_search.py` (157/157)
+- `cli/upgrade.py` (135/135)
+- `cli/export.py` (55/55)
 
 ## Pruned stale ideas
-- ❌ "next target: cli/search" (done)
-- ❌ "next target: cli/data" (done)
-- ❌ "next target: cli/install" (done)
-- ❌ "next target: cli/meta" (done)
-- ❌ "next target: cli/query" (done)
-- ❌ "next target: cli/peek" (done)
-- ❌ "next target: cli/tool_search" (done)
-- ❌ "next target: cli/upgrade" (done)
+
+- Removed all prior "next target" entries for completed CLI modules above.
 
 ## Highest ROI next targets
 
-### 1) `cli/export.py`
-- Remaining practical CLI surface for deterministic branch gains
+### 1) `cli/tags.py`
+- Still has meaningful uncovered branch surface in full-suite coverage snapshot.
+- Existing `tests/cli/test_tags.py` gives a practical lane to step up quickly.
 
-## De-prioritized for now
-- `serve/*`, `embeddings/*` marker/runtime-heavy paths
-- `adapters/template.py` example code
-- brittle terminal-only defensive branches unless they block practical milestones
+### 2) `output/*` formatter edge branches (if still not saturated on current branch)
+### 3) targeted `api/*` deterministic leaf modules
+
+## De-prioritized
+
+- `serve/*`, `embeddings/*` (marker/runtime heavy)
+- `adapters/template.py` (example code)
+- brittle terminal/TTY-only defensive branches unless they block practical milestones

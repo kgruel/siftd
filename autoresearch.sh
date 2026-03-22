@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# CLI export coverage efficiency benchmark
+# CLI tags coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.cli.export"
-TEST_FILES="tests/test_export.py"
+INCLUDE_ARGS="--cov=siftd.cli.tags"
+TEST_FILES="tests/cli/test_tags.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

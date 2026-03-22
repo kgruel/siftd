@@ -36,7 +36,7 @@ if errors:
     for e in errors:
         print(f'  {e}')
     sys.exit(1)
-" tests/test_export.py
+" tests/cli/test_tags.py
 
 # Lint
-uv run python -m ruff check tests/test_export.py 2>&1 | tail -10
+uv run python -m ruff check tests/cli/test_tags.py 2>&1 | tail -10

@@ -1,11 +1,9 @@
 """Tests for siftd tag CLI command (apply, remove, list, rename, delete)."""
 
-import pytest
 
 from siftd.cli import main
 from siftd.cli.tags import _parse_tag_args
 from siftd.storage.sqlite import open_database
-
 
 # ---------------------------------------------------------------------------
 # _parse_tag_args
