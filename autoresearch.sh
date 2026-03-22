@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# CLI sessions coverage efficiency benchmark
+# Output format registry coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.cli.sessions"
-TEST_FILES="tests/cli/test_sessions_cli.py"
+INCLUDE_ARGS="--cov=siftd.output.format_registry"
+TEST_FILES="tests/test_output_format_registry.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

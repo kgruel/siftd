@@ -14,19 +14,20 @@
 - `cli/upgrade.py` (135/135)
 - `cli/export.py` (55/55)
 - `cli/tags.py` (426/426)
+- `cli/sessions.py` (50/50) — step-down complete (efficiency improved to 0.25)
 
 ## Pruned stale ideas
 
-- Removed stale `cli/tags.py` target after saturation.
+- Removed stale `cli/tags.py` and `cli/sessions.py` targets after saturation.
 - Removed completed CLI sweep leftovers; keep only unsaturated post-CLI lanes.
 
 ## Highest ROI next targets
 
-### 1) `cli/sessions.py`
-- Small deterministic CLI leaf with practical branch edges (state file vs DB fallback).
-- New focused lane: `tests/cli/test_sessions_cli.py`.
+### 1) `output/format_registry.py`
+- Currently has deterministic fallback/empty-registry branches worth covering.
+- Focused lane: `tests/test_output_format_registry.py`.
 
-### 2) `output/*` formatter edge branches (if still not saturated on current branch)
+### 2) other `output/*` formatter edge branches (if still not saturated)
 ### 3) targeted `api/*` deterministic leaf modules
 
 ## De-prioritized
