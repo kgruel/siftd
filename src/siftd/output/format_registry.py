@@ -47,7 +47,7 @@ class OutputFormat(Protocol):
     name: str
     media_type: str
 
-    def render_detail(self, turns: list, fidelity: Fidelity, **context: Any) -> Any: ...
+    def render_detail(self, result: Any, fidelity: Fidelity, **context: Any) -> Any: ...
 
 
 def _get_name(module: ModuleType) -> str:
@@ -56,9 +56,9 @@ def _get_name(module: ModuleType) -> str:
 
 def _load_builtin_formats() -> list[PluginInfo]:
     """Load built-in output format modules."""
-    from siftd.output import json_fmt, markdown_fmt, terminal_fmt
+    from siftd.output import html_fmt, json_fmt, markdown_fmt, terminal_fmt
 
-    builtins = [terminal_fmt, markdown_fmt, json_fmt]
+    builtins = [terminal_fmt, markdown_fmt, json_fmt, html_fmt]
     return [
         PluginInfo(
             name=getattr(m, "name", m.__name__.split(".")[-1]),

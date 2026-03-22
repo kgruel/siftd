@@ -10,7 +10,7 @@ each normalize into an Operation. The dispatch loop executes and renders it.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +31,9 @@ class Operation:
             "search", "stats", or "raw" (passthrough).
         fidelity: Rendering depth/visibility controls.
         db: Resolved database path (for serve delegation db_path matching).
+        render_context: Extra kwargs forwarded to the format renderer
+            (e.g. detail_base, shell_base, query). Input-context concern —
+            the caller knows what its link bases and UI controls are.
     """
 
     path: str
@@ -40,6 +43,7 @@ class Operation:
     render_method: str
     fidelity: Fidelity
     db: Path
+    render_context: dict[str, Any] = field(default_factory=dict)
 
 
 # Keys that are serve routing, not fn kwargs.
@@ -71,7 +75,7 @@ def render(result: Any, op: Operation, *, fmt: Any) -> Any:
     if renderer is None:
         return result
 
-    return renderer(result, op.fidelity)
+    return renderer(result, op.fidelity, **op.render_context)
 
 
 def dispatch(op: Operation, *, fmt: Any) -> Any:

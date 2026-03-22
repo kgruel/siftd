@@ -1,11 +1,16 @@
 """Export API for siftd.
 
-Fetches and prepares conversations for export. Rendering is handled by
-the output format system (markdown_fmt, json_fmt, etc.).
+Fetches and prepares conversations for export.
+
+export_conversations: returns raw ExportedConversation objects for programmatic use.
+export_document: produces a complete serialized artifact (markdown or JSON document).
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from siftd.api.conversations import (
     ConversationDetail,
@@ -13,6 +18,9 @@ from siftd.api.conversations import (
     get_conversation,
     list_conversations,
 )
+
+if TYPE_CHECKING:
+    from painted import Fidelity
 
 
 @dataclass
@@ -108,4 +116,98 @@ def _detail_to_export(detail: ConversationDetail) -> ExportedConversation:
         turns=detail.turns,
         tags=detail.tags,
         total_tokens=detail.total_input_tokens + detail.total_output_tokens,
+    )
+
+
+@dataclass
+class ExportArtifact:
+    """A complete, serialized export document ready to serve or write."""
+
+    content: str
+    media_type: str
+    filename: str
+    count: int
+
+
+def export_document(
+    *,
+    format: str = "md",
+    fidelity: Fidelity | None = None,
+    no_header: bool = False,
+    id: list[str] | None = None,
+    last: int | None = None,
+    n: int = 0,
+    workspace: str | None = None,
+    tag: list[str] | None = None,
+    no_tag: list[str] | None = None,
+    since: str | None = None,
+    before: str | None = None,
+    search: str | None = None,
+    db_path: Path | None = None,
+    include_thinking: bool = True,
+    include_tool_content: bool = False,
+    owner: str | None = None,
+) -> ExportArtifact:
+    """Export conversations as a complete document.
+
+    Selects conversations, serializes them via the appropriate formatter,
+    and returns a ready-to-serve artifact. The format choice is an export
+    parameter, not a render-time decision.
+
+    Args:
+        format: Output format — "md" (markdown) or "json".
+        fidelity: Rendering fidelity. Defaults to full (show everything).
+        no_header: Omit per-conversation metadata headers.
+        Other args: passed through to export_conversations.
+
+    Returns:
+        ExportArtifact with serialized content, media_type, and filename.
+    """
+    if fidelity is None:
+        from painted import Fidelity as F
+
+        fidelity = F(visible={"text", "thinking", "tools"}, depth=3, chars=0)
+
+    conversations = export_conversations(
+        id=id, last=last, n=n, workspace=workspace, tag=tag,
+        no_tag=no_tag, since=since, before=before, search=search,
+        db_path=db_path, include_thinking=include_thinking,
+        include_tool_content=include_tool_content, owner=owner,
+    )
+
+    if format == "json":
+        import json
+
+        from siftd.output import json_fmt
+
+        sections = [
+            json_fmt.render_detail(conv, fidelity, no_header=no_header)
+            for conv in conversations
+        ]
+        content = json.dumps(sections, indent=2)
+        media_type = "application/json"
+        ext = "json"
+    else:
+        from siftd.output import markdown_fmt
+
+        sections = [
+            markdown_fmt.render_detail(conv, fidelity, no_header=no_header)
+            for conv in conversations
+        ]
+        content = "\n\n---\n\n".join(sections) if len(sections) > 1 else (sections[0] if sections else "")
+        media_type = "text/markdown"
+        ext = "md"
+
+    # Build a descriptive filename
+    if conversations and len(conversations) == 1:
+        slug = conversations[0].id[:12]
+        filename = f"siftd-{slug}.{ext}"
+    else:
+        filename = f"siftd-export-{len(conversations)}.{ext}"
+
+    return ExportArtifact(
+        content=content,
+        media_type=media_type,
+        filename=filename,
+        count=len(conversations),
     )

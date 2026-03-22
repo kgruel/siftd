@@ -85,7 +85,7 @@ class TestShellExecutePresenter:
         lines = _render([block])
         text = "\n".join(lines)
         assert "exit: 0" in text
-        assert "wall: 1.5s" in text
+        assert "1.5s" in text  # format: bare seconds without label
 
     def test_error_result_styling(self):
         block = _tool_block(

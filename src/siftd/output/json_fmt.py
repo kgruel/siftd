@@ -15,19 +15,24 @@ name = "json"
 media_type = "application/json"
 
 
-def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> dict:
+def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> dict:
     """Render conversation detail as a dict.
+
+    Args:
+        result: ConversationDetail object, or raw turns list (backward compat).
 
     Returns a dict (not a JSON string) so callers can compose
     (e.g. wrapping multiple conversations in an array for export).
     Caller serializes with json.dumps().
-
-    Context keys:
-        detail: conversation metadata object (ConversationDetail or ExportedConversation)
     """
     from siftd.serialization.conversations import serialize_conversation_detail
 
-    detail = context.get("detail")
+    if hasattr(result, "turns"):
+        detail = result
+        turns = context.get("turns", detail.turns)
+    else:
+        turns = result
+        detail = context.get("detail")
     if detail is not None:
         return serialize_conversation_detail(detail, fidelity=fidelity)
 
