@@ -146,6 +146,7 @@ def export_document(
     db_path: Path | None = None,
     include_thinking: bool = True,
     include_tool_content: bool = False,
+    owner: str | None = None,
 ) -> ExportArtifact:
     """Export conversations as a complete document.
 
@@ -171,7 +172,7 @@ def export_document(
         id=id, last=last, n=n, workspace=workspace, tag=tag,
         no_tag=no_tag, since=since, before=before, search=search,
         db_path=db_path, include_thinking=include_thinking,
-        include_tool_content=include_tool_content,
+        include_tool_content=include_tool_content, owner=owner,
     )
 
     if format == "json":

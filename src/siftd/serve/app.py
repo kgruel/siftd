@@ -20,6 +20,7 @@ from siftd.serve.html_routes import (
     ui_stats,
     ui_tag,
     ui_tags_suggest,
+    ui_tools,
 )
 from siftd.serve.routes import (
     conversation_detail,
@@ -75,7 +76,7 @@ def create_app(
             tag_write_route, tags_route, tool_search_route, export_route,
             push, pull, conversation_detail, conversation_list, search_route,
             ui_shell, ui_meta, ui_query, ui_search, ui_peek, ui_follow, ui_stats,
-            ui_tag, ui_tags_suggest, ui_export,
+            ui_tag, ui_tags_suggest, ui_tools, ui_export,
             static_router,
         ],
         dependencies={

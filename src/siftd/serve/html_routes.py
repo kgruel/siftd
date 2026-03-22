@@ -110,6 +110,7 @@ def _page_shell(
   <a href="/ui" hx-get="/ui/query" hx-target="#list" hx-push-url="/ui"
     hx-on::before-request="document.querySelectorAll('#filters select,#filters input').forEach(e=>e.value='')">Recent</a>
   <a href="#" hx-get="/ui/peek" hx-target="#list">Live</a>
+  <a href="#" hx-get="/ui/tools" hx-target="#list">Tools</a>
   <a href="#" hx-get="/ui/stats" hx-target="#detail" hx-swap="innerHTML">Stats</a>
   <button class="density-toggle" onclick="document.body.classList.toggle('compact')" title="Toggle compact mode">Compact</button>
 </nav>
@@ -247,6 +248,11 @@ async def ui_meta(db_path: Path) -> Response:
         _select("workspace", "workspaces", ws_opts),
         _select("model", "models", model_opts),
         _select("tag", "tags", tag_opts),
+        (
+            '<input type="text" name="owner" placeholder="Owner"'
+            ' hx-get="/ui/query" hx-target="#list" hx-trigger="change"'
+            ' hx-include="#filters" class="filter-input">'
+        ),
         _date("since", "Since"),
         _date("before", "Before"),
     ]
@@ -262,6 +268,7 @@ async def ui_query(
     model: str | None = Parameter(query="model", default=None),
     tag: list[str] | None = Parameter(query="tag", default=None),
     search: str | None = Parameter(query="search", default=None),
+    owner: str | None = Parameter(query="owner", default=None),
     n: int = Parameter(query="n", default=50),
     id: str | None = Parameter(query="id", default=None),
     # Fidelity controls (detail view)
@@ -281,6 +288,7 @@ async def ui_query(
     search = search or None
     since = since or None
     before = before or None
+    owner = owner or None
     tag = [t for t in (tag or []) if t] or None
 
     fmt = get_format("html")
@@ -336,6 +344,7 @@ async def ui_query(
             "before": before,
             "search": search,
             "tag": tag,
+            "owner": owner,
             "n": n,
         },
         render_method="list",
@@ -638,6 +647,100 @@ async def ui_stats(db_path: Path) -> Response:
         by_workspace=by_workspace,
     )
     return _html_response(html)
+
+
+# ---------------------------------------------------------------------------
+# Tool search
+# ---------------------------------------------------------------------------
+
+
+@get("/ui/tools", opt={"no_auth": True})
+async def ui_tools(
+    db_path: Path,
+    q: str = Parameter(query="q", default=""),
+    n: int = Parameter(query="n", default=30),
+) -> Response:
+    """Tool call search — list pane view with inline search input."""
+    from html import escape
+
+    from siftd.api.dispatch import Operation, execute
+    from siftd.api.tool_search import search_tool_calls
+    from siftd.output.common import fmt_timestamp, fmt_workspace
+
+    # Search input (always shown)
+    input_html = (
+        '<div class="tool-search-bar">'
+        f'<input type="search" name="q" value="{escape(q)}" placeholder="Search tool calls..."'
+        f' hx-get="/ui/tools" hx-target="#list" hx-trigger="keyup changed delay:300ms"'
+        f' hx-include="this" class="tool-search-input">'
+        '</div>'
+    )
+
+    if not q.strip():
+        return _html_response(
+            input_html
+            + '<p class="empty">Search tool calls by file path, command, pattern, or content</p>'
+        )
+
+    op = Operation(
+        path="/v1/tool-search",
+        method="GET",
+        fn=search_tool_calls,
+        params={"q": q, "db_path": db_path, "n": n},
+        render_method="raw",
+        fidelity=_fidelity(),
+        db=db_path,
+    )
+
+    try:
+        results = execute(op)
+    except Exception:
+        return _html_response(
+            input_html + f'<p class="empty">No results for: {escape(q)}</p>'
+        )
+
+    if not results:
+        return _html_response(
+            input_html + f'<p class="empty">No results for: {escape(q)}</p>'
+        )
+
+    # Group by conversation
+    from siftd.api.tool_search import group_tool_search_results
+
+    groups = group_tool_search_results(results)
+
+    parts = [input_html]
+    parts.append(f'<p class="tool-search-count">{len(results)} calls in {len(groups)} conversations</p>')
+    parts.append('<table class="conversation-list">')
+    parts.append(
+        "<thead><tr>"
+        '<th class="temporal">Time</th>'
+        '<th class="workspace">Workspace</th>'
+        '<th class="tool-name">Tools</th>'
+        '<th class="metric">Calls</th>'
+        "</tr></thead><tbody>"
+    )
+
+    detail_base = "/ui/query"
+    shell_base = "/ui"
+    for g in groups:
+        cid = g.conversation_id
+        ts = fmt_timestamp(g.first_timestamp) if g.first_timestamp else ""
+        ws = fmt_workspace(g.workspace_path)
+        tool_list = ", ".join(g.tool_names[:5])
+        if len(g.tool_names) > 5:
+            tool_list += f" +{len(g.tool_names) - 5}"
+        parts.append(
+            f"<tr{_hx_detail(detail_base, cid, shell_base)}>"
+            f'<td class="temporal">{escape(ts)}</td>'
+            f'<td class="workspace">{escape(ws)}</td>'
+            f'<td class="tool-name">{escape(tool_list)}</td>'
+            f'<td class="metric">{g.tool_call_count}</td>'
+            f"</tr>"
+        )
+
+    parts.append("</tbody></table>")
+    return _html_response("\n".join(parts))
 
 
 # ---------------------------------------------------------------------------

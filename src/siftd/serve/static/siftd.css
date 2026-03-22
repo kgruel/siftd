@@ -238,6 +238,17 @@ main {
   outline: none;
 }
 
+#filters .filter-input {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 0.15rem 0.3rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 0.75em;
+  width: 6em;
+}
+
 #filters input[type="date"] {
   background: var(--bg);
   color: var(--fg);
@@ -343,6 +354,23 @@ main {
   color: var(--accent);
   border-color: var(--accent-dim);
 }
+
+/* Tool search */
+.tool-search-bar { padding: var(--space-sm) 0; }
+.tool-search-input {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 0.9em;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.tool-search-input:focus { border-color: var(--accent); outline: none; }
+.tool-search-count { color: var(--muted); font-size: 0.8em; margin: var(--space-xs) 0; }
+
 .adapter { color: var(--muted); }
 .summary { color: var(--fg-secondary); }
 .prompt { color: var(--accent); }
