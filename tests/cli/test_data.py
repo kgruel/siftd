@@ -3,9 +3,11 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 from conftest import FIXTURES_DIR
 
+import siftd.cli.data as data_cli
 from siftd.cli import main
 from siftd.cli.data import _AdapterCounts, _IngestJsonRenderer, _IngestTextRenderer
 
@@ -557,3 +559,148 @@ class TestCmdDoctor:
         assert rc == 0
         out = capsys.readouterr().out
         assert "ingest-pending" in out
+
+
+class TestDataDirectBranches:
+    def test_copy_query_and_formatter_branches(self, monkeypatch, capsys):
+        monkeypatch.setattr("siftd.api.list_builtin_queries", lambda: [])
+        rc = data_cli.cmd_copy(SimpleNamespace(resource_type="query", name=None, force=False, all=True))
+        assert rc == 1
+
+        monkeypatch.setattr("siftd.api.list_builtin_queries", lambda: ["cost"])
+        monkeypatch.setattr("siftd.api.copy_query", lambda n, force=False: f"/tmp/{n}.sql")
+        rc = data_cli.cmd_copy(SimpleNamespace(resource_type="query", name=None, force=False, all=False))
+        assert rc == 1
+        assert "Available queries" in capsys.readouterr().out
+
+        rc = data_cli.cmd_copy(SimpleNamespace(resource_type="query", name="cost", force=False, all=False))
+        assert rc == 0
+
+        monkeypatch.setattr("siftd.api.list_builtin_formatters", lambda: [])
+        rc = data_cli.cmd_copy(SimpleNamespace(resource_type="formatter", name=None, force=False, all=True))
+        assert rc == 1
+
+        monkeypatch.setattr("siftd.api.list_builtin_formatters", lambda: ["markdown"])
+        monkeypatch.setattr("siftd.api.copy_formatter", lambda n, force=False: f"/tmp/{n}.py")
+        rc = data_cli.cmd_copy(SimpleNamespace(resource_type="formatter", name="markdown", force=False, all=False))
+        assert rc == 0
+
+        rc = data_cli.cmd_copy(SimpleNamespace(resource_type="unknown", name=None, force=False, all=False))
+        assert rc == 1
+
+    def test_doctor_fix_paths_and_registry_fixes(self, test_db, monkeypatch, capsys):
+        monkeypatch.setattr("siftd.doctor.fixes.load_findings_cache", lambda: [])
+        rc = data_cli._doctor_fix(SimpleNamespace(db=str(test_db)))
+        assert rc == 1
+
+        monkeypatch.setattr("siftd.doctor.fixes.load_findings_cache", lambda: [{"fix_command": "unknown"}])
+        monkeypatch.setattr("siftd.doctor.fixes.clear_findings_cache", lambda: None)
+        monkeypatch.setattr("siftd.api.open_database", lambda *_a, **_k: SimpleNamespace(close=lambda: None))
+        rc = data_cli._doctor_fix(SimpleNamespace(db=str(test_db)))
+        assert rc == 0
+
+        # _fix helpers
+        monkeypatch.setattr("siftd.adapters.registry.load_all_adapters", lambda: [SimpleNamespace(module="m")])
+        monkeypatch.setattr("siftd.ingestion.orchestration.ingest_all", lambda conn, mods: SimpleNamespace(files_ingested=1, files_skipped=2))
+        assert "1 file" in data_cli._fix_ingest(object(), Path("/d"))
+
+        monkeypatch.setattr("siftd.api.search.rebuild_fts_index", lambda conn: None)
+        assert "FTS index rebuilt" in data_cli._fix_rebuild_fts(object(), Path("/d"))
+
+        monkeypatch.setattr("siftd.api.search.build_index", lambda **k: {"chunks_added": 3})
+        assert "3 chunk" in data_cli._fix_search_index(object(), Path("/d"))
+        assert "3 chunk" in data_cli._fix_search_rebuild(object(), Path("/d"))
+
+        monkeypatch.setattr("siftd.api.migrations.migrate_blobs", lambda conn: {"migrated": 2, "blobs_created": 4})
+        assert "2 result" in data_cli._fix_migrate_blobs(object(), Path("/d"))
+
+        monkeypatch.setattr("siftd.api.migrations.backfill_git_remotes", lambda conn: {"updated": 5})
+        assert "5 workspace" in data_cli._fix_backfill_git_remote(object(), Path("/d"))
+
+        monkeypatch.setattr("siftd.api.migrations.merge_duplicate_workspaces", lambda conn: {"workspaces_merged": 6})
+        assert "6 workspace" in data_cli._fix_merge_workspaces(object(), Path("/d"))
+
+        monkeypatch.setattr("siftd.api.sessions.cleanup_stale_sessions", lambda *_a, **_k: (7, 8))
+        assert "7 session" in data_cli._fix_pending_tags(object(), Path("/d"))
+
+    def test_doctor_run_json_plain_and_painted_error_paths(self, test_db, monkeypatch):
+        args = SimpleNamespace(db=str(test_db), json=False, strict=False)
+
+        monkeypatch.setattr("siftd.api.run_checks", lambda **k: (_ for _ in ()).throw(FileNotFoundError("missing")))
+        assert data_cli._doctor_run_json(args, None, False, Path(test_db)) == 1
+        assert data_cli._doctor_run_plain(args, None, False, Path(test_db)) == 1
+
+        monkeypatch.setattr("siftd.api.run_checks", lambda **k: (_ for _ in ()).throw(ValueError("bad")))
+        assert data_cli._doctor_run_json(args, None, False, Path(test_db)) == 1
+        assert data_cli._doctor_run_plain(args, None, False, Path(test_db)) == 1
+
+        class _R:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return False
+
+            def render(self, *_a, **_k):
+                return None
+
+            def finalize(self, *_a, **_k):
+                return None
+
+        class _Theme:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, *_a):
+                return False
+
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "painted",
+            SimpleNamespace(InPlaceRenderer=_R, use_theme=lambda *_a, **_k: _Theme()),
+        )
+        monkeypatch.setattr("siftd.api.list_checks", lambda: [SimpleNamespace(name="c1")])
+        monkeypatch.setattr("siftd.doctor.view.render_progress_block", lambda *_a, **_k: "blk")
+        monkeypatch.setitem(__import__("sys").modules, "siftd.output.theme", SimpleNamespace(siftd_theme=object()))
+        monkeypatch.setattr("siftd.api.run_checks", lambda **k: [])
+        monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda findings: None)
+        assert data_cli._doctor_run_painted(args, ["c1"], False, Path(test_db)) == 0
+
+    def test_migrate_merge_verbose_and_dry_run_outputs(self, test_db, monkeypatch, capsys):
+        monkeypatch.setattr(
+            "siftd.api.migrations.backfill_git_remotes",
+            lambda conn, on_progress, dry_run: (on_progress("progress"), {"checked": 1, "updated": 1, "skipped_missing": 0, "skipped_no_git": 0})[1],
+        )
+        monkeypatch.setattr("siftd.api.migrations.verify_workspace_identity", lambda conn: {"duplicate_groups": 1, "duplicate_workspaces": 2, "total": 2, "with_remote": 1, "without_remote": 1})
+        monkeypatch.setattr("siftd.api.migrations.merge_duplicate_workspaces", lambda conn, on_progress, dry_run: (on_progress("merging"), {"workspaces_merged": 1, "conversations_moved": 2})[1])
+        rc = main(["--db", str(test_db), "migrate", "--merge-workspaces", "--dry-run", "-v"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "progress" in out and "Would merge" in out
+
+        monkeypatch.setattr("siftd.api.migrations.verify_workspace_identity", lambda conn: {"duplicate_groups": 0, "duplicate_workspaces": 0, "total": 1, "with_remote": 1, "without_remote": 0})
+        rc = main(["--db", str(test_db), "migrate", "--merge-workspaces"])
+        assert rc == 0
+
+    def test_ingest_and_backfill_remaining_branches(self, test_db, monkeypatch, capsys):
+        # cmd_ingest: unmatched adapter in json mode
+        monkeypatch.setattr("siftd.adapters.registry.load_all_adapters", lambda: [])
+        monkeypatch.setattr("siftd.api.create_database", lambda db: SimpleNamespace(close=lambda: None))
+        monkeypatch.setattr("siftd.paths.ensure_dirs", lambda: None)
+        rc = main(["--db", str(test_db), "ingest", "--json", "--adapter", "nope"])
+        assert rc == 1
+
+        # cmd_backfill: shell-tags, derivative-tags, and filter-binary error/notice prints
+        monkeypatch.setattr("siftd.backfill.backfill_shell_tags", lambda conn: {"git": 2})
+        rc = main(["--db", str(test_db), "backfill", "--shell-tags"])
+        assert rc == 0
+
+        monkeypatch.setattr("siftd.backfill.backfill_derivative_tags", lambda conn: 1)
+        rc = main(["--db", str(test_db), "backfill", "--derivative-tags"])
+        assert rc == 0
+
+        monkeypatch.setattr("siftd.backfill.backfill_filter_binary", lambda conn, dry_run=False: {"filtered": 1, "skipped": 0, "errors": 2})
+        rc = main(["--db", str(test_db), "backfill", "--filter-binary", "--dry-run"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Errors" in out and "Run without --dry-run" in out
