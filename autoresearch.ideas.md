@@ -29,6 +29,9 @@
 ### `cli/tool_search.py` — ✅ 100%
 - 157/157 covered, miss 0
 
+### `cli/upgrade.py` — ✅ 100%
+- 135/135 covered, miss 0
+
 ## Pruned stale ideas
 - ❌ "next target: cli/search" (done)
 - ❌ "next target: cli/data" (done)
@@ -37,14 +40,12 @@
 - ❌ "next target: cli/query" (done)
 - ❌ "next target: cli/peek" (done)
 - ❌ "next target: cli/tool_search" (done)
+- ❌ "next target: cli/upgrade" (done)
 
 ## Highest ROI next targets
 
-### 1) `cli/upgrade.py`
-- Small deterministic CLI surface; good candidate for quick saturation
-
-### 2) `cli/export.py`
-- Likely next practical CLI branch target after upgrade
+### 1) `cli/export.py`
+- Remaining practical CLI surface for deterministic branch gains
 
 ## De-prioritized for now
 - `serve/*`, `embeddings/*` marker/runtime-heavy paths

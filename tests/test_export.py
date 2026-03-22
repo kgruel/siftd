@@ -3,7 +3,6 @@
 import json
 
 import pytest
-
 from painted import Fidelity
 
 from siftd.api import (
