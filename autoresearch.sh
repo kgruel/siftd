@@ -8,7 +8,7 @@ set -euo pipefail
 # Timing/LOC are measured from sync-specific test files only.
 
 INCLUDE_ARGS="--cov=siftd.api.sync"
-TEST_FILES="tests/test_sync.py tests/test_sync_transport.py"
+TEST_FILES="tests/test_sync.py"
 
 # Quick pre-check
 for f in $TEST_FILES; do

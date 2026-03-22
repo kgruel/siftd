@@ -375,8 +375,10 @@ class TestPullLocalAndHttp:
 class _Conn:
     def __init__(self, result):
         self._result = result
+        self.runs = []
 
-    async def run(self, *_a, **_kw):
+    async def run(self, *args, **kwargs):
+        self.runs.append((args, kwargs))
         return self._result
 
     async def __aenter__(self):
@@ -473,6 +475,66 @@ class TestSshErrorAndEdgePaths:
         monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, rebuild_fts=True: got.append((s, d)))
         conv, size = asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, None, False))
         assert conv == 1 and size == 3 and got
+
+    def test_push_ssh_timeout_generic_and_nonzero(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+        slice_path = tmp_path / "slice.db"
+        slice_path.write_bytes(b"db")
+
+        def _timeout(*_a, **_kw):
+            raise TimeoutError()
+
+        monkeypatch.setattr("siftd.api.sync.asyncssh.connect", _timeout)
+        with pytest.raises(SyncError, match="timed out"):
+            asyncio.run(_push_ssh(_remote(host="box"), slice_path))
+
+        def _oserr(*_a, **_kw):
+            raise OSError("Connection refused")
+
+        monkeypatch.setattr("siftd.api.sync.asyncssh.connect", _oserr)
+        with pytest.raises(SyncError, match="running"):
+            asyncio.run(_push_ssh(_remote(host="box"), slice_path))
+
+        conn = _Conn(SimpleNamespace(returncode=1, stdout="", stderr="bad remote"))
+        monkeypatch.setattr("siftd.api.sync.asyncssh.connect", lambda *_a, **_kw: conn)
+        with pytest.raises(SyncError, match="Remote error"):
+            asyncio.run(_push_ssh(_remote(host="box"), slice_path))
+
+    def test_push_ssh_created_response(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+        conn = _Conn(SimpleNamespace(returncode=0, stdout='{"status":"created"}', stderr=""))
+        monkeypatch.setattr("siftd.api.sync.asyncssh.connect", lambda *_a, **_kw: conn)
+        slice_path = tmp_path / "slice.db"
+        slice_path.write_bytes(b"db")
+        assert asyncio.run(_push_ssh(_remote(host="box"), slice_path)) is False
+
+    def test_pull_ssh_since_workspace_zero_and_dry_run(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+
+        conn = _Conn(SimpleNamespace(returncode=0, stdout="", stderr='{"conversations":0}'))
+        monkeypatch.setattr("siftd.api.sync.asyncssh.connect", lambda *_a, **_kw: conn)
+        assert asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), "2024-01", "proj", True)) == (0, 0)
+        cmd = conn.runs[0][0][0]
+        assert "--since" in cmd and "-w" in cmd
+
+        conn2 = _Conn(SimpleNamespace(returncode=0, stdout="abc", stderr='{"conversations":1}'))
+        monkeypatch.setattr("siftd.api.sync.asyncssh.connect", lambda *_a, **_kw: conn2)
+        conv, size = asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, None, True))
+        assert conv == 1 and size == 3
+
+    def test_pull_ssh_generic_oserror(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+
+        def _boom(*_a, **_kw):
+            raise OSError("Connection refused")
+
+        monkeypatch.setattr("siftd.api.sync.asyncssh.connect", _boom)
+        with pytest.raises(SyncError, match="running"):
+            asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, None, True))
 
 
 class TestPullHttpAuthAndStatus:
