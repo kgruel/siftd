@@ -1,7 +1,8 @@
 """Tests for siftd.math module."""
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from siftd.math import cosine_similarity, cosine_similarity_batch
 

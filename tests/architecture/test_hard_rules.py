@@ -479,3 +479,141 @@ def test_no_raw_sql_in_cli_modules(src_dir):
             "Use API/storage helpers instead:\n"
             + "\n".join(violations)
         )
+
+
+# =============================================================================
+# 7. Schema Stability
+# =============================================================================
+
+
+class TestSchemaStability:
+    """Database schema produced by open_database must match expected structure.
+
+    Rationale: Schema changes affect migrations, queries, and adapters.
+    Breaking changes to table/column names must be deliberate. These tests
+    catch accidental renames, drops, or missing migration steps.
+    """
+
+    @pytest.fixture()
+    def db(self, tmp_path):
+        """Create a fresh database with full migration chain applied."""
+        from siftd.storage.sqlite import open_database
+
+        db_path = tmp_path / "schema_test.db"
+        conn = open_database(db_path)
+        yield conn
+        conn.close()
+
+    def _table_names(self, db) -> set[str]:
+        rows = db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+        return {r[0] for r in rows}
+
+    def _virtual_table_names(self, db) -> set[str]:
+        rows = db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND sql LIKE '%VIRTUAL%'"
+        ).fetchall()
+        # FTS5 creates shadow tables (*_content, *_data, etc); only return the root
+        return {r[0] for r in rows if not any(r[0].endswith(s) for s in ("_content", "_data", "_idx", "_docsize", "_config"))}
+
+    def _columns_of(self, db, table: str) -> set[str]:
+        rows = db.execute(f"PRAGMA table_info({table})").fetchall()
+        return {r[1] for r in rows}
+
+    # -- Tables ---------------------------------------------------------------
+
+    # Core tables from schema.sql
+    EXPECTED_TABLES = {
+        # Vocabulary
+        "harnesses",
+        "models",
+        "providers",
+        "tools",
+        "tool_aliases",
+        "pricing",
+        "workspaces",
+        # Core
+        "conversations",
+        "prompts",
+        "responses",
+        "tool_calls",
+        # Content
+        "prompt_content",
+        "response_content",
+        "content_blobs",
+        # Attributes
+        "conversation_attributes",
+        "prompt_attributes",
+        "response_attributes",
+        "tool_call_attributes",
+        # Tags
+        "tags",
+        "workspace_tags",
+        "conversation_tags",
+        "tool_call_tags",
+        # Operational
+        "ingested_files",
+        # Migration-ensured
+        "conversation_stats",
+        "active_sessions",
+        "pending_tags",
+        "prompt_tags",
+        "conversation_owners",
+        # FTS5 virtual table (shows as type='table' in sqlite_master)
+        "content_fts",
+    }
+
+    def test_expected_tables_exist(self, db):
+        """All expected tables must be present after open_database."""
+        actual = self._table_names(db)
+        missing = self.EXPECTED_TABLES - actual
+        if missing:
+            pytest.fail(f"Missing tables: {sorted(missing)}")
+
+    def test_no_unexpected_tables_without_review(self, db):
+        """New tables should be added to EXPECTED_TABLES to track them.
+
+        If this test fails, a migration added a table. Add it to
+        EXPECTED_TABLES above so future renames are caught.
+        """
+        actual = self._table_names(db)
+        # Exclude FTS shadow tables (content_fts_*)
+        filtered = {t for t in actual if not t.startswith("content_fts_")}
+        unexpected = filtered - self.EXPECTED_TABLES
+        if unexpected:
+            pytest.fail(
+                f"Untracked tables found: {sorted(unexpected)}. "
+                "Add them to TestSchemaStability.EXPECTED_TABLES."
+            )
+
+    def test_fts5_virtual_table_exists(self, db):
+        """The FTS5 full-text search index must exist."""
+        rows = db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts'"
+        ).fetchall()
+        assert len(rows) == 1, "content_fts virtual table not found"
+
+    # -- Key columns on critical tables ---------------------------------------
+
+    CRITICAL_COLUMNS = {
+        "conversations": {"id", "external_id", "harness_id", "workspace_id", "started_at", "branch"},
+        "responses": {"id", "conversation_id", "prompt_id", "model_id", "provider_id", "timestamp", "input_tokens", "output_tokens"},
+        "prompts": {"id", "conversation_id", "timestamp"},
+        "tool_calls": {"id", "response_id", "conversation_id", "tool_id", "result_hash", "status"},
+        "content_blobs": {"hash", "content", "ref_count", "created_at"},
+        "tags": {"id", "name", "created_at"},
+        "ingested_files": {"id", "path", "file_hash", "harness_id", "conversation_id", "error", "file_mtime", "file_size"},
+        "models": {"id", "raw_name", "name", "family", "variant"},
+    }
+
+    def test_critical_columns_exist(self, db):
+        """Key columns on critical tables must be present."""
+        violations = []
+        for table, expected_cols in self.CRITICAL_COLUMNS.items():
+            actual_cols = self._columns_of(db, table)
+            missing = expected_cols - actual_cols
+            if missing:
+                violations.append(f"{table}: missing {sorted(missing)}")
+        if violations:
+            pytest.fail("Missing columns on critical tables:\n" + "\n".join(violations))

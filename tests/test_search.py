@@ -1,5 +1,6 @@
 """Tests for search module."""
 
+import pytest
 
 from siftd.search import ScoreBreakdown, apply_temporal_weight, mmr_rerank
 
@@ -20,6 +21,7 @@ class TestScoreBreakdown:
         assert "pre_mmr_score" in d
 
 
+@pytest.mark.embeddings
 class TestApplyTemporalWeight:
     def test_empty_results(self):
         assert apply_temporal_weight([], {}) == []
@@ -63,6 +65,7 @@ class TestApplyTemporalWeight:
         assert weighted[0]["score"] == 0.8  # unchanged, error caught
 
 
+@pytest.mark.embeddings
 class TestMMRRerank:
     def test_empty(self):
         assert mmr_rerank([], [0.1, 0.2]) == []
