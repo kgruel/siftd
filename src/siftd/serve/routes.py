@@ -248,6 +248,7 @@ async def tool_search_route(
     all_tags: list[str] | None = Parameter(query="all_tags", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
     n: int = Parameter(query="n", default=20),
+    owner: str | None = Parameter(query="owner", default=None),
 ) -> dict:
     """Search tool calls via FTS."""
     from siftd.api.tool_search import search_tool_calls
@@ -256,7 +257,7 @@ async def tool_search_route(
         "/v1/tool-search", "GET", search_tool_calls,
         {"q": q, "db_path": db_path, "n": n, "workspace": workspace, "model": model,
          "since": since, "before": before, "tag": tag, "all_tags": all_tags,
-         "no_tag": no_tag, "tool": tool, "tool_tag": tool_tag},
+         "no_tag": no_tag, "tool": tool, "tool_tag": tool_tag, "owner": owner},
         "tool_search", db_path,
     )
 
