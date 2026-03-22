@@ -12,6 +12,7 @@ import pytest
 # Architecture groups (layered, lowest → highest):
 # - domain: pure data models (no internal dependencies)
 # - utilities: shared helpers (paths, ids, config, git, plugin discovery, math)
+# - serialization: domain → dict transforms (narrative walker, JSON shapes)
 # - content: content filters + built-in query templates
 # - storage: SQLite access and migrations
 # - embeddings: vector index & similarity operations
@@ -27,6 +28,7 @@ import pytest
 ALLOWED_DEPS: dict[str, list[str]] = {
     "domain": [],
     "utilities": [],
+    "serialization": ["domain", "utilities"],
     "content": [],
     "storage": ["domain", "content", "utilities"],
     "embeddings": ["domain", "storage", "utilities"],
@@ -34,13 +36,14 @@ ALLOWED_DEPS: dict[str, list[str]] = {
     "ingestion": ["domain", "storage", "adapters", "content", "utilities"],
     "peek": ["domain", "adapters", "utilities"],
     "search": ["domain", "storage", "embeddings", "peek", "utilities"],
-    "output": ["domain", "storage", "search", "utilities", "content"],
+    "output": ["domain", "storage", "search", "serialization", "utilities", "content"],
     "doctor": ["domain", "storage", "adapters", "embeddings", "output", "utilities"],
-    "serve": ["domain", "storage", "search", "api", "utilities"],
+    "serve": ["domain", "storage", "search", "serialization", "api", "utilities"],
     "api": [
         "domain",
         "storage",
         "search",
+        "serialization",
         "peek",
         "doctor",
         "ingestion",
@@ -57,6 +60,7 @@ ALLOWED_DEPS: dict[str, list[str]] = {
 # CLI modules are handled via prefix in group_for_module().
 MODULE_GROUPS: dict[str, str] = {
     "domain": "domain",
+    "serialization": "serialization",
     "storage": "storage",
     "api": "api",
     "search": "search",

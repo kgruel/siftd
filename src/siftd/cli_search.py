@@ -7,13 +7,12 @@ Supports three modes:
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 from typing import cast
-from urllib.parse import urlparse
 
 from siftd.cli_common import apply_config_defaults, resolve_db
+from siftd.cli_filters import extract_filter_args
 from siftd.paths import embeddings_db_path
 
 
@@ -42,101 +41,11 @@ def _print_empty_json_results(args, query: str, db: Path) -> None:
         print(result)
 
 
-def _parse_bool_like(value: str | None) -> bool | None:
-    if value is None:
-        return None
-    v = value.strip().lower()
-    if v in ("1", "true", "yes", "y", "on"):
-        return True
-    if v in ("0", "false", "no", "n", "off"):
-        return False
-    return None
-
-
-def _serve_delegation_enabled() -> bool:
-    env = _parse_bool_like(os.environ.get("SIFTD_SERVE_DELEGATE"))
-    if env is not None:
-        return env
-
-    try:
-        from siftd.config import get_config
-    except Exception:
-        return True
-
-    cfg = _parse_bool_like(get_config("search.serve_delegate"))
-    return True if cfg is None else cfg
-
-
-def _is_loopback_url(base_url: str) -> bool:
-    try:
-        host = (urlparse(base_url).hostname or "").lower()
-    except Exception:
-        return False
-    return host in ("127.0.0.1", "localhost", "::1")
-
-
-def _resolve_serve_base_url() -> tuple[str, bool]:
-    """Resolve siftd-serve base URL.
-
-    Returns (base_url, explicit) where explicit means it came from SIFTD_SERVE_URL
-    or config `serve.url` (as opposed to the localhost default fallback).
-    """
-    try:
-        from siftd.config import get_config
-    except Exception:
-        get_config = None  # type: ignore[assignment]
-
-    env_url = os.environ.get("SIFTD_SERVE_URL")
-    if env_url:
-        return env_url, True
-
-    if get_config is not None:
-        cfg_url = get_config("serve.url")
-        if cfg_url:
-            return cfg_url, True
-
-    port = 8484
-    port_from_config = False
-    if get_config is not None:
-        port_cfg = get_config("serve.port")
-        if port_cfg:
-            try:
-                port = int(port_cfg)
-                port_from_config = True
-            except (ValueError, TypeError):
-                pass
-
-    # Runtime fallback: only consult the state file when serve.port is NOT
-    # configured, so config remains authoritative over stale/other state files.
-    if not port_from_config:
-        import json
-
-        from siftd.paths import state_dir
-
-        serve_state = state_dir() / "serve.json"
-        try:
-            data = json.loads(serve_state.read_text())
-            pid = data.get("pid")
-            if isinstance(pid, int):
-                os.kill(pid, 0)  # raises OSError if process doesn't exist
-                state_port = data.get("port")
-                if isinstance(state_port, int):
-                    port = state_port
-        except (OSError, json.JSONDecodeError, KeyError, TypeError):
-            pass
-
-    return f"http://127.0.0.1:{port}", False
-
-
 def _can_delegate_to_serve(args, *, db: Path, embed_db: Path) -> bool:
     """Conservatively decide whether it's safe to delegate to siftd-serve."""
-    if not _serve_delegation_enabled():
-        return False
+    from siftd.serve.delegation import can_delegate
 
-    base_url, explicit = _resolve_serve_base_url()
-
-    # Only auto-delegate to loopback to keep the cold-path probe bounded (<10ms).
-    if not explicit and not _is_loopback_url(base_url):
+    if not can_delegate(db=db):
         return False
 
     # Embeddings DB overrides are not supported over HTTP.
@@ -146,110 +55,6 @@ def _can_delegate_to_serve(args, *, db: Path, embed_db: Path) -> bool:
 
     return True
 
-
-def _delegate_search_via_serve(
-    args,
-    *,
-    query: str,
-    n: int,
-    embeddings_only: bool,
-    rerank: str,
-    exclude_active: bool,
-    db: Path,
-) -> list[dict] | None:
-    """Try to run semantic/hybrid search via siftd-serve; return results or None."""
-    base_url, explicit = _resolve_serve_base_url()
-
-    from siftd.serve.client import probe_health
-    from siftd.serve.client import search as serve_search
-
-    try:
-        probe_timeout = 0.5 if explicit else 0.02
-        health = probe_health(base_url=base_url, timeout_s=probe_timeout)
-    except Exception:
-        return None
-
-    served_db_path = health.get("db_path")
-    if not isinstance(served_db_path, str):
-        return None
-    if served_db_path != str(db.resolve()):
-        return None
-
-    params: dict[str, object] = {
-        "q": query,
-        "n": n,
-        "workspace": getattr(args, "workspace", None),
-        "since": getattr(args, "since", None),
-        "before": getattr(args, "before", None),
-        "model": getattr(args, "model", None),
-        "recall": getattr(args, "recall", 80),
-        "embeddings_only": embeddings_only,
-        "exclude_active": exclude_active,
-        "rerank": rerank,
-        "lambda": getattr(args, "lambda_", 0.7),
-        "recency": getattr(args, "recency", False),
-        "recency_half_life": getattr(args, "recency_half_life", 30.0),
-        "recency_max_boost": getattr(args, "recency_max_boost", 1.15),
-        "backend": getattr(args, "backend", None),
-        "tag": getattr(args, "tag", None),
-        "all_tags": getattr(args, "all_tags", None),
-        "no_tag": getattr(args, "no_tag", None),
-        "include_derivative": getattr(args, "include_derivative", False),
-    }
-    params = {k: v for k, v in params.items() if v is not None}
-
-    try:
-        body = serve_search(base_url=base_url, params=params, timeout_s=1.0)
-    except Exception:
-        return None
-
-    raw_results = body.get("results")
-    if not isinstance(raw_results, list):
-        return None
-
-    from siftd.search import ScoreBreakdown
-
-    results: list[dict] = []
-    for r in raw_results:
-        if not isinstance(r, dict):
-            continue
-        conv_id = r.get("conversation_id")
-        score = r.get("score")
-        text = r.get("text")
-        chunk_type = r.get("chunk_type")
-        if not isinstance(conv_id, str) or not isinstance(score, (int, float)) or not isinstance(text, str) or not isinstance(chunk_type, str):
-            continue
-
-        breakdown_obj = None
-        breakdown = r.get("breakdown")
-        if isinstance(breakdown, dict) and "embedding_sim" in breakdown:
-            try:
-                breakdown_obj = ScoreBreakdown(
-                    embedding_sim=float(breakdown.get("embedding_sim", 0.0)),
-                    recency_boost=float(breakdown.get("recency_boost", 1.0)),
-                    pre_mmr_score=breakdown.get("pre_mmr_score"),
-                    mmr_penalty=breakdown.get("mmr_penalty"),
-                    mmr_rank=breakdown.get("mmr_rank"),
-                    final_score=breakdown.get("final_score"),
-                    fts5_matched=bool(breakdown.get("fts5_matched", False)),
-                    fts5_mode=breakdown.get("fts5_mode"),
-                )
-            except Exception:
-                breakdown_obj = None
-
-        results.append(
-            {
-                "chunk_id": r.get("chunk_id"),
-                "conversation_id": conv_id,
-                "chunk_type": chunk_type,
-                "text": text,
-                "score": float(score),
-                "source_ids": r.get("source_ids") or [],
-                "breakdown": breakdown_obj,
-            }
-        )
-
-    return results
 
 
 def _fetch_search_metadata(conn, results):
@@ -376,7 +181,6 @@ def _enrich_context(conn, results, n):
 def cmd_search(args) -> int:
     """Unified search over conversations — auto-selects FTS5 or semantic based on availability."""
     from siftd.api import open_database
-    from siftd.api.search import open_embeddings_db, search_similar
 
     # Apply config defaults before processing
     from siftd.config import get_search_defaults
@@ -419,6 +223,9 @@ def cmd_search(args) -> int:
     if args.json and args.thread:
         print("Note: --thread is ignored with --json output", file=sys.stderr)
 
+    # Extract standard filters once for delegation and candidate resolution
+    filters = extract_filter_args(args)
+
     # Determine search mode: FTS5-only, semantic-only, or hybrid
     use_fts = getattr(args, "fts", False)
     use_semantic = getattr(args, "semantic", False)
@@ -430,220 +237,104 @@ def cmd_search(args) -> int:
 
     # --fts mode: pure FTS5, no embeddings required
     if use_fts:
-        return _search_fts_only(args, db, query)
+        return _search_fts_only(args, db, query, filters)
 
     # --semantic mode: force embeddings-only (no FTS5 recall), error if unavailable
     if use_semantic:
         # Force embeddings-only mode (skip FTS5 recall)
         args.embeddings_only = True
 
-    # Prefer delegating semantic/hybrid search to a running siftd-serve (warm caches).
+    # Determine search mode — check embeddings availability
+    has_embeddings = embeddings_available() and embed_db.exists()
+
+    if use_semantic:
+        # --semantic: require embeddings, error if unavailable
+        if not embeddings_available():
+            print("Semantic search requires the [embed] extra.", file=sys.stderr)
+            print()
+            print("Install with:")
+            print("  siftd install embed")
+            return 1
+        if not embed_db.exists():
+            print("No embeddings index found.")
+            print("Run 'siftd search --index' to build it.")
+            return 1
+        search_mode = "semantic"
+    elif not has_embeddings:
+        # Auto-fallback to FTS with hint
+        if embeddings_available() and not embed_db.exists():
+            print("[FTS5 mode - embeddings index not built: siftd search --index]", file=sys.stderr)
+        else:
+            print("[FTS5 mode - for semantic search: siftd install embed]", file=sys.stderr)
+        search_mode = "fts"
+    else:
+        search_mode = "hybrid"
+
+    # Widen limit for modes that aggregate or filter post-hoc
+    widened_limit = args.limit
+    if args.thread:
+        widened_limit = max(args.limit, 40)
+    elif args.first or args.conversations:
+        widened_limit = max(args.limit * 10, 100)
+
+    from siftd.api.dispatch import Operation, execute
+    from siftd.api.search import hybrid_search
+    from siftd.cli_common import fidelity_from_args
+    from siftd.serve.delegation import try_serve
+
+    fidelity = fidelity_from_args(args)
+    rerank = "mmr" if not args.no_diversity else "relevance"
+
+    op = Operation(
+        path="/v1/search",
+        method="GET",
+        fn=hybrid_search,
+        params={
+            "q": query,
+            "db_path": db,
+            "embed_db": embed_db,
+            "n": widened_limit,
+            "mode": search_mode,
+            "workspace": filters.workspace,
+            "model": filters.model,
+            "since": filters.since,
+            "before": filters.before,
+            "tag": filters.tag,
+            "all_tags": filters.all_tags,
+            "no_tag": filters.no_tag,
+            "exclude_active": not args.no_exclude_active,
+            "include_derivative": args.include_derivative,
+            "recall": args.recall,
+            "rerank": rerank,
+            "lambda_": args.lambda_,
+            "recency": args.recency,
+            "recency_half_life": args.recency_half_life,
+            "recency_max_boost": args.recency_max_boost,
+            "backend": args.backend,
+            # Serve-only: route uses embeddings_only instead of mode
+            "embeddings_only": search_mode == "semantic",
+        },
+        render_method="search",
+        fidelity=fidelity,
+        db=db,
+    )
+
+    # Try serve delegation (warm caches, embeddings loaded)
+    # Skip for FTS mode (serve does hybrid/semantic) and custom --embed-db
     results: list[dict] | None = None
-    if _can_delegate_to_serve(args, db=db, embed_db=embed_db):
-        use_mmr = not args.no_diversity
-        widened = args.limit
-        if args.thread:
-            widened = max(args.limit, 40)
-        elif args.first or args.conversations:
-            widened = max(args.limit * 10, 100)
-        n_for_server = widened if not use_mmr else widened  # widened pool is handled server-side for MMR
-        results = _delegate_search_via_serve(
-            args,
-            query=query,
-            n=n_for_server,
-            embeddings_only=bool(getattr(args, "embeddings_only", False)),
-            rerank="mmr" if use_mmr else "relevance",
-            exclude_active=not args.no_exclude_active,
-            db=db,
-        )
+    if search_mode != "fts" and _can_delegate_to_serve(args, db=db, embed_db=embed_db):
+        results = try_serve(op)
 
+    # Local execution
     if results is None:
-        # Check embeddings availability for auto-selection
-        has_embeddings = embeddings_available() and embed_db.exists()
-
-        # --semantic mode: require local deps/index when not delegating
-        if use_semantic:
-            if not embeddings_available():
-                print("Semantic search requires the [embed] extra.", file=sys.stderr)
-                print()
-                print("Install with:")
-                print("  siftd install embed")
-                return 1
-            if not embed_db.exists():
-                print("No embeddings index found.")
-                print("Run 'siftd search --index' to build it.")
-                return 1
-
-        # Auto-selection: fall back to FTS5 if embeddings not fully available
-        if not has_embeddings and not use_semantic:
-            # Distinguish between "deps not installed" and "index missing"
-            if embeddings_available() and not embed_db.exists():
-                print("[FTS5 mode - embeddings index not built: siftd search --index]", file=sys.stderr)
-            else:
-                print("[FTS5 mode - for semantic search: siftd install embed]", file=sys.stderr)
-            return _search_fts_only(args, db, query)
-
-        # Resolve backend for query embedding
-        from siftd.embeddings import get_backend
         try:
-            backend = get_backend(preferred=args.backend, verbose=True)
+            results = execute(op)
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
-
-        # Compose filters: get candidate conversation IDs from main DB
-        from siftd.api import DERIVATIVE_TAG
-        from siftd.search import filter_conversations, get_active_conversation_ids
-
-        exclude_tags = list(getattr(args, "no_tag", None) or [])
-        if not args.include_derivative:
-            exclude_tags.append(DERIVATIVE_TAG)
-
-        candidate_ids = filter_conversations(
-            db,
-            workspace=args.workspace,
-            model=args.model,
-            since=args.since,
-            before=args.before,
-            tags=getattr(args, "tag", None),
-            all_tags=getattr(args, "all_tags", None),
-            exclude_tags=exclude_tags or None,
-        )
-
-        # Exclude conversations from active sessions (unless opted out)
-        exclude_active_ids = set()
-        if not args.no_exclude_active:
-            exclude_active_ids = get_active_conversation_ids(db)
-            if exclude_active_ids:
-                if candidate_ids is not None:
-                    candidate_ids = candidate_ids - exclude_active_ids
-                else:
-                    from siftd.api.search import list_conversation_ids
-
-                    conn_tmp = open_database(db, read_only=True)
-                    all_ids = list_conversation_ids(conn_tmp)
-                    conn_tmp.close()
-                    candidate_ids = all_ids - exclude_active_ids
-
-        # Hybrid recall: FTS5 narrows candidates, embeddings rerank
-        fts5_ids: set[str] | None = None
-        fts5_mode: str | None = None
-        if not args.embeddings_only:
-            from siftd.api.search import fts5_recall_conversations
-
-            main_conn = open_database(db, read_only=True)
-            fts5_ids, fts5_mode = fts5_recall_conversations(main_conn, query, limit=args.recall)
-            main_conn.close()
-
-            if fts5_ids:
-                if candidate_ids is not None:
-                    intersected = fts5_ids & candidate_ids
-                    candidate_ids = intersected if intersected else candidate_ids
-                else:
-                    candidate_ids = fts5_ids
-            elif fts5_mode == "none":
-                print("FTS5 found no matches, falling back to pure embeddings.", file=sys.stderr)
-
-        if candidate_ids is not None and not candidate_ids:
-            if args.json:
-                _print_empty_json_results(args, query, db)
-            else:
-                print("No conversations match the given filters.")
-            return 0
-
-        # Embed query and search
-        use_mmr = not args.no_diversity
-        query_embedding = backend.embed_one(query)
-        embed_conn = open_embeddings_db(embed_db, read_only=True)
-
-        # Validate index compatibility before search
-        from siftd.api.search import IndexCompatError, validate_index_compat
-        from siftd.embeddings import SCHEMA_VERSION
-
-        try:
-            validate_index_compat(
-                embed_conn,
-                backend_name=backend.name,
-                backend_model=backend.model,
-                backend_dimension=backend.dimension,
-                current_schema_version=SCHEMA_VERSION,
-            )
-        except IndexCompatError as e:
-            embed_conn.close()
-            print(f"Error: {e}", file=sys.stderr)
-            return 1
-
-        # Widen initial search for modes that aggregate or filter post-hoc
-        search_limit = args.limit
-        if args.thread:
-            search_limit = max(args.limit, 40)
-        elif args.first or args.conversations:
-            search_limit = max(args.limit * 10, 100)
-        # Widen further for MMR to have candidates to diversify from
-        if use_mmr:
-            search_limit = max(search_limit * 3, search_limit)
-        try:
-            results = search_similar(
-                embed_conn,
-                query_embedding,
-                limit=search_limit,
-                conversation_ids=candidate_ids,
-                include_embeddings=use_mmr,
-            )
         except ValueError as e:
-            embed_conn.close()
             print(f"Error: {e}", file=sys.stderr)
             return 1
-        embed_conn.close()
-
-        if not results:
-            if args.json:
-                _print_empty_json_results(args, query, db)
-            else:
-                print(f"No results for: {query}")
-            return 0
-
-        # Update breakdown with FTS5 recall info
-        from siftd.search import ScoreBreakdown
-        for r in results:
-            if "breakdown" in r and isinstance(r["breakdown"], ScoreBreakdown):
-                breakdown = r["breakdown"]
-                if fts5_ids:
-                    breakdown.fts5_matched = r["conversation_id"] in fts5_ids
-                    breakdown.fts5_mode = fts5_mode if breakdown.fts5_matched else None
-                else:
-                    breakdown.fts5_matched = False
-                    breakdown.fts5_mode = None
-
-        # Apply temporal weighting if requested (before MMR so it affects reranking)
-        if args.recency and results:
-            from siftd.api.search import apply_temporal_weight, fetch_conversation_timestamps
-
-            conv_ids_for_ts = list({r["conversation_id"] for r in results})
-            ts_conn = open_database(db, read_only=True)
-            timestamps = fetch_conversation_timestamps(ts_conn, conv_ids_for_ts)
-            ts_conn.close()
-            results = apply_temporal_weight(
-                results,
-                timestamps,
-                half_life_days=args.recency_half_life,
-                max_boost=args.recency_max_boost,
-            )
-
-        # Apply MMR diversity reranking
-        if use_mmr and results:
-            from siftd.search import mmr_rerank
-            mmr_limit = args.limit
-            if args.thread:
-                mmr_limit = max(args.limit, 40)
-            elif args.first or args.conversations:
-                mmr_limit = max(args.limit * 10, 100)
-            results = mmr_rerank(
-                results,
-                query_embedding,
-                lambda_=args.lambda_,
-                limit=mmr_limit,
-            )
 
     if not results:
         if args.json:
@@ -705,11 +396,9 @@ def cmd_search(args) -> int:
 
     # Select output format and determine mode
 
-    from siftd.cli_common import fidelity_from_args
     from siftd.output.common import print_refs_content
     from siftd.output.format_registry import select_format
 
-    fidelity = fidelity_from_args(args)
     try:
         fmt = select_format(
             name=getattr(args, "format", None),
@@ -762,7 +451,7 @@ def cmd_search(args) -> int:
         if context_n is not None and mode == "chunks":
             _enrich_context(main_conn, results, context_n)
 
-        output = fmt.render_search(results, fidelity, **ctx_kwargs)
+        output = fmt.render_search(results, op.fidelity, **ctx_kwargs)
         from siftd.output.painted_bridge import emit_output
 
         emit_output(output)
@@ -787,13 +476,12 @@ def cmd_search(args) -> int:
     return 0
 
 
-def _search_fts_only(args, db: Path, query: str) -> int:
+def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     """FTS5-only search mode — keyword search without embeddings."""
     import sqlite3
 
-    from siftd.api import DERIVATIVE_TAG, open_database
+    from siftd.api import open_database
     from siftd.api.search import fts5_search_content
-    from siftd.search import filter_conversations, get_active_conversation_ids
 
     # Warn about flags that are ignored in FTS5-only mode
     unsupported_flags = []
@@ -821,35 +509,23 @@ def _search_fts_only(args, db: Path, query: str) -> int:
         print(f"WARNING: {flags_str} ignored in FTS5 mode (requires embeddings)", file=sys.stderr)
 
     # Compose filters
-    exclude_tags = list(getattr(args, "no_tag", None) or [])
-    if not args.include_derivative:
-        exclude_tags.append(DERIVATIVE_TAG)
+    if filters is None:
+        filters = extract_filter_args(args)
 
-    candidate_ids = filter_conversations(
+    from siftd.search import resolve_candidates
+
+    candidate_ids = resolve_candidates(
         db,
-        workspace=args.workspace,
-        model=args.model,
-        since=args.since,
-        before=args.before,
-        tags=getattr(args, "tag", None),
-        all_tags=getattr(args, "all_tags", None),
-        exclude_tags=exclude_tags or None,
+        workspace=filters.workspace,
+        model=filters.model,
+        since=filters.since,
+        before=filters.before,
+        tag=filters.tag,
+        all_tags=filters.all_tags,
+        no_tag=filters.no_tag,
+        exclude_active=not args.no_exclude_active,
+        include_derivative=args.include_derivative,
     )
-
-    # Exclude active sessions
-    exclude_active_ids = set()
-    if not args.no_exclude_active:
-        exclude_active_ids = get_active_conversation_ids(db)
-        if exclude_active_ids:
-            if candidate_ids is not None:
-                candidate_ids = candidate_ids - exclude_active_ids
-            else:
-                from siftd.api.search import list_conversation_ids
-
-                conn_tmp = open_database(db, read_only=True)
-                all_ids = list_conversation_ids(conn_tmp)
-                conn_tmp.close()
-                candidate_ids = all_ids - exclude_active_ids
 
     # Run FTS5 search
     conn = open_database(db, read_only=True)

@@ -370,6 +370,15 @@ def cmd_ingest(args) -> int:
     else:
         renderer.print_summary(stats)
     conn.close()
+
+    # Write stats cache — OS page cache is still warm so get_stats is cheap.
+    try:
+        from siftd.api.stats import get_stats, write_stats_cache
+
+        write_stats_cache(get_stats(db_path=db))
+    except Exception:
+        pass  # Cache write failure is never fatal
+
     return 0
 
 

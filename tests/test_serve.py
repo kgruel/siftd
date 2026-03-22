@@ -146,7 +146,7 @@ class TestQuery:
         )
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
-            resp = client.get("/v1/query")
+            resp = client.get("/v1/conversations")
         assert resp.status_code == 200
         body = resp.json()
         assert "conversations" in body
@@ -159,7 +159,7 @@ class TestQuery:
         )
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
-            resp = client.get("/v1/query", params={"n": 1})
+            resp = client.get("/v1/conversations", params={"n": 1})
         body = resp.json()
         assert len(body["conversations"]) == 1
 
@@ -171,14 +171,43 @@ class TestQuery:
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
             # First get the list to find the ID
-            resp = client.get("/v1/query")
+            resp = client.get("/v1/conversations")
             conv_id = resp.json()["conversations"][0]["id"]
             # Then get the detail
-            resp = client.get("/v1/query", params={"id": conv_id})
+            resp = client.get(f"/v1/conversations/{conv_id}")
         assert resp.status_code == 200
         body = resp.json()
         assert "conversation" in body
         assert body["conversation"]["id"] == conv_id
+
+
+class TestStats:
+    def test_stats_returns_counts(self, tmp_path):
+        team_db = _make_team_db(
+            tmp_path / "team.db",
+            conversations=[{"external_id": "c1"}, {"external_id": "c2"}],
+        )
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/v1/stats")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["counts"]["conversations"] == 2
+        assert body["counts"]["prompts"] == 2
+        assert body["counts"]["responses"] == 2
+        assert "models" in body
+        assert "top_workspaces" in body
+        assert "token_coverage" in body
+
+    def test_stats_on_empty_db(self, tmp_path):
+        db = tmp_path / "team.db"
+        create_database(db)
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/v1/stats")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["counts"]["conversations"] == 0
 
 
 class TestSearch:

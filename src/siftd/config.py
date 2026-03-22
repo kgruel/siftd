@@ -64,6 +64,7 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     _SchemaEntry("query.chars", "int", _is_int_like),
     _SchemaEntry("query.tool_chars", "int", _is_int_like),
     _SchemaEntry("ingestion.filter_binary", "bool", _is_bool_like),
+    _SchemaEntry("serve.delegate", "bool", _is_bool_like),
     _SchemaEntry("serve.url", "string", _is_str),
     _SchemaEntry("serve.db", "string", _is_str),
     _SchemaEntry("serve.host", "string", _is_str),

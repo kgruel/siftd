@@ -252,7 +252,7 @@ def test_hybrid_search_fts5_passthrough_is_opt_in(tmp_path):
         embeddings_only=False,
         exclude_active=False,
         include_derivative=True,
-        limit=3,
+        n=3,
         recall=80,
         fts5_passthrough=False,
     )
@@ -266,14 +266,14 @@ def test_hybrid_search_fts5_passthrough_is_opt_in(tmp_path):
         embeddings_only=False,
         exclude_active=False,
         include_derivative=True,
-        limit=3,
+        n=3,
         recall=80,
         fts5_passthrough=True,
     )
     assert len(passed) == 3
     assert all(r.chunk_type == "fts5" for r in passed)
 
-    # Passthrough only triggers when FTS5 can fill `limit`.
+    # Passthrough only triggers when FTS5 can fill `n`.
     not_enough = hybrid_search(
         "needle",
         db_path=db_path,
@@ -281,7 +281,7 @@ def test_hybrid_search_fts5_passthrough_is_opt_in(tmp_path):
         embeddings_only=False,
         exclude_active=False,
         include_derivative=True,
-        limit=4,
+        n=4,
         recall=80,
         fts5_passthrough=True,
     )

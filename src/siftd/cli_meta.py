@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from siftd.api import list_workspaces, open_database
+from siftd.api import list_workspaces
 from siftd.cli_common import resolve_db
 from siftd.paths import cache_dir, config_dir, config_file, data_dir, db_path
 
@@ -13,16 +13,47 @@ from siftd.paths import cache_dir, config_dir, config_file, data_dir, db_path
 def cmd_status(args) -> int:
     """Show database status and statistics."""
     from siftd.api import get_stats
+    from siftd.api.dispatch import Operation, execute
+    from siftd.api.stats import _dict_to_stats, read_stats_cache
     from siftd.output import fmt_timestamp
+    from siftd.serve.delegation import try_serve
 
     db = Path(args.db) if args.db else None
+    effective_db = db or db_path()
 
-    try:
-        stats = get_stats(db_path=db)
-    except FileNotFoundError as e:
-        print(str(e))
-        print("Run 'siftd ingest' to create it.")
-        return 1
+    # Fidelity not needed for stats rendering (no depth/visibility controls)
+    # but Operation requires it — use a minimal default.
+    from painted import Fidelity
+
+    op = Operation(
+        path="/v1/stats",
+        method="GET",
+        fn=get_stats,
+        params={"db_path": db},
+        render_method="stats",
+        fidelity=Fidelity(),
+        db=effective_db,
+    )
+
+    stats = None
+
+    # Tier 1: delegate to running server (DB already warm)
+    result = try_serve(op)
+    if result is not None:
+        stats = _dict_to_stats(result)
+
+    # Tier 2: read from cache (avoids 1.5s cold-open on large DBs)
+    if stats is None:
+        stats = read_stats_cache(db_path=db)
+
+    # Tier 3: local execution (cold-open fallback)
+    if stats is None:
+        try:
+            stats = execute(op)
+        except FileNotFoundError as e:
+            print(str(e))
+            print("Run 'siftd ingest' to create it.")
+            return 1
 
     # JSON output
     if args.json:
@@ -173,21 +204,45 @@ def cmd_status(args) -> int:
 
 def cmd_workspaces(args) -> int:
     """List workspaces with conversation counts."""
-    db = resolve_db(args)
+    from painted import Fidelity
+
+    from siftd.api.dispatch import Operation, execute
     from siftd.output import fmt_timestamp, fmt_workspace
+    from siftd.serve.delegation import try_serve
 
-    if not db.exists():
-        if args.json:
-            print("[]")
-            return 0
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
-        return 1
-
-    conn = open_database(db, read_only=True)
+    db = resolve_db(args)
     limit = args.limit if args.limit > 0 else 10000
-    rows = list_workspaces(conn, limit=limit)
-    conn.close()
+
+    op = Operation(
+        path="/v1/workspaces",
+        method="GET",
+        fn=list_workspaces,
+        params={"db_path": db, "n": limit},
+        render_method="raw",
+        fidelity=Fidelity(),
+        db=db,
+    )
+
+    rows = None
+
+    # Try serve delegation
+    result = try_serve(op)
+    if result is not None and isinstance(result, dict) and "workspaces" in result:
+        rows = [
+            {"path": w["path"], "convs": w["conversations"], "last_activity": w.get("last_activity")}
+            for w in result["workspaces"]
+        ]
+
+    if rows is None:
+        try:
+            rows = execute(op)
+        except FileNotFoundError as e:
+            if args.json:
+                print("[]")
+                return 0
+            print(str(e))
+            print("Run 'siftd ingest' to create it.")
+            return 1
 
     if args.json:
         out = [

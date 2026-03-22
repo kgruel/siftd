@@ -165,18 +165,18 @@ def _cmd_tag_list(args, db: Path) -> int:
 
         filters = extract_filter_args(args)
         # Merge the drill-down tag with any -l tags from filter args
-        filter_tags = filters.tags or []
+        filter_tags = filters.tag or []
         if tag_name not in filter_tags:
             filter_tags = [tag_name] + filter_tags
-        filters.tags = filter_tags
+        filters.tag = filter_tags
 
         limit = getattr(args, "limit", None) or 10
 
         try:
             filter_kwargs = asdict(filters)
-            filter_kwargs.pop("tags")  # pass explicitly below
+            filter_kwargs.pop("tag")  # pass explicitly below
             conversations = list_conversations(
-                db_path=db, tags=filters.tags, limit=limit, **filter_kwargs,
+                db_path=db, tag=filters.tag, n=limit, **filter_kwargs,
             )
         except FileNotFoundError as e:
             print(str(e))
@@ -207,14 +207,52 @@ def _cmd_tag_list(args, db: Path) -> int:
     # Default: list tags
     since = getattr(args, "since", None)
     before = getattr(args, "before", None)
-    tags = list_tags(conn=conn, since=since, before=before)
+
+    from painted import Fidelity
+
+    from siftd.api.dispatch import Operation, execute
+    from siftd.serve.delegation import try_serve
+
+    op = Operation(
+        path="/v1/tags",
+        method="GET",
+        fn=list_tags,
+        params={"db_path": db, "since": since, "before": before},
+        render_method="raw",
+        fidelity=Fidelity(),
+        db=db,
+    )
+
+    tags = None
+
+    # Try serve delegation
+    result = try_serve(op)
+    if result is not None and isinstance(result, dict) and "tags" in result:
+        from siftd.api.tags import TagInfo
+
+        conn.close()
+        tags = [
+            TagInfo(
+                name=t["name"],
+                description=t.get("description"),
+                created_at=t.get("created_at", ""),
+                conversation_count=t.get("conversation_count", 0),
+                workspace_count=t.get("workspace_count", 0),
+                tool_call_count=t.get("tool_call_count", 0),
+                prompt_count=t.get("prompt_count", 0),
+            )
+            for t in result["tags"]
+        ]
+
+    if tags is None:
+        conn.close()
+        tags = execute(op)
 
     if not tags:
         if since or before:
             print("No tags found in the specified time range.")
         else:
             print("No tags defined.")
-        conn.close()
         return 0
 
     # When filtering temporally, hide tags with zero counts in the window
@@ -222,7 +260,6 @@ def _cmd_tag_list(args, db: Path) -> int:
         tags = [t for t in tags if t.conversation_count or t.tool_call_count or t.workspace_count]
         if not tags:
             print("No tags found in the specified time range.")
-            conn.close()
             return 0
 
     prefix = getattr(args, "prefix", None)
@@ -230,7 +267,6 @@ def _cmd_tag_list(args, db: Path) -> int:
         tags = [t for t in tags if t.name.startswith(prefix)]
         if not tags:
             print(f"No tags found with prefix: {prefix}")
-            conn.close()
             return 0
 
     for tag in tags:
@@ -245,7 +281,6 @@ def _cmd_tag_list(args, db: Path) -> int:
         desc = f" - {tag.description}" if tag.description else ""
         print(f"  {tag.name}{desc}{count_str}")
 
-    conn.close()
     return 0
 
 
@@ -259,24 +294,48 @@ def _cmd_tag_rename(args, db: Path) -> int:
 
     old_name, new_name = positional[1], positional[2]
 
-    if not db.exists():
+    from painted import Fidelity
+
+    from siftd.api.dispatch import Operation, execute
+    from siftd.serve.delegation import try_serve
+
+    op = Operation(
+        path="/v1/tag",
+        method="POST",
+        fn=rename_tag,
+        params={
+            "action": "rename",
+            "old_name": old_name,
+            "new_name": new_name,
+            "db_path": db,
+        },
+        render_method="raw",
+        fidelity=Fidelity(),
+        db=db,
+    )
+
+    # Try serve delegation
+    result = try_serve(op)
+    if result is not None and isinstance(result, dict) and result.get("status") == "renamed":
+        print(f"Renamed '{old_name}' \u2192 '{new_name}'")
+        return 0
+
+    # Local execution
+    try:
+        success = execute(op)
+    except FileNotFoundError:
         print(f"Database not found: {db}")
         print("Run 'siftd ingest' to create it.")
         return 1
-
-    conn = open_database(db)
-    try:
-        if rename_tag(conn, old_name, new_name, commit=True):
-            print(f"Renamed '{old_name}' \u2192 '{new_name}'")
-        else:
-            print(f"Tag not found: {old_name}")
-            conn.close()
-            return 1
     except ValueError as e:
         print(f"Error: {e}")
-        conn.close()
         return 1
-    conn.close()
+
+    if success:
+        print(f"Renamed '{old_name}' \u2192 '{new_name}'")
+    else:
+        print(f"Tag not found: {old_name}")
+        return 1
     return 0
 
 
@@ -391,8 +450,59 @@ def cmd_tag(args) -> int:
         print("Run 'siftd ingest' to create it.")
         return 1
 
-    conn = open_database(db)
     removing = args.remove
+
+    # Normalize args into a POST body for delegation
+    from painted import Fidelity
+
+    from siftd.api.dispatch import Operation
+    from siftd.serve.delegation import try_serve
+
+    body: dict = {"action": "remove" if removing else "apply"}
+
+    if args.last is not None:
+        n = args.last
+        if isinstance(n, str):
+            try:
+                n = int(n)
+            except ValueError:
+                positional = [str(n)] + positional
+                n = 1
+        body["last"] = n
+        body["tags"] = [str(t) for t in positional]
+    elif positional:
+        parsed = _parse_tag_args(positional)
+        if parsed:
+            entity_type, entity_id, tag_names_parsed = parsed
+            body["entity_type"] = entity_type
+            body["entity_id"] = entity_id
+            body["tags"] = tag_names_parsed
+
+    if "tags" in body:
+        op = Operation(
+            path="/v1/tag",
+            method="POST",
+            fn=remove_tag if removing else apply_tag,
+            params={**body, "db_path": db},
+            render_method="raw",
+            fidelity=Fidelity(),
+            db=db,
+        )
+        result = try_serve(op)
+        if result is not None and isinstance(result, dict) and "error" not in result:
+            for r in result.get("results", []):
+                tag = r["tag"]
+                status = r["status"]
+                count = r.get("count", 0)
+                if status == "not_found":
+                    print(f"Tag '{tag}' not found")
+                elif status == "applied":
+                    print(f"Applied tag '{tag}' to {count} conversation(s)")
+                elif status == "removed":
+                    print(f"Removed tag '{tag}' from {count} conversation(s)")
+            return 0
+
+    conn = open_database(db)
 
     # Handle --last mode
     if args.last is not None:

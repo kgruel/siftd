@@ -1,9 +1,14 @@
 """Database statistics API."""
 
+import json
+import os
 import sqlite3
+import tempfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
+from siftd.paths import cache_dir
 from siftd.paths import db_path as default_db_path
 from siftd.storage.queries import (
     fetch_conversation_time_window,
@@ -164,19 +169,136 @@ def get_cost_coverage(conn: sqlite3.Connection) -> CostCoverage | None:
 
 
 def list_workspaces(
-    conn: sqlite3.Connection,
-    limit: int = 10,
+    conn: sqlite3.Connection | None = None,
+    n: int = 10,
+    *,
+    db_path: Path | None = None,
 ) -> list[sqlite3.Row]:
     """List workspaces with conversation counts.
 
     Args:
-        conn: Database connection.
-        limit: Maximum workspaces to return.
+        conn: Database connection. Opened from db_path if not provided.
+        n: Maximum workspaces to return.
+        db_path: Path to database. Ignored if conn provided.
 
     Returns:
         Rows with 'path' and 'convs' keys.
     """
-    return fetch_top_workspaces(conn, limit=limit)
+    should_close = False
+    if conn is None:
+        db = db_path or default_db_path()
+        conn = open_database(db, read_only=True)
+        should_close = True
+    try:
+        return fetch_top_workspaces(conn, limit=n)
+    finally:
+        if should_close:
+            conn.close()
+
+
+def stats_cache_path() -> Path:
+    """Return path to the stats cache file."""
+    return cache_dir() / "stats.json"
+
+
+def _stats_to_dict(stats: DatabaseStats) -> dict:
+    """Serialize DatabaseStats to a JSON-safe dict.
+
+    Delegates to serialization.stats.serialize_stats — the canonical
+    serializer. This wrapper kept for backward compatibility.
+    """
+    from siftd.serialization.stats import serialize_stats
+
+    return serialize_stats(stats)
+
+
+
+def _dict_to_stats(data: dict) -> DatabaseStats:
+    """Deserialize a JSON dict back to DatabaseStats."""
+    c = data["counts"]
+    tc = data["token_coverage"]
+    aw = data["activity_window"]
+
+    return DatabaseStats(
+        db_path=Path(data["db_path"]),
+        db_size_bytes=data["db_size_bytes"],
+        counts=TableCounts(**c),
+        harnesses=[
+            HarnessInfo(name=h["name"], source=h.get("source"), log_format=h.get("log_format"))
+            for h in data["harnesses"]
+        ],
+        harness_counts=[
+            HarnessCount(name=hc["name"], conversation_count=hc["conversation_count"])
+            for hc in data["harness_counts"]
+        ],
+        top_workspaces=[
+            WorkspaceStats(path=w["path"], conversation_count=w["conversation_count"], last_activity=w.get("last_activity"))
+            for w in data["top_workspaces"]
+        ],
+        models=data["models"],
+        top_tools=[ToolStats(name=t["name"], usage_count=t["usage_count"]) for t in data["top_tools"]],
+        top_tags=[TagStats(name=t["name"], count=t["count"]) for t in data["top_tags"]],
+        token_coverage=TokenCoverage(
+            responses=tc["responses"],
+            with_tokens=tc["with_tokens"],
+            pct_with_tokens=tc["pct_with_tokens"],
+            by_harness=[
+                TokenCoverageByHarness(name=h["name"], responses=h["responses"], with_tokens=h["with_tokens"], pct_with_tokens=h["pct_with_tokens"])
+                for h in tc["by_harness"]
+            ],
+        ),
+        activity_window=(aw[0], aw[1]),
+        last_ingest_at=data.get("last_ingest_at"),
+    )
+
+
+def write_stats_cache(stats: DatabaseStats) -> None:
+    """Atomically write stats to the cache file.
+
+    Includes db_mtime_ns for staleness detection and computed_at timestamp.
+    """
+    payload = {
+        "_meta": {
+            "computed_at": datetime.now(UTC).isoformat(),
+            "db_mtime_ns": stats.db_path.stat().st_mtime_ns if stats.db_path.exists() else 0,
+        },
+        **_stats_to_dict(stats),
+    }
+    dest = stats_cache_path()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=dest.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp, dest)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def read_stats_cache(*, db_path: Path | None = None) -> DatabaseStats | None:
+    """Read cached stats if the cache exists and is fresh.
+
+    Returns None if cache is missing, corrupt, or the db_path doesn't match.
+    """
+    path = stats_cache_path()
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    # Verify db_path matches (prevents stale cache from a different DB)
+    effective_db = db_path or default_db_path()
+    cached_db = Path(data.get("db_path", ""))
+    if cached_db.resolve() != effective_db.resolve():
+        return None
+
+    return _dict_to_stats(data)
 
 
 def get_stats(*, db_path: Path | None = None) -> DatabaseStats:

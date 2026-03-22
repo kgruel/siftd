@@ -25,9 +25,14 @@ def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> dict:
     Context keys:
         detail: conversation metadata object (ConversationDetail or ExportedConversation)
     """
-    from siftd.output.narrative import JsonEmitter, walk_narrative
+    from siftd.serialization.conversations import serialize_conversation_detail
 
     detail = context.get("detail")
+    if detail is not None:
+        return serialize_conversation_detail(detail, fidelity=fidelity)
+
+    # Fallback for cases where only turns are provided (no detail object)
+    from siftd.serialization.narrative import JsonEmitter, walk_narrative
 
     turns_data = []
     for turn in turns:
@@ -45,25 +50,7 @@ def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> dict:
             },
         })
 
-    conv_data: dict[str, Any] = {}
-    if detail:
-        total_tokens = getattr(detail, "total_tokens", None)
-        if total_tokens is None:
-            total_tokens = (
-                getattr(detail, "total_input_tokens", 0)
-                + getattr(detail, "total_output_tokens", 0)
-            )
-        conv_data = {
-            "id": getattr(detail, "id", None),
-            "workspace": getattr(detail, "workspace_path", None),
-            "model": getattr(detail, "model", None),
-            "started_at": getattr(detail, "started_at", None),
-            "tags": getattr(detail, "tags", []),
-            "total_tokens": total_tokens,
-        }
-
-    conv_data["turns"] = turns_data
-    return conv_data
+    return {"turns": turns_data}
 
 
 def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
@@ -73,21 +60,9 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     """
     import json
 
-    out = [
-        {
-            "id": c.id,
-            "workspace": c.workspace_path,
-            "model": c.model,
-            "started_at": c.started_at,
-            "prompts": c.prompt_count,
-            "responses": c.response_count,
-            "tokens": c.total_tokens,
-            "cost": c.cost,
-            "tags": c.tags,
-        }
-        for c in summaries
-    ]
-    return json.dumps(out, indent=2)
+    from siftd.serialization.conversations import serialize_conversation_list
+
+    return json.dumps(serialize_conversation_list(summaries), indent=2)
 
 
 def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
@@ -137,6 +112,34 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
     # Chunks mode
     output["results"] = _json_chunk_list(results)
     return output
+
+
+def render_stats(stats: Any, fidelity: Fidelity, **context: Any) -> dict:
+    """Render database stats as a dict."""
+    from siftd.serialization.stats import serialize_stats
+
+    return serialize_stats(stats)
+
+
+def render_workspaces(rows: list, fidelity: Fidelity, **context: Any) -> dict:
+    """Render workspace list as a dict."""
+    from siftd.serialization.serve_fmt import render_workspaces as _impl
+
+    return _impl(rows, fidelity)
+
+
+def render_tags(tags: list, fidelity: Fidelity, **context: Any) -> dict:
+    """Render tag list as a dict."""
+    from siftd.serialization.serve_fmt import render_tags as _impl
+
+    return _impl(tags, fidelity)
+
+
+def render_tool_search(result: Any, fidelity: Fidelity, **context: Any) -> dict:
+    """Render tool search results as a dict."""
+    from siftd.serialization.serve_fmt import render_tool_search as _impl
+
+    return _impl(result, fidelity)
 
 
 def _json_chunk_list(results: list) -> list[dict]:

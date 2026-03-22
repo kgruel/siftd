@@ -88,6 +88,42 @@ def _get_json(
     return body
 
 
+def _post_json(
+    base_url: str,
+    path: str,
+    *,
+    body: dict[str, Any],
+    timeout_s: float = 1.0,
+) -> dict[str, Any]:
+    target = _parse_target(base_url)
+    full_path = f"{target.path_prefix}{path}"
+    payload = json.dumps(body).encode("utf-8")
+
+    conn = _conn(target, timeout_s)
+    try:
+        conn.request(
+            "POST", full_path, body=payload,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        resp = conn.getresponse()
+        raw = resp.read()
+    finally:
+        conn.close()
+
+    if resp.status not in (200, 201):
+        raise ServeUnavailable(f"HTTP {resp.status} from {target.base_url}{path}")
+
+    try:
+        result = json.loads(raw.decode("utf-8"))
+    except Exception as e:
+        raise ServeUnavailable(f"Invalid JSON from {target.base_url}{path}: {e}") from e
+
+    if not isinstance(result, dict):
+        raise ServeUnavailable(f"Invalid JSON shape from {target.base_url}{path}: expected object")
+
+    return result
+
+
 def probe_health(*, base_url: str, timeout_s: float = 0.02) -> dict[str, Any]:
     """Return health payload if siftd-serve is running, else raise ServeUnavailable."""
     body = _get_json(base_url, "/v1/health", timeout_s=timeout_s)
@@ -104,3 +140,12 @@ def search(
 ) -> dict[str, Any]:
     """Call the serve search endpoint and return parsed JSON body."""
     return _get_json(base_url, "/v1/search", params=params, timeout_s=timeout_s)
+
+
+def stats(
+    *,
+    base_url: str,
+    timeout_s: float = 1.0,
+) -> dict[str, Any]:
+    """Call the serve stats endpoint and return parsed JSON body."""
+    return _get_json(base_url, "/v1/stats", timeout_s=timeout_s)

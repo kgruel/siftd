@@ -3,11 +3,35 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from litestar import Request, get, post
 from litestar.params import Parameter
 from litestar.response import Response
+
+
+def _dispatch(
+    path: str, method: str, fn: Callable, params: dict[str, Any],
+    render_method: str, db: Path,
+) -> Any:
+    """Build an Operation and dispatch it through the format protocol.
+
+    Shared helper for simple routes: extract params → execute → render.
+    Uses serve_fmt (serialization layer) instead of output/json_fmt
+    to respect the architecture boundary (serve cannot import output).
+    """
+    from painted import Fidelity
+
+    from siftd.api.dispatch import Operation, dispatch
+    from siftd.serialization import serve_fmt
+
+    op = Operation(
+        path=path, method=method, fn=fn, params=params,
+        render_method=render_method, fidelity=Fidelity(), db=db,
+    )
+    return dispatch(op, fmt=serve_fmt)
 
 
 @get("/", opt={"no_auth": True})
@@ -19,8 +43,17 @@ async def index() -> dict:
             {"method": "GET", "path": "/v1/health", "description": "Health check and DB status"},
             {"method": "POST", "path": "/v1/push", "description": "Push a database slice"},
             {"method": "GET", "path": "/v1/pull", "description": "Pull a filtered database slice"},
-            {"method": "GET", "path": "/v1/query", "description": "List or detail conversations"},
+            {"method": "GET", "path": "/v1/conversations", "description": "List conversations"},
+            {"method": "GET", "path": "/v1/conversations/{id}", "description": "Get conversation detail"},
             {"method": "GET", "path": "/v1/search", "description": "Semantic + FTS search"},
+            {"method": "GET", "path": "/v1/stats", "description": "Database statistics"},
+            {"method": "GET", "path": "/v1/workspaces", "description": "List workspaces"},
+            {"method": "GET", "path": "/v1/tools", "description": "Tool tag usage summary"},
+            {"method": "GET", "path": "/v1/tools/workspaces", "description": "Tool tags by workspace"},
+            {"method": "GET", "path": "/v1/tags", "description": "List tags with counts"},
+            {"method": "GET", "path": "/v1/tool-search", "description": "Search tool calls"},
+            {"method": "GET", "path": "/v1/export", "description": "Export full conversations"},
+            {"method": "POST", "path": "/v1/tag", "description": "Apply, remove, rename, or delete tags"},
         ],
     }
 
@@ -50,6 +83,206 @@ async def health(db_path: Path) -> dict:
     }
 
 
+@get("/v1/stats")
+async def stats_route(db_path: Path) -> dict:
+    """Return database statistics. Server has DB warm, so this is fast."""
+    from siftd.api.stats import get_stats
+
+    return _dispatch("/v1/stats", "GET", get_stats, {"db_path": db_path}, "stats", db_path)
+
+
+@get("/v1/workspaces")
+async def workspaces_route(
+    db_path: Path,
+    n: int = Parameter(query="n", default=10000),
+) -> dict:
+    """List workspaces with conversation counts."""
+    from siftd.api.stats import list_workspaces
+
+    return _dispatch("/v1/workspaces", "GET", list_workspaces, {"db_path": db_path, "n": n}, "workspaces", db_path)
+
+
+@get("/v1/tools")
+async def tools_route(
+    db_path: Path,
+    prefix: str = Parameter(query="prefix", default="shell:"),
+) -> dict:
+    """Tool tag usage summary."""
+    from siftd.api.tools import get_tool_tag_summary
+
+    return _dispatch(
+        "/v1/tools", "GET", get_tool_tag_summary,
+        {"db_path": db_path, "prefix": prefix}, "tools", db_path,
+    )
+
+
+@get("/v1/tools/workspaces")
+async def tools_by_workspace_route(
+    db_path: Path,
+    prefix: str = Parameter(query="prefix", default="shell:"),
+    n: int = Parameter(query="n", default=20),
+) -> dict:
+    """Tool tag usage broken down by workspace."""
+    from siftd.api.tools import get_tool_tags_by_workspace
+
+    return _dispatch(
+        "/v1/tools/workspaces", "GET", get_tool_tags_by_workspace,
+        {"db_path": db_path, "prefix": prefix, "n": n}, "tools_by_workspace", db_path,
+    )
+
+
+@get("/v1/tags")
+async def tags_route(
+    db_path: Path,
+    since: str | None = Parameter(query="since", default=None),
+    before: str | None = Parameter(query="before", default=None),
+) -> dict:
+    """List tags with usage counts."""
+    from siftd.api.tags import list_tags
+
+    return _dispatch("/v1/tags", "GET", list_tags, {"db_path": db_path, "since": since, "before": before}, "tags", db_path)
+
+
+@post("/v1/tag")
+async def tag_write_route(request: Request, db_path: Path) -> dict:
+    """Apply, remove, rename, or delete tags.
+
+    Request body (JSON):
+      action: "apply" | "remove" | "rename" | "delete"
+      tags: list[str]              — tag names (apply/remove)
+      entity_type: str             — "conversation" (default), "workspace", "tool_call"
+      entity_id: str               — target entity ID (apply/remove)
+      last: int                    — apply/remove to N most recent (alternative to entity_id)
+      old_name: str, new_name: str — for rename
+      tag_name: str                — for delete
+    """
+    import json as json_mod
+
+    from siftd.api.conversations import (
+        get_recent_conversation_ids,
+        resolve_entity_id,
+    )
+    from siftd.storage.sqlite import open_database
+    from siftd.storage.tags import (
+        apply_tag,
+        delete_tag,
+        get_or_create_tag,
+        get_tag_id,
+        remove_tag,
+        rename_tag,
+    )
+
+    body = json_mod.loads(await request.body())
+    action = body.get("action", "apply")
+    conn = open_database(db_path)
+
+    try:
+        if action == "rename":
+            old_name = body["old_name"]
+            new_name = body["new_name"]
+            rename_tag(conn, old_name, new_name, commit=True)
+            return {"status": "renamed", "old_name": old_name, "new_name": new_name}
+
+        if action == "delete":
+            tag_name = body["tag_name"]
+            delete_tag(conn, tag_name, commit=True)
+            return {"status": "deleted", "tag_name": tag_name}
+
+        # apply or remove
+        tags = body.get("tags", [])
+        entity_type = body.get("entity_type", "conversation")
+        entity_id = body.get("entity_id")
+        last_n = body.get("last")
+
+        if last_n:
+            ids = get_recent_conversation_ids(conn, int(last_n))
+        elif entity_id:
+            resolved = resolve_entity_id(conn, entity_type, entity_id)
+            ids = [resolved] if resolved else []
+        else:
+            return {"error": "entity_id or last required"}
+
+        if not ids:
+            return {"error": "no matching entities found"}
+
+        results = []
+        for tag_name in tags:
+            if action == "remove":
+                tag_id = get_tag_id(conn, tag_name)
+                if not tag_id:
+                    results.append({"tag": tag_name, "status": "not_found"})
+                    continue
+                count = sum(1 for eid in ids if remove_tag(conn, entity_type, eid, tag_id, commit=False))
+                results.append({"tag": tag_name, "status": "removed", "count": count})
+            else:
+                tag_id = get_or_create_tag(conn, tag_name)
+                count = sum(1 for eid in ids if apply_tag(conn, entity_type, eid, tag_id, commit=False))
+                results.append({"tag": tag_name, "status": "applied", "count": count})
+
+        conn.commit()
+
+        # Refresh stats cache
+        try:
+            from siftd.api.stats import get_stats, write_stats_cache
+
+            write_stats_cache(get_stats(db_path=db_path))
+        except Exception:
+            pass
+
+        return {"action": action, "results": results}
+    finally:
+        conn.close()
+
+
+@get("/v1/tool-search")
+async def tool_search_route(
+    db_path: Path,
+    q: str = Parameter(query="q"),
+    workspace: str | None = Parameter(query="workspace", default=None),
+    model: str | None = Parameter(query="model", default=None),
+    since: str | None = Parameter(query="since", default=None),
+    before: str | None = Parameter(query="before", default=None),
+    tool: str | None = Parameter(query="tool", default=None),
+    tool_tag: str | None = Parameter(query="tool_tag", default=None),
+    tag: list[str] | None = Parameter(query="tag", default=None),
+    all_tags: list[str] | None = Parameter(query="all_tags", default=None),
+    no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    n: int = Parameter(query="n", default=20),
+) -> dict:
+    """Search tool calls via FTS."""
+    from siftd.api.tool_search import search_tool_calls
+
+    return _dispatch(
+        "/v1/tool-search", "GET", search_tool_calls,
+        {"q": q, "db_path": db_path, "n": n, "workspace": workspace, "model": model,
+         "since": since, "before": before, "tag": tag, "all_tags": all_tags,
+         "no_tag": no_tag, "tool": tool, "tool_tag": tool_tag},
+        "tool_search", db_path,
+    )
+
+
+@get("/v1/export")
+async def export_route(
+    db_path: Path,
+    id: list[str] | None = Parameter(query="id", default=None),
+    workspace: str | None = Parameter(query="workspace", default=None),
+    since: str | None = Parameter(query="since", default=None),
+    before: str | None = Parameter(query="before", default=None),
+    tag: list[str] | None = Parameter(query="tag", default=None),
+    no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    n: int = Parameter(query="n", default=0),
+) -> dict:
+    """Export full conversation data."""
+    from siftd.api.export import export_conversations
+
+    return _dispatch(
+        "/v1/export", "GET", export_conversations,
+        {"id": id, "workspace": workspace, "since": since, "before": before,
+         "tag": tag, "no_tag": no_tag, "n": n, "db_path": db_path},
+        "export", db_path,
+    )
+
+
 @post("/v1/push")
 async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | dict:
     """Receive a pushed slice and merge into team DB."""
@@ -72,6 +305,14 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
         # Attribution: record push in push_log
         identity = _get_push_identity(request)
         _record_push_log(db_path, identity, result["conversations"], len(body), request)
+
+        # Refresh stats cache (server has DB warm from the merge)
+        try:
+            from siftd.api.stats import get_stats, write_stats_cache
+
+            write_stats_cache(get_stats(db_path=db_path))
+        except Exception:
+            pass  # Cache refresh failure is never fatal
 
         status_code = 201 if result["status"] == "created" else 200
         return Response(
@@ -107,7 +348,7 @@ async def pull(
             since=since,
             before=before,
             model=model,
-            tags=tag,
+            tag=tag,
             rebuild_fts=False,
         )
 
@@ -135,42 +376,52 @@ async def pull(
         )
 
 
-@get("/v1/query")
-async def query(
+@get("/v1/conversations/{id:str}")
+async def conversation_detail(
+    db_path: Path,
+    id: str,
+    include_thinking: bool = Parameter(query="include_thinking", default=False),
+    include_tool_content: bool = Parameter(query="include_tool_content", default=False),
+    tool_filter: str | None = Parameter(query="tool_filter", default=None),
+) -> dict:
+    """Get a single conversation by ID (supports prefix match)."""
+    from siftd.api.conversations import get_conversation
+
+    return _dispatch(
+        "/v1/conversations", "GET", get_conversation,
+        {"id": id, "db_path": db_path, "include_thinking": include_thinking,
+         "include_tool_content": include_tool_content, "tool_filter": tool_filter},
+        "detail", db_path,
+    )
+
+
+@get("/v1/conversations")
+async def conversation_list(
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),
     model: str | None = Parameter(query="model", default=None),
     tag: list[str] | None = Parameter(query="tag", default=None),
+    all_tags: list[str] | None = Parameter(query="all_tags", default=None),
+    no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    tool: str | None = Parameter(query="tool", default=None),
+    tool_tag: str | None = Parameter(query="tool_tag", default=None),
     search: str | None = Parameter(query="search", default=None),
     n: int = Parameter(query="n", default=20),
-    id: str | None = Parameter(query="id", default=None),
+    oldest: bool = Parameter(query="oldest", default=False),
 ) -> dict:
-    """List or detail conversations."""
-    import dataclasses
+    """List conversations with filtering."""
+    from siftd.api.conversations import list_conversations
 
-    from siftd.api.conversations import get_conversation, list_conversations
-
-    if id is not None:
-        detail = get_conversation(id, db_path=db_path)
-        if detail is None:
-            return {"error": f"conversation not found: {id}"}
-        d = dataclasses.asdict(detail)
-        d.pop("exchanges", None)  # property, not serializable
-        return {"conversation": d}
-
-    rows = list_conversations(
-        db_path=db_path,
-        workspace=workspace,
-        model=model,
-        since=since,
-        before=before,
-        search=search,
-        tags=tag,
-        limit=n,
+    return _dispatch(
+        "/v1/conversations", "GET", list_conversations,
+        {"db_path": db_path, "workspace": workspace, "model": model,
+         "since": since, "before": before, "search": search, "tool": tool,
+         "tag": tag, "all_tags": all_tags, "no_tag": no_tag,
+         "tool_tag": tool_tag, "n": n, "oldest": oldest},
+        "list", db_path,
     )
-    return {"conversations": [dataclasses.asdict(r) for r in rows]}
 
 
 @get("/v1/search")
@@ -199,53 +450,33 @@ async def search_route(
 ) -> dict | Response:
     """Semantic + FTS search against team DB."""
     try:
-        from siftd.search import hybrid_search
+        from siftd.api.search import hybrid_search
     except ImportError:
         return Response(
             content={"error": "search requires siftd[embed]"},
             status_code=501,
         )
 
+    mode = "semantic" if embeddings_only else "hybrid"
     try:
-        results = hybrid_search(
-            q,
-            db_path=db_path,
-            limit=n,
-            recall=recall,
-            embeddings_only=embeddings_only,
-            workspace=workspace,
-            model=model,
-            since=since,
-            before=before,
-            backend=backend,
-            exclude_active=exclude_active,
-            rerank=rerank,
-            lambda_=lambda_,
-            recency=recency,
-            recency_half_life=recency_half_life,
-            recency_max_boost=recency_max_boost,
-            tags=tag,
-            all_tags=all_tags,
-            exclude_tags=no_tag,
-            include_derivative=include_derivative,
+        return _dispatch(
+            "/v1/search", "GET", hybrid_search,
+            {"q": q, "db_path": db_path, "n": n, "recall": recall,
+             "mode": mode, "workspace": workspace,
+             "model": model, "since": since, "before": before,
+             "backend": backend, "exclude_active": exclude_active,
+             "rerank": rerank, "lambda_": lambda_, "recency": recency,
+             "recency_half_life": recency_half_life,
+             "recency_max_boost": recency_max_boost,
+             "threshold": threshold, "tag": tag, "all_tags": all_tags,
+             "no_tag": no_tag, "include_derivative": include_derivative},
+            "search", db_path,
         )
     except Exception as e:
         return Response(
             content={"error": f"search failed: {e}"},
             status_code=501,
         )
-
-    if threshold > 0:
-        results = [r for r in results if r.score >= threshold]
-
-    import dataclasses
-
-    serialized = [dataclasses.asdict(r) for r in results]
-    return {
-        "query": q,
-        "result_count": len(serialized),
-        "results": serialized,
-    }
 
 
 # ---------------------------------------------------------------------------

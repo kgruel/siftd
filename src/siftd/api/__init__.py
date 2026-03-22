@@ -82,6 +82,9 @@ from siftd.api.stats import (
     get_cost_coverage,
     get_stats,
     list_workspaces,
+    read_stats_cache,
+    stats_cache_path,
+    write_stats_cache,
 )
 from siftd.api.sync import (
     PushResult,
@@ -212,6 +215,9 @@ __all__ = [
     "get_cost_coverage",
     "get_stats",
     "list_workspaces",
+    "stats_cache_path",
+    "write_stats_cache",
+    "read_stats_cache",
     # merge
     "merge_database",
     # receive

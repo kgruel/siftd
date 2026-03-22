@@ -1,7 +1,6 @@
 """CLI handlers for query commands (query, tools)."""
 
 import argparse
-import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -14,46 +13,84 @@ from siftd.paths import queries_dir
 
 def cmd_tools(args) -> int:
     """Show tool usage summary by category."""
+    import json
+
+    from painted import Fidelity
+
+    from siftd.api import get_tool_tag_summary, get_tool_tags_by_workspace
+    from siftd.api.dispatch import Operation, execute
     from siftd.config import get_tools_defaults
+    from siftd.serve.delegation import try_serve
 
     apply_config_defaults(args, get_tools_defaults, {"limit": 20})
-    from siftd.api import get_tool_tag_summary, get_tool_tags_by_workspace
 
     db = resolve_db(args)
+    prefix = args.prefix or "shell:"
 
-    if not db.exists():
+    # Build Operation based on mode
+    if args.by_workspace:
+        op = Operation(
+            path="/v1/tools/workspaces",
+            method="GET",
+            fn=get_tool_tags_by_workspace,
+            params={"db_path": db, "prefix": prefix, "n": args.limit},
+            render_method="raw",
+            fidelity=Fidelity(),
+            db=db,
+        )
+    else:
+        op = Operation(
+            path="/v1/tools",
+            method="GET",
+            fn=get_tool_tag_summary,
+            params={"db_path": db, "prefix": prefix},
+            render_method="raw",
+            fidelity=Fidelity(),
+            db=db,
+        )
+
+    # Try serve delegation
+    result = try_serve(op)
+
+    if result is not None and isinstance(result, dict):
+        if args.json:
+            print(json.dumps(result, indent=2))
+        elif args.by_workspace and "workspaces" in result:
+            for ws in result["workspaces"]:
+                ws_display = fmt_workspace(ws["workspace"])
+                print(f"\n{ws_display} ({ws['total']} total)")
+                for tag in ws["tags"]:
+                    category = tag["name"][len(prefix):] if tag["name"].startswith(prefix) else tag["name"]
+                    print(f"  {category}: {tag['count']}")
+        elif "tags" in result:
+            total = result.get("total", 0)
+            print(f"Tool call tags ({prefix}*): {total} total\n")
+            for tag in result["tags"]:
+                category = tag["name"][len(prefix):] if tag["name"].startswith(prefix) else tag["name"]
+                print(f"  {category}: {tag['count']} ({tag.get('percentage', 0)}%)")
+        return 0
+
+    # Local execution
+    try:
+        data = execute(op)
+    except FileNotFoundError as e:
         if args.json:
             print("[]")
             return 0
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        print(str(e))
+        if not args.by_workspace:
+            print("Run 'siftd ingest' to create it.")
         return 1
 
-    prefix = args.prefix or "shell:"
-
-    # By-workspace mode
+    # By-workspace rendering
     if args.by_workspace:
-        try:
-            results = get_tool_tags_by_workspace(
-                db_path=db,
-                prefix=prefix,
-                limit=args.limit,
-            )
-        except FileNotFoundError as e:
-            if args.json:
-                print("[]")
-                return 0
-            print(str(e))
-            return 1
-
-        if not results:
+        if not data:
             if args.json:
                 print("[]")
                 return 0
             print(f"No tool calls with '{prefix}*' tags found.")
             return 0
 
-        # JSON output for by-workspace mode
         if args.json:
             out = [
                 {
@@ -64,32 +101,22 @@ def cmd_tools(args) -> int:
                         for tag in ws_usage.tags
                     ],
                 }
-                for ws_usage in results
+                for ws_usage in data
             ]
             print(json.dumps(out, indent=2))
             return 0
 
-        for ws_usage in results:
+        for ws_usage in data:
             ws_display = fmt_workspace(ws_usage.workspace)
             print(f"\n{ws_display} ({ws_usage.total} total)")
             for tag in ws_usage.tags:
-                # Strip prefix for display
                 category = tag.name[len(prefix):] if tag.name.startswith(prefix) else tag.name
                 print(f"  {category}: {tag.count}")
 
         return 0
 
-    # Default: summary mode
-    try:
-        tags = get_tool_tag_summary(db_path=db, prefix=prefix)
-    except FileNotFoundError as e:
-        if args.json:
-            print("[]")
-            return 0
-        print(str(e))
-        return 1
-
-    if not tags:
+    # Summary rendering
+    if not data:
         if args.json:
             print("[]")
             return 0
@@ -97,25 +124,23 @@ def cmd_tools(args) -> int:
         print("Run 'siftd backfill --shell-tags' to categorize shell commands.")
         return 0
 
-    # JSON output for summary mode
     if args.json:
-        total = sum(t.count for t in tags)
+        total = sum(t.count for t in data)
         out = [
             {
                 "name": tag.name,
                 "count": tag.count,
                 "percentage": round((tag.count / total) * 100, 1) if total > 0 else 0,
             }
-            for tag in tags
+            for tag in data
         ]
         print(json.dumps(out, indent=2))
         return 0
 
-    total = sum(t.count for t in tags)
+    total = sum(t.count for t in data)
     print(f"Tool call tags ({prefix}*): {total} total\n")
 
-    for tag in tags:
-        # Strip prefix for display
+    for tag in data:
         category = tag.name[len(prefix):] if tag.name.startswith(prefix) else tag.name
         pct = (tag.count / total) * 100 if total > 0 else 0
         print(f"  {category}: {tag.count} ({pct:.1f}%)")
@@ -127,7 +152,9 @@ def cmd_tools(args) -> int:
 def _query_detail(args) -> int:
     """Show conversation detail timeline."""
     from siftd.api import get_conversation
+    from siftd.api.dispatch import Operation, execute
     from siftd.cli_common import fidelity_from_args, tool_chars_from_args
+    from siftd.serve.delegation import try_serve
 
     # Validate --exchanges
     exchanges_n = getattr(args, "exchanges", None)
@@ -136,6 +163,7 @@ def _query_detail(args) -> int:
         return 1
 
     db = Path(args.db) if args.db else None
+    effective_db = db or resolve_db(args)
 
     fidelity = fidelity_from_args(args)
     tool_chars = tool_chars_from_args(args, fidelity)
@@ -147,14 +175,34 @@ def _query_detail(args) -> int:
     if tools_flag is not None and tools_flag != "all":
         tool_filter = tools_flag
 
+    op = Operation(
+        path=f"/v1/conversations/{args.conversation_id}",
+        method="GET",
+        fn=get_conversation,
+        params={
+            "id": args.conversation_id,
+            "db_path": db,
+            "include_thinking": include_thinking,
+            "include_tool_content": include_tool_content,
+            "tool_filter": tool_filter,
+        },
+        render_method="detail",
+        fidelity=fidelity,
+        db=effective_db,
+    )
+
+    # For --json output, delegate to serve if available (avoids cold-open
+    # entirely — server returns the canonical JSON shape directly)
+    if getattr(args, "json", False) and not getattr(args, "summary", False):
+        result = try_serve(op)
+        if result is not None and isinstance(result, dict) and "conversation" in result:
+            import json
+
+            print(json.dumps(result["conversation"], indent=2))
+            return 0
+
     try:
-        detail = get_conversation(
-            args.conversation_id,
-            db_path=db,
-            include_thinking=include_thinking,
-            include_tool_content=include_tool_content,
-            tool_filter=tool_filter,
-        )
+        detail = execute(op)
     except FileNotFoundError as e:
         print(str(e))
         print("Run 'siftd ingest' to create it.")
@@ -283,40 +331,70 @@ def cmd_query(args) -> int:
     if args.conversation_id:
         return _query_detail(args)
 
+    from dataclasses import asdict
+
     from siftd.api import list_conversations
+    from siftd.api.dispatch import Operation, execute
+    from siftd.cli_filters import extract_filter_args
+    from siftd.serve.delegation import try_serve
 
-    db = Path(args.db) if args.db else None
+    db = resolve_db(args)
+    filters = extract_filter_args(args)
+    fidelity = fidelity_from_args(args)
 
-    try:
-        conversations = list_conversations(
-            db_path=db,
-            workspace=args.workspace,
-            model=args.model,
-            since=args.since,
-            before=args.before,
-            tool=args.tool,
-            tags=args.tag,
-            all_tags=getattr(args, "all_tags", None),
-            exclude_tags=getattr(args, "no_tag", None),
-            tool_tag=getattr(args, "tool_tag", None),
-            limit=args.limit,
-            oldest_first=args.oldest,
-        )
-    except FileNotFoundError as e:
-        print(str(e))
-        print("Run 'siftd ingest' to create it.")
-        return 1
-    except sqlite3.OperationalError as e:
-        err_msg = str(e).lower()
-        if "no such table" in err_msg and "fts" in err_msg:
-            print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
-        elif "fts5" in err_msg or "syntax" in err_msg:
-            print(f"Invalid search query: {e}", file=sys.stderr)
-            print("Tip: Check your search query for syntax errors.", file=sys.stderr)
-        else:
-            print(f"Database error: {e}", file=sys.stderr)
-            print("Tip: Run 'siftd doctor' to check database health.", file=sys.stderr)
-        return 1
+    op = Operation(
+        path="/v1/conversations",
+        method="GET",
+        fn=list_conversations,
+        params={
+            "db_path": db,
+            **{k: v for k, v in asdict(filters).items() if v is not None},
+            "n": args.limit,
+            "oldest": args.oldest,
+        },
+        render_method="list",
+        fidelity=fidelity,
+        db=db,
+    )
+
+    # Try serve, fall back to local execution
+    conversations = try_serve(op)
+    if conversations is not None and isinstance(conversations, dict):
+        # Server returned serialized list — deserialize back to domain objects
+        from siftd.api.conversations import ConversationSummary
+
+        conversations = [
+            ConversationSummary(
+                id=c["id"],
+                workspace_path=c.get("workspace"),
+                model=c.get("model"),
+                started_at=c.get("started_at"),
+                prompt_count=c.get("prompts", 0),
+                response_count=c.get("responses", 0),
+                total_tokens=c.get("tokens", 0),
+                cost=c.get("cost"),
+                tags=c.get("tags", []),
+            )
+            for c in conversations.get("conversations", [])
+        ]
+    else:
+        try:
+            conversations = execute(op)
+        except FileNotFoundError as e:
+            print(str(e))
+            print("Run 'siftd ingest' to create it.")
+            return 1
+        except sqlite3.OperationalError as e:
+            err_msg = str(e).lower()
+            if "no such table" in err_msg and "fts" in err_msg:
+                print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
+            elif "fts5" in err_msg or "syntax" in err_msg:
+                print(f"Invalid search query: {e}", file=sys.stderr)
+                print("Tip: Check your search query for syntax errors.", file=sys.stderr)
+            else:
+                print(f"Database error: {e}", file=sys.stderr)
+                print("Tip: Run 'siftd doctor' to check database health.", file=sys.stderr)
+            return 1
 
     if not conversations:
         if args.json:

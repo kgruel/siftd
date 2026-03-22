@@ -151,13 +151,12 @@ def list_conversations(
     before: str | None = None,
     search: str | None = None,
     tool: str | None = None,
-    tag: str | None = None,
-    tags: list[str] | None = None,
+    tag: str | list[str] | None = None,
     all_tags: list[str] | None = None,
-    exclude_tags: list[str] | None = None,
+    no_tag: list[str] | None = None,
     tool_tag: str | None = None,
-    limit: int = 10,
-    oldest_first: bool = False,
+    n: int = 10,
+    oldest: bool = False,
 ) -> list[ConversationSummary]:
     """List conversations with optional filtering.
 
@@ -169,13 +168,13 @@ def list_conversations(
         before: Filter conversations started before this date.
         search: FTS5 full-text search query.
         tool: Filter by canonical tool name (e.g., 'shell.execute').
-        tag: Filter by tag name (single, backward compat — prefer tags).
-        tags: OR filter — conversations with any of these tags.
+        tag: OR filter — conversations with any of these tags. Also accepts
+            a single string for backward compat.
         all_tags: AND filter — conversations with all of these tags.
-        exclude_tags: NOT filter — exclude conversations with any of these tags.
+        no_tag: NOT filter — exclude conversations with any of these tags.
         tool_tag: Filter by tool call tag (e.g., 'shell:test').
-        limit: Maximum results to return (0 = unlimited).
-        oldest_first: Sort by oldest first instead of newest.
+        n: Maximum results to return (0 = unlimited).
+        oldest: Sort by oldest first instead of newest.
 
     Returns:
         List of ConversationSummary objects.
@@ -190,7 +189,7 @@ def list_conversations(
 
     conn = open_database(db, read_only=True)
     try:
-        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, tags, all_tags, exclude_tags, tool_tag, limit, oldest_first)
+        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest)
     finally:
         conn.close()
 
@@ -203,13 +202,12 @@ def _list_conversations_impl(
     before: str | None,
     search: str | None,
     tool: str | None,
-    tag: str | None,
-    tags: list[str] | None,
+    tag: str | list[str] | None,
     all_tags: list[str] | None,
-    exclude_tags: list[str] | None,
+    no_tag: list[str] | None,
     tool_tag: str | None,
-    limit: int,
-    oldest_first: bool,
+    n: int,
+    oldest: bool,
 ) -> list[ConversationSummary]:
     """Implementation of list_conversations with connection already open."""
     # Check if pricing table exists
@@ -235,14 +233,12 @@ def _list_conversations_impl(
             tool,
         )
 
-    # Legacy single-tag support: fold into the OR list
-    effective_tags = list(tags or [])
-    if tag:
-        effective_tags.append(tag)
+    # Normalize tag: accept str (single) or list (OR filter)
+    effective_tags = [tag] if isinstance(tag, str) else list(tag or [])
 
     wb.tags_any(effective_tags or None)
     wb.tags_all(all_tags)
-    wb.tags_none(exclude_tags)
+    wb.tags_none(no_tag)
 
     if tool_tag:
         op, val = _tag_condition(tool_tag)
@@ -255,8 +251,8 @@ def _list_conversations_impl(
 
     where = wb.where_sql()
     params = wb.params
-    order = "ASC" if oldest_first else "DESC"
-    limit_clause = f"LIMIT {limit}" if limit > 0 else ""
+    order = "ASC" if oldest else "DESC"
+    limit_clause = f"LIMIT {n}" if n > 0 else ""
 
     # Phase 1: Identify the target conversations quickly.
     # WhereBuilder tracks which JOINs its filters actually need, so we only
@@ -386,7 +382,7 @@ def _extract_text(raw: str) -> str:
 
 
 def get_conversation(
-    conversation_id: str,
+    id: str,
     *,
     db_path: Path | None = None,
     include_thinking: bool = False,
@@ -398,7 +394,7 @@ def get_conversation(
     Supports prefix matching on conversation ID.
 
     Args:
-        conversation_id: Full or prefix of conversation ULID.
+        id: Full or prefix of conversation ULID.
         db_path: Path to database. Uses default if not specified.
         include_thinking: Include thinking/reasoning blocks in turns.
         include_tool_content: Include tool input/result in turns.
@@ -419,7 +415,7 @@ def get_conversation(
     conn = open_database(db, read_only=True)
 
     # Find conversation (support prefix match)
-    conv = fetch_conversation_by_id_or_prefix(conn, conversation_id)
+    conv = fetch_conversation_by_id_or_prefix(conn, id)
     if not conv:
         conn.close()
         return None

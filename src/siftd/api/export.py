@@ -31,11 +31,12 @@ class ExportedConversation:
 
 def export_conversations(
     *,
-    conversation_ids: list[str] | None = None,
+    id: list[str] | None = None,
     last: int | None = None,
+    n: int = 0,
     workspace: str | None = None,
-    tags: list[str] | None = None,
-    exclude_tags: list[str] | None = None,
+    tag: list[str] | None = None,
+    no_tag: list[str] | None = None,
     since: str | None = None,
     before: str | None = None,
     search: str | None = None,
@@ -49,9 +50,9 @@ def export_conversations(
     is known (for placeholder rendering). Tool content is fetched only
     when include_tool_content=True (for --tools/--full).
     """
-    if conversation_ids:
+    if id:
         results = []
-        for cid in conversation_ids:
+        for cid in id:
             detail = get_conversation(
                 cid,
                 db_path=db_path,
@@ -62,16 +63,16 @@ def export_conversations(
                 results.append(_detail_to_export(detail))
         return results
 
-    limit = last if last else 10
+    n = last if last else (n if n > 0 else 10)
     summaries = list_conversations(
         db_path=db_path,
         workspace=workspace,
-        tags=tags,
-        exclude_tags=exclude_tags,
+        tag=tag,
+        no_tag=no_tag,
         since=since,
         before=before,
         search=search,
-        limit=limit,
+        n=n,
     )
 
     results = []
@@ -85,6 +86,8 @@ def export_conversations(
         if detail:
             results.append(_detail_to_export(detail))
 
+    if n > 0:
+        results = results[:n]
     return results
 
 
