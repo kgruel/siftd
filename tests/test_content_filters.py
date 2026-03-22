@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from siftd.content.filters import (
     filter_binary_block,
     filter_tool_result_binary,
@@ -58,6 +56,10 @@ class TestIsBase64ImageBlock:
         assert is_base64_image_block("string") is False
         assert is_base64_image_block(None) is False
         assert is_base64_image_block([]) is False
+
+    def test_source_not_dict(self):
+        """Image block with non-dict source is not base64."""
+        assert is_base64_image_block({"type": "image", "source": "url"}) is False
 
 
 class TestIsBinaryContent:
@@ -250,6 +252,12 @@ class TestFilterToolResultBinary:
         assert filtered["content"] == "[base64 content filtered]"
         assert filtered["filtered_reason"] == "base64_content"
         assert "original_size" in filtered
+
+    def test_content_list_with_non_dict_item(self):
+        """Non-dict items in content list are preserved as-is."""
+        result = {"content": ["plain text", {"type": "text", "text": "hello"}]}
+        filtered = filter_tool_result_binary(result)
+        assert filtered is result  # no change needed
 
     def test_preserves_normal_string_content(self):
         """Normal string content is preserved."""

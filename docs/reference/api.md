@@ -94,7 +94,7 @@ def list_checks() -> list[CheckInfo]
 Run health checks and return findings.
 
 ```python
-def run_checks(*, checks: list[str] | None = ..., db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ...) -> list[Finding]
+def run_checks(*, checks: list[str] | None = ..., db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., on_check_done: object | None = ...) -> list[Finding]
 ```
 
 **Parameters:**

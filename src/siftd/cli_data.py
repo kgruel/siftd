@@ -707,11 +707,144 @@ def _doctor_list(args) -> int:
     return 0
 
 
+def _doctor_fix(args) -> int:
+    """Execute cached fixes from the last doctor run."""
+    from siftd.doctor.fixes import clear_findings_cache, load_findings_cache
+
+    cached = load_findings_cache()
+    if not cached:
+        print("No pending fixes. Run 'siftd doctor' first to detect issues.", file=sys.stderr)
+        return 1
+
+    db = resolve_db(args)
+    if not db.exists():
+        print(f"Database not found: {db}")
+        return 1
+
+    conn = open_database(db)
+
+    # Filter to fixes we know how to execute
+    actionable = [entry for entry in cached if entry["fix_command"] in _FIX_REGISTRY]
+    if not actionable:
+        print("No actionable fixes found in cache.")
+        clear_findings_cache()
+        conn.close()
+        return 0
+
+    print(f"Applying {len(actionable)} fix(es):\n")
+
+    errors = 0
+    for entry in actionable:
+        cmd = entry["fix_command"]
+        label, fn = _FIX_REGISTRY[cmd]
+        print(f"  ⠋ {label}...", end="", flush=True)
+        try:
+            result = fn(conn, db)
+            print(f"\r  ✓ {label}: {result}")
+        except Exception as e:
+            print(f"\r  ✗ {label}: {e}")
+            errors += 1
+
+    conn.close()
+    clear_findings_cache()
+
+    print()
+    if errors:
+        print(f"Done with {errors} error(s). Run 'siftd doctor' to verify.")
+        return 1
+    print("All fixes applied. Run 'siftd doctor' to verify.")
+    return 0
+
+
+# Fix registry: maps fix_command → (label, callable(conn, db_path) → str)
+def _fix_ingest(conn, db_path):
+    from siftd.adapters.registry import load_all_adapters
+    from siftd.ingestion.orchestration import ingest_all
+
+    adapters = load_all_adapters()
+    stats = ingest_all(conn, [a.module for a in adapters])
+    return f"{stats.files_ingested} file(s) ingested, {stats.files_skipped} skipped"
+
+
+def _fix_rebuild_fts(conn, db_path):
+    from siftd.api.search import rebuild_fts_index
+
+    rebuild_fts_index(conn)
+    return "FTS index rebuilt"
+
+
+def _fix_search_index(conn, db_path):
+    from siftd.api.search import build_index
+
+    result = build_index(db_path=db_path, rebuild=False)
+    return f"{result.get('chunks_added', 0)} chunk(s) indexed"
+
+
+def _fix_search_rebuild(conn, db_path):
+    from siftd.api.search import build_index
+
+    result = build_index(db_path=db_path, rebuild=True)
+    return f"{result.get('chunks_added', 0)} chunk(s) indexed"
+
+
+def _fix_migrate_blobs(conn, db_path):
+    from siftd.api.migrations import migrate_blobs
+
+    result = migrate_blobs(conn)
+    return f"{result['migrated']} result(s) migrated, {result['blobs_created']} blob(s) created"
+
+
+def _fix_backfill_git_remote(conn, db_path):
+    from siftd.api.migrations import backfill_git_remotes
+
+    result = backfill_git_remotes(conn)
+    return f"{result['updated']} workspace(s) updated"
+
+
+def _fix_merge_workspaces(conn, db_path):
+    from siftd.api.migrations import merge_duplicate_workspaces
+
+    result = merge_duplicate_workspaces(conn)
+    return f"{result['workspaces_merged']} workspace(s) merged"
+
+
+def _fix_pending_tags(conn, db_path):
+    from siftd.api.sessions import cleanup_stale_sessions
+
+    sessions, tags = cleanup_stale_sessions(conn, max_age_hours=48, commit=True)
+    return f"{sessions} session(s), {tags} tag(s) cleaned up"
+
+
+_FIX_REGISTRY = {
+    "siftd ingest": ("Ingesting new files", _fix_ingest),
+    "siftd ingest --rebuild-fts": ("Rebuilding FTS index", _fix_rebuild_fts),
+    "siftd search --index": ("Indexing embeddings", _fix_search_index),
+    "siftd search --rebuild": ("Rebuilding embeddings index", _fix_search_rebuild),
+    "siftd migrate blobs": ("Migrating tool results to blobs", _fix_migrate_blobs),
+    "siftd backfill git-remote": ("Backfilling git remote URLs", _fix_backfill_git_remote),
+    "siftd migrate merge-workspaces": ("Merging duplicate workspaces", _fix_merge_workspaces),
+    "siftd doctor fix --pending-tags": ("Cleaning up stale sessions", _fix_pending_tags),
+}
+
+
 def _doctor_run(args, check_names: list[str] | None = None, show_fixes: bool = False) -> int:
     """Run doctor checks and display findings."""
-    from siftd.api import run_checks
-
     db = Path(args.db) if args.db else None
+
+    # JSON output — no progress, no painted rendering
+    if args.json:
+        return _doctor_run_json(args, check_names, show_fixes, db)
+
+    # TTY — painted progress + themed findings
+    if sys.stdout.isatty():
+        return _doctor_run_painted(args, check_names, show_fixes, db)
+
+    # Non-TTY (piped) — plain text, no progress
+    return _doctor_run_plain(args, check_names, show_fixes, db)
+
+
+def _doctor_run_json(args, check_names, show_fixes, db) -> int:
+    from siftd.api import run_checks
 
     try:
         findings = run_checks(checks=check_names or None, db_path=db)
@@ -722,62 +855,73 @@ def _doctor_run(args, check_names: list[str] | None = None, show_fixes: bool = F
         print(f"Error: {e}")
         return 1
 
-    # JSON output
-    if args.json:
-        # Sort same as text mode: severity descending, then check name
-        severity_order = {"error": 0, "warning": 1, "info": 2}
-        findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
+    severity_order = {"error": 0, "warning": 1, "info": 2}
+    findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
 
-        error_count = sum(1 for f in findings if f.severity == "error")
-        warning_count = sum(1 for f in findings if f.severity == "warning")
-        out = {
-            "findings": [
-                {
-                    "check": f.check,
-                    "severity": f.severity,
-                    "message": f.message,
-                    "fix_available": f.fix_available,
-                    "fix_command": f.fix_command,
-                    "context": f.context,
-                }
-                for f in findings
-            ],
-            "summary": {
-                "total": len(findings),
-                "error": error_count,
-                "warning": warning_count,
-                "info": sum(1 for f in findings if f.severity == "info"),
-            },
-        }
-        print(json.dumps(out, indent=2))
-        fail_count = error_count + warning_count if args.strict else error_count
-        return 1 if fail_count > 0 else 0
+    error_count = sum(1 for f in findings if f.severity == "error")
+    warning_count = sum(1 for f in findings if f.severity == "warning")
+    out = {
+        "findings": [
+            {
+                "check": f.check,
+                "severity": f.severity,
+                "message": f.message,
+                "fix_available": f.fix_available,
+                "fix_command": f.fix_command,
+                "context": f.context,
+            }
+            for f in findings
+        ],
+        "summary": {
+            "total": len(findings),
+            "error": error_count,
+            "warning": warning_count,
+            "info": sum(1 for f in findings if f.severity == "info"),
+        },
+    }
+    print(json.dumps(out, indent=2))
+
+    # Cache fixable findings for `doctor fix`
+    from siftd.doctor.fixes import save_findings_cache
+
+    save_findings_cache(findings)
+
+    fail_count = error_count + warning_count if args.strict else error_count
+    return 1 if fail_count > 0 else 0
+
+
+def _doctor_run_plain(args, check_names, show_fixes, db) -> int:
+    from siftd.api import run_checks
+
+    try:
+        findings = run_checks(checks=check_names or None, db_path=db)
+    except FileNotFoundError as e:
+        print(str(e))
+        return 1
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
 
     if not findings:
         print("No issues found.")
         return 0
 
-    # Display findings grouped by severity
     severity_order = {"error": 0, "warning": 1, "info": 2}
     findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
 
     icons = {"info": "i", "warning": "!", "error": "x"}
-
     for finding in findings:
         icon = icons.get(finding.severity, "?")
         print(f"[{icon}] {finding.check}: {finding.message}")
         if finding.fix_command and not show_fixes:
             print(f"    Fix: {finding.fix_command}")
 
-    # Summary
     error_count = sum(1 for f in findings if f.severity == "error")
     warning_count = sum(1 for f in findings if f.severity == "warning")
     info_count = sum(1 for f in findings if f.severity == "info")
-
     print()
     print(f"Found {len(findings)} issue(s): {error_count} error, {warning_count} warning, {info_count} info")
 
-    # Show consolidated fix commands
     if show_fixes:
         fixable = [f for f in findings if f.fix_available and f.fix_command]
         if fixable:
@@ -788,6 +932,66 @@ def _doctor_run(args, check_names: list[str] | None = None, show_fixes: bool = F
                     print(f"  {f.fix_command}")
                     seen_commands.add(f.fix_command)
 
+    # Cache fixable findings for `doctor fix`
+    from siftd.doctor.fixes import save_findings_cache
+
+    save_findings_cache(findings)
+
+    fail_count = error_count + warning_count if args.strict else error_count
+    return 1 if fail_count > 0 else 0
+
+
+def _doctor_run_painted(args, check_names, show_fixes, db) -> int:
+    from painted import InPlaceRenderer, use_theme
+
+    from siftd.api import list_checks, run_checks
+    from siftd.doctor.view import render_progress_block
+    from siftd.output.theme import siftd_theme
+
+    all_checks = list_checks()
+    if check_names:
+        all_checks = [c for c in all_checks if c.name in check_names]
+    check_names_ordered = [c.name for c in all_checks]
+
+    completed: dict[str, list] = {}
+
+    with use_theme(siftd_theme), InPlaceRenderer() as renderer:
+
+        def on_done(name, check_findings):
+            completed[name] = check_findings
+            block = render_progress_block(check_names_ordered, completed, len(completed))
+            renderer.render(block)
+
+        # Show initial state
+        block = render_progress_block(check_names_ordered, completed, 0)
+        renderer.render(block)
+
+        try:
+            findings = run_checks(
+                checks=check_names or None,
+                db_path=db,
+                on_check_done=on_done,
+            )
+        except FileNotFoundError as e:
+            renderer.finalize()
+            print(str(e))
+            return 1
+        except ValueError as e:
+            renderer.finalize()
+            print(f"Error: {e}")
+            return 1
+
+        # Finalize progress in place — it already shows the full layout
+        final_block = render_progress_block(check_names_ordered, completed, len(completed))
+        renderer.finalize(final_block)
+
+    # Cache fixable findings for `doctor fix`
+    from siftd.doctor.fixes import save_findings_cache
+
+    save_findings_cache(findings)
+
+    error_count = sum(1 for f in findings if f.severity == "error")
+    warning_count = sum(1 for f in findings if f.severity == "warning")
     fail_count = error_count + warning_count if args.strict else error_count
     return 1 if fail_count > 0 else 0
 
@@ -811,11 +1015,9 @@ def cmd_doctor(args) -> int:
         return _doctor_run(args, check_names=check_names)
 
     if action == "fix":
-        # doctor fix --pending-tags — clean up stale sessions and orphaned pending tags
         if getattr(args, "pending_tags", False):
             return _doctor_fix_pending_tags(args)
-        # doctor fix — run all checks and show fixes
-        return _doctor_run(args, show_fixes=True)
+        return _doctor_fix(args)
 
     # Legacy: siftd doctor checks
     if action == "checks":

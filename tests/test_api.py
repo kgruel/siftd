@@ -19,8 +19,20 @@ from siftd.api import (
     get_tool_tags_by_workspace,
     list_conversations,
 )
+from siftd.api.conversations import (
+    ToolCallDetail,
+    _collapse_tool_call_rows,
+    _collapse_tool_details,
+    _extract_text,
+    _extract_thinking,
+    _extract_tool_result,
+    _extract_tool_use_id,
+    _matches_tool_filter,
+    resolve_entity_id,
+)
 from siftd.api.search import ConversationScore, aggregate_by_conversation, first_mention
 from siftd.search import SearchResult
+from siftd.storage.sqlite import open_database
 
 
 class TestGetStats:
@@ -92,6 +104,7 @@ class TestGetCostCoverage:
         assert result is None
 
     def test_positive_cost_counted(self, tmp_path):
+        from siftd.storage.conversation_stats import rebuild_conversation_stats
         from siftd.storage.sqlite import (
             create_database,
             get_or_create_harness,
@@ -102,7 +115,6 @@ class TestGetCostCoverage:
             insert_prompt,
             insert_response,
         )
-        from siftd.storage.conversation_stats import rebuild_conversation_stats
 
         conn = create_database(tmp_path / "t.db")
         provider_id = get_or_create_provider(conn, "anthropic")
@@ -782,3 +794,328 @@ class TestFetchFileRefs:
         assert paths["/test/inline.txt"] == "inline content"
 
         conn.close()
+
+
+class TestExtractText:
+    """Tests for _extract_text utility."""
+
+    def test_json_wrapped(self):
+        assert _extract_text('{"text": "hello"}') == "hello"
+
+    def test_plain_string(self):
+        assert _extract_text("plain text") == "plain text"
+
+
+class TestMatchesToolFilter:
+    """Tests for _matches_tool_filter utility."""
+
+    def test_no_filter(self):
+        assert _matches_tool_filter("file.read", "success", None) is True
+
+    def test_errors_filter(self):
+        assert _matches_tool_filter("file.read", "error", "errors") is True
+        assert _matches_tool_filter("file.read", "success", "errors") is False
+
+    def test_exact_name(self):
+        assert _matches_tool_filter("file.read", "success", "file.read") is True
+        assert _matches_tool_filter("file.write", "success", "file.read") is False
+
+    def test_prefix_match(self):
+        assert _matches_tool_filter("file.read", "success", "file") is True
+        assert _matches_tool_filter("shell.execute", "success", "file") is False
+
+    def test_none_tool_name(self):
+        assert _matches_tool_filter(None, "success", "file") is False
+
+
+class TestCollapseToolCallRows:
+    """Tests for _collapse_tool_call_rows utility."""
+
+    def test_empty(self):
+        assert _collapse_tool_call_rows([]) == []
+
+    def test_collapses_consecutive(self):
+        rows = [
+            {"tool_name": "file.read", "status": "success"},
+            {"tool_name": "file.read", "status": "success"},
+            {"tool_name": "shell.execute", "status": "success"},
+        ]
+        result = _collapse_tool_call_rows(rows)
+        assert len(result) == 2
+        assert result[0].tool_name == "file.read"
+        assert result[0].count == 2
+        assert result[1].tool_name == "shell.execute"
+
+
+class TestExtractThinking:
+    """Tests for _extract_thinking utility."""
+
+    def test_thinking_key(self):
+        assert _extract_thinking('{"thinking": "pondering..."}') == "pondering..."
+
+    def test_text_key(self):
+        assert _extract_thinking('{"text": "analysis"}') == "analysis"
+
+    def test_subject_description(self):
+        result = _extract_thinking('{"subject": "Code review", "description": "checking tests"}')
+        assert "Code review" in result
+        assert "checking tests" in result
+
+    def test_description_only(self):
+        assert _extract_thinking('{"description": "checking"}') == "checking"
+
+    def test_subject_only(self):
+        assert _extract_thinking('{"subject": "Review"}') == "Review"
+
+    def test_plain_string(self):
+        assert _extract_thinking("raw text") == "raw text"
+
+
+class TestExtractToolUseId:
+    """Tests for _extract_tool_use_id utility."""
+
+    def test_id_key(self):
+        assert _extract_tool_use_id('{"id": "toolu_123"}') == "toolu_123"
+
+    def test_tool_use_id_key(self):
+        assert _extract_tool_use_id('{"tool_use_id": "call_456"}') == "call_456"
+
+    def test_call_id_key(self):
+        assert _extract_tool_use_id('{"call_id": "fc_789"}') == "fc_789"
+
+    def test_no_id(self):
+        assert _extract_tool_use_id('{"name": "tool"}') is None
+
+    def test_plain_string(self):
+        assert _extract_tool_use_id("not json") is None
+
+
+class TestExtractToolResult:
+    """Tests for _extract_tool_result utility."""
+
+    def test_text_key(self):
+        assert _extract_tool_result('{"text": "output"}') == "output"
+
+    def test_content_string(self):
+        assert _extract_tool_result('{"content": "hello"}') == "hello"
+
+    def test_content_dict(self):
+        result = _extract_tool_result('{"content": {"text": "nested"}}')
+        assert result == "nested"
+
+    def test_content_dict_no_text(self):
+        result = _extract_tool_result('{"content": {"key": "val"}}')
+        assert "key" in result  # JSON dump
+
+    def test_content_list(self):
+        result = _extract_tool_result('{"content": ["line1", "line2"]}')
+        assert "line1" in result
+        assert "line2" in result
+
+    def test_content_list_with_dicts(self):
+        result = _extract_tool_result('{"content": [{"text": "a"}, {"text": "b"}]}')
+        assert "a" in result and "b" in result
+
+    def test_output_key(self):
+        assert _extract_tool_result('{"output": "done"}') == "done"
+
+    def test_plain_string(self):
+        assert _extract_tool_result("raw") == "raw"
+
+    def test_non_string_value(self):
+        result = _extract_tool_result('{"text": 42}')
+        assert result == "42"
+
+    def test_content_list_with_non_text_dict(self):
+        result = _extract_tool_result('{"content": [{"key": "val"}, "text"]}')
+        assert "key" in result and "text" in result
+
+
+class TestCollapseToolDetails:
+    """Tests for _collapse_tool_details utility."""
+
+    def test_empty(self):
+        assert _collapse_tool_details([], collapse=True) == []
+
+    def test_no_collapse(self):
+        tools = [ToolCallDetail(tool_name="file.read", status="success")]
+        result = _collapse_tool_details(tools, collapse=False)
+        assert len(result) == 1
+
+    def test_collapses(self):
+        tools = [
+            ToolCallDetail(tool_name="file.read", status="success"),
+            ToolCallDetail(tool_name="file.read", status="success"),
+            ToolCallDetail(tool_name="shell.execute", status="success"),
+        ]
+        result = _collapse_tool_details(tools, collapse=True)
+        assert len(result) == 2
+        assert result[0].count == 2
+
+
+class TestResolveEntityId:
+    """Tests for resolve_entity_id utility."""
+
+    def test_workspace(self, test_db):
+        conn = open_database(test_db, read_only=True)
+        # Look up actual workspace from test_db
+        ws = conn.execute("SELECT id FROM workspaces LIMIT 1").fetchone()
+        result = resolve_entity_id(conn, "workspace", ws["id"])
+        conn.close()
+        assert result == ws["id"]
+
+    def test_unknown_type(self, test_db):
+        conn = open_database(test_db, read_only=True)
+        result = resolve_entity_id(conn, "unknown_type", "id1")
+        conn.close()
+        assert result is None
+
+    def test_tool_call(self, test_db):
+        conn = open_database(test_db, read_only=True)
+        result = resolve_entity_id(conn, "tool_call", "nonexistent")
+        conn.close()
+        assert result is None
+
+
+class TestBuildNarrative:
+    """Tests for _build_narrative with mock content blocks."""
+
+    def test_text_flushes_pending_tools(self):
+        """L648-655: text block flushes pending tool calls."""
+        from siftd.api.conversations import _build_narrative
+        blocks = [
+            {"block_type": "tool_use", "content": '{"id": "tu1"}'},
+            {"block_type": "text", "content": "After tools"},
+        ]
+        tool_calls = [{"external_id": "tu1", "tool_name": "file.read", "status": "success", "input": "{}", "result": "ok"}]
+        result = _build_narrative(
+            [{"id": "r1"}],
+            {"r1": blocks},
+            {"r1": tool_calls},
+            include_thinking=False,
+            include_tool_content=False,
+            tool_filter=None,
+        )
+        types = [b.block_type for b in result]
+        assert "tool_calls" in types
+        assert "text" in types
+        assert types.index("tool_calls") < types.index("text")
+
+    def test_thinking_flushes_pending_tools(self):
+        """L668-675: thinking block flushes pending tool calls."""
+        from siftd.api.conversations import _build_narrative
+        blocks = [
+            {"block_type": "tool_use", "content": '{"id": "tu1"}'},
+            {"block_type": "thinking", "content": '{"thinking": "hmm"}'},
+        ]
+        tool_calls = [{"external_id": "tu1", "tool_name": "shell.execute", "status": "success", "input": "{}", "result": "ok"}]
+        result = _build_narrative(
+            [{"id": "r1"}],
+            {"r1": blocks},
+            {"r1": tool_calls},
+            include_thinking=True,
+            include_tool_content=False,
+            tool_filter=None,
+        )
+        types = [b.block_type for b in result]
+        assert "tool_calls" in types
+        assert "thinking" in types
+
+    def test_tool_use_fallback_matching(self):
+        """L694-703: tool_use with no matching external_id falls back to order."""
+        from siftd.api.conversations import _build_narrative
+        blocks = [
+            {"block_type": "tool_use", "content": '{"id": "unknown_id"}'},
+        ]
+        tool_calls = [{"external_id": None, "tool_name": "file.write", "status": "success", "input": "{}", "result": "ok"}]
+        result = _build_narrative(
+            [{"id": "r1"}],
+            {"r1": blocks},
+            {"r1": tool_calls},
+            include_thinking=False,
+            include_tool_content=False,
+            tool_filter=None,
+        )
+        # Should have matched by fallback order
+        assert len(result) >= 1
+
+    def test_tool_result_block(self):
+        """L718-732: tool_result/tool_output blocks."""
+        from siftd.api.conversations import _build_narrative
+        blocks = [
+            {"block_type": "tool_use", "content": '{"id": "tu1"}'},
+            {"block_type": "tool_result", "content": '{"text": "result data"}'},
+        ]
+        tool_calls = [{"external_id": "tu1", "tool_name": "file.read", "status": "success", "input": "{}", "result": "ok"}]
+        result = _build_narrative(
+            [{"id": "r1"}],
+            {"r1": blocks},
+            {"r1": tool_calls},
+            include_thinking=False,
+            include_tool_content=False,
+            tool_filter=None,
+        )
+        types = [b.block_type for b in result]
+        assert "tool_result" in types
+
+    def test_tool_use_fallback_skips_used_ids(self):
+        """L699,702: fallback matching skips already-used external_ids."""
+        from siftd.api.conversations import _build_narrative
+        blocks = [
+            {"block_type": "tool_use", "content": '{"id": "tu1"}'},
+            {"block_type": "tool_use", "content": '{"id": "tu_unknown"}'},
+        ]
+        tool_calls = [
+            {"external_id": "tu1", "tool_name": "file.read", "status": "success", "input": "{}", "result": "ok"},
+            {"external_id": "tu2", "tool_name": "file.write", "status": "success", "input": "{}", "result": "done"},
+        ]
+        result = _build_narrative(
+            [{"id": "r1"}],
+            {"r1": blocks},
+            {"r1": tool_calls},
+            include_thinking=False,
+            include_tool_content=True,
+            tool_filter=None,
+        )
+        # First tool_use matches tu1 by ID
+        # Second tool_use falls back, finds tu1 already used, picks tu2
+        assert len(result) >= 1
+
+
+
+
+class TestFetchOwnersEdgeCases:
+    def test_empty_ids(self, test_db):
+        """L398: empty conversation_ids returns empty dict."""
+        from siftd.api.conversations import _fetch_owners_for_conversations
+        conn = open_database(test_db, read_only=True)
+        assert _fetch_owners_for_conversations(conn, []) == {}
+        conn.close()
+
+    def test_owner_no_table(self, tmp_path):
+        """L229: conversation_owners table missing returns []."""
+        import sqlite3
+
+        from siftd.api.conversations import _list_conversations_impl
+        # Use bare DB without conversation_owners table
+        db = tmp_path / "bare.db"
+        conn = sqlite3.connect(str(db))
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY, workspace_id TEXT, started_at TEXT, ended_at TEXT)")
+        conn.execute("CREATE TABLE workspaces (id TEXT PRIMARY KEY, path TEXT, git_remote TEXT)")
+        conn.execute("CREATE TABLE responses (id TEXT PRIMARY KEY, conversation_id TEXT, model_id TEXT)")
+        conn.execute("CREATE TABLE models (id TEXT PRIMARY KEY, raw_name TEXT, name TEXT)")
+        result = _list_conversations_impl(
+            conn, workspace=None, model=None, since=None, before=None,
+            search=None, tool=None, tag=None, all_tags=None, no_tag=None,
+            tool_tag=None, n=50, oldest=False, owner="alice",
+        )
+        assert result == []
+        conn.close()
+
+
+class TestListConversationsFilters:
+    def test_tool_filter(self, test_db):
+        """L239: tool filter adds SQL clause."""
+        result = list_conversations(db_path=test_db, tool="nonexistent_tool")
+        assert result == []  # no conversations match this tool

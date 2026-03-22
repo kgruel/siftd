@@ -29,7 +29,12 @@ SCHEMA_VERSION = 1
 # =============================================================================
 
 
-def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
+def open_database(
+    db_path: Path,
+    *,
+    read_only: bool = False,
+    check_same_thread: bool = True,
+) -> sqlite3.Connection:
     """Open database connection, creating schema if needed.
 
     Args:
@@ -37,6 +42,8 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         read_only: If True, open without running migrations/ensures that write.
             This enables read-only operations (status/query/search) against a DB that
             lives on read-only media or in restricted environments.
+        check_same_thread: If False, allow the connection to be used from multiple
+            threads.  Useful for concurrent read-only access (e.g. doctor checks).
     """
     is_new = not db_path.exists()
     if is_new and read_only:
@@ -46,9 +53,9 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         # Use URI mode with mode=ro&immutable=1 to avoid creating WAL/SHM sidecars
         # and to work on read-only filesystems. Mirrors embeddings.py approach.
         uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
-        conn = sqlite3.connect(uri, uri=True)
+        conn = sqlite3.connect(uri, uri=True, check_same_thread=check_same_thread)
     else:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     if not read_only:

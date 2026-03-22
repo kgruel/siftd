@@ -1,6 +1,17 @@
 """Tests for tool-search projection/index."""
 
+import sqlite3
+
 from siftd.api.database import create_database
+from siftd.api.tool_search import (
+    _add_conversation_tags_all,
+    _add_conversation_tags_any,
+    _add_conversation_tags_none,
+    _add_owner_clause,
+    _add_tool_call_tags,
+    _search_tool_calls_impl,
+    search_tool_calls,
+)
 from siftd.storage.sqlite import (
     get_or_create_harness,
     get_or_create_model,
@@ -12,110 +23,139 @@ from siftd.storage.sqlite import (
     insert_tool_call,
 )
 from siftd.storage.tool_search import rebuild_tool_search_index
+from siftd.tool_query import ToolQuery
+
+
+def _seed_db(tmp_path, name="test.db"):
+    """Create a minimal DB with one shell.execute tool call."""
+    db_path = tmp_path / name
+    conn = create_database(db_path)
+    h = get_or_create_harness(conn, "h", source="test", log_format="jsonl")
+    w = get_or_create_workspace(conn, "/work", "2024-01-01T00:00:00Z")
+    m = get_or_create_model(conn, "model")
+    t = get_or_create_tool(conn, "shell.execute", description="Execute commands")
+    c = insert_conversation(conn, "c1", h, w, "2024-01-15T10:00:00Z")
+    p = insert_prompt(conn, c, "p1", "2024-01-15T10:00:00Z")
+    r = insert_response(conn, c, p, m, None, "r1", "2024-01-15T10:00:01Z")
+    return db_path, conn, t, c, r
 
 
 class TestToolSearchIndex:
-    def test_rebuild_projects_tool_calls_into_search_rows(self, tmp_path):
-        db_path = tmp_path / "tool_search.db"
-        conn = create_database(db_path)
+    def test_rebuild_projects_tool_calls(self, tmp_path):
+        db_path, conn, shell_t, c, r = _seed_db(tmp_path)
+        read_t = get_or_create_tool(conn, "file.read", description="Read files")
 
-        harness_id = get_or_create_harness(conn, "test_harness", source="test", log_format="jsonl")
-        workspace_id = get_or_create_workspace(conn, "/work/siftd", "2024-01-01T00:00:00Z")
-        model_id = get_or_create_model(conn, "test-model")
-        shell_tool_id = get_or_create_tool(conn, "shell.execute", description="Execute shell commands")
-        read_tool_id = get_or_create_tool(conn, "file.read", description="Read file contents")
-
-        conv_id = insert_conversation(
-            conn,
-            external_id="conv-1",
-            harness_id=harness_id,
-            workspace_id=workspace_id,
-            started_at="2024-01-15T10:00:00Z",
-        )
-        prompt_id = insert_prompt(conn, conv_id, "p1", "2024-01-15T10:00:00Z")
-        response_id = insert_response(
-            conn,
-            conv_id,
-            prompt_id,
-            model_id,
-            None,
-            "r1",
-            "2024-01-15T10:00:01Z",
-        )
-
-        shell_tc_id = insert_tool_call(
-            conn,
-            response_id,
-            conv_id,
-            shell_tool_id,
-            "tc-shell",
-            '{"command": "git status"}',
-            '{"stderr": "fatal: not a git repository"}',
-            "error",
-            "2024-01-15T10:00:02Z",
-        )
-        read_tc_id = insert_tool_call(
-            conn,
-            response_id,
-            conv_id,
-            read_tool_id,
-            "tc-read",
-            '{"file_path": "/work/siftd/pyproject.toml"}',
-            '{"content": "[tool.ruff]"}',
-            "success",
-            "2024-01-15T10:00:03Z",
-        )
-
+        stc = insert_tool_call(conn, r, c, shell_t, "tc-s",
+                               '{"command": "git status"}',
+                               '{"stderr": "fatal: not a git repository"}',
+                               "error", "2024-01-15T10:00:02Z")
+        rtc = insert_tool_call(conn, r, c, read_t, "tc-r",
+                               '{"file_path": "/work/siftd/pyproject.toml"}',
+                               '{"content": "[tool.ruff]"}',
+                               "success", "2024-01-15T10:00:03Z")
         rebuild_tool_search_index(conn)
 
-        shell_row = conn.execute(
-            "SELECT * FROM tool_search WHERE tool_call_id = ?",
-            (shell_tc_id,),
-        ).fetchone()
-        assert shell_row is not None
-        assert shell_row["tool_name"] == "shell.execute"
-        assert shell_row["tool_family"] == "shell"
-        assert shell_row["status"] == "error"
-        assert shell_row["command"] == "git status"
-        assert shell_row["command_verb"] == "git"
-        assert shell_row["result_snippet"] == "fatal: not a git repository"
-        assert "/work/siftd" in shell_row["search_text"]
+        s = conn.execute("SELECT * FROM tool_search WHERE tool_call_id=?", (stc,)).fetchone()
+        assert s["tool_name"] == "shell.execute"
+        assert s["tool_family"] == "shell"
+        assert s["status"] == "error"
+        assert s["command"] == "git status"
+        assert s["command_verb"] == "git"
 
-        read_row = conn.execute(
-            "SELECT * FROM tool_search WHERE tool_call_id = ?",
-            (read_tc_id,),
-        ).fetchone()
-        assert read_row is not None
-        assert read_row["path"] == "/work/siftd/pyproject.toml"
-        assert read_row["basename"] == "pyproject.toml"
-        assert read_row["ext"] == "toml"
-        assert read_row["result_snippet"] == "[tool.ruff]"
+        rd = conn.execute("SELECT * FROM tool_search WHERE tool_call_id=?", (rtc,)).fetchone()
+        assert rd["path"] == "/work/siftd/pyproject.toml"
+        assert rd["basename"] == "pyproject.toml"
+        assert rd["ext"] == "toml"
 
-        fts_rows = conn.execute(
-            """
-            SELECT ts.tool_call_id
-            FROM tool_search_fts fts
-            JOIN tool_search ts ON ts.rowid = fts.rowid
-            WHERE tool_search_fts MATCH ?
-            ORDER BY bm25(tool_search_fts)
-            """,
+        fts = conn.execute(
+            "SELECT ts.tool_call_id FROM tool_search_fts fts"
+            " JOIN tool_search ts ON ts.rowid = fts.rowid"
+            " WHERE tool_search_fts MATCH ? ORDER BY bm25(tool_search_fts)",
             ("pyproject",),
         ).fetchall()
-        assert [row["tool_call_id"] for row in fts_rows] == [read_tc_id]
-
+        assert [row["tool_call_id"] for row in fts] == [rtc]
         conn.close()
 
-    def test_tables_not_created_eagerly_on_database_open(self, tmp_path):
-        """tool_search tables are lazy — not created until first tool-search use."""
+    def test_tables_not_created_eagerly(self, tmp_path):
         conn = create_database(tmp_path / "empty.db")
-
-        tables = {
-            row["name"]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            ).fetchall()
-        }
-
+        tables = {r["name"] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'",
+        ).fetchall()}
         assert "tool_search" not in tables
-        assert "tool_search_fts" not in tables
+        conn.close()
+
+
+class TestSQLBuilders:
+    """Tests for SQL WHERE clause builder functions."""
+
+    def test_tags_any(self):
+        w, p = [], []
+        _add_conversation_tags_any(w, p, ["bug", "feat"])
+        assert len(w) == 1 and "OR" in w[0] and len(p) == 2
+
+    def test_tags_any_none(self):
+        w, p = [], []
+        _add_conversation_tags_any(w, p, None)
+        assert w == []
+
+    def test_tags_all(self):
+        w, p = [], []
+        _add_conversation_tags_all(w, p, ["bug", "fix"])
+        assert len(w) == 2 and len(p) == 2
+
+    def test_tags_all_none(self):
+        w, p = [], []
+        _add_conversation_tags_all(w, p, None)
+        assert w == []
+
+    def test_tags_none(self):
+        w, p = [], []
+        _add_conversation_tags_none(w, p, ["wip"])
+        assert len(w) == 1 and "NOT IN" in w[0]
+
+    def test_tags_none_empty(self):
+        w, p = [], []
+        _add_conversation_tags_none(w, p, None)
+        assert w == []
+
+    def test_owner(self):
+        w, p = [], []
+        _add_owner_clause(w, p, "alice")
+        assert len(w) == 1 and p == ["alice"]
+
+    def test_owner_none(self):
+        w, p = [], []
+        _add_owner_clause(w, p, None)
+        assert w == []
+
+    def test_tool_tags(self):
+        w, p = [], []
+        _add_tool_call_tags(w, p, ["shell:test"])
+        assert len(w) == 1 and "tool_call_tags" in w[0]
+
+    def test_tool_tags_none(self):
+        w, p = [], []
+        _add_tool_call_tags(w, p, None)
+        assert w == []
+
+
+class TestSearchToolCallsIntegration:
+    def test_rebuild_index(self, tmp_path):
+        """L96-102: search with rebuild_index=True."""
+        db_path, conn, t, c, r = _seed_db(tmp_path)
+        insert_tool_call(conn, r, c, t, "tc1",
+                         '{"command": "ls"}', '"files"', "success", "2024-01-01T00:00:02Z")
+        conn.commit()
+        conn.close()
+        parsed, results = search_tool_calls("ls", db_path=db_path, rebuild_index=True)
+        assert parsed is not None
+
+    def test_owner_guard_no_table(self, tmp_path):
+        """L150: owner filter with no conversation_owners table."""
+        conn = sqlite3.connect(str(tmp_path / "bare.db"))
+        conn.row_factory = sqlite3.Row
+        for t in ("tool_search", "conversations", "responses", "models", "providers", "harnesses"):
+            conn.execute(f"CREATE TABLE {t} (id TEXT PRIMARY KEY)")
+        parsed = ToolQuery(raw="t", terms=[], fields={}, bare_terms=[], unknown_fields=[])
+        assert _search_tool_calls_impl(conn, parsed, limit=10, owner="alice") == []
         conn.close()

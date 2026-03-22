@@ -217,8 +217,6 @@ def _ensure_parent_table(doc: TOMLDocument, parts: list[str]) -> Container:
         elif not isinstance(current[part], dict):
             raise ValueError(f"Config path '{'.'.join(parts[:-1])}' is not a table")
         current = cast(Container, current[part])
-    if not isinstance(current, dict):
-        raise ValueError(f"Config path '{'.'.join(parts[:-1])}' is not a table")
     return current
 
 

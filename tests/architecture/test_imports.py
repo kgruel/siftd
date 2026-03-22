@@ -53,7 +53,7 @@ ALLOWED_DEPS: dict[str, list[str]] = {
         "adapters",
         "utilities",
     ],
-    "cli": ["api", "output", "utilities", "serve"],
+    "cli": ["api", "output", "utilities", "serve", "doctor"],
 }
 
 # Map top-level siftd modules to architecture groups.

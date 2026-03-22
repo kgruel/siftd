@@ -2,9 +2,8 @@
 
 import subprocess
 
-import pytest
-
 from siftd.git import (
+    clear_git_caches,
     get_canonical_workspace_path,
     get_git_remote_url,
     normalize_remote_url,
@@ -63,6 +62,10 @@ class TestNormalizeRemoteUrl:
         """Trailing slashes are stripped."""
         assert normalize_remote_url("https://github.com/user/repo/") == "github.com/user/repo"
         assert normalize_remote_url("git@github.com:user/repo/") == "github.com/user/repo"
+
+    def test_ssh_no_slash(self):
+        """SSH URL with no slash (just host:repo) is normalized."""
+        assert normalize_remote_url("git@github.com:repo") == "github.com/repo"
 
     def test_file_protocol(self):
         """file:// URLs return the path."""
@@ -305,3 +308,15 @@ class TestGetCanonicalWorkspacePath:
         # Check cache was used
         cache_info = get_canonical_workspace_path.cache_info()
         assert cache_info.hits >= 2  # At least 2 cache hits
+
+
+class TestClearGitCaches:
+    def test_clears_cache(self, tmp_path):
+        """clear_git_caches() resets the LRU cache."""
+        path = str(tmp_path / "some_dir")
+        get_canonical_workspace_path(path)
+        info_before = get_canonical_workspace_path.cache_info()
+        assert info_before.misses >= 1
+        clear_git_caches()
+        info_after = get_canonical_workspace_path.cache_info()
+        assert info_after.misses == 0  # cache was cleared

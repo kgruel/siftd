@@ -794,3 +794,299 @@ class TestDatabaseOps:
             open_database(tmp_path / "nope.db", read_only=True)
         with pytest.raises(FileNotFoundError):
             sq.backup_database(tmp_path / "missing.db", tmp_path / "d.db")
+
+
+# --- Doctor diagnostic functions ---
+
+
+class TestDiagnostics:
+    def _insert_error_file(self, db, path, harness_id, error):
+        db.execute(
+            "INSERT INTO ingested_files (id, path, file_hash, harness_id, ingested_at, error) "
+            "VALUES (?, ?, 'hash', ?, datetime('now'), ?)",
+            (f"if-{path}", path, harness_id, error),
+        )
+
+    def test_get_ingest_errors(self, db):
+        assert sq.get_ingest_errors(db) == []
+        db.execute("INSERT INTO harnesses (id, name) VALUES ('h1', 'test_harness')")
+        self._insert_error_file(db, "/bad/file.json", "h1", "parse error")
+        db.commit()
+        errors = sq.get_ingest_errors(db)
+        assert len(errors) == 1
+        assert errors[0]["path"] == "/bad/file.json"
+        assert errors[0]["error"] == "parse error"
+        assert errors[0]["harness_name"] == "test_harness"
+
+    def test_get_ingest_errors_missing_harness(self, db):
+        db.execute("PRAGMA foreign_keys = OFF")
+        self._insert_error_file(db, "/f", "h_unknown", "err")
+        db.commit()
+        db.execute("PRAGMA foreign_keys = ON")
+        errors = sq.get_ingest_errors(db)
+        assert errors[0]["harness_name"] == "h_unknown"  # fallback to ID
+
+    def test_get_models_without_pricing(self, db):
+        assert sq.get_models_without_pricing(db) == []
+        # Insert model + provider + conversation chain + response
+        db.execute("INSERT INTO models (id, raw_name, name) VALUES ('m1', 'gpt-4', 'gpt-4')")
+        db.execute("INSERT INTO providers (id, name) VALUES ('p1', 'openai')")
+        db.execute("INSERT INTO harnesses (id, name) VALUES ('h1', 'test')")
+        db.execute(
+            "INSERT INTO conversations (id, external_id, harness_id, started_at) "
+            "VALUES ('c1', 'ext1', 'h1', '2024-01-01')"
+        )
+        db.execute(
+            "INSERT INTO prompts (id, conversation_id, timestamp) VALUES ('pr1', 'c1', '2024-01-01')"
+        )
+        db.execute(
+            "INSERT INTO responses (id, conversation_id, prompt_id, timestamp, model_id, provider_id) "
+            "VALUES ('r1', 'c1', 'pr1', '2024-01-01', 'm1', 'p1')"
+        )
+        db.commit()
+        result = sq.get_models_without_pricing(db)
+        assert len(result) == 1
+        assert result[0]["model_name"] == "gpt-4"
+        assert result[0]["provider_name"] == "openai"
+
+    def test_get_freelist_info(self, db):
+        info = sq.get_freelist_info(db)
+        assert "freelist_count" in info
+        assert "page_count" in info
+        assert "page_size" in info
+        assert isinstance(info["page_size"], int) and info["page_size"] > 0
+
+    def test_get_pending_schema_migrations(self, db):
+        # Fresh DB should have no pending migrations (open_database runs them all)
+        pending = sq.get_pending_schema_migrations(db)
+        assert pending == []
+
+
+class TestFTSSync:
+    def test_get_fts_sync_status(self, db):
+        result = fts.get_fts_sync_status(db)
+        assert result["orphaned_count"] == 0
+        assert result["missing_prompt_count"] == 0
+        assert result["missing_response_count"] == 0
+
+
+class TestMigrateWorkspaces:
+    def test_backfill_git_remotes_missing_path(self, db, tmp_path):
+        from siftd.storage.migrate_workspaces import backfill_git_remotes
+        # Insert a workspace with a path that doesn't exist
+        db.execute("INSERT INTO workspaces (id, path, discovered_at) VALUES ('w1', '/nonexistent/path', '2024-01-01')")
+        db.commit()
+        progress = []
+        stats = backfill_git_remotes(db, on_progress=lambda msg: progress.append(msg))
+        assert stats["skipped_missing"] == 1
+        assert any("no longer exists" in m for m in progress)
+
+    def test_backfill_git_remotes_no_git(self, db, tmp_path, monkeypatch):
+        from siftd.storage.migrate_workspaces import backfill_git_remotes
+        no_git = tmp_path / "no_git_dir"
+        no_git.mkdir()
+        db.execute("INSERT INTO workspaces (id, path, discovered_at) VALUES ('w1', ?, '2024-01-01')", (str(no_git),))
+        db.commit()
+        progress = []
+        stats = backfill_git_remotes(db, on_progress=lambda msg: progress.append(msg))
+        assert stats["skipped_no_git"] == 1
+        assert any("no git remote" in m for m in progress)
+
+    def test_backfill_git_remotes_with_git(self, db, tmp_path, monkeypatch):
+        from siftd.storage.migrate_workspaces import backfill_git_remotes
+        # Create a directory and mock git remote
+        git_dir = tmp_path / "git_dir"
+        git_dir.mkdir()
+        monkeypatch.setattr(
+            "siftd.storage.migrate_workspaces.get_git_remote_url",
+            lambda path: "https://github.com/test/repo.git",
+        )
+        db.execute("INSERT INTO workspaces (id, path, discovered_at) VALUES ('w1', ?, '2024-01-01')", (str(git_dir),))
+        db.commit()
+        stats = backfill_git_remotes(db)
+        assert stats["updated"] == 1
+        # Verify the remote was saved
+        row = db.execute("SELECT git_remote FROM workspaces WHERE id = 'w1'").fetchone()
+        assert row["git_remote"] == "https://github.com/test/repo.git"
+
+    def test_backfill_git_remotes_dry_run(self, db, tmp_path, monkeypatch):
+        from siftd.storage.migrate_workspaces import backfill_git_remotes
+        git_dir = tmp_path / "git_dir"
+        git_dir.mkdir()
+        monkeypatch.setattr(
+            "siftd.storage.migrate_workspaces.get_git_remote_url",
+            lambda path: "https://github.com/test/repo.git",
+        )
+        db.execute("INSERT INTO workspaces (id, path, discovered_at) VALUES ('w1', ?, '2024-01-01')", (str(git_dir),))
+        db.commit()
+        progress = []
+        stats = backfill_git_remotes(db, dry_run=True, on_progress=lambda m: progress.append(m))
+        assert stats["updated"] == 1
+        # Dry run should NOT save
+        row = db.execute("SELECT git_remote FROM workspaces WHERE id = 'w1'").fetchone()
+        assert row["git_remote"] is None
+        assert any("updated" in m for m in progress)
+
+
+    def test_merge_duplicate_workspaces(self, db):
+        from siftd.storage.migrate_workspaces import merge_duplicate_workspaces
+        # Create two workspaces with same git_remote
+        db.execute(
+            "INSERT INTO workspaces (id, path, git_remote, discovered_at) "
+            "VALUES ('w1', '/proj1', 'https://github.com/test/repo.git', '2024-01-01')"
+        )
+        db.execute(
+            "INSERT INTO workspaces (id, path, git_remote, discovered_at) "
+            "VALUES ('w2', '/proj2', 'https://github.com/test/repo.git', '2024-01-01')"
+        )
+        db.execute("INSERT INTO harnesses (id, name) VALUES ('h1', 'test')")
+        # Give w1 more conversations so it becomes keeper
+        for i in range(3):
+            db.execute(
+                "INSERT INTO conversations (id, external_id, harness_id, workspace_id, started_at) "
+                "VALUES (?, ?, 'h1', 'w1', '2024-01-01')",
+                (f"c{i}", f"ext{i}"),
+            )
+        db.execute(
+            "INSERT INTO conversations (id, external_id, harness_id, workspace_id, started_at) "
+            "VALUES ('c_w2', 'ext_w2', 'h1', 'w2', '2024-01-01')"
+        )
+        db.commit()
+        progress = []
+        stats = merge_duplicate_workspaces(db, on_progress=lambda m: progress.append(m))
+        assert stats["workspaces_merged"] == 1
+        assert stats["conversations_moved"] == 1
+        # w2 should be gone, conversation re-pointed to w1
+        assert db.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0] == 1
+        assert db.execute(
+            "SELECT workspace_id FROM conversations WHERE id = 'c_w2'"
+        ).fetchone()[0] == "w1"
+        assert any("Merging" in m for m in progress)
+
+
+    def test_merge_no_conversations(self, db):
+        """Test merge when workspaces have no conversations (keeper = first ID)."""
+        from siftd.storage.migrate_workspaces import merge_duplicate_workspaces
+        db.execute(
+            "INSERT INTO workspaces (id, path, git_remote, discovered_at) "
+            "VALUES ('w1', '/p1', 'git://dup', '2024-01-01')"
+        )
+        db.execute(
+            "INSERT INTO workspaces (id, path, git_remote, discovered_at) "
+            "VALUES ('w2', '/p2', 'git://dup', '2024-01-01')"
+        )
+        db.commit()
+        stats = merge_duplicate_workspaces(db)
+        assert stats["workspaces_merged"] == 1
+        assert db.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0] == 1
+
+    def test_merge_with_tags(self, db):
+        """Test merge migrates workspace_tags."""
+        from siftd.storage.migrate_workspaces import merge_duplicate_workspaces
+        db.execute(
+            "INSERT INTO workspaces (id, path, git_remote, discovered_at) "
+            "VALUES ('w1', '/p1', 'git://dup', '2024-01-01')"
+        )
+        db.execute(
+            "INSERT INTO workspaces (id, path, git_remote, discovered_at) "
+            "VALUES ('w2', '/p2', 'git://dup', '2024-01-01')"
+        )
+        db.execute("INSERT INTO tags (id, name, created_at) VALUES ('t1', 'important', '2024-01-01')")
+        db.execute(
+            "INSERT INTO workspace_tags (id, workspace_id, tag_id, applied_at) "
+            "VALUES ('wt1', 'w2', 't1', '2024-01-01')"
+        )
+        db.commit()
+        stats = merge_duplicate_workspaces(db)
+        assert stats["workspaces_merged"] == 1
+        # Tag should be migrated to keeper (w1)
+        row = db.execute(
+            "SELECT workspace_id FROM workspace_tags WHERE tag_id = 't1'"
+        ).fetchone()
+        assert row["workspace_id"] == "w1"
+
+
+class TestPreMigrationGuards:
+    """Test guards that return early when columns/tables don't exist."""
+
+    def test_get_ingest_errors_no_error_column(self, tmp_path):
+        import sqlite3
+        conn = sqlite3.connect(str(tmp_path / "bare.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE ingested_files (id TEXT, path TEXT)")
+        conn.commit()
+        assert sq.get_ingest_errors(conn) == []
+        conn.close()
+
+    def test_get_models_without_pricing_no_table(self, tmp_path):
+        import sqlite3
+        conn = sqlite3.connect(str(tmp_path / "bare.db"))
+        conn.row_factory = sqlite3.Row
+        conn.commit()
+        assert sq.get_models_without_pricing(conn) == []
+        conn.close()
+
+
+class TestPendingMigrationsDetection:
+    """Test get_pending_schema_migrations with a stripped-down DB."""
+
+    def test_detects_missing_tables_and_columns(self, tmp_path):
+        import sqlite3
+        # Create a minimal DB without any migrations
+        db_path = tmp_path / "bare.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE ingested_files (id TEXT PRIMARY KEY, path TEXT)")
+        conn.execute("CREATE TABLE prompts (id TEXT PRIMARY KEY, conversation_id TEXT)")
+        conn.commit()
+        pending = sq.get_pending_schema_migrations(conn)
+        assert "add error column to ingested_files" in pending
+        assert "add CASCADE deletes to foreign keys" in pending
+        assert "create pricing table" in pending
+        assert "create content_blobs table" in pending
+        assert "create tool_call_tags table" in pending
+        assert "create FTS5 search index" in pending
+        conn.close()
+
+
+class TestFTSSyncNoTable:
+    def test_no_fts_table(self, tmp_path):
+        import sqlite3
+        conn = sqlite3.connect(str(tmp_path / "bare.db"))
+        conn.row_factory = sqlite3.Row
+        result = fts.get_fts_sync_status(conn)
+        assert result == {"orphaned_count": 0, "missing_prompt_count": 0, "missing_response_count": 0}
+        conn.close()
+
+
+class TestMigrateBlobs:
+    def test_count_pending_migrations(self, db):
+        from siftd.storage.migrate_blobs import count_pending_migrations
+        result = count_pending_migrations(db)
+        assert "total" in result and "unique" in result
+
+    def test_migrate_with_actual_data(self, db):
+        from siftd.storage.migrate_blobs import migrate_existing_results
+        # Insert a tool call with a result to migrate
+        db.execute("INSERT INTO harnesses (id, name) VALUES ('h1', 'test')")
+        db.execute(
+            "INSERT INTO conversations (id, external_id, harness_id, started_at) "
+            "VALUES ('c1', 'ext1', 'h1', '2024-01-01')"
+        )
+        db.execute(
+            "INSERT INTO prompts (id, conversation_id, timestamp) VALUES ('p1', 'c1', '2024-01-01')"
+        )
+        db.execute(
+            "INSERT INTO responses (id, conversation_id, prompt_id, timestamp) "
+            "VALUES ('r1', 'c1', 'p1', '2024-01-01')"
+        )
+        db.execute(
+            "INSERT INTO tool_calls (id, response_id, conversation_id, input) "
+            "VALUES ('tc1', 'r1', 'c1', '{}')"
+        )
+        db.execute("UPDATE tool_calls SET result = 'hello world' WHERE id = 'tc1'")
+        db.commit()
+        progress = []
+        stats = migrate_existing_results(db, on_progress=lambda done, total: progress.append((done, total)))
+        assert stats["migrated"] == 1
+        assert len(progress) > 0  # on_progress was called

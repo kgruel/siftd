@@ -3,7 +3,6 @@
 import sqlite3
 
 import pytest
-
 from conftest import make_db as _make_db
 
 from siftd.api.merge import merge_database
@@ -763,3 +762,29 @@ def test_merge_no_new_returns_empty_ids(tmp_path):
     assert result["conversations"] == 0
     assert result["new_conversation_ids"] == []
     assert result["replaced_conversation_ids"] == []
+
+
+def test_missing_target_db(tmp_path):
+    """L41: target DB doesn't exist."""
+    import pytest
+
+    from siftd.api.database import create_database
+    from siftd.api.merge import merge_database
+
+    source = tmp_path / "source.db"
+    create_database(source).close()
+    with pytest.raises(FileNotFoundError, match="Target"):
+        merge_database(target_db=tmp_path / "nonexistent.db", source_path=source)
+
+
+def test_missing_source_db(tmp_path):
+    """L43: source DB doesn't exist."""
+    import pytest
+
+    from siftd.api.database import create_database
+    from siftd.api.merge import merge_database
+
+    target = tmp_path / "target.db"
+    create_database(target).close()
+    with pytest.raises(FileNotFoundError, match="Source"):
+        merge_database(target_db=target, source_path=tmp_path / "nonexistent.db")

@@ -31,6 +31,7 @@ def run_checks(
     checks: list[str] | None = None,
     db_path: Path | None = None,
     embed_db_path: Path | None = None,
+    on_check_done: object | None = None,
 ) -> list[Finding]:
     """Run health checks and return findings.
 
@@ -108,7 +109,11 @@ def run_checks(
         with ThreadPoolExecutor() as pool:
             futures = {pool.submit(_run_one, check): check for check in checks_to_run}
             for future in as_completed(futures):
-                findings.extend(future.result())
+                check = futures[future]
+                results = future.result()
+                findings.extend(results)
+                if on_check_done is not None:
+                    on_check_done(check.name, results)
         return findings
     finally:
         ctx.close()
