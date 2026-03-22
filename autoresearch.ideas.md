@@ -20,20 +20,24 @@
 ### `cli/meta.py` — ✅ 100%
 - 229/229 covered, miss 0
 
+### `cli/query.py` — ✅ 100%
+- 287/287 covered, miss 0
+
 ## Pruned stale ideas
 - ❌ "next target: cli/search" (done)
 - ❌ "next target: cli/data" (done)
 - ❌ "next target: cli/install" (done)
 - ❌ "next target: cli/meta" (done)
+- ❌ "next target: cli/query" (done)
 
 ## Highest ROI next targets
 
-### 1) `cli/query.py`
-- Strong remaining branch surface and practical user-path value
-- Existing tests can likely be extended without heavy runtime cost
+### 1) `cli/peek.py`
+- Remaining high-value CLI surface not yet saturated in this phase
+- Expect stream/IO branch complexity; likely needs careful fixture design
 
-### 2) `cli/peek.py`
-- Valuable coverage, but stream/IO behavior may add complexity/variance
+### 2) `cli/tool_search.py`
+- Candidate if peek branch setup is too costly for near-term loop velocity
 
 ## De-prioritized for now
 - `serve/*`, `embeddings/*` marker/runtime-heavy paths

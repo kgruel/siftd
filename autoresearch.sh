@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# CLI query coverage efficiency benchmark
+# CLI peek coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.cli.query"
-TEST_FILES="tests/cli/test_query_tools.py tests/cli/test_query_noembed.py"
+INCLUDE_ARGS="--cov=siftd.cli.peek"
+TEST_FILES="tests/cli/test_cmd_peek.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
