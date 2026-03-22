@@ -62,6 +62,7 @@ class TestSDK:
     def test_timestamp_bounds_and_load_jsonl(self, tmp_path):
         assert sdk.timestamp_bounds([{"timestamp": "C"}, {"timestamp": "A"}]) == ("A", "C")
         assert sdk.timestamp_bounds([]) == (None, None)
+        assert sdk.timestamp_bounds([{"timestamp": None}, {"timestamp": "B"}]) == ("B", "B")
         f = tmp_path / "data.jsonl"
         f.write_text('{"a":1}\nbad\n{"b":2}\n\n')
         records, errors = sdk.load_jsonl(f)
@@ -85,6 +86,9 @@ class TestSDK:
         (tmp_path / "big.txt").write_text("\n".join(f"line {i}" for i in range(5000)) + "\n")
         assert sdk.seek_last_lines(tmp_path / "big.txt", 5, chunk_size=256)[-1] == "line 4999"
         assert len(sdk.seek_last_lines(tmp_path / "big.txt", 10000, chunk_size=256)) == 5000
+        # Small file with bad encoding → UnicodeDecodeError (L333-334)
+        (tmp_path / "bad.txt").write_bytes(b'\x80\x81\x82\n' * 5)
+        assert sdk.seek_last_lines(tmp_path / "bad.txt", 3) == []
 
     def test_text_helpers(self):
         blocks = [{"type": "text", "text": "hi"}, {"type": "image"}, {"type": "tool_use", "name": "f"},
@@ -105,6 +109,7 @@ class TestSDK:
         assert sdk.extract_tool_hint("shell.execute", {"command": "x" * 100}, hints).endswith("...")
         assert sdk.extract_tool_hint("file.read", {"file_path": 123}, hints) is None
         assert sdk.extract_tool_hint("shell.execute", {"command": ""}, hints) is None
+        assert sdk.extract_tool_hint("shell.execute", {"command": "  "}, hints) is None  # whitespace-only (L469)
 
     def test_iter_jsonl_and_tail(self, tmp_path):
         f = write_jsonl(tmp_path, [{"a": 1}, {"b": 2}, {"c": 3}])
@@ -112,8 +117,14 @@ class TestSDK:
         assert list(sdk.iter_jsonl(tmp_path / "nope.jsonl")) == []
         (tmp_path / "bad.jsonl").write_text('{"ok":1}\nnot json\n')
         assert len(list(sdk.iter_jsonl(tmp_path / "bad.jsonl"))) == 1
+        # iter_jsonl with blank lines (L566)
+        (tmp_path / "blanks.jsonl").write_text('{"a":1}\n\n  \n{"b":2}\n')
+        assert len(list(sdk.iter_jsonl(tmp_path / "blanks.jsonl"))) == 2
         assert list(sdk.peek_jsonl_tail(f, 2))[-1] == {"c": 3}
         assert all(isinstance(r, str) for r in sdk.peek_jsonl_tail(f, 2, parse_json=False))
+        # peek_jsonl_tail with parse_json=True and bad JSON (L505-506)
+        tail = list(sdk.peek_jsonl_tail(tmp_path / "bad.jsonl", 5, parse_json=True))
+        assert tail[0] == {"ok": 1} and isinstance(tail[1], str)
 
     def test_peek_scan_exchanges_hooks(self, tmp_path):
         def _recs(f):
@@ -122,17 +133,49 @@ class TestSDK:
         r2 = sdk.peek_scan_from_records(_recs(CodexSession(tmp_path, exchanges=1, cwd="/proj", model="gpt-4", name="cx.jsonl").build()), codex_norm, default_session_id="fb")
         assert r2.workspace_path == "/proj" and r2.model == "gpt-4"
         assert sdk.peek_scan_from_records([], claude_norm, default_session_id="x") is None
+        # assistant-before-user → exchange_count=1 (L644), unknown records skipped (L620)
+        asst_first = sdk.peek_scan_from_records([
+            {"type": "system", "timestamp": "T0"},  # normalize returns None → L620
+            {"type": "assistant", "timestamp": "T1", "message": {"role": "assistant", "model": "m", "content": "init"}},
+            {"type": "user", "timestamp": "T2", "message": {"role": "user", "content": "hi"}},
+        ], claude_norm, default_session_id="af")
+        assert asst_first.exchange_count == 2
         assert sdk.peek_scan_from_records(_recs(ClaudeSession(tmp_path, name="sub.jsonl").with_subagent("sub-1").build()), claude_norm, default_session_id="m").parent_session_id is not None
+        # Path-based subagent detection (L665, L673) — no agent_id in records
+        from pathlib import Path as P
+        path_sub = sdk.peek_scan_from_records([
+            {"type": "user", "timestamp": "T1", "sessionId": "s1", "message": {"role": "user", "content": "hi"}},
+            {"type": "assistant", "timestamp": "T2", "message": {"role": "assistant", "model": "m", "content": "ok"}}
+        ], claude_norm, default_session_id="ps", subagent_path_marker="/agents/", file_path=P("/sessions/agents/sub.jsonl"))
+        assert path_sub.parent_session_id == "s1"
         ex = sdk.peek_exchanges_from_records(_recs(ClaudeSession(tmp_path, exchanges=3, name="t.jsonl").with_tools(["Read"]).build()), claude_norm, last_n=2, tool_aliases={"Read": "file.read"})
         assert len(ex) == 2 and ex[0].prompt_text and len(ex[0].tool_calls) >= 1
         assert sdk.peek_exchanges_from_records(_recs(CodexSession(tmp_path, exchanges=1, name="cu.jsonl").with_tools(["shell"]).with_usage().build()), codex_norm, last_n=5, tool_aliases={"shell": "shell.execute"})[0].input_tokens > 0
         assert sdk.peek_exchanges_from_records([{"type": "assistant", "timestamp": "T1", "message": {"role": "assistant", "model": "m", "content": [{"type": "text", "text": "init"}]}}], claude_norm, last_n=5)[0].prompt_text is None
+        # last_n < 1 clamps to 1 (L711)
+        assert len(sdk.peek_exchanges_from_records([
+            {"type": "user", "timestamp": "T1", "message": {"role": "user", "content": "q"}},
+            {"type": "assistant", "timestamp": "T2", "message": {"role": "assistant", "model": "m", "content": "a"}}], claude_norm, last_n=0)) == 1
         ex4 = sdk.peek_exchanges_from_records([
             {"type": "user", "timestamp": "T1", "message": {"role": "user", "content": [{"type": "text", "text": "go"}]}},
             {"type": "assistant", "timestamp": "T2", "message": {"role": "assistant", "model": "m",
                 "content": [{"type": "thinking", "thinking": "hmm"}, {"type": "text", "text": "done"}]}},
         ], claude_norm, last_n=5, include_thinking=True)
         assert any(b.block_type == "thinking" for b in ex4[0].narrative)
+        # Tool-placeholder-only text → None (L750)
+        ex5 = sdk.peek_exchanges_from_records([
+            {"type": "user", "timestamp": "T1", "message": {"role": "user", "content": "go"}},
+            {"type": "assistant", "timestamp": "T2", "message": {"role": "assistant", "model": "m",
+                "content": [{"type": "tool_use", "name": "f"}]}}
+        ], claude_norm, last_n=5)
+        assert ex5[0].response_text is None
+        # non-dict block skipped in narrative loop (L758)
+        ex6 = sdk.peek_exchanges_from_records([
+            {"type": "user", "timestamp": "T1", "message": {"role": "user", "content": "go"}},
+            {"type": "assistant", "timestamp": "T2", "message": {"role": "assistant", "model": "m",
+                "content": ["string-block", {"type": "text", "text": "ok"}]}}
+        ], claude_norm, last_n=5)
+        assert ex6[0].response_text and "ok" in ex6[0].response_text
         scan, exchanges, tail = sdk.make_peek_hooks(claude_norm, tool_aliases={"Read": "file.read"})
         f = ClaudeSession(tmp_path, exchanges=2, name="h.jsonl").with_tools(["Read"]).build()
         assert scan(f).exchange_count == 2 and len(exchanges(f, last_n=1)) == 1 and list(tail(f, 1))
