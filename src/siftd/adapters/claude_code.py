@@ -14,6 +14,7 @@ from siftd.adapters.sdk import (
     discover_files,
     flush_pending_calls,
     make_peek_hooks,
+    yield_conversation,
 )
 from siftd.domain import (
     Conversation,
@@ -258,11 +259,7 @@ def parse(source: Source) -> Iterable[Conversation]:
     # Handle any pending tool calls that never got results
     flush_pending_calls(pending_tool_uses)
 
-    # Skip sessions with no messages (opened and immediately canceled)
-    if not conversation.prompts:
-        return
-
-    yield conversation
+    yield from yield_conversation(conversation)
 
 
 def _normalize_content(content) -> list:

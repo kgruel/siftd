@@ -100,6 +100,12 @@ def build_harness(
     )
 
 
+def yield_conversation(conversation) -> Iterator:
+    """Yield conversation only if it has prompts. Skips empty sessions."""
+    if conversation.prompts:
+        yield conversation
+
+
 def timestamp_bounds(
     records: Iterable[dict],
     key: str = "timestamp",

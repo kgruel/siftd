@@ -14,7 +14,7 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
-from siftd.adapters.sdk import build_harness
+from siftd.adapters.sdk import build_harness, yield_conversation
 from siftd.domain import (
     ContentBlock,
     Conversation,
@@ -130,11 +130,7 @@ def _parse_chat_history(path: Path) -> Iterable[Conversation]:
 
         _parse_session_body(body, conversation)
 
-        # Skip empty sessions (opened and immediately closed)
-        if not conversation.prompts:
-            continue
-
-        yield conversation
+        yield from yield_conversation(conversation)
 
 
 def _split_sessions(text: str) -> list[tuple[str, str]]:

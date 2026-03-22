@@ -41,6 +41,7 @@ from siftd.adapters.sdk import (
     discover_files,
     load_jsonl,
     timestamp_bounds,
+    yield_conversation,
 )
 from siftd.domain import (
     ContentBlock,
@@ -166,11 +167,7 @@ def parse(source: Source) -> Iterable[Conversation]:
     # This example assumes records have "role" and "content" fields
     _parse_records(records, conversation)
 
-    # Skip empty conversations
-    if not conversation.prompts:
-        return
-
-    yield conversation
+    yield from yield_conversation(conversation)
 
 
 # ============================================================================

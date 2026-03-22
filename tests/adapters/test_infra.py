@@ -50,6 +50,15 @@ class TestSDK:
         assert h.display_name == "Test" and h.name == "test"
         assert sdk.build_harness("t", "s", "j", display_name="X").display_name == "X"
 
+    def test_yield_conversation(self):
+        from siftd.domain import ContentBlock, Conversation, Prompt
+        h = sdk.build_harness("test", "src", "jsonl")
+        empty = Conversation(external_id="e", harness=h, started_at="T")
+        assert list(sdk.yield_conversation(empty)) == []
+        with_prompts = Conversation(external_id="p", harness=h, started_at="T")
+        with_prompts.prompts.append(Prompt(timestamp="T", content=[ContentBlock(block_type="text", content={"text": "hi"})]))
+        assert list(sdk.yield_conversation(with_prompts)) == [with_prompts]
+
     def test_timestamp_bounds_and_load_jsonl(self, tmp_path):
         assert sdk.timestamp_bounds([{"timestamp": "C"}, {"timestamp": "A"}]) == ("A", "C")
         assert sdk.timestamp_bounds([]) == (None, None)

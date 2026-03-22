@@ -15,7 +15,7 @@ from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-from siftd.adapters.sdk import NormalizedRecord, build_harness, discover_files, make_peek_hooks
+from siftd.adapters.sdk import NormalizedRecord, build_harness, discover_files, make_peek_hooks, yield_conversation
 from siftd.domain import (
     ContentBlock,
     Conversation,
@@ -120,10 +120,7 @@ def _session_to_conversation(data: dict, path: Path) -> Iterable[Conversation]:
         if prompt:
             conversation.prompts.append(prompt)
 
-    if not conversation.prompts:
-        return
-
-    yield conversation
+    yield from yield_conversation(conversation)
 
 
 def _replay_jsonl(path: Path) -> dict | None:
