@@ -206,13 +206,13 @@ class TestReceiveOwnership:
         assert result["status"] == "created"
         assert "owned" not in result
 
-        # conversation_owners table should not even exist
+        # Table exists (created by migration chain) but should be empty
         conn = sqlite3.connect(str(target))
-        has_table = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE name='conversation_owners'"
-        ).fetchone()
+        count = conn.execute(
+            "SELECT COUNT(*) FROM conversation_owners"
+        ).fetchone()[0]
         conn.close()
-        assert has_table is None
+        assert count == 0
 
     def test_push_id_provenance(self, tmp_path):
         """Push ID is recorded in conversation_owners for provenance."""

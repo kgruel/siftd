@@ -94,6 +94,7 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         _ensure_tag_indexes(conn)
         _ensure_response_attributes_key_index(conn)
         _ensure_conversation_stats_table(conn)
+        ensure_conversation_owners_table(conn)
 
         # Stamp schema version after successful migrations
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
