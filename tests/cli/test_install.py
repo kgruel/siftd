@@ -425,3 +425,119 @@ class TestInstallHelpers:
         monkeypatch.setattr("siftd.cli.install.distribution", lambda name: _Dist())
         monkeypatch.setattr("siftd.cli.install.importlib.resources.as_file", lambda ref: __import__("contextlib").nullcontext(tmp_path / "missing"))
         assert _find_plugin_source() == fake_repo / "plugin"
+
+
+class TestInstallRemainingBranches:
+    def test_detect_install_method_pip_paths(self, monkeypatch):
+        monkeypatch.setattr("siftd.cli.install._editable_source_url", lambda: None)
+        monkeypatch.setattr("siftd.cli.install.sys.prefix", "/venv")
+        monkeypatch.setattr("siftd.cli.install.sys.base_prefix", "/base")
+        assert detect_install_method() == "pip_venv"
+
+        monkeypatch.setattr("siftd.cli.install.sys.base_prefix", "/venv")
+
+        class _F:
+            def locate(self):
+                return "/users/me/.local/lib/python/site-packages/siftd/__init__.py"
+
+        class _Dist:
+            files = [_F()]
+
+        monkeypatch.setattr("siftd.cli.install.distribution", lambda name: _Dist())
+        import site
+
+        monkeypatch.setattr(site, "getusersitepackages", lambda: "/users/me/.local/lib/python/site-packages")
+        assert detect_install_method() == "pip_user"
+
+    def test_embed_serve_import_checks(self, monkeypatch):
+        monkeypatch.setitem(__import__("sys").modules, "fastembed", object())
+        monkeypatch.setitem(__import__("sys").modules, "litestar", object())
+        from siftd.cli.install import _serve_installed, embed_installed
+
+        assert embed_installed()
+        assert _serve_installed()
+
+    def test_run_extra_install_dryrun_and_verify_warning(self, monkeypatch, capsys):
+        monkeypatch.setattr("siftd.cli.install.detect_install_method", lambda: "editable")
+        monkeypatch.setattr("siftd.cli.install._editable_source_url", lambda: "file:///tmp/src")
+        monkeypatch.setattr("siftd.cli.install._install_commands", lambda extra, source_path=None: {"editable": ["pip", "install"]})
+        monkeypatch.setattr("siftd.cli.install.install_hint", lambda extra: "pip install -e")
+
+        rc = _run_extra_install(
+            SimpleNamespace(dry_run=True),
+            "embed",
+            is_installed=lambda: False,
+            already_msg="already",
+            success_msg="ok",
+        )
+        assert rc == 0
+
+        class _Res:
+            returncode = 0
+
+        monkeypatch.setattr("siftd.cli.install.subprocess.run", lambda *a, **k: _Res())
+        rc = _run_extra_install(
+            SimpleNamespace(dry_run=False),
+            "embed",
+            is_installed=lambda: False,
+            already_msg="already",
+            success_msg="ok",
+        )
+        assert rc == 0
+        assert "Warning: Installation completed" in capsys.readouterr().err
+
+    def test_install_skill_and_plugin_error_branches(self, tmp_path, monkeypatch):
+        # _install_skill: missing bundled files
+        monkeypatch.setattr("siftd.cli.install._find_plugin_source", lambda: None)
+        assert _install_skill(_make_skill_args()) == 1
+
+        bad = tmp_path / "plugin"
+        bad.mkdir()
+        monkeypatch.setattr("siftd.cli.install._find_plugin_source", lambda: bad)
+        assert _install_skill(_make_skill_args()) == 1
+
+        # _install_plugin: missing source
+        monkeypatch.setattr("siftd.cli.install._find_plugin_source", lambda: None)
+        assert _install_plugin(_make_args()) == 1
+
+    def test_install_skill_scope_resolution_and_warns(self, tmp_path, monkeypatch):
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+        monkeypatch.chdir(tmp_path)
+
+        # build custom harness map to hit ~, /abs, relative and single-scope branches
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "siftd.skill_gen",
+            SimpleNamespace(
+                HARNESS_INFO={
+                    "one": {"display_name": "One", "scope_dirs": {"user": "~"}, "format": "instructions", "filename": "x.md"},
+                    "abs": {"display_name": "Abs", "scope_dirs": {"user": str(tmp_path / "abs")}, "format": "instructions", "filename": "a.md"},
+                    "rel": {"display_name": "Rel", "scope_dirs": {"user": "rel-dir"}, "format": "instructions", "filename": "r.md"},
+                },
+                render_instructions=lambda ref: "content",
+            ),
+        )
+
+        source = tmp_path / "srcp"
+        (source / "skills" / "siftd" / "reference").mkdir(parents=True)
+        (source / "skills" / "siftd" / "SKILL.md").write_text("x")
+        monkeypatch.setattr("siftd.cli.install._find_plugin_source", lambda: source)
+
+        assert _install_skill(_make_skill_args(harness="one", scope="project")) == 0
+        assert (fake_home / "x.md").exists()
+        assert _install_skill(_make_skill_args(harness="abs")) == 0
+        assert (tmp_path / "abs" / "a.md").exists()
+        assert _install_skill(_make_skill_args(harness="rel")) == 0
+        assert (tmp_path / "rel-dir" / "r.md").exists()
+
+    def test_cmd_install_dispatch(self, monkeypatch):
+        monkeypatch.setattr("siftd.cli.install._install_embed", lambda args: 11)
+        monkeypatch.setattr("siftd.cli.install._install_serve", lambda args: 12)
+        monkeypatch.setattr("siftd.cli.install._install_skill", lambda args: 13)
+        monkeypatch.setattr("siftd.cli.install._install_plugin", lambda args: 14)
+        assert cmd_install(SimpleNamespace(extra="embed")) == 11
+        assert cmd_install(SimpleNamespace(extra="serve")) == 12
+        assert cmd_install(SimpleNamespace(extra="skill")) == 13
+        assert cmd_install(SimpleNamespace(extra="plugin")) == 14
