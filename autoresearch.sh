@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# CLI tool-search coverage efficiency benchmark
+# CLI upgrade coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.cli.tool_search"
-TEST_FILES="tests/cli/test_tool_search_cli.py"
+INCLUDE_ARGS="--cov=siftd.cli.upgrade"
+TEST_FILES="tests/cli/test_upgrade.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

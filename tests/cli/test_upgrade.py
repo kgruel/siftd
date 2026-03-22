@@ -1,17 +1,12 @@
 """Tests for siftd upgrade command and version check."""
 
 import json
-import time
-from datetime import datetime, timezone
-from unittest.mock import patch
 
 from siftd.cli.upgrade import (
-    _cache_path,
-    _fetch_latest_version,
+    _cache_is_fresh,
     _is_newer,
     _read_cache,
     _write_cache,
-    _cache_is_fresh,
     maybe_print_notice,
 )
 
