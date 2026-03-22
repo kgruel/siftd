@@ -141,6 +141,11 @@ def test_status_and_workspaces_remaining_branches(monkeypatch, tmp_path, capsys)
     out = capsys.readouterr().out
     assert "(unknown)" in out and "Embeddings: installed" in out
 
+    # latest-only activity window branch (L176-177)
+    stats.activity_window = (None, "2024-01-02")
+    assert cmd_status(_args(json=False, db=str(tmp_path / "db.sqlite"))) == 0
+    assert "(unknown) ->" in capsys.readouterr().out
+
     # status: execute FileNotFoundError branch
     monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
     monkeypatch.setattr("siftd.api.stats.read_stats_cache", lambda **k: None)
