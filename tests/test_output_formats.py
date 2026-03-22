@@ -4,7 +4,6 @@ import json
 from dataclasses import dataclass, field
 
 import pytest
-
 from painted import Fidelity
 
 

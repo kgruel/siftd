@@ -1,72 +1,64 @@
-# Autoresearch: Adapter Layer Test Coverage Efficiency
+# Autoresearch: Output Layer Test Coverage
 
 ## Objective
-Optimize the **test coverage efficiency** of the `src/siftd/adapters/` package. The metric
-rewards writing concise, fast tests that cover more source lines — encouraging clean
-integration tests over bloated or trivial ones.
-
-Tests are split per-adapter under `tests/adapters/` so each adapter can be independently
-optimized without interference. The benchmark measures aggregate efficiency across all files.
+Optimize **test coverage** of the `src/siftd/output/` package using a composite metric
+that naturally balances coverage improvement against test efficiency — no manual zone
+rules needed.
 
 ## Metrics
-- **Primary**: `efficiency` (lower is better) = `test_LOC × test_time_s / covered_lines`
-- **Secondary**:
-  - `coverage_pct` — percentage of adapter lines covered (higher = better, watch for progress)
-  - `test_time_s` — seconds to run adapter tests (lower = better, watch for regression)
-  - `test_loc` — lines of test code (lower per coverage = better)
-  - `covered_lines` — absolute count of covered source lines (higher = better)
+- **Primary**: `score` (lower is better) = `miss_lines + (test_LOC × test_time_s / covered_lines)`
+  - First term (`miss_lines`) dominates during coverage push — each uncovered line adds 1.0
+  - Second term (efficiency) takes over near 100% — rewards concise, fast tests
+  - Natural phase transition: no edge zone rules needed
+- **Secondary** (for monitoring):
+  - `miss` — number of uncovered source lines
+  - `coverage_pct` — percentage of output lines covered
+  - `test_time_s` — seconds to run output tests
+  - `test_loc` — lines of test code
+  - `covered_lines` — absolute count of covered source lines
+  - `efficiency` — raw LOC×time/covered (the old metric, for reference)
 
 ## Keep/Discard Rules
-Two zones based on coverage percentage:
+Simple: score improved → keep. Score worse → discard. No zones.
 
-- **Normal zone** (<90% coverage): efficiency must improve to keep
-- **Edge zone** (≥90% coverage): keep if coverage improved ≥1% even if efficiency
-  regressed up to 25%. This avoids penalizing tests that close hard-to-reach
-  edge-case gaps — the lines that matter most.
-- **Always discard**: efficiency regressed AND coverage didn't improve
+The composite metric inherently handles the coverage/efficiency tradeoff:
+- Adding 20 LOC to cover 10 new miss lines: miss drops by 10, efficiency rises ~0.1 → net improvement
+- Adding 20 LOC that covers nothing: miss unchanged, efficiency rises → net worse
+- Compressing 50 LOC at 100% coverage: miss stays 0, efficiency drops → net improvement
 
 ## How to Run
 `./autoresearch.sh` — runs median-of-5 timing, outputs `METRIC name=number` lines.
 
 ## Scope
-Coverage is measured over adapter source files (excluding __init__.py and template.py):
+Coverage is measured over output source files (excluding empty modules):
 
-- `src/siftd/adapters/_jsonl.py` (21 stmts) — JSONL helper utilities
-- `src/siftd/adapters/aider.py` (158 stmts) — Aider log parser
-- `src/siftd/adapters/claude_code.py` (149 stmts) — Claude Code JSONL parser
-- `src/siftd/adapters/codex_cli.py` (194 stmts) — Codex CLI session parser
-- `src/siftd/adapters/copilot_cli.py` (132 stmts) — Copilot CLI parser
-- `src/siftd/adapters/gemini_cli.py` (158 stmts) — Gemini CLI parser
-- `src/siftd/adapters/opencode.py` (174 stmts) — OpenCode SQLite parser
-- `src/siftd/adapters/pi_agent.py` (154 stmts) — Pi Agent JSONL parser
-- `src/siftd/adapters/registry.py` (35 stmts) — Adapter discovery and loading
-- `src/siftd/adapters/sdk.py` (325 stmts) — Shared SDK utilities for adapters
-- `src/siftd/adapters/validation.py` (26 stmts) — Adapter validation helpers
-- `src/siftd/adapters/vscode.py` (195 stmts) — VS Code chat history parser
+- `src/siftd/output/common.py` (115 stmts) — Format helpers, table formatting, refs display
+- `src/siftd/output/format_registry.py` (52 stmts) — Format discovery and selection
+- `src/siftd/output/json_fmt.py` (64 stmts) — JSON output format
+- `src/siftd/output/markdown_fmt.py` (171 stmts) — Markdown output format
+- `src/siftd/output/narrative.py` (46 stmts) — Markdown narrative emitter
+- `src/siftd/output/painted_bridge.py` (599 stmts) — Tool presenters, narrative rendering
+- `src/siftd/output/terminal_fmt.py` (121 stmts) — Terminal output format
+- `src/siftd/output/theme.py` (39 stmts) — Domain styles
+- `src/siftd/output/validation.py` (13 stmts) — Formatter validation
 
-Total: ~1,721 statements
+Total: ~1,220 statements
 
 ## Test Structure
 ```
-tests/adapters/
-├── test_infra.py        — validation, registry, SDK (shared adapter infra)
-├── test_claude_code.py  — Claude Code adapter
-├── test_codex_cli.py    — Codex CLI adapter
-├── test_gemini_cli.py   — Gemini CLI adapter
-├── test_aider.py        — Aider adapter
-├── test_vscode.py       — VS Code adapter
-├── test_pi_agent.py     — Pi Agent adapter
-├── test_opencode.py     — OpenCode adapter
-└── test_copilot_cli.py  — Copilot CLI adapter
+tests/
+├── test_output_common.py    — common.py helpers (fmt_timestamp, etc.)
+├── test_output_formats.py   — render_list across all formats, format_table, fidelity
 ```
 
 ## Files in Scope (may modify)
-- `tests/adapters/test_*.py` — per-adapter test files (extend and optimize)
-- `tests/conftest.py` — shared fixtures (may add adapter-specific fixtures)
+- `tests/test_output_common.py` — extend with more common.py coverage
+- `tests/test_output_formats.py` — extend with render_detail, render_search, narrative
+- New test files under `tests/` for output — may create per-module test files
 
 ## Off Limits (must NOT modify)
 - All source files under `src/siftd/` — we're testing, not changing the implementation
-- Other test files outside `tests/adapters/` — don't break existing tests
+- Other test files not related to output — don't break existing tests
 - No new external dependencies
 
 ## Constraints
@@ -74,10 +66,3 @@ tests/adapters/
 - Tests must have meaningful assertions (no `assert True` padding)
 - Each test function must contain at least one `assert` statement
 - Tests should exercise real behavior through the public API, not mock internals
-
-## What's Been Tried
-- LOC compression (merged assertions, removed redundant imports): 567→502 LOC
-- Normalizer tests for copilot/pi_agent: +47 coverage at zero time cost
-- Aider analytics path + vscode error path tests: +17 coverage
-- Median-of-5 timing to stabilize time measurement (~8% variance vs ~40% before)
-- Split monolith test_adapters.py → per-adapter files under tests/adapters/
