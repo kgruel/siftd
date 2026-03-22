@@ -10,6 +10,7 @@ from siftd.api import (
     run_checks,
 )
 from siftd.doctor.checks import (
+    BlobMigrationCheck,
     CheckContext,
     ConfigValidCheck,
     CostCoverageCheck,
@@ -22,6 +23,7 @@ from siftd.doctor.checks import (
     OrphanedChunksCheck,
     PricingGapsCheck,
     SchemaCurrentCheck,
+    WorkspaceIdentityCheck,
 )
 
 
@@ -74,6 +76,8 @@ class TestListChecks:
         assert "config-valid" in names
         # embeddings-compat is from main (replaces embeddings-dimension-mismatch)
         assert "embeddings-compat" in names
+        assert "workspace-identity" in names
+        assert "blob-migration" in names
 
     def test_has_fix_matches_class_attribute(self):
         """has_fix in CheckInfo matches the class attribute on each check."""
@@ -233,6 +237,7 @@ class TestEmbeddingsStaleCheck:
 
     def test_stale_conversations(self, check_context, monkeypatch):
         """Reports stale conversations when embeddings DB exists but is empty."""
+        pytest.importorskip("numpy")
         import siftd.embeddings.availability as avail
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
 
@@ -554,6 +559,7 @@ class TestOrphanedChunksCheck:
 
     def test_no_orphans(self, check_context, monkeypatch):
         """Returns no findings when all chunks match conversations."""
+        pytest.importorskip("numpy")
         import siftd.embeddings.availability as avail
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
 
@@ -582,6 +588,7 @@ class TestOrphanedChunksCheck:
 
     def test_detects_orphans(self, check_context, monkeypatch):
         """Reports orphaned chunks for conversations not in main DB."""
+        pytest.importorskip("numpy")
         import siftd.embeddings.availability as avail
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
 
@@ -1020,4 +1027,106 @@ class TestConfigValidCheck:
         assert check.has_fix is False
         assert check.requires_db is False
         assert check.requires_embed_db is False
+        assert check.cost == "fast"
+
+
+class TestWorkspaceIdentityCheck:
+    """Tests for the workspace-identity check."""
+
+    def test_no_issues(self, check_context, monkeypatch):
+        """Returns no findings when all workspaces have remotes and no duplicates."""
+        monkeypatch.setattr(
+            "siftd.storage.migrate_workspaces.verify_workspace_identity",
+            lambda conn: {
+                "total": 5,
+                "with_remote": 5,
+                "without_remote": 0,
+                "duplicate_groups": 0,
+                "duplicate_workspaces": 0,
+            },
+        )
+        check = WorkspaceIdentityCheck()
+        findings = check.run(check_context)
+        assert findings == []
+
+    def test_missing_remotes(self, check_context, monkeypatch):
+        """Reports info finding for workspaces without git remote."""
+        monkeypatch.setattr(
+            "siftd.storage.migrate_workspaces.verify_workspace_identity",
+            lambda conn: {
+                "total": 5,
+                "with_remote": 3,
+                "without_remote": 2,
+                "duplicate_groups": 0,
+                "duplicate_workspaces": 0,
+            },
+        )
+        check = WorkspaceIdentityCheck()
+        findings = check.run(check_context)
+        assert len(findings) == 1
+        assert findings[0].severity == "info"
+        assert "2 workspace" in findings[0].message
+        assert findings[0].fix_command == "siftd backfill git-remote"
+
+    def test_duplicates(self, check_context, monkeypatch):
+        """Reports warning finding for duplicate workspace groups."""
+        monkeypatch.setattr(
+            "siftd.storage.migrate_workspaces.verify_workspace_identity",
+            lambda conn: {
+                "total": 5,
+                "with_remote": 5,
+                "without_remote": 0,
+                "duplicate_groups": 2,
+                "duplicate_workspaces": 4,
+            },
+        )
+        check = WorkspaceIdentityCheck()
+        findings = check.run(check_context)
+        assert len(findings) == 1
+        assert findings[0].severity == "warning"
+        assert "2 workspace group" in findings[0].message
+        assert findings[0].fix_command == "siftd migrate merge-workspaces"
+
+    def test_finding_structure(self):
+        """Check has correct attributes."""
+        check = WorkspaceIdentityCheck()
+        assert check.name == "workspace-identity"
+        assert check.has_fix is True
+        assert check.requires_db is True
+        assert check.cost == "fast"
+
+
+class TestBlobMigrationCheck:
+    """Tests for the blob-migration check."""
+
+    def test_no_pending(self, check_context, monkeypatch):
+        """Returns no findings when no migrations pending."""
+        monkeypatch.setattr(
+            "siftd.storage.migrate_blobs.count_pending_migrations",
+            lambda conn: {"total": 0, "unique": 0, "size_bytes": 0},
+        )
+        check = BlobMigrationCheck()
+        findings = check.run(check_context)
+        assert findings == []
+
+    def test_pending_migrations(self, check_context, monkeypatch):
+        """Reports info finding for pending blob migrations."""
+        monkeypatch.setattr(
+            "siftd.storage.migrate_blobs.count_pending_migrations",
+            lambda conn: {"total": 500, "unique": 200, "size_bytes": 5_242_880},
+        )
+        check = BlobMigrationCheck()
+        findings = check.run(check_context)
+        assert len(findings) == 1
+        assert findings[0].severity == "info"
+        assert "500 tool call" in findings[0].message
+        assert "5.0MB" in findings[0].message
+        assert findings[0].fix_command == "siftd migrate blobs"
+
+    def test_finding_structure(self):
+        """Check has correct attributes."""
+        check = BlobMigrationCheck()
+        assert check.name == "blob-migration"
+        assert check.has_fix is True
+        assert check.requires_db is True
         assert check.cost == "fast"

@@ -697,11 +697,13 @@ def _doctor_list(args) -> int:
         ]
         print(json.dumps(out, indent=2))
         return 0
-    print("Available checks:")
-    for check in checks:
-        fix_marker = " [fix]" if check.has_fix else ""
-        print(f"  {check.name}{fix_marker}")
-        print(f"    {check.description}")
+    from siftd.output.common import print_table
+
+    rows = [
+        [c.name, c.description, "[fix]" if c.has_fix else ""]
+        for c in checks
+    ]
+    print_table(["CHECK", "DESCRIPTION", "FIX"], rows)
     return 0
 
 

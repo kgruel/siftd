@@ -1379,6 +1379,128 @@ def clear_ingested_file_error(
     conn.execute("DELETE FROM ingested_files WHERE path = ?", (path,))
 
 
+def get_ingest_errors(conn: sqlite3.Connection) -> list[dict]:
+    """Get files that failed ingestion, grouped by harness.
+
+    Returns list of dicts with keys: path, error, harness_name.
+    Returns empty list if the error column doesn't exist yet.
+    """
+    cur = conn.execute("PRAGMA table_info(ingested_files)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "error" not in columns:
+        return []
+
+    cur = conn.execute(
+        "SELECT path, error, harness_id FROM ingested_files WHERE error IS NOT NULL"
+    )
+    rows = cur.fetchall()
+
+    results = []
+    for row in rows:
+        h_row = conn.execute(
+            "SELECT name FROM harnesses WHERE id = ?", (row["harness_id"],)
+        ).fetchone()
+        results.append({
+            "path": row["path"],
+            "error": row["error"],
+            "harness_name": h_row["name"] if h_row else row["harness_id"],
+        })
+    return results
+
+
+def get_models_without_pricing(conn: sqlite3.Connection) -> list[dict]:
+    """Get models used in responses that have no pricing data.
+
+    Returns list of dicts with keys: model_name, provider_name.
+    Returns empty list if the pricing table doesn't exist yet.
+    """
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='pricing'"
+    )
+    if not cur.fetchone():
+        return []
+
+    cur = conn.execute("""
+        SELECT DISTINCT m.name as model_name, COALESCE(p.name, 'unknown') as provider_name
+        FROM responses r
+        JOIN models m ON r.model_id = m.id
+        LEFT JOIN providers p ON r.provider_id = p.id
+        WHERE r.model_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM pricing pr
+            WHERE pr.model_id = r.model_id
+              AND (r.provider_id IS NULL OR pr.provider_id = r.provider_id)
+          )
+        ORDER BY provider_name, m.name
+    """)
+    return [{"model_name": row[0], "provider_name": row[1]} for row in cur.fetchall()]
+
+
+def get_freelist_info(conn: sqlite3.Connection) -> dict:
+    """Get SQLite freelist page statistics.
+
+    Returns dict with keys: freelist_count, page_count, page_size.
+    """
+    return {
+        "freelist_count": conn.execute("PRAGMA freelist_count").fetchone()[0],
+        "page_count": conn.execute("PRAGMA page_count").fetchone()[0],
+        "page_size": conn.execute("PRAGMA page_size").fetchone()[0],
+    }
+
+
+def get_pending_schema_migrations(conn: sqlite3.Connection) -> list[str]:
+    """Detect schema migrations that haven't been applied yet.
+
+    Returns list of human-readable migration descriptions.
+    Uses the same detection logic as the _migrate_* and ensure_* functions.
+    """
+    pending = []
+
+    # error column on ingested_files (from _migrate_add_error_column)
+    cur = conn.execute("PRAGMA table_info(ingested_files)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "error" not in columns:
+        pending.append("add error column to ingested_files")
+
+    # CASCADE deletes on prompts (from _migrate_add_cascade_deletes)
+    cur = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='prompts'"
+    )
+    row = cur.fetchone()
+    if row and "ON DELETE CASCADE" not in (row[0] or ""):
+        pending.append("add CASCADE deletes to foreign keys")
+
+    # pricing table (from ensure_pricing_table)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='pricing'"
+    )
+    if not cur.fetchone():
+        pending.append("create pricing table")
+
+    # content_blobs table (from ensure_content_blobs_table)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='content_blobs'"
+    )
+    if not cur.fetchone():
+        pending.append("create content_blobs table")
+
+    # tool_call_tags table (from ensure_tool_call_tags_table)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='tool_call_tags'"
+    )
+    if not cur.fetchone():
+        pending.append("create tool_call_tags table")
+
+    # FTS5 content_fts table (from ensure_fts_table)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts'"
+    )
+    if not cur.fetchone():
+        pending.append("create FTS5 search index")
+
+    return pending
+
+
 def update_file_stat(
     conn: sqlite3.Connection,
     path: str,

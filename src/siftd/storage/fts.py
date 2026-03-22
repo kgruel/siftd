@@ -81,6 +81,43 @@ def rebuild_fts_index(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def get_fts_sync_status(conn: sqlite3.Connection) -> dict:
+    """Detect FTS5 index sync issues with content tables.
+
+    Returns dict with keys: orphaned_count, missing_prompt_count,
+    missing_response_count. All zeros if FTS table doesn't exist.
+    """
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts'"
+    ).fetchone()
+    if not row:
+        return {"orphaned_count": 0, "missing_prompt_count": 0, "missing_response_count": 0}
+
+    orphaned_count = conn.execute("""
+        SELECT COUNT(*) FROM content_fts
+        WHERE content_id NOT IN (SELECT id FROM prompt_content)
+          AND content_id NOT IN (SELECT id FROM response_content)
+    """).fetchone()[0]
+
+    missing_prompt_count = conn.execute("""
+        SELECT COUNT(*) FROM prompt_content pc
+        WHERE pc.block_type = 'text'
+          AND pc.id NOT IN (SELECT content_id FROM content_fts WHERE side = 'prompt')
+    """).fetchone()[0]
+
+    missing_response_count = conn.execute("""
+        SELECT COUNT(*) FROM response_content rc
+        WHERE rc.block_type = 'text'
+          AND rc.id NOT IN (SELECT content_id FROM content_fts WHERE side = 'response')
+    """).fetchone()[0]
+
+    return {
+        "orphaned_count": orphaned_count,
+        "missing_prompt_count": missing_prompt_count,
+        "missing_response_count": missing_response_count,
+    }
+
+
 def insert_fts_content(
     conn: sqlite3.Connection,
     content_id: str,

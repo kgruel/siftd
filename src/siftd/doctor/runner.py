@@ -1,5 +1,6 @@
 """Doctor runner: orchestrates health checks."""
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from siftd.doctor.checks import (
@@ -32,6 +33,9 @@ def run_checks(
     embed_db_path: Path | None = None,
 ) -> list[Finding]:
     """Run health checks and return findings.
+
+    Checks run concurrently using a thread pool. Each check gets a shared
+    read-only CheckContext (SQLite connections opened with check_same_thread=False).
 
     Args:
         checks: Specific check names to run, or None for all.
@@ -77,7 +81,7 @@ def run_checks(
             f"Database not found: {actual_db_path}\nRun 'siftd ingest' to create it."
         )
 
-    # Create context
+    # Create context (thread-safe for read-only access)
     ctx = CheckContext(
         db_path=actual_db_path,
         embed_db_path=actual_embed_path,
@@ -86,24 +90,25 @@ def run_checks(
         queries_dir=queries_dir(),
     )
 
-    try:
-        # Run all checks, collecting findings
-        findings: list[Finding] = []
-        for check in checks_to_run:
-            try:
-                check_findings = check.run(ctx)
-                findings.extend(check_findings)
-            except Exception as e:
-                # Check itself failed - report as error finding
-                findings.append(
-                    Finding(
-                        check=check.name,
-                        severity="error",
-                        message=f"Check failed to run: {e}",
-                        fix_available=False,
-                    )
+    def _run_one(check):
+        try:
+            return check.run(ctx)
+        except Exception as e:
+            return [
+                Finding(
+                    check=check.name,
+                    severity="error",
+                    message=f"Check failed to run: {e}",
+                    fix_available=False,
                 )
+            ]
 
+    try:
+        findings: list[Finding] = []
+        with ThreadPoolExecutor() as pool:
+            futures = {pool.submit(_run_one, check): check for check in checks_to_run}
+            for future in as_completed(futures):
+                findings.extend(future.result())
         return findings
     finally:
         ctx.close()

@@ -1,68 +1,69 @@
-# Autoresearch: Output Layer Test Coverage
+# Autoresearch: Test Coverage Methodology
 
-## Objective
-Optimize **test coverage** of the `src/siftd/output/` package using a composite metric
-that naturally balances coverage improvement against test efficiency — no manual zone
-rules needed.
+## Metric
+**Primary**: `efficiency` (lower is better) = `test_LOC × test_time_s / covered_lines`
 
-## Metrics
-- **Primary**: `score` (lower is better) = `miss_lines + (test_LOC × test_time_s / covered_lines)`
-  - First term (`miss_lines`) dominates during coverage push — each uncovered line adds 1.0
-  - Second term (efficiency) takes over near 100% — rewards concise, fast tests
-  - Natural phase transition: no edge zone rules needed
-- **Secondary** (for monitoring):
-  - `miss` — number of uncovered source lines
-  - `coverage_pct` — percentage of output lines covered
-  - `test_time_s` — seconds to run output tests
-  - `test_loc` — lines of test code
-  - `covered_lines` — absolute count of covered source lines
-  - `efficiency` — raw LOC×time/covered (the old metric, for reference)
+Rewards concise, fast tests that cover more source lines. Encourages shared fixtures,
+integration tests, and clean test structure over bloated one-offs.
 
-## Keep/Discard Rules
-Simple: score improved → keep. Score worse → discard. No zones.
+**Secondary** (for monitoring):
+- `covered_lines` — absolute count of covered source lines (drives keep/discard rule)
+- `coverage_pct` — percentage of target lines covered
+- `miss` — number of uncovered source lines
+- `test_loc` — lines of test code
+- `test_time_s` — seconds to run tests
 
-The composite metric inherently handles the coverage/efficiency tradeoff:
-- Adding 20 LOC to cover 10 new miss lines: miss drops by 10, efficiency rises ~0.1 → net improvement
-- Adding 20 LOC that covers nothing: miss unchanged, efficiency rises → net worse
-- Compressing 50 LOC at 100% coverage: miss stays 0, efficiency drops → net improvement
+## Keep/Discard: Stairstep Rule
 
-## How to Run
-`./autoresearch.sh` — runs median-of-5 timing, outputs `METRIC name=number` lines.
+The decision checks **Δcovered first**, then efficiency:
 
-## Scope
-Coverage is measured over output source files (excluding empty modules):
-
-- `src/siftd/output/common.py` (115 stmts) — Format helpers, table formatting, refs display
-- `src/siftd/output/format_registry.py` (52 stmts) — Format discovery and selection
-- `src/siftd/output/json_fmt.py` (64 stmts) — JSON output format
-- `src/siftd/output/markdown_fmt.py` (171 stmts) — Markdown output format
-- `src/siftd/output/narrative.py` (46 stmts) — Markdown narrative emitter
-- `src/siftd/output/painted_bridge.py` (599 stmts) — Tool presenters, narrative rendering
-- `src/siftd/output/terminal_fmt.py` (121 stmts) — Terminal output format
-- `src/siftd/output/theme.py` (39 stmts) — Domain styles
-- `src/siftd/output/validation.py` (13 stmts) — Formatter validation
-
-Total: ~1,220 statements
-
-## Test Structure
 ```
-tests/
-├── test_output_common.py    — common.py helpers (fmt_timestamp, etc.)
-├── test_output_formats.py   — render_list across all formats, format_table, fidelity
+if covered_lines > previous_covered:
+    keep    # coverage gained — always accept
+elif efficiency improved:
+    keep    # tests got tighter without losing coverage
+else:
+    discard # nothing improved
 ```
 
-## Files in Scope (may modify)
-- `tests/test_output_common.py` — extend with more common.py coverage
-- `tests/test_output_formats.py` — extend with render_detail, render_search, narrative
-- New test files under `tests/` for output — may create per-module test files
+No zones, no thresholds, no composite formulas.
 
-## Off Limits (must NOT modify)
-- All source files under `src/siftd/` — we're testing, not changing the implementation
-- Other test files not related to output — don't break existing tests
-- No new external dependencies
+### Why this works
 
-## Constraints
-- All existing tests must still pass (`./dev test`)
-- Tests must have meaningful assertions (no `assert True` padding)
-- Each test function must contain at least one `assert` statement
-- Tests should exercise real behavior through the public API, not mock internals
+Coverage gains and efficiency gains are different activities with a natural rhythm:
+
+1. **Step up** — Add tests covering new lines. Efficiency gets worse (more LOC for
+   hard-to-reach edges). Keep anyway: coverage ratcheted up.
+2. **Step down** — Compress, extract fixtures, share helpers, merge tests. Coverage stays
+   the same. Efficiency improves.
+3. **Repeat** — Coverage never goes back. Efficiency oscillates but trends down.
+
+The efficiency metric still serves its purpose: it pushes toward shared fixtures,
+integration-style tests, and clean structure. But it can never veto real coverage gains.
+
+### Edge cases
+
+- **Padding** (useless LOC, no new coverage): covered unchanged, efficiency worse → discard ✓
+- **Expensive edge coverage** (20 LOC for 2 lines): covered increased → keep ✓
+- **Pure compression** (same coverage, fewer LOC): covered unchanged, efficiency better → keep ✓
+- **Delete tests**: covered decreased → never keep (implicit: always track previous best covered)
+
+## Measurement
+
+Coverage is measured from the **full test suite** (not just target-specific tests) to avoid
+writing redundant tests for lines already covered by integration/CLI tests. Only the
+target-specific test files count toward LOC and timing.
+
+```
+coverage: full suite with --cov=<target_package> (parallel via xdist)
+timing:   single run of target test files only
+LOC:      non-empty, non-comment lines in target test files
+```
+
+## Applying to a new target
+
+1. Pick a package (e.g., `src/siftd/output/`)
+2. Set `INCLUDE` and `TEST_FILES` in `autoresearch.sh`
+3. Run baseline → establishes covered_lines and efficiency
+4. Push coverage (step up), then optimize (step down), repeat
+5. Stop when remaining miss lines are diminishing returns (platform guards, dead code, etc.)

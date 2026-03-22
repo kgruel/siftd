@@ -7,6 +7,7 @@ conversation instead of joining/aggregating the responses table.
 """
 
 import sqlite3
+from dataclasses import dataclass
 
 _TABLE = "conversation_stats"
 
@@ -106,3 +107,47 @@ def rebuild_conversation_stats(conn: sqlite3.Connection, *, commit: bool = False
     if commit:
         conn.commit()
     return count
+
+
+@dataclass
+class CostCoverage:
+    """Cost coverage across conversations with token data."""
+
+    total_with_tokens: int
+    with_positive_cost: int
+    with_null_cost: int
+    pct_covered: float
+
+
+def get_cost_coverage(conn: sqlite3.Connection) -> CostCoverage | None:
+    """Get cost coverage statistics from conversation_stats.
+
+    Returns None if the conversation_stats table does not exist.
+
+    Cost coverage is measured as the fraction of token-bearing conversations
+    that have a positive computed cost (cost > 0).  Conversations with NULL cost
+    have no pricing data available; conversations with cost = 0.0 have tokens
+    but were priced at zero (indicates stale stats -- run siftd ingest to rebuild).
+    """
+    if not has_conversation_stats_table(conn):
+        return None
+
+    row = conn.execute("""
+        SELECT
+            COUNT(*) FILTER (WHERE total_tokens > 0) AS with_tokens,
+            COUNT(*) FILTER (WHERE cost > 0) AS with_cost,
+            COUNT(*) FILTER (WHERE total_tokens > 0 AND cost IS NULL) AS null_cost
+        FROM conversation_stats
+    """).fetchone()
+
+    with_tokens = row["with_tokens"] or 0
+    with_cost = row["with_cost"] or 0
+    null_cost = row["null_cost"] or 0
+    pct = round((with_cost / with_tokens) * 100, 2) if with_tokens else 0.0
+
+    return CostCoverage(
+        total_with_tokens=with_tokens,
+        with_positive_cost=with_cost,
+        with_null_cost=null_cost,
+        pct_covered=pct,
+    )

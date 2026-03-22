@@ -469,7 +469,7 @@ class TestCmdDoctor:
         rc = main(["doctor", "list"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "Available checks:" in out
+        assert "ingest-pending" in out
 
     def test_doctor_list_json(self, capsys):
         """siftd doctor list --json returns JSON."""
@@ -559,4 +559,4 @@ class TestCmdDoctor:
         rc = main(["doctor", "checks"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "Available checks:" in out
+        assert "ingest-pending" in out

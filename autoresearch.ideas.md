@@ -1,42 +1,49 @@
 # Autoresearch Ideas — Output Layer
 
-## Current state: 78% overall (267 uncovered lines)
+## Final state: 98.6% coverage (17 uncovered lines)
 
 ### Coverage by file
+- ✅ common.py: 100%
+- ✅ markdown_fmt.py: 100%
+- ✅ narrative.py: 100%
 - ✅ theme.py: 100%
 - ✅ validation.py: 100%
-- ✅ formatters.py: 100% (empty)
-- ✅ registry.py: 100% (empty)
-- 🔶 format_registry.py: 92% (4 miss — select_format edge cases)
-- 🔶 narrative.py: 91% (4 miss — MarkdownEmitter methods)
-- 🔶 markdown_fmt.py: 87% (23 miss — render_detail, render_search modes)
-- 🔶 terminal_fmt.py: 86% (17 miss — render_search modes)
-- 🔶 painted_bridge.py: 77% (140 miss — tool presenters, detail/peek/follow)
-- 🔶 json_fmt.py: 72% (18 miss — render_search, render_detail fallback)
-- 🔶 common.py: 47% (61 miss — format_refs, print_refs_content, print_indented)
+- ✅ terminal_fmt.py: 99% (1 miss — L175, chunks context_data path)
+- 🔶 format_registry.py: 92% (4 miss — L151-154 unreachable fallback)
+- 🔶 json_fmt.py: 94% (4 miss — render_stats L119/121, render_tool_search L140/142)
+- 🔶 painted_bridge.py: 98.5% (9 miss — scattered internal helpers + empty-parts guards)
 
-### High-ROI targets (pure logic, no I/O)
-- [ ] common.py: fmt_tokens, fmt_workspace, fmt_ago, fmt_model, truncate_text, format_refs_annotation, print_refs_content — all pure functions, very testable
-- [ ] json_fmt render_search: 3 modes (chunks, conversations, thread) — dict output, easy assertions
-- [ ] json_fmt render_detail fallback: needs turns with narrative — use dataclass stubs
-- [ ] markdown_fmt render_detail: header generation with metadata parts
-- [ ] markdown_fmt render_search: 3 modes, string output
-- [ ] narrative.py MarkdownEmitter: tool_content, tool_output, thinking — 4 lines
+### Remaining uncovered lines (diminishing returns)
 
-### Medium-ROI targets (need painted)
-- [ ] painted_bridge tool presenters: _render_shell_execute_lines, _render_file_read_lines, etc. — test via render_narrative_block with fixture blocks
-- [ ] terminal_fmt render_search: 3 modes — returns string, testable
-- [ ] painted_bridge render_query_detail_block: needs ConversationDetail stub
-- [ ] painted_bridge render_peek_detail_block: needs PeekSession stub
-- [ ] painted_bridge render_follow_event_block: needs FollowEvent stub
+**format_registry.py L151-154**: `select_format` last-resort fallback when terminal format
+is missing. Unreachable because builtins always load terminal_fmt. Would need to monkey-patch
+the global `_formats` dict — not worth it for defensive code.
 
-### Patterns to apply
-- Dataclass stubs for ConversationDetail, Turn, NarrativeBlock, etc.
-- Direct MarkdownEmitter testing (zero I/O, high coverage per LOC)
-- Dict assertion for json_fmt (no rendering needed)
-- String assertion for markdown_fmt and terminal_fmt render_search
-- Block-to-text extraction for painted_bridge (pattern from existing test_output_formats.py)
+**json_fmt.py L119/121, L140/142**: `render_stats` and `render_tool_search` — thin delegates
+to serialization.serve_fmt/stats. Need complex DatabaseStats/ToolQuery type stubs that match
+deeply nested dataclass hierarchies. Low value: they're one-liner pass-throughs.
 
-### Metric note
-New metric: `miss + LOC×time/covered` — no edge zone rules needed.
-Starting score ≈ 267. Target: <30 (high coverage, reasonable efficiency).
+**painted_bridge.py (9 lines)**:
+- L39-41 `_styles()`: Legacy function, only called by dead code paths. Not exercised by any
+  render function through the current code paths (theme uses `domain_styles()` instead).
+- L73 `_lines_to_block([])`: Empty list guard. All callers check for empty before calling.
+- L111 `_append_multiline` with text that strips to empty: All callers pass non-empty text.
+- L147 `_output_preview_lines` with empty output: Guard for whitespace-only output.
+- L225 `file.read` raw non-JSON input: The test sends it but it goes through _parse_json_safe
+  which returns None, then the `elif raw_input` path… actually this should be coverable.
+- L804, L903: `if not parts: return Block.empty(0,0)` in query/peek detail renderers.
+  Headers always create parts, so this guard can't fire without an empty detail object.
+
+### Metric evolution
+- Baseline: score=267 (267 miss + 0.07 efficiency)
+- After common/search/detail/narrative: score=160 (160 miss + 0.22)
+- After painted_bridge/tool presenters: score=52 (51 miss + 1.04)
+- After tool edges/render_search context: score=22 (21 miss + 0.63)
+- After json_fmt delegates: score=18 (17 miss + 0.54)
+
+### New metric validation
+The `miss + LOC×time/covered` metric worked perfectly for this cycle:
+- No edge zone rules needed
+- Every coverage improvement was correctly rewarded
+- Efficiency term stayed <1.0 throughout (negligible vs miss)
+- Natural phase: miss dominated at start, efficiency will dominate when approaching 100%

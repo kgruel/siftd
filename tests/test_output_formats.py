@@ -1,4 +1,4 @@
-"""Tests for output format render_list implementations."""
+"""Tests for output format rendering: lists, search, detail, narrative."""
 
 import json
 from dataclasses import dataclass, field
@@ -228,6 +228,1003 @@ class TestFormatTable:
         captured = capsys.readouterr()
         assert "x" in captured.out
         assert "y" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# render_search tests — exercises all 3 modes across formats
+# ---------------------------------------------------------------------------
+
+
+def _chunk_result(**overrides):
+    """Build a minimal search result dict."""
+    base = {
+        "conversation_id": "01ABC123456789",
+        "chunk_id": "chunk001",
+        "score": 0.85,
+        "chunk_type": "response",
+        "text": "The answer is 42.",
+        "source_ids": [],
+        "_started_at": "2026-03-15",
+        "_workspace": "my-project",
+    }
+    base.update(overrides)
+    return base
+
+
+def _conv_result(**overrides):
+    """Build a minimal conversation-mode search result."""
+    base = {
+        "conversation_id": "01ABC123456789",
+        "max_score": 0.92,
+        "mean_score": 0.75,
+        "chunk_count": 3,
+        "_started_at": "2026-03-15",
+        "_workspace": "my-project",
+        "best_excerpt": "The answer is 42.",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestJsonRenderSearch:
+    def test_chunks_mode(self):
+        from siftd.output.json_fmt import render_search
+
+        result = render_search(
+            [_chunk_result()], Fidelity(depth=1), query="meaning of life", mode="chunks"
+        )
+        assert result["mode"] == "chunks"
+        assert result["query"] == "meaning of life"
+        assert result["result_count"] == 1
+        assert result["results"][0]["score"] == 0.85
+
+    def test_conversations_mode(self):
+        from siftd.output.json_fmt import render_search
+
+        result = render_search(
+            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations"
+        )
+        assert result["mode"] == "conversations"
+        assert result["results"][0]["max_score"] == 0.92
+        assert result["results"][0]["chunk_count"] == 3
+
+    def test_thread_mode(self):
+        from siftd.output.json_fmt import render_search
+
+        tier1 = [_chunk_result(text="expanded")]
+        tier2 = [_chunk_result(text="compact", score=0.5)]
+        result = render_search(
+            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1, tier2=tier2
+        )
+        assert result["mode"] == "thread"
+        assert result["result_count"] == 2
+        assert len(result["tier1"]) == 1
+        assert len(result["tier2"]) == 1
+
+    def test_chunk_with_file_refs(self):
+        from siftd.output.json_fmt import render_search
+
+        @dataclass
+        class Ref:
+            basename: str
+            path: str
+            op: str
+            content: str | None = None
+
+        chunk = _chunk_result(file_refs=[Ref("f.py", "/f.py", "r", "import os")])
+        result = render_search([chunk], Fidelity(depth=1), query="q")
+        refs = result["results"][0]["file_refs"]
+        assert len(refs) == 1
+        assert refs[0]["basename"] == "f.py"
+        assert refs[0]["content_length"] == 9  # len("import os")
+
+    def test_render_workspaces(self):
+        from siftd.output.json_fmt import render_workspaces
+
+        result = render_workspaces([], Fidelity(depth=1))
+        assert result == {"workspaces": []}
+
+    def test_render_tags(self):
+        from siftd.output.json_fmt import render_tags
+
+        result = render_tags([], Fidelity(depth=1))
+        assert result == {"tags": []}
+
+    def test_chunk_with_breakdown(self):
+        from siftd.output.json_fmt import render_search
+        from siftd.search import ScoreBreakdown
+
+        bd = ScoreBreakdown(embedding_sim=0.85, recency_boost=1.1)
+        chunk = _chunk_result(breakdown=bd)
+        result = render_search([chunk], Fidelity(depth=1), query="q")
+        assert "breakdown" in result["results"][0]
+
+
+class TestMarkdownRenderSearch:
+    def test_chunks_mode(self):
+        from siftd.output.markdown_fmt import render_search
+
+        output = render_search(
+            [_chunk_result()], Fidelity(depth=1), query="test query", mode="chunks"
+        )
+        assert "## Results for: test query" in output
+        assert "01ABC1234567" in output
+        assert "0.850" in output
+
+    def test_conversations_mode(self):
+        from siftd.output.markdown_fmt import render_search
+
+        output = render_search(
+            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations"
+        )
+        assert "## Conversations for: q" in output
+        assert "0.920" in output
+
+    def test_thread_mode_with_exchanges(self):
+        from siftd.output.markdown_fmt import render_search
+
+        tier1 = [_chunk_result(_exchanges=[("p1", "What?", "That.")])]
+        output = render_search(
+            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1
+        )
+        assert "> What?" in output
+        assert "That." in output
+
+    def test_thread_mode_text_fallback(self):
+        from siftd.output.markdown_fmt import render_search
+
+        tier1 = [_chunk_result(text="fallback text")]
+        tier2 = [_chunk_result(text="compact", score=0.4)]
+        output = render_search(
+            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1, tier2=tier2
+        )
+        assert "fallback text" in output
+        assert "compact" in output
+        assert "More results" in output
+
+    def test_chunks_mode_with_exchanges(self):
+        from siftd.output.markdown_fmt import render_search
+
+        chunk = _chunk_result(_exchanges=[("p1", "Ask", "Answer")])
+        output = render_search([chunk], Fidelity(depth=1), query="q")
+        assert "> Ask" in output
+        assert "Answer" in output
+
+    def test_chunks_mode_with_context(self):
+        from siftd.output.markdown_fmt import render_search
+
+        chunk = _chunk_result(_context=[("p1", "Q?", "A!", True), ("p2", "Q2", "A2", False)])
+        output = render_search([chunk], Fidelity(depth=1), query="q")
+        assert "**>>>**" in output  # matched entry
+        assert "Q?" in output
+
+    def test_chunks_mode_text_truncation(self):
+        from siftd.output.markdown_fmt import render_search
+
+        long_text = "x" * 500
+        chunk = _chunk_result(text=long_text)
+        output = render_search([chunk], Fidelity(depth=0), query="q")
+        assert "..." in output  # truncated at depth 0
+
+
+class TestTerminalRenderSearch:
+    def test_chunks_mode(self):
+        from siftd.output.terminal_fmt import render_search
+
+        output = render_search(
+            [_chunk_result()], Fidelity(depth=1), query="test query", mode="chunks"
+        )
+        assert "Results for: test query" in output
+        assert "01ABC1234567" in output
+        assert "0.850" in output
+
+    def test_conversations_mode(self):
+        from siftd.output.terminal_fmt import render_search
+
+        output = render_search(
+            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations"
+        )
+        assert "Conversations for: q" in output
+        assert "0.920" in output
+
+    def test_thread_mode_with_exchanges(self):
+        from siftd.output.terminal_fmt import render_search
+
+        tier1 = [_chunk_result(_exchanges=[("p1", "What?", "That.")])]
+        output = render_search(
+            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1
+        )
+        assert "[user] What?" in output
+        assert "[asst] That." in output
+
+    def test_thread_mode_text_fallback_and_file_refs(self):
+        from siftd.output.terminal_fmt import render_search
+
+        @dataclass
+        class Ref:
+            basename: str
+            path: str
+            op: str
+
+        tier1 = [_chunk_result(text="fallback", file_refs=[Ref("a.py", "/a.py", "r")])]
+        tier2 = [_chunk_result(text="compact", score=0.4, file_refs=[Ref("b.py", "/b.py", "w")])]
+        output = render_search(
+            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1, tier2=tier2
+        )
+        assert "fallback" in output
+        assert "refs:" in output
+        assert "More results" in output or "──" in output
+
+    def test_chunks_mode_with_exchanges(self):
+        from siftd.output.terminal_fmt import render_search
+
+        chunk = _chunk_result(_exchanges=[("p1", "Multi\nline", "Reply\nhere")])
+        output = render_search([chunk], Fidelity(depth=1), query="q")
+        assert "> Multi" in output
+        assert "Reply" in output
+
+    def test_chunks_mode_with_context(self):
+        from siftd.output.terminal_fmt import render_search
+
+        chunk = _chunk_result(
+            _context=[("p1", "Multi\nline Q", "Response\ntext", True), ("p2", "Q2", None, False)]
+        )
+        output = render_search([chunk], Fidelity(depth=1), query="q")
+        assert ">>>" in output
+        assert "Multi" in output
+        assert "Response" in output
+
+    def test_chunks_mode_with_file_refs(self):
+        from siftd.output.terminal_fmt import render_search
+
+        @dataclass
+        class Ref:
+            basename: str
+            path: str
+            op: str
+
+        chunk = _chunk_result(file_refs=[Ref("f.py", "/f.py", "r")])
+        output = render_search([chunk], Fidelity(depth=1), query="q")
+        assert "refs:" in output
+        assert "f.py(r)" in output
+
+
+# ---------------------------------------------------------------------------
+# render_detail tests
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeTurn:
+    """Minimal turn for render_detail testing."""
+
+    timestamp: str | None = "2026-03-15T10:00:00Z"
+    prompt_text: str | None = "Hello"
+    narrative: list = field(default_factory=list)
+    total_input_tokens: int = 100
+    total_output_tokens: int = 200
+    tool_call_summaries: list = field(default_factory=list)
+
+
+@dataclass
+class FakeDetail:
+    """Minimal ConversationDetail for render_detail testing."""
+
+    id: str = "01DETAIL123456"
+    workspace_path: str | None = "/home/user/project"
+    started_at: str | None = "2026-03-15T10:00:00Z"
+    model: str | None = "claude-opus-4-5"
+    total_input_tokens: int = 500
+    total_output_tokens: int = 1000
+    tags: list = field(default_factory=list)
+
+
+class TestJsonRenderDetail:
+    def test_fallback_without_detail(self):
+        """When no detail context is provided, render_detail uses turn-level data."""
+        from siftd.output.json_fmt import render_detail
+
+        turn = FakeTurn(prompt_text="What is 2+2?")
+        result = render_detail([turn], Fidelity(depth=1))
+        assert "turns" in result
+        assert result["turns"][0]["prompt"] == "What is 2+2?"
+        assert result["turns"][0]["tokens"]["input"] == 100
+
+
+class TestMarkdownRenderDetail:
+    def test_renders_header_and_turns(self):
+        from siftd.output.markdown_fmt import render_detail
+
+        detail = FakeDetail(tags=["review"])
+        turn = FakeTurn()
+        output = render_detail([turn], Fidelity(depth=1), detail=detail)
+        assert "# Session 01DETAIL1234" in output
+        assert "project" in output
+        assert "### " in output  # turn headers
+        assert "Hello" in output
+
+    def test_truncates_long_prompts(self):
+        from siftd.output.markdown_fmt import render_detail
+
+        detail = FakeDetail()
+        turn = FakeTurn(prompt_text="x" * 200)
+        output = render_detail([turn], Fidelity(depth=1, chars=50), detail=detail)
+        assert "..." in output
+
+
+# ---------------------------------------------------------------------------
+# MarkdownEmitter tests
+# ---------------------------------------------------------------------------
+
+
+class TestMarkdownEmitter:
+    def test_tool_content(self):
+        from siftd.output.narrative import MarkdownEmitter
+
+        e = MarkdownEmitter()
+        e.tool_content("shell.execute", 1, "ls -la", "file1.py\nfile2.py", None)
+        text = "\n".join(e.lines)
+        assert "**shell.execute**" in text
+        assert "`ls -la`" in text
+        assert "file1.py" in text
+
+    def test_tool_content_with_count_and_status(self):
+        from siftd.output.narrative import MarkdownEmitter
+
+        e = MarkdownEmitter()
+        e.tool_content("file.read", 3, None, None, "error")
+        text = "\n".join(e.lines)
+        assert "×3" in text
+        assert "(error)" in text
+
+    def test_tool_content_truncates_long_input(self):
+        from siftd.output.narrative import MarkdownEmitter
+
+        e = MarkdownEmitter()
+        e.tool_content("test", 1, "x" * 200, None, None)
+        text = "\n".join(e.lines)
+        assert "..." in text  # truncated at 100 chars
+
+    def test_tool_content_truncates_long_result(self):
+        from siftd.output.narrative import MarkdownEmitter
+
+        e = MarkdownEmitter()
+        e.tool_content("test", 1, None, "y" * 300, None)
+        text = "\n".join(e.lines)
+        assert "..." in text  # result truncated at 200 chars
+
+    def test_tool_output(self):
+        from siftd.output.narrative import MarkdownEmitter
+
+        e = MarkdownEmitter()
+        e.tool_output("tool_result", "output here")
+        text = "\n".join(e.lines)
+        assert "```" in text
+        assert "output here" in text
+
+    def test_thinking(self):
+        from siftd.output.narrative import MarkdownEmitter
+
+        e = MarkdownEmitter()
+        e.thinking("deep thoughts\nmore thoughts")
+        text = "\n".join(e.lines)
+        assert "> **Thinking**" in text
+        assert "> deep thoughts" in text
+        assert "> more thoughts" in text
+
+    def test_thinking_placeholder(self):
+        from siftd.output.narrative import MarkdownEmitter
+
+        e = MarkdownEmitter()
+        e.thinking_placeholder()
+        assert "*[thinking]*" in e.lines
+
+
+# ---------------------------------------------------------------------------
+# painted_bridge tests
+# ---------------------------------------------------------------------------
+
+
+def _block_to_text(block):
+    """Extract plain text from a painted Block."""
+    lines = []
+    for y in range(block.height):
+        lines.append("".join(cell.char for cell in block.row(y)).rstrip())
+    return "\n".join(lines)
+
+
+class TestEmitOutput:
+    def test_string_output(self, capsys):
+        from siftd.output.painted_bridge import emit_output
+
+        emit_output("hello world")
+        assert capsys.readouterr().out.strip() == "hello world"
+
+    def test_dict_output(self, capsys):
+        from siftd.output.painted_bridge import emit_output
+
+        emit_output({"key": "value"})
+        out = capsys.readouterr().out
+        assert '"key": "value"' in out
+
+    def test_block_output(self, capsys):
+        from painted import Line, Span, Style
+
+        from siftd.output.painted_bridge import emit_output
+
+        line = Line(spans=(Span("test", Style()),))
+        block = line.to_block(4)
+        emit_output(block)
+        assert "test" in capsys.readouterr().out
+
+    def test_falsy_noop(self, capsys):
+        from siftd.output.painted_bridge import emit_output
+
+        emit_output(None)
+        emit_output("")
+        assert capsys.readouterr().out == ""
+
+
+class TestFormatGenericInput:
+    def test_priority_keys(self):
+        from siftd.output.tool_presenters import _format_generic_input
+
+        result = _format_generic_input('{"command": "ls", "path": "/tmp"}')
+        assert "command: ls" in result
+        assert "path: /tmp" in result
+
+    def test_no_priority_keys_falls_back_to_json(self):
+        from siftd.output.tool_presenters import _format_generic_input
+
+        result = _format_generic_input('{"foo": "bar"}')
+        assert "foo" in result
+
+    def test_non_json_returns_raw(self):
+        from siftd.output.tool_presenters import _format_generic_input
+
+        assert _format_generic_input("plain text") == "plain text"
+
+
+class TestFormatGenericResult:
+    def test_output_with_meta(self):
+        from siftd.output.tool_presenters import _format_generic_result
+
+        result = _format_generic_result('{"output": "hello", "exit_code": 0}')
+        assert "exit_code: 0" in result
+        assert "hello" in result
+
+    def test_text_key_fallback(self):
+        from siftd.output.tool_presenters import _format_generic_result
+
+        result = _format_generic_result('{"text": "some text"}')
+        assert result == "some text"
+
+    def test_compact_keys(self):
+        from siftd.output.tool_presenters import _format_generic_result
+
+        result = _format_generic_result('{"error": "fail", "status": "error"}')
+        assert "error: fail" in result
+        assert "status: error" in result
+
+    def test_empty_dict_json_fallback(self):
+        from siftd.output.tool_presenters import _format_generic_result
+
+        result = _format_generic_result('{"x": 1}')
+        assert "1" in result
+
+    def test_non_json_returns_raw(self):
+        from siftd.output.tool_presenters import _format_generic_result
+
+        assert _format_generic_result("raw text") == "raw text"
+
+
+@dataclass
+class FakeNarrativeBlock:
+    block_type: str
+    content: str | None = None
+    tool_calls: list = field(default_factory=list)
+
+
+@dataclass
+class FakeToolCall:
+    tool_name: str
+    count: int = 1
+    status: str | None = None
+    input: str | None = None
+    result: str | None = None
+
+
+class TestRenderNarrativeBlock:
+    def test_text_block(self):
+        from siftd.output.painted_bridge import render_narrative_block
+
+        blocks = [FakeNarrativeBlock("text", "Hello world")]
+        result = render_narrative_block(blocks, fidelity=Fidelity(depth=1))
+        text = _block_to_text(result)
+        assert "Hello world" in text
+
+    def test_thinking_block(self):
+        from siftd.output.painted_bridge import render_narrative_block
+
+        blocks = [FakeNarrativeBlock("thinking", "deep thought")]
+        result = render_narrative_block(blocks, fidelity=Fidelity(depth=3, visible=frozenset({"thinking"})))
+        text = _block_to_text(result)
+        assert "thinking" in text.lower()
+
+    def test_tool_calls_compact(self):
+        from siftd.output.painted_bridge import render_narrative_block
+
+        tc = FakeToolCall("shell.execute", count=2, status="error")
+        blocks = [FakeNarrativeBlock("tool_calls", tool_calls=[tc])]
+        result = render_narrative_block(blocks, fidelity=Fidelity(depth=0))
+        text = _block_to_text(result)
+        assert "shell.execute" in text
+        assert "×2" in text
+
+    def test_tool_calls_expanded(self):
+        from siftd.output.painted_bridge import render_narrative_block
+
+        tc = FakeToolCall(
+            "shell.execute",
+            input='{"command": "ls"}',
+            result='{"output": "file.py", "exit_code": 0}',
+        )
+        blocks = [FakeNarrativeBlock("tool_calls", tool_calls=[tc])]
+        result = render_narrative_block(
+            blocks, fidelity=Fidelity(depth=3, visible=frozenset({"tools"}))
+        )
+        text = _block_to_text(result)
+        assert "ls" in text
+
+    def test_tool_result_block(self):
+        from siftd.output.painted_bridge import render_narrative_block
+
+        blocks = [FakeNarrativeBlock("tool_result", "result content")]
+        result = render_narrative_block(
+            blocks, fidelity=Fidelity(depth=3, visible=frozenset({"tools"}))
+        )
+        text = _block_to_text(result)
+        assert "result content" in text
+
+    def test_empty_blocks(self):
+        from siftd.output.painted_bridge import render_narrative_block
+
+        result = render_narrative_block([], fidelity=Fidelity(depth=1))
+        assert result.height == 0
+
+
+@dataclass
+class FakeToolSummary:
+    tool_name: str
+    count: int = 1
+    status: str | None = None
+
+
+class TestToolPresenters:
+    """Test individual tool presenters via render_narrative_block."""
+
+    def _render_tool(self, tool_name, input_json=None, result_json=None, status=None):
+        from siftd.output.painted_bridge import render_narrative_block
+
+        tc = FakeToolCall(tool_name, input=input_json, result=result_json, status=status)
+        blocks = [FakeNarrativeBlock("tool_calls", tool_calls=[tc])]
+        result = render_narrative_block(
+            blocks, fidelity=Fidelity(depth=3, visible=frozenset({"tools"}))
+        )
+        return _block_to_text(result)
+
+    def test_shell_execute_raw_result_fallback(self):
+        text = self._render_tool("shell.execute", result_json="raw output text")
+        assert "raw output" in text
+
+    def test_shell_execute_overflow_preview(self):
+        import json as json_mod
+
+        # 10 lines triggers overflow (max 6 preview lines when tool_chars > 0)
+        output = "\n".join(f"line{i}" for i in range(10))
+        tc = FakeToolCall(
+            "shell.execute",
+            result=json_mod.dumps({"output": output, "exit_code": 0}),
+        )
+        from siftd.output.painted_bridge import render_narrative_block
+
+        blocks = [FakeNarrativeBlock("tool_calls", tool_calls=[tc])]
+        result = render_narrative_block(
+            blocks,
+            fidelity=Fidelity(depth=1, visible=frozenset({"tools"})),
+            tool_chars=120,
+        )
+        text = _block_to_text(result)
+        assert "more lines" in text
+
+    def test_file_read_raw_input_string(self):
+        # Non-JSON input falls back to raw string display
+        text = self._render_tool("file.read", input_json="/path/to/file.py")
+        assert "file.py" in text
+
+    def test_file_edit_raw_input_string(self):
+        text = self._render_tool("file.edit", input_json="not-json-path")
+        assert "not-json-path" in text
+
+    def test_file_edit_error(self):
+        text = self._render_tool(
+            "file.edit",
+            input_json='{"path": "f.py"}',
+            result_json='{"error": "conflict"}',
+            status="error",
+        )
+        assert "conflict" in text
+
+    def test_file_write_raw_input_string(self):
+        text = self._render_tool("file.write", input_json="not-json")
+        assert "not-json" in text
+
+    def test_file_write_error(self):
+        text = self._render_tool(
+            "file.write",
+            input_json='{"path": "f.py"}',
+            result_json='{"error": "permission denied"}',
+            status="error",
+        )
+        assert "permission denied" in text
+
+    def test_search_grep_raw_input_string(self):
+        text = self._render_tool("search.grep", input_json="not-json")
+        assert "not-json" in text
+
+    def test_search_grep_raw_result_string(self):
+        text = self._render_tool("search.grep", result_json="raw grep output")
+        assert "raw grep output" in text
+
+    def test_file_glob_raw_input_string(self):
+        text = self._render_tool("file.glob", input_json="not-json")
+        assert "not-json" in text
+
+    def test_file_glob_result_dict(self):
+        text = self._render_tool("file.glob", result_json='{"output": "a.py\\nb.py"}')
+        assert "a.py" in text
+
+    def test_file_glob_raw_result_string(self):
+        text = self._render_tool("file.glob", result_json="raw glob")
+        assert "raw glob" in text
+
+    def test_todo_tasks(self):
+        tasks = [
+            {"description": "Fix bug", "status": "done"},
+            {"description": "Write tests", "status": "pending"},
+            "Plain string task",
+        ]
+        import json as json_mod
+
+        text = self._render_tool(
+            "ui.todo", input_json=json_mod.dumps({"title": "Plan", "tasks": tasks})
+        )
+        assert "Plan" in text
+        assert "Fix bug" in text
+        assert "✓" in text
+        assert "○" in text
+
+    def test_todo_raw_input(self):
+        text = self._render_tool("ui.todo", input_json="not-json")
+        assert "not-json" in text
+
+
+class TestRenderQueryDetailBlock:
+    def test_renders_header_and_turns(self):
+        from siftd.output.painted_bridge import render_query_detail_block
+
+        detail = FakeDetail(tags=["review"])
+        turn = FakeTurn()
+        result = render_query_detail_block(
+            detail, turns=[turn], fidelity=Fidelity(depth=1)
+        )
+        text = _block_to_text(result)
+        assert "Conversation:" in text
+        assert "01DETAIL" in text
+        assert "project" in text
+        assert "[prompt]" in text
+        assert "[response]" in text
+
+    def test_turn_with_tool_summaries(self):
+        from siftd.output.painted_bridge import render_query_detail_block
+
+        detail = FakeDetail()
+        turn = FakeTurn(
+            narrative=[],
+            tool_call_summaries=[
+                FakeToolSummary("file.read", count=3, status="error"),
+            ],
+        )
+        result = render_query_detail_block(
+            detail, turns=[turn], fidelity=Fidelity(depth=1)
+        )
+        text = _block_to_text(result)
+        assert "file.read" in text
+        assert "×3" in text
+
+    def test_turn_with_narrative(self):
+        from siftd.output.painted_bridge import render_query_detail_block
+
+        detail = FakeDetail()
+        turn = FakeTurn(narrative=[FakeNarrativeBlock("text", "AI response text")])
+        result = render_query_detail_block(
+            detail, turns=[turn], fidelity=Fidelity(depth=1)
+        )
+        text = _block_to_text(result)
+        assert "AI response text" in text
+
+    def test_prompt_only_turn_no_response(self):
+        from siftd.output.painted_bridge import render_query_detail_block
+
+        detail = FakeDetail()
+        turn = FakeTurn(
+            total_input_tokens=0,
+            total_output_tokens=0,
+            tool_call_summaries=[],
+        )
+        result = render_query_detail_block(
+            detail, turns=[turn], fidelity=Fidelity(depth=1)
+        )
+        text = _block_to_text(result)
+        assert "[prompt]" in text
+
+    def test_empty_turns(self):
+        from siftd.output.painted_bridge import render_query_detail_block
+
+        detail = FakeDetail()
+        result = render_query_detail_block(
+            detail, turns=[], fidelity=Fidelity(depth=1)
+        )
+        text = _block_to_text(result)
+        assert "Conversation:" in text
+
+
+@dataclass
+class FakePeekExchange:
+    timestamp: str | None = "2026-03-15T10:00:00Z"
+    prompt_text: str | None = "Hello"
+    narrative: list = field(default_factory=list)
+    response_text: str | None = None
+    tool_calls: list = field(default_factory=list)
+    input_tokens: int = 50
+    output_tokens: int = 100
+
+
+@dataclass
+class FakePeekInfo:
+    session_id: str = "sess001"
+    workspace_name: str | None = "my-project"
+    workspace_path: str | None = None
+    branch: str | None = "main"
+    model: str | None = "claude-opus-4-5"
+    adapter_name: str | None = "claude_code"
+    exchange_count: int = 5
+    last_activity: float | None = None
+    file_path: str = "/home/.claude/session.jsonl"
+    parent_session_id: str | None = None
+    preview_available: bool = True
+
+
+@dataclass
+class FakePeekDetail:
+    info: FakePeekInfo = field(default_factory=FakePeekInfo)
+    started_at: str | None = "2026-03-15T10:00:00Z"
+
+
+class TestRenderPeekDetailBlock:
+    def test_renders_header_and_exchanges(self):
+        from siftd.output.painted_bridge import render_peek_detail_block
+
+        detail = FakePeekDetail()
+        exchange = FakePeekExchange()
+        result = render_peek_detail_block(
+            detail, exchanges=[exchange], fidelity=Fidelity(depth=1)
+        )
+        text = _block_to_text(result)
+        assert "Session:" in text
+        assert "sess001" in text
+        assert "my-project" in text
+        assert "[prompt]" in text
+
+    def test_exchange_with_response_text(self):
+        from siftd.output.painted_bridge import render_peek_detail_block
+
+        detail = FakePeekDetail()
+        exchange = FakePeekExchange(narrative=[], response_text="I can help with that.")
+        result = render_peek_detail_block(
+            detail, exchanges=[exchange], fidelity=Fidelity(depth=1)
+        )
+        text = _block_to_text(result)
+        assert "I can help" in text
+
+    def test_exchange_with_tool_calls(self):
+        from siftd.output.painted_bridge import render_peek_detail_block
+
+        detail = FakePeekDetail()
+        exchange = FakePeekExchange(
+            narrative=[], tool_calls=[("file.read", 1)]
+        )
+        result = render_peek_detail_block(
+            detail, exchanges=[exchange], fidelity=Fidelity(depth=1)
+        )
+        text = _block_to_text(result)
+        assert "file.read" in text
+
+    def test_empty_exchanges(self):
+        from siftd.output.painted_bridge import render_peek_detail_block
+
+        detail = FakePeekDetail()
+        result = render_peek_detail_block(
+            detail, exchanges=[], fidelity=Fidelity(depth=1)
+        )
+        text = _block_to_text(result)
+        assert "Session:" in text
+
+    def test_prompt_only_exchange(self):
+        from siftd.output.painted_bridge import render_peek_detail_block
+
+        detail = FakePeekDetail()
+        exchange = FakePeekExchange(input_tokens=0, output_tokens=0, tool_calls=[])
+        result = render_peek_detail_block(
+            detail, exchanges=[exchange], fidelity=Fidelity(depth=1)
+        )
+        text = _block_to_text(result)
+        assert "[prompt]" in text
+
+    def test_parent_session_shown(self):
+        from siftd.output.painted_bridge import render_peek_detail_block
+
+        info = FakePeekInfo(parent_session_id="parent001")
+        detail = FakePeekDetail(info=info)
+        result = render_peek_detail_block(
+            detail, exchanges=[], fidelity=Fidelity(depth=1)
+        )
+        text = _block_to_text(result)
+        assert "Parent:" in text
+        assert "parent001" in text
+
+
+@dataclass
+class FakeFollowEvent:
+    timestamp: str | None = "2026-03-15T10:00:00Z"
+    is_user: bool = False
+    text: str | None = None
+    narrative: list = field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    tool_calls: list = field(default_factory=list)
+
+
+class TestRenderFollowEventBlock:
+    def test_user_event(self):
+        from siftd.output.painted_bridge import render_follow_event_block
+
+        event = FakeFollowEvent(is_user=True, text="How do I fix this?")
+        result = render_follow_event_block(event, fidelity=Fidelity(depth=1))
+        text = _block_to_text(result)
+        assert "[prompt]" in text
+        assert "How do I fix" in text
+
+    def test_assistant_event_with_text(self):
+        from siftd.output.painted_bridge import render_follow_event_block
+
+        event = FakeFollowEvent(text="Here's the fix.", input_tokens=100, output_tokens=200)
+        result = render_follow_event_block(event, fidelity=Fidelity(depth=1))
+        text = _block_to_text(result)
+        assert "[response]" in text
+        assert "Here's the fix" in text
+        assert "tok" in text
+
+    def test_assistant_event_with_tool_calls(self):
+        from siftd.output.painted_bridge import render_follow_event_block
+
+        event = FakeFollowEvent(tool_calls=[("shell.execute", 1)])
+        result = render_follow_event_block(event, fidelity=Fidelity(depth=1))
+        text = _block_to_text(result)
+        assert "shell.execute" in text
+
+    def test_assistant_event_no_content(self):
+        """Event with no text, narrative, or tools — just the response header."""
+        from siftd.output.painted_bridge import render_follow_event_block
+
+        event = FakeFollowEvent(input_tokens=10, output_tokens=20)
+        result = render_follow_event_block(event, fidelity=Fidelity(depth=1))
+        text = _block_to_text(result)
+        assert "[response]" in text
+
+    def test_assistant_event_with_narrative(self):
+        from siftd.output.painted_bridge import render_follow_event_block
+
+        event = FakeFollowEvent(
+            narrative=[FakeNarrativeBlock("text", "narrative content")],
+            input_tokens=50,
+            output_tokens=100,
+        )
+        result = render_follow_event_block(event, fidelity=Fidelity(depth=1))
+        text = _block_to_text(result)
+        assert "narrative content" in text
+
+
+class TestRenderPeekListBlock:
+    def test_renders_session_list(self):
+        from siftd.output.painted_bridge import render_peek_list_block
+
+        info = FakePeekInfo(last_activity=0.0)
+        result = render_peek_list_block([info], children_by_parent={})
+        assert result is not None
+        text = _block_to_text(result)
+        assert "sess001" in text  # session id appears in table
+
+    def test_empty_list_returns_none(self):
+        from siftd.output.painted_bridge import render_peek_list_block
+
+        assert render_peek_list_block([], children_by_parent={}) is None
+
+    def test_preview_unavailable(self):
+        from siftd.output.painted_bridge import render_peek_list_block
+
+        info = FakePeekInfo(last_activity=0.0, preview_available=False)
+        result = render_peek_list_block([info], children_by_parent={})
+        text = _block_to_text(result)
+        assert "preview unavailable" in text
+
+    def test_children_shown(self):
+        from siftd.output.painted_bridge import render_peek_list_block
+
+        info = FakePeekInfo(last_activity=0.0)
+        children = {"sess001": [FakePeekInfo(session_id="child1")]}
+        result = render_peek_list_block([info], children_by_parent=children)
+        text = _block_to_text(result)
+        assert "+1 agents" in text
+
+
+# ---------------------------------------------------------------------------
+# terminal render_detail test
+# ---------------------------------------------------------------------------
+
+
+class TestTerminalRenderDetail:
+    def test_renders_via_painted_bridge(self):
+        from siftd.output.terminal_fmt import render_detail
+
+        detail = FakeDetail()
+        turn = FakeTurn()
+        result = render_detail([turn], Fidelity(depth=1), detail=detail)
+        text = _block_to_text(result)
+        assert "01DETAIL" in text
+        assert "[prompt]" in text
+
+
+class TestSelectFormat:
+    def test_explicit_name(self):
+        from siftd.output.format_registry import select_format
+
+        fmt = select_format(name="json")
+        assert fmt.name == "json"
+
+    def test_unknown_name_raises(self):
+        from siftd.output.format_registry import select_format
+
+        with pytest.raises(ValueError, match="Unknown format"):
+            select_format(name="nonexistent")
+
+    def test_json_mode(self):
+        from siftd.output.format_registry import select_format
+
+        fmt = select_format(json_mode=True)
+        assert fmt.name == "json"
+
+    def test_non_tty_selects_markdown(self):
+        from siftd.output.format_registry import select_format
+
+        fmt = select_format(is_tty=False)
+        assert fmt.name == "markdown"
+
+    def test_tty_selects_terminal(self):
+        from siftd.output.format_registry import select_format
+
+        fmt = select_format(is_tty=True)
+        assert fmt.name == "terminal"
 
 
 class TestFidelityFromArgsBrief:

@@ -6,9 +6,6 @@ Setup an isolated test database:
 
 Doctor list shows available checks:
 
-  $ siftd --db $PRYSK_TEMP/test.db doctor list | grep "Available checks:"
-  Available checks:
-
   $ siftd --db $PRYSK_TEMP/test.db doctor list | grep -c "ingest-pending"
   1
 

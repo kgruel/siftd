@@ -290,6 +290,9 @@ def test_no_sqlite3_connect_outside_storage():
 
     # adapters/sdk.py provides open_external_db() for reading third-party databases
     adapter_sdk = src_dir / "adapters" / "sdk.py"
+    # doctor/checks/__init__.py opens connections with check_same_thread=False
+    # for concurrent check execution
+    doctor_checks_init = src_dir / "doctor" / "checks" / "__init__.py"
 
     for py_file in src_dir.rglob("*.py"):
         # Allow sqlite3.connect() inside storage/
@@ -297,6 +300,9 @@ def test_no_sqlite3_connect_outside_storage():
             continue
         # Allow sqlite3.connect() in adapter SDK (external DB helper)
         if py_file == adapter_sdk:
+            continue
+        # Allow sqlite3.connect() in doctor CheckContext (thread-safe reads)
+        if py_file == doctor_checks_init:
             continue
 
         for line_num, call_text in find_sqlite3_connect_calls(py_file):
