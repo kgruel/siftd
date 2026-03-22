@@ -1,6 +1,8 @@
 """Tests for siftd db namespace commands."""
 
+import io
 import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 
 from siftd.cli import main
@@ -254,3 +256,115 @@ class TestDbPushPull:
         rc = main(["--db", str(test_db), "db", "pull", "r"])
         assert rc == 0
         assert "Pulled 3 conversations" in capsys.readouterr().out
+
+    def test_push_file_not_found_and_zero(self, test_db, monkeypatch, capsys):
+        monkeypatch.setattr("siftd.config.get_sync_remote", lambda n: _remote_cfg())
+        monkeypatch.setattr("siftd.api.sync.sync_push", lambda **kw: (_ for _ in ()).throw(FileNotFoundError("no db")))
+        rc = main(["--db", str(test_db), "db", "push", "r"])
+        assert rc == 1
+        assert "no db" in capsys.readouterr().out
+
+        monkeypatch.setattr(
+            "siftd.api.sync.sync_push",
+            lambda **kw: SimpleNamespace(conversations=0, size_bytes=0, dry_run=False, remote_existed=True),
+        )
+        rc = main(["--db", str(test_db), "db", "push", "r"])
+        assert rc == 0
+        assert "Nothing new to push" in capsys.readouterr().out
+
+
+class _FakeStdin:
+    def __init__(self, data=b"", *, is_tty=False):
+        self.buffer = io.BytesIO(data)
+        self._is_tty = is_tty
+
+    def isatty(self):
+        return self._is_tty
+
+
+class _FakeStdout:
+    def __init__(self, *, is_tty=False):
+        self.buffer = io.BytesIO()
+        self._is_tty = is_tty
+        self.out = []
+
+    def isatty(self):
+        return self._is_tty
+
+    def write(self, s):
+        self.out.append(s)
+        return len(s)
+
+    def flush(self):
+        pass
+
+
+class TestDbSendReceive:
+    def test_send_missing_db_and_tty_stdout(self, tmp_path, monkeypatch, capsys):
+        rc = main(["--db", str(tmp_path / "missing.db"), "db", "send"])
+        assert rc == 1
+        assert "Database not found" in capsys.readouterr().err
+
+        fake_out = _FakeStdout(is_tty=True)
+        monkeypatch.setattr("sys.stdout", fake_out)
+        rc = main(["--db", str(tmp_path / "x.db"), "db", "send"])
+        assert rc == 1
+
+    def test_send_zero_success_and_slice_error(self, test_db, monkeypatch, capsys):
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 0, "size_bytes": 0},
+        )
+        rc = main(["--db", str(test_db), "db", "send"])
+        assert rc == 0
+        assert '"conversations": 0' in capsys.readouterr().err
+
+        def _missing(**kw):
+            raise FileNotFoundError("bad source")
+
+        monkeypatch.setattr("siftd.api.slice.slice_database", _missing)
+        rc = main(["--db", str(test_db), "db", "send"])
+        assert rc == 1
+        assert "bad source" in capsys.readouterr().err
+
+    def test_send_streams_binary_when_nonzero(self, test_db, monkeypatch):
+        fake_out = _FakeStdout(is_tty=False)
+        monkeypatch.setattr("sys.stdout", fake_out)
+
+        def _slice(**kw):
+            Path(kw["target_path"]).write_bytes(b"sqlite")
+            return {"conversations": 1, "size_bytes": 6}
+
+        monkeypatch.setattr("siftd.api.slice.slice_database", _slice)
+        monkeypatch.setattr("shutil.copyfileobj", lambda src, dst: dst.write(src.read()))
+        assert main(["--db", str(test_db), "db", "send", "--since", "2024-01-01", "-w", "proj"]) == 0
+        assert fake_out.buffer.getvalue() == b"sqlite"
+
+    def test_receive_tty_empty_success_and_errors(self, test_db, monkeypatch, capsys):
+        monkeypatch.setattr("sys.stdin", _FakeStdin(is_tty=True))
+        rc = main(["--db", str(test_db), "db", "receive"])
+        assert rc == 1
+        assert "No data on stdin" in capsys.readouterr().err
+
+        monkeypatch.setattr("sys.stdin", _FakeStdin(b""))
+        rc = main(["--db", str(test_db), "db", "receive"])
+        assert rc == 1
+        assert "Empty input" in capsys.readouterr().err
+
+        monkeypatch.setattr("sys.stdin", _FakeStdin(b"sqlite-bytes"))
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda *a, **k: {"status": "merged", "conversations": 1})
+        rc = main(["--db", str(test_db), "db", "receive", "--no-fts"])
+        assert rc == 0
+        assert '"status": "merged"' in capsys.readouterr().out
+
+        monkeypatch.setattr("sys.stdin", _FakeStdin(b"sqlite-bytes"))
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad db")))
+        rc = main(["--db", str(test_db), "db", "receive"])
+        assert rc == 1
+        assert "bad db" in capsys.readouterr().err
+
+        monkeypatch.setattr("sys.stdin", _FakeStdin(b"sqlite-bytes"))
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
+        rc = main(["--db", str(test_db), "db", "receive"])
+        assert rc == 1
+        assert '"error_type": "database_locked"' in capsys.readouterr().err
