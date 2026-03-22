@@ -117,7 +117,7 @@ class TestFtsAndSemanticMutualExclusivity:
 
     def test_fts_and_semantic_together_errors(self, fts_db, capsys):
         """Using both --fts and --semantic returns error."""
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         args = make_search_args(
             query=["error"],
@@ -140,7 +140,7 @@ class TestNoEmbeddingsInstalled:
     def test_default_mode_falls_back_to_fts5(self, fts_db, capsys, monkeypatch):
         """Without embeddings, default mode uses FTS5 with hint."""
         import siftd.embeddings.availability as avail
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         # Mock embeddings as unavailable
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
@@ -162,7 +162,7 @@ class TestNoEmbeddingsInstalled:
     def test_fts_flag_works_without_embeddings(self, fts_db, capsys, monkeypatch):
         """--fts flag works when embeddings unavailable."""
         import siftd.embeddings.availability as avail
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 
@@ -183,7 +183,7 @@ class TestNoEmbeddingsInstalled:
     def test_semantic_flag_errors_without_embeddings(self, fts_db, capsys, monkeypatch):
         """--semantic flag errors with install instructions when embeddings unavailable."""
         import siftd.embeddings.availability as avail
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 
@@ -208,7 +208,7 @@ class TestFtsOnlyMode:
     def test_fts_returns_keyword_matches(self, fts_db, capsys, monkeypatch):
         """--fts mode returns FTS5 keyword matches."""
         import siftd.embeddings.availability as avail
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         # Mock embeddings unavailable to ensure we're testing FTS path
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
@@ -230,7 +230,7 @@ class TestFtsOnlyMode:
         import json
 
         import siftd.embeddings.availability as avail
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 
@@ -253,7 +253,7 @@ class TestFtsOnlyMode:
     def test_fts_handles_no_results(self, fts_db, capsys, monkeypatch):
         """--fts shows appropriate message when no results."""
         import siftd.embeddings.availability as avail
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 
@@ -272,7 +272,7 @@ class TestFtsOnlyMode:
     def test_fts_respects_workspace_filter(self, tmp_path, capsys, monkeypatch):
         """--fts respects --workspace filter."""
         import siftd.embeddings.availability as avail
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 
@@ -396,7 +396,7 @@ class TestWithEmbeddingsInstalled:
 
     def test_default_mode_uses_hybrid(self, indexed_db, capsys):
         """Default mode (no flags) uses hybrid search with embeddings."""
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         args = make_search_args(
             query=["error", "handling"],
@@ -413,7 +413,7 @@ class TestWithEmbeddingsInstalled:
 
     def test_fts_flag_uses_pure_fts5(self, indexed_db, capsys):
         """--fts flag uses pure FTS5 even with embeddings available."""
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         args = make_search_args(
             query=["error"],
@@ -433,7 +433,7 @@ class TestWithEmbeddingsInstalled:
 
     def test_semantic_flag_uses_pure_embeddings(self, indexed_db, capsys):
         """--semantic flag uses pure embeddings search (auto-sets embeddings_only)."""
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         args = make_search_args(
             query=["error", "handling"],
@@ -459,7 +459,7 @@ class TestHelpText:
     def test_search_help_mentions_auto_selection(self, capsys):
         """Search command help mentions auto-selection."""
         import argparse
-        from siftd.cli_search import build_search_parser
+        from siftd.cli.search import build_search_parser
 
         parser = argparse.ArgumentParser()
         subparsers = parser.add_subparsers()
@@ -489,7 +489,7 @@ class TestAutoSelectionHints:
     def test_deps_installed_but_index_missing_shows_index_hint(self, fts_db, capsys, monkeypatch):
         """When deps installed but index missing, hints at --index."""
         import siftd.embeddings.availability as avail
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         # Mock: embeddings available but index doesn't exist
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
@@ -512,7 +512,7 @@ class TestAutoSelectionHints:
     def test_deps_not_installed_shows_install_hint(self, fts_db, capsys, monkeypatch):
         """When deps not installed, hints at installing."""
         import siftd.embeddings.availability as avail
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         # Mock: embeddings not available
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
@@ -537,7 +537,7 @@ class TestFtsOnlyModeWarnings:
     def test_unsupported_flags_show_warning(self, fts_db, capsys, monkeypatch):
         """Unsupported flags in FTS mode show warning."""
         import siftd.embeddings.availability as avail
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 
@@ -562,7 +562,7 @@ class TestFtsOnlyModeWarnings:
     def test_supported_flags_no_warning(self, fts_db, capsys, monkeypatch):
         """Supported flags don't trigger warning."""
         import siftd.embeddings.availability as avail
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 
@@ -587,7 +587,7 @@ class TestFtsMissingTableError:
     def test_missing_fts_table_shows_helpful_error(self, tmp_path, capsys, monkeypatch):
         """Missing FTS table shows 'run ingest' message."""
         import siftd.embeddings.availability as avail
-        from siftd.cli_search import cmd_search
+        from siftd.cli.search import cmd_search
 
         monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
 

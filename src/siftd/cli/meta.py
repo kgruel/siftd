@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from siftd.api import list_workspaces
-from siftd.cli_common import resolve_db
+from siftd.cli._common import resolve_db
 from siftd.paths import cache_dir, config_dir, config_file, data_dir, db_path
 
 

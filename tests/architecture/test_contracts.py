@@ -170,8 +170,8 @@ class TestCommandReferences:
         # storage/tags.py checks for 'siftd ask' to detect historical tool calls
         # in conversation logs (the old command name before rename to 'search')
         ("storage/tags.py", "siftd ask"),
-        # cli_tags.py deprecation bridge references 'siftd tags' in warning message
-        ("cli_tags.py", "siftd tags"),
+        # cli/tags.py deprecation bridge references 'siftd tags' in warning message
+        ("cli/tags.py", "siftd tags"),
     ]
 
     # Words that look like commands but are actually prose

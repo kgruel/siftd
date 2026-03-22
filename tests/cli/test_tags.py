@@ -3,7 +3,7 @@
 import pytest
 
 from siftd.cli import main
-from siftd.cli_tags import _parse_tag_args
+from siftd.cli.tags import _parse_tag_args
 from siftd.storage.sqlite import open_database
 
 

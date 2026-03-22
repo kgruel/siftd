@@ -6,8 +6,8 @@ import pytest
 import tomlkit
 
 from siftd import config as cfg
-from siftd.cli_common import apply_config_defaults
-from siftd.cli_search import _has_explicit_formatter
+from siftd.cli._common import apply_config_defaults
+from siftd.cli.search import _has_explicit_formatter
 from siftd.config import (
     _coerce_value,
     _ensure_parent_table,

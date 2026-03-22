@@ -16,7 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from siftd.cli_common import resolve_db
+from siftd.cli._common import resolve_db
 from siftd.dateparse import parse_date
 
 
@@ -59,21 +59,21 @@ def cmd_db_info(args) -> int:
 
 def cmd_db_stats(args) -> int:
     """Show database statistics (delegates to status implementation)."""
-    from siftd.cli_meta import cmd_status
+    from siftd.cli.meta import cmd_status
 
     return cmd_status(args)
 
 
 def cmd_db_workspaces(args) -> int:
     """List workspaces (delegates to workspaces implementation)."""
-    from siftd.cli_meta import cmd_workspaces
+    from siftd.cli.meta import cmd_workspaces
 
     return cmd_workspaces(args)
 
 
 def cmd_db_path(args) -> int:
     """Show XDG paths (delegates to path implementation)."""
-    from siftd.cli_meta import cmd_path
+    from siftd.cli.meta import cmd_path
 
     return cmd_path(args)
 
@@ -167,7 +167,7 @@ def cmd_db_restore(args) -> int:
 def cmd_db_slice(args) -> int:
     """Export a filtered subset of conversations into a standalone SQLite database."""
     from siftd.api.slice import slice_database
-    from siftd.cli_filters import extract_filter_args
+    from siftd.cli._filters import extract_filter_args
 
     db = resolve_db(args)
     if not db.exists():
@@ -633,7 +633,7 @@ examples:
     p_slice.add_argument("--force", action="store_true", help="Overwrite existing file")
     p_slice.add_argument("--no-fts", action="store_true", help="Skip FTS5 index rebuild in output")
 
-    from siftd.cli_filters import add_filter_args
+    from siftd.cli._filters import add_filter_args
 
     add_filter_args(p_slice)
     p_slice.set_defaults(func=cmd_db_slice)

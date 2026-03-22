@@ -12,7 +12,7 @@ def cmd_serve(args) -> int:
     try:
         require_serve()
     except ImportError as e:
-        from siftd.cli_install import install_hint
+        from siftd.cli.install import install_hint
 
         print(f"{e} Install with: {install_hint('serve')}", file=sys.stderr)
         return 1

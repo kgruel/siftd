@@ -5,7 +5,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from siftd.cli_common import apply_config_defaults, fidelity_from_args, resolve_db
+from siftd.cli._common import apply_config_defaults, fidelity_from_args, resolve_db
 from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, print_table
 from siftd.output.painted_bridge import emit_output
 from siftd.paths import queries_dir
@@ -153,7 +153,7 @@ def _query_detail(args) -> int:
     """Show conversation detail timeline."""
     from siftd.api import get_conversation
     from siftd.api.dispatch import Operation, execute
-    from siftd.cli_common import fidelity_from_args, tool_chars_from_args
+    from siftd.cli._common import fidelity_from_args, tool_chars_from_args
     from siftd.serve.delegation import try_serve
 
     # Validate --exchanges
@@ -335,7 +335,7 @@ def cmd_query(args) -> int:
 
     from siftd.api import list_conversations
     from siftd.api.dispatch import Operation, execute
-    from siftd.cli_filters import extract_filter_args
+    from siftd.cli._filters import extract_filter_args
     from siftd.serve.delegation import try_serve
 
     db = resolve_db(args)
@@ -502,7 +502,7 @@ examples:
     p_query.add_argument("sql_name", nargs="?", help="SQL query name (when using 'sql' subcommand)")
 
     # Filtering options
-    from siftd.cli_filters import add_filter_args
+    from siftd.cli._filters import add_filter_args
 
     add_filter_args(p_query, include_tool=True, include_tool_tag=True)
 

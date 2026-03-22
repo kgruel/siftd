@@ -11,8 +11,8 @@ import sys
 from pathlib import Path
 from typing import cast
 
-from siftd.cli_common import apply_config_defaults, resolve_db
-from siftd.cli_filters import extract_filter_args
+from siftd.cli._common import apply_config_defaults, resolve_db
+from siftd.cli._filters import extract_filter_args
 from siftd.paths import embeddings_db_path
 
 
@@ -279,7 +279,7 @@ def cmd_search(args) -> int:
 
     from siftd.api.dispatch import Operation, execute
     from siftd.api.search import hybrid_search
-    from siftd.cli_common import fidelity_from_args
+    from siftd.cli._common import fidelity_from_args
     from siftd.serve.delegation import try_serve
 
     fidelity = fidelity_from_args(args)
@@ -714,7 +714,7 @@ examples:
     p_search.add_argument("query", nargs="*", help="Natural language search query")
 
     # Filtering options (most commonly used)
-    from siftd.cli_filters import add_filter_args
+    from siftd.cli._filters import add_filter_args
 
     add_filter_args(p_search)
 

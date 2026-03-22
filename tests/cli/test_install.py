@@ -5,7 +5,7 @@ import stat
 from argparse import Namespace
 from pathlib import Path
 
-from siftd.cli_install import _find_plugin_source, _install_plugin, _install_skill
+from siftd.cli.install import _find_plugin_source, _install_plugin, _install_skill
 
 
 def _make_args(dry_run=False, scope="user") -> Namespace:

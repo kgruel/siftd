@@ -91,12 +91,12 @@ MODULE_GROUPS: dict[str, str] = {
 # Known violations pending refactor.
 # Format: (relative_path_from_src_siftd, imported_group)
 KNOWN_VIOLATIONS = {
-    ("cli_data.py", "adapters"),  # CLI entrypoint loads adapters directly
-    ("cli_data.py", "ingestion"),  # CLI entrypoint calls ingestion/backfill
-    ("cli_meta.py", "embeddings"),  # CLI entrypoint reads embeddings status
-    ("cli_peek.py", "peek"),  # CLI entrypoint needs peek error type
-    ("cli_search.py", "embeddings"),  # CLI entrypoint uses embeddings utilities
-    ("cli_search.py", "search"),  # CLI entrypoint calls search module directly
+    ("cli/data.py", "adapters"),  # CLI entrypoint loads adapters directly
+    ("cli/data.py", "ingestion"),  # CLI entrypoint calls ingestion/backfill
+    ("cli/meta.py", "embeddings"),  # CLI entrypoint reads embeddings status
+    ("cli/peek.py", "peek"),  # CLI entrypoint needs peek error type
+    ("cli/search.py", "embeddings"),  # CLI entrypoint uses embeddings utilities
+    ("cli/search.py", "search"),  # CLI entrypoint calls search module directly
     ("storage/embeddings.py", "search"),  # storage depends on search scoring types
 }
 
@@ -173,7 +173,7 @@ def group_for_module(module_path: str) -> str | None:
         return None
 
     top = parts[1]
-    if top == "cli" or top.startswith("cli_"):
+    if top == "cli":
         return "cli"
 
     return MODULE_GROUPS.get(top)

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from siftd.api import create_database, open_database
 from siftd.api.sessions import find_active_session, register_session
-from siftd.cli_common import resolve_db
+from siftd.cli._common import resolve_db
 from siftd.paths import ensure_dirs, session_id_file
 
 

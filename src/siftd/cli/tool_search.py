@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from siftd.api.tool_search import group_tool_search_results, search_tool_calls
-from siftd.cli_filters import add_filter_args, extract_filter_args
+from siftd.cli._filters import add_filter_args, extract_filter_args
 from siftd.output.common import fmt_timestamp, fmt_workspace, truncate_text
 
 
@@ -21,7 +21,7 @@ def cmd_tool_search(args) -> int:
         print("       siftd tool-search --rebuild-index")
         return 1
 
-    from siftd.cli_common import resolve_db
+    from siftd.cli._common import resolve_db
 
     db = Path(args.db) if args.db else None
     effective_db = db or resolve_db(args)

@@ -19,7 +19,7 @@ from siftd.api import (
 )
 from siftd.api.sessions import is_session_registered
 from siftd.api.sessions import queue_tag as queue_pending_tag
-from siftd.cli_common import resolve_db
+from siftd.cli._common import resolve_db
 from siftd.paths import ensure_dirs, session_id_file
 
 # Subcommand names that can never collide with ULIDs (26-char base32).
@@ -158,7 +158,7 @@ def _cmd_tag_list(args, db: Path) -> int:
         from dataclasses import asdict
 
         from siftd.api import list_conversations
-        from siftd.cli_filters import extract_filter_args
+        from siftd.cli._filters import extract_filter_args
 
         tag_name = name
         conn.close()
@@ -186,7 +186,7 @@ def _cmd_tag_list(args, db: Path) -> int:
             print(f"No conversations found for tag: {tag_name}")
             return 0
 
-        from siftd.cli_common import fidelity_from_args
+        from siftd.cli._common import fidelity_from_args
         from siftd.output.format_registry import select_format
 
         print(f"Conversations tagged '{tag_name}' (showing {len(conversations)}):")
@@ -701,7 +701,7 @@ live session tagging:
     p_tag.add_argument("--limit", type=int, default=10, help="Max conversations in drill-down (default: 10, use with 'tag list <name>')")
     p_tag.add_argument("--force", action="store_true", help="Force delete even if tag has associations (use with 'tag delete')")
 
-    from siftd.cli_filters import add_filter_args
+    from siftd.cli._filters import add_filter_args
 
     add_filter_args(p_tag, include_model=True)
 

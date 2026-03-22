@@ -9,8 +9,8 @@ import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
-from siftd.cli_common import _get_version
-from siftd.cli_install import METHOD_LABELS, detect_install_method
+from siftd.cli._common import _get_version
+from siftd.cli.install import METHOD_LABELS, detect_install_method
 from siftd.paths import state_dir
 
 _CHECK_INTERVAL_S = 86400  # 24 hours

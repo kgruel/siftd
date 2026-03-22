@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from siftd.api import create_database, open_database
 from siftd.api.search import rebuild_fts_index
-from siftd.cli_common import resolve_db
+from siftd.cli._common import resolve_db
 from siftd.output import fmt_model, fmt_workspace
 from siftd.paths import ensure_dirs
 

@@ -133,7 +133,7 @@ class TestJsonRenderSearch:
 
     def test_formats_conversation_mode(self, enriched_results):
         from siftd.output import json_fmt
-        from siftd.cli_search import _aggregate_conversations
+        from siftd.cli.search import _aggregate_conversations
 
         conv_results = _aggregate_conversations(enriched_results, limit=10)
         result = json_fmt.render_search(
@@ -240,7 +240,7 @@ class TestTerminalRenderSearch:
 
     def test_conversations_mode(self, enriched_results):
         from siftd.output import terminal_fmt
-        from siftd.cli_search import _aggregate_conversations
+        from siftd.cli.search import _aggregate_conversations
 
         conv_results = _aggregate_conversations(enriched_results, limit=10)
         output = terminal_fmt.render_search(
@@ -254,7 +254,7 @@ class TestTerminalRenderSearch:
 
     def test_thread_mode(self, enriched_results):
         from siftd.output import terminal_fmt
-        from siftd.cli_search import _compute_thread_tiers
+        from siftd.cli.search import _compute_thread_tiers
 
         tier1, tier2 = _compute_thread_tiers(enriched_results)
         output = terminal_fmt.render_search(
@@ -277,7 +277,7 @@ class TestTerminalRenderSearch:
             {"conversation_id": "conv-low", "score": 0.45, "chunk_type": "prompt",
              "text": "Low relevance", "_workspace": "low", "_started_at": "2024-01-16"},
         ]
-        from siftd.cli_search import _compute_thread_tiers
+        from siftd.cli.search import _compute_thread_tiers
 
         tier1, tier2 = _compute_thread_tiers(results)
         output = terminal_fmt.render_search(
@@ -291,7 +291,7 @@ class TestTerminalRenderSearch:
     def test_single_result_in_thread_tier2(self, enriched_results):
         """Single result at mean score goes to tier2."""
         from siftd.output import terminal_fmt
-        from siftd.cli_search import _compute_thread_tiers
+        from siftd.cli.search import _compute_thread_tiers
 
         single = enriched_results[:1]
         tier1, tier2 = _compute_thread_tiers(single)
@@ -421,7 +421,7 @@ class TestMarkdownRenderSearch:
 
     def test_conversations_mode_table(self, enriched_results):
         from siftd.output import markdown_fmt
-        from siftd.cli_search import _aggregate_conversations
+        from siftd.cli.search import _aggregate_conversations
 
         conv_results = _aggregate_conversations(enriched_results, limit=10)
         output = markdown_fmt.render_search(
@@ -435,7 +435,7 @@ class TestMarkdownRenderSearch:
 
     def test_thread_mode(self):
         from siftd.output import markdown_fmt
-        from siftd.cli_search import _compute_thread_tiers
+        from siftd.cli.search import _compute_thread_tiers
 
         results = [
             {"conversation_id": "conv-high", "score": 0.95, "chunk_type": "prompt",
@@ -633,7 +633,7 @@ class TestSearchHelpers:
     """Tests for cli_search helper functions used by the new formatter flow."""
 
     def test_aggregate_conversations(self, enriched_results):
-        from siftd.cli_search import _aggregate_conversations
+        from siftd.cli.search import _aggregate_conversations
 
         conv_results = _aggregate_conversations(enriched_results, limit=10)
 
@@ -644,7 +644,7 @@ class TestSearchHelpers:
         assert r["_workspace"] == "project"
 
     def test_aggregate_conversations_respects_limit(self):
-        from siftd.cli_search import _aggregate_conversations
+        from siftd.cli.search import _aggregate_conversations
 
         results = [
             {"conversation_id": f"conv{i}", "score": 0.9 - i * 0.1,
@@ -657,7 +657,7 @@ class TestSearchHelpers:
         assert len(conv_results) == 2
 
     def test_compute_thread_tiers(self):
-        from siftd.cli_search import _compute_thread_tiers
+        from siftd.cli.search import _compute_thread_tiers
 
         results = [
             {"conversation_id": "high", "score": 0.95, "chunk_type": "prompt",
@@ -675,7 +675,7 @@ class TestSearchHelpers:
 
     def test_compute_thread_tiers_single(self):
         """Single result at mean goes to tier2."""
-        from siftd.cli_search import _compute_thread_tiers
+        from siftd.cli.search import _compute_thread_tiers
 
         results = [
             {"conversation_id": "only", "score": 0.8, "chunk_type": "prompt",
@@ -688,7 +688,7 @@ class TestSearchHelpers:
         assert len(tier2) == 1
 
     def test_fetch_search_metadata(self, mock_conn, sample_results):
-        from siftd.cli_search import _fetch_search_metadata
+        from siftd.cli.search import _fetch_search_metadata
 
         _fetch_search_metadata(mock_conn, sample_results)
 

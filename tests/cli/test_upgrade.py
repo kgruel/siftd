@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timezone
 from unittest.mock import patch
 
-from siftd.cli_upgrade import (
+from siftd.cli.upgrade import (
     _cache_path,
     _fetch_latest_version,
     _is_newer,
@@ -35,7 +35,7 @@ class TestIsNewer:
 
 class TestCache:
     def test_write_and_read(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.cli_upgrade.state_dir", lambda: tmp_path)
+        monkeypatch.setattr("siftd.cli.upgrade.state_dir", lambda: tmp_path)
         _write_cache("0.6.0")
         cache = _read_cache()
         assert cache is not None
@@ -43,21 +43,21 @@ class TestCache:
         assert "checked_at" in cache
 
     def test_read_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.cli_upgrade.state_dir", lambda: tmp_path)
+        monkeypatch.setattr("siftd.cli.upgrade.state_dir", lambda: tmp_path)
         assert _read_cache() is None
 
     def test_read_corrupt(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.cli_upgrade.state_dir", lambda: tmp_path)
+        monkeypatch.setattr("siftd.cli.upgrade.state_dir", lambda: tmp_path)
         (tmp_path / "update-check.json").write_text("not json")
         assert _read_cache() is None
 
     def test_fresh_within_interval(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.cli_upgrade.state_dir", lambda: tmp_path)
+        monkeypatch.setattr("siftd.cli.upgrade.state_dir", lambda: tmp_path)
         _write_cache("0.6.0")
         assert _cache_is_fresh()
 
     def test_stale_after_interval(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.cli_upgrade.state_dir", lambda: tmp_path)
+        monkeypatch.setattr("siftd.cli.upgrade.state_dir", lambda: tmp_path)
         path = tmp_path / "update-check.json"
         path.write_text(json.dumps({
             "latest": "0.6.0",
@@ -68,17 +68,17 @@ class TestCache:
 
 class TestNotice:
     def test_no_notice_when_current(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr("siftd.cli_upgrade.state_dir", lambda: tmp_path)
-        monkeypatch.setattr("siftd.cli_upgrade._get_version", lambda: "0.5.0")
-        monkeypatch.setattr("siftd.cli_upgrade.sys.stderr.isatty", lambda: True)
+        monkeypatch.setattr("siftd.cli.upgrade.state_dir", lambda: tmp_path)
+        monkeypatch.setattr("siftd.cli.upgrade._get_version", lambda: "0.5.0")
+        monkeypatch.setattr("siftd.cli.upgrade.sys.stderr.isatty", lambda: True)
         _write_cache("0.5.0")
         maybe_print_notice()
         assert capsys.readouterr().err == ""
 
     def test_notice_when_newer(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr("siftd.cli_upgrade.state_dir", lambda: tmp_path)
-        monkeypatch.setattr("siftd.cli_upgrade._get_version", lambda: "0.5.0")
-        monkeypatch.setattr("siftd.cli_upgrade.sys.stderr.isatty", lambda: True)
+        monkeypatch.setattr("siftd.cli.upgrade.state_dir", lambda: tmp_path)
+        monkeypatch.setattr("siftd.cli.upgrade._get_version", lambda: "0.5.0")
+        monkeypatch.setattr("siftd.cli.upgrade.sys.stderr.isatty", lambda: True)
         _write_cache("0.6.0")
         maybe_print_notice()
         err = capsys.readouterr().err
@@ -86,17 +86,17 @@ class TestNotice:
         assert "siftd upgrade" in err
 
     def test_no_notice_when_not_tty(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr("siftd.cli_upgrade.state_dir", lambda: tmp_path)
-        monkeypatch.setattr("siftd.cli_upgrade._get_version", lambda: "0.5.0")
-        monkeypatch.setattr("siftd.cli_upgrade.sys.stderr.isatty", lambda: False)
+        monkeypatch.setattr("siftd.cli.upgrade.state_dir", lambda: tmp_path)
+        monkeypatch.setattr("siftd.cli.upgrade._get_version", lambda: "0.5.0")
+        monkeypatch.setattr("siftd.cli.upgrade.sys.stderr.isatty", lambda: False)
         _write_cache("0.6.0")
         maybe_print_notice()
         assert capsys.readouterr().err == ""
 
     def test_no_notice_when_env_disabled(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr("siftd.cli_upgrade.state_dir", lambda: tmp_path)
+        monkeypatch.setattr("siftd.cli.upgrade.state_dir", lambda: tmp_path)
         monkeypatch.setenv("SIFTD_NO_UPDATE_CHECK", "1")
-        monkeypatch.setattr("siftd.cli_upgrade.sys.stderr.isatty", lambda: True)
+        monkeypatch.setattr("siftd.cli.upgrade.sys.stderr.isatty", lambda: True)
         _write_cache("0.6.0")
         maybe_print_notice()
         assert capsys.readouterr().err == ""

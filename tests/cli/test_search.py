@@ -11,7 +11,7 @@ pytestmark = pytest.mark.embeddings
 
 pytest.importorskip("fastembed")
 
-from siftd.cli_search import cmd_search
+from siftd.cli.search import cmd_search
 from siftd.embeddings.indexer import build_embeddings_index
 from siftd.storage.sqlite import (
     create_database,
@@ -310,7 +310,7 @@ class TestSearchServeDelegation:
         )
 
         # Force delegation eligibility regardless of DB path checks.
-        monkeypatch.setattr("siftd.cli_search._can_delegate_to_serve", lambda *a, **k: True)
+        monkeypatch.setattr("siftd.cli.search._can_delegate_to_serve", lambda *a, **k: True)
 
         fake_results = [
             {
@@ -323,7 +323,7 @@ class TestSearchServeDelegation:
                 "breakdown": None,
             }
         ]
-        monkeypatch.setattr("siftd.cli_search._delegate_search_via_serve", lambda *a, **k: fake_results)
+        monkeypatch.setattr("siftd.cli.search._delegate_search_via_serve", lambda *a, **k: fake_results)
 
         # If local semantic path is used, this would be called.
         import siftd.embeddings as embeddings
@@ -346,7 +346,7 @@ class TestSearchServeDelegation:
 
     def test_delegation_rejects_mismatched_db_path(self, monkeypatch, tmp_path):
         """Delegate path should reject serve instances pointing at a different DB."""
-        from siftd.cli_search import _delegate_search_via_serve
+        from siftd.cli.search import _delegate_search_via_serve
 
         args = make_args()
 

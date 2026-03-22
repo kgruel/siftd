@@ -1229,7 +1229,7 @@ class TestSelectFormat:
 
 class TestFidelityFromArgsBrief:
     def test_brief_sets_depth_zero(self):
-        from siftd.cli_common import fidelity_from_args
+        from siftd.cli._common import fidelity_from_args
 
         args = type("Args", (), {"brief": True, "full": False, "thinking": False, "tools": None, "chars": None})()
         fidelity = fidelity_from_args(args)
@@ -1237,14 +1237,14 @@ class TestFidelityFromArgsBrief:
         assert fidelity.chars == 80
 
     def test_default_depth_is_one(self):
-        from siftd.cli_common import fidelity_from_args
+        from siftd.cli._common import fidelity_from_args
 
         args = type("Args", (), {"brief": False, "full": False, "thinking": False, "tools": None, "chars": None})()
         fidelity = fidelity_from_args(args)
         assert fidelity.depth == 1
 
     def test_full_depth_is_three(self):
-        from siftd.cli_common import fidelity_from_args
+        from siftd.cli._common import fidelity_from_args
 
         args = type("Args", (), {"brief": False, "full": True, "thinking": False, "tools": None, "chars": None})()
         fidelity = fidelity_from_args(args)

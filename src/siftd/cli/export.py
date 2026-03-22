@@ -5,14 +5,14 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from siftd.cli_common import resolve_db
+from siftd.cli._common import resolve_db
 
 
 def cmd_export(args) -> int:
     """Export conversations as readable markdown or structured JSON."""
     from siftd.api.dispatch import Operation, execute
     from siftd.api.export import export_document
-    from siftd.cli_common import fidelity_from_args
+    from siftd.cli._common import fidelity_from_args
 
     db = resolve_db(args)
 
@@ -104,7 +104,7 @@ def build_export_parser(subparsers) -> None:
         help="Export N most recent sessions (default: 1 if no ID given)",
     )
 
-    from siftd.cli_filters import add_filter_args
+    from siftd.cli._filters import add_filter_args
 
     add_filter_args(p, include_model=False, include_search=True, include_all_tags=False)
 

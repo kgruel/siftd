@@ -9,7 +9,7 @@ import pytest
 from conftest import FIXTURES_DIR
 
 from siftd.cli import main
-from siftd.cli_data import _AdapterCounts, _IngestJsonRenderer, _IngestTextRenderer
+from siftd.cli.data import _AdapterCounts, _IngestJsonRenderer, _IngestTextRenderer
 
 
 # ---------------------------------------------------------------------------

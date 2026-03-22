@@ -3,20 +3,20 @@
 import argparse
 import sys
 
-from siftd.cli_common import _get_version
-from siftd.cli_data import build_data_parser
-from siftd.cli_db import build_db_parser
-from siftd.cli_export import build_export_parser
-from siftd.cli_install import build_install_parser
-from siftd.cli_meta import build_meta_parser
-from siftd.cli_peek import build_peek_parser
-from siftd.cli_query import build_query_parser
-from siftd.cli_search import build_search_parser
-from siftd.cli_serve import build_serve_parser
-from siftd.cli_sessions import build_sessions_parser
-from siftd.cli_tags import build_tags_parser
-from siftd.cli_tool_search import build_tool_search_parser
-from siftd.cli_upgrade import build_upgrade_parser
+from siftd.cli._common import _get_version
+from siftd.cli.data import build_data_parser
+from siftd.cli.db import build_db_parser
+from siftd.cli.export import build_export_parser
+from siftd.cli.install import build_install_parser
+from siftd.cli.meta import build_meta_parser
+from siftd.cli.peek import build_peek_parser
+from siftd.cli.query import build_query_parser
+from siftd.cli.search import build_search_parser
+from siftd.cli.serve import build_serve_parser
+from siftd.cli.sessions import build_sessions_parser
+from siftd.cli.tags import build_tags_parser
+from siftd.cli.tool_search import build_tool_search_parser
+from siftd.cli.upgrade import build_upgrade_parser
 from siftd.paths import db_path
 
 
@@ -71,7 +71,7 @@ def main(argv=None) -> int:
         return 130
 
     # Post-command: passive update check (non-blocking)
-    from siftd.cli_upgrade import maybe_print_notice, maybe_start_check
+    from siftd.cli.upgrade import maybe_print_notice, maybe_start_check
 
     maybe_print_notice()
     maybe_start_check()

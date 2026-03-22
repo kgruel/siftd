@@ -14,7 +14,7 @@ def cmd_peek(args) -> int:
         read_session_detail,
         tail_session,
     )
-    from siftd.cli_common import fidelity_from_args, tool_chars_from_args
+    from siftd.cli._common import fidelity_from_args, tool_chars_from_args
     from siftd.output.painted_bridge import emit_output, render_follow_event_block, render_peek_detail_block
     from siftd.output.painted_bridge import print_block as print_painted_block
     from siftd.peek import AmbiguousSessionError

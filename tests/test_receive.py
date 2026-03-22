@@ -316,7 +316,7 @@ class TestReceiveCLIErrors:
         mock_stdin_wrapper.isatty = MagicMock(return_value=False)
 
         with (
-            patch("siftd.cli_db.sys.stdin", mock_stdin_wrapper),
+            patch("siftd.cli.db.sys.stdin", mock_stdin_wrapper),
             patch(
                 "siftd.api.receive.receive_database",
                 side_effect=sqlite3.OperationalError("database is locked"),
@@ -348,7 +348,7 @@ class TestReceiveCLIErrors:
         mock_stdin_wrapper.isatty = MagicMock(return_value=False)
 
         with (
-            patch("siftd.cli_db.sys.stdin", mock_stdin_wrapper),
+            patch("siftd.cli.db.sys.stdin", mock_stdin_wrapper),
             patch(
                 "siftd.api.receive.receive_database",
                 side_effect=sqlite3.OperationalError("disk I/O error"),
