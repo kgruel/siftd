@@ -146,7 +146,7 @@ class TestQuery:
         )
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
-            resp = client.get("/v1/query")
+            resp = client.get("/v1/conversations")
         assert resp.status_code == 200
         body = resp.json()
         assert "conversations" in body
@@ -159,7 +159,7 @@ class TestQuery:
         )
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
-            resp = client.get("/v1/query", params={"n": 1})
+            resp = client.get("/v1/conversations", params={"n": 1})
         body = resp.json()
         assert len(body["conversations"]) == 1
 
@@ -171,10 +171,10 @@ class TestQuery:
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
             # First get the list to find the ID
-            resp = client.get("/v1/query")
+            resp = client.get("/v1/conversations")
             conv_id = resp.json()["conversations"][0]["id"]
             # Then get the detail
-            resp = client.get("/v1/query", params={"id": conv_id})
+            resp = client.get(f"/v1/conversations/{conv_id}")
         assert resp.status_code == 200
         body = resp.json()
         assert "conversation" in body

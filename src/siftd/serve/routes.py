@@ -158,16 +158,18 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
     """
     import json as json_mod
 
+    from siftd.api.conversations import (
+        get_recent_conversation_ids,
+        resolve_entity_id,
+    )
     from siftd.storage.sqlite import open_database
     from siftd.storage.tags import (
         apply_tag,
         delete_tag,
         get_or_create_tag,
-        get_recent_conversation_ids,
         get_tag_id,
         remove_tag,
         rename_tag,
-        resolve_entity_id,
     )
 
     body = json_mod.loads(await request.body())
@@ -375,13 +377,21 @@ async def pull(
 
 
 @get("/v1/conversations/{id:str}")
-async def conversation_detail(db_path: Path, id: str) -> dict:
+async def conversation_detail(
+    db_path: Path,
+    id: str,
+    include_thinking: bool = Parameter(query="include_thinking", default=False),
+    include_tool_content: bool = Parameter(query="include_tool_content", default=False),
+    tool_filter: str | None = Parameter(query="tool_filter", default=None),
+) -> dict:
     """Get a single conversation by ID (supports prefix match)."""
     from siftd.api.conversations import get_conversation
 
     return _dispatch(
         "/v1/conversations", "GET", get_conversation,
-        {"id": id, "db_path": db_path}, "detail", db_path,
+        {"id": id, "db_path": db_path, "include_thinking": include_thinking,
+         "include_tool_content": include_tool_content, "tool_filter": tool_filter},
+        "detail", db_path,
     )
 
 
@@ -440,18 +450,19 @@ async def search_route(
 ) -> dict | Response:
     """Semantic + FTS search against team DB."""
     try:
-        from siftd.search import hybrid_search
+        from siftd.api.search import hybrid_search
     except ImportError:
         return Response(
             content={"error": "search requires siftd[embed]"},
             status_code=501,
         )
 
+    mode = "semantic" if embeddings_only else "hybrid"
     try:
         return _dispatch(
             "/v1/search", "GET", hybrid_search,
             {"q": q, "db_path": db_path, "n": n, "recall": recall,
-             "embeddings_only": embeddings_only, "workspace": workspace,
+             "mode": mode, "workspace": workspace,
              "model": model, "since": since, "before": before,
              "backend": backend, "exclude_active": exclude_active,
              "rerank": rerank, "lambda_": lambda_, "recency": recency,

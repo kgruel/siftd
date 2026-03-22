@@ -63,7 +63,7 @@ def export_conversations(
                 results.append(_detail_to_export(detail))
         return results
 
-    n = last if last else 10
+    n = last if last else (n if n > 0 else 10)
     summaries = list_conversations(
         db_path=db_path,
         workspace=workspace,
