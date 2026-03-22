@@ -450,7 +450,13 @@ table.conversation-list tr.htmx-request {
 .conversation-detail { }
 
 .conversation-header {
-  margin-bottom: var(--space-md);
+  position: sticky;
+  top: calc(-1 * var(--space-lg));
+  z-index: 20;
+  background: var(--bg);
+  margin: calc(-1 * var(--space-lg)) calc(-1 * var(--space-xl)) var(--space-md);
+  padding: var(--space-lg) var(--space-xl) var(--space-sm);
+  border-bottom: 1px solid var(--border);
 }
 
 /* Toolbar: fidelity controls left, export right */
@@ -461,11 +467,8 @@ table.conversation-list tr.htmx-request {
   margin-bottom: var(--space-sm);
 }
 
-/* Sticky info bar — matches list table vocabulary */
+/* Info bar — matches list table vocabulary */
 .detail-info-bar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
   display: flex;
   gap: 0;
   align-items: baseline;
@@ -686,18 +689,28 @@ pre[class*="language-"] {
   margin-bottom: var(--space-xl);
   border-bottom: 1px solid var(--border);
   padding-bottom: var(--space-lg);
+  scroll-margin-top: 10rem;
 }
 
 .turn:last-child {
   border-bottom: none;
 }
 
-.turn h3 {
-  margin: var(--space-sm) 0;
+/* Collapsible blocks within a turn (prompt + response independently) */
+details.turn-block > summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  cursor: pointer;
+  padding: var(--space-xs) 0;
   font-size: 0.8em;
+  list-style: none;
+  user-select: none;
 }
 
-.turn h3 .role-label {
+details.turn-block > summary::-webkit-details-marker { display: none; }
+
+details.turn-block > summary .role-label {
   font-family: var(--sans);
   font-weight: 600;
   text-transform: uppercase;
@@ -705,8 +718,58 @@ pre[class*="language-"] {
   color: var(--fg-secondary);
 }
 
-.turn h3 .temporal {
+details.turn-block > summary .temporal {
   font-size: 0.85em;
+}
+
+details.turn-block > summary .turn-preview {
+  color: var(--muted);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Show preview only when collapsed */
+details.turn-block[open] > summary .turn-preview {
+  display: none;
+}
+
+/* Collapse indicator */
+details.turn-block > summary::before {
+  content: "\25B6";
+  font-size: 0.6em;
+  color: var(--muted);
+  transition: transform var(--transition);
+  flex-shrink: 0;
+}
+details.turn-block[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.response-block {
+  margin-top: var(--space-xs);
+}
+
+/* Turn navigation */
+.turn-nav {
+  margin-left: auto;
+  display: flex;
+  gap: 0.2em;
+  flex-shrink: 0;
+}
+.turn-nav-btn {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 1.1em;
+  line-height: 1;
+  padding: 0 0.2em;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition), background var(--transition);
+}
+.turn-nav-btn:hover {
+  color: var(--accent);
+  background: rgba(107, 163, 214, 0.1);
 }
 
 .narrative-text {
@@ -729,7 +792,7 @@ pre[class*="language-"] {
 
 /* --- Phase 5: Tool Cards & Thinking Blocks --- */
 
-/* Tool calls — bordered cards */
+/* Tool calls — bordered cards, collapsible when content present */
 .tool-call {
   margin: var(--space-sm) 0;
   padding: var(--space-sm) var(--space-md);
@@ -738,28 +801,59 @@ pre[class*="language-"] {
   border-radius: var(--radius);
 }
 
+details.tool-call > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+details.tool-call > summary::-webkit-details-marker { display: none; }
+
+details.tool-call > summary::before {
+  content: "\25B6";
+  font-size: 0.5em;
+  color: var(--muted);
+  transition: transform var(--transition);
+  flex-shrink: 0;
+}
+details.tool-call[open] > summary::before {
+  transform: rotate(90deg);
+}
+
 .tool-call .tool-name {
   font-family: var(--sans);
   font-weight: 500;
   font-size: 0.8em;
-  margin-bottom: var(--space-xs);
+  flex-shrink: 0;
 }
 
 .tool-call .tool-headline {
-  display: block;
   color: var(--fg);
   font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Full headline styling when expanded */
+details.tool-call[open] .tool-headline {
+  display: block;
   background: var(--bg);
   padding: 0.2rem var(--space-sm);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   margin-top: var(--space-xs);
+  white-space: pre-wrap;
+  overflow: visible;
 }
 
 .tool-call .tool-meta {
   color: var(--muted);
   font-size: 0.8em;
   margin-left: var(--space-sm);
+  flex-shrink: 0;
 }
 
 .tool-call pre {

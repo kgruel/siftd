@@ -249,33 +249,57 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
 
         parts.append("</header>")
 
-    for turn in turns:
-        parts.append('<section class="turn">')
-
+    total_turns = len(turns)
+    for i, turn in enumerate(turns):
+        turn_id = f"turn-{i}"
         ts = fmt_timestamp(getattr(turn, "timestamp", None), time_only=True)
+        summary_ts = f' <span class="temporal">{escape(ts)}</span>' if ts else ""
+
+        # Nav buttons — anchored to the turn wrapper
+        nav = '<span class="turn-nav">'
+        if i > 0:
+            nav += f'<a href="#turn-{i - 1}" class="turn-nav-btn" title="Previous turn">\u2191</a>'
+        if i < total_turns - 1:
+            nav += f'<a href="#turn-{i + 1}" class="turn-nav-btn" title="Next turn">\u2193</a>'
+        nav += "</span>"
+
+        parts.append(f'<section class="turn" id="{turn_id}">')
 
         prompt_text = getattr(turn, "prompt_text", None)
         if prompt_text:
-            parts.append('<div class="prompt">')
+            preview_text = prompt_text.strip().replace("\n", " ")[:80]
+            if len(prompt_text.strip()) > 80:
+                preview_text += "\u2026"
+            preview = f' <span class="turn-preview">{escape(preview_text)}</span>'
+
+            parts.append('<details class="turn-block prompt-block" open>')
             parts.append(
-                f'<h3><span class="role-label">User</span>{f" <span class=temporal>{escape(ts)}</span>" if ts else ""}</h3>'
+                f'<summary><span class="role-label">User</span>'
+                f'{summary_ts}{preview}{nav}</summary>'
             )
+            parts.append('<div class="prompt">')
             text = prompt_text.strip()
             if fidelity.chars > 0 and len(text) > fidelity.chars:
                 text = text[: fidelity.chars] + "..."
             parts.append(f"<p>{escape(text)}</p>")
             parts.append("</div>")
+            parts.append("</details>")
 
         narrative = getattr(turn, "narrative", [])
         if narrative:
-            parts.append('<div class="assistant">')
+            # If no prompt, nav goes on the response summary
+            response_nav = nav if not prompt_text else ""
+            parts.append('<details class="turn-block response-block" open>')
             parts.append(
-                f'<h3><span class="role-label">Assistant</span>{f" <span class=temporal>{escape(ts)}</span>" if ts else ""}</h3>'
+                f'<summary><span class="role-label">Assistant</span>'
+                f'{summary_ts}{response_nav}</summary>'
             )
+            parts.append('<div class="assistant">')
             emitter = HtmlEmitter()
             walk_narrative(narrative, emitter, fidelity=fidelity, tool_chars=tool_chars)
             parts.append(emitter.to_html())
             parts.append("</div>")
+            parts.append("</details>")
 
         parts.append("</section>")
 

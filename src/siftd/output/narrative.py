@@ -240,15 +240,27 @@ class HtmlEmitter:
             lang = self._lang_from_path(pres.headline)
         lang_attr = f' class="language-{lang}"' if lang else ""
 
-        parts = [f'<div class="tool-call{status_css}">']
-        parts.append(f'<div class="tool-name">{e(name)}{count_suffix}</div>')
+        # Summary line: tool name + headline (always visible)
+        summary_meta = f' <span class="tool-meta">{e(pres.meta)}</span>' if pres.meta else ""
+        has_content = (
+            pres.removed is not None or pres.added is not None
+            or pres.output or pres.error or pres.tasks
+        )
 
-        # Headline — always present
-        parts.append(f'<code class="tool-headline">{e(pres.headline)}</code>')
-
-        # Meta — optional secondary info
-        if pres.meta:
-            parts.append(f'<span class="tool-meta">{e(pres.meta)}</span>')
+        if has_content:
+            parts = [f'<details class="tool-call{status_css}">']
+            parts.append(
+                f'<summary>'
+                f'<span class="tool-name">{e(name)}{count_suffix}</span>'
+                f' <code class="tool-headline">{e(pres.headline)}</code>'
+                f'{summary_meta}</summary>'
+            )
+        else:
+            parts = [f'<div class="tool-call{status_css}">']
+            parts.append(f'<span class="tool-name">{e(name)}{count_suffix}</span>')
+            parts.append(f' <code class="tool-headline">{e(pres.headline)}</code>')
+            if summary_meta:
+                parts.append(summary_meta)
 
         # Diff content (file.edit) — side-by-side when both present
         if pres.removed is not None and pres.added is not None:
@@ -281,7 +293,7 @@ class HtmlEmitter:
         if pres.error:
             parts.append(f'<pre class="tool-error">{e(pres.error)}</pre>')
 
-        parts.append("</div>")
+        parts.append("</details>" if has_content else "</div>")
         self.parts.append("\n".join(parts))
 
     def tool_output(self, block_type: str, content: str) -> None:
