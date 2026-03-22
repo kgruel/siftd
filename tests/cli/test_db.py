@@ -368,3 +368,63 @@ class TestDbSendReceive:
         rc = main(["--db", str(test_db), "db", "receive"])
         assert rc == 1
         assert '"error_type": "database_locked"' in capsys.readouterr().err
+
+
+class TestDbErrorPaths:
+    def test_info_vacuum_backup_restore_missing_db(self, tmp_path, capsys):
+        missing = tmp_path / "missing.db"
+        assert main(["--db", str(missing), "db", "info"]) == 1
+        assert main(["--db", str(missing), "db", "vacuum"]) == 1
+        assert main(["--db", str(missing), "db", "backup", str(tmp_path / "b.db")]) == 1
+        assert main(["--db", str(tmp_path / "out.db"), "db", "restore", str(tmp_path / "nope.db")]) == 1
+
+    def test_slice_missing_and_force_overwrite(self, test_db, tmp_path, monkeypatch, capsys):
+        # missing local DB path
+        assert main(["--db", str(tmp_path / "missing.db"), "db", "slice", str(tmp_path / "x.db")]) == 1
+
+        # force-overwrite path + FileNotFoundError from API
+        out = tmp_path / "slice.db"
+        out.write_text("existing")
+
+        def _missing(**kw):
+            raise FileNotFoundError("source gone")
+
+        monkeypatch.setattr("siftd.api.slice.slice_database", _missing)
+        rc = main(["--db", str(test_db), "db", "slice", str(out), "--force"])
+        assert rc == 1
+        assert "source gone" in capsys.readouterr().out
+
+    def test_merge_missing_db_source_runtime_and_detail_lines(self, test_db, tmp_path, monkeypatch, capsys):
+        # source file missing
+        assert main(["--db", str(test_db), "db", "merge", str(tmp_path / "nope.db")]) == 1
+
+        # valid source file but missing target db
+        src = tmp_path / "src.db"
+        src.write_bytes(b"SQLite format 3\x00demo")
+        assert main(["--db", str(tmp_path / "missing.db"), "db", "merge", str(src)]) == 1
+
+        # runtime failure from merge API
+        monkeypatch.setattr("siftd.api.merge.merge_database", lambda **kw: (_ for _ in ()).throw(RuntimeError("merge bad")))
+        rc = main(["--db", str(test_db), "db", "merge", str(src)])
+        assert rc == 1
+        assert "Merge failed" in capsys.readouterr().err
+
+        # success branch prints replaced/tags/workspace details
+        monkeypatch.setattr(
+            "siftd.api.merge.merge_database",
+            lambda **kw: {
+                "conversations": 1,
+                "replaced_conversations": 2,
+                "skipped_conversations": 3,
+                "prompts": 4,
+                "responses": 5,
+                "tool_calls": 6,
+                "content_blobs": 7,
+                "tags": 8,
+                "workspaces_matched": 9,
+            },
+        )
+        rc = main(["--db", str(test_db), "db", "merge", str(src)])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "replaced" in out and "Tags:" in out and "Workspaces:" in out
