@@ -17,22 +17,23 @@
 ### `cli/install.py` — ✅ 100%
 - 303/303 covered, miss 0
 
+### `cli/meta.py` — ✅ 100%
+- 229/229 covered, miss 0
+
 ## Pruned stale ideas
 - ❌ "next target: cli/search" (done)
 - ❌ "next target: cli/data" (done)
 - ❌ "next target: cli/install" (done)
+- ❌ "next target: cli/meta" (done)
 
 ## Highest ROI next targets
 
-### 1) `cli/meta.py`
-- Deterministic output/control-flow branches (status/config/adapters/workspaces/path)
-- Should be lighter/faster benchmark lane than `cli/data.py`
+### 1) `cli/query.py`
+- Strong remaining branch surface and practical user-path value
+- Existing tests can likely be extended without heavy runtime cost
 
-### 2) `cli/query.py`
-- Good remaining miss pockets; may require richer fixtures
-
-### 3) `cli/peek.py`
-- Valuable coverage but more stream/IO behavior and timing variance
+### 2) `cli/peek.py`
+- Valuable coverage, but stream/IO behavior may add complexity/variance
 
 ## De-prioritized for now
 - `serve/*`, `embeddings/*` marker/runtime-heavy paths
