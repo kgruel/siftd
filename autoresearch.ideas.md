@@ -13,16 +13,18 @@
 - `cli/tool_search.py` (157/157)
 - `cli/upgrade.py` (135/135)
 - `cli/export.py` (55/55)
+- `cli/tags.py` (426/426)
 
 ## Pruned stale ideas
 
-- Removed all prior "next target" entries for completed CLI modules above.
+- Removed stale `cli/tags.py` target after saturation.
+- Removed completed CLI sweep leftovers; keep only unsaturated post-CLI lanes.
 
 ## Highest ROI next targets
 
-### 1) `cli/tags.py`
-- Still has meaningful uncovered branch surface in full-suite coverage snapshot.
-- Existing `tests/cli/test_tags.py` gives a practical lane to step up quickly.
+### 1) `cli/sessions.py`
+- Small deterministic CLI leaf with practical branch edges (state file vs DB fallback).
+- New focused lane: `tests/cli/test_sessions_cli.py`.
 
 ### 2) `output/*` formatter edge branches (if still not saturated on current branch)
 ### 3) targeted `api/*` deterministic leaf modules
