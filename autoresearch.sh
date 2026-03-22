@@ -4,7 +4,7 @@ set -euo pipefail
 # CLI query coverage efficiency benchmark
 
 INCLUDE_ARGS="--cov=siftd.cli.query"
-TEST_FILES="tests/cli/test_query_tools.py"
+TEST_FILES="tests/cli/test_query_tools.py tests/cli/test_query_noembed.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
