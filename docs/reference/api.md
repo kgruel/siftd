@@ -237,6 +237,7 @@ Summary row for conversation listing.
 | `total_tokens` | `int` |  |
 | `cost` | `float \| None` |  |
 | `tags` | `list[str]` |  |
+| `owner` | `str \| None` |  |
 
 ### ConversationDetail
 
@@ -332,7 +333,7 @@ def get_recent_conversation_ids(conn: Connection, limit: int) -> list[str]
 List conversations with optional filtering.
 
 ```python
-def list_conversations(*, db_path: pathlib._local.Path | None = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., tool: str | None = ..., tag: str | None = ..., tags: list[str] | None = ..., all_tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., tool_tag: str | None = ..., limit: int = ..., oldest_first: bool = ...) -> list[ConversationSummary]
+def list_conversations(*, db_path: pathlib._local.Path | None = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., tool: str | None = ..., tag: str | list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tool_tag: str | None = ..., n: int = ..., oldest: bool = ..., owner: str | None = ...) -> list[ConversationSummary]
 ```
 
 **Parameters:**
@@ -344,12 +345,12 @@ def list_conversations(*, db_path: pathlib._local.Path | None = ..., workspace: 
 - `before`: Filter conversations started before this date.
 - `search`: FTS5 full-text search query.
 - `tool`: Filter by canonical tool name (e.g., 'shell.execute').
-- `tag`: Filter by tag name (single, backward compat — prefer tags).
-- `tags`: OR filter — conversations with any of these tags.
+- `tag`: OR filter — conversations with any of these tags. Also accepts a single string for backward compat.
 - `all_tags`: AND filter — conversations with all of these tags.
-- `exclude_tags`: NOT filter — exclude conversations with any of these tags.
+- `no_tag`: NOT filter — exclude conversations with any of these tags.
 - `tool_tag`: Filter by tool call tag (e.g., 'shell:test').
-- `limit`: Maximum results to return (0 = unlimited).
+- `n`: Maximum results to return (0 = unlimited).
+- `oldest`: Sort by oldest first instead of newest.
 
 **Returns:** List of ConversationSummary objects.
 
@@ -362,12 +363,12 @@ def list_conversations(*, db_path: pathlib._local.Path | None = ..., workspace: 
 Get full conversation detail by ID.
 
 ```python
-def get_conversation(conversation_id: str, *, db_path: pathlib._local.Path | None = ..., include_thinking: bool = ..., include_tool_content: bool = ..., tool_filter: str | None = ...) -> siftd.api.conversations.ConversationDetail | None
+def get_conversation(id: str, *, db_path: pathlib._local.Path | None = ..., include_thinking: bool = ..., include_tool_content: bool = ..., tool_filter: str | None = ...) -> siftd.api.conversations.ConversationDetail | None
 ```
 
 **Parameters:**
 
-- `conversation_id`: Full or prefix of conversation ULID.
+- `id`: Full or prefix of conversation ULID.
 - `db_path`: Path to database. Uses default if not specified.
 - `include_thinking`: Include thinking/reasoning blocks in turns.
 - `include_tool_content`: Include tool input/result in turns.
@@ -644,43 +645,28 @@ Single tool-call search result.
 
 ### hybrid_search
 
-Run hybrid FTS5+embeddings search, return structured results.
+Unified search pipeline — FTS5, semantic, or hybrid.
 
 ```python
-def hybrid_search(query: str, *, db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., limit: int = ..., recall: int = ..., embeddings_only: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tags: list[str] | None = ..., all_tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., include_derivative: bool = ..., backend: str | None = ..., exclude_active: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., fts5_passthrough: bool = ...) -> list[SearchResult]
+def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., backend: str | None = ...) -> list[dict]
 ```
 
 **Parameters:**
 
-- `query`: The search query string.
-- `db_path`: Path to main SQLite DB. Defaults to XDG data path.
-- `embed_db_path`: Path to embeddings DB. Defaults to XDG data path.
-- `limit`: Maximum number of results to return.
-- `recall`: Number of FTS5 candidate conversations for hybrid recall.
-- `embeddings_only`: Skip FTS5 recall, search all embeddings directly.
-- `workspace`: Filter to conversations from workspaces matching this substring.
-- `model`: Filter to conversations using models matching this substring.
-- `since`: Filter to conversations started at or after this ISO date.
-- `before`: Filter to conversations started before this ISO date.
-- `tags`: OR filter — conversations with any of these tags.
-- `all_tags`: AND filter — conversations with all of these tags.
-- `exclude_tags`: NOT filter — exclude conversations with any of these tags.
-- `include_derivative`: Include derivative conversations (default False).
-- `backend`: Preferred embedding backend name (ollama, fastembed).
-- `exclude_active`: Auto-exclude conversations from active sessions (default True).
-- `rerank`: Reranking strategy — "mmr" for diversity or "relevance" for pure similarity.
-- `lambda_`: MMR balance between relevance (1.0) and diversity (0.0). Default 0.7.
-- `recency`: Enable temporal weighting to boost recent results. Default False.
-- `recency_half_life`: Days until recency boost decays to half. Default 30.
-- `recency_max_boost`: Maximum boost for today's results (e.g., 1.15 = 15%). Default 1.15.
+- `q`: Search query string.
+- `db_path`: Path to main database.
+- `embed_db`: Path to embeddings database. Required for hybrid/semantic modes.
+- `n`: Desired result count after all processing.
+- `mode`: "hybrid" (FTS5 + semantic), "fts" (keyword only), "semantic" (embeddings only).
+- `rerank`: "mmr" for diversity reranking, "relevance" for pure score order.
 
-**Returns:** List of SearchResult ordered by reranking strategy.
+**Returns:** List of result dicts with: conversation_id, score, text, chunk_type, source_ids, breakdown (ScoreBreakdown or None), file_refs.
 
 **Raises:**
 
-- `FileNotFoundError`: If the database files don't exist.
-- `RuntimeError`: If no embedding backend is available.
-- `EmbeddingsNotAvailable`: If embedding dependencies are not installed.
+- `FileNotFoundError`: If database doesn't exist.
+- `ValueError`: If query is empty or search fails.
+- `RuntimeError`: If embedding backend unavailable.
 
 ### first_mention
 
@@ -733,12 +719,23 @@ def group_tool_search_results(results: list[ToolSearchResult]) -> list[ToolSearc
 Search tool calls using structured fields + FTS over the projection.
 
 ```python
-def search_tool_calls(query: str, *, db_path: pathlib._local.Path | None = ..., limit: int = ..., rebuild_index: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tags: list[str] | None = ..., all_tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., tool: str | None = ..., tool_tag: str | None = ...) -> tuple[ToolQuery, list[ToolSearchResult]]
+def search_tool_calls(q: str, *, db_path: pathlib._local.Path | None = ..., n: int = ..., rebuild_index: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tool: str | None = ..., tool_tag: str | None = ..., owner: str | None = ...) -> tuple[ToolQuery, list[ToolSearchResult]]
 ```
 
 ## Stats
 
 ### Data Types
+
+### CostCoverage
+
+Cost coverage across conversations with token data.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_with_tokens` | `int` |  |
+| `with_positive_cost` | `int` |  |
+| `with_null_cost` | `int` |  |
+| `pct_covered` | `float` |  |
 
 ### DatabaseStats
 
@@ -758,6 +755,18 @@ Complete database statistics.
 | `token_coverage` | `TokenCoverage` |  |
 | `activity_window` | `tuple[str \| None, str \| None]` |  |
 | `last_ingest_at` | `str \| None` |  |
+
+### GroupUsage
+
+Token/cost breakdown for a single group (model or workspace).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `str` |  |
+| `conversations` | `int` |  |
+| `input_tokens` | `int` |  |
+| `output_tokens` | `int` |  |
+| `cost` | `float` |  |
 
 ### TableCounts
 
@@ -785,6 +794,17 @@ Harness metadata.
 | `source` | `str \| None` |  |
 | `log_format` | `str \| None` |  |
 
+### UsageSummary
+
+Aggregated token/cost stats.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_conversations` | `int` |  |
+| `total_input_tokens` | `int` |  |
+| `total_output_tokens` | `int` |  |
+| `total_cost` | `float` |  |
+
 ### WorkspaceStats
 
 Workspace with conversation count.
@@ -806,6 +826,14 @@ Tool with usage count.
 
 ### Functions
 
+### get_cost_coverage
+
+Get cost coverage statistics from conversation_stats.
+
+```python
+def get_cost_coverage(conn: sqlite3.Connection | None = ..., *, db_path: pathlib._local.Path | None = ...) -> siftd.api.stats.CostCoverage | None
+```
+
 ### get_stats
 
 Get comprehensive database statistics.
@@ -820,19 +848,68 @@ def get_stats(*, db_path: pathlib._local.Path | None = ...) -> DatabaseStats
 
 - `FileNotFoundError`: If database does not exist.
 
+### get_usage_by_model
+
+Get token/cost breakdown grouped by model.
+
+```python
+def get_usage_by_model(*, db_path: pathlib._local.Path | None = ...) -> list[GroupUsage]
+```
+
+### get_usage_by_workspace
+
+Get token/cost breakdown grouped by workspace.
+
+```python
+def get_usage_by_workspace(*, db_path: pathlib._local.Path | None = ...) -> list[GroupUsage]
+```
+
+### get_usage_summary
+
+Get aggregate token/cost totals across all conversations.
+
+```python
+def get_usage_summary(*, db_path: pathlib._local.Path | None = ...) -> UsageSummary
+```
+
 ### list_workspaces
 
 List workspaces with conversation counts.
 
 ```python
-def list_workspaces(conn: Connection, limit: int = ...) -> list[Row]
+def list_workspaces(conn: sqlite3.Connection | None = ..., n: int = ..., *, db_path: pathlib._local.Path | None = ...) -> list[Row]
 ```
 
 **Parameters:**
 
-- `conn`: Database connection.
+- `conn`: Database connection. Opened from db_path if not provided.
+- `n`: Maximum workspaces to return.
 
 **Returns:** Rows with 'path' and 'convs' keys.
+
+### stats_cache_path
+
+Return path to the stats cache file.
+
+```python
+def stats_cache_path() -> Path
+```
+
+### write_stats_cache
+
+Atomically write stats to the cache file.
+
+```python
+def write_stats_cache(stats: DatabaseStats) -> None
+```
+
+### read_stats_cache
+
+Read cached stats if the cache exists and is fresh.
+
+```python
+def read_stats_cache(*, db_path: pathlib._local.Path | None = ...) -> siftd.api.stats.DatabaseStats | None
+```
 
 ## Tools
 
@@ -882,7 +959,7 @@ def get_tool_tag_summary(*, db_path: pathlib._local.Path | None = ..., prefix: s
 Get tool tag usage broken down by workspace.
 
 ```python
-def get_tool_tags_by_workspace(*, db_path: pathlib._local.Path | None = ..., prefix: str = ..., limit: int = ...) -> list[WorkspaceTagUsage]
+def get_tool_tags_by_workspace(*, db_path: pathlib._local.Path | None = ..., prefix: str = ..., n: int = ...) -> list[WorkspaceTagUsage]
 ```
 
 **Parameters:**
@@ -899,6 +976,17 @@ def get_tool_tags_by_workspace(*, db_path: pathlib._local.Path | None = ..., pre
 ## Export
 
 ### Data Types
+
+### ExportArtifact
+
+A complete, serialized export document ready to serve or write.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | `str` |  |
+| `media_type` | `str` |  |
+| `filename` | `str` |  |
+| `count` | `int` |  |
 
 ### ExportedConversation
 
@@ -922,8 +1010,19 @@ A conversation prepared for export.
 Export conversations matching the specified criteria.
 
 ```python
-def export_conversations(*, conversation_ids: list[str] | None = ..., last: int | None = ..., workspace: str | None = ..., tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib._local.Path | None = ..., include_thinking: bool = ..., include_tool_content: bool = ...) -> list[ExportedConversation]
+def export_conversations(*, id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib._local.Path | None = ..., include_thinking: bool = ..., include_tool_content: bool = ..., owner: str | None = ...) -> list[ExportedConversation]
 ```
+
+### export_document
+
+Export conversations as a complete document.
+
+**Parameters:**
+
+- `format`: Output format — "md" (markdown) or "json".
+- `fidelity`: Rendering fidelity. Defaults to full (show everything).
+
+**Returns:** ExportArtifact with serialized content, media_type, and filename.
 
 ## Other
 
@@ -1117,14 +1216,15 @@ def remove_tag(conn: Connection, entity_type: str, entity_id: str, tag_id: str, 
 Rename a tag.
 
 ```python
-def rename_tag(conn: Connection, old_name: str, new_name: str, *, commit: bool = ...) -> bool
+def rename_tag(conn: sqlite3.Connection | None = ..., old_name: str = ..., new_name: str = ..., *, db_path: pathlib._local.Path | None = ..., commit: bool = ...) -> bool
 ```
 
 **Parameters:**
 
-- `conn`: Database connection.
+- `conn`: Database connection. Opened from db_path if not provided.
 - `old_name`: Current tag name.
 - `new_name`: New tag name.
+- `db_path`: Path to database. Ignored if conn provided.
 
 **Returns:** True if renamed, False if old_name not found.
 
@@ -1158,13 +1258,15 @@ def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..
 Create or merge a source database into the target.
 
 ```python
-def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = ...) -> dict
+def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = ..., user_id: str | None = ..., push_id: str | None = ...) -> dict
 ```
 
 **Parameters:**
 
 - `source_path`: Path to the incoming database (e.g. a slice).
 - `target_db`: Path to the target siftd database.
+- `rebuild_fts`: Whether to rebuild the FTS5 index after merge.
+- `user_id`: Authenticated user identity to stamp as conversation owner.
 
 **Returns:** Dict with ``status`` ("created" or "merged") and merge stats.
 
@@ -1178,7 +1280,7 @@ def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = 
 Export filtered conversations into a standalone SQLite database.
 
 ```python
-def slice_database(source_db: Path, target_path: Path, *, workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tags: list[str] | None = ..., all_tags: list[str] | None = ..., exclude_tags: list[str] | None = ..., tool: str | None = ..., tool_tag: str | None = ..., search: str | None = ..., rebuild_fts: bool = ...) -> dict
+def slice_database(source_db: Path, target_path: Path, *, workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tool: str | None = ..., tool_tag: str | None = ..., search: str | None = ..., rebuild_fts: bool = ..., owner: str | None = ...) -> dict
 ```
 
 **Parameters:**

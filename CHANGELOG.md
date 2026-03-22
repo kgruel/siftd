@@ -7,18 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **Adapter SDK: record normalizer pattern** — Adapters that implement `normalize_record()` get `peek_scan`, `peek_exchanges`, and `peek_tail` for free via `make_peek_hooks()`. Replaces per-adapter custom peek implementations with a single SDK code path.
-- **Peek coverage: 3/8 → 7/8 adapters** — Pi Agent, Copilot CLI, and VSCode gain peek support. Claude Code, Codex CLI, and Gemini CLI migrated from custom peek to normalizer-derived.
-- **Adapter boilerplate reduction** — All adapters now use `build_harness()`, `flush_pending_calls()`, and `discover_files()` from the SDK. Net ~580 lines removed from adapters.
-- **Subagent detection promoted to SDK** — `SUBAGENT_PATH_MARKER` and `extra["agent_id"]` in `NormalizedRecord` enable any adapter to support session hierarchy, not just Claude Code.
-
 ### Added
 
-- `NormalizedRecord` dataclass, `peek_scan_from_records()`, `peek_exchanges_from_records()`, `make_peek_hooks()`, `iter_jsonl()`, `flush_pending_calls()` in adapter SDK
-- `PiAgentSession` and `CopilotSession` test session builders
-- 50 cross-format normalizer validation tests (`test_normalizers.py`)
+- **htmx web UI** — Browse, search, and analyze conversations in the browser at `/ui`:
+  - Conversation list with workspace/model/tag/date filters
+  - Full detail view with collapsible turns, tool cards, and sticky header
+  - Markdown rendering (mistune) and syntax highlighting (Prism.js)
+  - Live search — semantic + FTS5 hybrid when embeddings available, FTS5 fallback
+  - Search modes — chunks/conversations toggle with `aggregate_by_conversation()` API
+  - Follow mode — live session tailing via `/ui/follow` with 2s polling
+  - Stats dashboard — summary cards, by-model token breakdown, by-workspace cost, top tools
+  - Deep links — bookmarkable `?id=`, `?q=`, `?follow=` URLs via `hx-push-url`
+  - Resizable panes — draggable divider between list and detail (JS, 15%-85% clamp)
+  - Inline tagging — add/remove tags from conversation detail view
+  - Export as document artifact from detail view
+  - "The Instrument" design system with dedicated CSS (`siftd.css`)
+  - Architecture tests enforcing route boundary separation
+- **Multi-tenancy** — Conversation ownership for shared databases:
+  - `conversation_owners` table with push-time identity stamping
+  - Owner-scoped queries across list, search, tool-search, and export
+  - `--owner` CLI filter
+  - `owner` promoted to first-class attribute on `ConversationSummary`
+- **Operation IR** — `dispatch()` pattern for normalize→execute→render:
+  - All commands migrated (Tier 1: stats/workspaces/tools/tags, Tier 2: detail/export/tool-search, Tier 3: tag writes, search)
+  - Unified parameter names across CLI/HTTP/API — dissolves `_SERVE_PARAM_MAP`
+  - HTML output format as fourth peer to terminal/markdown/JSON
+- **Unified exception handling** — `safecall` module with codebase-wide migration
+- **Serve as general daemon** — Stats cache, read-path delegation for query/workspaces/tools/tags/tool-search/export/detail, tag write delegation via `POST /v1/tag`
+- **Serialization layer** — Extracted JSON output unification across CLI and API
+- **Tool presenters** — Format-neutral extraction layer with 7 tool-specific extractors (file.read, file.edit, file.write, shell.execute, search.grep, file.glob, ui.todo) plus generic fallback. Consumed by both painted bridge and HTML formatter
+- **Narrative emitter protocol** — `PaintedEmitter` and `HtmlEmitter` share `walk_narrative()` as single source of truth for fidelity gating
+
+### Changed
+
+- **Adapter SDK: record normalizer pattern** — Adapters that implement `normalize_record()` get `peek_scan`, `peek_exchanges`, and `peek_tail` for free via `make_peek_hooks()`. Replaces per-adapter custom peek implementations with a single SDK code path
+- **Peek coverage: 3/8 → 7/8 adapters** — Pi Agent, Copilot CLI, and VSCode gain peek support. Claude Code, Codex CLI, and Gemini CLI migrated from custom peek to normalizer-derived
+- **Adapter boilerplate reduction** — All adapters now use `build_harness()`, `flush_pending_calls()`, and `discover_files()` from the SDK. Net ~580 lines removed from adapters
+- **Subagent detection promoted to SDK** — `SUBAGENT_PATH_MARKER` and `extra["agent_id"]` in `NormalizedRecord` enable any adapter to support session hierarchy, not just Claude Code
+- **painted bridge simplified** — 7 `_render_*_lines` functions and duplicated JSON parsing replaced by single `_presentation_to_lines` consuming `ToolPresentation`. Net ~350 lines removed
+- **Search findability** — Porter stemmer and tool descriptions in FTS5 index (+21% FTS5 recall). Tool summary embeddings (+44% semantic recall@10). AND→OR priority FTS5 query logic. Hybrid search trusts FTS5 ranking when it finds sufficient candidates
+- **`siftd query` is ~50× faster** — Covering index on `response_attributes`, two-phase query, `WhereBuilder` JOIN tracking, `EXISTS` subquery for model filter, materialized `conversation_stats` table. Default query from ~3.5s to ~70ms
+- **Storage test coverage** — 18.4% → 100% via 27 autoresearch runs. All 10 storage modules at 100% coverage
+- **Adapter test coverage** — Per-adapter test files split from monolith. Claude Code 99.3%, Codex CLI 99.5%, VSCode 100%, OpenCode 99.4%, cross-format normalizer validation (50 tests)
+- **`~110 lines removed`** — Dead `_delegate_search_via_serve` code path removed
+
+### Fixed
+
+- **Cost coverage** — Pricing JOIN routed through harness source as fallback. NULL-safe cost expression (missing pricing → NULL, not 0.0). Bundled pricing seed for 10 models. Estimated 50% → 75% cost coverage
+- **Editable install detection** — `siftd upgrade` now detects editable `uv tool` installs
+- **HTML route escaping** — XSS-relevant escaping bugs fixed in html_routes
+- **Connection leak** — Fixed in html_routes detail endpoint
 
 ## [0.5.5] - 2026-03-20
 
@@ -491,7 +529,13 @@ Initial public release.
 
 ---
 
-[Unreleased]: https://github.com/kgruel/siftd/compare/v0.4.7...HEAD
+[Unreleased]: https://github.com/kgruel/siftd/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/kgruel/siftd/compare/v0.5.4...v0.5.5
+[0.5.4]: https://github.com/kgruel/siftd/compare/v0.5.3...v0.5.4
+[0.5.3]: https://github.com/kgruel/siftd/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/kgruel/siftd/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/kgruel/siftd/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/kgruel/siftd/compare/v0.4.7...v0.5.0
 [0.4.7]: https://github.com/kgruel/siftd/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/kgruel/siftd/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/kgruel/siftd/compare/v0.4.4...v0.4.5
