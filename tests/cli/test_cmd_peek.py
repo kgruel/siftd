@@ -3,6 +3,7 @@
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from siftd.cli import main
@@ -383,3 +384,110 @@ class TestPeekListMode:
         main(["peek", "--tail"])
         err = capsys.readouterr().err
         assert "--tail" in err and "ignored" in err
+
+
+class TestPeekEdgeBranches:
+    @patch("siftd.api.find_session_file")
+    def test_last_response_ambiguous_and_not_found(self, mock_find, capsys):
+        from siftd.peek import AmbiguousSessionError
+
+        mock_find.side_effect = AmbiguousSessionError("abc", [Path("/tmp/a"), Path("/tmp/b")])
+        assert main(["peek", "abc", "--last-response"]) == 1
+
+        mock_find.side_effect = None
+        mock_find.return_value = None
+        assert main(["peek", "abc", "--last-response"]) == 1
+        assert "Session not found" in capsys.readouterr().err
+
+    @patch("siftd.api.list_active_sessions")
+    def test_last_response_default_session_missing(self, mock_list, capsys):
+        mock_list.return_value = []
+        assert main(["peek", "--last-response"]) == 1
+        err = capsys.readouterr().err
+        assert "No active sessions found" in err and "siftd query" in err
+
+    @patch("siftd.api.list_active_sessions")
+    @patch("siftd.api.read_session_detail")
+    def test_last_response_and_prompt_error_branches(self, mock_read, mock_list, capsys):
+        mock_list.return_value = [_session("abc")]
+        mock_read.return_value = None
+        assert main(["peek", "--last-response"]) == 1
+
+        empty_detail = type("Detail", (), {"exchanges": []})()
+        mock_read.return_value = empty_detail
+        assert main(["peek", "--last-response"]) == 1
+
+        detail_no_resp = type("Detail", (), {"exchanges": [PeekExchange(timestamp="t", prompt_text="p", narrative=[], input_tokens=0, output_tokens=0)]})()
+        mock_read.return_value = detail_no_resp
+        assert main(["peek", "--last-response"]) == 1
+
+        detail_no_prompt = type("Detail", (), {"exchanges": [PeekExchange(timestamp="t", prompt_text="", narrative=[PeekNarrativeBlock(block_type="text", content="r")], input_tokens=0, output_tokens=0)]})()
+        mock_read.return_value = detail_no_prompt
+        assert main(["peek", "--last-prompt"]) == 1
+
+    @patch("siftd.api.list_active_sessions")
+    @patch("siftd.api.read_session_detail")
+    def test_last_response_and_prompt_success(self, mock_read, mock_list, capsys):
+        mock_list.return_value = [_session("abc")]
+        ex = SimpleNamespace(prompt_text="ask", response_text="resp")
+        mock_read.return_value = type("Detail", (), {"exchanges": [ex]})()
+        assert main(["peek", "--last-response"]) == 0
+        assert "resp" in capsys.readouterr().out
+
+        assert main(["peek", "--last-prompt"]) == 0
+        assert "ask" in capsys.readouterr().out
+
+    @patch("siftd.api.list_active_sessions")
+    def test_follow_default_no_sessions(self, mock_list, capsys):
+        mock_list.return_value = []
+        assert main(["peek", "--follow"]) == 1
+        assert "No active sessions found" in capsys.readouterr().err
+
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.peek.read_session_detail")
+    @patch("siftd.peek.follow_session")
+    def test_follow_json_mode_ndjson(self, mock_follow, mock_read, mock_find, capsys):
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read.return_value = _detail()
+        assert main(["peek", "abc", "--follow", "--json"]) == 0
+        out_lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+        assert len(out_lines) >= 2
+        parsed = [json.loads(line) for line in out_lines]
+        assert all(isinstance(p, dict) for p in parsed)
+        mock_follow.assert_called_once()
+        assert mock_follow.call_args.kwargs["json_mode"] is True
+
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.api.tail_session")
+    def test_detail_tail_text_and_json(self, mock_tail, mock_find, capsys):
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_tail.return_value = ['{"a":1}', 'not-json']
+        assert main(["peek", "abc", "--tail"]) == 0
+        out = capsys.readouterr().out
+        assert '{"a":1}' in out and "not-json" in out
+
+        assert main(["peek", "abc", "--tail", "--json"]) == 0
+        parsed = json.loads(capsys.readouterr().out)
+        assert parsed[0]["a"] == 1 and parsed[1] == "not-json"
+
+    @patch("siftd.api.find_session_file")
+    @patch("siftd.api.read_session_detail")
+    def test_detail_none_and_json_output(self, mock_read, mock_find, capsys):
+        mock_find.return_value = Path("/tmp/fake-session.jsonl")
+        mock_read.return_value = None
+        assert main(["peek", "abc"]) == 1
+        capsys.readouterr()
+
+        d = _detail()
+        d.info.parent_session_id = "p1"
+        mock_read.return_value = d
+        assert main(["peek", "abc", "--json"]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["parent_session_id"] == "p1"
+
+    @patch("siftd.api.list_active_sessions")
+    def test_list_mode_ignored_flags_combo(self, mock_list, capsys):
+        mock_list.return_value = []
+        assert main(["peek", "--tail-lines", "5", "--exchanges", "2", "--tools"]) == 0
+        err = capsys.readouterr().err
+        assert "--tail-lines" in err and "--exchanges" in err and "--tools" in err
