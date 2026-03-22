@@ -177,12 +177,12 @@ async def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
     try:
         async with asyncssh.connect(remote.host, **connect_opts) as conn:
             result = await conn.run(receive_cmd, input=slice_data, timeout=timeout)
-    except asyncssh.DisconnectError as e:
-        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
-    except asyncssh.ConnectionLost as e:
-        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
     except asyncssh.PermissionDenied as e:
         raise SyncError(_friendly_os_error(remote.host, "Permission denied")) from e
+    except asyncssh.ConnectionLost as e:
+        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
+    except asyncssh.DisconnectError as e:
+        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
     except asyncssh.ChannelOpenError as e:
         raise SyncError(_friendly_os_error(remote.host, str(e))) from e
     except OSError as e:
@@ -442,12 +442,12 @@ async def _pull_ssh(
     try:
         async with asyncssh.connect(remote.host, **connect_opts) as conn:
             result = await conn.run(send_cmd, timeout=timeout)
-    except asyncssh.DisconnectError as e:
-        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
-    except asyncssh.ConnectionLost as e:
-        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
     except asyncssh.PermissionDenied as e:
         raise SyncError(_friendly_os_error(remote.host, "Permission denied")) from e
+    except asyncssh.ConnectionLost as e:
+        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
+    except asyncssh.DisconnectError as e:
+        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
     except asyncssh.ChannelOpenError as e:
         raise SyncError(_friendly_os_error(remote.host, str(e))) from e
     except OSError as e:

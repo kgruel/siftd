@@ -250,6 +250,16 @@ class TestSyncPushBranches:
         result = sync_push(_db(tmp_path), _remote(path="/r.db", host="box"))
         assert result.remote_existed is False
 
+    def test_local_transport_branch(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 7},
+        )
+        monkeypatch.setattr("siftd.api.sync._push_local", lambda *a, **k: True)
+        monkeypatch.setattr("siftd.config.update_last_push", lambda *_: None)
+        result = sync_push(_db(tmp_path), _remote(path=str(tmp_path / "remote.db")))
+        assert result.remote_existed
+
 
 class TestSyncPullBranches:
     def test_http_branch_updates_last_pull(self, tmp_path, monkeypatch):
@@ -429,6 +439,27 @@ class TestSshErrorAndEdgePaths:
 
         monkeypatch.setattr("siftd.api.sync.asyncssh.connect", _boom)
         with pytest.raises(SyncError):
+            asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, None, True))
+
+    def test_pull_ssh_timeout(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+
+        def _boom(*_a, **_kw):
+            raise TimeoutError()
+
+        monkeypatch.setattr("siftd.api.sync.asyncssh.connect", _boom)
+        with pytest.raises(SyncError, match="timed out"):
+            asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, None, True))
+
+    def test_pull_ssh_nonzero_exit(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+        monkeypatch.setattr(
+            "siftd.api.sync.asyncssh.connect",
+            lambda *_a, **_kw: _Conn(SimpleNamespace(returncode=1, stdout="", stderr="bad remote")),
+        )
+        with pytest.raises(SyncError, match="Remote error"):
             asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, None, True))
 
     def test_pull_ssh_merge_path_and_bytes_stdout(self, tmp_path, monkeypatch):
