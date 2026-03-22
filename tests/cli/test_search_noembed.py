@@ -441,3 +441,30 @@ def test_search_fts_only_additional_error_and_warning_branches(monkeypatch, tmp_
     assert _search_fts_only(args, db, "q") == 0
     out = json.loads(capsys.readouterr().out)
     assert out["warnings"]
+
+
+def test_cmd_search_semantic_mode_path(test_db, tmp_path, monkeypatch):
+    embed = tmp_path / "embed.db"
+    embed.write_text("x")
+    monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
+    # semantic=true with existing embed db reaches line setting search_mode='semantic'
+    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), semantic=True)) == 0
+
+
+def test_cmd_search_first_result_kept_branch(test_db, tmp_path, monkeypatch):
+    embed = tmp_path / "embed.db"
+    embed.write_text("x")
+    monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [{"conversation_id": "c1", "score": 0.9, "source_ids": [], "chunk_id": "ch1", "text": "hello"}])
+    monkeypatch.setattr("siftd.api.first_mention", lambda *a, **k: {"conversation_id": "c1", "score": 0.9, "source_ids": [], "chunk_id": "ch1", "text": "hello"})
+
+    class _Conn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("siftd.api.open_database", lambda *a, **k: _Conn())
+    monkeypatch.setattr("siftd.cli.search._fetch_search_metadata", lambda conn, results: None)
+    monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: SimpleNamespace(render_search=lambda *a, **k2: "OUT"))
+    monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
+    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), first=True)) == 0
