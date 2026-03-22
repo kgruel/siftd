@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from conftest import FIXTURES_DIR, write_jsonl
+from conftest import FIXTURES_DIR, default_location_source, write_jsonl
 
 from siftd.adapters import claude_code
 from siftd.domain.source import Source
@@ -43,3 +43,31 @@ class TestClaudeCodeAdapter:
         assert n({"type": "assistant", "timestamp": "T2", "message": {"role": "assistant", "content": None}}).content_blocks == []
         assert n({"type": "system"}) is None
         assert not claude_code.can_handle(Source(kind="file", location=Path("/home/.codex/sessions/s.jsonl")))
+
+    def test_normalizer_edges(self):
+        n = claude_code.normalize_record
+        # String content (L307), list content (L308), unknown content type (L310)
+        assert n({"type": "assistant", "timestamp": "T", "message": {"role": "assistant", "content": "text"}}).content_blocks[0]["text"] == "text"
+        assert n({"type": "assistant", "timestamp": "T", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}).content_blocks
+        assert n({"type": "assistant", "timestamp": "T", "message": {"role": "assistant", "content": 42}}).content_blocks == []
+        # tool_result detection (L319)
+        tr = n({"type": "user", "timestamp": "T", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x"}]}})
+        assert tr.kind == "tool_result"
+        # agentId extraction (L324) — only on user records
+        u = n({"type": "user", "timestamp": "T", "agentId": "sub-1", "message": {"role": "user", "content": "hi"}})
+        assert u.extra.get("agent_id") == "sub-1"
+
+    def test_discover_and_parse_edges(self, tmp_path):
+        assert list(claude_code.discover(locations=[str(FIXTURES_DIR)]))
+        (tmp_path / "empty.jsonl").write_text("")
+        assert list(claude_code.parse(Source(kind="file", location=tmp_path / "empty.jsonl"))) == []
+        assert not claude_code.can_handle(Source(kind="directory", location=FIXTURES_DIR))
+        assert claude_code.can_handle(default_location_source(claude_code))
+        # Record with non-user/assistant type gets skipped (L167)
+        records = [{"type": "user", "sessionId": "s", "cwd": "/w", "timestamp": "T1",
+             "uuid": "u1", "message": {"role": "user", "content": "hi"}},
+            {"type": "result", "sessionId": "s", "timestamp": "T2"},
+            {"type": "assistant", "sessionId": "s", "timestamp": "T3", "uuid": "a1",
+             "message": {"role": "assistant", "model": "m", "content": "ok"}}]
+        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        assert len(conv.prompts) == 1
