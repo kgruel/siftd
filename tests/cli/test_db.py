@@ -2,8 +2,6 @@
 
 import sqlite3
 
-import pytest
-
 from siftd.cli import main
 
 

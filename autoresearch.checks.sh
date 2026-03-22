@@ -4,10 +4,10 @@ set -euo pipefail
 # Full test suite — all tests should pass on this branch (editable install)
 uv run python -m pytest tests/ -x -q --tb=short -n auto \
     -m "not embeddings and not serve" \
-    -k "not test_import_rules and not test_doctor and not test_basics and not test_follow_session" \
+    -k "not test_import_rules and not test_basics and not test_follow_session" \
     --override-ini="addopts=" 2>&1 | tail -30
 
-# No trivial tests in sync test files
+# No trivial tests in target files
 uv run python -c "
 import ast, sys
 
@@ -36,7 +36,7 @@ if errors:
     for e in errors:
         print(f'  {e}')
     sys.exit(1)
-" tests/test_sync.py tests/test_sync_transport.py
+" tests/cli/test_db.py
 
 # Lint
-uv run python -m ruff check tests/test_sync.py tests/test_sync_transport.py 2>&1 | tail -10
+uv run python -m ruff check tests/cli/test_db.py 2>&1 | tail -10

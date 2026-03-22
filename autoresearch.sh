@@ -1,14 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-# Sync transport coverage efficiency benchmark
+# CLI DB command coverage efficiency benchmark
 #
 # Primary metric: efficiency = test_LOC × test_time_s / covered_lines (lower is better)
 # Coverage is measured from the full test suite to avoid redundant tests.
-# Timing/LOC are measured from sync-specific test files only.
+# Timing/LOC are measured from target test files only.
 
-INCLUDE_ARGS="--cov=siftd.api.sync"
-TEST_FILES="tests/test_sync.py"
+INCLUDE_ARGS="--cov=siftd.cli.db"
+TEST_FILES="tests/cli/test_db.py"
 
 # Quick pre-check
 for f in $TEST_FILES; do
@@ -27,7 +27,7 @@ echo "Running full test suite with coverage..."
 uv run python -m pytest tests/ -x -q --tb=short -p no:randomly \
     $INCLUDE_ARGS --cov-report=json:coverage.json \
     --override-ini="addopts=" -m "not embeddings and not serve" \
-    -k "not test_import_rules and not test_doctor and not test_basics and not test_follow_session" 2>&1 | tail -5
+    -k "not test_import_rules and not test_basics and not test_follow_session" 2>&1 | tail -5
 
 COVERAGE_JSON=$(cat coverage.json)
 rm -f coverage.json
