@@ -1,75 +1,48 @@
-# Autoresearch Ideas — Current State (Sync + CLI DB)
+# Autoresearch Ideas — Current State (CLI sweep)
 
-## What landed
+## Recently completed
 
-### 1) `api/sync.py` is now **100% covered**
-- Benchmark: `sync transport coverage efficiency`
-- Final: **296/296 covered**, miss **0**, efficiency **0.96**
-- Added meaningful transport tests for:
-  - SSH push/pull error mapping (disconnect, permission, channel, timeout)
-  - HTTP push/pull auth + status/connect errors
-  - local pull/push merge + dry-run branches
-  - sync_push/sync_pull branch routing and last_push/last_pull updates
+### `api/sync.py` — ✅ 100%
+- 296/296 covered, miss 0
+- Transport branches covered: SSH/HTTP/local, auth/errors/timeouts, dry-run/update logic
 
-### 2) `cli/db.py` is now **100% covered**
-- Benchmark: `cli-db coverage efficiency`
-- Final: **398/398 covered**, miss **0**, efficiency **0.96**
-- Added command-level tests for:
-  - `db remote add/list/remove`
-  - `db push/pull` success/error/dry-run/zero-conversation/file-not-found
-  - `db send/receive` tty/stdin handling, stream path, API error mapping
-  - `db info/vacuum/backup/restore/slice/merge` missing-file + runtime branches
+### `cli/db.py` — ✅ 100%
+- 398/398 covered, miss 0
+- Covered remote add/list/remove, push/pull, send/receive, merge/slice, and key error paths
 
-## Biggest remaining ROI (next implementation targets)
+### `cli/search.py` (no-embed benchmark scope) — ✅ 100%
+- 400/400 covered, miss 0
+- Added robust no-embed tests for:
+  - mode selection and validation
+  - FTS-only error/empty/non-empty output paths
+  - cmd_search branch behavior (threshold/first/thread/conversations/refs/by-time)
+  - delegation/formatter and build-index error branches
 
-Current CLI misses (non-serve/non-embeddings test run):
-- `src/siftd/cli/data.py` → **182 miss** (73%)
-- `src/siftd/cli/search.py` → **153 miss** (62%)
-- `src/siftd/cli/install.py` → **155 miss** (49%)
-- `src/siftd/cli/meta.py` → **107 miss** (53%)
-- `src/siftd/cli/query.py` → **98 miss** (66%)
-- `src/siftd/cli/peek.py` → **82 miss** (62%)
+## Pruned stale ideas
+- ❌ "next target: cli/search" (done)
+- ❌ "sync transport untestable" (done)
+- ❌ "need structural changes before search" (handled enough for no-embed branch testing)
 
-### High-value function clusters
+## Highest ROI next targets
 
-#### `cli/data.py`
-- `cmd_copy` (63 miss)
-- `_doctor_run_painted` (34 miss)
-- `cmd_migrate` (14 miss)
-- `_doctor_fix` (13 miss)
-- `_doctor_run_plain` (12 miss)
+### 1) `cli/data.py` (still largest CLI gap)
+- Current miss remains high (copy + doctor subpaths dominate)
+- Biggest clusters:
+  - `cmd_copy`
+  - doctor renderers (`_doctor_run_plain`, `_doctor_run_json`, `_doctor_run_painted`)
+  - migrate/backfill edge handlers
+- Suggested implementation prep:
+  - extract copy flow helper(s)
+  - split doctor output modes into tighter helpers with dependency injection
 
-#### `cli/search.py`
-- `cmd_search` (80 miss)
-- `_search_fts_only` (18 miss)
-- `_search_build_index` (17 miss)
-- `_enrich_context` (17 miss)
+### 2) `cli/install.py` + `cli/meta.py`
+- Medium-sized miss pockets with many deterministic branches
+- Good candidates for quick branch-coverage gains once data.py is underway
 
-## Implementation improvements needed for next gains
+### 3) `cli/query.py` + `cli/peek.py`
+- Useful but less ROI than data/install/meta in raw miss reduction
 
-1. **Split `cli/data.py` into smaller command modules**
-   - Move doctor subcommand rendering into dedicated helpers (`doctor_plain`, `doctor_json`, `doctor_painted`)
-   - Extract `cmd_copy` flow (validate/filter/copy/report) into pure helpers
-   - This will let tests assert behavior without full command orchestration in each case.
-
-2. **Refactor `cli/search.py` command body**
-   - `cmd_search` is still too monolithic; extract decision tree into testable helper funcs:
-     - delegation decision
-     - empty-result formatting
-     - enrichment pipeline selection
-   - Keep parser wiring thin; move logic into pure functions with injected dependencies.
-
-3. **Add shared CLI command test helpers**
-   - Create helpers for:
-     - fake stdin/stdout objects (send/receive-like paths)
-     - patchable result factories for sync/search command return objects
-     - reusable remote-config fixtures
-   - Avoid repeated boilerplate in each `tests/cli/test_*.py` file.
-
-4. **Use full-suite filter without stale exclusions when possible**
-   - `test_doctor` now passes; keep only genuinely needed exclusions (`test_basics`, `test_follow_session`, and environment-gated markers).
-
-## De-prioritized / not worth chasing now
-- `serve/*` and `embeddings/*` (marker-gated and environment-dependent)
-- `adapters/template.py` (example template)
-- terminal/UI-only defensive branches that require brittle TTY internals
+## De-prioritized for now
+- `serve/*`, `embeddings/*` (marker/runtime heavy)
+- `adapters/template.py` (example code)
+- terminal-UI-only defensive branches with brittle TTY behavior
