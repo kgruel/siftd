@@ -13,29 +13,28 @@
 
 ### `cli/data.py` — ✅ 100%
 - 674/674 covered, miss 0
-- Covered copy/doctor/migrate/backfill/ingest branches including painted/json/plain doctor runners and fix registry paths
+
+### `cli/install.py` — ✅ 100%
+- 303/303 covered, miss 0
 
 ## Pruned stale ideas
 - ❌ "next target: cli/search" (done)
 - ❌ "next target: cli/data" (done)
-- ❌ "doctor/copy branches likely blocked" (now covered)
+- ❌ "next target: cli/install" (done)
 
 ## Highest ROI next targets
 
-### 1) `cli/install.py`
-- Good deterministic branch density with low runtime overhead vs `test_data.py`
-- Likely better efficiency slope than current heavy data benchmark
+### 1) `cli/meta.py`
+- Deterministic output/control-flow branches (status/config/adapters/workspaces/path)
+- Should be lighter/faster benchmark lane than `cli/data.py`
 
-### 2) `cli/meta.py`
-- Medium branch pockets, mostly deterministic CLI output paths
+### 2) `cli/query.py`
+- Good remaining miss pockets; may require richer fixtures
 
-### 3) `cli/query.py`
-- Still meaningful miss pockets but some branches depend on broader fixtures
-
-### 4) `cli/peek.py`
-- Useful, but more IO/stream behavior; likely lower immediate ROI than install/meta
+### 3) `cli/peek.py`
+- Valuable coverage but more stream/IO behavior and timing variance
 
 ## De-prioritized for now
 - `serve/*`, `embeddings/*` marker/runtime-heavy paths
 - `adapters/template.py` example code
-- brittle terminal-only defensive branches unless they block practical coverage milestones
+- brittle terminal-only defensive branches unless they block practical milestones

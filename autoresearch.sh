@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# CLI install coverage efficiency benchmark
+# CLI meta coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.cli.install"
-TEST_FILES="tests/cli/test_install.py"
+INCLUDE_ARGS="--cov=siftd.cli.meta"
+TEST_FILES="tests/cli/test_meta.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
