@@ -454,3 +454,67 @@ class TestTagsEdgeBranches:
         monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
         assert main(["--db", str(test_db), "tag", "--remove", conv_id, "never-tagged"]) == 0
         assert "not found" in capsys.readouterr().out.lower() or "not applied" in capsys.readouterr().out.lower()
+
+    def test_remaining_list_rename_delete_and_cmd_tag_branches(self, test_db, monkeypatch, capsys):
+        # _detect_current_session line 59: fallback active-session return
+        monkeypatch.setattr("siftd.paths.db_path", lambda: Path(test_db))
+        monkeypatch.setattr("siftd.cli.tags.session_id_file", lambda ws: Path("/tmp/does-not-exist-session-id"))
+        monkeypatch.setattr("siftd.api.open_database", lambda *a, **k: SimpleNamespace(close=lambda: None))
+        monkeypatch.setattr("siftd.api.sessions.find_active_session", lambda conn, ws: "sess-id")
+        assert tags_cli._detect_current_session() == "sess-id"
+
+        # _tag_session queued exchange message
+        monkeypatch.setattr("siftd.cli.tags.queue_pending_tag", lambda *a, **k: True)
+        assert tags_cli._tag_session(SimpleNamespace(remove=False, positional=["x"], exchange=1), Path(test_db), "sess") == 0
+
+        # _cmd_tag_list drill-down FileNotFound and tip path
+        args = SimpleNamespace(positional=["list", "t"], limit=1, json=False, workspace=None, model=None, since=None, before=None, tag=None, all_tags=None, no_tag=None, tool=None, tool_tag=None, owner=None)
+        monkeypatch.setattr("siftd.api.list_conversations", lambda **k: (_ for _ in ()).throw(FileNotFoundError("missing")))
+        assert tags_cli._cmd_tag_list(args, Path(test_db)) == 1
+
+        conv = SimpleNamespace(prompt_count=1, response_count=1, total_tokens=1)
+        monkeypatch.setattr("siftd.api.list_conversations", lambda **k: [conv])
+        monkeypatch.setattr("siftd.cli._common.fidelity_from_args", lambda a: SimpleNamespace())
+        monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: SimpleNamespace(render_list=lambda c, f: "LIST"))
+        monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
+        assert tags_cli._cmd_tag_list(args, Path(test_db)) == 0
+
+        # _cmd_tag_list serve tags conversion/printing with workspace/tool counts
+        monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: {"tags": [{"name": "t", "workspace_count": 1, "tool_call_count": 2, "conversation_count": 0}]})
+        args2 = SimpleNamespace(positional=["list"], since=None, before=None, prefix=None)
+        assert tags_cli._cmd_tag_list(args2, Path(test_db)) == 0
+
+        # rename: serve success + file missing
+        monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: {"status": "renamed"})
+        assert tags_cli._cmd_tag_rename(SimpleNamespace(positional=["rename", "a", "b"]), Path(test_db)) == 0
+
+        monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
+        monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: (_ for _ in ()).throw(FileNotFoundError("x")))
+        assert tags_cli._cmd_tag_rename(SimpleNamespace(positional=["rename", "a", "b"]), Path(test_db)) == 1
+
+        # delete: warning and deleted messaging include workspace/tool/prompt counts
+        ti = SimpleNamespace(name="t", conversation_count=1, workspace_count=2, tool_call_count=3, prompt_count=4)
+        monkeypatch.setattr("siftd.cli.tags.list_tags", lambda conn=None: [ti])
+        monkeypatch.setattr("siftd.cli.tags.delete_tag", lambda *a, **k: None)
+        assert tags_cli._cmd_tag_delete(SimpleNamespace(positional=["delete", "t"], force=False), Path(test_db)) == 1
+        assert tags_cli._cmd_tag_delete(SimpleNamespace(positional=["delete", "t"], force=True), Path(test_db)) == 0
+
+        # cmd_tag branches: --last ignored with --session, n<1, no recent convs, remove-not-applied, tags name branch
+        assert main(["--db", str(test_db), "tag", "--session", "sess", "--last", "1", "x"]) == 0
+
+        monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
+        assert main(["--db", str(test_db), "tag", "--last", "0", "x"]) == 1
+
+        monkeypatch.setattr("siftd.cli.tags.get_recent_conversation_ids", lambda conn, n: [])
+        assert main(["--db", str(test_db), "tag", "--last", "1", "x"]) == 1
+
+        # create existing tag but not on target conversation for line 608
+        conn = open_database(test_db)
+        ids = [r["id"] for r in conn.execute("SELECT id FROM conversations LIMIT 2").fetchall()]
+        conn.close()
+        main(["--db", str(test_db), "tag", ids[0], "exists-not-applied"])
+        capsys.readouterr()
+        assert main(["--db", str(test_db), "tag", "--remove", ids[1], "exists-not-applied"]) == 0
+
+        # deprecated tags name positional branch
+        assert main(["--db", str(test_db), "tags", "some-tag"]) in (0, 1)
