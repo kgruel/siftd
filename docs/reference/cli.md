@@ -162,6 +162,7 @@ usage: siftd tag [-h] [-n [N]] [-r] [--session ID] [--current]
                  [--exchange INDEX] [--prefix PREFIX] [--limit LIMIT]
                  [--force] [-w SUBSTR] [-m NAME] [--since DATE]
                  [--before DATE] [-l NAME] [--all-tags NAME] [--no-tag NAME]
+                 [--owner USER]
                  [positional ...]
 
 Apply, remove, list, rename, or delete tags.
@@ -192,6 +193,7 @@ filtering:
                         1w, yesterday, today)
   --before DATE         Conversations started before this date (YYYY-MM-DD,
                         7d, 1w, yesterday, today)
+  --owner USER          Filter to conversations owned by this user
 
 tag filtering:
   -l, --tag NAME        Filter by tag (repeatable, OR logic)
@@ -247,10 +249,10 @@ examples:
 ```
 usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                    [-l NAME] [--all-tags NAME] [--no-tag NAME] [-t NAME]
-                   [--tool-tag NAME] [-n LIMIT] [-v] [--oldest] [--json]
-                   [--stats] [--exchanges N] [-b] [--summary] [-F] [--chars N]
-                   [--thinking] [--tools [FILTER]] [--tool-chars N]
-                   [--var KEY=VALUE]
+                   [--tool-tag NAME] [--owner USER] [-n LIMIT] [-v] [--oldest]
+                   [--json] [--stats] [--exchanges N] [-b] [--summary] [-F]
+                   [--chars N] [--thinking] [--tools [FILTER]]
+                   [--tool-chars N] [--var KEY=VALUE]
                    [conversation_id] [sql_name]
 
 positional arguments:
@@ -270,6 +272,7 @@ filtering:
   --before DATE         Conversations started before this date (YYYY-MM-DD,
                         7d, 1w, yesterday, today)
   -t, --tool NAME       Filter by canonical tool name (e.g. shell.execute)
+  --owner USER          Filter to conversations owned by this user
 
 tag filtering:
   -l, --tag NAME        Filter by tag (repeatable, OR logic)
@@ -450,15 +453,15 @@ exit codes:
 
 ```
 usage: siftd search [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
-                    [-l NAME] [--all-tags NAME] [--no-tag NAME] [-n LIMIT]
-                    [-v] [--full] [--context N] [--thread] [--by-time]
-                    [--json] [--format NAME] [--conversations] [--first]
-                    [--refs [FILES]] [--fts] [--semantic] [--embeddings-only]
-                    [--recall N] [--threshold SCORE] [--no-diversity]
-                    [--lambda FLOAT] [--recency] [--recency-half-life DAYS]
-                    [--recency-max-boost MULT] [--no-exclude-active]
-                    [--include-derivative] [--index] [--rebuild]
-                    [--backend NAME] [--embed-db PATH]
+                    [-l NAME] [--all-tags NAME] [--no-tag NAME] [--owner USER]
+                    [-n LIMIT] [-v] [--full] [--context N] [--thread]
+                    [--by-time] [--json] [--format NAME] [--conversations]
+                    [--first] [--refs [FILES]] [--fts] [--semantic]
+                    [--embeddings-only] [--recall N] [--threshold SCORE]
+                    [--no-diversity] [--lambda FLOAT] [--recency]
+                    [--recency-half-life DAYS] [--recency-max-boost MULT]
+                    [--no-exclude-active] [--include-derivative] [--index]
+                    [--rebuild] [--backend NAME] [--embed-db PATH]
                     [query ...]
 
 positional arguments:
@@ -475,6 +478,7 @@ filtering:
                         1w, yesterday, today)
   --before DATE         Conversations started before this date (YYYY-MM-DD,
                         7d, 1w, yesterday, today)
+  --owner USER          Filter to conversations owned by this user
 
 tag filtering:
   -l, --tag NAME        Filter by tag (repeatable, OR logic)
@@ -590,8 +594,8 @@ examples:
 usage: siftd tool-search [-h] [-w SUBSTR] [-m NAME] [--since DATE]
                          [--before DATE] [-l NAME] [--all-tags NAME]
                          [--no-tag NAME] [-t NAME] [--tool-tag NAME]
-                         [-n LIMIT] [--json] [--grouped] [--ungrouped]
-                         [--show-snippets] [--rebuild-index]
+                         [--owner USER] [-n LIMIT] [--json] [--grouped]
+                         [--ungrouped] [--show-snippets] [--rebuild-index]
                          [query ...]
 
 Search tool calls with structured inline fields plus bare-term FTS.
@@ -626,6 +630,7 @@ filtering:
   --before DATE         Conversations started before this date (YYYY-MM-DD,
                         7d, 1w, yesterday, today)
   -t, --tool NAME       Filter by canonical tool name (e.g. shell.execute)
+  --owner USER          Filter to conversations owned by this user
 
 tag filtering:
   -l, --tag NAME        Filter by tag (repeatable, OR logic)
@@ -745,8 +750,9 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
 
 ```
 usage: siftd export [-h] [-n [N]] [-w SUBSTR] [--since DATE] [--before DATE]
-                    [-l NAME] [--no-tag NAME] [-s QUERY] [--thinking]
-                    [--tools] [-b] [-F] [--json] [--no-header] [-o FILE]
+                    [-l NAME] [--no-tag NAME] [-s QUERY] [--owner USER]
+                    [--thinking] [--tools] [-b] [-F] [--json] [--no-header]
+                    [-o FILE]
                     [conversation_id]
 
 positional arguments:
@@ -765,6 +771,7 @@ filtering:
   --before DATE         Conversations started before this date (YYYY-MM-DD,
                         7d, 1w, yesterday, today)
   -s, --search QUERY    Full-text search filter
+  --owner USER          Filter to conversations owned by this user
 
 tag filtering:
   -l, --tag NAME        Filter by tag (repeatable, OR logic)

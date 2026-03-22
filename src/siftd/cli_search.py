@@ -302,6 +302,7 @@ def cmd_search(args) -> int:
             "tag": filters.tag,
             "all_tags": filters.all_tags,
             "no_tag": filters.no_tag,
+            "owner": filters.owner,
             "exclude_active": not args.no_exclude_active,
             "include_derivative": args.include_derivative,
             "recall": args.recall,
@@ -523,6 +524,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         tag=filters.tag,
         all_tags=filters.all_tags,
         no_tag=filters.no_tag,
+        owner=filters.owner,
         exclude_active=not args.no_exclude_active,
         include_derivative=args.include_derivative,
     )
