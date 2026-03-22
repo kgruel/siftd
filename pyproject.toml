@@ -19,6 +19,7 @@ classifiers = [
     "Topic :: Software Development :: Documentation",
 ]
 dependencies = [
+    "asyncssh",
     "painted>=0.1.7",
     "tomlkit",
 ]
@@ -61,7 +62,7 @@ packages = ["src/siftd"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 addopts = "-n auto"
 markers = [
     "embeddings: tests that require embedding dependencies",

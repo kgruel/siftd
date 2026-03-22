@@ -9,14 +9,17 @@ on the remote. SSH pulls stream from ``siftd db send`` on the remote.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import shlex
 import shutil
-import subprocess
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
+
+import asyncssh
 
 from siftd.domain.sync import PullResult, PushResult, SyncRemote
 from siftd.safecall import parse_json
@@ -102,7 +105,7 @@ def sync_push(
         if _is_http_remote(remote):
             remote_existed = _push_http(remote, slice_path)
         elif remote.host:
-            remote_existed = _push_ssh(remote, slice_path)
+            remote_existed = asyncio.run(_push_ssh(remote, slice_path))
         else:
             remote_existed = _push_local(remote, slice_path, db_path)
 
@@ -140,11 +143,11 @@ def _resolve_since(
     return remote.last_push
 
 
-def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
-    """Push via single SSH stdin pipe to ``siftd db receive``.
+async def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
+    """Push via asyncssh to ``siftd db receive`` on the remote.
 
     Streams the slice DB over stdin in a single SSH connection:
-        ssh [opts] host "siftd --db <path> db receive --no-fts" < slice.db
+        asyncssh.connect(host, **opts) -> conn.run(cmd, input=data)
 
     Returns whether the remote DB already existed (status != "created").
     """
@@ -153,8 +156,7 @@ def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
     remote_db = shlex.quote(remote.path)
     receive_cmd = f"siftd --db {remote_db} db receive --no-fts"
 
-    ssh_opts = _build_ssh_options(remote)
-    cmd = ["ssh"] + ssh_opts + [remote.host, receive_cmd]
+    connect_opts = _build_ssh_options(remote)
 
     from siftd.config import get_config
 
@@ -166,27 +168,36 @@ def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
         except (ValueError, TypeError):
             pass
 
+    # Ensure connect_timeout is set (command timeout is separate)
+    if "connect_timeout" not in connect_opts:
+        connect_opts["connect_timeout"] = timeout
+
+    slice_data = slice_path.read_bytes()
+
     try:
-        with open(slice_path, "rb") as f:
-            result = subprocess.run(
-                cmd,
-                stdin=f,
-                capture_output=True,
-                timeout=timeout,
-            )
-    except subprocess.TimeoutExpired as e:
-        raise SyncError(
-            f"Push to {remote.host} timed out after {timeout}s. "
-            "The remote may be slow or unreachable."
-        ) from e
+        async with asyncssh.connect(remote.host, **connect_opts) as conn:
+            result = await conn.run(receive_cmd, input=slice_data, timeout=timeout)
+    except asyncssh.DisconnectError as e:
+        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
+    except asyncssh.ConnectionLost as e:
+        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
+    except asyncssh.PermissionDenied as e:
+        raise SyncError(_friendly_os_error(remote.host, "Permission denied")) from e
+    except asyncssh.ChannelOpenError as e:
+        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
     except OSError as e:
+        if isinstance(e, TimeoutError):
+            raise SyncError(
+                f"Push to {remote.host} timed out after {timeout}s. "
+                "The remote may be slow or unreachable."
+            ) from e
         raise SyncError(_friendly_os_error(remote.host, str(e))) from e
 
-    if result.returncode != 0:
-        stderr = result.stderr.decode().strip()
+    if result.returncode is not None and result.returncode != 0:
+        stderr = result.stderr.strip() if result.stderr else ""
         raise SyncError(_friendly_remote_error(remote.host, remote.path, stderr))
 
-    stdout = result.stdout.decode().strip()
+    stdout = result.stdout.strip() if result.stdout else ""
     try:
         response = json.loads(stdout)
     except (json.JSONDecodeError, ValueError) as e:
@@ -197,11 +208,11 @@ def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
     return response.get("status") != "created"
 
 
-def _build_ssh_options(remote: SyncRemote) -> list[str]:
-    """Build SSH CLI options from config for this remote."""
-    from siftd.config import get_ssh_options
+def _build_ssh_options(remote: SyncRemote) -> dict[str, Any]:
+    """Build asyncssh connect kwargs from config for this remote."""
+    from siftd.config import get_ssh_connect_kwargs
 
-    return get_ssh_options(remote.name)
+    return get_ssh_connect_kwargs(remote.name)
 
 
 def _friendly_os_error(host: str, message: str) -> str:
@@ -340,8 +351,8 @@ def sync_pull(
             remote, db_path, effective_since, workspace, dry_run,
         )
     elif remote.host:
-        conversations, size_bytes = _pull_ssh(
-            remote, db_path, effective_since, workspace, dry_run,
+        conversations, size_bytes = asyncio.run(
+            _pull_ssh(remote, db_path, effective_since, workspace, dry_run)
         )
     else:
         conversations, size_bytes = _pull_local(
@@ -390,17 +401,17 @@ def _resolve_pull_since(
     return remote.last_pull
 
 
-def _pull_ssh(
+async def _pull_ssh(
     remote: SyncRemote,
     local_db: Path,
     since: str | None,
     workspace: str | None,
     dry_run: bool,
 ) -> tuple[int, int]:
-    """Pull via SSH by running ``siftd db send`` on the remote.
+    """Pull via asyncssh by running ``siftd db send`` on the remote.
 
     Streams the remote slice DB over stdout:
-        ssh [opts] host "siftd --db <path> db send --no-fts [--since ...]"
+        asyncssh.connect(host, **opts) -> conn.run(send_cmd)
 
     Returns (conversations, size_bytes).
     """
@@ -413,8 +424,7 @@ def _pull_ssh(
     if workspace is not None:
         send_cmd += f" -w {shlex.quote(workspace)}"
 
-    ssh_opts = _build_ssh_options(remote)
-    cmd = ["ssh"] + ssh_opts + [remote.host, send_cmd]
+    connect_opts = _build_ssh_options(remote)
 
     from siftd.config import get_config
 
@@ -426,51 +436,64 @@ def _pull_ssh(
         except (ValueError, TypeError):
             pass
 
+    if "connect_timeout" not in connect_opts:
+        connect_opts["connect_timeout"] = timeout
+
+    try:
+        async with asyncssh.connect(remote.host, **connect_opts) as conn:
+            result = await conn.run(send_cmd, timeout=timeout)
+    except asyncssh.DisconnectError as e:
+        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
+    except asyncssh.ConnectionLost as e:
+        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
+    except asyncssh.PermissionDenied as e:
+        raise SyncError(_friendly_os_error(remote.host, "Permission denied")) from e
+    except asyncssh.ChannelOpenError as e:
+        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
+    except OSError as e:
+        if isinstance(e, TimeoutError):
+            raise SyncError(
+                f"Pull from {remote.host} timed out after {timeout}s. "
+                "The remote may be slow or unreachable."
+            ) from e
+        raise SyncError(_friendly_os_error(remote.host, str(e))) from e
+
+    if result.returncode is not None and result.returncode != 0:
+        stderr = result.stderr.strip() if result.stderr else ""
+        raise SyncError(_friendly_remote_error(remote.host, remote.path, stderr))
+
+    # Parse metadata from stderr (JSON line from db send)
+    stderr_text = result.stderr.strip() if result.stderr else ""
+    meta = _parse_send_metadata(stderr_text)
+    conversations = meta.get("conversations", 0)
+
+    if conversations == 0:
+        return 0, 0
+
+    # stdout is the binary DB data — asyncssh returns it as str
+    stdout_data = result.stdout or ""
+    if isinstance(stdout_data, str):
+        raw_bytes = stdout_data.encode("latin-1")
+    else:
+        raw_bytes = stdout_data
+
+    size_bytes = len(raw_bytes)
+
+    if dry_run:
+        return conversations, size_bytes
+
+    # Write to temp file and merge into local DB
     with tempfile.NamedTemporaryFile(
         prefix="siftd-pull-", suffix=".db", delete=False,
     ) as tmp:
         tmp_path = Path(tmp.name)
 
     try:
-        with open(tmp_path, "wb") as out_f:
-            try:
-                result = subprocess.run(
-                    cmd,
-                    stdout=out_f,
-                    stderr=subprocess.PIPE,
-                    timeout=timeout,
-                )
-            except subprocess.TimeoutExpired as e:
-                raise SyncError(
-                    f"Pull from {remote.host} timed out after {timeout}s. "
-                    "The remote may be slow or unreachable."
-                ) from e
-            except OSError as e:
-                raise SyncError(_friendly_os_error(remote.host, str(e))) from e
-
-        if result.returncode != 0:
-            stderr = result.stderr.decode().strip()
-            raise SyncError(_friendly_remote_error(remote.host, remote.path, stderr))
-
-        # Parse metadata from stderr (JSON line from db send)
-        stderr_text = result.stderr.decode().strip()
-        meta = _parse_send_metadata(stderr_text)
-        conversations = meta.get("conversations", 0)
-
-        if conversations == 0:
-            return 0, 0
-
-        size_bytes = tmp_path.stat().st_size
-
-        if dry_run:
-            return conversations, size_bytes
-
-        # Merge into local DB
+        tmp_path.write_bytes(raw_bytes)
         from siftd.api.receive import receive_database
 
         receive_database(tmp_path, local_db, rebuild_fts=True)
         return conversations, size_bytes
-
     finally:
         if tmp_path.exists():
             tmp_path.unlink()

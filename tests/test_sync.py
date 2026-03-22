@@ -88,9 +88,11 @@ class TestFriendlyRemoteError:
 
 
 class TestBuildSshOptions:
-    def test_returns_list(self, monkeypatch):
-        monkeypatch.setattr("siftd.config.get_ssh_options", lambda n: ["-o", "X=Y"])
-        assert "-o" in _build_ssh_options(_remote())
+    def test_returns_dict(self, monkeypatch):
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {"username": "user"})
+        result = _build_ssh_options(_remote())
+        assert isinstance(result, dict)
+        assert result["username"] == "user"
 
 
 class TestPushLocal:

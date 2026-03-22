@@ -830,3 +830,23 @@ def write_jsonl(tmp_path, records, name="session.jsonl"):
 def get_message_content_blocks(record):
     """Extract content blocks from a standard message record."""
     return record.get("message", {}).get("content", [])
+
+
+@pytest.fixture
+def cli_db(tmp_path, test_db):
+    """Test database with extracted IDs for CLI testing."""
+    from types import SimpleNamespace
+
+    from siftd.storage.sqlite import open_database
+
+    conn = open_database(test_db, read_only=True)
+    row = conn.execute(
+        "SELECT id, external_id FROM conversations ORDER BY started_at LIMIT 1"
+    ).fetchone()
+    conn.close()
+    return SimpleNamespace(
+        path=test_db,
+        conv_id=row["id"],
+        external_id=row["external_id"],
+        args=["--db", str(test_db)],
+    )

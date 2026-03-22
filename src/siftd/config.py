@@ -609,6 +609,78 @@ def get_ssh_options(remote_name: str | None = None) -> list[str]:
     return result
 
 
+def get_ssh_connect_kwargs(remote_name: str | None = None) -> dict:
+    """Build asyncssh connect kwargs from config.
+
+    Reads the same config sections as ``get_ssh_options`` but returns a dict
+    suitable for passing to ``asyncssh.connect(host, **kwargs)``.
+
+    Supported config keys (under ``[sync.ssh]`` or ``[sync.remotes.<name>.ssh]``):
+        identity_file  -> client_keys=[path]
+        username       -> username=user
+        port           -> port=N
+        known_hosts    -> known_hosts=path | None (if "none")
+        connect_timeout_s -> connect_timeout=N
+    """
+    doc = load_config()
+    sync_config = doc.get("sync", {})
+    if not isinstance(sync_config, dict):
+        return {}
+
+    # Resolve per-remote SSH config, falling back to global
+    ssh_cfg: dict = {}
+    if remote_name is not None:
+        remotes_config = sync_config.get("remotes", {})
+        if isinstance(remotes_config, dict):
+            remote_cfg = remotes_config.get(remote_name, {})
+            if isinstance(remote_cfg, dict):
+                per_remote_ssh = remote_cfg.get("ssh", {})
+                if isinstance(per_remote_ssh, dict):
+                    ssh_cfg = dict(per_remote_ssh)
+
+    if not ssh_cfg:
+        global_ssh = sync_config.get("ssh", {})
+        if isinstance(global_ssh, dict):
+            ssh_cfg = dict(global_ssh)
+
+    if not ssh_cfg:
+        return {}
+
+    result: dict = {}
+
+    identity = ssh_cfg.get("identity_file")
+    if identity is not None:
+        result["client_keys"] = [str(identity)]
+
+    username = ssh_cfg.get("username")
+    if username is not None:
+        result["username"] = str(username)
+
+    port = ssh_cfg.get("port")
+    if port is not None:
+        try:
+            result["port"] = int(port)
+        except (ValueError, TypeError):
+            pass
+
+    known_hosts = ssh_cfg.get("known_hosts")
+    if known_hosts is not None:
+        val = str(known_hosts).lower()
+        if val == "none":
+            result["known_hosts"] = None
+        else:
+            result["known_hosts"] = str(known_hosts)
+
+    timeout = ssh_cfg.get("connect_timeout_s")
+    if timeout is not None:
+        try:
+            result["connect_timeout"] = int(timeout)
+        except (ValueError, TypeError):
+            pass
+
+    return result
+
+
 def get_ingestion_filter_binary() -> bool:
     """Get whether to filter binary content during ingestion.
 
