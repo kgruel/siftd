@@ -3,14 +3,11 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 from conftest import FIXTURES_DIR
 
 from siftd.cli import main
 from siftd.cli.data import _AdapterCounts, _IngestJsonRenderer, _IngestTextRenderer
-
 
 # ---------------------------------------------------------------------------
 # Helpers

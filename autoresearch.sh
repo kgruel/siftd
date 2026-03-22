@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# CLI search (non-embeddings paths) coverage efficiency benchmark
+# CLI data coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.cli.search"
-TEST_FILES="tests/cli/test_search_noembed.py"
+INCLUDE_ARGS="--cov=siftd.cli.data"
+TEST_FILES="tests/cli/test_data.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
@@ -38,7 +38,7 @@ for _fname, fdata in sorted(d['files'].items()):
 ")
 
 BEST_TIME=99999
-for i in 1 2 3 4 5; do
+for i in 1 2 3; do
     START=$(python3 -c "import time; print(time.monotonic())")
     uv run python -m pytest $TEST_FILES -x -q --tb=short -p no:xdist \
         --override-ini="addopts=" -m "not embeddings and not serve" 2>&1 | tail -1
