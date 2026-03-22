@@ -162,8 +162,7 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
         get_recent_conversation_ids,
         resolve_entity_id,
     )
-    from siftd.storage.sqlite import open_database
-    from siftd.storage.tags import (
+    from siftd.api.tags import (
         apply_tag,
         delete_tag,
         get_or_create_tag,
@@ -171,6 +170,7 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
         remove_tag,
         rename_tag,
     )
+    from siftd.storage.sqlite import open_database
 
     body = json_mod.loads(await request.body())
     action = body.get("action", "apply")

@@ -7,14 +7,21 @@ from typing import Any
 
 from litestar import Litestar
 from litestar.di import Provide
+from litestar.static_files import create_static_files_router
 
-try:
-    from siftd.serve.html_routes import ui_query, ui_search, ui_shell
-
-    _HTML_ROUTES = [ui_shell, ui_query, ui_search]
-except ImportError:
-    _HTML_ROUTES = []
-
+from siftd.serve.html_routes import (
+    ui_export,
+    ui_follow,
+    ui_meta,
+    ui_peek,
+    ui_query,
+    ui_search,
+    ui_shell,
+    ui_stats,
+    ui_tag,
+    ui_tags_suggest,
+    ui_tools,
+)
 from siftd.serve.routes import (
     conversation_detail,
     conversation_list,
@@ -60,12 +67,17 @@ def create_app(
 
         middleware.append(create_auth_middleware(auth_config))
 
+    static_dir = Path(__file__).parent / "static"
+    static_router = create_static_files_router(path="/static", directories=[static_dir])
+
     return Litestar(
         route_handlers=[
             index, health, stats_route, workspaces_route, tools_route, tools_by_workspace_route,
             tag_write_route, tags_route, tool_search_route, export_route,
             push, pull, conversation_detail, conversation_list, search_route,
-            *_HTML_ROUTES,
+            ui_shell, ui_meta, ui_query, ui_search, ui_peek, ui_follow, ui_stats,
+            ui_tag, ui_tags_suggest, ui_tools, ui_export,
+            static_router,
         ],
         dependencies={
             "db_path": Provide(provide_db_path),

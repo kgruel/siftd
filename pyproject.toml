@@ -39,6 +39,7 @@ serve = [
     "uvicorn",
     "httpx",
     "PyJWT[crypto]",
+    "mistune>=3.0",
 ]
 dev = [
     "pytest>=8.0",

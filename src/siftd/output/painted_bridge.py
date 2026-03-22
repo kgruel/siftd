@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from siftd.output.common import fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
-from siftd.safecall import parse_json
 
 if TYPE_CHECKING:
     from painted import Align, Block, Fidelity, Line, Style
+
+    from siftd.output.theme import DomainStyles
+    from siftd.output.tool_presenters import ToolPresentation
 
 
 @dataclass(frozen=True)
@@ -118,396 +119,50 @@ def _append_multiline(
 
 
 # ---------------------------------------------------------------------------
-# Tool-specific presenters
+# Tool content → painted lines (via format-neutral ToolPresentation)
 # ---------------------------------------------------------------------------
 
 _TOOL_INDENT = "      "  # 6-space indent, consistent with current convention
-_MAX_PREVIEW_LINES = 6
 
 
-def _parse_json_safe(raw: str | None) -> dict | None:
-    """Parse raw JSON string to dict, returning None on failure."""
-    if not raw:
-        return None
-    obj = parse_json(raw) if isinstance(raw, str) else raw
-    return obj if isinstance(obj, dict) else None
-
-
-def _output_preview_lines(
-    output: str,
-    *,
-    result_style: Style,
+def _presentation_to_lines(
+    pres: ToolPresentation,
     styles: _RoleStyles,
-    tool_chars: int,
 ) -> list[Line]:
-    """Render output text as a line-limited preview with overflow indicator."""
-    lines: list[Line] = []
-    raw_lines = [ln for ln in output.strip().splitlines() if ln.strip()]
-    if not raw_lines:
-        return lines
-    max_lines = 0 if tool_chars == 0 else _MAX_PREVIEW_LINES
-    preview = raw_lines if max_lines == 0 else raw_lines[:max_lines]
-    for out_line in preview:
-        _append_multiline(lines, _TOOL_INDENT, styles.meta, out_line, result_style, tool_chars)
-    if max_lines > 0 and len(raw_lines) > max_lines:
-        overflow = len(raw_lines) - max_lines
-        lines.append(_line((_TOOL_INDENT + f"... +{overflow} more lines", styles.summary_hint)))
-    return lines
-
-
-def _render_shell_execute_lines(
-    raw_input: str | None,
-    raw_result: str | None,
-    status: str | None,
-    styles: _RoleStyles,
-    tool_chars: int,
-) -> list[Line]:
-    """Render shell.execute (Bash) tool call content."""
-    lines: list[Line] = []
-    inp = _parse_json_safe(raw_input)
-    res = _parse_json_safe(raw_result)
-
-    command = ""
-    if isinstance(inp, dict):
-        command = inp.get("command") or inp.get("cmd", "")
-    elif raw_input:
-        command = str(raw_input)
-    if command:
-        lines.append(_line((_TOOL_INDENT + "$ ", styles.meta), (command, styles.tool)))
-
-    if isinstance(res, dict):
-        meta_parts: list[str] = []
-        exit_code = res.get("exit_code")
-        if exit_code is not None:
-            meta_parts.append(f"exit: {exit_code}")
-        wall = res.get("wall_time_seconds") or res.get("wall_time")
-        if wall is not None:
-            meta_parts.append(f"wall: {wall}s")
-        if meta_parts:
-            meta_style = styles.tool_error if status == "error" else styles.meta
-            lines.append(_line((_TOOL_INDENT, meta_style), (" · ".join(meta_parts), meta_style)))
-
-        output = res.get("output", "")
-        if isinstance(output, str) and output.strip():
-            result_style = styles.tool_error if status == "error" else styles.tool_result
-            lines.extend(
-                _output_preview_lines(output, result_style=result_style, styles=styles, tool_chars=tool_chars)
-            )
-    elif raw_result:
-        result_style = styles.tool_error if status == "error" else styles.tool_result
-        _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, str(raw_result), result_style, tool_chars)
-
-    return lines
-
-
-def _render_file_read_lines(
-    raw_input: str | None,
-    raw_result: str | None,
-    status: str | None,
-    styles: _RoleStyles,
-    tool_chars: int,
-) -> list[Line]:
-    """Render file.read (Read) tool call content."""
-    lines: list[Line] = []
-    inp = _parse_json_safe(raw_input)
-    res = _parse_json_safe(raw_result)
-
-    path_str = ""
-    if isinstance(inp, dict):
-        path = inp.get("file_path") or inp.get("path", "")
-        if path:
-            path_str = str(path)
-            offset = inp.get("offset")
-            limit = inp.get("limit")
-            if offset is not None and limit is not None:
-                path_str += f":{offset}-{offset + limit - 1}"
-            elif offset is not None:
-                path_str += f":{offset}"
-    elif raw_input:
-        path_str = str(raw_input)
-
-    if path_str:
-        suffix_parts: list[str] = []
-        if isinstance(res, dict):
-            tokens = res.get("original_token_count")
-            if tokens:
-                suffix_parts.append(f"{tokens} tokens")
-        suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
-        lines.append(_line((_TOOL_INDENT, styles.meta), (path_str, styles.tool), (suffix, styles.meta)))
-
-    if status == "error" and isinstance(res, dict):
-        error_text = res.get("error") or res.get("message") or res.get("output", "")
-        if error_text:
-            _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, str(error_text), styles.tool_error, tool_chars)
-
-    return lines
-
-
-def _render_file_edit_lines(
-    raw_input: str | None,
-    raw_result: str | None,
-    status: str | None,
-    styles: _RoleStyles,
-    tool_chars: int,
-) -> list[Line]:
-    """Render file.edit (Edit) tool call content."""
-    lines: list[Line] = []
-    inp = _parse_json_safe(raw_input)
-    res = _parse_json_safe(raw_result)
-
-    if isinstance(inp, dict):
-        path = inp.get("file_path") or inp.get("path", "")
-        if path:
-            lines.append(_line((_TOOL_INDENT, styles.meta), (str(path), styles.tool)))
-
-        old = inp.get("old_string", "")
-        new = inp.get("new_string", "")
-        if old:
-            _append_multiline(lines, _TOOL_INDENT + "- ", styles.tool_input, str(old), styles.tool_input, tool_chars)
-        if new:
-            _append_multiline(lines, _TOOL_INDENT + "+ ", styles.meta, str(new), styles.tool_result, tool_chars)
-    elif raw_input:
-        lines.append(_line((_TOOL_INDENT, styles.meta), (str(raw_input), styles.tool)))
-
-    if status == "error" and isinstance(res, dict):
-        error_text = res.get("error") or res.get("message") or res.get("text", "")
-        if error_text:
-            _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, str(error_text), styles.tool_error, tool_chars)
-
-    return lines
-
-
-def _render_file_write_lines(
-    raw_input: str | None,
-    raw_result: str | None,
-    status: str | None,
-    styles: _RoleStyles,
-    tool_chars: int,
-) -> list[Line]:
-    """Render file.write (Write) tool call content."""
-    lines: list[Line] = []
-    inp = _parse_json_safe(raw_input)
-    res = _parse_json_safe(raw_result)
-
-    if isinstance(inp, dict):
-        path = inp.get("file_path") or inp.get("path", "")
-        if path:
-            content = inp.get("content", "")
-            line_count = len(content.splitlines()) if isinstance(content, str) and content else 0
-            suffix = f" ({line_count} lines)" if line_count else ""
-            lines.append(_line((_TOOL_INDENT, styles.meta), (str(path), styles.tool), (suffix, styles.meta)))
-    elif raw_input:
-        lines.append(_line((_TOOL_INDENT, styles.meta), (str(raw_input), styles.tool)))
-
-    if status == "error" and isinstance(res, dict):
-        error_text = res.get("error") or res.get("message") or res.get("text", "")
-        if error_text:
-            _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, str(error_text), styles.tool_error, tool_chars)
-
-    return lines
-
-
-def _render_search_grep_lines(
-    raw_input: str | None,
-    raw_result: str | None,
-    status: str | None,
-    styles: _RoleStyles,
-    tool_chars: int,
-) -> list[Line]:
-    """Render search.grep (Grep) tool call content."""
-    lines: list[Line] = []
-    inp = _parse_json_safe(raw_input)
-    res = _parse_json_safe(raw_result)
-
-    if isinstance(inp, dict):
-        pattern = inp.get("pattern", "")
-        path = inp.get("path", "")
-        include = inp.get("include") or inp.get("glob", "")
-        parts: list[tuple[str, Style]] = [(_TOOL_INDENT, styles.meta)]
-        if pattern:
-            parts.append((f"/{pattern}/", styles.tool))
-        if path:
-            parts.append((f" in {path}", styles.tool_input))
-        if include:
-            parts.append((f" {include}", styles.tool_input))
-        if len(parts) > 1:
-            lines.append(_line(*parts))
-    elif raw_input:
-        _append_multiline(lines, _TOOL_INDENT + "input: ", styles.tool_input, str(raw_input), styles.tool_input, tool_chars)
-
-    if isinstance(res, dict):
-        output = res.get("output", "")
-        if isinstance(output, str) and output.strip():
-            result_style = styles.tool_error if status == "error" else styles.tool_result
-            lines.extend(
-                _output_preview_lines(output, result_style=result_style, styles=styles, tool_chars=tool_chars)
-            )
-    elif raw_result:
-        result_style = styles.tool_error if status == "error" else styles.tool_result
-        _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, str(raw_result), result_style, tool_chars)
-
-    return lines
-
-
-def _render_file_glob_lines(
-    raw_input: str | None,
-    raw_result: str | None,
-    status: str | None,
-    styles: _RoleStyles,
-    tool_chars: int,
-) -> list[Line]:
-    """Render file.glob (Glob) tool call content."""
-    lines: list[Line] = []
-    inp = _parse_json_safe(raw_input)
-    res = _parse_json_safe(raw_result)
-
-    if isinstance(inp, dict):
-        pattern = inp.get("pattern", "")
-        path = inp.get("path", "")
-        parts: list[tuple[str, Style]] = [(_TOOL_INDENT, styles.meta)]
-        if pattern:
-            parts.append((pattern, styles.tool))
-        if path:
-            parts.append((f" in {path}", styles.tool_input))
-        if len(parts) > 1:
-            lines.append(_line(*parts))
-    elif raw_input:
-        _append_multiline(lines, _TOOL_INDENT + "input: ", styles.tool_input, str(raw_input), styles.tool_input, tool_chars)
-
-    if isinstance(res, dict):
-        output = res.get("output", "")
-        if isinstance(output, str) and output.strip():
-            lines.extend(
-                _output_preview_lines(output, result_style=styles.tool_result, styles=styles, tool_chars=tool_chars)
-            )
-    elif raw_result:
-        _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, str(raw_result), styles.tool_result, tool_chars)
-
-    return lines
-
-
-def _render_todo_lines(
-    raw_input: str | None,
-    raw_result: str | None,
-    status: str | None,
-    styles: _RoleStyles,
-    tool_chars: int,
-) -> list[Line]:
-    """Render ui.todo (TodoWrite) tool call content."""
-    lines: list[Line] = []
-    inp = _parse_json_safe(raw_input)
-
-    if isinstance(inp, dict):
-        title = inp.get("title", "")
-        if title:
-            lines.append(_line((_TOOL_INDENT, styles.meta), (str(title), styles.tool)))
-        tasks = inp.get("tasks") or inp.get("plan") or []
-        if isinstance(tasks, list):
-            for item in tasks:
-                if isinstance(item, dict):
-                    step = item.get("description") or item.get("step") or item.get("content", "")
-                    item_status = item.get("status", "")
-                    check = "✓" if item_status in ("done", "completed") else "○"
-                    if step:
-                        lines.append(
-                            _line((_TOOL_INDENT + f"  {check} ", styles.meta), (str(step), styles.tool_input))
-                        )
-                elif isinstance(item, str):
-                    lines.append(_line((_TOOL_INDENT + "  ○ ", styles.meta), (item, styles.tool_input)))
-    elif raw_input:
-        _append_multiline(lines, _TOOL_INDENT + "input: ", styles.tool_input, str(raw_input), styles.tool_input, tool_chars)
-
-    return lines
-
-
-def _format_generic_input(raw: str) -> str:
-    """Format tool input JSON into a compact, readable summary."""
-    obj = _parse_json_safe(raw)
-    if isinstance(obj, dict):
-        priority_keys = (
-            "description", "command", "cmd", "file_path", "path",
-            "pattern", "query", "url", "title",
-        )
-        parts: list[str] = []
-        for key in priority_keys:
-            value = obj.get(key)
-            if value in (None, "", [], {}):
-                continue
-            parts.append(f"{key}: {value}")
-        if parts:
-            return " · ".join(parts)
-        return json.dumps(obj, ensure_ascii=False, sort_keys=True)
-    return raw
-
-
-def _format_generic_result(raw: str) -> str:
-    """Format tool result JSON into a readable summary."""
-    obj = _parse_json_safe(raw)
-    if isinstance(obj, dict):
-        output = obj.get("output")
-        if isinstance(output, str) and output.strip():
-            meta_parts: list[str] = []
-            for mkey, label in (
-                ("exit_code", "exit"),
-                ("wall_time_seconds", "wall"),
-                ("wall_time", "wall"),
-                ("duration", "duration"),
-            ):
-                mvalue = obj.get(mkey)
-                if mvalue not in (None, "", [], {}):
-                    meta_parts.append(f"{label}: {mvalue}")
-            prefix = " · ".join(meta_parts) + "\n" if meta_parts else ""
-            return prefix + output
-
-        for key in ("text", "result", "message"):
-            value = obj.get(key)
-            if isinstance(value, str) and value.strip():
-                return value
-
-        compact: list[str] = []
-        for key in ("output", "result", "message", "error", "status"):
-            value = obj.get(key)
-            if value not in (None, "", [], {}):
-                compact.append(f"{key}: {value}")
-        if compact:
-            return " · ".join(compact)
-        return json.dumps(obj, ensure_ascii=False, sort_keys=True)
-    return raw
-
-
-def _render_generic_lines(
-    raw_input: str | None,
-    raw_result: str | None,
-    status: str | None,
-    styles: _RoleStyles,
-    tool_chars: int,
-) -> list[Line]:
-    """Render any tool call with generic input/result formatting."""
+    """Convert a format-neutral ToolPresentation into painted Lines."""
     lines: list[Line] = []
 
-    if raw_input:
-        formatted = _format_generic_input(raw_input)
-        if formatted:
-            _append_multiline(lines, _TOOL_INDENT + "input: ", styles.tool_input, formatted, styles.tool_input, tool_chars)
+    # Headline + optional meta suffix
+    if pres.headline:
+        parts: list[tuple[str, Style]] = [(_TOOL_INDENT, styles.meta), (pres.headline, styles.tool)]
+        if pres.meta:
+            parts.append((f" ({pres.meta})", styles.meta))
+        lines.append(_line(*parts))
 
-    if raw_result:
-        formatted = _format_generic_result(raw_result)
-        if formatted:
-            result_style = styles.tool_error if status == "error" else styles.tool_result
-            _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, formatted, result_style, tool_chars)
+    # Diff (edit tool)
+    if pres.removed:
+        _append_multiline(lines, _TOOL_INDENT + "- ", styles.tool_input, pres.removed, styles.tool_input, 0)
+    if pres.added:
+        _append_multiline(lines, _TOOL_INDENT + "+ ", styles.meta, pres.added, styles.tool_result, 0)
+
+    # Tasks (todo tool)
+    for text, done in pres.tasks:
+        check = "✓" if done else "○"
+        lines.append(_line((_TOOL_INDENT + f"  {check} ", styles.meta), (text, styles.tool_input)))
+
+    # Output preview (already truncated by extractor)
+    if pres.output:
+        result_style = styles.tool_result
+        for out_line in pres.output.splitlines():
+            lines.append(_line((_TOOL_INDENT, styles.meta), (out_line, result_style)))
+    if pres.overflow > 0:
+        lines.append(_line((_TOOL_INDENT + f"... +{pres.overflow} more lines", styles.summary_hint)))
+
+    # Error
+    if pres.error:
+        _append_multiline(lines, _TOOL_INDENT + "← ", styles.meta, pres.error, styles.tool_error, 0)
 
     return lines
-
-
-_TOOL_PRESENTERS = {
-    "shell.execute": _render_shell_execute_lines,
-    "file.read": _render_file_read_lines,
-    "file.edit": _render_file_edit_lines,
-    "file.write": _render_file_write_lines,
-    "search.grep": _render_search_grep_lines,
-    "file.glob": _render_file_glob_lines,
-    "ui.todo": _render_todo_lines,
-}
 
 
 def _render_tool_content_lines(
@@ -518,9 +173,12 @@ def _render_tool_content_lines(
     styles: _RoleStyles,
     tool_chars: int,
 ) -> list[Line]:
-    """Dispatch to tool-specific or generic presenter."""
-    renderer = _TOOL_PRESENTERS.get(name, _render_generic_lines)
-    return renderer(raw_input, raw_result, status, styles, tool_chars)
+    """Extract tool presentation then render as painted lines."""
+    from siftd.output.tool_presenters import extract_tool_presentation
+
+    pres = extract_tool_presentation(name, raw_input, raw_result, status, tool_chars)
+    return _presentation_to_lines(pres, styles)
+
 
 
 _DEFAULT_TOOL_CHARS = 120
@@ -535,6 +193,128 @@ def _tool_density(fidelity: Fidelity) -> int:
     return _DEFAULT_TOOL_CHARS
 
 
+# ---------------------------------------------------------------------------
+# Painted emitter — NarrativeEmitter that builds painted Blocks
+# ---------------------------------------------------------------------------
+
+
+class PaintedEmitter:
+    """Accumulates painted Blocks from narrative walker events.
+
+    After walk_narrative() returns, call .result() to get the composed Block.
+    """
+
+    def __init__(self, ds: DomainStyles, tool_chars: int) -> None:
+        from painted import border, pad
+
+        self._border = border
+        self._pad = pad
+        self._ds = ds
+        self._tool_chars = tool_chars
+        self._role_styles = _RoleStyles(
+            heading=ds.label,
+            meta=ds.separator,
+            prompt=ds.prompt,
+            assistant=ds.assistant,
+            thinking=ds.thinking,
+            tool=ds.tool_name,
+            tool_input=ds.tool_input,
+            tool_result=ds.tool_result,
+            tool_error=ds.tool_error,
+            summary_hint=ds.summary,
+        )
+        self._parts: list[Block] = []
+        self._pending: list[Line] = []
+
+    def _flush_lines(self) -> None:
+        if self._pending:
+            self._parts.append(_lines_to_block(self._pending))
+            self._pending = []
+
+    # -- NarrativeEmitter interface --
+
+    def text(self, content: str) -> None:
+        # Walker already truncated; limit=0 avoids double truncation
+        _append_multiline(self._pending, "  ", self._ds.assistant, content, self._ds.assistant, 0)
+
+    def thinking(self, content: str) -> None:
+        self._flush_lines()
+        think_lines: list[Line] = []
+        _append_multiline(think_lines, "", self._ds.thinking, content, self._ds.thinking, 0)
+        inner = _lines_to_block(think_lines)
+        title_text = "thinking"
+        min_inner_width = len(title_text) + 5
+        if inner.width + 2 < min_inner_width:
+            inner = self._pad(inner, right=min_inner_width - inner.width - 2)
+        bordered = self._border(
+            self._pad(inner, left=1, right=1),
+            chars=self._ds.thinking_border,
+            style=self._ds.separator,
+            title=title_text,
+            title_style=self._ds.thinking,
+        )
+        self._parts.append(self._pad(bordered, left=4))
+
+    def thinking_placeholder(self) -> None:
+        self._pending.append(_line(("    ", self._ds.separator), ("*[thinking]*", self._ds.thinking)))
+
+    def tool_summary(self, tools: list[tuple[str, int, str | None]]) -> None:
+        self._pending.extend(_tool_summary_lines_styled(tools, self._ds))
+
+    def tool_content(
+        self,
+        name: str,
+        count: int,
+        raw_input: str | None,
+        raw_result: str | None,
+        status: str | None,
+    ) -> None:
+        title = name
+        if count > 1:
+            title += f" ×{count}"
+        if status and status != "success":
+            title += f" ({status})"
+
+        tool_lines = _render_tool_content_lines(
+            name, raw_input, raw_result, status,
+            self._role_styles, self._tool_chars,
+        )
+        if tool_lines:
+            self._flush_lines()
+            inner = _lines_to_block(tool_lines)
+            title_style = self._ds.tool_error if status == "error" else self._ds.tool_name
+            min_inner_width = len(title) + 5
+            if inner.width + 2 < min_inner_width:
+                inner = self._pad(inner, right=min_inner_width - inner.width - 2)
+            bordered = self._border(
+                self._pad(inner, left=1, right=1),
+                chars=self._ds.tool_border,
+                style=self._ds.separator,
+                title=title,
+                title_style=title_style,
+            )
+            self._parts.append(self._pad(bordered, left=4))
+
+    def tool_output(self, block_type: str, content: str) -> None:
+        _append_multiline(
+            self._pending,
+            f"  [{block_type}] ",
+            self._ds.summary,
+            content,
+            self._ds.tool_result,
+            self._tool_chars,
+        )
+
+    def result(self) -> Block:
+        Block, _, _, _, _, join_vertical, _ = _painted()
+        self._flush_lines()
+        if not self._parts:
+            return Block.empty(0, 0)
+        if len(self._parts) == 1:
+            return self._parts[0]
+        return join_vertical(*self._parts)
+
+
 def render_narrative_block(
     blocks: list,
     *,
@@ -543,153 +323,24 @@ def render_narrative_block(
 ) -> Block:
     """Render narrative blocks into a composed painted Block.
 
-    Text and tool headers render as styled lines. Tool content and thinking
-    render as bordered sub-blocks using the domain theme's border chars.
-
-    Args:
-        blocks: Narrative blocks to render.
-        fidelity: Three-axis rendering spec (depth, visibility, density).
-        tool_chars: Optional tool density override (0=derive from fidelity).
+    Delegates to walk_narrative() for fidelity gating (what to show),
+    PaintedEmitter for rendering (how to show it).
     """
-    from painted import border, pad
-
+    from siftd.output.narrative import walk_narrative
     from siftd.output.theme import domain_styles
-
-    Block, _, _, _, _, join_vertical, _ = _painted()
 
     ds = domain_styles(fidelity)
-    # Bridge: tool presenters still use _RoleStyles internally
-    role_styles = _RoleStyles(
-        heading=ds.label,
-        meta=ds.separator,
-        prompt=ds.prompt,
-        assistant=ds.assistant,
-        thinking=ds.thinking,
-        tool=ds.tool_name,
-        tool_input=ds.tool_input,
-        tool_result=ds.tool_result,
-        tool_error=ds.tool_error,
-        summary_hint=ds.summary,
-    )
-    parts: list[Block] = []
-    chars_limit = fidelity.chars
     effective_tool_chars = tool_chars or _tool_density(fidelity)
-    show_tool_content = fidelity.shows("tools")
-
-    def _flush_lines(lines: list[Line]) -> None:
-        if lines:
-            parts.append(_lines_to_block(lines))
-            lines.clear()
-
-    pending: list[Line] = []
-
-    for block in blocks:
-        block_type = getattr(block, "block_type", "")
-        content = getattr(block, "content", None) or ""
-
-        if block_type == "text":
-            if content:
-                _append_multiline(pending, "  ", ds.assistant, content, ds.assistant, chars_limit)
-
-        elif block_type == "thinking":
-            if content:
-                _flush_lines(pending)
-                think_lines: list[Line] = []
-                _append_multiline(think_lines, "", ds.thinking, content, ds.thinking, chars_limit)
-                inner = _lines_to_block(think_lines)
-                # Ensure minimum width for border title to render
-                title_text = "thinking"
-                min_inner_width = len(title_text) + 5  # title + 3 (border rule) + 2 (padding)
-                if inner.width + 2 < min_inner_width:
-                    inner = pad(inner, right=min_inner_width - inner.width - 2)
-                bordered = border(
-                    pad(inner, left=1, right=1),
-                    chars=ds.thinking_border,
-                    style=ds.separator,
-                    title=title_text,
-                    title_style=ds.thinking,
-                )
-                parts.append(pad(bordered, left=4))
-
-        elif block_type in ("tool_result", "tool_output"):
-            if content and show_tool_content:
-                _append_multiline(
-                    pending,
-                    f"  [{block_type}] ",
-                    ds.summary,
-                    content,
-                    ds.tool_result,
-                    effective_tool_chars,
-                )
-
-        elif block_type == "tool_calls":
-            for tc in getattr(block, "tool_calls", []):
-                name = getattr(tc, "tool_name", "unknown")
-                count = getattr(tc, "count", 1)
-                status = getattr(tc, "status", None)
-
-                # Build title suffix for count/status
-                title = name
-                if count > 1:
-                    title += f" ×{count}"
-                if status and status != "success":
-                    title += f" ({status})"
-
-                if not show_tool_content:
-                    # Compact: arrow + name header
-                    header_parts: list[tuple[str, Style]] = [
-                        ("    → ", ds.separator),
-                        (name, ds.tool_name),
-                    ]
-                    if count > 1:
-                        header_parts.append((f" ×{count}", ds.separator))
-                    if status and status != "success":
-                        status_style = ds.tool_error if status == "error" else ds.separator
-                        header_parts.append((f" ({status})", status_style))
-                    pending.append(_line(*header_parts))
-                    continue
-
-                # Expanded: bordered block with tool name as title
-                tool_lines = _render_tool_content_lines(
-                    name,
-                    getattr(tc, "input", None),
-                    getattr(tc, "result", None),
-                    status,
-                    role_styles,
-                    effective_tool_chars,
-                )
-                if tool_lines:
-                    _flush_lines(pending)
-                    inner = _lines_to_block(tool_lines)
-                    title_style = ds.tool_error if status == "error" else ds.tool_name
-                    min_inner_width = len(title) + 5
-                    if inner.width + 2 < min_inner_width:
-                        inner = pad(inner, right=min_inner_width - inner.width - 2)
-                    bordered = border(
-                        pad(inner, left=1, right=1),
-                        chars=ds.tool_border,
-                        style=ds.separator,
-                        title=title,
-                        title_style=title_style,
-                    )
-                    parts.append(pad(bordered, left=4))
-
-    _flush_lines(pending)
-
-    if not parts:
-        return Block.empty(0, 0)
-    if len(parts) == 1:
-        return parts[0]
-    return join_vertical(*parts)
+    emitter = PaintedEmitter(ds, effective_tool_chars)
+    walk_narrative(blocks, emitter, fidelity=fidelity, tool_chars=effective_tool_chars)
+    return emitter.result()
 
 
-def _tool_summary_lines(
+def _tool_summary_lines_styled(
     tools: list[tuple[str, int, str | None]],
+    ds: DomainStyles,
 ) -> list[Line]:
     """Render tool summary lines from (name, count, status) tuples."""
-    from siftd.output.theme import domain_styles
-
-    ds = domain_styles()
     lines: list[Line] = []
     for name, count, status in tools:
         parts: list[tuple[str, Style]] = [
@@ -703,6 +354,15 @@ def _tool_summary_lines(
             parts.append((f" ({status})", status_style))
         lines.append(_line(*parts))
     return lines
+
+
+def _tool_summary_lines(
+    tools: list[tuple[str, int, str | None]],
+) -> list[Line]:
+    """Render tool summary lines using ambient theme."""
+    from siftd.output.theme import domain_styles
+
+    return _tool_summary_lines_styled(tools, domain_styles())
 
 
 def _peek_workspace(info) -> str:

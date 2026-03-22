@@ -15,17 +15,25 @@ name = "markdown"
 media_type = "text/markdown"
 
 
-def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> str:
+def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
     """Render conversation detail as GFM markdown.
 
+    Args:
+        result: ConversationDetail object, or raw turns list (backward compat).
+
     Context keys:
-        detail: conversation metadata object (ConversationDetail or ExportedConversation)
+        turns: override which turns to render (default: result.turns)
         no_header: bool — omit session header (default: False)
     """
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
     from siftd.output.narrative import MarkdownEmitter, walk_narrative
 
-    detail = context.get("detail")
+    if hasattr(result, "turns"):
+        detail = result
+        turns = context.get("turns", detail.turns)
+    else:
+        turns = result
+        detail = context.get("detail")
     no_header = context.get("no_header", False)
 
     lines: list[str] = []

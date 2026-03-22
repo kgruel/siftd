@@ -15,16 +15,24 @@ name = "terminal"
 media_type = "terminal"
 
 
-def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> Any:
+def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> Any:
     """Render conversation detail as a painted Block.
 
+    Args:
+        result: ConversationDetail object, or raw turns list (backward compat).
+
     Context keys:
-        detail: ConversationDetail — full conversation metadata
+        turns: override which turns to render (default: result.turns)
         tool_chars: int — tool content char limit (0 = no limit)
     """
     from siftd.output.painted_bridge import render_query_detail_block
 
-    detail = context.get("detail")
+    if hasattr(result, "turns"):
+        detail = result
+        turns = context.get("turns", detail.turns)
+    else:
+        turns = result
+        detail = context.get("detail")
     tool_chars = context.get("tool_chars", 0)
 
     return render_query_detail_block(

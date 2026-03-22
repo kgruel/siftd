@@ -39,8 +39,10 @@ from siftd.api.doctor import (
     run_checks,
 )
 from siftd.api.export import (
+    ExportArtifact,
     ExportedConversation,
     export_conversations,
+    export_document,
 )
 from siftd.api.file_refs import (
     FileRef,
@@ -75,12 +77,17 @@ from siftd.api.slice import (
 from siftd.api.stats import (
     CostCoverage,
     DatabaseStats,
+    GroupUsage,
     HarnessInfo,
     TableCounts,
     ToolStats,
+    UsageSummary,
     WorkspaceStats,
     get_cost_coverage,
     get_stats,
+    get_usage_by_model,
+    get_usage_by_workspace,
+    get_usage_summary,
     list_workspaces,
     read_stats_cache,
     stats_cache_path,
@@ -208,12 +215,17 @@ __all__ = [
     # stats
     "CostCoverage",
     "DatabaseStats",
+    "GroupUsage",
     "TableCounts",
     "HarnessInfo",
+    "UsageSummary",
     "WorkspaceStats",
     "ToolStats",
     "get_cost_coverage",
     "get_stats",
+    "get_usage_by_model",
+    "get_usage_by_workspace",
+    "get_usage_summary",
     "list_workspaces",
     "stats_cache_path",
     "write_stats_cache",
@@ -239,6 +251,8 @@ __all__ = [
     "group_tool_search_results",
     "search_tool_calls",
     # export
+    "ExportArtifact",
     "ExportedConversation",
     "export_conversations",
+    "export_document",
 ]

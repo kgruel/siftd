@@ -131,7 +131,11 @@ class DatabaseStats:
     last_ingest_at: str | None
 
 
-def get_cost_coverage(conn: sqlite3.Connection) -> CostCoverage | None:
+def get_cost_coverage(
+    conn: sqlite3.Connection | None = None,
+    *,
+    db_path: Path | None = None,
+) -> CostCoverage | None:
     """Get cost coverage statistics from conversation_stats.
 
     Returns None if the conversation_stats table does not exist.
@@ -141,31 +145,43 @@ def get_cost_coverage(conn: sqlite3.Connection) -> CostCoverage | None:
     have no pricing data available; conversations with cost = 0.0 have tokens
     but were priced at zero (indicates stale stats — run siftd ingest to rebuild).
     """
-    has_stats = conn.execute(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
-    ).fetchone()[0]
-    if not has_stats:
-        return None
+    from siftd.storage.sqlite import open_database
 
-    row = conn.execute("""
-        SELECT
-            COUNT(*) FILTER (WHERE total_tokens > 0) AS with_tokens,
-            COUNT(*) FILTER (WHERE cost > 0) AS with_cost,
-            COUNT(*) FILTER (WHERE total_tokens > 0 AND cost IS NULL) AS null_cost
-        FROM conversation_stats
-    """).fetchone()
+    should_close = False
+    if conn is None:
+        path = db_path or default_db_path()
+        conn = open_database(path, read_only=True)
+        should_close = True
 
-    with_tokens = row["with_tokens"] or 0
-    with_cost = row["with_cost"] or 0
-    null_cost = row["null_cost"] or 0
-    pct = round((with_cost / with_tokens) * 100, 2) if with_tokens else 0.0
+    try:
+        has_stats = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
+        ).fetchone()[0]
+        if not has_stats:
+            return None
 
-    return CostCoverage(
-        total_with_tokens=with_tokens,
-        with_positive_cost=with_cost,
-        with_null_cost=null_cost,
-        pct_covered=pct,
-    )
+        row = conn.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE total_tokens > 0) AS with_tokens,
+                COUNT(*) FILTER (WHERE cost > 0) AS with_cost,
+                COUNT(*) FILTER (WHERE total_tokens > 0 AND cost IS NULL) AS null_cost
+            FROM conversation_stats
+        """).fetchone()
+
+        with_tokens = row["with_tokens"] or 0
+        with_cost = row["with_cost"] or 0
+        null_cost = row["null_cost"] or 0
+        pct = round((with_cost / with_tokens) * 100, 2) if with_tokens else 0.0
+
+        return CostCoverage(
+            total_with_tokens=with_tokens,
+            with_positive_cost=with_cost,
+            with_null_cost=null_cost,
+            pct_covered=pct,
+        )
+    finally:
+        if should_close:
+            conn.close()
 
 
 def list_workspaces(
@@ -319,91 +335,91 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
         raise FileNotFoundError(f"Database not found: {db}")
 
     conn = open_database(db, read_only=True)
+    try:
+        # Table counts
+        table_names = [
+            "conversations",
+            "prompts",
+            "responses",
+            "tool_calls",
+            "harnesses",
+            "workspaces",
+            "tools",
+            "models",
+            "ingested_files",
+        ]
+        count_values = {name: fetch_table_count(conn, name) for name in table_names}
+        counts = TableCounts(**count_values)
 
-    # Table counts
-    table_names = [
-        "conversations",
-        "prompts",
-        "responses",
-        "tool_calls",
-        "harnesses",
-        "workspaces",
-        "tools",
-        "models",
-        "ingested_files",
-    ]
-    count_values = {name: fetch_table_count(conn, name) for name in table_names}
-    counts = TableCounts(**count_values)
-
-    # Harnesses
-    harness_rows = fetch_harnesses(conn)
-    harnesses = [
-        HarnessInfo(
-            name=row["name"],
-            source=row["source"],
-            log_format=row["log_format"],
-        )
-        for row in harness_rows
-    ]
-
-    # Top workspaces
-    workspace_rows = fetch_top_workspaces(conn, limit=10)
-    top_workspaces = [
-        WorkspaceStats(
-            path=row["path"],
-            conversation_count=row["convs"],
-            last_activity=row["last_activity"],
-        )
-        for row in workspace_rows
-    ]
-
-    # Models
-    models = fetch_model_names(conn)
-
-    # Top tools by usage
-    tool_rows = fetch_top_tools(conn, limit=10)
-    top_tools = [
-        ToolStats(name=row["name"], usage_count=row["uses"]) for row in tool_rows
-    ]
-
-    # Harness conversation counts
-    harness_count_rows = fetch_harness_conversation_counts(conn)
-    harness_counts = [
-        HarnessCount(name=row["name"], conversation_count=row["conversations"])
-        for row in harness_count_rows
-    ]
-
-    # Top conversation tags
-    tag_rows = fetch_top_conversation_tags(conn, limit=5)
-    top_tags = [TagStats(name=row["name"], count=row["count"]) for row in tag_rows]
-
-    # Token coverage
-    total_responses, responses_with_tokens = fetch_response_token_coverage(conn)
-    pct_with_tokens = (
-        round((responses_with_tokens / total_responses) * 100, 2)
-        if total_responses
-        else 0.0
-    )
-    harness_rows = fetch_token_coverage_by_harness(conn)
-    token_by_harness = []
-    for row in harness_rows:
-        responses = row["responses"]
-        with_tokens = row["with_tokens"] if row["with_tokens"] is not None else 0
-        pct = round((with_tokens / responses) * 100, 2) if responses else 0.0
-        token_by_harness.append(
-            TokenCoverageByHarness(
-                name=row["harness"],
-                responses=responses,
-                with_tokens=with_tokens,
-                pct_with_tokens=pct,
+        # Harnesses
+        harness_rows = fetch_harnesses(conn)
+        harnesses = [
+            HarnessInfo(
+                name=row["name"],
+                source=row["source"],
+                log_format=row["log_format"],
             )
+            for row in harness_rows
+        ]
+
+        # Top workspaces
+        workspace_rows = fetch_top_workspaces(conn, limit=10)
+        top_workspaces = [
+            WorkspaceStats(
+                path=row["path"],
+                conversation_count=row["convs"],
+                last_activity=row["last_activity"],
+            )
+            for row in workspace_rows
+        ]
+
+        # Models
+        models = fetch_model_names(conn)
+
+        # Top tools by usage
+        tool_rows = fetch_top_tools(conn, limit=10)
+        top_tools = [
+            ToolStats(name=row["name"], usage_count=row["uses"]) for row in tool_rows
+        ]
+
+        # Harness conversation counts
+        harness_count_rows = fetch_harness_conversation_counts(conn)
+        harness_counts = [
+            HarnessCount(name=row["name"], conversation_count=row["conversations"])
+            for row in harness_count_rows
+        ]
+
+        # Top conversation tags
+        tag_rows = fetch_top_conversation_tags(conn, limit=5)
+        top_tags = [TagStats(name=row["name"], count=row["count"]) for row in tag_rows]
+
+        # Token coverage
+        total_responses, responses_with_tokens = fetch_response_token_coverage(conn)
+        pct_with_tokens = (
+            round((responses_with_tokens / total_responses) * 100, 2)
+            if total_responses
+            else 0.0
         )
+        harness_rows = fetch_token_coverage_by_harness(conn)
+        token_by_harness = []
+        for row in harness_rows:
+            responses = row["responses"]
+            with_tokens = row["with_tokens"] if row["with_tokens"] is not None else 0
+            pct = round((with_tokens / responses) * 100, 2) if responses else 0.0
+            token_by_harness.append(
+                TokenCoverageByHarness(
+                    name=row["harness"],
+                    responses=responses,
+                    with_tokens=with_tokens,
+                    pct_with_tokens=pct,
+                )
+            )
 
-    # Activity window and ingest recency
-    activity_window = fetch_conversation_time_window(conn)
-    last_ingest_at = fetch_last_ingest_time(conn)
-
-    conn.close()
+        # Activity window and ingest recency
+        activity_window = fetch_conversation_time_window(conn)
+        last_ingest_at = fetch_last_ingest_time(conn)
+    finally:
+        conn.close()
 
     return DatabaseStats(
         db_path=db,
@@ -424,3 +440,151 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
         activity_window=activity_window,
         last_ingest_at=last_ingest_at,
     )
+
+
+
+@dataclass
+class UsageSummary:
+    """Aggregated token/cost stats."""
+
+    total_conversations: int
+    total_input_tokens: int
+    total_output_tokens: int
+    total_cost: float
+
+
+@dataclass
+class GroupUsage:
+    """Token/cost breakdown for a single group (model or workspace)."""
+
+    name: str
+    conversations: int
+    input_tokens: int
+    output_tokens: int
+    cost: float
+
+
+def get_usage_summary(*, db_path: Path | None = None) -> UsageSummary:
+    """Get aggregate token/cost totals across all conversations."""
+    from siftd.storage.sqlite import open_database
+
+    path = db_path or default_db_path()
+    conn = open_database(path, read_only=True)
+    try:
+        row = conn.execute(
+            "SELECT COUNT(DISTINCT c.id) AS n,"
+            " COALESCE(SUM(r.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(r.output_tokens), 0) AS out"
+            " FROM conversations c"
+            " LEFT JOIN responses r ON r.conversation_id = c.id"
+        ).fetchone()
+        # Cost is per-conversation in conversation_stats, sum separately
+        has_stats = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
+        ).fetchone()[0]
+        total_cost = 0.0
+        if has_stats:
+            cost_row = conn.execute(
+                "SELECT COALESCE(SUM(cost), 0) AS cost FROM conversation_stats"
+            ).fetchone()
+            total_cost = cost_row["cost"]
+        return UsageSummary(
+            total_conversations=row["n"],
+            total_input_tokens=row["inp"],
+            total_output_tokens=row["out"],
+            total_cost=total_cost,
+        )
+    finally:
+        conn.close()
+
+
+def get_usage_by_model(*, db_path: Path | None = None) -> list[GroupUsage]:
+    """Get token/cost breakdown grouped by model."""
+    from siftd.storage.sqlite import open_database
+
+    path = db_path or default_db_path()
+    conn = open_database(path, read_only=True)
+    try:
+        # Tokens from responses grouped by model
+        token_rows = conn.execute(
+            "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
+            " COUNT(DISTINCT r.conversation_id) AS convs,"
+            " COALESCE(SUM(r.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(r.output_tokens), 0) AS out"
+            " FROM responses r"
+            " LEFT JOIN models m ON r.model_id = m.id"
+            " GROUP BY m.raw_name"
+        ).fetchall()
+        has_stats = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
+        ).fetchone()[0]
+        cost_by_model: dict[str, float] = {}
+        if has_stats:
+            cost_rows = conn.execute(
+                "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
+                " COALESCE(SUM(cs.cost), 0) AS cost"
+                " FROM conversation_stats cs"
+                " JOIN responses r ON r.conversation_id = cs.conversation_id"
+                " LEFT JOIN models m ON r.model_id = m.id"
+                " GROUP BY m.raw_name"
+            ).fetchall()
+            cost_by_model = {r["name"]: r["cost"] for r in cost_rows}
+        results = [
+            GroupUsage(
+                name=r["name"], conversations=r["convs"],
+                input_tokens=r["inp"], output_tokens=r["out"],
+                cost=cost_by_model.get(r["name"], 0),
+            )
+            for r in token_rows
+        ]
+        results.sort(key=lambda g: g.input_tokens + g.output_tokens, reverse=True)
+        return results
+    finally:
+        conn.close()
+
+
+def get_usage_by_workspace(*, db_path: Path | None = None) -> list[GroupUsage]:
+    """Get token/cost breakdown grouped by workspace."""
+    from siftd.storage.sqlite import open_database
+
+    path = db_path or default_db_path()
+    conn = open_database(path, read_only=True)
+    try:
+        # Tokens from responses grouped by workspace
+        token_rows = conn.execute(
+            "SELECT COALESCE(w.path, '') AS name,"
+            " COUNT(DISTINCT c.id) AS convs,"
+            " COALESCE(SUM(r.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(r.output_tokens), 0) AS out"
+            " FROM conversations c"
+            " LEFT JOIN workspaces w ON c.workspace_id = w.id"
+            " LEFT JOIN responses r ON r.conversation_id = c.id"
+            " GROUP BY w.path"
+        ).fetchall()
+        # Cost from conversation_stats grouped by workspace
+        has_stats = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
+        ).fetchone()[0]
+        cost_by_ws: dict[str, float] = {}
+        if has_stats:
+            cost_rows = conn.execute(
+                "SELECT COALESCE(w.path, '') AS name,"
+                " COALESCE(SUM(cs.cost), 0) AS cost"
+                " FROM conversation_stats cs"
+                " JOIN conversations c ON cs.conversation_id = c.id"
+                " LEFT JOIN workspaces w ON c.workspace_id = w.id"
+                " GROUP BY w.path"
+            ).fetchall()
+            cost_by_ws = {r["name"]: r["cost"] for r in cost_rows}
+        results = [
+            GroupUsage(
+                name=r["name"], conversations=r["convs"],
+                input_tokens=r["inp"], output_tokens=r["out"],
+                cost=cost_by_ws.get(r["name"], 0),
+            )
+            for r in token_rows
+        ]
+        results.sort(key=lambda g: g.cost, reverse=True)
+        return results
+    finally:
+        conn.close()
