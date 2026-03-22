@@ -508,6 +508,12 @@ class TestTagsEdgeBranches:
         monkeypatch.setattr("siftd.cli.tags.get_recent_conversation_ids", lambda conn, n: [])
         assert main(["--db", str(test_db), "tag", "--last", "1", "x"]) == 1
 
+        # remove-last not-applied branch (line 554)
+        monkeypatch.setattr("siftd.cli.tags.get_recent_conversation_ids", lambda conn, n: ["cid"])
+        monkeypatch.setattr("siftd.cli.tags.get_tag_id", lambda conn, tag: "tid")
+        monkeypatch.setattr("siftd.cli.tags.remove_tag", lambda *a, **k: False)
+        assert main(["--db", str(test_db), "tag", "--remove", "--last", "1", "x"]) == 0
+
         # create existing tag but not on target conversation for line 608
         conn = open_database(test_db)
         ids = [r["id"] for r in conn.execute("SELECT id FROM conversations LIMIT 2").fetchall()]
@@ -515,6 +521,12 @@ class TestTagsEdgeBranches:
         main(["--db", str(test_db), "tag", ids[0], "exists-not-applied"])
         capsys.readouterr()
         assert main(["--db", str(test_db), "tag", "--remove", ids[1], "exists-not-applied"]) == 0
+
+        # _cmd_tag_list with since and no tags (line 253)
+        monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
+        monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
+        args3 = SimpleNamespace(positional=["list"], since="2024-01-01", before=None, prefix=None)
+        assert tags_cli._cmd_tag_list(args3, Path(test_db)) == 0
 
         # deprecated tags name positional branch
         assert main(["--db", str(test_db), "tags", "some-tag"]) in (0, 1)
