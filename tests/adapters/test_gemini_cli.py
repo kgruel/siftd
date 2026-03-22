@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from conftest import FIXTURES_DIR, fixture_source
+from conftest import FIXTURES_DIR, default_location_source, fixture_source
 
 from siftd.adapters import gemini_cli
 from siftd.domain.source import Source
@@ -57,4 +57,34 @@ class TestGeminiCliParseEdgeCases:
         assert gemini_cli.peek_exchanges(FIXTURES_DIR / "gemini_cli_minimal.json", last_n=5)
         assert gemini_cli.peek_scan(tmp_path / "e.json") is None
         assert list(gemini_cli.peek_tail(FIXTURES_DIR / "gemini_cli_minimal.json", lines=5))
+        assert not list(gemini_cli.peek_tail(tmp_path / "e.json", lines=5))
         assert not gemini_cli.can_handle(Source(kind="sqlite", location=tmp_path / "e.json"))
+
+    def test_normalizer(self):
+        n = gemini_cli.normalize_record
+        u = n({"type": "user", "id": "u1", "timestamp": "T", "content": "hi"})
+        assert u.kind == "user" and u.content_blocks[0]["text"] == "hi"
+        a = n({"type": "gemini", "id": "g1", "timestamp": "T", "model": "m", "content": "ok",
+            "tokens": {"input": 5, "output": 3}, "thoughts": [{"subject": "S"}],
+            "toolCalls": [{"name": "f", "args": {}, "status": "success", "result": []}]})
+        assert a.kind == "assistant" and a.model == "m" and a.input_tokens == 5
+        assert n({"type": "unknown"}) is None
+
+    def test_discover_and_can_handle_edges(self, tmp_path):
+        # discover with valid structure
+        chats = tmp_path / "hash" / "chats"
+        chats.mkdir(parents=True)
+        (chats / "s.json").write_text("{}")
+        assert list(gemini_cli.discover(locations=[str(tmp_path)]))
+        assert list(gemini_cli.discover(locations=[str(tmp_path / "nope")])) == []
+        # can_handle: non-json suffix, and DEFAULT_LOCATIONS expanded path
+        assert not gemini_cli.can_handle(Source(kind="file", location=Path("/mock/chats/test.txt")))
+        assert gemini_cli.can_handle(default_location_source(gemini_cli, "hash/chats/s.json"))
+
+    def test_normalizer_thinking_edges(self):
+        n = gemini_cli.normalize_record
+        # Thought with description only, subject only, and empty — L342
+        a = n({"type": "gemini", "id": "g", "timestamp": "T", "model": "m",
+            "thoughts": [{"description": "desc only"}, {"subject": "subj only"}, {}]})
+        texts = [b["text"] for b in a.content_blocks if b["type"] == "thinking"]
+        assert "desc only" in texts and "subj only" in texts and len(texts) == 2

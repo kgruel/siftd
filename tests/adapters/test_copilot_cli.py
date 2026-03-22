@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from conftest import FIXTURES_DIR, fixture_source
+from conftest import FIXTURES_DIR, default_location_source, fixture_source
 
 from siftd.adapters import copilot_cli
 from siftd.domain.source import Source
@@ -14,6 +14,7 @@ class TestCopilotCliAdapter:
         assert copilot_cli.can_handle(Source(kind="file", location=Path("/mock/.copilot/session-state/uuid/events.jsonl")))
         assert not copilot_cli.can_handle(Source(kind="file", location=FIXTURES_DIR / "copilot_cli_minimal.jsonl"))
         assert not copilot_cli.can_handle(Source(kind="directory", location=Path("/mock/.copilot/session-state")))
+        assert copilot_cli.can_handle(default_location_source(copilot_cli, "uuid/events.jsonl"))
 
     def test_parse_full(self, tmp_path):
         copilot_source = fixture_source(tmp_path, "copilot_cli_minimal.jsonl", ".copilot/session-state/test-uuid", "events.jsonl")

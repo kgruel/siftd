@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from conftest import FIXTURES_DIR, CodexSession, fixture_source, write_jsonl
+from conftest import FIXTURES_DIR, CodexSession, default_location_source, fixture_source, write_jsonl
 
 from siftd.adapters import codex_cli
 from siftd.domain.source import Source
@@ -93,6 +93,7 @@ class TestCodexCliParseEdgeCases:
         (d / "empty.jsonl").write_text("")
         assert list(codex_cli.parse(Source(kind="file", location=d / "empty.jsonl"))) == []
         assert not codex_cli.can_handle(Source(kind="file", location=Path("/mock/sessions/test.json")))
+        assert codex_cli.can_handle(default_location_source(codex_cli))
         # Out-of-order timestamps to cover L109 (started_at update)
         records = [{"type": "session_meta", "timestamp": "2024-01-01T00:00:05Z", "payload": {"id": "s", "cwd": "/w"}},
             {"type": "response_item", "timestamp": "2024-01-01T00:00:01Z", "payload": {"type": "message", "role": "user", "content": ["plain text"]}},

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from conftest import FIXTURES_DIR, fixture_source
+from conftest import FIXTURES_DIR, default_location_source, fixture_source
 
 from siftd.adapters import pi_agent
 from siftd.domain.source import Source
@@ -14,6 +14,7 @@ class TestPiAgentAdapter:
         assert pi_agent.can_handle(Source(kind="file", location=Path("/mock/.pi/agent/sessions/test.jsonl")))
         assert not pi_agent.can_handle(Source(kind="file", location=FIXTURES_DIR / "pi_agent_minimal.jsonl"))
         assert not pi_agent.can_handle(Source(kind="directory", location=Path("/mock/.pi/agent/sessions")))
+        assert pi_agent.can_handle(default_location_source(pi_agent))
 
     def test_parse_full(self, tmp_path):
         pi_source = fixture_source(tmp_path, "pi_agent_minimal.jsonl", ".pi/agent/sessions/--test--")

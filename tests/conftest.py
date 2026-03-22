@@ -63,6 +63,18 @@ def fixture_source(tmp_path, fixture, subdir, dest_name=None):
     return Source(kind="file", location=dest)
 
 
+def default_location_source(adapter_module, filename="test.jsonl"):
+    """Create a Source with a path under the adapter's DEFAULT_LOCATIONS.
+
+    Useful for testing can_handle() against the expanded home-directory path
+    without needing real files on disk.
+    """
+    from siftd.domain.source import Source
+
+    loc = str(Path(adapter_module.DEFAULT_LOCATIONS[0]).expanduser())
+    return Source(kind="file", location=Path(f"{loc}/{filename}"))
+
+
 def make_db(
     path,
     *,

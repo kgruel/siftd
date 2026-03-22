@@ -11,8 +11,8 @@ import py_compile, sys
 py_compile.compile('tests/adapters/test_codex_cli.py', doraise=True)
 "
 
-INCLUDE="src/siftd/adapters/codex_cli.py"
-TEST_FILE="tests/adapters/test_codex_cli.py"
+INCLUDE="src/siftd/adapters/gemini_cli.py"
+TEST_FILE="tests/adapters/test_gemini_cli.py"
 
 # Count test LOC (non-empty, non-comment lines)
 TEST_LOC=$(grep -v '^\s*$' "$TEST_FILE" | grep -v '^\s*#' | wc -l | tr -d ' ')
@@ -77,7 +77,7 @@ fi
 ZONE=$(.venv/bin/python -c "print('edge' if $PCT >= 90 else 'normal')")
 
 echo ""
-echo "=== Codex CLI Adapter Coverage Efficiency ==="
+echo "=== Gemini CLI Adapter Coverage Efficiency ==="
 echo "Test LOC:       $TEST_LOC"
 echo "Test time:      ${TEST_TIME}s (median of 5: $T1, $T2, $T3, $T4, $T5)"
 echo "Covered lines:  $COVERED / $TOTAL"
