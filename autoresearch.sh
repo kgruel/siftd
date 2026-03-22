@@ -1,18 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 
-# VSCode adapter coverage efficiency benchmark
+# OpenCode adapter coverage efficiency benchmark
 # Metric: test_LOC × test_time_s / covered_lines (lower = better)
 # Uses median-of-5 timing (all with coverage) for stability
 
 # Quick pre-check: syntax errors
 .venv/bin/python -c "
 import py_compile, sys
-py_compile.compile('tests/adapters/test_vscode.py', doraise=True)
+py_compile.compile('tests/adapters/test_opencode.py', doraise=True)
 "
 
-INCLUDE="src/siftd/adapters/vscode.py"
-TEST_FILE="tests/adapters/test_vscode.py"
+INCLUDE="src/siftd/adapters/opencode.py"
+TEST_FILE="tests/adapters/test_opencode.py"
 
 # Count test LOC (non-empty, non-comment lines)
 TEST_LOC=$(grep -v '^\s*$' "$TEST_FILE" | grep -v '^\s*#' | wc -l | tr -d ' ')
@@ -77,7 +77,7 @@ fi
 ZONE=$(.venv/bin/python -c "print('edge' if $PCT >= 90 else 'normal')")
 
 echo ""
-echo "=== VSCode Adapter Coverage Efficiency ==="
+echo "=== OpenCode Adapter Coverage Efficiency ==="
 echo "Test LOC:       $TEST_LOC"
 echo "Test time:      ${TEST_TIME}s (median of 5: $T1, $T2, $T3, $T4, $T5)"
 echo "Covered lines:  $COVERED / $TOTAL"

@@ -9,7 +9,7 @@ set -euo pipefail
 import ast, sys
 
 errors = []
-tree = ast.parse(open('tests/adapters/test_vscode.py').read())
+tree = ast.parse(open('tests/adapters/test_opencode.py').read())
 for node in ast.walk(tree):
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith('test_'):
         has_assert = any(
@@ -25,7 +25,7 @@ for node in ast.walk(tree):
             for n in ast.walk(node)
         )
         if not has_assert and not has_raises:
-            errors.append(f'test_vscode.py:{node.lineno} {node.name} has no assertions')
+            errors.append(f'test_opencode.py:{node.lineno} {node.name} has no assertions')
 
 if errors:
     print('TRIVIAL TESTS DETECTED:')
@@ -35,4 +35,4 @@ if errors:
 "
 
 # Lint check
-.venv/bin/python -m ruff check src/siftd/adapters/vscode.py tests/adapters/test_vscode.py 2>&1 | tail -20
+.venv/bin/python -m ruff check src/siftd/adapters/opencode.py tests/adapters/test_opencode.py 2>&1 | tail -20
