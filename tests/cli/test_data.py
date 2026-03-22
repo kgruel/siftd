@@ -841,3 +841,45 @@ class TestDataDirectBranches:
 
         monkeypatch.setattr("siftd.api.run_checks", lambda **k: (_ for _ in ()).throw(ValueError("bad")))
         assert data_cli._doctor_run_painted(SimpleNamespace(strict=False), ["c1"], False, Path(test_db)) == 1
+
+    def test_last_missing_branches(self, test_db, monkeypatch, capsys):
+        # migrate merge non-dry-run summary lines (505/506)
+        monkeypatch.setattr(
+            "siftd.api.migrations.backfill_git_remotes",
+            lambda conn, on_progress, dry_run: {"checked": 1, "updated": 1, "skipped_missing": 0, "skipped_no_git": 0},
+        )
+        monkeypatch.setattr(
+            "siftd.api.migrations.verify_workspace_identity",
+            lambda conn: {"duplicate_groups": 1, "duplicate_workspaces": 2, "total": 3, "with_remote": 2, "without_remote": 1},
+        )
+        monkeypatch.setattr(
+            "siftd.api.migrations.merge_duplicate_workspaces",
+            lambda conn, on_progress, dry_run: {"workspaces_merged": 2, "conversations_moved": 5},
+        )
+        rc = main(["--db", str(test_db), "migrate", "--merge-workspaces"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Merged 2 workspaces" in out and "Moved 5 conversations" in out
+
+        # migrate status duplicate-groups hint lines (515/518)
+        monkeypatch.setattr(
+            "siftd.api.migrations.verify_workspace_identity",
+            lambda conn: {"duplicate_groups": 2, "duplicate_workspaces": 4, "total": 6, "with_remote": 5, "without_remote": 1},
+        )
+        rc = main(["--db", str(test_db), "migrate"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Duplicate groups: 2" in out and "--merge-workspaces" in out
+
+        # copy formatter usage listing lines (636-641)
+        monkeypatch.setattr("siftd.api.list_builtin_formatters", lambda: ["markdown", "json"])
+        rc = data_cli.cmd_copy(SimpleNamespace(resource_type="formatter", name=None, force=False, all=False))
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "Usage: siftd copy formatter" in out and "markdown" in out
+
+        # doctor fix pending tags non-json cleanup message (680)
+        monkeypatch.setattr("siftd.api.sessions.cleanup_stale_sessions", lambda *_a, **_k: (1, 2))
+        rc = data_cli._doctor_fix_pending_tags(SimpleNamespace(db=str(test_db), json=False))
+        assert rc == 0
+        assert "Cleaned up 1 stale session" in capsys.readouterr().out
