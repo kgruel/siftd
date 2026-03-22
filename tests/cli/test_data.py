@@ -704,3 +704,140 @@ class TestDataDirectBranches:
         assert rc == 0
         out = capsys.readouterr().out
         assert "Errors" in out and "Run without --dry-run" in out
+
+    def test_copy_all_and_error_paths(self, monkeypatch):
+        class _CopyErr(Exception):
+            pass
+
+        monkeypatch.setattr("siftd.api.CopyError", _CopyErr)
+
+        monkeypatch.setattr("siftd.api.list_builtin_adapters", lambda: [])
+        assert data_cli.cmd_copy(SimpleNamespace(resource_type="adapter", name=None, force=False, all=True)) == 1
+
+        monkeypatch.setattr("siftd.api.list_builtin_adapters", lambda: ["a1", "a2"])
+        monkeypatch.setattr("siftd.api.copy_adapter", lambda n, force=False: (_ for _ in ()).throw(_CopyErr("boom")) if n == "a2" else f"/tmp/{n}")
+        assert data_cli.cmd_copy(SimpleNamespace(resource_type="adapter", name=None, force=False, all=True)) == 0
+
+        monkeypatch.setattr("siftd.api.list_builtin_queries", lambda: ["q1", "q2"])
+        monkeypatch.setattr("siftd.api.copy_query", lambda n, force=False: (_ for _ in ()).throw(_CopyErr("bad")) if n == "q2" else f"/tmp/{n}")
+        assert data_cli.cmd_copy(SimpleNamespace(resource_type="query", name=None, force=False, all=True)) == 0
+
+        monkeypatch.setattr("siftd.api.list_builtin_queries", lambda: [])
+        assert data_cli.cmd_copy(SimpleNamespace(resource_type="query", name=None, force=False, all=False)) == 1
+
+        monkeypatch.setattr("siftd.api.copy_query", lambda n, force=False: (_ for _ in ()).throw(_CopyErr("nope")))
+        assert data_cli.cmd_copy(SimpleNamespace(resource_type="query", name="q", force=False, all=False)) == 1
+
+        monkeypatch.setattr("siftd.api.list_builtin_formatters", lambda: ["f1", "f2"])
+        monkeypatch.setattr("siftd.api.copy_formatter", lambda n, force=False: (_ for _ in ()).throw(_CopyErr("bad")) if n == "f2" else f"/tmp/{n}")
+        assert data_cli.cmd_copy(SimpleNamespace(resource_type="formatter", name=None, force=False, all=True)) == 0
+
+        monkeypatch.setattr("siftd.api.copy_formatter", lambda n, force=False: (_ for _ in ()).throw(_CopyErr("bad")))
+        assert data_cli.cmd_copy(SimpleNamespace(resource_type="formatter", name="f1", force=False, all=False)) == 1
+
+    def test_renderer_and_cmd_doctor_remaining_edges(self, test_db, monkeypatch, capsys):
+        # lines 68/236: total update branch
+        tr = _IngestTextRenderer(verbose=True)
+        tr.handle_event(FakeEvent(index=1, total=1))
+        tr.handle_event(FakeEvent(index=2, total=2, status="error", error="oops"))
+        jr = _IngestJsonRenderer()
+        jr.handle_event(FakeEvent(index=1, total=1))
+        jr.handle_event(FakeEvent(index=2, total=2))
+
+        # print_summary verbose reasons + error column
+        c = _AdapterCounts(total=2)
+        c.add("ingested", None)
+        c.add("error", None)
+        c.add("skipped", "unchanged")
+        tr._counts["a"] = c
+        tr.print_summary(FakeStats(conversations=1, prompts=1, responses=1, tool_calls=1))
+
+        # ingest stats cache exception branch
+        monkeypatch.setattr("siftd.adapters.registry.load_all_adapters", lambda: [SimpleNamespace(name="ok", module="m")])
+        monkeypatch.setattr("siftd.adapters.registry.wrap_adapter_paths", lambda m, p: m)
+        monkeypatch.setattr("siftd.ingestion.ingest_all", lambda conn, adapters, on_event: FakeStats())
+        monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: {})
+        monkeypatch.setattr("siftd.api.stats.write_stats_cache", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("x")))
+        monkeypatch.setattr("siftd.paths.ensure_dirs", lambda: None)
+        rc = main(["--db", str(test_db), "ingest", "--json", "--adapter", "ok"])
+        assert rc == 0
+
+        # cmd_doctor legacy aliases
+        assert main(["--db", str(test_db), "doctor", "fixes"]) in (0, 1)
+        assert main(["--db", str(test_db), "doctor", "some-check-name"]) in (0, 1)
+
+    def test_doctor_fix_and_run_extra_branches(self, test_db, monkeypatch):
+        # _doctor_fix: missing db
+        monkeypatch.setattr("siftd.doctor.fixes.load_findings_cache", lambda: [{"fix_command": "siftd ingest"}])
+        assert data_cli._doctor_fix(SimpleNamespace(db=str(Path(test_db).with_name("missing.db")))) == 1
+
+        # _doctor_fix: action raises -> error summary branch
+        monkeypatch.setattr("siftd.api.open_database", lambda *_a, **_k: SimpleNamespace(close=lambda: None))
+        monkeypatch.setattr("siftd.doctor.fixes.clear_findings_cache", lambda: None)
+        monkeypatch.setattr("siftd.doctor.fixes.load_findings_cache", lambda: [{"fix_command": "siftd ingest"}])
+        monkeypatch.setitem(data_cli._FIX_REGISTRY, "siftd ingest", ("Ingest", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("bad"))))
+        assert data_cli._doctor_fix(SimpleNamespace(db=str(test_db))) == 1
+
+        # _doctor_run_plain no findings and show_fixes list
+        monkeypatch.setattr("siftd.api.run_checks", lambda **k: [])
+        monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda findings: None)
+        assert data_cli._doctor_run_plain(SimpleNamespace(strict=False), None, False, Path(test_db)) == 0
+
+        f = SimpleNamespace(severity="warning", check="c", message="m", fix_available=True, fix_command="siftd ingest", context={})
+        monkeypatch.setattr("siftd.api.run_checks", lambda **k: [f])
+        assert data_cli._doctor_run_plain(SimpleNamespace(strict=False), None, True, Path(test_db)) == 0
+
+    def test_doctor_run_router_tty_and_painted_exceptions(self, test_db, monkeypatch):
+        # _doctor_run should choose painted on tty
+        real_painted = data_cli._doctor_run_painted
+        real_stdout = data_cli.sys.stdout
+        monkeypatch.setattr("siftd.cli.data._doctor_run_painted", lambda *a, **k: 7)
+
+        class _Std:
+            def isatty(self):
+                return True
+
+        monkeypatch.setattr(data_cli.sys, "stdout", _Std())
+        assert data_cli._doctor_run(SimpleNamespace(db=str(test_db), json=False), None, False) == 7
+        monkeypatch.setattr("siftd.cli.data._doctor_run_painted", real_painted)
+        monkeypatch.setattr(data_cli.sys, "stdout", real_stdout)
+
+        # _doctor_run_painted: drive on_done and exception branches
+        class _R:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return False
+
+            def render(self, *_a, **_k):
+                return None
+
+            def finalize(self, *_a, **_k):
+                return None
+
+        class _Theme:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, *_a):
+                return False
+
+        monkeypatch.setitem(__import__("sys").modules, "painted", SimpleNamespace(InPlaceRenderer=_R, use_theme=lambda *_a, **_k: _Theme()))
+        monkeypatch.setitem(__import__("sys").modules, "siftd.output.theme", SimpleNamespace(siftd_theme=object()))
+        monkeypatch.setattr("siftd.api.list_checks", lambda: [SimpleNamespace(name="c1")])
+        monkeypatch.setattr("siftd.doctor.view.render_progress_block", lambda *_a, **_k: "blk")
+        monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda findings: None)
+
+        def _run_checks_ok(**kwargs):
+            kwargs["on_check_done"]("c1", [])
+            return []
+
+        monkeypatch.setattr("siftd.api.run_checks", _run_checks_ok)
+        assert data_cli._doctor_run_painted(SimpleNamespace(strict=False), ["c1"], False, Path(test_db)) == 0
+
+        monkeypatch.setattr("siftd.api.run_checks", lambda **k: (_ for _ in ()).throw(FileNotFoundError("missing")))
+        assert data_cli._doctor_run_painted(SimpleNamespace(strict=False), ["c1"], False, Path(test_db)) == 1
+
+        monkeypatch.setattr("siftd.api.run_checks", lambda **k: (_ for _ in ()).throw(ValueError("bad")))
+        assert data_cli._doctor_run_painted(SimpleNamespace(strict=False), ["c1"], False, Path(test_db)) == 1
