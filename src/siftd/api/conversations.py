@@ -106,6 +106,7 @@ class ConversationSummary:
     total_tokens: int
     cost: float | None
     tags: list[str] = field(default_factory=list)
+    owner: str | None = None
 
 
 @dataclass
@@ -157,6 +158,7 @@ def list_conversations(
     tool_tag: str | None = None,
     n: int = 10,
     oldest: bool = False,
+    owner: str | None = None,
 ) -> list[ConversationSummary]:
     """List conversations with optional filtering.
 
@@ -175,6 +177,7 @@ def list_conversations(
         tool_tag: Filter by tool call tag (e.g., 'shell:test').
         n: Maximum results to return (0 = unlimited).
         oldest: Sort by oldest first instead of newest.
+        owner: Filter to conversations owned by this user_id.
 
     Returns:
         List of ConversationSummary objects.
@@ -189,7 +192,7 @@ def list_conversations(
 
     conn = open_database(db, read_only=True)
     try:
-        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest)
+        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest, owner)
     finally:
         conn.close()
 
@@ -208,6 +211,7 @@ def _list_conversations_impl(
     tool_tag: str | None,
     n: int,
     oldest: bool,
+    owner: str | None = None,
 ) -> list[ConversationSummary]:
     """Implementation of list_conversations with connection already open."""
     # Check if pricing table exists
@@ -219,6 +223,11 @@ def _list_conversations_impl(
     wb.model(model)
     wb.since(since)
     wb.before(before)
+    if owner and not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+    ).fetchone():
+        return []
+    wb.owner(owner)
 
     if search:
         wb.add(
@@ -354,8 +363,9 @@ def _list_conversations_impl(
             conv_ids,
         ).fetchall()
 
-    # Bulk-fetch tags
+    # Bulk-fetch tags and owners
     tags_by_conv = fetch_tags_for_conversations(conn, conv_ids)
+    owner_by_conv = _fetch_owners_for_conversations(conn, conv_ids)
 
     return [
         ConversationSummary(
@@ -368,9 +378,42 @@ def _list_conversations_impl(
             total_tokens=row["tokens"],
             cost=row["cost"],
             tags=tags_by_conv.get(row["conversation_id"], []),
+            owner=owner_by_conv.get(row["conversation_id"]),
         )
         for row in rows
     ]
+
+
+def _fetch_owners_for_conversations(
+    conn,
+    conversation_ids: list[str],
+) -> dict[str, str]:
+    """Bulk fetch owners for multiple conversations.
+
+    Returns dict mapping conversation_id to user_id.
+    Returns empty dict if the conversation_owners table doesn't exist
+    (e.g. hand-built DBs, pre-migration schemas).
+    """
+    if not conversation_ids:
+        return {}
+
+    # Table may not exist on DBs created outside open_database()
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+    ).fetchone()
+    if not has_table:
+        return {}
+
+    from siftd.storage.sql_helpers import batched_in_query
+
+    rows = batched_in_query(
+        conn,
+        "SELECT conversation_id, user_id "
+        "FROM conversation_owners "
+        "WHERE conversation_id IN ({placeholders})",
+        conversation_ids,
+    )
+    return {row["conversation_id"]: row["user_id"] for row in rows}
 
 
 def _extract_text(raw: str) -> str:

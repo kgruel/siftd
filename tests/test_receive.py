@@ -147,6 +147,156 @@ class TestReceiveDatabase:
         assert violations == []
 
 
+class TestReceiveOwnership:
+    """Ownership stamping via user_id parameter."""
+
+    def test_first_receive_stamps_all_conversations(self, tmp_path):
+        """First receive with user_id stamps all conversations."""
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}, {"external_id": "conv-B"}],
+        )
+        target = tmp_path / "target" / "team.db"
+
+        result = receive_database(source, target, user_id="alice@co.com")
+
+        assert result["status"] == "created"
+        assert result["owned"] == 2
+
+        conn = sqlite3.connect(str(target))
+        conn.row_factory = sqlite3.Row
+        owners = conn.execute("SELECT * FROM conversation_owners").fetchall()
+        conn.close()
+
+        assert len(owners) == 2
+        assert all(r["user_id"] == "alice@co.com" for r in owners)
+
+    def test_merge_stamps_new_conversations(self, tmp_path):
+        """Merge with user_id stamps only newly inserted conversations."""
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        target = tmp_path / "target.db"
+        _make_db(target, conversations=[{"external_id": "conv-existing"}])
+
+        result = receive_database(source, target, user_id="bob@co.com")
+
+        assert result["status"] == "merged"
+        assert result["owned"] == 1
+
+        conn = sqlite3.connect(str(target))
+        conn.row_factory = sqlite3.Row
+        owners = conn.execute("SELECT * FROM conversation_owners").fetchall()
+        conn.close()
+
+        assert len(owners) == 1
+        assert owners[0]["user_id"] == "bob@co.com"
+
+    def test_no_user_id_skips_ownership(self, tmp_path):
+        """Receive without user_id does not create ownership rows."""
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        target = tmp_path / "target" / "team.db"
+
+        result = receive_database(source, target)
+
+        assert result["status"] == "created"
+        assert "owned" not in result
+
+        # Table exists (created by migration chain) but should be empty
+        conn = sqlite3.connect(str(target))
+        count = conn.execute(
+            "SELECT COUNT(*) FROM conversation_owners"
+        ).fetchone()[0]
+        conn.close()
+        assert count == 0
+
+    def test_push_id_provenance(self, tmp_path):
+        """Push ID is recorded in conversation_owners for provenance."""
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        target = tmp_path / "target" / "team.db"
+
+        result = receive_database(
+            source, target,
+            user_id="alice@co.com",
+            push_id="01PUSH_ID_HERE",
+        )
+
+        assert result["owned"] == 1
+
+        conn = sqlite3.connect(str(target))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT push_id FROM conversation_owners").fetchone()
+        conn.close()
+        assert row["push_id"] == "01PUSH_ID_HERE"
+
+    def test_idempotent_receive_no_double_ownership(self, tmp_path):
+        """Re-receiving same data doesn't fail — INSERT OR REPLACE handles it."""
+        source = _make_db(
+            tmp_path / "source.db",
+            conversations=[{"external_id": "conv-A"}],
+        )
+        target = tmp_path / "target" / "team.db"
+
+        receive_database(source, target, user_id="alice@co.com")
+        # Second receive — same data, merge path
+        result = receive_database(source, target, user_id="alice@co.com")
+
+        assert result["status"] == "merged"
+        assert result["owned"] == 0  # no new conversations
+
+        conn = sqlite3.connect(str(target))
+        count = conn.execute("SELECT COUNT(*) FROM conversation_owners").fetchone()[0]
+        conn.close()
+        assert count == 1  # still just one row
+
+
+class TestOwnershipQueryScoping:
+    """End-to-end: push as different users, query with owner filter."""
+
+    def test_owner_filter_scopes_conversations(self, tmp_path):
+        """list_conversations with owner= returns only that user's data."""
+        from siftd.api.conversations import list_conversations
+
+        target = tmp_path / "team.db"
+
+        # Alice pushes 2 conversations
+        alice_source = _make_db(
+            tmp_path / "alice.db",
+            conversations=[{"external_id": "alice-1"}, {"external_id": "alice-2"}],
+        )
+        receive_database(alice_source, target, user_id="alice@co.com")
+
+        # Bob pushes 1 conversation
+        bob_source = _make_db(
+            tmp_path / "bob.db",
+            conversations=[{"external_id": "bob-1"}],
+        )
+        receive_database(bob_source, target, user_id="bob@co.com")
+
+        # Unfiltered: all 3
+        all_convs = list_conversations(db_path=target, n=0)
+        assert len(all_convs) == 3
+
+        # Alice's conversations only
+        alice_convs = list_conversations(db_path=target, n=0, owner="alice@co.com")
+        assert len(alice_convs) == 2
+
+        # Bob's conversations only
+        bob_convs = list_conversations(db_path=target, n=0, owner="bob@co.com")
+        assert len(bob_convs) == 1
+
+        # Unknown user: empty
+        nobody_convs = list_conversations(db_path=target, n=0, owner="nobody@co.com")
+        assert len(nobody_convs) == 0
+
+
 class TestReceiveCLIErrors:
     def test_operational_error_returns_json(self, tmp_path, monkeypatch, capsys):
         """OperationalError from receive surfaces as structured JSON error."""

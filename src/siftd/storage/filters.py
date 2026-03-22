@@ -80,6 +80,14 @@ class WhereBuilder:
         if value:
             self.add("c.started_at < ?", value)
 
+    def owner(self, value: str | None) -> None:
+        """Filter to conversations owned by this user_id."""
+        if value:
+            self.add(
+                "c.id IN (SELECT conversation_id FROM conversation_owners WHERE user_id = ?)",
+                value,
+            )
+
     def tags_any(self, tags: list[str] | None) -> None:
         """OR semantics: conversation has ANY of these tags."""
         if not tags:

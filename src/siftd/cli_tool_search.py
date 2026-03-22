@@ -49,6 +49,7 @@ def cmd_tool_search(args) -> int:
             "no_tag": filters.no_tag,
             "tool": filters.tool,
             "tool_tag": filters.tool_tag,
+            "owner": filters.owner,
         },
         render_method="raw",
         fidelity=Fidelity(),

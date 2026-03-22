@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 def serialize_conversation_summary(conv: ConversationSummary) -> dict[str, Any]:
     """Serialize a ConversationSummary to a JSON-safe dict."""
-    return {
+    d = {
         "id": conv.id,
         "workspace": conv.workspace_path,
         "model": conv.model,
@@ -27,6 +27,10 @@ def serialize_conversation_summary(conv: ConversationSummary) -> dict[str, Any]:
         "cost": conv.cost,
         "tags": conv.tags,
     }
+    owner = getattr(conv, "owner", None)
+    if owner is not None:
+        d["owner"] = owner
+    return d
 
 
 def serialize_conversation_list(conversations: list[ConversationSummary]) -> list[dict[str, Any]]:

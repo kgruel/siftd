@@ -77,6 +77,7 @@ def search_tool_calls(
     no_tag: list[str] | None = None,
     tool: str | None = None,
     tool_tag: str | None = None,
+    owner: str | None = None,
 ) -> tuple[ToolQuery, list[ToolSearchResult]]:
     """Search tool calls using structured fields + FTS over the projection."""
     parsed = _merge_cli_filters(
@@ -95,7 +96,7 @@ def search_tool_calls(
         conn = open_database(db_path, read_only=False)
         try:
             rebuild_tool_search_index(conn, commit=True)
-            results = _search_tool_calls_impl(conn, parsed, limit=n)
+            results = _search_tool_calls_impl(conn, parsed, limit=n, owner=owner)
             return parsed, results
         finally:
             conn.close()
@@ -108,7 +109,7 @@ def search_tool_calls(
             conn = open_database(db_path, read_only=False)
             ensure_tool_search_tables(conn)
             rebuild_tool_search_index(conn, commit=True)
-        results = _search_tool_calls_impl(conn, parsed, limit=n)
+        results = _search_tool_calls_impl(conn, parsed, limit=n, owner=owner)
         return parsed, results
     finally:
         conn.close()
@@ -129,6 +130,7 @@ def _search_tool_calls_impl(
     parsed: ToolQuery,
     *,
     limit: int,
+    owner: str | None = None,
 ) -> list[ToolSearchResult]:
     base_from = (
         " FROM tool_search ts"
@@ -142,6 +144,11 @@ def _search_tool_calls_impl(
     where: list[str] = []
     params: list[object] = []
 
+    if owner and not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+    ).fetchone():
+        return []
+    _add_owner_clause(where, params, owner)
     _add_tool_name_clauses(where, params, parsed.fields.get("tool"))
     _add_eq_or_clauses(where, params, "ts.tool_family", parsed.fields.get("tool_family"))
     status_values = [*(parsed.fields.get("status") or []), *(parsed.fields.get("result_status") or [])]
@@ -356,6 +363,15 @@ def _add_conversation_tags_none(where: list[str], params: list[object], tags: li
         "ts.conversation_id NOT IN (SELECT ct.conversation_id FROM conversation_tags ct"
         f" JOIN tags tg ON tg.id = ct.tag_id WHERE {clause})"
     )
+
+
+def _add_owner_clause(where: list[str], params: list[object], owner: str | None) -> None:
+    if not owner:
+        return
+    where.append(
+        "ts.conversation_id IN (SELECT conversation_id FROM conversation_owners WHERE user_id = ?)"
+    )
+    params.append(owner)
 
 
 def _add_tool_call_tags(where: list[str], params: list[object], tags: list[str] | None) -> None:

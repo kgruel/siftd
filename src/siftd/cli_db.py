@@ -201,6 +201,7 @@ def cmd_db_slice(args) -> int:
             tool=filters.tool,
             tool_tag=filters.tool_tag,
             search=filters.search,
+            owner=filters.owner,
             rebuild_fts=rebuild_fts,
         )
     except FileNotFoundError as e:

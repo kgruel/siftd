@@ -94,6 +94,7 @@ def open_database(db_path: Path, *, read_only: bool = False) -> sqlite3.Connecti
         _ensure_tag_indexes(conn)
         _ensure_response_attributes_key_index(conn)
         _ensure_conversation_stats_table(conn)
+        ensure_conversation_owners_table(conn)
 
         # Stamp schema version after successful migrations
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -549,6 +550,29 @@ def ensure_push_log_table(conn: sqlite3.Connection) -> None:
             size_bytes INTEGER NOT NULL,
             source_ip TEXT
         )
+    """)
+
+
+def ensure_conversation_owners_table(conn: sqlite3.Connection) -> None:
+    """Create conversation_owners table for multi-tenancy. Idempotent.
+
+    Server-side only — tracks which user owns each conversation.
+    Called from the open_database() migration chain and idempotently
+    from the receive path.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_owners (
+            conversation_id TEXT NOT NULL
+                REFERENCES conversations(id) ON DELETE CASCADE,
+            user_id         TEXT NOT NULL,
+            push_id         TEXT,
+            assigned_at     TEXT NOT NULL,
+            PRIMARY KEY (conversation_id)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_conversation_owners_user
+        ON conversation_owners(user_id)
     """)
 
 

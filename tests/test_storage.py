@@ -406,6 +406,23 @@ class TestWhereBuilder:
         wb2.require_join("m")
         assert "responses" in wb2.joins_sql() and "models" in wb2.joins_sql()
 
+    def test_owner_filter(self):
+        wb = WhereBuilder()
+        wb.owner("alice@co.com")
+        sql = wb.where_sql()
+        assert "conversation_owners" in sql
+        assert "user_id = ?" in sql
+        assert wb.params == ["alice@co.com"]
+        # No JOINs needed, no GROUP BY impact
+        assert wb.joins_sql() == ""
+        assert not wb.needs_group_by
+
+    def test_owner_none_is_noop(self):
+        wb = WhereBuilder()
+        wb.owner(None)
+        assert wb.where_sql() == ""
+        assert wb.params == []
+
     def test_empty_and_none(self):
         wb = WhereBuilder()
         assert wb.where_sql() == "" and wb.joins_sql() == ""
@@ -413,6 +430,7 @@ class TestWhereBuilder:
         wb.model(None)
         wb.since(None)
         wb.before(None)
+        wb.owner(None)
         wb.tags_any(None)
         wb.tags_all(None)
         wb.tags_none(None)
@@ -740,6 +758,20 @@ class TestDatabaseOps:
     def test_ensure_tables(self, db):
         sq.ensure_push_log_table(db)
         assert db.execute("SELECT 1 FROM sqlite_master WHERE name='push_log'").fetchone() is not None
+
+    def test_ensure_conversation_owners_table(self, db):
+        sq.ensure_conversation_owners_table(db)
+        assert db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='conversation_owners'"
+        ).fetchone() is not None
+        # Idempotent
+        sq.ensure_conversation_owners_table(db)
+        # Has the right columns
+        cols = {
+            r[1]
+            for r in db.execute("PRAGMA table_info(conversation_owners)").fetchall()
+        }
+        assert cols == {"conversation_id", "user_id", "push_id", "assigned_at"}
 
     def test_open_and_backup(self, tmp_path):
         conn = open_database(tmp_path / "new.db")

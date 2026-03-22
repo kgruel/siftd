@@ -638,6 +638,7 @@ def filter_conversations(
     tags: list[str] | None = None,
     all_tags: list[str] | None = None,
     exclude_tags: list[str] | None = None,
+    owner: str | None = None,
 ) -> set[str] | None:
     """Apply filters and return candidate conversation IDs.
 
@@ -652,18 +653,19 @@ def filter_conversations(
         tags: OR filter — conversations with any of these tags.
         all_tags: AND filter — conversations with all of these tags.
         exclude_tags: NOT filter — exclude conversations with any of these tags.
+        owner: Filter to conversations owned by this user_id.
 
     Returns:
         Set of conversation IDs matching filters, or None if no filters.
     """
-    if not any([workspace, model, since, before, tags, all_tags, exclude_tags]):
+    if not any([workspace, model, since, before, tags, all_tags, exclude_tags, owner]):
         return None
 
     conn = open_database(db, read_only=True)
     try:
         return _filter_conversations_conn(
             conn, workspace=workspace, model=model, since=since, before=before,
-            tags=tags, all_tags=all_tags, exclude_tags=exclude_tags,
+            tags=tags, all_tags=all_tags, exclude_tags=exclude_tags, owner=owner,
         )
     finally:
         conn.close()
@@ -679,16 +681,23 @@ def _filter_conversations_conn(
     tags: list[str] | None = None,
     all_tags: list[str] | None = None,
     exclude_tags: list[str] | None = None,
+    owner: str | None = None,
 ) -> set[str] | None:
     """Internal: filter conversations using an existing connection."""
-    if not any([workspace, model, since, before, tags, all_tags, exclude_tags]):
+    if not any([workspace, model, since, before, tags, all_tags, exclude_tags, owner]):
         return None
+
+    if owner and not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+    ).fetchone():
+        return set()
 
     wb = WhereBuilder()
     wb.workspace(workspace)
     wb.model(model)
     wb.since(since)
     wb.before(before)
+    wb.owner(owner)
     wb.tags_any(tags)
     wb.tags_all(all_tags)
     wb.tags_none(exclude_tags)
@@ -780,6 +789,7 @@ def resolve_candidates(
     no_tag: list[str] | None = None,
     exclude_active: bool = True,
     include_derivative: bool = False,
+    owner: str | None = None,
 ) -> set[str] | None:
     """Resolve candidate conversation IDs from filters + scope options.
 
@@ -802,6 +812,7 @@ def resolve_candidates(
         tags=tag,
         all_tags=all_tags,
         exclude_tags=effective_exclude or None,
+        owner=owner,
     )
 
     if exclude_active:

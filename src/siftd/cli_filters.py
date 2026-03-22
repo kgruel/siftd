@@ -28,6 +28,7 @@ class FilterArgs:
     tool: str | None = None
     tool_tag: str | None = None
     search: str | None = None
+    owner: str | None = None
 
 
 def add_filter_args(
@@ -102,6 +103,10 @@ def add_filter_args(
             "-s", "--search", metavar="QUERY",
             help="Full-text search filter",
         )
+    filter_group.add_argument(
+        "--owner", metavar="USER",
+        help="Filter to conversations owned by this user",
+    )
 
 
     @classmethod
@@ -138,6 +143,7 @@ def add_filter_args(
             tool=_str_or_none(params.get("tool")),
             tool_tag=_str_or_none(params.get("tool_tag")),
             search=_str_or_none(params.get("search")),
+            owner=_str_or_none(params.get("owner")),
         )
 
 
@@ -158,4 +164,5 @@ def extract_filter_args(args) -> FilterArgs:
         tool=getattr(args, "tool", None),
         tool_tag=getattr(args, "tool_tag", None),
         search=getattr(args, "search", None),
+        owner=getattr(args, "owner", None),
     )
