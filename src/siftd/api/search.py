@@ -12,7 +12,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean as _mean
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from siftd.storage.queries import (
     fetch_all_conversation_ids,
@@ -24,6 +24,16 @@ from siftd.storage.queries import (
 if TYPE_CHECKING:
     from siftd.search import SearchResult, apply_temporal_weight
     from siftd.storage.embeddings import IndexCompatError
+
+
+class EmbeddingBackend(Protocol):
+    """Minimal protocol for embedding backends (real or fake)."""
+
+    name: str
+    model: str
+    dimension: int
+
+    def embed_one(self, text: str) -> list[float]: ...
 
 # Lazy re-exports — resolved on first access to avoid eager numpy import.
 _LAZY_IMPORTS = {
@@ -402,6 +412,7 @@ def hybrid_search(
     recency_max_boost: float = 1.15,
     # Backend
     backend: str | None = None,
+    embed_backend: EmbeddingBackend | None = None,
 ) -> list[dict]:
     """Unified search pipeline — FTS5, semantic, or hybrid.
 
@@ -412,7 +423,10 @@ def hybrid_search(
         n: Desired result count after all processing.
         mode: "hybrid" (FTS5 + semantic), "fts" (keyword only), "semantic" (embeddings only).
         rerank: "mmr" for diversity reranking, "relevance" for pure score order.
-        backend: Preferred embedding backend (ollama, fastembed).
+        backend: Preferred embedding backend name (ollama, fastembed).
+        embed_backend: Injected embedding backend instance. If provided, skips
+            get_backend() discovery. Must implement embed_one(text) -> list[float],
+            and have .name, .model, .dimension attributes.
 
     Returns:
         List of result dicts with: conversation_id, score, text, chunk_type,
@@ -423,7 +437,7 @@ def hybrid_search(
         ValueError: If query is empty or search fails.
         RuntimeError: If embedding backend unavailable.
     """
-    from siftd.search import ScoreBreakdown, mmr_rerank, resolve_candidates
+    from siftd.search import annotate_fts5_breakdown, mmr_rerank, resolve_candidates
     from siftd.storage.sqlite import open_database
 
     # --- FTS-only mode ---
@@ -456,12 +470,19 @@ def hybrid_search(
             conn.close()
 
     # --- Hybrid / semantic modes need embeddings ---
-    from siftd.embeddings import SCHEMA_VERSION, get_backend
     from siftd.paths import embeddings_db_path as default_embed_db
     from siftd.search import apply_temporal_weight
 
     effective_embed_db = embed_db or default_embed_db()
-    _backend = get_backend(preferred=backend, verbose=False)
+
+    if embed_backend is not None:
+        _backend = embed_backend
+        # Caller injected a backend — still need SCHEMA_VERSION for compat check
+        from siftd.embeddings import SCHEMA_VERSION
+    else:
+        from siftd.embeddings import SCHEMA_VERSION, get_backend
+        _backend = get_backend(preferred=backend, verbose=False)
+
     embeddings_only = mode == "semantic"
 
     candidate_ids = resolve_candidates(
@@ -523,15 +544,7 @@ def hybrid_search(
         return []
 
     # Mark FTS5 recall matches in breakdown
-    for r in results:
-        if "breakdown" in r and isinstance(r["breakdown"], ScoreBreakdown):
-            bd = r["breakdown"]
-            if fts5_ids:
-                bd.fts5_matched = r["conversation_id"] in fts5_ids
-                bd.fts5_mode = fts5_mode if bd.fts5_matched else None
-            else:
-                bd.fts5_matched = False
-                bd.fts5_mode = None
+    annotate_fts5_breakdown(results, fts5_ids, fts5_mode)
 
     # Temporal weighting (before MMR so it affects reranking)
     if recency and results:

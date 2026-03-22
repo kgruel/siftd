@@ -21,7 +21,6 @@ class TestScoreBreakdown:
         assert "pre_mmr_score" in d
 
 
-@pytest.mark.embeddings
 class TestApplyTemporalWeight:
     def test_empty_results(self):
         assert apply_temporal_weight([], {}) == []

@@ -92,10 +92,10 @@ def apply_temporal_weight(
     if not results or max_boost <= 1.0:
         return results
 
-    import numpy as np
+    import math
 
     now = datetime.now(UTC)
-    decay_constant = np.log(2) / half_life_days
+    decay_constant = math.log(2) / half_life_days
 
     weighted = []
     for r in results:
@@ -115,7 +115,7 @@ def apply_temporal_weight(
                     ts = datetime.fromisoformat(ts_str_clean)
                 days_ago = max(0, (now - ts).total_seconds() / 86400)
                 # Exponential decay: starts at max_boost, decays to 1.0
-                weight = 1.0 + (max_boost - 1.0) * np.exp(-decay_constant * days_ago)
+                weight = 1.0 + (max_boost - 1.0) * math.exp(-decay_constant * days_ago)
                 r_copy["score"] = r["score"] * weight
             except (ValueError, TypeError):
                 pass  # Keep original score if timestamp parsing fails
@@ -145,6 +145,32 @@ class SearchResult:
     chunk_id: str | None = None
     source_ids: list[str] | None = None
     breakdown: dict | None = None
+
+
+def annotate_fts5_breakdown(
+    results: list[dict],
+    fts5_ids: set[str] | None,
+    fts5_mode: str | None,
+) -> None:
+    """Annotate ScoreBreakdown objects with FTS5 recall match info.
+
+    Mutates results in-place. Each result with a ScoreBreakdown gets
+    fts5_matched set to True/False and fts5_mode set accordingly.
+
+    Args:
+        results: List of result dicts with optional 'breakdown' key.
+        fts5_ids: Set of conversation IDs that matched FTS5 recall, or None.
+        fts5_mode: FTS5 match mode ("and", "or"), or None.
+    """
+    if fts5_ids is None:
+        return
+
+    for r in results:
+        breakdown = r.get("breakdown")
+        if breakdown and isinstance(breakdown, ScoreBreakdown):
+            matched = r["conversation_id"] in fts5_ids
+            breakdown.fts5_matched = matched
+            breakdown.fts5_mode = fts5_mode if matched else None
 
 
 def mmr_rerank(
@@ -541,13 +567,7 @@ def hybrid_search(
         return []
 
     # Annotate breakdown with FTS5 recall info (used by JSON output explainability)
-    if fts5_ids is not None:
-        for r in raw_results:
-            breakdown = r.get("breakdown")
-            if breakdown and isinstance(breakdown, ScoreBreakdown):
-                matched = r["conversation_id"] in fts5_ids
-                breakdown.fts5_matched = matched
-                breakdown.fts5_mode = fts5_mode if matched else None
+    annotate_fts5_breakdown(raw_results, fts5_ids, fts5_mode)
 
     # Apply temporal weighting if requested (before MMR so it affects reranking)
     if recency:

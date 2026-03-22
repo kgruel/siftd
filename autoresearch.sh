@@ -1,28 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
-# CLI DB command coverage efficiency benchmark
-#
-# Primary metric: efficiency = test_LOC × test_time_s / covered_lines (lower is better)
-# Coverage is measured from the full test suite to avoid redundant tests.
-# Timing/LOC are measured from target test files only.
+# CLI search (non-embeddings paths) coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.cli.db"
-TEST_FILES="tests/cli/test_db.py"
+INCLUDE_ARGS="--cov=siftd.cli.search"
+TEST_FILES="tests/cli/test_search_noembed.py"
 
-# Quick pre-check
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
 done
 
-# Count test LOC
 TEST_LOC=0
 for f in $TEST_FILES; do
     LOC=$(grep -v '^\s*$' "$f" | grep -v '^\s*#' | wc -l | tr -d ' ')
     TEST_LOC=$((TEST_LOC + LOC))
 done
 
-# --- Step 1: Full suite coverage ---
 echo "Running full test suite with coverage..."
 uv run python -m pytest tests/ -x -q --tb=short -p no:randomly \
     $INCLUDE_ARGS --cov-report=json:coverage.json \
@@ -38,13 +31,12 @@ PCT=$(     echo "$COVERAGE_JSON" | python3 -c "import json,sys; d=json.load(sys.
 MISSING=$( echo "$COVERAGE_JSON" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
-for fname, fdata in sorted(d['files'].items()):
+for _fname, fdata in sorted(d['files'].items()):
     lines = fdata.get('missing_lines', [])
     if lines:
         print('  L' + ','.join(str(l) for l in lines))
 ")
 
-# --- Step 2: Best-of-5 timed runs ---
 BEST_TIME=99999
 for i in 1 2 3 4 5; do
     START=$(python3 -c "import time; print(time.monotonic())")
@@ -56,7 +48,6 @@ for i in 1 2 3 4 5; do
 done
 TEST_TIME=$BEST_TIME
 
-# --- Step 3: Compute metrics ---
 if [ "$COVERED" -eq 0 ]; then
     EFFICIENCY=99999
 else
