@@ -1,49 +1,75 @@
-# Autoresearch Ideas — Output Layer
+# Autoresearch Ideas — Current State (Sync + CLI DB)
 
-## Final state: 98.6% coverage (17 uncovered lines)
+## What landed
 
-### Coverage by file
-- ✅ common.py: 100%
-- ✅ markdown_fmt.py: 100%
-- ✅ narrative.py: 100%
-- ✅ theme.py: 100%
-- ✅ validation.py: 100%
-- ✅ terminal_fmt.py: 99% (1 miss — L175, chunks context_data path)
-- 🔶 format_registry.py: 92% (4 miss — L151-154 unreachable fallback)
-- 🔶 json_fmt.py: 94% (4 miss — render_stats L119/121, render_tool_search L140/142)
-- 🔶 painted_bridge.py: 98.5% (9 miss — scattered internal helpers + empty-parts guards)
+### 1) `api/sync.py` is now **100% covered**
+- Benchmark: `sync transport coverage efficiency`
+- Final: **296/296 covered**, miss **0**, efficiency **0.96**
+- Added meaningful transport tests for:
+  - SSH push/pull error mapping (disconnect, permission, channel, timeout)
+  - HTTP push/pull auth + status/connect errors
+  - local pull/push merge + dry-run branches
+  - sync_push/sync_pull branch routing and last_push/last_pull updates
 
-### Remaining uncovered lines (diminishing returns)
+### 2) `cli/db.py` is now **100% covered**
+- Benchmark: `cli-db coverage efficiency`
+- Final: **398/398 covered**, miss **0**, efficiency **0.96**
+- Added command-level tests for:
+  - `db remote add/list/remove`
+  - `db push/pull` success/error/dry-run/zero-conversation/file-not-found
+  - `db send/receive` tty/stdin handling, stream path, API error mapping
+  - `db info/vacuum/backup/restore/slice/merge` missing-file + runtime branches
 
-**format_registry.py L151-154**: `select_format` last-resort fallback when terminal format
-is missing. Unreachable because builtins always load terminal_fmt. Would need to monkey-patch
-the global `_formats` dict — not worth it for defensive code.
+## Biggest remaining ROI (next implementation targets)
 
-**json_fmt.py L119/121, L140/142**: `render_stats` and `render_tool_search` — thin delegates
-to serialization.serve_fmt/stats. Need complex DatabaseStats/ToolQuery type stubs that match
-deeply nested dataclass hierarchies. Low value: they're one-liner pass-throughs.
+Current CLI misses (non-serve/non-embeddings test run):
+- `src/siftd/cli/data.py` → **182 miss** (73%)
+- `src/siftd/cli/search.py` → **153 miss** (62%)
+- `src/siftd/cli/install.py` → **155 miss** (49%)
+- `src/siftd/cli/meta.py` → **107 miss** (53%)
+- `src/siftd/cli/query.py` → **98 miss** (66%)
+- `src/siftd/cli/peek.py` → **82 miss** (62%)
 
-**painted_bridge.py (9 lines)**:
-- L39-41 `_styles()`: Legacy function, only called by dead code paths. Not exercised by any
-  render function through the current code paths (theme uses `domain_styles()` instead).
-- L73 `_lines_to_block([])`: Empty list guard. All callers check for empty before calling.
-- L111 `_append_multiline` with text that strips to empty: All callers pass non-empty text.
-- L147 `_output_preview_lines` with empty output: Guard for whitespace-only output.
-- L225 `file.read` raw non-JSON input: The test sends it but it goes through _parse_json_safe
-  which returns None, then the `elif raw_input` path… actually this should be coverable.
-- L804, L903: `if not parts: return Block.empty(0,0)` in query/peek detail renderers.
-  Headers always create parts, so this guard can't fire without an empty detail object.
+### High-value function clusters
 
-### Metric evolution
-- Baseline: score=267 (267 miss + 0.07 efficiency)
-- After common/search/detail/narrative: score=160 (160 miss + 0.22)
-- After painted_bridge/tool presenters: score=52 (51 miss + 1.04)
-- After tool edges/render_search context: score=22 (21 miss + 0.63)
-- After json_fmt delegates: score=18 (17 miss + 0.54)
+#### `cli/data.py`
+- `cmd_copy` (63 miss)
+- `_doctor_run_painted` (34 miss)
+- `cmd_migrate` (14 miss)
+- `_doctor_fix` (13 miss)
+- `_doctor_run_plain` (12 miss)
 
-### New metric validation
-The `miss + LOC×time/covered` metric worked perfectly for this cycle:
-- No edge zone rules needed
-- Every coverage improvement was correctly rewarded
-- Efficiency term stayed <1.0 throughout (negligible vs miss)
-- Natural phase: miss dominated at start, efficiency will dominate when approaching 100%
+#### `cli/search.py`
+- `cmd_search` (80 miss)
+- `_search_fts_only` (18 miss)
+- `_search_build_index` (17 miss)
+- `_enrich_context` (17 miss)
+
+## Implementation improvements needed for next gains
+
+1. **Split `cli/data.py` into smaller command modules**
+   - Move doctor subcommand rendering into dedicated helpers (`doctor_plain`, `doctor_json`, `doctor_painted`)
+   - Extract `cmd_copy` flow (validate/filter/copy/report) into pure helpers
+   - This will let tests assert behavior without full command orchestration in each case.
+
+2. **Refactor `cli/search.py` command body**
+   - `cmd_search` is still too monolithic; extract decision tree into testable helper funcs:
+     - delegation decision
+     - empty-result formatting
+     - enrichment pipeline selection
+   - Keep parser wiring thin; move logic into pure functions with injected dependencies.
+
+3. **Add shared CLI command test helpers**
+   - Create helpers for:
+     - fake stdin/stdout objects (send/receive-like paths)
+     - patchable result factories for sync/search command return objects
+     - reusable remote-config fixtures
+   - Avoid repeated boilerplate in each `tests/cli/test_*.py` file.
+
+4. **Use full-suite filter without stale exclusions when possible**
+   - `test_doctor` now passes; keep only genuinely needed exclusions (`test_basics`, `test_follow_session`, and environment-gated markers).
+
+## De-prioritized / not worth chasing now
+- `serve/*` and `embeddings/*` (marker-gated and environment-dependent)
+- `adapters/template.py` (example template)
+- terminal/UI-only defensive branches that require brittle TTY internals
