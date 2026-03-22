@@ -53,11 +53,49 @@ class TestCodexCliParseEdgeCases:
         resp = list(codex_cli.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0].prompts[0].responses[0]
         assert resp.usage.input_tokens == 100 and resp.attributes.get("cached_input_tokens") == "30"
 
-    def test_pending_tools(self, tmp_path):
+    def test_pending_tools_and_early_call(self, tmp_path):
+        # function_call before assistant message → _get_or_create_response creates new (L289-292)
         records = [{"type": "session_meta", "timestamp": "T0", "payload": {"id": "s1", "cwd": "/p"}},
             {"type": "response_item", "timestamp": "T1", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "go"}]}},
-            {"type": "response_item", "timestamp": "T2", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}},
-            {"type": "response_item", "timestamp": "T3", "payload": {"type": "function_call", "name": "shell", "call_id": "c1", "arguments": "{}"}}]
+            {"type": "response_item", "timestamp": "T2", "payload": {"type": "function_call", "name": "shell", "call_id": "c1", "arguments": "{}"}},
+            {"type": "response_item", "timestamp": "T3", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}}]
         conv = list(codex_cli.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         assert any(tc.status == "pending" for p in conv.prompts for r in p.responses for tc in r.tool_calls)
         assert not codex_cli.can_handle(Source(kind="sqlite", location=Path("/mock/sessions/s.jsonl")))
+
+    def test_normalizer(self):
+        n = codex_cli.normalize_record
+        assert n({"type": "session_meta", "timestamp": "T", "payload": {"id": "s", "cwd": "/w"}}).session_id == "s"
+        assert n({"type": "turn_context", "timestamp": "T", "payload": {"model": "m"}}).model == "m"
+        u = n({"type": "response_item", "timestamp": "T", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "q"}]}})
+        assert u.kind == "user" and u.content_blocks[0]["text"] == "q"
+        a = n({"type": "response_item", "timestamp": "T", "payload": {"type": "message", "role": "assistant", "content": ["plain", {"type": "output_text", "text": "ok"}]}})
+        assert a.kind == "assistant" and a.content_blocks[0]["text"] == "plain" and a.content_blocks[1]["text"] == "ok"
+        assert n({"type": "response_item", "timestamp": "T", "payload": {"type": "function_call", "name": "sh"}}).kind == "tool_use"
+        assert n({"type": "response_item", "timestamp": "T", "payload": {"type": "custom_tool_call", "name": "x"}}).tool_name == "x"
+        ev = n({"type": "event_msg", "timestamp": "T", "payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 5, "output_tokens": 3}}}})
+        assert ev.kind == "usage" and ev.input_tokens == 5
+        assert n({"type": "event_msg", "timestamp": "T", "payload": {"type": "other"}}) is None
+        assert n({"type": "unknown"}) is None
+        assert n({"type": "response_item", "timestamp": "T", "payload": {"type": "unknown"}}) is None
+
+    def test_normalizer_block_edges(self):
+        n = codex_cli.normalize_record
+        a = n({"type": "response_item", "timestamp": "T", "payload": {"type": "message", "role": "assistant",
+            "content": [{"type": "reasoning", "text": "think"}]}})
+        assert a.content_blocks[0]["type"] == "reasoning"
+
+    def test_discover_and_parse_edges(self, tmp_path):
+        d = tmp_path / "sessions"
+        d.mkdir()
+        (d / "s.jsonl").write_text("{}\n")
+        assert list(codex_cli.discover(locations=[str(tmp_path)]))
+        (d / "empty.jsonl").write_text("")
+        assert list(codex_cli.parse(Source(kind="file", location=d / "empty.jsonl"))) == []
+        assert not codex_cli.can_handle(Source(kind="file", location=Path("/mock/sessions/test.json")))
+        # Out-of-order timestamps to cover L109 (started_at update)
+        records = [{"type": "session_meta", "timestamp": "2024-01-01T00:00:05Z", "payload": {"id": "s", "cwd": "/w"}},
+            {"type": "response_item", "timestamp": "2024-01-01T00:00:01Z", "payload": {"type": "message", "role": "user", "content": ["plain text"]}},
+            {"type": "response_item", "timestamp": "2024-01-01T00:00:02Z", "payload": {"type": "message", "role": "assistant", "content": [{"type": "other_type", "data": 1}]}}]
+        conv = list(codex_cli.parse(Source(kind="file", location=write_jsonl(tmp_path, records, "ts.jsonl"))))[0]
+        assert "00:01" in conv.started_at and conv.prompts[0].content[0].content["text"] == "plain text"
