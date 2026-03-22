@@ -300,14 +300,14 @@ class _FakeStdout:
 
 
 class TestDbSendReceive:
-    def test_send_missing_db_and_tty_stdout(self, tmp_path, monkeypatch, capsys):
+    def test_send_missing_db_and_tty_stdout(self, test_db, tmp_path, monkeypatch, capsys):
         rc = main(["--db", str(tmp_path / "missing.db"), "db", "send"])
         assert rc == 1
         assert "Database not found" in capsys.readouterr().err
 
         fake_out = _FakeStdout(is_tty=True)
         monkeypatch.setattr("sys.stdout", fake_out)
-        rc = main(["--db", str(tmp_path / "x.db"), "db", "send"])
+        rc = main(["--db", str(test_db), "db", "send"])
         assert rc == 1
 
     def test_send_zero_success_and_slice_error(self, test_db, monkeypatch, capsys):
@@ -362,6 +362,12 @@ class TestDbSendReceive:
         rc = main(["--db", str(test_db), "db", "receive"])
         assert rc == 1
         assert "bad db" in capsys.readouterr().err
+
+        monkeypatch.setattr("sys.stdin", _FakeStdin(b"sqlite-bytes"))
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("merge failed")))
+        rc = main(["--db", str(test_db), "db", "receive"])
+        assert rc == 1
+        assert "merge failed" in capsys.readouterr().err
 
         monkeypatch.setattr("sys.stdin", _FakeStdin(b"sqlite-bytes"))
         monkeypatch.setattr("siftd.api.receive.receive_database", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
@@ -428,3 +434,28 @@ class TestDbErrorPaths:
         assert rc == 0
         out = capsys.readouterr().out
         assert "replaced" in out and "Tags:" in out and "Workspaces:" in out
+
+    def test_vacuum_saved_branch(self, monkeypatch, capsys):
+        class _FakePath:
+            def __init__(self):
+                self._sizes = iter([2048, 1024])
+
+            def exists(self):
+                return True
+
+            def stat(self):
+                return SimpleNamespace(st_size=next(self._sizes))
+
+        class _Conn:
+            def execute(self, *_a, **_kw):
+                return None
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr("siftd.cli.db.resolve_db", lambda args: _FakePath())
+        monkeypatch.setattr("siftd.api.open_database", lambda db: _Conn())
+
+        rc = main(["db", "vacuum"])
+        assert rc == 0
+        assert "Saved:" in capsys.readouterr().out
