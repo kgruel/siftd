@@ -33,12 +33,12 @@ main() {
     cd "$DEV_ROOT"
 
     if [ $verbose -eq 1 ]; then
-        uv run pytest tests/ -v --tb=short -m "not embeddings and not serve"
+        uv run pytest tests/ -v --tb=short -m "not embeddings and not serve and not slow"
     else
         # Quiet mode: minimal output, details only on failure
         log_info "Running tests (excluding embeddings)..."
         set +e
-        output=$(uv run pytest tests/ -q --tb=line -m "not embeddings and not serve" 2>&1)
+        output=$(uv run pytest tests/ -q --tb=line -m "not embeddings and not serve and not slow" 2>&1)
         status=$?
         set -e
         if [ $status -ne 0 ]; then

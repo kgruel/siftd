@@ -109,44 +109,6 @@ def add_filter_args(
     )
 
 
-    @classmethod
-    def from_query_params(cls, params: dict) -> FilterArgs:
-        """Build FilterArgs from HTTP query parameters.
-
-        Normalizes HTTP quirks: empty strings → None, string lists
-        from doseq encoding, etc.
-        """
-
-        def _str_or_none(v: object) -> str | None:
-            if v is None:
-                return None
-            s = str(v).strip()
-            return s if s else None
-
-        def _str_list_or_none(v: object) -> list[str] | None:
-            if v is None:
-                return None
-            if isinstance(v, list):
-                result = [str(x).strip() for x in v if str(x).strip()]
-                return result if result else None
-            s = str(v).strip()
-            return [s] if s else None
-
-        return cls(
-            workspace=_str_or_none(params.get("workspace")),
-            model=_str_or_none(params.get("model")),
-            since=_str_or_none(params.get("since")),
-            before=_str_or_none(params.get("before")),
-            tag=_str_list_or_none(params.get("tag")),
-            all_tags=_str_list_or_none(params.get("all_tags")),
-            no_tag=_str_list_or_none(params.get("no_tag")),
-            tool=_str_or_none(params.get("tool")),
-            tool_tag=_str_or_none(params.get("tool_tag")),
-            search=_str_or_none(params.get("search")),
-            owner=_str_or_none(params.get("owner")),
-        )
-
-
 def extract_filter_args(args) -> FilterArgs:
     """Pull filter values from a parsed argparse namespace.
 

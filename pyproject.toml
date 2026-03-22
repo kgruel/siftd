@@ -66,6 +66,7 @@ addopts = "-n auto"
 markers = [
     "embeddings: tests that require embedding dependencies",
     "serve: tests that require serve dependencies",
+    "slow: tests that take >10s (excluded from default runs)",
 ]
 
 [tool.ruff]

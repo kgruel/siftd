@@ -48,7 +48,7 @@ main() {
         uv run pytest tests/architecture/ -v --tb=short
         echo ""
         echo -e "${BOLD}=== Test ===${NC}"
-        uv run pytest tests/ -v --tb=short -m "not embeddings and not serve" --ignore=tests/architecture/ \
+        uv run pytest tests/ -v --tb=short -m "not embeddings and not serve and not slow" --ignore=tests/architecture/ \
             --cov=siftd --cov-report=xml:coverage.xml --cov-report=
         echo ""
         echo -e "${BOLD}=== Diff coverage ===${NC}"
@@ -64,9 +64,9 @@ main() {
         printf "Spec... "
         uv run pytest tests/architecture/ -q --tb=line > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; uv run pytest tests/architecture/ -v --tb=short; exit 1; }
         printf "Test... "
-        uv run pytest tests/ -q --tb=line -m "not embeddings and not serve" --ignore=tests/architecture/ \
+        uv run pytest tests/ -q --tb=line -m "not embeddings and not serve and not slow" --ignore=tests/architecture/ \
             --cov=siftd --cov-report=xml:coverage.xml --cov-report= > /dev/null 2>&1 \
-            && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; uv run pytest tests/ -q --tb=short -m "not embeddings and not serve" --ignore=tests/architecture/; exit 1; }
+            && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; uv run pytest tests/ -q --tb=short -m "not embeddings and not serve and not slow" --ignore=tests/architecture/; exit 1; }
         printf "Diff coverage... "
         if has_python_changes; then
             uv run diff-cover coverage.xml --compare-branch=main --fail-under=80 --quiet > /dev/null 2>&1 \

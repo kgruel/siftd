@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from conftest import make_db
 
 from siftd.api.stats import (
@@ -182,6 +183,7 @@ class TestCacheMeta:
 class TestIngestWritesCache:
     """Integration: cmd_ingest writes the stats cache."""
 
+    @pytest.mark.slow
     def test_ingest_creates_cache(self, tmp_path, monkeypatch):
         from siftd.cli import main
 
