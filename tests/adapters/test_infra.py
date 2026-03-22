@@ -144,8 +144,10 @@ class TestRegistryAndDiscover:
         assert len(builtins) >= 8 and "claude_code" in {p.name for p in builtins}
         assert load_dropin_adapters(tmp_path) == []
         assert len(load_all_adapters(dropin_path=tmp_path)) >= 8
+        assert len(load_all_adapters()) >= 8  # uses default dropin_path (L86)
         wrapped = wrap_adapter_paths(claude_code, ["/custom"])
         assert wrapped.DEFAULT_LOCATIONS == ["/custom"] and wrapped.NAME == claude_code.NAME
+        assert list(wrapped.discover()) == []  # /custom doesn't exist, but exercises wrapped discover
 
     def test_discover_all_adapters(self, tmp_path):
         def _touch(rel):
