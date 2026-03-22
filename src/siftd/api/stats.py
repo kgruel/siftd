@@ -145,37 +145,43 @@ def get_cost_coverage(
     have no pricing data available; conversations with cost = 0.0 have tokens
     but were priced at zero (indicates stale stats — run siftd ingest to rebuild).
     """
-    if conn is None:
-        from siftd.storage.sqlite import open_database
+    from siftd.storage.sqlite import open_database
 
+    should_close = False
+    if conn is None:
         path = db_path or default_db_path()
         conn = open_database(path, read_only=True)
+        should_close = True
 
-    has_stats = conn.execute(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
-    ).fetchone()[0]
-    if not has_stats:
-        return None
+    try:
+        has_stats = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
+        ).fetchone()[0]
+        if not has_stats:
+            return None
 
-    row = conn.execute("""
-        SELECT
-            COUNT(*) FILTER (WHERE total_tokens > 0) AS with_tokens,
-            COUNT(*) FILTER (WHERE cost > 0) AS with_cost,
-            COUNT(*) FILTER (WHERE total_tokens > 0 AND cost IS NULL) AS null_cost
-        FROM conversation_stats
-    """).fetchone()
+        row = conn.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE total_tokens > 0) AS with_tokens,
+                COUNT(*) FILTER (WHERE cost > 0) AS with_cost,
+                COUNT(*) FILTER (WHERE total_tokens > 0 AND cost IS NULL) AS null_cost
+            FROM conversation_stats
+        """).fetchone()
 
-    with_tokens = row["with_tokens"] or 0
-    with_cost = row["with_cost"] or 0
-    null_cost = row["null_cost"] or 0
-    pct = round((with_cost / with_tokens) * 100, 2) if with_tokens else 0.0
+        with_tokens = row["with_tokens"] or 0
+        with_cost = row["with_cost"] or 0
+        null_cost = row["null_cost"] or 0
+        pct = round((with_cost / with_tokens) * 100, 2) if with_tokens else 0.0
 
-    return CostCoverage(
-        total_with_tokens=with_tokens,
-        with_positive_cost=with_cost,
-        with_null_cost=null_cost,
-        pct_covered=pct,
-    )
+        return CostCoverage(
+            total_with_tokens=with_tokens,
+            with_positive_cost=with_cost,
+            with_null_cost=null_cost,
+            pct_covered=pct,
+        )
+    finally:
+        if should_close:
+            conn.close()
 
 
 def list_workspaces(
@@ -503,7 +509,15 @@ def get_usage_by_model(*, db_path: Path | None = None) -> list[GroupUsage]:
             " LEFT JOIN models m ON r.model_id = m.id"
             " GROUP BY m.raw_name"
         ).fetchall()
-        cost_by_model: dict[str, float] = {}
+        cost_rows = conn.execute(
+            "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
+            " COALESCE(SUM(cs.cost), 0) AS cost"
+            " FROM conversation_stats cs"
+            " JOIN responses r ON r.conversation_id = cs.conversation_id"
+            " LEFT JOIN models m ON r.model_id = m.id"
+            " GROUP BY m.raw_name"
+        ).fetchall()
+        cost_by_model = {r["name"]: r["cost"] for r in cost_rows}
         results = [
             GroupUsage(
                 name=r["name"], conversations=r["convs"],

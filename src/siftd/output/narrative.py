@@ -154,7 +154,8 @@ class HtmlEmitter:
         try:
             import mistune
 
-            rendered = mistune.html(content)
+            md = mistune.create_markdown(escape=True)
+            rendered = md(content)
             self.parts.append(f'<div class="narrative-text">{rendered}</div>')
         except ImportError:
             # Fallback: escaped text when mistune not installed

@@ -47,7 +47,7 @@ class OutputFormat(Protocol):
     name: str
     media_type: str
 
-    def render_detail(self, turns: list, fidelity: Fidelity, **context: Any) -> Any: ...
+    def render_detail(self, result: Any, fidelity: Fidelity, **context: Any) -> Any: ...
 
 
 def _get_name(module: ModuleType) -> str:

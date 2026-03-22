@@ -265,6 +265,65 @@ main {
 .workspace { color: var(--fg); }
 .model { color: var(--fg-secondary); }
 .tag { color: var(--teal); }
+
+/* Tag section — interactive tagging */
+.tag-section {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.tag-section .tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2em;
+  padding: 0.1em var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.85em;
+}
+
+.tag-section .tag.interactive { padding-right: 0.2em; }
+
+.tag-remove {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1em;
+  line-height: 1;
+  padding: 0 0.15em;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition), background var(--transition);
+}
+.tag-remove:hover {
+  color: var(--error);
+  background: rgba(200, 80, 80, 0.15);
+}
+
+.tag-add {
+  display: inline-flex;
+  align-items: center;
+}
+
+.tag-input {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.15em var(--space-sm);
+  font-family: var(--mono);
+  font-size: 0.85em;
+  width: 10em;
+  transition: border-color var(--transition);
+}
+.tag-input:focus {
+  border-color: var(--teal);
+  outline: none;
+}
+.tag-input::placeholder { color: var(--muted); }
 .adapter { color: var(--muted); }
 .summary { color: var(--fg-secondary); }
 .prompt { color: var(--accent); }

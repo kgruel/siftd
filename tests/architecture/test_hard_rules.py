@@ -281,7 +281,11 @@ class TestServeRouteBoundary:
             )
 
     def test_html_routes_no_v1_references(self, src_dir):
-        """HTML UI routes (html_routes.py) must not reference /v1/ paths."""
+        """HTML UI routes (html_routes.py) must not reference /v1/ paths.
+
+        Operation path= fields are excluded — those are API endpoint
+        identifiers for serve delegation, not URL references in HTML output.
+        """
         import re
 
         html_routes_file = src_dir / "serve" / "html_routes.py"
@@ -289,9 +293,11 @@ class TestServeRouteBoundary:
             pytest.skip("No serve/html_routes.py")
 
         v1_re = re.compile(r'["\']/v1/')
+        # Operation(path="/v1/...") is serve delegation, not HTML output
+        op_path_re = re.compile(r'path\s*=\s*["\']|path\s*=\s*f["\']')
         violations = []
         for i, line in enumerate(html_routes_file.read_text().splitlines(), 1):
-            if v1_re.search(line):
+            if v1_re.search(line) and not op_path_re.search(line):
                 violations.append(f"serve/html_routes.py:{i}: references /v1/ path")
 
         if violations:

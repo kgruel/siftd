@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from litestar import Request, get
+from litestar import Request, get, post
 from litestar.params import Parameter
 from litestar.response import Response
 
@@ -207,7 +207,7 @@ async def ui_meta(db_path: Path) -> Response:
 
     ws_rows: list = []
     try:
-        ws_rows = list_workspaces(db_path=db_path, limit=200)
+        ws_rows = list_workspaces(db_path=db_path, n=200)
     except Exception:
         pass
 
@@ -271,6 +271,10 @@ async def ui_query(
     brief: bool = Parameter(query="brief", default=False),
 ) -> Response:
     """List or detail conversations as HTML fragments."""
+    from siftd.api.conversations import get_conversation, list_conversations
+    from siftd.api.dispatch import Operation, dispatch, execute
+    from siftd.output.format_registry import get_format
+
     # Normalize empty strings to None (htmx sends "" for blank inputs)
     workspace = workspace or None
     model = model or None
@@ -279,13 +283,10 @@ async def ui_query(
     before = before or None
     tag = [t for t in (tag or []) if t] or None
 
-    from siftd.output.format_registry import get_format
-
     fmt = get_format("html")
+    ctx = {"detail_base": "/ui/query", "shell_base": "/ui"}
 
     if id is not None:
-        from siftd.api.conversations import get_conversation
-
         # Build fidelity from query params — same logic as CLI flags
         if full:
             fidelity = _fidelity(depth=3, chars=0, tools=True, thinking=True)
@@ -294,42 +295,54 @@ async def ui_query(
         else:
             fidelity = _fidelity(depth=2, chars=0, tools=tools, thinking=thinking)
 
-        detail = get_conversation(
-            id,
-            db_path=db_path,
-            include_thinking=fidelity.shows("thinking"),
-            include_tool_content=fidelity.shows("tools"),
+        op = Operation(
+            path=f"/v1/conversations/{id}",
+            method="GET",
+            fn=get_conversation,
+            params={
+                "id": id,
+                "db_path": db_path,
+                "include_thinking": fidelity.shows("thinking"),
+                "include_tool_content": fidelity.shows("tools"),
+            },
+            render_method="detail",
+            fidelity=fidelity,
+            db=db_path,
+            render_context={
+                **ctx,
+                "tool_chars": _tool_chars(fidelity),
+                "controls": {"id": id, "tools": tools, "thinking": thinking,
+                             "full": full, "brief": brief},
+                "interactive_tags": True,
+                "tag_action_url": "/ui/tag",
+                "tag_suggest_url": "/ui/tags/suggest",
+            },
         )
+        detail = execute(op)
         if detail is None:
             return _html_response(f'<p class="empty">Not found: {id[:12]}</p>')
+        return _html_response(fmt.render_detail(detail, op.fidelity, **op.render_context))
 
-        tc = _tool_chars(fidelity)
-        html = fmt.render_detail(
-            detail.turns,
-            fidelity,
-            detail=detail,
-            tool_chars=tc,
-            detail_base="/ui/query",
-            shell_base="/ui",
-            controls={"id": id, "tools": tools, "thinking": thinking,
-                      "full": full, "brief": brief},
-        )
-        return _html_response(html)
-
-    from siftd.api.conversations import list_conversations
-
-    rows = list_conversations(
-        db_path=db_path,
-        workspace=workspace,
-        model=model,
-        since=since,
-        before=before,
-        search=search,
-        tags=tag,
-        limit=n,
+    op = Operation(
+        path="/v1/conversations",
+        method="GET",
+        fn=list_conversations,
+        params={
+            "db_path": db_path,
+            "workspace": workspace,
+            "model": model,
+            "since": since,
+            "before": before,
+            "search": search,
+            "tag": tag,
+            "n": n,
+        },
+        render_method="list",
+        fidelity=_fidelity(),
+        db=db_path,
+        render_context=ctx,
     )
-    html = fmt.render_list(rows, _fidelity(), detail_base="/ui/query", shell_base="/ui")
-    return _html_response(html)
+    return _html_response(dispatch(op, fmt=fmt))
 
 
 @get("/ui/search", opt={"no_auth": True})
@@ -345,6 +358,7 @@ async def ui_search(
     """
     from html import escape
 
+    from siftd.api.dispatch import Operation, execute
     from siftd.output.format_registry import get_format
 
     if not q.strip():
@@ -373,7 +387,17 @@ async def ui_search(
     try:
         from siftd.api.search import aggregate_by_conversation, hybrid_search
 
-        results = hybrid_search(q, db_path=db_path, limit=30, fts5_passthrough=True)
+        op = Operation(
+            path="/v1/search",
+            method="GET",
+            fn=hybrid_search,
+            params={"q": q, "db_path": db_path, "n": 30},
+            render_method="search",
+            fidelity=_fidelity(),
+            db=db_path,
+            render_context=ctx,
+        )
+        results = execute(op)
         if results:
             if mode == "conversations":
                 convs = aggregate_by_conversation(results, limit=20)
@@ -388,22 +412,19 @@ async def ui_search(
                     }
                     for c in convs
                 ]
-                html = fmt.render_search(conv_hits, _fidelity(), **ctx)
-                return _html_response(mode_bar + html)
-
-            # chunks mode (default)
-            hits = [
-                {
-                    "conversation_id": r.conversation_id,
-                    "score": r.score,
-                    "text": r.text,
-                    "chunk_type": r.chunk_type,
-                    "_workspace": r.workspace_path or "",
-                    "_started_at": r.started_at or "",
-                }
-                for r in results[:20]
-            ]
-            html = fmt.render_search(hits, _fidelity(), **ctx)
+            else:
+                conv_hits = [
+                    {
+                        "conversation_id": r.conversation_id,
+                        "score": r.score,
+                        "text": r.text,
+                        "chunk_type": r.chunk_type,
+                        "_workspace": r.workspace_path or "",
+                        "_started_at": r.started_at or "",
+                    }
+                    for r in results[:20]
+                ]
+            html = fmt.render_search(conv_hits, op.fidelity, **op.render_context)
             return _html_response(mode_bar + html)
     except Exception:
         pass  # Embeddings not installed or DB missing — fall through to FTS
@@ -411,12 +432,22 @@ async def ui_search(
     # FTS5 fallback (always available)
     from siftd.api.conversations import list_conversations
 
-    rows = list_conversations(db_path=db_path, search=q, limit=20)
+    op = Operation(
+        path="/v1/conversations",
+        method="GET",
+        fn=list_conversations,
+        params={"db_path": db_path, "search": q, "n": 20},
+        render_method="list",
+        fidelity=_fidelity(),
+        db=db_path,
+        render_context=ctx,
+    )
+    rows = execute(op)
     if rows:
-        html = fmt.render_list(rows, _fidelity(), **ctx)
+        html = fmt.render_list(rows, op.fidelity, **op.render_context)
         return _html_response(mode_bar + html)
 
-    return _html_response(mode_bar + f'<p class="empty">No results for: {q}</p>')
+    return _html_response(mode_bar + f'<p class="empty">No results for: {escape(q)}</p>')
 
 
 # ---------------------------------------------------------------------------
@@ -552,156 +583,105 @@ async def ui_follow(
 @get("/ui/stats", opt={"no_auth": True})
 async def ui_stats(db_path: Path) -> Response:
     """Render cost/token dashboard as HTML fragment."""
-    from html import escape
+    from siftd.api.dispatch import Operation, execute
+    from siftd.api.stats import (
+        get_cost_coverage,
+        get_stats,
+        get_usage_by_model,
+        get_usage_by_workspace,
+        get_usage_summary,
+    )
+    from siftd.output.format_registry import get_format
 
-    from siftd.api.stats import get_stats, get_usage_by_model, get_usage_by_workspace, get_usage_summary
-    from siftd.output.common import fmt_tokens, fmt_workspace
+    op = Operation(
+        path="/v1/stats",
+        method="GET",
+        fn=get_stats,
+        params={"db_path": db_path},
+        render_method="stats",
+        fidelity=_fidelity(),
+        db=db_path,
+    )
 
-    def cost_coverage_pct(db: Path) -> int:
-        """Return percentage of conversations with cost data."""
-        from siftd.api.stats import get_cost_coverage
-
-        result = get_cost_coverage(db_path=db)
-        return round(result.pct_covered) if result else 0
-
-    parts: list[str] = ['<article class="stats-dashboard">']
-    parts.append("<h2>Stats</h2>")
-
-    # Overall stats from get_stats()
     try:
-        stats = get_stats(db_path=db_path)
+        stats = execute(op)
     except Exception:
         return _html_response('<p class="empty">No data available</p>')
 
-    # Summary cards
-    parts.append('<div class="stats-grid">')
-    parts.append(
-        f'<div class="stat-card">'
-        f'<div class="stat-value">{stats.counts.conversations:,}</div>'
-        f'<div class="stat-label">Conversations</div></div>'
-    )
-    parts.append(
-        f'<div class="stat-card">'
-        f'<div class="stat-value">{stats.counts.responses:,}</div>'
-        f'<div class="stat-label">Responses</div></div>'
-    )
-    parts.append(
-        f'<div class="stat-card">'
-        f'<div class="stat-value">{stats.token_coverage.pct_with_tokens:.0f}%</div>'
-        f'<div class="stat-label">Token coverage</div></div>'
-    )
-    if stats.activity_window[0]:
-        parts.append(
-            f'<div class="stat-card">'
-            f'<div class="stat-value">{escape(stats.activity_window[0][:10])}</div>'
-            f'<div class="stat-label">First activity</div></div>'
-        )
-    if stats.activity_window[1]:
-        parts.append(
-            f'<div class="stat-card">'
-            f'<div class="stat-value">{escape(stats.activity_window[1][:10])}</div>'
-            f'<div class="stat-label">Last activity</div></div>'
-        )
-    parts.append("</div>")
-
-    # Aggregate token/cost totals (full database)
+    # Gather supplementary data for render context
+    usage = None
+    cost_coverage = 0
+    by_model: list = []
+    by_workspace: list = []
     try:
         usage = get_usage_summary(db_path=db_path)
-        total_tokens = usage.total_input_tokens + usage.total_output_tokens
-
-        parts.append('<div class="stats-grid">')
-        parts.append(
-            f'<div class="stat-card">'
-            f'<div class="stat-value">{fmt_tokens(total_tokens)}</div>'
-            f'<div class="stat-label">Total tokens</div></div>'
-        )
-        parts.append(
-            f'<div class="stat-card">'
-            f'<div class="stat-value">{fmt_tokens(usage.total_input_tokens)}</div>'
-            f'<div class="stat-label">Input tokens</div></div>'
-        )
-        parts.append(
-            f'<div class="stat-card">'
-            f'<div class="stat-value">{fmt_tokens(usage.total_output_tokens)}</div>'
-            f'<div class="stat-label">Output tokens</div></div>'
-        )
-        # Cost coverage caveat
-        cost_coverage = cost_coverage_pct(db_path)
-        parts.append(
-            f'<div class="stat-card">'
-            f'<div class="stat-value">${usage.total_cost:.2f}</div>'
-            f'<div class="stat-label">Cost tracked ({cost_coverage}% coverage)</div></div>'
-        )
-        parts.append("</div>")
+        cc = get_cost_coverage(db_path=db_path)
+        cost_coverage = round(cc.pct_covered) if cc else 0
     except Exception:
         pass
-
-    # By model (full database)
     try:
         by_model = get_usage_by_model(db_path=db_path)
-        if by_model:
-            parts.append("<h3>By model</h3>")
-            parts.append('<table class="conversation-list">')
-            parts.append(
-                "<thead><tr>"
-                "<th>Model</th><th>Conversations</th>"
-                "<th>Input</th><th>Output</th><th>Total</th>"
-                "</tr></thead><tbody>"
-            )
-            for g in by_model:
-                tok = g.input_tokens + g.output_tokens
-                parts.append(
-                    f"<tr>"
-                    f'<td class="model">{escape(g.name)}</td>'
-                    f'<td class="metric">{g.conversations:,}</td>'
-                    f'<td class="metric">{fmt_tokens(g.input_tokens)}</td>'
-                    f'<td class="metric">{fmt_tokens(g.output_tokens)}</td>'
-                    f'<td class="metric">{fmt_tokens(tok)}</td>'
-                    f"</tr>"
-                )
-            parts.append("</tbody></table>")
     except Exception:
         pass
-
-    # By workspace (full database)
     try:
-        by_ws = get_usage_by_workspace(db_path=db_path)
-        if by_ws:
-            parts.append("<h3>By workspace</h3>")
-            parts.append('<table class="conversation-list">')
-            parts.append(
-                "<thead><tr>"
-                "<th>Workspace</th><th>Conversations</th>"
-                "<th>Tokens</th><th>Cost</th>"
-                "</tr></thead><tbody>"
-            )
-            for g in by_ws:
-                tok = g.input_tokens + g.output_tokens
-                parts.append(
-                    f"<tr>"
-                    f'<td class="workspace">{escape(fmt_workspace(g.name))}</td>'
-                    f'<td class="metric">{g.conversations:,}</td>'
-                    f'<td class="metric">{fmt_tokens(tok)}</td>'
-                    f'<td class="metric">${g.cost:.4f}</td>'
-                    f"</tr>"
-                )
-            parts.append("</tbody></table>")
+        by_workspace = get_usage_by_workspace(db_path=db_path)
     except Exception:
         pass
 
-    # Top tools
-    if stats.top_tools:
-        parts.append("<h3>Top tools</h3>")
-        parts.append('<table class="conversation-list">')
-        parts.append(
-            "<thead><tr><th>Tool</th><th>Calls</th></tr></thead><tbody>"
-        )
-        for t in stats.top_tools[:15]:
-            parts.append(
-                f'<tr><td class="tool-name">{escape(t.name)}</td>'
-                f'<td class="metric">{t.usage_count:,}</td></tr>'
-            )
-        parts.append("</tbody></table>")
+    fmt = get_format("html")
+    html = fmt.render_stats(
+        stats, op.fidelity,
+        usage=usage,
+        cost_coverage_pct=cost_coverage,
+        by_model=by_model,
+        by_workspace=by_workspace,
+    )
+    return _html_response(html)
 
-    parts.append("</article>")
-    return _html_response("\n".join(parts))
+
+# ---------------------------------------------------------------------------
+# Tag operations
+# ---------------------------------------------------------------------------
+
+
+@post("/ui/tag", opt={"no_auth": True})
+async def ui_tag(request: Request, db_path: Path) -> Response:
+    """Apply or remove a tag, return updated tag section fragment."""
+    from siftd.api.tags import modify_conversation_tag
+    from siftd.output.html_fmt import render_tag_section
+
+    form = await request.form()
+    action = str(form.get("action", "apply"))
+    conv_id = str(form.get("id", ""))
+    tag_name = str(form.get("tag", "")).strip()
+
+    if not conv_id or not tag_name:
+        return _html_response('<div class="tag-section">error: missing id or tag</div>')
+
+    tags = modify_conversation_tag(
+        conv_id, tag_name, action=action, db_path=db_path,
+    )
+    return _html_response(render_tag_section(
+        conv_id, tags,
+        tag_action_url="/ui/tag", tag_suggest_url="/ui/tags/suggest",
+    ))
+
+
+@get("/ui/tags/suggest", opt={"no_auth": True})
+async def ui_tags_suggest(
+    db_path: Path,
+    tag: str = Parameter(query="tag", default=""),
+) -> Response:
+    """Return datalist <option> elements for tag autocomplete."""
+    from html import escape
+
+    from siftd.api.tags import list_tags
+
+    all_tags = list_tags(db_path=db_path)
+    prefix = tag.lower()
+    options = [
+        f'<option value="{escape(t.name)}">'
+        for t in all_tags
+        if not prefix or t.name.lower().startswith(prefix)
+    ]
+    return _html_response("".join(options[:20]))

@@ -38,7 +38,7 @@ ALLOWED_DEPS: dict[str, list[str]] = {
     "search": ["domain", "storage", "embeddings", "peek", "utilities"],
     "output": ["domain", "storage", "search", "serialization", "utilities", "content"],
     "doctor": ["domain", "storage", "adapters", "embeddings", "output", "utilities"],
-    "serve": ["domain", "storage", "search", "serialization", "api", "output", "utilities"],
+    "serve": ["domain", "storage", "search", "serialization", "api", "output", "utilities"],  # output: html_routes uses format_registry + html_fmt for fragment rendering
     "api": [
         "domain",
         "storage",

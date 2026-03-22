@@ -59,6 +59,16 @@ Main repo: `~/Code/siftd` (branch `main`)
 - **`list_workspaces`** gains `db_path` kwarg (matching `list_tags` pattern).
 - **Stats API** — `get_usage_summary`, `get_usage_by_model`, `get_usage_by_workspace`, `get_cost_coverage` — proper aggregate SQL over full DB.
 
+### Phase 6: Operation IR conversion
+
+- **`render_context` on Operation** — `dict[str, Any]` field forwarded as `**kwargs` to formatter. Input-context concern (link bases, controls) flows through dispatch.
+- **`render_detail` unified signature** — all output formatters accept either `ConversationDetail` (dispatch path) or raw turns list (backward compat). Duck-typed via `hasattr(result, "turns")`.
+- **`html_fmt.render_stats`** — 155 lines of stats HTML moved from route to formatter.
+- **`ui_query`** — list + detail branches normalize into Operations. List uses full `dispatch()`, detail uses `execute()` + None check + render.
+- **`ui_search`** — semantic + FTS5 paths both build Operations. Post-execute aggregation stays in route.
+- **`ui_stats`** — reduced to data gathering + single `render_stats` call.
+- **Arch test updated** — `test_html_routes_no_v1_references` excludes `Operation(path=...)` declarations.
+
 ### Cost coverage (merged to main)
 
 Investigation + fix landed on `main` (subtask `fix/cost-coverage-v2`):
@@ -70,40 +80,29 @@ Investigation + fix landed on `main` (subtask `fix/cost-coverage-v2`):
 
 - **Lazy turn loading** — no measurable latency problem. Revisit if conversations with 100+ turns cause visible lag.
 - **Per-turn fidelity** — requires turn-level endpoint for a problem that doesn't exist yet.
-- **Side-by-side comparison** — wait for Operation IR to land before building more views.
+- **Operation IR blocker** — landed. Routes converted. No longer blocking new views.
 
-## Blocked: waiting for Operation IR
+## Next
 
-The Operation IR pattern formalizes what html_routes already does ad-hoc:
+### Tagging UI (in progress)
 
-```
-normalize(input) → Operation(fn, params, fidelity) → dispatch → render
-```
+Add/remove tags on conversations from the web UI.
 
-Both CLI and serve routes will declare Operations instead of manually building the normalize→call→render pipeline. Landing this in the main repo first, then pulling into this branch to refactor routes and extend functionality.
+### Export UI
 
-**What changes when Operations land:**
-- `html_routes.py` endpoints shrink to normalization + `dispatch(op, format)`
-- New endpoints become trivial (just an Operation declaration)
-- CLI and HTTP share the same dispatch path — feature parity by construction
+Export conversations from the UI. Trivial Operation declaration now that IR is in place.
 
-**What to do after Operations land:**
-- Refactor existing routes to Operation declarations
-- Add remaining views: export, tagging UI, advanced search (thread mode)
+### Advanced search (thread mode)
 
-## Next: needs design discussion
+Thread-mode search view. `render_search` already handles thread mode — needs a UI mode toggle.
 
-### Syntax highlighting + diff rendering
+### Side-by-side comparison
 
-Tool cards show raw code in `<pre>` blocks. Two related improvements:
-- **Syntax highlighting** in file reads and tool output (lightweight CDN highlighter)
-- **Proper diff rendering** in edit tool cards (unified diff with line numbers, potentially side-by-side)
-
-These affect the HtmlEmitter and tool_presenters interface — need to decide whether highlighting is CSS-only (class-based tokens from server) or client-side JS (Prism/highlight.js). Diff rendering may need changes to ToolPresentation's `removed`/`added` fields.
+Compare two conversations. Unblocked by Operation IR.
 
 ### Keyboard navigation
 
-`j`/`k` list navigation, `Enter` to open detail. Pure JS, no route changes. Independent of Operations.
+`j`/`k` list navigation, `Enter` to open detail. Pure JS, no route changes.
 
 ## Running it
 

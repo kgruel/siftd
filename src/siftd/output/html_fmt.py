@@ -82,11 +82,86 @@ def _render_controls(controls: dict, detail_base: str) -> str:
     return '<div class="fidelity-controls">' + "".join(buttons) + "</div>"
 
 
-def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> str:
+def _render_tag_section(
+    conv_id: str,
+    tags: list[str],
+    interactive: bool = False,
+    *,
+    tag_action_url: str = "",
+    tag_suggest_url: str = "",
+) -> str:
+    """Render the tag section for a conversation detail header.
+
+    When interactive=True, tags get × remove buttons and a + add input.
+    The section has a stable ID for htmx fragment swaps.
+    Route URLs are passed via parameters — formatters must not hardcode routes.
+    """
+    section_id = f"tags-{conv_id[:12]}"
+    parts = [f'<div class="tag-section" id="{escape(section_id)}">']
+
+    for tag in tags:
+        if interactive and tag_action_url:
+            parts.append(
+                f'<span class="tag interactive">{escape(tag)}'
+                f'<button class="tag-remove"'
+                f' hx-post="{escape(tag_action_url)}"'
+                f' hx-vals=\'{{"action":"remove","id":"{escape(conv_id)}","tag":"{escape(tag)}"}}\''
+                f' hx-target="#{escape(section_id)}" hx-swap="outerHTML"'
+                f' title="Remove tag">\xd7</button>'
+                f'</span>'
+            )
+        else:
+            parts.append(f'<span class="tag">{escape(tag)}</span>')
+
+    if interactive and tag_action_url:
+        input_id = f"tag-input-{conv_id[:12]}"
+        list_id = f"tag-suggest-{conv_id[:12]}"
+        parts.append(
+            f'<form class="tag-add" hx-post="{escape(tag_action_url)}"'
+            f' hx-target="#{escape(section_id)}"'
+            f' hx-swap="outerHTML">'
+            f'<input type="hidden" name="action" value="apply">'
+            f'<input type="hidden" name="id" value="{escape(conv_id)}">'
+            f'<input type="text" name="tag" id="{escape(input_id)}"'
+            f' list="{escape(list_id)}" class="tag-input"'
+            f' placeholder="add tag\u2026"'
+            f' autocomplete="off"'
+            f' hx-get="{escape(tag_suggest_url)}" hx-trigger="focus, keyup changed delay:200ms"'
+            f' hx-target="#{escape(list_id)}" hx-swap="innerHTML"'
+            f' hx-include="this">'
+            f'<datalist id="{escape(list_id)}"></datalist>'
+            f'</form>'
+        )
+
+    parts.append('</div>')
+    return "\n".join(parts)
+
+
+def render_tag_section(
+    conv_id: str,
+    tags: list[str],
+    *,
+    tag_action_url: str = "",
+    tag_suggest_url: str = "",
+) -> str:
+    """Public entry point for rendering an interactive tag section fragment.
+
+    Used by the tag mutation route to return the updated tag section.
+    """
+    return _render_tag_section(
+        conv_id, tags, interactive=True,
+        tag_action_url=tag_action_url, tag_suggest_url=tag_suggest_url,
+    )
+
+
+def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
     """Render conversation detail as an HTML fragment.
 
+    Args:
+        result: ConversationDetail object, or raw turns list (backward compat).
+
     Context keys:
-        detail: conversation metadata object
+        turns: override which turns to render (default: result.turns)
         tool_chars: int
         no_header: bool
         controls: dict — fidelity toggle state (id, tools, thinking, full, brief)
@@ -94,7 +169,12 @@ def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> str:
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
     from siftd.output.narrative import HtmlEmitter, walk_narrative
 
-    detail = context.get("detail")
+    if hasattr(result, "turns"):
+        detail = result
+        turns = context.get("turns", detail.turns)
+    else:
+        turns = result
+        detail = context.get("detail")
     no_header = context.get("no_header", False)
     tool_chars = context.get("tool_chars", 0)
     controls = context.get("controls")
@@ -137,13 +217,16 @@ def render_detail(turns: list, fidelity: Fidelity, **context: Any) -> str:
                 f'<span class="metric">{escape(fmt_tokens(total_tokens))} tokens</span>'
             )
 
-        tags = getattr(detail, "tags", None)
-        if tags:
-            for tag in tags:
-                meta.append(f'<span class="tag">{escape(tag)}</span>')
-
         if meta:
             parts.append(f'<div class="meta">{" ".join(meta)}</div>')
+
+        tags = getattr(detail, "tags", None) or []
+        interactive = context.get("interactive_tags", False)
+        parts.append(_render_tag_section(
+            detail_id, tags, interactive,
+            tag_action_url=context.get("tag_action_url", ""),
+            tag_suggest_url=context.get("tag_suggest_url", ""),
+        ))
         if controls:
             detail_base = context.get("detail_base", "")
             parts.append(_render_controls(controls, detail_base))
@@ -366,4 +449,146 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         parts.append("</article>")
 
     parts.append("</section>")
+    return "\n".join(parts)
+
+
+def render_stats(stats: Any, fidelity: Fidelity, **context: Any) -> str:
+    """Render stats dashboard as an HTML fragment.
+
+    Args:
+        stats: DatabaseStats object from get_stats().
+
+    Context keys:
+        usage: UsageSummary — aggregate token/cost totals
+        cost_coverage_pct: int — percentage of conversations with cost data
+        by_model: list[GroupUsage] — token/cost breakdown by model
+        by_workspace: list[GroupUsage] — token/cost breakdown by workspace
+    """
+    from siftd.output.common import fmt_tokens, fmt_workspace
+
+    usage = context.get("usage")
+    cost_coverage = context.get("cost_coverage_pct", 0)
+    by_model = context.get("by_model", [])
+    by_workspace = context.get("by_workspace", [])
+
+    parts: list[str] = ['<article class="stats-dashboard">']
+    parts.append("<h2>Stats</h2>")
+
+    # Summary cards
+    parts.append('<div class="stats-grid">')
+    parts.append(
+        f'<div class="stat-card">'
+        f'<div class="stat-value">{stats.counts.conversations:,}</div>'
+        f'<div class="stat-label">Conversations</div></div>'
+    )
+    parts.append(
+        f'<div class="stat-card">'
+        f'<div class="stat-value">{stats.counts.responses:,}</div>'
+        f'<div class="stat-label">Responses</div></div>'
+    )
+    parts.append(
+        f'<div class="stat-card">'
+        f'<div class="stat-value">{stats.token_coverage.pct_with_tokens:.0f}%</div>'
+        f'<div class="stat-label">Token coverage</div></div>'
+    )
+    if stats.activity_window[0]:
+        parts.append(
+            f'<div class="stat-card">'
+            f'<div class="stat-value">{escape(stats.activity_window[0][:10])}</div>'
+            f'<div class="stat-label">First activity</div></div>'
+        )
+    if stats.activity_window[1]:
+        parts.append(
+            f'<div class="stat-card">'
+            f'<div class="stat-value">{escape(stats.activity_window[1][:10])}</div>'
+            f'<div class="stat-label">Last activity</div></div>'
+        )
+    parts.append("</div>")
+
+    # Aggregate token/cost totals
+    if usage is not None:
+        total_tokens = usage.total_input_tokens + usage.total_output_tokens
+        parts.append('<div class="stats-grid">')
+        parts.append(
+            f'<div class="stat-card">'
+            f'<div class="stat-value">{fmt_tokens(total_tokens)}</div>'
+            f'<div class="stat-label">Total tokens</div></div>'
+        )
+        parts.append(
+            f'<div class="stat-card">'
+            f'<div class="stat-value">{fmt_tokens(usage.total_input_tokens)}</div>'
+            f'<div class="stat-label">Input tokens</div></div>'
+        )
+        parts.append(
+            f'<div class="stat-card">'
+            f'<div class="stat-value">{fmt_tokens(usage.total_output_tokens)}</div>'
+            f'<div class="stat-label">Output tokens</div></div>'
+        )
+        parts.append(
+            f'<div class="stat-card">'
+            f'<div class="stat-value">${usage.total_cost:.2f}</div>'
+            f'<div class="stat-label">Cost tracked ({cost_coverage}% coverage)</div></div>'
+        )
+        parts.append("</div>")
+
+    # By model
+    if by_model:
+        parts.append("<h3>By model</h3>")
+        parts.append('<table class="conversation-list">')
+        parts.append(
+            "<thead><tr>"
+            "<th>Model</th><th>Conversations</th>"
+            "<th>Input</th><th>Output</th><th>Total</th>"
+            "</tr></thead><tbody>"
+        )
+        for g in by_model:
+            tok = g.input_tokens + g.output_tokens
+            parts.append(
+                f"<tr>"
+                f'<td class="model">{escape(g.name)}</td>'
+                f'<td class="metric">{g.conversations:,}</td>'
+                f'<td class="metric">{fmt_tokens(g.input_tokens)}</td>'
+                f'<td class="metric">{fmt_tokens(g.output_tokens)}</td>'
+                f'<td class="metric">{fmt_tokens(tok)}</td>'
+                f"</tr>"
+            )
+        parts.append("</tbody></table>")
+
+    # By workspace
+    if by_workspace:
+        parts.append("<h3>By workspace</h3>")
+        parts.append('<table class="conversation-list">')
+        parts.append(
+            "<thead><tr>"
+            "<th>Workspace</th><th>Conversations</th>"
+            "<th>Tokens</th><th>Cost</th>"
+            "</tr></thead><tbody>"
+        )
+        for g in by_workspace:
+            tok = g.input_tokens + g.output_tokens
+            parts.append(
+                f"<tr>"
+                f'<td class="workspace">{escape(fmt_workspace(g.name))}</td>'
+                f'<td class="metric">{g.conversations:,}</td>'
+                f'<td class="metric">{fmt_tokens(tok)}</td>'
+                f'<td class="metric">${g.cost:.4f}</td>'
+                f"</tr>"
+            )
+        parts.append("</tbody></table>")
+
+    # Top tools
+    if stats.top_tools:
+        parts.append("<h3>Top tools</h3>")
+        parts.append('<table class="conversation-list">')
+        parts.append(
+            "<thead><tr><th>Tool</th><th>Calls</th></tr></thead><tbody>"
+        )
+        for t in stats.top_tools[:15]:
+            parts.append(
+                f'<tr><td class="tool-name">{escape(t.name)}</td>'
+                f'<td class="metric">{t.usage_count:,}</td></tr>'
+            )
+        parts.append("</tbody></table>")
+
+    parts.append("</article>")
     return "\n".join(parts)

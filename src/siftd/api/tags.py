@@ -173,6 +173,50 @@ def remove_tag(
     return _remove_tag(conn, entity_type, entity_id, tag_id, commit=commit)
 
 
+def modify_conversation_tag(
+    conversation_id: str,
+    tag_name: str,
+    *,
+    action: str = "apply",
+    db_path: Path | None = None,
+) -> list[str]:
+    """Apply or remove a tag on a conversation, returning the updated tag list.
+
+    Manages its own connection. Resolves the conversation ID (prefix match).
+
+    Args:
+        conversation_id: Full or prefix conversation ID.
+        tag_name: Tag name to apply or remove.
+        action: "apply" or "remove".
+        db_path: Database path. Uses default if not provided.
+
+    Returns:
+        Updated list of tag names on the conversation.
+    """
+    from siftd.api.conversations import resolve_entity_id
+    from siftd.storage.queries import fetch_conversation_tags
+
+    path = db_path or _db_path()
+    conn = _open_database(path)
+    try:
+        resolved = resolve_entity_id(conn, "conversation", conversation_id)
+        if not resolved:
+            return []
+
+        if action == "remove":
+            tid = _get_tag_id(conn, tag_name)
+            if tid:
+                _remove_tag(conn, "conversation", resolved, tid)
+        else:
+            tid = _get_or_create_tag(conn, tag_name)
+            _apply_tag(conn, "conversation", resolved, tid)
+
+        conn.commit()
+        return fetch_conversation_tags(conn, resolved)
+    finally:
+        conn.close()
+
+
 def rename_tag(
     conn: sqlite3.Connection | None = None,
     old_name: str = "",
