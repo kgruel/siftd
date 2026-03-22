@@ -77,13 +77,14 @@ def _page_shell(
 ) -> str:
     """Build the page shell with optional initial state for deep links."""
     from html import escape as esc
+    from urllib.parse import quote as urlquote
 
     # Search bar: pre-populate if search_q provided
     search_val = f' value="{esc(search_q)}"' if search_q else ""
 
     # List pane: search results, peek sessions, or conversation list
     if search_q:
-        list_url = f"/ui/search?q={esc(search_q)}"
+        list_url = f"/ui/search?q={urlquote(search_q)}"
     elif follow_sid:
         list_url = "/ui/peek"
     else:

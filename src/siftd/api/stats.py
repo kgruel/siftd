@@ -335,91 +335,91 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
         raise FileNotFoundError(f"Database not found: {db}")
 
     conn = open_database(db, read_only=True)
+    try:
+        # Table counts
+        table_names = [
+            "conversations",
+            "prompts",
+            "responses",
+            "tool_calls",
+            "harnesses",
+            "workspaces",
+            "tools",
+            "models",
+            "ingested_files",
+        ]
+        count_values = {name: fetch_table_count(conn, name) for name in table_names}
+        counts = TableCounts(**count_values)
 
-    # Table counts
-    table_names = [
-        "conversations",
-        "prompts",
-        "responses",
-        "tool_calls",
-        "harnesses",
-        "workspaces",
-        "tools",
-        "models",
-        "ingested_files",
-    ]
-    count_values = {name: fetch_table_count(conn, name) for name in table_names}
-    counts = TableCounts(**count_values)
-
-    # Harnesses
-    harness_rows = fetch_harnesses(conn)
-    harnesses = [
-        HarnessInfo(
-            name=row["name"],
-            source=row["source"],
-            log_format=row["log_format"],
-        )
-        for row in harness_rows
-    ]
-
-    # Top workspaces
-    workspace_rows = fetch_top_workspaces(conn, limit=10)
-    top_workspaces = [
-        WorkspaceStats(
-            path=row["path"],
-            conversation_count=row["convs"],
-            last_activity=row["last_activity"],
-        )
-        for row in workspace_rows
-    ]
-
-    # Models
-    models = fetch_model_names(conn)
-
-    # Top tools by usage
-    tool_rows = fetch_top_tools(conn, limit=10)
-    top_tools = [
-        ToolStats(name=row["name"], usage_count=row["uses"]) for row in tool_rows
-    ]
-
-    # Harness conversation counts
-    harness_count_rows = fetch_harness_conversation_counts(conn)
-    harness_counts = [
-        HarnessCount(name=row["name"], conversation_count=row["conversations"])
-        for row in harness_count_rows
-    ]
-
-    # Top conversation tags
-    tag_rows = fetch_top_conversation_tags(conn, limit=5)
-    top_tags = [TagStats(name=row["name"], count=row["count"]) for row in tag_rows]
-
-    # Token coverage
-    total_responses, responses_with_tokens = fetch_response_token_coverage(conn)
-    pct_with_tokens = (
-        round((responses_with_tokens / total_responses) * 100, 2)
-        if total_responses
-        else 0.0
-    )
-    harness_rows = fetch_token_coverage_by_harness(conn)
-    token_by_harness = []
-    for row in harness_rows:
-        responses = row["responses"]
-        with_tokens = row["with_tokens"] if row["with_tokens"] is not None else 0
-        pct = round((with_tokens / responses) * 100, 2) if responses else 0.0
-        token_by_harness.append(
-            TokenCoverageByHarness(
-                name=row["harness"],
-                responses=responses,
-                with_tokens=with_tokens,
-                pct_with_tokens=pct,
+        # Harnesses
+        harness_rows = fetch_harnesses(conn)
+        harnesses = [
+            HarnessInfo(
+                name=row["name"],
+                source=row["source"],
+                log_format=row["log_format"],
             )
+            for row in harness_rows
+        ]
+
+        # Top workspaces
+        workspace_rows = fetch_top_workspaces(conn, limit=10)
+        top_workspaces = [
+            WorkspaceStats(
+                path=row["path"],
+                conversation_count=row["convs"],
+                last_activity=row["last_activity"],
+            )
+            for row in workspace_rows
+        ]
+
+        # Models
+        models = fetch_model_names(conn)
+
+        # Top tools by usage
+        tool_rows = fetch_top_tools(conn, limit=10)
+        top_tools = [
+            ToolStats(name=row["name"], usage_count=row["uses"]) for row in tool_rows
+        ]
+
+        # Harness conversation counts
+        harness_count_rows = fetch_harness_conversation_counts(conn)
+        harness_counts = [
+            HarnessCount(name=row["name"], conversation_count=row["conversations"])
+            for row in harness_count_rows
+        ]
+
+        # Top conversation tags
+        tag_rows = fetch_top_conversation_tags(conn, limit=5)
+        top_tags = [TagStats(name=row["name"], count=row["count"]) for row in tag_rows]
+
+        # Token coverage
+        total_responses, responses_with_tokens = fetch_response_token_coverage(conn)
+        pct_with_tokens = (
+            round((responses_with_tokens / total_responses) * 100, 2)
+            if total_responses
+            else 0.0
         )
+        harness_rows = fetch_token_coverage_by_harness(conn)
+        token_by_harness = []
+        for row in harness_rows:
+            responses = row["responses"]
+            with_tokens = row["with_tokens"] if row["with_tokens"] is not None else 0
+            pct = round((with_tokens / responses) * 100, 2) if responses else 0.0
+            token_by_harness.append(
+                TokenCoverageByHarness(
+                    name=row["harness"],
+                    responses=responses,
+                    with_tokens=with_tokens,
+                    pct_with_tokens=pct,
+                )
+            )
 
-    # Activity window and ingest recency
-    activity_window = fetch_conversation_time_window(conn)
-    last_ingest_at = fetch_last_ingest_time(conn)
-
-    conn.close()
+        # Activity window and ingest recency
+        activity_window = fetch_conversation_time_window(conn)
+        last_ingest_at = fetch_last_ingest_time(conn)
+    finally:
+        conn.close()
 
     return DatabaseStats(
         db_path=db,
@@ -479,14 +479,20 @@ def get_usage_summary(*, db_path: Path | None = None) -> UsageSummary:
             " LEFT JOIN responses r ON r.conversation_id = c.id"
         ).fetchone()
         # Cost is per-conversation in conversation_stats, sum separately
-        cost_row = conn.execute(
-            "SELECT COALESCE(SUM(cost), 0) AS cost FROM conversation_stats"
-        ).fetchone()
+        has_stats = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
+        ).fetchone()[0]
+        total_cost = 0.0
+        if has_stats:
+            cost_row = conn.execute(
+                "SELECT COALESCE(SUM(cost), 0) AS cost FROM conversation_stats"
+            ).fetchone()
+            total_cost = cost_row["cost"]
         return UsageSummary(
             total_conversations=row["n"],
             total_input_tokens=row["inp"],
             total_output_tokens=row["out"],
-            total_cost=cost_row["cost"],
+            total_cost=total_cost,
         )
     finally:
         conn.close()
@@ -509,15 +515,20 @@ def get_usage_by_model(*, db_path: Path | None = None) -> list[GroupUsage]:
             " LEFT JOIN models m ON r.model_id = m.id"
             " GROUP BY m.raw_name"
         ).fetchall()
-        cost_rows = conn.execute(
-            "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
-            " COALESCE(SUM(cs.cost), 0) AS cost"
-            " FROM conversation_stats cs"
-            " JOIN responses r ON r.conversation_id = cs.conversation_id"
-            " LEFT JOIN models m ON r.model_id = m.id"
-            " GROUP BY m.raw_name"
-        ).fetchall()
-        cost_by_model = {r["name"]: r["cost"] for r in cost_rows}
+        has_stats = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
+        ).fetchone()[0]
+        cost_by_model: dict[str, float] = {}
+        if has_stats:
+            cost_rows = conn.execute(
+                "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
+                " COALESCE(SUM(cs.cost), 0) AS cost"
+                " FROM conversation_stats cs"
+                " JOIN responses r ON r.conversation_id = cs.conversation_id"
+                " LEFT JOIN models m ON r.model_id = m.id"
+                " GROUP BY m.raw_name"
+            ).fetchall()
+            cost_by_model = {r["name"]: r["cost"] for r in cost_rows}
         results = [
             GroupUsage(
                 name=r["name"], conversations=r["convs"],
@@ -551,15 +562,20 @@ def get_usage_by_workspace(*, db_path: Path | None = None) -> list[GroupUsage]:
             " GROUP BY w.path"
         ).fetchall()
         # Cost from conversation_stats grouped by workspace
-        cost_rows = conn.execute(
-            "SELECT COALESCE(w.path, '') AS name,"
-            " COALESCE(SUM(cs.cost), 0) AS cost"
-            " FROM conversation_stats cs"
-            " JOIN conversations c ON cs.conversation_id = c.id"
-            " LEFT JOIN workspaces w ON c.workspace_id = w.id"
-            " GROUP BY w.path"
-        ).fetchall()
-        cost_by_ws = {r["name"]: r["cost"] for r in cost_rows}
+        has_stats = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
+        ).fetchone()[0]
+        cost_by_ws: dict[str, float] = {}
+        if has_stats:
+            cost_rows = conn.execute(
+                "SELECT COALESCE(w.path, '') AS name,"
+                " COALESCE(SUM(cs.cost), 0) AS cost"
+                " FROM conversation_stats cs"
+                " JOIN conversations c ON cs.conversation_id = c.id"
+                " LEFT JOIN workspaces w ON c.workspace_id = w.id"
+                " GROUP BY w.path"
+            ).fetchall()
+            cost_by_ws = {r["name"]: r["cost"] for r in cost_rows}
         results = [
             GroupUsage(
                 name=r["name"], conversations=r["convs"],

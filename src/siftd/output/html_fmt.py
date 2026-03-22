@@ -122,11 +122,13 @@ def _render_tag_section(
 
     for tag in tags:
         if interactive and tag_action_url:
+            import json as _json
+            vals = _json.dumps({"action": "remove", "id": conv_id, "tag": tag})
             parts.append(
                 f'<span class="tag interactive">{escape(tag)}'
                 f'<button class="tag-remove"'
                 f' hx-post="{escape(tag_action_url)}"'
-                f' hx-vals=\'{{"action":"remove","id":"{escape(conv_id)}","tag":"{escape(tag)}"}}\''
+                f' hx-vals="{escape(vals)}"'
                 f' hx-target="#{escape(section_id)}" hx-swap="outerHTML"'
                 f' title="Remove tag">\xd7</button>'
                 f'</span>'
@@ -188,7 +190,7 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
         no_header: bool
         controls: dict — fidelity toggle state (id, tools, thinking, full, brief)
     """
-    from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
+    from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens
     from siftd.output.narrative import HtmlEmitter, walk_narrative
 
     if hasattr(result, "turns"):
@@ -298,6 +300,21 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
             emitter = HtmlEmitter()
             walk_narrative(narrative, emitter, fidelity=fidelity, tool_chars=tool_chars)
             parts.append(emitter.to_html())
+            parts.append("</div>")
+            parts.append("</details>")
+
+        elif getattr(turn, "response_text", None):
+            response_nav = nav if not prompt_text else ""
+            parts.append('<details class="turn-block response-block" open>')
+            parts.append(
+                f'<summary><span class="role-label">Assistant</span>'
+                f'{summary_ts}{response_nav}</summary>'
+            )
+            parts.append('<div class="assistant">')
+            text = turn.response_text.strip()
+            if fidelity.chars > 0 and len(text) > fidelity.chars:
+                text = text[: fidelity.chars] + "..."
+            parts.append(f"<p>{escape(text)}</p>")
             parts.append("</div>")
             parts.append("</details>")
 
