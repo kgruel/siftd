@@ -144,6 +144,10 @@ def _search_tool_calls_impl(
     where: list[str] = []
     params: list[object] = []
 
+    if owner and not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+    ).fetchone():
+        return []
     _add_owner_clause(where, params, owner)
     _add_tool_name_clauses(where, params, parsed.fields.get("tool"))
     _add_eq_or_clauses(where, params, "ts.tool_family", parsed.fields.get("tool_family"))

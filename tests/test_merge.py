@@ -434,7 +434,7 @@ def test_replace_stale_conversation(tmp_path):
 
     result = merge_database(target, source)
     assert result["replaced_conversations"] == 1
-    assert result["conversations"] == 1  # the replacement counts as new
+    assert result["conversations"] == 0  # replacement not double-counted as new
     assert result["skipped_conversations"] == 0
 
     # Target should have the source's version

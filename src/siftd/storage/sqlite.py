@@ -557,8 +557,8 @@ def ensure_conversation_owners_table(conn: sqlite3.Connection) -> None:
     """Create conversation_owners table for multi-tenancy. Idempotent.
 
     Server-side only — tracks which user owns each conversation.
-    Called on-demand from the receive path, not in the open_database()
-    migration chain.
+    Called from the open_database() migration chain and idempotently
+    from the receive path.
     """
     conn.execute("""
         CREATE TABLE IF NOT EXISTS conversation_owners (

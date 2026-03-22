@@ -57,10 +57,10 @@ def receive_database(
     result["status"] = "merged"
 
     if user_id:
-        owned_ids = (
-            result.get("new_conversation_ids", [])
-            + result.get("replaced_conversation_ids", [])
-        )
+        # new_conversation_ids is a superset of replaced_conversation_ids
+        # (replacements delete the stale target before the snapshot, so the
+        # source rows appear as new in the diff).  No need to concatenate.
+        owned_ids = result.get("new_conversation_ids", [])
         _stamp_ownership(target_db, owned_ids, user_id, push_id)
         result["owned"] = len(owned_ids)
 
@@ -113,14 +113,10 @@ def _stamp_ownership(
     if not conversation_ids:
         return
 
-    from siftd.storage.sqlite import (
-        ensure_conversation_owners_table,
-        open_database,
-    )
+    from siftd.storage.sqlite import open_database
 
     conn = open_database(db_path)
     try:
-        ensure_conversation_owners_table(conn)
         now = datetime.now(UTC).isoformat()
         conn.executemany(
             "INSERT OR REPLACE INTO conversation_owners "

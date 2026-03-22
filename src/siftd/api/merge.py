@@ -369,7 +369,7 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
     conn.execute("DROP TABLE _id_map")
 
     return {
-        "conversations": new_conversations,
+        "conversations": new_conversations - replaced_conversations,
         "replaced_conversations": replaced_conversations,
         "skipped_conversations": skipped_conversations,
         "new_conversation_ids": new_conversation_ids,
@@ -462,6 +462,9 @@ def _replace_stale_conversations(conn) -> tuple[int, list[str]]:
     conn.execute("DELETE FROM conversation_attributes WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     conn.execute("DELETE FROM conversation_tags WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     conn.execute("DELETE FROM ingested_files WHERE conversation_id IN (SELECT id FROM _stale_convs)")
+    # conversation_owners — table may not exist on pre-migration DBs
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'").fetchone():
+        conn.execute("DELETE FROM conversation_owners WHERE conversation_id IN (SELECT id FROM _stale_convs)")
 
     # Delete the stale conversations themselves
     conn.execute("DELETE FROM conversations WHERE id IN (SELECT id FROM _stale_convs)")

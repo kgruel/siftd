@@ -177,6 +177,7 @@ def list_conversations(
         tool_tag: Filter by tool call tag (e.g., 'shell:test').
         n: Maximum results to return (0 = unlimited).
         oldest: Sort by oldest first instead of newest.
+        owner: Filter to conversations owned by this user_id.
 
     Returns:
         List of ConversationSummary objects.
@@ -222,6 +223,10 @@ def _list_conversations_impl(
     wb.model(model)
     wb.since(since)
     wb.before(before)
+    if owner and not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+    ).fetchone():
+        return []
     wb.owner(owner)
 
     if search:

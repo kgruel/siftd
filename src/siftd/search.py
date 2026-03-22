@@ -687,6 +687,11 @@ def _filter_conversations_conn(
     if not any([workspace, model, since, before, tags, all_tags, exclude_tags, owner]):
         return None
 
+    if owner and not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+    ).fetchone():
+        return set()
+
     wb = WhereBuilder()
     wb.workspace(workspace)
     wb.model(model)
