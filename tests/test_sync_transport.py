@@ -7,10 +7,10 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from fakes.ssh import FakeSSH, FakeSSHResult
 
 from siftd.api.sync import SyncError, _build_ssh_options, _pull_ssh, _push_ssh
 from siftd.domain.sync import SyncRemote
-from fakes.ssh import FakeSSH, FakeSSHResult
 
 
 def _remote(path="/r/db", name="t", host="box", **kw):
