@@ -47,6 +47,7 @@ def test_cmd_tools_serve_and_local_branches(monkeypatch, capsys, tmp_path):
         lambda op: {"total": 2, "tags": [{"name": "shell:test", "count": 2, "percentage": 100}]},
     )
     assert cmd_tools(_args(json=False, db=str(tmp_path / "db.sqlite"))) == 0
+    assert cmd_tools(_args(json=True, db=str(tmp_path / "db.sqlite"))) == 0
 
     # serve by-workspace path
     monkeypatch.setattr(
@@ -64,6 +65,7 @@ def test_cmd_tools_serve_and_local_branches(monkeypatch, capsys, tmp_path):
     # by-workspace local empty and json output
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
     assert cmd_tools(_args(by_workspace=True, json=False, db=str(tmp_path / "db.sqlite"))) == 0
+    assert cmd_tools(_args(by_workspace=True, json=True, db=str(tmp_path / "db.sqlite"))) == 0
 
     ws = [SimpleNamespace(workspace="/w", total=2, tags=[SimpleNamespace(name="shell:git", count=2)])]
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: ws)
@@ -113,6 +115,7 @@ def test_query_detail_branches(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: SimpleNamespace(render_detail=lambda *a, **k2: "OUT"))
     monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
     assert _query_detail(_args(conversation_id="c1", exchanges=1, db=str(tmp_path / "db.sqlite"))) == 0
+    assert _query_detail(_args(conversation_id="c1", exchanges=1, tools="shell", db=str(tmp_path / "db.sqlite"))) == 0
 
 
 def test_query_sql_and_cmd_query_list_branches(monkeypatch, capsys, tmp_path):
@@ -167,6 +170,15 @@ def test_query_sql_and_cmd_query_list_branches(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: SimpleNamespace(render_list=lambda convs, fidelity: "LIST"))
     monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
     assert cmd_query(_args(stats=True, db=str(tmp_path / "db.sqlite"))) == 0
+
+    class _F:
+        def with_depth(self, d):
+            return self
+
+    monkeypatch.setattr("siftd.cli.query.fidelity_from_args", lambda args: _F())
+    monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [SimpleNamespace(prompt_count=1, response_count=1, total_tokens=3)])
+    assert cmd_query(_args(verbose=True, db=str(tmp_path / "db.sqlite"))) == 0
 
     # local execution errors
     monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
