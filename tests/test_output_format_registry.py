@@ -1,22 +1,13 @@
-"""Focused tests for output format registry fallback branches."""
+import pytest
 
 from siftd.output import format_registry as reg
 
 
-def test_select_format_falls_back_to_first_available(monkeypatch):
-    monkeypatch.setattr(reg, "get_format", lambda name: None)
+def test_select_format_fallback_and_empty_registry(monkeypatch):
+    monkeypatch.setattr(reg, "get_format", lambda _name: None)
     monkeypatch.setattr(reg, "_ensure_loaded", lambda: {"markdown": object(), "json": object()})
+    assert reg.select_format(is_tty=True)
 
-    fmt = reg.select_format(is_tty=True)
-    assert fmt is not None
-
-
-def test_select_format_raises_when_no_formats(monkeypatch):
-    monkeypatch.setattr(reg, "get_format", lambda name: None)
     monkeypatch.setattr(reg, "_ensure_loaded", lambda: {})
-
-    try:
+    with pytest.raises(ValueError, match="No output formats available"):
         reg.select_format(is_tty=True)
-        assert False, "expected ValueError"
-    except ValueError as exc:
-        assert "No output formats available" in str(exc)
