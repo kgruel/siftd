@@ -425,3 +425,17 @@ class TestExportCLI:
 
         captured = capsys.readouterr()
         assert "No conversations found" in captured.out
+
+    def test_export_generic_db_error_message(self, test_db, monkeypatch, capsys):
+        import sqlite3
+
+        from siftd.cli import main
+
+        monkeypatch.setattr(
+            "siftd.api.dispatch.execute",
+            lambda op: (_ for _ in ()).throw(sqlite3.OperationalError("boom")),
+        )
+
+        result = main(["--db", str(test_db), "export", "-s", "x"])
+        assert result == 1
+        assert "Database error: boom" in capsys.readouterr().err
