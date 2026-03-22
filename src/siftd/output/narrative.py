@@ -90,54 +90,6 @@ class MarkdownEmitter:
 
 
 
-class JsonEmitter:
-    """Emits narrative as JSON-serializable dicts.
-
-    Accumulates into self.blocks: list[dict].
-    """
-
-    def __init__(self) -> None:
-        self.blocks: list[dict] = []
-
-    def text(self, content: str) -> None:
-        self.blocks.append({"type": "text", "content": content})
-
-    def thinking(self, content: str) -> None:
-        self.blocks.append({"type": "thinking", "content": content})
-
-    def thinking_placeholder(self) -> None:
-        self.blocks.append({"type": "thinking"})
-
-    def tool_summary(self, tools: list[tuple[str, int, str | None]]) -> None:
-        self.blocks.append({
-            "type": "tool_calls",
-            "tools": [
-                {"name": name, "count": count, **({"status": status} if status else {})}
-                for name, count, status in tools
-            ],
-        })
-
-    def tool_content(
-        self,
-        name: str,
-        count: int,
-        raw_input: str | None,
-        raw_result: str | None,
-        status: str | None,
-    ) -> None:
-        d: dict = {"name": name, "count": count}
-        if status:
-            d["status"] = status
-        if raw_input:
-            d["input"] = raw_input
-        if raw_result:
-            d["result"] = raw_result
-        self.blocks.append({"type": "tool_call", **d})
-
-    def tool_output(self, block_type: str, content: str) -> None:
-        self.blocks.append({"type": block_type, "content": content})
-
-
 class HtmlEmitter:
     """Emits narrative blocks as HTML fragments.
 

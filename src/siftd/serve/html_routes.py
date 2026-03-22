@@ -28,6 +28,19 @@ def _html_response(content: str) -> Response:
     return Response(content=content, media_type="text/html")
 
 
+def _hx_detail(detail_base: str, conv_id: str, shell_base: str = "") -> str:
+    """Build htmx attributes for a row that navigates to conversation detail."""
+    from html import escape
+    if not detail_base:
+        return ""
+    push = f' hx-push-url="{escape(shell_base)}?id={escape(conv_id)}"' if shell_base else ""
+    return (
+        f' hx-get="{escape(detail_base)}?id={escape(conv_id)}"'
+        f' hx-target="#detail" hx-swap="innerHTML"'
+        f'{push}'
+    )
+
+
 def _fidelity(
     depth: int = 1,
     chars: int = 200,
