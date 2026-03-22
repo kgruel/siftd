@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from siftd.cli import main
+from siftd.cli.peek import cmd_peek
 from siftd.domain.peek import PeekExchange, PeekNarrativeBlock, PeekToolCall, SessionInfo
 from siftd.output.common import fmt_timestamp
 from siftd.peek.follow import FollowEvent
@@ -26,6 +27,32 @@ def _session(session_id="abc123", **kwargs):
     }
     defaults.update(kwargs)
     return SessionInfo(session_id=session_id, **defaults)
+
+
+def _peek_args(**kwargs):
+    defaults = {
+        "session_id": None,
+        "workspace": None,
+        "branch": None,
+        "all": False,
+        "limit": 10,
+        "exchanges": None,
+        "brief": False,
+        "full": False,
+        "chars": None,
+        "thinking": False,
+        "tools": False,
+        "follow": False,
+        "tail": False,
+        "tail_lines": 20,
+        "json": False,
+        "main_only": False,
+        "children": None,
+        "last_response": False,
+        "last_prompt": False,
+    }
+    defaults.update(kwargs)
+    return SimpleNamespace(**defaults)
 
 
 def _detail(*, include_thinking: bool = False, response_text: str = "Doing it."):
@@ -89,6 +116,11 @@ class TestPeekValidation:
 
     def test_follow_with_last_response_exclusive(self, capsys):
         rc = main(["peek", "--follow", "--last-response"])
+        assert rc == 1
+        assert "mutually exclusive" in capsys.readouterr().out
+
+    def test_follow_with_last_prompt_exclusive(self, capsys):
+        rc = main(["peek", "--follow", "--last-prompt"])
         assert rc == 1
         assert "mutually exclusive" in capsys.readouterr().out
 
@@ -444,6 +476,28 @@ class TestPeekEdgeBranches:
         assert "No active sessions found" in capsys.readouterr().err
 
     @patch("siftd.api.find_session_file")
+    def test_follow_id_ambiguous_and_not_found(self, mock_find, capsys):
+        from siftd.peek import AmbiguousSessionError
+
+        mock_find.side_effect = AmbiguousSessionError("abc", [Path("/tmp/a"), Path("/tmp/b")])
+        assert main(["peek", "abc", "--follow"]) == 1
+
+        mock_find.side_effect = None
+        mock_find.return_value = None
+        assert main(["peek", "abc", "--follow"]) == 1
+        assert "Session not found" in capsys.readouterr().err
+
+    @patch("siftd.api.list_active_sessions")
+    @patch("siftd.peek.read_session_detail")
+    @patch("siftd.peek.follow_session")
+    def test_follow_default_uses_most_recent_session(self, mock_follow, mock_read, mock_list):
+        mock_list.return_value = [_session("abc", file_path=Path("/tmp/default.jsonl"))]
+        mock_read.return_value = None
+        assert main(["peek", "--follow"]) == 0
+        mock_follow.assert_called_once()
+        assert mock_follow.call_args.args[0] == Path("/tmp/default.jsonl")
+
+    @patch("siftd.api.find_session_file")
     @patch("siftd.peek.read_session_detail")
     @patch("siftd.peek.follow_session")
     def test_follow_json_mode_ndjson(self, mock_follow, mock_read, mock_find, capsys):
@@ -473,6 +527,15 @@ class TestPeekEdgeBranches:
     @patch("siftd.api.find_session_file")
     @patch("siftd.api.read_session_detail")
     def test_detail_none_and_json_output(self, mock_read, mock_find, capsys):
+        from siftd.peek import AmbiguousSessionError
+
+        mock_find.side_effect = AmbiguousSessionError("abc", [Path("/tmp/a"), Path("/tmp/b")])
+        assert main(["peek", "abc"]) == 1
+
+        mock_find.side_effect = None
+        mock_find.return_value = None
+        assert main(["peek", "abc"]) == 1
+
         mock_find.return_value = Path("/tmp/fake-session.jsonl")
         mock_read.return_value = None
         assert main(["peek", "abc"]) == 1
@@ -491,3 +554,16 @@ class TestPeekEdgeBranches:
         assert main(["peek", "--tail-lines", "5", "--exchanges", "2", "--tools"]) == 0
         err = capsys.readouterr().err
         assert "--tail-lines" in err and "--exchanges" in err and "--tools" in err
+
+    def test_follow_id_error_branches_direct(self, monkeypatch, capsys):
+        from siftd.peek import AmbiguousSessionError
+
+        monkeypatch.setattr(
+            "siftd.api.find_session_file",
+            lambda _sid: (_ for _ in ()).throw(AmbiguousSessionError("abc", [Path("/tmp/a"), Path("/tmp/b")])),
+        )
+        assert cmd_peek(_peek_args(session_id="abc", follow=True)) == 1
+
+        monkeypatch.setattr("siftd.api.find_session_file", lambda _sid: None)
+        assert cmd_peek(_peek_args(session_id="abc", follow=True)) == 1
+        assert "Session not found" in capsys.readouterr().err
