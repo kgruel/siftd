@@ -112,3 +112,30 @@ def test_hybrid_mode_recency_and_mmr(monkeypatch, tmp_path):
     backend = SimpleNamespace(name="b", model="m", dimension=1, embed_one=lambda q: [0.1])
     out = api_search.hybrid_search("q", db_path=tmp_path / "db", mode="hybrid", recency=True, rerank="mmr", embed_backend=backend, embed_db=tmp_path / "e.db")
     assert out and calls.get("annotate") and calls.get("recency") and calls.get("mmr")
+
+
+def test_hybrid_uses_default_backend_and_fts_ids_when_candidates_none(monkeypatch, tmp_path):
+    class _Conn:
+        def close(self):
+            pass
+
+    calls = {}
+    fake_search = SimpleNamespace(
+        resolve_candidates=lambda *a, **k: None,
+        annotate_fts5_breakdown=lambda *a, **k: None,
+        mmr_rerank=lambda results, *_a, **_k: results,
+        apply_temporal_weight=lambda results, *_a, **_k: results,
+    )
+    backend = SimpleNamespace(name="b", model="m", dimension=1, embed_one=lambda q: [0.1])
+    fake_embeddings = SimpleNamespace(SCHEMA_VERSION=1, get_backend=lambda preferred=None, verbose=False: calls.setdefault("backend", backend))
+
+    monkeypatch.setitem(sys.modules, "siftd.search", fake_search)
+    monkeypatch.setitem(sys.modules, "siftd.embeddings", fake_embeddings)
+    monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *a, **k: _Conn())
+    monkeypatch.setattr(api_search, "fts5_recall_conversations", lambda conn, q, limit=80: ({"c1"}, "and"))
+    monkeypatch.setattr(api_search, "open_embeddings_db", lambda *_a, **_k: _Conn())
+    monkeypatch.setattr(api_search, "validate_index_compat", lambda *a, **k: None)
+    monkeypatch.setattr(api_search, "search_similar", lambda conn, emb, limit=10, conversation_ids=None, include_embeddings=False: [{"conversation_id": next(iter(conversation_ids)), "score": 0.9, "source_ids": [], "chunk_id": "x"}])
+
+    out = api_search.hybrid_search("q", db_path=tmp_path / "db", mode="hybrid", embed_db=tmp_path / "e.db")
+    assert out and calls.get("backend") is backend
