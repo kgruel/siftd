@@ -57,6 +57,7 @@
 - `embeddings/fastembed_backend.py` (20/20) — deterministic constructor/import/embed/probe paths saturated.
 - `embeddings/ollama_backend.py` (44/44) — model discovery + API error handling branches saturated.
 - `embeddings/indexer.py` (118/118) — incremental/compat/helpers fully covered with deterministic stubs.
+- `search.py` (399/399) — MMR fallback + hybrid search branch matrix covered; lane saturated.
 - `content/filters.py` (69/69) — encode-exception guard branch closed; lane saturated.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
@@ -68,13 +69,10 @@
 
 ## Highest ROI next targets
 
-### 1) `search.py` MMR stability lane
-- Active lane: remove MMR exclusion and harden mmr reranking against transient numpy import failures under heavy embed test runs.
+### 1) warning/stability cleanup lane
+- Active lane: continue reducing sqlite `ResourceWarning` noise in tests (requests dependency warning was mitigated by pinning `chardet<6`).
 
-### 2) warning/stability cleanup lane
-- Investigate recurring `requests` dependency warning and sqlite `ResourceWarning` noise in tests; reduce warning overhead/noise without masking real failures.
-
-### 3) stability follow-up (serve)
+### 2) stability follow-up (serve)
 - Long full-suite runs under coverage show intermittent 500s in `tests/test_serve.py` integration classes; currently excluded in autoresearch filter for stability. Root-cause and re-enable when deterministic.
 ## Deferred but promising
 
