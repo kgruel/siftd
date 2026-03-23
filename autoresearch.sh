@@ -5,7 +5,7 @@ set -euo pipefail
 
 INCLUDE_ARGS="--cov=siftd.serve.html_routes"
 TARGET_FILE="src/siftd/serve/html_routes.py"
-TEST_FILES="tests/test_serve_html_routes_edges.py"
+TEST_FILES="tests/test_serve_html_routes_edges.py tests/test_serve_html_routes_stepup.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
@@ -39,6 +39,12 @@ if lines:
     print('  L' + ','.join(str(l) for l in lines))
 ")
 
+# Extract project-wide totals from the same coverage.json (zero extra cost)
+PROJECT_COV=$(  echo "$COVERAGE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); t=d['totals']; print(round(t.get('percent_covered', t.get('percent_covered_display', 0)), 1))")
+PROJECT_COVERED=$(echo "$COVERAGE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); t=d['totals']; print(t.get('covered_lines', 0))")
+PROJECT_STMTS=$( echo "$COVERAGE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); t=d['totals']; print(t.get('num_statements', 0))")
+PROJECT_MISS=$(  echo "$COVERAGE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); t=d['totals']; print(t.get('missing_lines', 0))")
+
 BEST_TIME=99999
 for i in 1 2 3 4 5; do
     START=$(python3 -c "import time; print(time.monotonic())")
@@ -64,6 +70,7 @@ echo "Covered lines:  $COVERED / $TOTAL"
 echo "Missing lines:  $MISS"
 echo "Coverage:       ${PCT}%"
 echo "Efficiency:     $EFFICIENCY"
+echo "Project:        ${PROJECT_COV}% (${PROJECT_COVERED}/${PROJECT_STMTS}, miss ${PROJECT_MISS})"
 echo ""
 echo "Missing:"
 echo "$MISSING"
@@ -74,3 +81,7 @@ echo "METRIC coverage_pct=$PCT"
 echo "METRIC miss=$MISS"
 echo "METRIC test_time_s=$TEST_TIME"
 echo "METRIC test_loc=$TEST_LOC"
+echo "METRIC project_coverage_pct=$PROJECT_COV"
+echo "METRIC project_covered=$PROJECT_COVERED"
+echo "METRIC project_statements=$PROJECT_STMTS"
+echo "METRIC project_miss=$PROJECT_MISS"
