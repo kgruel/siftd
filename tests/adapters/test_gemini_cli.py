@@ -88,3 +88,17 @@ class TestGeminiCliParseEdgeCases:
             "thoughts": [{"description": "desc only"}, {"subject": "subj only"}, {}]})
         texts = [b["text"] for b in a.content_blocks if b["type"] == "thinking"]
         assert "desc only" in texts and "subj only" in texts and len(texts) == 2
+
+    def test_resolve_workspace_from_hash_permission_error(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(gemini_cli.Path, "home", lambda: tmp_path)
+        blocked = tmp_path / "Code" / "blocked"
+        blocked.mkdir(parents=True)
+        orig_iterdir = gemini_cli.Path.iterdir
+
+        def fake_iterdir(path):
+            if path == blocked:
+                raise PermissionError("denied")
+            return orig_iterdir(path)
+
+        monkeypatch.setattr(gemini_cli.Path, "iterdir", fake_iterdir)
+        assert gemini_cli._resolve_workspace_from_hash("does-not-exist") is None

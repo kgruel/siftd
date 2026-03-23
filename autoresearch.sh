@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# serve.app coverage efficiency benchmark
+# adapters.gemini_cli coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.serve.app"
-TARGET_FILE="src/siftd/serve/app.py"
-TEST_FILES="tests/test_serve_app_edges.py"
+INCLUDE_ARGS="--cov=siftd.adapters.gemini_cli"
+TARGET_FILE="src/siftd/adapters/gemini_cli.py"
+TEST_FILES="tests/adapters/test_gemini_cli.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
