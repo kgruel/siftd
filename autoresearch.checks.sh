@@ -36,7 +36,7 @@ if errors:
     for e in errors:
         print(f'  {e}')
     sys.exit(1)
-" tests/test_backfill.py
+" tests/test_content_filters.py
 
 # Lint
-uv run python -m ruff check tests/test_backfill.py 2>&1 | tail -10
+uv run python -m ruff check tests/test_content_filters.py 2>&1 | tail -10

@@ -104,6 +104,13 @@ class TestIsBinaryContent:
         assert is_binary_content(None) is False
         assert is_binary_content(123) is False
 
+    def test_encode_error_branch_returns_false(self):
+        class BrokenStr(str):
+            def encode(self, *_a, **_k):
+                raise AttributeError("broken")
+
+        assert is_binary_content(BrokenStr("text")) is False
+
 
 class TestHasLargeBase64:
     """Tests for has_large_base64 detection."""

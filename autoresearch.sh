@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# backfill coverage efficiency benchmark
+# content.filters coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.backfill"
-TARGET_FILE="src/siftd/backfill.py"
-TEST_FILES="tests/test_backfill.py"
+INCLUDE_ARGS="--cov=siftd.content.filters"
+TARGET_FILE="src/siftd/content/filters.py"
+TEST_FILES="tests/test_content_filters.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

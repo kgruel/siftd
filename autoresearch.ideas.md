@@ -28,6 +28,7 @@
 - `api/conversations.py` (424/424) — final edge branches covered (prompt-without-response and empty SQL result) with focused lane; follow-up step-down attempt was flat at metric floor.
 - `api/merge.py` (134/134) — FK-violation rollback branch covered and step-down pass completed (to 0.05).
 - `api/slice.py` (70/70) — missing-source + FK-guard branches covered with focused lane; step-down pass completed (to 0.07).
+- `backfill.py` (173/173) — final new_hash==old_hash skip branch closed; lane saturated.
 - `api/export.py` (66/66) — default-fidelity branch covered with focused lane; step-down attempt was flat at metric floor (discarded).
 - `api/sessions.py` (17/17) — wrapper gap closed; step-down pass completed (to 0.17).
 - `api/adapters.py` (30/30) — final entrypoint loop branch covered; focused lane currently at step-down 0.11.
@@ -60,14 +61,14 @@
 
 ## Highest ROI next targets
 
-### 1) `backfill.py`
-- Active lane: close final deterministic skip branch (`new_hash == old_hash`) and re-run with full-suite coverage.
+### 1) `content/filters.py`
+- Active lane: close remaining encode-exception guard branch in `is_binary_content`.
 
 ### 2) serve integration instability follow-up
 - Long full-suite runs under coverage show intermittent 500s in `tests/test_serve.py` integration classes; currently excluded in autoresearch filter for stability. Root-cause and re-enable when deterministic.
 
 ### 3) post-serve sweep
-- Next deterministic tiny misses: `content/filters.py`, `adapters/copilot_cli.py`, and `cli/query.py`.
+- Next deterministic tiny misses: `adapters/copilot_cli.py` and `cli/query.py`.
 
 ## Deferred but promising
 
