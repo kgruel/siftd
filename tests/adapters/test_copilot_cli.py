@@ -43,3 +43,28 @@ class TestCopilotCliAdapter:
         assert nr.kind == "assistant" and len(nr.content_blocks) == 3 and nr.content_blocks[1]["type"] == "thinking"
         assert n({"type": "tool.execution_complete", "timestamp": "T"}).kind == "tool_result"
         assert n({"type": "unknown"}) is None
+
+    def test_discover_wrapper_and_can_handle_fallback_false(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(copilot_cli, "discover_files", lambda *a, **k: [Source(kind="file", location=tmp_path / "x")])
+        assert list(copilot_cli.discover(locations=[str(tmp_path)]))
+        assert not copilot_cli.can_handle(Source(kind="file", location=tmp_path / "events.jsonl"))
+
+    def test_parse_updates_started_at_when_timestamps_unordered(self, tmp_path):
+        d = tmp_path / ".copilot" / "session-state" / "uuid"
+        d.mkdir(parents=True)
+        p = d / "events.jsonl"
+        p.write_text("\n".join([
+            '{"type":"assistant.message","timestamp":"2024-01-03T00:00:00Z","data":{"content":"later"}}',
+            '{"type":"user.message","timestamp":"2024-01-02T00:00:00Z","data":{"content":"earlier"}}'
+        ]))
+        conv = list(copilot_cli.parse(Source(kind="file", location=p)))[0]
+        assert conv.started_at == "2024-01-02T00:00:00Z"
+
+    def test_windows_default_locations_branch_reload(self, monkeypatch):
+        import importlib
+
+        import siftd.adapters.copilot_cli as mod
+
+        monkeypatch.setattr(mod.sys, "platform", "win32")
+        mod = importlib.reload(mod)
+        assert any("AppData/Local/.copilot/session-state" in p for p in mod.DEFAULT_LOCATIONS)

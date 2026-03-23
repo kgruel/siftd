@@ -147,14 +147,20 @@
 <div class="tab-pane active" id="tab-charts">
 
 <div class="timeline-container">
-  <div class="timeline-title">Project-wide coverage <button class="reload-btn" id="reload-btn">&#x21bb; Reload</button></div>
+  <div class="timeline-title">Project-wide <button class="reload-btn" id="reload-btn">&#x21bb; Reload</button></div>
+  <div class="timeline-tabs" id="proj-tabs">
+    <div class="timeline-tab active" data-proj-metric="coverage">Coverage %</div>
+    <div class="timeline-tab" data-proj-metric="covered">Lines covered</div>
+    <div class="timeline-tab" data-proj-metric="missing">Lines missing</div>
+    <div class="timeline-tab" data-proj-metric="statements">Total statements</div>
+  </div>
   <div class="timeline-canvas-wrap">
     <canvas id="project-timeline" height="200"></canvas>
     <div class="timeline-tooltip" id="project-tooltip"></div>
   </div>
-  <div class="timeline-legend">
-    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#58a6ff"></div> project coverage</div>
-    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#3fb950"></div> tracked module coverage</div>
+  <div class="timeline-legend" id="proj-legend">
+    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#58a6ff"></div> project</div>
+    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#3fb950"></div> tracked modules</div>
     <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="border-top:1px dashed #30363d;width:16px;height:0"></div> segment boundary</div>
   </div>
 </div>
@@ -328,32 +334,89 @@ function addHover(cId,tId,dots,fn) {
    Charts
    ═══════════════════════════════════════════════════════════════ */
 
-function drawProject(data) {
+let curProjMetric = 'coverage';
+
+function projVal(p, metric) {
+  switch(metric) {
+    case 'coverage': return p.est_pct;
+    case 'covered': return p.est_covered;
+    case 'missing': return p.est_total - p.est_covered;
+    case 'statements': return p.est_total;
+  }
+  return 0;
+}
+function projTrackedVal(p, metric) {
+  switch(metric) {
+    case 'coverage': return p.tracked_total > 0 ? p.tracked_covered / p.tracked_total * 100 : 0;
+    case 'covered': return p.tracked_covered;
+    case 'missing': return p.tracked_total - p.tracked_covered;
+    case 'statements': return p.tracked_total;
+  }
+  return 0;
+}
+
+function drawProject(data, metric) {
   if(!data.length)return;
+  metric = metric || curProjMetric;
   const{ctx,W,H}=mkCanvas('project-timeline',200);
   const pad={top:20,right:20,bottom:30,left:55},n=data.length;
   const cw=W-pad.left-pad.right,ch=H-pad.top-pad.bottom;
-  const xF=i=>pad.left+(i/(n-1||1))*cw,yF=v=>pad.top+ch-(v/100)*ch;
-  grid(ctx,pad,W,H,0,100,5,v=>Math.round(v)+'%');
+
+  const vals = data.map(p => projVal(p, metric));
+  const tvals = data.map(p => projTrackedVal(p, metric));
+  const allVals = [...vals, ...tvals].filter(v => v != null);
+
+  let lo, hi;
+  if (metric === 'coverage') { lo = 0; hi = 100; }
+  else { lo = 0; hi = Math.max(...allVals, 1); }
+  const rng = hi - lo || 1;
+
+  const xF = i => pad.left + (i/(n-1||1)) * cw;
+  const yF = v => pad.top + ch - ((v - lo) / rng) * ch;
+
+  const fmtLabel = metric === 'coverage' ? v => Math.round(v)+'%' : v => {
+    if (v >= 1000) return (v/1000).toFixed(1)+'k';
+    return Math.round(v).toString();
+  };
+  grid(ctx, pad, W, H, lo, hi, 5, fmtLabel);
+
   const bounds=[];let ls=null;
   for(let i=0;i<n;i++){if(data[i].segment!==ls){if(ls)bounds.push(i);ls=data[i].segment;}}
   segLines(ctx,pad,H,bounds,xF);
-  ctx.beginPath();ctx.moveTo(xF(0),yF(0));
-  for(let i=0;i<n;i++)ctx.lineTo(xF(i),yF(data[i].est_pct));
-  ctx.lineTo(xF(n-1),yF(0));ctx.closePath();ctx.fillStyle='rgba(88,166,255,0.08)';ctx.fill();
+
+  // Area fill under blue line
+  ctx.beginPath();ctx.moveTo(xF(0),yF(lo));
+  for(let i=0;i<n;i++) ctx.lineTo(xF(i),yF(vals[i]));
+  ctx.lineTo(xF(n-1),yF(lo));ctx.closePath();
+  ctx.fillStyle='rgba(88,166,255,0.08)';ctx.fill();
+
+  // Blue line: project values
   ctx.beginPath();ctx.strokeStyle='#58a6ff';ctx.lineWidth=2;
-  for(let i=0;i<n;i++){const x=xF(i),y=yF(data[i].est_pct);i?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.stroke();
+  for(let i=0;i<n;i++){const x=xF(i),y=yF(vals[i]);i?ctx.lineTo(x,y):ctx.moveTo(x,y);}
+  ctx.stroke();
+
+  // Green line: tracked module values
   ctx.beginPath();ctx.strokeStyle='#3fb950';ctx.lineWidth=1.5;
-  for(let i=0;i<n;i++){const p=data[i].tracked_total>0?data[i].tracked_covered/data[i].tracked_total*100:0;const x=xF(i),y=yF(p);i?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.stroke();
+  for(let i=0;i<n;i++){const x=xF(i),y=yF(tvals[i]);i?ctx.lineTo(x,y):ctx.moveTo(x,y);}
+  ctx.stroke();
+
+  // Dots on blue line
   const dots=[];
-  for(let i=0;i<n;i++){const x=xF(i),y=yF(data[i].est_pct);ctx.beginPath();ctx.arc(x,y,2.5,0,Math.PI*2);ctx.fillStyle='#58a6ff';ctx.fill();dots.push({x,y,idx:i});}
+  for(let i=0;i<n;i++){const x=xF(i),y=yF(vals[i]);ctx.beginPath();ctx.arc(x,y,2.5,0,Math.PI*2);ctx.fillStyle='#58a6ff';ctx.fill();dots.push({x,y,idx:i});}
+
   ctx.fillStyle='#484f58';ctx.font='10px SF Mono,Menlo,monospace';ctx.textAlign='center';
-  const ev=Math.max(1,Math.floor(n/12));for(let i=0;i<n;i+=ev)ctx.fillText(i+1,xF(i),H-pad.bottom+14);
+  const ev=Math.max(1,Math.floor(n/12));
+  for(let i=0;i<n;i+=ev)ctx.fillText(i+1,xF(i),H-pad.bottom+14);
+
+  const mlabel = {coverage:'Coverage',covered:'Covered lines',missing:'Missing lines',statements:'Statements'}[metric]||metric;
+  const fmt = metric === 'coverage' ? v => v+'%' : v => v.toLocaleString();
   addHover('project-timeline','project-tooltip',dots,idx=>{
-    const p=data[idx],tp=p.tracked_total>0?(p.tracked_covered/p.tracked_total*100).toFixed(1):'0';
+    const p=data[idx];
+    const pv = projVal(p, metric), tv = projTrackedVal(p, metric);
     return`<div style="color:#e6edf3;font-weight:600;margin-bottom:3px">${p.segment}</div>
-      <div style="color:#58a6ff">${p.real?'Project':'Est. project'} coverage: <b>${p.est_pct}%</b> (${p.est_covered}/${p.est_total})</div>
-      <div style="color:#3fb950">Tracked: <b>${tp}%</b> (${p.tracked_covered}/${p.tracked_total})</div>`;
+      <div style="color:#58a6ff">${p.real?'Project':'Est.'} ${mlabel}: <b>${fmt(pv)}</b></div>
+      <div style="color:#3fb950">Tracked: <b>${fmt(Math.round(tv))}</b> (${p.tracked_covered}/${p.tracked_total})</div>
+      <div style="color:#7d8590">cov ${p.est_pct}% &middot; ${p.est_covered}/${p.est_total} stmts</div>`;
   });
 }
 
@@ -652,9 +715,20 @@ document.getElementById('pick-method').onclick = () => pickMd('method', 'method-
 
 /* ── Event listeners (registered once) ── */
 
-document.querySelectorAll('.timeline-tab').forEach(tab => {
+// Project metric tabs
+document.querySelectorAll('#proj-tabs .timeline-tab').forEach(tab => {
   tab.onclick = () => {
-    document.querySelectorAll('.timeline-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('#proj-tabs .timeline-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    curProjMetric = tab.dataset.projMetric;
+    if (cachedProjData) drawProject(cachedProjData);
+  };
+});
+
+// Per-segment metric tabs
+document.querySelectorAll('[data-metric].timeline-tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('[data-metric].timeline-tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     curMetric = tab.dataset.metric;
     if (cachedSegments) drawSegChart(cachedSegments, curMetric);

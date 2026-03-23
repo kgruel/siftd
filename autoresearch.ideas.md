@@ -55,6 +55,7 @@
 - `embeddings/base.py` (45/45) — backend cache/fallback/error selection paths fully covered.
 - `embeddings/fastembed_backend.py` (20/20) — deterministic constructor/import/embed/probe paths saturated.
 - `embeddings/ollama_backend.py` (44/44) — model discovery + API error handling branches saturated.
+- `content/filters.py` (69/69) — encode-exception guard branch closed; lane saturated.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -65,8 +66,8 @@
 
 ## Highest ROI next targets
 
-### 1) `content/filters.py`
-- Active lane: close the remaining encode-exception guard branch in `is_binary_content` (currently 67/69).
+### 1) `adapters/copilot_cli.py`
+- Active lane: close remaining deterministic misses (discover wrapper, can_handle fallback false branch, parse timestamp-min update path).
 
 ### 2) warning/stability cleanup lane
 - Investigate recurring `requests` dependency warning and sqlite `ResourceWarning` noise in tests; reduce warning overhead/noise without masking real failures.
