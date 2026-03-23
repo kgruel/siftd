@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# serve.auth coverage efficiency benchmark
+# serve.routes coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.serve.auth"
-TARGET_FILE="src/siftd/serve/auth.py"
-TEST_FILES="tests/test_serve_auth_focus.py"
+INCLUDE_ARGS="--cov=siftd.serve.routes"
+TARGET_FILE="src/siftd/serve/routes.py"
+TEST_FILES="tests/test_serve_routes_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
