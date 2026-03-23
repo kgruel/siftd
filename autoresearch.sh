@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# Output format registry coverage efficiency benchmark
+# Output terminal formatter coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.output.format_registry"
-TEST_FILES="tests/test_output_format_registry.py"
+INCLUDE_ARGS="--cov=siftd.output.terminal_fmt"
+TEST_FILES="tests/test_output_terminal_fmt.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
