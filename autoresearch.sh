@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# API search coverage efficiency benchmark
+# Output painted bridge coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.api.search"
-TARGET_FILE="src/siftd/api/search.py"
-TEST_FILES="tests/test_api_search_edges.py"
+INCLUDE_ARGS="--cov=siftd.output.painted_bridge"
+TARGET_FILE="src/siftd/output/painted_bridge.py"
+TEST_FILES="tests/test_output_painted_bridge_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

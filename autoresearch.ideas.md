@@ -21,6 +21,7 @@
 - `api/resources.py` (69/69) — step-up to 100% plus step-down compression pass (to 0.42)
 - `api/auth.py` (30/30) — timeout branch covered and step-down pass complete (to 0.34)
 - `api/file_refs.py` (49/49) — guard branch covered and step-down passes complete (to 0.19)
+- `api/search.py` (155/155) — step-up to 100% and initial step-down pass (to 0.18)
 - `output/painted_bridge.py` (372/374) — near-saturated; remaining 2 lines appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -31,12 +32,11 @@
 
 ## Highest ROI next targets
 
-### 1) `api/search.py`
-- High remaining deterministic branch surface in wrappers and hybrid/fts orchestration logic.
-- Candidate focused lane: `tests/test_api_search_edges.py` (new) to avoid bloating legacy broad tests.
+### 1) `output/painted_bridge.py` cleanup lane
+- Re-validate remaining 2 uncovered lines; if structurally unreachable, document and stop, else add tiny targeted tests.
 
 ### 2) other `output/*` formatter edge branches (if still not saturated)
-### 3) targeted `api/*` deterministic leaf modules
+### 3) targeted `api/*` deterministic leaf modules (post-search sweep)
 
 ## Deferred but promising
 
