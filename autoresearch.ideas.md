@@ -38,6 +38,10 @@
 ### 2) other `output/*` formatter edge branches (if still not saturated)
 ### 3) targeted `api/*` deterministic leaf modules
 
+## Deferred but promising
+
+- Reduce `tests/test_api_search_edges.py` LOC via shared hybrid stub fixtures; prior aggressive rewrite triggered early acceptance failure (`test_doctor.t`) during full-suite benchmark, so retry in smaller safe increments.
+
 ## De-prioritized
 
 - `serve/*`, `embeddings/*` (marker/runtime heavy)

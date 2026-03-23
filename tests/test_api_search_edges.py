@@ -6,6 +6,11 @@ import pytest
 import siftd.api.search as api_search
 
 
+class _Conn:
+    def close(self):
+        pass
+
+
 def test_lazy_getattr_and_missing(monkeypatch):
     fake_mod = SimpleNamespace(SearchResult=object, apply_temporal_weight=lambda *a, **k: [], IndexCompatError=RuntimeError)
     monkeypatch.setattr("importlib.import_module", lambda name: fake_mod)
@@ -43,10 +48,6 @@ def test_list_ids_build_index_and_fts_mode(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "siftd.embeddings", fake_embeddings_api)
     assert api_search.build_index(db_path=tmp_path / "db") == {"chunks_added": 2, "total_chunks": 3}
 
-    class _Conn:
-        def close(self):
-            pass
-
     fake_search = SimpleNamespace(
         resolve_candidates=lambda *a, **k: {"keep"},
         annotate_fts5_breakdown=lambda *a, **k: None,
@@ -62,10 +63,6 @@ def test_list_ids_build_index_and_fts_mode(monkeypatch, tmp_path):
 
 
 def test_hybrid_mode_candidate_empty_and_no_results(monkeypatch, tmp_path):
-    class _Conn:
-        def close(self):
-            pass
-
     fake_search = SimpleNamespace(
         resolve_candidates=lambda *a, **k: set(),
         annotate_fts5_breakdown=lambda *a, **k: None,
@@ -90,10 +87,6 @@ def test_hybrid_mode_candidate_empty_and_no_results(monkeypatch, tmp_path):
 def test_hybrid_mode_recency_and_mmr(monkeypatch, tmp_path):
     calls = {}
 
-    class _Conn:
-        def close(self):
-            pass
-
     fake_search = SimpleNamespace(
         resolve_candidates=lambda *a, **k: {"c1"},
         annotate_fts5_breakdown=lambda *a, **k: calls.setdefault("annotate", True),
@@ -115,10 +108,6 @@ def test_hybrid_mode_recency_and_mmr(monkeypatch, tmp_path):
 
 
 def test_hybrid_uses_default_backend_and_fts_ids_when_candidates_none(monkeypatch, tmp_path):
-    class _Conn:
-        def close(self):
-            pass
-
     calls = {}
     fake_search = SimpleNamespace(
         resolve_candidates=lambda *a, **k: None,
