@@ -102,3 +102,14 @@ def test_try_delegate_post_guard_and_exception_paths(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_path": str(db.resolve())})
     monkeypatch.setattr("siftd.serve.client._post_json", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     assert delegation.try_delegate_post("/v1/tags", {}, db=db) is None
+
+
+def test_resolve_serve_url_invalid_port_falls_back(monkeypatch, tmp_path):
+    monkeypatch.delenv("SIFTD_SERVE_URL", raising=False)
+
+    def fake_get(key):
+        return "bad-port" if key == "serve.port" else None
+
+    monkeypatch.setattr("siftd.config.get_config", fake_get)
+    monkeypatch.setattr("siftd.paths.state_dir", lambda: tmp_path)
+    assert delegation.resolve_serve_url() == ("http://127.0.0.1:8484", False)
