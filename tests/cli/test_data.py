@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from conftest import FIXTURES_DIR
 
 import siftd.cli.data as data_cli
@@ -508,6 +509,7 @@ class TestCmdDoctor:
         rc = main(["--db", str(test_db), "doctor", "run", "nonexistent_check_xyz"])
         assert rc == 1
 
+    @pytest.mark.slow
     def test_doctor_fix_shows_fix_commands(self, test_db, capsys):
         """siftd doctor fix shows fix suggestions."""
         rc = main(["--db", str(test_db), "doctor", "fix"])
