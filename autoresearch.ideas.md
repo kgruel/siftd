@@ -51,6 +51,7 @@
 - `serve/routes.py` (185/185) — direct route-function tests closed all branches; focused step-down reached 0.35.
 - `serve/html_routes.py` (288/288) — helper + fragment route branches fully covered with direct async route tests.
 - `serve/app.py` (20/20) — app factory middleware/dependency wiring fully covered; step-down improved efficiency to 0.35.
+- `embeddings/chunker.py` (208/208) — embed pivot lane saturated via deterministic chunking + tool-summary branch tests.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -61,11 +62,14 @@
 
 ## Highest ROI next targets
 
-### 1) `embeddings/chunker.py`
-- Active embed pivot lane: include embeddings tests in full-suite coverage runs and close remaining chunking branches.
+### 1) `embeddings/base.py`
+- Active lane: backend selection cache/fallback/error paths without depending on heavyweight model runtime.
 
 ### 2) embed backend sweep
-- Follow with `embeddings/base.py`, `embeddings/fastembed_backend.py`, and `embeddings/ollama_backend.py` once chunker stabilizes.
+- Follow with `embeddings/fastembed_backend.py`, then `embeddings/ollama_backend.py` once base is saturated.
+
+### 3) warning/stability cleanup lane
+- Investigate recurring `requests` dependency warning and sqlite `ResourceWarning` noise in tests; reduce warning overhead/noise without masking real failures.
 
 ### 3) stability follow-up (serve + embed)
 - Long full-suite runs under coverage show intermittent 500s in `tests/test_serve.py` integration classes; currently excluded in autoresearch filter for stability. Root-cause and re-enable when deterministic.

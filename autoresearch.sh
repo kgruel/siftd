@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# embeddings.chunker coverage efficiency benchmark
+# embeddings.base coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.embeddings.chunker"
-TARGET_FILE="src/siftd/embeddings/chunker.py"
-TEST_FILES="tests/test_chunker.py tests/test_embeddings.py"
+INCLUDE_ARGS="--cov=siftd.embeddings.base"
+TARGET_FILE="src/siftd/embeddings/base.py"
+TEST_FILES="tests/test_embeddings_base_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
