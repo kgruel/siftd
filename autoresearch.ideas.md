@@ -26,6 +26,7 @@
 - `api/tags.py` (73/73) — wrapper branches covered and focused step-down benchmark (to 0.12)
 - `api/migrations.py` (15/15) — wrapper coverage complete with step-down pass (to 0.40)
 - `api/conversations.py` (424/424) — final edge branches covered (prompt-without-response and empty SQL result) with focused lane; follow-up step-down attempt was flat at metric floor.
+- `api/merge.py` (134/134) — FK-violation rollback branch covered and step-down pass completed (to 0.05).
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -36,9 +37,9 @@
 
 ## Highest ROI next targets
 
-### 1) `api/merge.py`
-- Small remaining deterministic branch surface (FK-violation atomic rollback path).
-- Focused lane: `tests/test_api_merge_edges.py`.
+### 1) `api/slice.py`
+- Small deterministic branch surface still open (missing-source error + FK-violation guard paths).
+- Focused lane: `tests/test_api_slice_edges.py`.
 
 ### 2) `api/stats.py` optional additional step-down follow-up
 - Focused edge lane at 100%; re-check only if metric can move below current 0.05 floor.

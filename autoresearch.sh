@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# API merge coverage efficiency benchmark
+# API slice coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.api.merge"
-TARGET_FILE="src/siftd/api/merge.py"
-TEST_FILES="tests/test_api_merge_edges.py"
+INCLUDE_ARGS="--cov=siftd.api.slice"
+TARGET_FILE="src/siftd/api/slice.py"
+TEST_FILES="tests/test_api_slice_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
