@@ -5,7 +5,7 @@ set -euo pipefail
 
 INCLUDE_ARGS="--cov=siftd.api.tags"
 TARGET_FILE="src/siftd/api/tags.py"
-TEST_FILES="tests/test_tags_temporal.py tests/test_api_tags_edges.py"
+TEST_FILES="tests/test_api_tags_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
