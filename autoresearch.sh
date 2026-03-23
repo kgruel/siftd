@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# API export coverage efficiency benchmark
+# API sessions coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.api.export"
-TARGET_FILE="src/siftd/api/export.py"
-TEST_FILES="tests/test_api_export_edges.py"
+INCLUDE_ARGS="--cov=siftd.api.sessions"
+TARGET_FILE="src/siftd/api/sessions.py"
+TEST_FILES="tests/test_api_sessions_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

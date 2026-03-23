@@ -28,6 +28,7 @@
 - `api/conversations.py` (424/424) — final edge branches covered (prompt-without-response and empty SQL result) with focused lane; follow-up step-down attempt was flat at metric floor.
 - `api/merge.py` (134/134) — FK-violation rollback branch covered and step-down pass completed (to 0.05).
 - `api/slice.py` (70/70) — missing-source + FK-guard branches covered with focused lane; step-down pass completed (to 0.07).
+- `api/export.py` (66/66) — default-fidelity branch covered with focused lane; step-down attempt was flat at metric floor (discarded).
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -38,12 +39,12 @@
 
 ## Highest ROI next targets
 
-### 1) `api/export.py`
-- Small deterministic branch still open in `export_as_document` default-fidelity path.
-- Focused lane: `tests/test_api_export_edges.py`.
+### 1) `api/sessions.py`
+- Single wrapper line still uncovered; likely quick deterministic gain.
+- Focused lane: `tests/test_api_sessions_edges.py`.
 
-### 2) `api/stats.py` optional additional step-down follow-up
-- Focused edge lane at 100%; re-check only if metric can move below current 0.05 floor.
+### 2) `api/adapters.py` and `api/__init__.py`
+- Tiny residual misses (1 line each), likely straightforward wrapper/import-surface tests.
 
 ### 3) `output/painted_bridge.py` documentation/closure pass
 - Remaining miss lines likely structurally unreachable; document and de-prioritize unless new evidence appears.
