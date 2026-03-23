@@ -5,7 +5,7 @@ set -euo pipefail
 
 INCLUDE_ARGS="--cov=siftd.serve.auth"
 TARGET_FILE="src/siftd/serve/auth.py"
-TEST_FILES="tests/test_serve_auth_edges.py"
+TEST_FILES="tests/test_serve_auth_focus.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

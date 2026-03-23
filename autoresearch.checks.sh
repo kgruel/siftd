@@ -36,7 +36,7 @@ if errors:
     for e in errors:
         print(f'  {e}')
     sys.exit(1)
-" tests/test_serve_auth_edges.py
+" tests/test_serve_auth_focus.py
 
 # Lint
-uv run python -m ruff check tests/test_serve_auth_edges.py 2>&1 | tail -10
+uv run python -m ruff check tests/test_serve_auth_focus.py 2>&1 | tail -10
