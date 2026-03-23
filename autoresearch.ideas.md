@@ -46,6 +46,7 @@
 - `serve/client.py` (81/81) — serve pivot baseline + edge step-up completed; lane saturated.
 - `serve/delegation.py` (130/130) — delegation fallback/unavailable/timeout and config parsing branches fully covered.
 - `serve/auth.py` (84/84) — auth mode dispatch, OIDC/introspection, and JWKS paths covered; focused step-down reached 0.02.
+- `serve/routes.py` (185/185) — direct route-function tests closed all branches; focused step-down reached 0.35.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -56,11 +57,12 @@
 
 ## Highest ROI next targets
 
-### 1) broader `serve/routes.py` / `serve/html_routes.py`
-- Next serve lane: route-layer behavior with Litestar TestClient fixtures; likely biggest remaining serve surface.
+### 1) `serve/html_routes.py`
+- Next serve lane: HTML fragment handlers and helper functions (htmx/detail/search/follow/stats/tools/export).
+- Prefer direct function tests + selective TestClient usage to avoid flaky full-suite integration classes.
 
 ### 2) `serve/app.py`
-- Follow routes with app wiring branches once route-level setup is stable.
+- Follow html routes with app wiring branches once route-level setup is stable.
 
 ### 3) serve integration instability follow-up
 - Long full-suite runs under coverage show intermittent 500s in `tests/test_serve.py` integration classes; currently excluded in autoresearch filter for stability. Root-cause and re-enable when deterministic.
