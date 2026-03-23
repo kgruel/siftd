@@ -32,6 +32,8 @@
 - `api/sessions.py` (17/17) — wrapper gap closed; step-down pass completed (to 0.17).
 - `api/adapters.py` (30/30) — final entrypoint loop branch covered; focused lane currently at step-down 0.11.
 - `api/__init__.py` (25/25) — unknown-symbol defensive AttributeError path covered.
+- `adapters/_jsonl.py` (21/21) — string fast-path covered with focused edge test.
+- `adapters/registry.py` (35/35) — config path-override branch covered; step-down pass to 0.08.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -42,12 +44,12 @@
 
 ## Highest ROI next targets
 
-### 1) `adapters/_jsonl.py`
-- One missing deterministic branch (`parse_block` string input fast path).
-- Focused lane: `tests/adapters/test_jsonl_edges.py`.
+### 1) `model_names.py`
+- One residual fallback branch in `_parse_gemini` for unrecognized gemini variants.
+- Focused lane: `tests/test_model_names_edges.py`.
 
-### 2) Remaining tiny adapter misses after `_jsonl`
-- `adapters/opencode.py`, `adapters/aider.py`, `adapters/claude_code.py`, `adapters/registry.py` each have 1-line residual misses; pick deterministic ones first.
+### 2) Remaining tiny adapter misses
+- `adapters/opencode.py`, `adapters/aider.py`, `adapters/claude_code.py`, `adapters/pi_agent.py`, `adapters/sdk.py` have small residual misses; pick deterministic non-fixture-heavy branches first.
 
 ### 3) `output/painted_bridge.py` documentation/closure pass
 - Remaining miss lines likely structurally unreachable; document and de-prioritize unless new evidence appears.

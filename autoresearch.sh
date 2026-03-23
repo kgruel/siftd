@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# adapters.registry coverage efficiency benchmark
+# model_names coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.adapters.registry"
-TARGET_FILE="src/siftd/adapters/registry.py"
-TEST_FILES="tests/adapters/test_registry_edges.py"
+INCLUDE_ARGS="--cov=siftd.model_names"
+TARGET_FILE="src/siftd/model_names.py"
+TEST_FILES="tests/test_model_names_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
