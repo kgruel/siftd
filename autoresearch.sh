@@ -4,6 +4,7 @@ set -euo pipefail
 # API auth coverage efficiency benchmark
 
 INCLUDE_ARGS="--cov=siftd.api.auth"
+TARGET_FILE="src/siftd/api/auth.py"
 TEST_FILES="tests/test_auth.py"
 
 for f in $TEST_FILES; do
@@ -24,17 +25,18 @@ uv run python -m pytest tests/ -x -q --tb=short -p no:randomly \
 
 COVERAGE_JSON=$(cat coverage.json)
 rm -f coverage.json
-COVERED=$( echo "$COVERAGE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['totals']['covered_lines'])")
-TOTAL=$(   echo "$COVERAGE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['totals']['num_statements'])")
-MISS=$(    echo "$COVERAGE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['totals']['missing_lines'])")
-PCT=$(     echo "$COVERAGE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(round(d['totals']['percent_covered'], 1))")
+COVERED=$( echo "$COVERAGE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); tf='$TARGET_FILE'; f=next((v for k,v in d['files'].items() if k.endswith(tf)), None); s=(f or d['totals']); print(s['summary']['covered_lines'] if 'summary' in s else s['covered_lines'])")
+TOTAL=$(   echo "$COVERAGE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); tf='$TARGET_FILE'; f=next((v for k,v in d['files'].items() if k.endswith(tf)), None); s=(f or d['totals']); print(s['summary']['num_statements'] if 'summary' in s else s['num_statements'])")
+MISS=$(    echo "$COVERAGE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); tf='$TARGET_FILE'; f=next((v for k,v in d['files'].items() if k.endswith(tf)), None); s=(f or d['totals']); print(s['summary']['missing_lines'] if 'summary' in s else s['missing_lines'])")
+PCT=$(     echo "$COVERAGE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); tf='$TARGET_FILE'; f=next((v for k,v in d['files'].items() if k.endswith(tf)), None); s=(f or d['totals']); p=(s['summary']['percent_covered'] if 'summary' in s else s['percent_covered']); print(round(p, 1))")
 MISSING=$( echo "$COVERAGE_JSON" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
-for _fname, fdata in sorted(d['files'].items()):
-    lines = fdata.get('missing_lines', [])
-    if lines:
-        print('  L' + ','.join(str(l) for l in lines))
+tf='$TARGET_FILE'
+f=next((v for k,v in d['files'].items() if k.endswith(tf)), None)
+lines=(f or {}).get('missing_lines', [])
+if lines:
+    print('  L' + ','.join(str(l) for l in lines))
 ")
 
 BEST_TIME=99999
