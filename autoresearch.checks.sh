@@ -35,7 +35,7 @@ if errors:
     for e in errors:
         print(f'  {e}')
     sys.exit(1)
-" tests/test_embeddings_base_edges.py
+" tests/test_embeddings_fastembed_backend_edges.py
 
 # Lint
-uv run python -m ruff check tests/test_embeddings_base_edges.py 2>&1 | tail -10
+uv run python -m ruff check tests/test_embeddings_fastembed_backend_edges.py 2>&1 | tail -10

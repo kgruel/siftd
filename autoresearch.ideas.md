@@ -52,6 +52,7 @@
 - `serve/html_routes.py` (288/288) — helper + fragment route branches fully covered with direct async route tests.
 - `serve/app.py` (20/20) — app factory middleware/dependency wiring fully covered; step-down improved efficiency to 0.35.
 - `embeddings/chunker.py` (208/208) — embed pivot lane saturated via deterministic chunking + tool-summary branch tests.
+- `embeddings/base.py` (45/45) — backend cache/fallback/error selection paths fully covered.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -62,11 +63,11 @@
 
 ## Highest ROI next targets
 
-### 1) `embeddings/base.py`
-- Active lane: backend selection cache/fallback/error paths without depending on heavyweight model runtime.
+### 1) `embeddings/fastembed_backend.py`
+- Active lane: constructor ImportError path, embed/embed_one behavior, and dimension probing without loading large models.
 
 ### 2) embed backend sweep
-- Follow with `embeddings/fastembed_backend.py`, then `embeddings/ollama_backend.py` once base is saturated.
+- Follow with `embeddings/ollama_backend.py` once fastembed backend lane is saturated.
 
 ### 3) warning/stability cleanup lane
 - Investigate recurring `requests` dependency warning and sqlite `ResourceWarning` noise in tests; reduce warning overhead/noise without masking real failures.
