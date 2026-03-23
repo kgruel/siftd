@@ -406,3 +406,49 @@ class TestHybridSearchBranches:
 
         out = search_mod.hybrid_search("q", db_path=db, embed_db_path=embed, recency=True, rerank="relevance", threshold=0.0)
         assert out and out[0].conversation_id in {"c1", "c2"}
+
+    def test_mmr_candidate_cap_and_threshold_filter(self, monkeypatch, tmp_path):
+        db = tmp_path / "main.db"
+        embed = tmp_path / "embed.db"
+        db.write_text("x")
+        embed.write_text("x")
+
+        backend = SimpleNamespace(name="b", model="m", dimension=2, embed_one=lambda _q: [1.0, 0.0])
+        self._stub_embed_exports(monkeypatch, backend)
+
+        class _Conn:
+            def close(self):
+                return None
+
+        class _EmbConn:
+            def close(self):
+                return None
+
+        monkeypatch.setattr(search_mod, "open_database", lambda *_a, **_k: _Conn())
+        monkeypatch.setattr(search_mod, "get_active_conversation_ids", lambda _db: set())
+        monkeypatch.setattr(search_mod, "_filter_conversations_conn", lambda *_a, **_k: None)
+        monkeypatch.setattr("siftd.storage.fts.fts5_recall_details", lambda *_a, **_k: SimpleNamespace(conversation_ids=[], mode="and", fts_query="q"))
+        monkeypatch.setattr("siftd.storage.embeddings.open_embeddings_db", lambda *_a, **_k: _EmbConn())
+        monkeypatch.setattr("siftd.storage.embeddings.validate_index_compat", lambda *_a, **_k: None)
+
+        raw = [
+            {"conversation_id": f"c{i}", "score": 1.0 - i / 2000.0, "text": "t", "chunk_type": "exchange", "embedding": [1.0, 0.0], "chunk_id": f"k{i:04d}", "source_ids": []}
+            for i in range(search_mod.MAX_MMR_CANDIDATES + 2)
+        ]
+        monkeypatch.setattr("siftd.storage.embeddings.search_similar", lambda *_a, **_k: raw)
+
+        seen = {"n": 0}
+
+        def fake_mmr(results, query_embedding, **_k):
+            seen["n"] = len(results)
+            return [
+                {"conversation_id": "c0", "score": 0.99, "text": "t", "chunk_type": "exchange", "chunk_id": "k0", "source_ids": []},
+                {"conversation_id": "c1", "score": 0.2, "text": "t", "chunk_type": "exchange", "chunk_id": "k1", "source_ids": []},
+            ]
+
+        monkeypatch.setattr(search_mod, "mmr_rerank", fake_mmr)
+        monkeypatch.setattr(search_mod, "batched_in_query", lambda *_a, **_k: [{"id": "c0", "workspace": "/w", "started_at": "t"}, {"id": "c1", "workspace": "/w", "started_at": "t"}])
+
+        out = search_mod.hybrid_search("q", db_path=db, embed_db_path=embed, threshold=0.9)
+        assert seen["n"] == search_mod.MAX_MMR_CANDIDATES
+        assert len(out) == 1 and out[0].conversation_id == "c0"
