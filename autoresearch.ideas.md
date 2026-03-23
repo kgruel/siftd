@@ -61,15 +61,15 @@
 
 ## Highest ROI next targets
 
-### 1) `content/filters.py`
-- Active lane: close remaining encode-exception guard branch in `is_binary_content`.
+### 1) `embeddings/chunker.py`
+- Active embed pivot lane: include embeddings tests in full-suite coverage runs and close remaining chunking branches.
 
-### 2) serve integration instability follow-up
+### 2) embed backend sweep
+- Follow with `embeddings/base.py`, `embeddings/fastembed_backend.py`, and `embeddings/ollama_backend.py` once chunker stabilizes.
+
+### 3) stability follow-up (serve + embed)
 - Long full-suite runs under coverage show intermittent 500s in `tests/test_serve.py` integration classes; currently excluded in autoresearch filter for stability. Root-cause and re-enable when deterministic.
-
-### 3) post-serve sweep
-- Next deterministic tiny misses: `adapters/copilot_cli.py` and `cli/query.py`.
-
+- Embed pivot currently needs temporary `not mmr` exclusion under pytest-cov due numpy/fastembed re-import ImportError (`cannot load module more than once per process`); investigate dependency pin/import order fix and remove exclusion.
 ## Deferred but promising
 
 - Investigate full-suite interaction causing intermittent `tests/test_serve.py::TestHealth::test_health_returns_ok` 500 when running long non-randomly ordered suites under coverage; currently excluded from autoresearch k-filter for stability.

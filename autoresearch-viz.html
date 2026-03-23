@@ -3,73 +3,120 @@
 <head>
 <meta charset="utf-8">
 <title>autoresearch — efficiency trajectory</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1/themes/prism-tomorrow.min.css">
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1/prism.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1/plugins/autoloader/prism-autoloader.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'SF Mono', 'Menlo', 'Consolas', monospace; background: #0d1117; color: #c9d1d9; padding: 24px; font-size: 13px; }
   h1 { font-size: 18px; font-weight: 600; color: #e6edf3; margin-bottom: 4px; }
-  .subtitle { color: #7d8590; margin-bottom: 24px; font-size: 12px; }
-  .summary { display: flex; gap: 24px; margin-bottom: 24px; flex-wrap: wrap; }
-  .stat { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px 16px; min-width: 120px; }
-  .stat-value { font-size: 24px; font-weight: 700; color: #58a6ff; }
+  .subtitle { color: #7d8590; margin-bottom: 16px; font-size: 12px; }
+  .summary { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px 14px; min-width: 100px; }
+  .stat-value { font-size: 22px; font-weight: 700; color: #58a6ff; }
   .stat-label { font-size: 11px; color: #7d8590; margin-top: 2px; }
-  .segment { background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 12px; overflow: hidden; }
-  .segment-header { padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
+  /* Tabs (top-level navigation) */
+  .nav-tabs { display: flex; gap: 2px; margin-bottom: 20px; border-bottom: 1px solid #21262d; padding-bottom: 0; }
+  .nav-tab { padding: 8px 16px; font-size: 13px; cursor: pointer; color: #7d8590; border-bottom: 2px solid transparent; transition: all 0.15s; }
+  .nav-tab:hover { color: #c9d1d9; }
+  .nav-tab.active { color: #e6edf3; border-bottom-color: #58a6ff; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+  /* Segments */
+  .segment { background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 10px; overflow: hidden; }
+  .segment-header { padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
   .segment-header:hover { background: #1c2128; }
   .segment-name { font-weight: 600; color: #e6edf3; font-size: 13px; }
-  .segment-badges { display: flex; gap: 8px; align-items: center; }
+  .segment-badges { display: flex; gap: 6px; align-items: center; }
   .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 500; }
   .badge-cov { background: #1a3a2a; color: #3fb950; }
   .badge-cov-partial { background: #3a2a1a; color: #d29922; }
   .badge-runs { background: #1c2128; color: #7d8590; }
   .badge-eff { background: #1a2a3a; color: #58a6ff; }
-  .segment-body { display: none; padding: 0 14px 14px; }
+  .segment-body { display: none; padding: 0 12px 12px; }
   .segment.open .segment-body { display: block; }
-  .chart-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+  .chart-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12px; }
   .chart-run { width: 32px; text-align: right; color: #7d8590; }
   .chart-status { width: 14px; text-align: center; }
-  .chart-status.keep { color: #3fb950; }
-  .chart-status.discard { color: #f85149; }
-  .chart-status.crash { color: #d29922; }
-  .chart-status.checks_failed { color: #d29922; }
-  .chart-bar-container { flex: 1; position: relative; height: 18px; }
+  .chart-status.keep { color: #3fb950; } .chart-status.discard { color: #f85149; }
+  .chart-status.crash,.chart-status.checks_failed { color: #d29922; }
+  .chart-bar-container { flex: 1; height: 16px; }
   .chart-bar { height: 100%; border-radius: 2px; min-width: 2px; }
   .chart-bar.keep { background: linear-gradient(90deg, #1a6334, #238636); }
   .chart-bar.discard { background: linear-gradient(90deg, #6e2b28, #8b3530); }
-  .chart-bar.crash { background: linear-gradient(90deg, #5a3a1a, #7a4a2a); }
-  .chart-bar.checks_failed { background: linear-gradient(90deg, #5a3a1a, #7a4a2a); }
-  .chart-metrics { display: flex; gap: 12px; font-size: 11px; color: #7d8590; min-width: 280px; text-align: right; }
-  .chart-metrics span { min-width: 55px; }
-  .metric-eff { color: #58a6ff; }
-  .metric-cov { color: #3fb950; }
-  .metric-loc { color: #bc8cff; }
-  .metric-time { color: #d29922; }
-  .metric-miss { color: #f85149; }
+  .chart-bar.crash,.chart-bar.checks_failed { background: linear-gradient(90deg, #5a3a1a, #7a4a2a); }
+  .chart-metrics { display: flex; gap: 10px; font-size: 11px; color: #7d8590; min-width: 280px; text-align: right; }
+  .chart-metrics span { min-width: 50px; }
+  .metric-eff { color: #58a6ff; } .metric-cov { color: #3fb950; }
+  .metric-loc { color: #bc8cff; } .metric-time { color: #d29922; } .metric-miss { color: #f85149; }
   .arrow { transition: transform 0.2s; display: inline-block; color: #7d8590; }
   .segment.open .arrow { transform: rotate(90deg); }
-  .filter-bar { margin-bottom: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .filter-bar input[type=text] { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 6px; font-family: inherit; font-size: 12px; width: 240px; }
+  .filter-bar { margin-bottom: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .filter-bar input[type=text] { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 5px 10px; border-radius: 6px; font-family: inherit; font-size: 12px; width: 220px; }
   .filter-bar label { font-size: 12px; color: #7d8590; display: flex; align-items: center; gap: 4px; }
   .filter-bar input[type=checkbox] { accent-color: #58a6ff; }
-  .legend { display: flex; gap: 16px; margin-bottom: 16px; font-size: 11px; color: #7d8590; }
+  .legend { display: flex; gap: 14px; margin-bottom: 12px; font-size: 11px; color: #7d8590; }
   .legend-item { display: flex; align-items: center; gap: 4px; }
   .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
-  .timeline-container { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin-bottom: 24px; }
-  .timeline-title { font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 12px; }
+  /* Charts */
+  .timeline-container { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 14px; margin-bottom: 20px; }
+  .timeline-title { font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 10px; }
   .timeline-canvas-wrap { position: relative; }
   .timeline-canvas-wrap canvas { display: block; width: 100%; }
   .timeline-tooltip { position: absolute; background: #1c2128; border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px; font-size: 11px; color: #c9d1d9; pointer-events: none; display: none; z-index: 10; white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
-  .timeline-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 11px; color: #7d8590; justify-content: center; }
+  .timeline-legend { display: flex; gap: 14px; margin-top: 6px; font-size: 11px; color: #7d8590; justify-content: center; }
   .timeline-legend-item { display: flex; align-items: center; gap: 4px; }
   .timeline-legend-swatch { width: 16px; height: 3px; border-radius: 1px; }
-  .timeline-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+  .timeline-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
   .timeline-tab { padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; background: #0d1117; border: 1px solid #30363d; color: #7d8590; }
   .timeline-tab.active { background: #1a2a3a; border-color: #58a6ff; color: #58a6ff; }
+  /* Loader */
   .loader { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; gap: 16px; }
   .loader-drop { border: 2px dashed #30363d; border-radius: 12px; padding: 48px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; max-width: 500px; width: 100%; }
-  .loader-drop:hover, .loader-drop.drag-over { border-color: #58a6ff; background: rgba(88, 166, 255, 0.05); }
+  .loader-drop:hover,.loader-drop.drag-over { border-color: #58a6ff; background: rgba(88,166,255,0.05); }
   .loader-drop input { display: none; }
   .reload-btn { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 10px; border-radius: 4px; font-family: inherit; font-size: 11px; cursor: pointer; margin-left: 8px; }
   .reload-btn:hover { background: #30363d; }
+  /* Run log */
+  .run-log { max-height: 600px; overflow-y: auto; }
+  .log-entry { padding: 8px 12px; border-bottom: 1px solid #21262d; font-size: 12px; display: flex; gap: 10px; align-items: flex-start; }
+  .log-entry:hover { background: #161b22; }
+  .log-status { min-width: 14px; font-size: 14px; line-height: 1.4; }
+  .log-body { flex: 1; }
+  .log-seg { color: #58a6ff; font-weight: 600; font-size: 11px; }
+  .log-desc { color: #c9d1d9; margin-top: 2px; line-height: 1.5; }
+  .log-meta { color: #484f58; font-size: 11px; margin-top: 2px; }
+  .log-search { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 6px; font-family: inherit; font-size: 12px; width: 100%; margin-bottom: 10px; }
+  /* Efficiency comparison */
+  .eff-bar-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+  .eff-bar-label { min-width: 260px; color: #c9d1d9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .eff-bar-container { flex: 1; height: 16px; background: #0d1117; border-radius: 2px; }
+  .eff-bar { height: 100%; border-radius: 2px; min-width: 2px; }
+  .eff-bar-value { min-width: 60px; text-align: right; font-size: 11px; }
+  /* Health donut */
+  .health-row { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
+  .health-canvas { width: 120px; height: 120px; }
+  .health-stats { font-size: 12px; line-height: 2; }
+  /* Markdown */
+  .md-container { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 20px 24px; }
+  .md-container h1,.md-container h2,.md-container h3 { color: #e6edf3; margin: 16px 0 8px; }
+  .md-container h1 { font-size: 18px; border-bottom: 1px solid #21262d; padding-bottom: 6px; }
+  .md-container h2 { font-size: 15px; }
+  .md-container h3 { font-size: 13px; }
+  .md-container p { margin: 6px 0; line-height: 1.6; }
+  .md-container ul,.md-container ol { margin: 6px 0 6px 20px; }
+  .md-container li { margin: 3px 0; line-height: 1.5; }
+  .md-container code { background: #0d1117; padding: 2px 5px; border-radius: 3px; font-size: 12px; }
+  .md-container pre { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin: 8px 0; overflow-x: auto; }
+  .md-container pre code { background: none; padding: 0; }
+  .md-container blockquote { border-left: 3px solid #30363d; padding-left: 12px; color: #7d8590; margin: 8px 0; }
+  .md-container table { border-collapse: collapse; margin: 8px 0; }
+  .md-container th,.md-container td { border: 1px solid #30363d; padding: 6px 10px; font-size: 12px; }
+  .md-container th { background: #161b22; }
+  .md-empty { color: #484f58; font-style: italic; padding: 40px; text-align: center; }
+  .md-pick-btn { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 14px; border-radius: 6px; font-family: inherit; font-size: 12px; cursor: pointer; margin-top: 8px; }
+  .md-pick-btn:hover { background: #30363d; }
 </style>
 </head>
 <body>
@@ -87,6 +134,17 @@
 
 <div id="dashboard" style="display:none">
 <div class="summary" id="summary"></div>
+
+<div class="nav-tabs" id="nav-tabs">
+  <div class="nav-tab active" data-tab="charts">Charts</div>
+  <div class="nav-tab" data-tab="log">Run Log</div>
+  <div class="nav-tab" data-tab="efficiency">Efficiency</div>
+  <div class="nav-tab" data-tab="ideas">Ideas</div>
+  <div class="nav-tab" data-tab="methodology">Methodology</div>
+</div>
+
+<!-- ── Charts tab ── -->
+<div class="tab-pane active" id="tab-charts">
 
 <div class="timeline-container">
   <div class="timeline-title">Project-wide coverage <button class="reload-btn" id="reload-btn">&#x21bb; Reload</button></div>
@@ -121,6 +179,11 @@
   </div>
 </div>
 
+<div class="health-row" id="health-row">
+  <canvas class="health-canvas" id="health-canvas" width="120" height="120"></canvas>
+  <div class="health-stats" id="health-stats"></div>
+</div>
+
 <div class="filter-bar">
   <input type="text" id="filter" placeholder="Filter segments...">
   <label><input type="checkbox" id="hideComplete" checked> Hide single-run</label>
@@ -134,8 +197,46 @@
 <div id="segments"></div>
 </div>
 
+<!-- ── Run Log tab ── -->
+<div class="tab-pane" id="tab-log">
+  <input class="log-search" id="log-search" placeholder="Search run descriptions...">
+  <div class="run-log" id="run-log"></div>
+</div>
+
+<!-- ── Efficiency tab ── -->
+<div class="tab-pane" id="tab-efficiency">
+  <div class="timeline-container">
+    <div class="timeline-title">Final efficiency by segment (least efficient at top)</div>
+    <div id="eff-chart"></div>
+  </div>
+</div>
+
+<!-- ── Ideas tab ── -->
+<div class="tab-pane" id="tab-ideas">
+  <div class="md-container" id="ideas-content">
+    <div class="md-empty">
+      No ideas file loaded.<br>
+      <button class="md-pick-btn" id="pick-ideas">Load autoresearch.ideas.md</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Methodology tab ── -->
+<div class="tab-pane" id="tab-methodology">
+  <div class="md-container" id="method-content">
+    <div class="md-empty">
+      No methodology file loaded.<br>
+      <button class="md-pick-btn" id="pick-method">Load autoresearch.md</button>
+    </div>
+  </div>
+</div>
+
+</div><!-- /dashboard -->
+
 <script>
-/* ── Data parsing ─────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   Data parsing
+   ═══════════════════════════════════════════════════════════════ */
 
 function parseSegments(lines) {
   const segs = [];
@@ -150,362 +251,488 @@ function buildProjectTimeline(lines) {
   const segs = parseSegments(lines);
   const hasReal = lines.some(e => e.metrics && e.metrics.project_coverage_pct != null);
   const pts = [];
-
   if (hasReal) {
     for (const seg of segs) for (const r of seg.runs) {
       if (r.status !== 'keep') continue;
       const m = r.metrics || {};
       if (m.project_coverage_pct == null) continue;
-      pts.push({
-        timestamp: r.timestamp, segment: seg.name, run: r.run, commit: r.commit,
-        est_pct: m.project_coverage_pct,
-        est_covered: m.project_covered || 0, est_total: m.project_statements || 0,
-        tracked_covered: m.covered_lines || 0,
-        tracked_total: (m.covered_lines || 0) + (m.miss || 0),
-        tracked_modules: 0, real: true,
-      });
+      pts.push({ timestamp: r.timestamp, segment: seg.name, run: r.run, commit: r.commit,
+        est_pct: m.project_coverage_pct, est_covered: m.project_covered||0, est_total: m.project_statements||0,
+        tracked_covered: m.covered_lines||0, tracked_total: (m.covered_lines||0)+(m.miss||0),
+        tracked_modules: 0, real: true });
     }
   }
-
   if (!pts.length) {
-    // Estimate from per-module data
-    const T = 15593;
-    const ms = {};
+    const T = 15593; const ms = {};
     for (const seg of segs) for (const r of seg.runs) {
       if (r.status !== 'keep') continue;
       const m = r.metrics || {};
       if (m.covered_lines == null || !m.coverage_pct) continue;
-      const tot = Math.round(m.covered_lines / (m.coverage_pct / 100));
-      ms[seg.name] = { covered: m.covered_lines, total: tot };
-      const tc = Object.values(ms).reduce((s, v) => s + v.covered, 0);
-      const tt = Object.values(ms).reduce((s, v) => s + v.total, 0);
-      const ut = Math.max(0, T - tt);
-      const ec = tc + Math.round(ut * 0.7);
-      pts.push({
-        timestamp: r.timestamp, segment: seg.name, run: r.run, commit: r.commit,
-        est_pct: Math.round(ec / T * 1000) / 10,
-        est_covered: ec, est_total: T,
-        tracked_covered: tc, tracked_total: tt,
-        tracked_modules: Object.keys(ms).length, real: false,
-      });
+      ms[seg.name] = { covered: m.covered_lines, total: Math.round(m.covered_lines/(m.coverage_pct/100)) };
+      const tc = Object.values(ms).reduce((s,v)=>s+v.covered,0);
+      const tt = Object.values(ms).reduce((s,v)=>s+v.total,0);
+      const ec = tc + Math.round(Math.max(0,T-tt)*0.7);
+      pts.push({ timestamp: r.timestamp, segment: seg.name, run: r.run, commit: r.commit,
+        est_pct: Math.round(ec/T*1000)/10, est_covered: ec, est_total: T,
+        tracked_covered: tc, tracked_total: tt, tracked_modules: Object.keys(ms).length, real: false });
     }
   }
-  pts.sort((a, b) => a.timestamp - b.timestamp);
+  pts.sort((a,b) => a.timestamp - b.timestamp);
   return pts;
 }
 
-/* ── Canvas helpers ───────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   Canvas helpers
+   ═══════════════════════════════════════════════════════════════ */
 
-const SC = { keep:'#3fb950', discard:'#f85149', crash:'#d29922', checks_failed:'#d29922' };
+const SC = {keep:'#3fb950',discard:'#f85149',crash:'#d29922',checks_failed:'#d29922'};
+const SI = {keep:'\u2713',discard:'\u2717',crash:'\u26a0',checks_failed:'\u26a0'};
 
-function mkCanvas(id, h) {
-  const c = document.getElementById(id);
-  const dpr = devicePixelRatio || 1;
-  const W = c.parentElement.getBoundingClientRect().width, H = h;
-  c.width = W * dpr; c.height = H * dpr;
-  c.style.width = W + 'px'; c.style.height = H + 'px';
-  const ctx = c.getContext('2d'); ctx.scale(dpr, dpr);
-  return { c, ctx, W, H };
+function mkCanvas(id,h) {
+  const c=document.getElementById(id),dpr=devicePixelRatio||1;
+  const W=c.parentElement.getBoundingClientRect().width,H=h;
+  c.width=W*dpr;c.height=H*dpr;c.style.width=W+'px';c.style.height=H+'px';
+  const ctx=c.getContext('2d');ctx.scale(dpr,dpr);return{c,ctx,W,H};
 }
 
-function grid(ctx, pad, W, H, lo, hi, n, fmt) {
-  const ch = H - pad.top - pad.bottom, rng = hi - lo || 1;
-  ctx.strokeStyle = '#21262d'; ctx.lineWidth = 1;
-  ctx.fillStyle = '#484f58'; ctx.font = '10px SF Mono,Menlo,monospace'; ctx.textAlign = 'right';
-  for (let i = 0; i <= n; i++) {
-    const v = lo + (hi - lo) / n * i, y = pad.top + ch - ((v - lo) / rng) * ch;
-    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
-    ctx.fillText(fmt(v), pad.left - 8, y + 3);
-  }
+function grid(ctx,pad,W,H,lo,hi,n,fmt) {
+  const ch=H-pad.top-pad.bottom,rng=hi-lo||1;
+  ctx.strokeStyle='#21262d';ctx.lineWidth=1;
+  ctx.fillStyle='#484f58';ctx.font='10px SF Mono,Menlo,monospace';ctx.textAlign='right';
+  for(let i=0;i<=n;i++){const v=lo+(hi-lo)/n*i,y=pad.top+ch-((v-lo)/rng)*ch;
+    ctx.beginPath();ctx.moveTo(pad.left,y);ctx.lineTo(W-pad.right,y);ctx.stroke();
+    ctx.fillText(fmt(v),pad.left-8,y+3);}
 }
 
-function segLines(ctx, pad, H, bounds, xFor) {
-  ctx.save(); ctx.setLineDash([4,4]); ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
-  const ch = H - pad.top - pad.bottom;
-  for (const bi of bounds) { if (!bi) continue; const x = xFor(bi); ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + ch); ctx.stroke(); }
+function segLines(ctx,pad,H,bounds,xFor) {
+  ctx.save();ctx.setLineDash([4,4]);ctx.strokeStyle='#30363d';ctx.lineWidth=1;
+  const ch=H-pad.top-pad.bottom;
+  for(const bi of bounds){if(!bi)continue;const x=xFor(bi);ctx.beginPath();ctx.moveTo(x,pad.top);ctx.lineTo(x,pad.top+ch);ctx.stroke();}
   ctx.restore();
 }
 
-function addHover(cId, tId, dots, fn) {
-  const c = document.getElementById(cId), t = document.getElementById(tId);
-  c.onmousemove = e => {
-    const r = c.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
-    let best = null, bd = 25;
-    for (const d of dots) { if (!d) continue; const dd = Math.hypot(d.x - mx, d.y - my); if (dd < bd) { best = d; bd = dd; } }
-    if (best) {
-      t.style.display = 'block'; t.style.left = (best.x + 12) + 'px'; t.style.top = (best.y - 10) + 'px';
-      t.innerHTML = fn(best.idx);
-      const tr = t.getBoundingClientRect(), cr = c.parentElement.getBoundingClientRect();
-      if (tr.right > cr.right) t.style.left = (best.x - tr.width - 8) + 'px';
-    } else t.style.display = 'none';
-  };
-  c.onmouseleave = () => { t.style.display = 'none'; };
+function addHover(cId,tId,dots,fn) {
+  const c=document.getElementById(cId),t=document.getElementById(tId);
+  c.onmousemove=e=>{const r=c.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+    let best=null,bd=25;
+    for(const d of dots){if(!d)continue;const dd=Math.hypot(d.x-mx,d.y-my);if(dd<bd){best=d;bd=dd;}}
+    if(best){t.style.display='block';t.style.left=(best.x+12)+'px';t.style.top=(best.y-10)+'px';
+      t.innerHTML=fn(best.idx);
+      const tr=t.getBoundingClientRect(),cr=c.parentElement.getBoundingClientRect();
+      if(tr.right>cr.right)t.style.left=(best.x-tr.width-8)+'px';
+    }else t.style.display='none';};
+  c.onmouseleave=()=>{t.style.display='none';};
 }
 
-/* ── Project chart ────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   Charts
+   ═══════════════════════════════════════════════════════════════ */
 
 function drawProject(data) {
-  if (!data.length) return;
-  const { ctx, W, H } = mkCanvas('project-timeline', 200);
-  const pad = { top: 20, right: 20, bottom: 30, left: 55 };
-  const cw = W - pad.left - pad.right, ch = H - pad.top - pad.bottom, n = data.length;
-  const xF = i => pad.left + (i / (n - 1 || 1)) * cw;
-  const yF = v => pad.top + ch - (v / 100) * ch;
-
-  grid(ctx, pad, W, H, 0, 100, 5, v => Math.round(v) + '%');
-
-  const bounds = []; let ls = null;
-  for (let i = 0; i < n; i++) { if (data[i].segment !== ls) { if (ls) bounds.push(i); ls = data[i].segment; } }
-  segLines(ctx, pad, H, bounds, xF);
-
-  // area
-  ctx.beginPath(); ctx.moveTo(xF(0), yF(0));
-  for (let i = 0; i < n; i++) ctx.lineTo(xF(i), yF(data[i].est_pct));
-  ctx.lineTo(xF(n - 1), yF(0)); ctx.closePath();
-  ctx.fillStyle = 'rgba(88,166,255,0.08)'; ctx.fill();
-
-  // blue line
-  ctx.beginPath(); ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 2;
-  for (let i = 0; i < n; i++) { const x = xF(i), y = yF(data[i].est_pct); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-  ctx.stroke();
-
-  // green line
-  ctx.beginPath(); ctx.strokeStyle = '#3fb950'; ctx.lineWidth = 1.5;
-  for (let i = 0; i < n; i++) {
-    const p = data[i].tracked_total > 0 ? data[i].tracked_covered / data[i].tracked_total * 100 : 0;
-    const x = xF(i), y = yF(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-  }
-  ctx.stroke();
-
-  const dots = [];
-  for (let i = 0; i < n; i++) { const x = xF(i), y = yF(data[i].est_pct); ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI*2); ctx.fillStyle = '#58a6ff'; ctx.fill(); dots.push({x, y, idx: i}); }
-
-  ctx.fillStyle = '#484f58'; ctx.font = '10px SF Mono,Menlo,monospace'; ctx.textAlign = 'center';
-  const ev = Math.max(1, Math.floor(n / 12));
-  for (let i = 0; i < n; i += ev) ctx.fillText(i + 1, xF(i), H - pad.bottom + 14);
-
-  addHover('project-timeline', 'project-tooltip', dots, idx => {
-    const p = data[idx], tp = p.tracked_total > 0 ? (p.tracked_covered / p.tracked_total * 100).toFixed(1) : '0';
-    const lbl = p.real ? 'Project coverage' : 'Est. project coverage';
-    return `<div style="color:#e6edf3;font-weight:600;margin-bottom:3px">${p.segment}</div>
-      <div style="color:#58a6ff">${lbl}: <b>${p.est_pct}%</b> (${p.est_covered}/${p.est_total})</div>
-      <div style="color:#3fb950">Tracked: <b>${tp}%</b> (${p.tracked_covered}/${p.tracked_total}${p.tracked_modules ? ' in '+p.tracked_modules+' mods' : ''})</div>`;
+  if(!data.length)return;
+  const{ctx,W,H}=mkCanvas('project-timeline',200);
+  const pad={top:20,right:20,bottom:30,left:55},n=data.length;
+  const cw=W-pad.left-pad.right,ch=H-pad.top-pad.bottom;
+  const xF=i=>pad.left+(i/(n-1||1))*cw,yF=v=>pad.top+ch-(v/100)*ch;
+  grid(ctx,pad,W,H,0,100,5,v=>Math.round(v)+'%');
+  const bounds=[];let ls=null;
+  for(let i=0;i<n;i++){if(data[i].segment!==ls){if(ls)bounds.push(i);ls=data[i].segment;}}
+  segLines(ctx,pad,H,bounds,xF);
+  ctx.beginPath();ctx.moveTo(xF(0),yF(0));
+  for(let i=0;i<n;i++)ctx.lineTo(xF(i),yF(data[i].est_pct));
+  ctx.lineTo(xF(n-1),yF(0));ctx.closePath();ctx.fillStyle='rgba(88,166,255,0.08)';ctx.fill();
+  ctx.beginPath();ctx.strokeStyle='#58a6ff';ctx.lineWidth=2;
+  for(let i=0;i<n;i++){const x=xF(i),y=yF(data[i].est_pct);i?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.stroke();
+  ctx.beginPath();ctx.strokeStyle='#3fb950';ctx.lineWidth=1.5;
+  for(let i=0;i<n;i++){const p=data[i].tracked_total>0?data[i].tracked_covered/data[i].tracked_total*100:0;const x=xF(i),y=yF(p);i?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.stroke();
+  const dots=[];
+  for(let i=0;i<n;i++){const x=xF(i),y=yF(data[i].est_pct);ctx.beginPath();ctx.arc(x,y,2.5,0,Math.PI*2);ctx.fillStyle='#58a6ff';ctx.fill();dots.push({x,y,idx:i});}
+  ctx.fillStyle='#484f58';ctx.font='10px SF Mono,Menlo,monospace';ctx.textAlign='center';
+  const ev=Math.max(1,Math.floor(n/12));for(let i=0;i<n;i+=ev)ctx.fillText(i+1,xF(i),H-pad.bottom+14);
+  addHover('project-timeline','project-tooltip',dots,idx=>{
+    const p=data[idx],tp=p.tracked_total>0?(p.tracked_covered/p.tracked_total*100).toFixed(1):'0';
+    return`<div style="color:#e6edf3;font-weight:600;margin-bottom:3px">${p.segment}</div>
+      <div style="color:#58a6ff">${p.real?'Project':'Est. project'} coverage: <b>${p.est_pct}%</b> (${p.est_covered}/${p.est_total})</div>
+      <div style="color:#3fb950">Tracked: <b>${tp}%</b> (${p.tracked_covered}/${p.tracked_total})</div>`;
   });
 }
 
-/* ── Per-segment chart ────────────────────────────────────── */
+let curMetric='coverage';
+function mVal(p,m){const d=p.metrics||{};if(m==='coverage')return d.coverage_pct;if(m==='miss')return d.miss;if(m==='loc')return d.test_loc;if(m==='efficiency')return(p.metric!=null&&p.metric<500)?p.metric:null;return null;}
 
-let curMetric = 'coverage';
-
-function mVal(p, m) {
-  const d = p.metrics || {};
-  if (m === 'coverage') return d.coverage_pct;
-  if (m === 'miss') return d.miss;
-  if (m === 'loc') return d.test_loc;
-  if (m === 'efficiency') return (p.metric != null && p.metric < 500) ? p.metric : null;
-  return null;
-}
-
-function drawSegChart(segments, metric) {
-  const pts = [], bounds = [];
-  for (const seg of segments) { if (!seg.runs.length) continue; bounds.push(pts.length); for (const r of seg.runs) pts.push({...r, segName: seg.name}); }
-  if (!pts.length) return;
-
-  const { ctx, W, H } = mkCanvas('timeline', 220);
-  const pad = { top: 20, right: 20, bottom: 30, left: 55 };
-  const cw = W - pad.left - pad.right, ch = H - pad.top - pad.bottom, n = pts.length;
-  const vals = pts.map(p => mVal(p, metric)), valid = vals.filter(v => v != null);
-  if (!valid.length) return;
-
-  let lo = Math.min(...valid), hi = Math.max(...valid);
-  if (lo === hi) { lo -= 1; hi += 1; }
-  if (metric === 'coverage') { lo = Math.min(lo, 0); hi = 100; }
-  const rng = hi - lo || 1;
-  const xF = i => pad.left + (i / (n - 1 || 1)) * cw;
-  const yF = v => pad.top + ch - ((v - lo) / rng) * ch;
-
-  grid(ctx, pad, W, H, lo, hi, 5, metric === 'efficiency' ? v => v.toFixed(1) : v => Math.round(v).toString());
-  segLines(ctx, pad, H, bounds, xF);
-
-  // line
-  ctx.lineWidth = 1.5; ctx.strokeStyle = '#30363d'; ctx.beginPath(); let s = false;
-  for (let i = 0; i < n; i++) { if (vals[i] == null) { s = false; continue; } const x = xF(i), y = yF(vals[i]); s ? ctx.lineTo(x, y) : ctx.moveTo(x, y); s = true; }
-  ctx.stroke();
-
-  // dots
-  const dots = [];
-  for (let i = 0; i < n; i++) { if (vals[i] == null) { dots.push(null); continue; } const x = xF(i), y = yF(vals[i]); ctx.beginPath(); ctx.arc(x, y, 3.5, 0, Math.PI*2); ctx.fillStyle = SC[pts[i].status] || '#7d8590'; ctx.fill(); dots.push({x, y, idx: i}); }
-
-  ctx.fillStyle = '#484f58'; ctx.font = '10px SF Mono,Menlo,monospace'; ctx.textAlign = 'center';
-  const ev = Math.max(1, Math.floor(n / 15));
-  for (let i = 0; i < n; i += ev) ctx.fillText(i + 1, xF(i), H - pad.bottom + 16);
-
-  const ml = {coverage:'Coverage %', miss:'Lines missing', loc:'Test LOC', efficiency:'Efficiency'}[metric]||metric;
-  addHover('timeline', 'timeline-tooltip', dots, idx => {
-    const p = pts[idx], m = p.metrics||{}, v = vals[idx];
-    return `<div style="color:#e6edf3;font-weight:600;margin-bottom:3px">${p.segName}</div>
+function drawSegChart(segments,metric) {
+  const pts=[],bounds=[];
+  for(const seg of segments){if(!seg.runs.length)continue;bounds.push(pts.length);for(const r of seg.runs)pts.push({...r,segName:seg.name});}
+  if(!pts.length)return;
+  const{ctx,W,H}=mkCanvas('timeline',220);
+  const pad={top:20,right:20,bottom:30,left:55},n=pts.length;
+  const vals=pts.map(p=>mVal(p,metric)),valid=vals.filter(v=>v!=null);
+  if(!valid.length)return;
+  let lo=Math.min(...valid),hi=Math.max(...valid);if(lo===hi){lo-=1;hi+=1;}
+  if(metric==='coverage'){lo=Math.min(lo,0);hi=100;}
+  const rng=hi-lo||1;
+  const xF=i=>pad.left+(i/(n-1||1))*(W-pad.left-pad.right);
+  const yF=v=>pad.top+(H-pad.top-pad.bottom)-((v-lo)/rng)*(H-pad.top-pad.bottom);
+  grid(ctx,pad,W,H,lo,hi,5,metric==='efficiency'?v=>v.toFixed(1):v=>Math.round(v).toString());
+  segLines(ctx,pad,H,bounds,xF);
+  ctx.lineWidth=1.5;ctx.strokeStyle='#30363d';ctx.beginPath();let s=false;
+  for(let i=0;i<n;i++){if(vals[i]==null){s=false;continue;}const x=xF(i),y=yF(vals[i]);s?ctx.lineTo(x,y):ctx.moveTo(x,y);s=true;}ctx.stroke();
+  const dots=[];
+  for(let i=0;i<n;i++){if(vals[i]==null){dots.push(null);continue;}const x=xF(i),y=yF(vals[i]);ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fillStyle=SC[pts[i].status]||'#7d8590';ctx.fill();dots.push({x,y,idx:i});}
+  ctx.fillStyle='#484f58';ctx.font='10px SF Mono,Menlo,monospace';ctx.textAlign='center';
+  const ev=Math.max(1,Math.floor(n/15));for(let i=0;i<n;i+=ev)ctx.fillText(i+1,xF(i),H-pad.bottom+16);
+  const ml={coverage:'Coverage %',miss:'Lines missing',loc:'Test LOC',efficiency:'Efficiency'}[metric]||metric;
+  addHover('timeline','timeline-tooltip',dots,idx=>{
+    const p=pts[idx],m=p.metrics||{},v=vals[idx];
+    return`<div style="color:#e6edf3;font-weight:600;margin-bottom:3px">${p.segName}</div>
       <div>run #${p.run} &middot; <span style="color:${SC[p.status]||'#7d8590'}">${p.status}</span></div>
-      <div style="margin-top:3px">${ml}: <b>${v != null ? (metric==='efficiency' ? v.toFixed(2) : v) : '\u2014'}</b></div>
+      <div style="margin-top:3px">${ml}: <b>${v!=null?(metric==='efficiency'?v.toFixed(2):v):'\u2014'}</b></div>
       <div style="color:#7d8590">cov ${m.coverage_pct??'\u2014'}% &middot; miss ${m.miss??'\u2014'} &middot; ${m.test_loc??'\u2014'} loc &middot; ${m.test_time_s??'\u2014'}s</div>`;
   });
 }
 
-/* ── Segment list ─────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   Health donut
+   ═══════════════════════════════════════════════════════════════ */
+
+function drawHealth(lines) {
+  const runs = lines.filter(e => 'run' in e);
+  const counts = {keep:0,discard:0,crash:0,checks_failed:0};
+  for (const r of runs) counts[r.status] = (counts[r.status]||0) + 1;
+  const total = runs.length;
+  const ts = runs.filter(r=>r.timestamp).map(r=>r.timestamp);
+  const hours = ts.length >= 2 ? ((Math.max(...ts)-Math.min(...ts))/1000/3600) : 0;
+
+  // Donut
+  const c = document.getElementById('health-canvas');
+  const ctx = c.getContext('2d');
+  const cx=60,cy=60,r=50,rInner=32;
+  ctx.clearRect(0,0,120,120);
+  const slices = [
+    {count: counts.keep, color: '#3fb950'},
+    {count: counts.discard, color: '#f85149'},
+    {count: (counts.crash||0)+(counts.checks_failed||0), color: '#d29922'},
+  ];
+  let angle = -Math.PI/2;
+  for (const sl of slices) {
+    if (!sl.count) continue;
+    const sweep = (sl.count/total)*Math.PI*2;
+    ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r,angle,angle+sweep);ctx.closePath();
+    ctx.fillStyle=sl.color;ctx.fill();
+    angle+=sweep;
+  }
+  ctx.beginPath();ctx.arc(cx,cy,rInner,0,Math.PI*2);ctx.fillStyle='#161b22';ctx.fill();
+  ctx.fillStyle='#e6edf3';ctx.font='bold 16px SF Mono,Menlo,monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(total,cx,cy);
+
+  document.getElementById('health-stats').innerHTML = `
+    <div><span style="color:#3fb950">\u2713 ${counts.keep} kept</span> (${(counts.keep/total*100).toFixed(0)}%)</div>
+    <div><span style="color:#f85149">\u2717 ${counts.discard} discarded</span></div>
+    <div><span style="color:#d29922">\u26a0 ${(counts.crash||0)+(counts.checks_failed||0)} crashed/failed</span></div>
+    <div style="margin-top:8px;color:#7d8590">${hours.toFixed(1)} hours &middot; ${(total/Math.max(hours,0.1)).toFixed(1)} runs/hr</div>
+  `;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Segment list
+   ═══════════════════════════════════════════════════════════════ */
 
 function renderSegs(segments) {
-  const tot = segments.reduce((s, g) => s + g.runs.length, 0);
-  const kept = segments.reduce((s, g) => s + g.runs.filter(r => r.status === 'keep').length, 0);
-  const full = segments.filter(g => { const k = g.runs.filter(r => r.status === 'keep'); return k.length && k[k.length-1].metrics?.coverage_pct === 100; }).length;
+  const c=document.getElementById('segments');c.innerHTML='';
+  const filt=document.getElementById('filter').value.toLowerCase();
+  const hide1=document.getElementById('hideComplete').checked;
+  const collapse=document.getElementById('collapseAll').checked;
+  for(const seg of segments){
+    if(filt&&!seg.name.toLowerCase().includes(filt))continue;
+    if(hide1&&seg.runs.length<=1)continue;
+    const keeps=seg.runs.filter(r=>r.status==='keep'),discs=seg.runs.filter(r=>r.status==='discard');
+    const lk=keeps[keeps.length-1],lm=lk?.metrics||{};
+    const cov=lm.coverage_pct,eff=lk?.metric;
+    const maxE=Math.max(...seg.runs.map(r=>r.metric||0).filter(v=>v<1000),1);
+    const d=document.createElement('div');
+    d.className='segment'+(collapse?'':' open');
+    d.innerHTML=`<div class="segment-header">
+        <span class="segment-name"><span class="arrow">&#9654;</span> ${seg.name}</span>
+        <span class="segment-badges">
+          <span class="badge ${cov===100?'badge-cov':'badge-cov-partial'}">${cov!=null?cov+'%':'?'}</span>
+          <span class="badge badge-eff">eff ${eff!=null?eff.toFixed(2):'?'}</span>
+          <span class="badge badge-runs">${keeps.length}k/${discs.length}d of ${seg.runs.length}</span>
+        </span></div>
+      <div class="segment-body">${seg.runs.map(r=>{
+        const m=r.metrics||{},st=r.status||'?';
+        const bw=r.metric&&r.metric<1000?Math.max(2,(r.metric/maxE)*100):(st==='keep'?5:2);
+        return`<div class="chart-row">
+          <span class="chart-run">#${r.run}</span>
+          <span class="chart-status ${st}">${SI[st]||'?'}</span>
+          <div class="chart-bar-container"><div class="chart-bar ${st}" style="width:${bw}%"></div></div>
+          <div class="chart-metrics">
+            <span class="metric-eff">eff ${r.metric!=null?r.metric.toFixed(2):'\u2014'}</span>
+            <span class="metric-cov">${m.coverage_pct!=null?m.coverage_pct+'%':'\u2014'}</span>
+            <span class="metric-loc">${m.test_loc!=null?m.test_loc+' loc':'\u2014'}</span>
+            <span class="metric-miss">${m.miss!=null?m.miss+' miss':'\u2014'}</span>
+            <span class="metric-time">${m.test_time_s!=null?m.test_time_s+'s':'\u2014'}</span>
+          </div></div>`;}).join('')}</div>`;
+    d.querySelector('.segment-header').onclick=()=>d.classList.toggle('open');
+    c.appendChild(d);
+  }
+}
 
+/* ═══════════════════════════════════════════════════════════════
+   Run log
+   ═══════════════════════════════════════════════════════════════ */
+
+function renderLog(lines) {
+  const segs = parseSegments(lines);
+  const allRuns = [];
+  for (const seg of segs) for (const r of seg.runs) allRuns.push({...r, segName: seg.name});
+  allRuns.sort((a,b) => (b.timestamp||0) - (a.timestamp||0)); // newest first
+
+  function render(filter) {
+    const el = document.getElementById('run-log');
+    const f = filter.toLowerCase();
+    el.innerHTML = allRuns
+      .filter(r => !f || (r.description||'').toLowerCase().includes(f) || r.segName.toLowerCase().includes(f))
+      .slice(0, 200) // cap for performance
+      .map(r => {
+        const m = r.metrics || {};
+        const ts = r.timestamp ? new Date(r.timestamp).toLocaleString() : '';
+        const desc = (r.description || '').replace(/</g,'&lt;');
+        return `<div class="log-entry">
+          <div class="log-status" style="color:${SC[r.status]||'#7d8590'}">${SI[r.status]||'?'}</div>
+          <div class="log-body">
+            <div class="log-seg">${r.segName} &middot; run #${r.run}</div>
+            <div class="log-desc">${desc}</div>
+            <div class="log-meta">${ts} &middot; ${r.commit||''} &middot; cov ${m.coverage_pct??'?'}% &middot; eff ${r.metric!=null?r.metric.toFixed(2):'?'}</div>
+          </div>
+        </div>`;
+      }).join('');
+  }
+  render('');
+  document.getElementById('log-search').oninput = e => render(e.target.value);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Efficiency comparison
+   ═══════════════════════════════════════════════════════════════ */
+
+function renderEfficiency(segments) {
+  const items = [];
+  for (const seg of segments) {
+    const keeps = seg.runs.filter(r => r.status === 'keep');
+    if (!keeps.length) continue;
+    const last = keeps[keeps.length - 1];
+    if (last.metric == null || last.metric > 500) continue;
+    items.push({ name: seg.name, eff: last.metric, cov: last.metrics?.coverage_pct || 0 });
+  }
+  items.sort((a,b) => b.eff - a.eff);
+  const maxEff = Math.max(...items.map(i=>i.eff), 1);
+
+  document.getElementById('eff-chart').innerHTML = items.map(it => {
+    const pct = (it.eff / maxEff * 100).toFixed(1);
+    const color = it.eff < 0.5 ? '#3fb950' : it.eff < 2 ? '#58a6ff' : it.eff < 10 ? '#d29922' : '#f85149';
+    return `<div class="eff-bar-row">
+      <span class="eff-bar-label" title="${it.name}">${it.name}</span>
+      <div class="eff-bar-container"><div class="eff-bar" style="width:${pct}%;background:${color}"></div></div>
+      <span class="eff-bar-value" style="color:${color}">${it.eff.toFixed(2)}</span>
+    </div>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   File handling
+   ═══════════════════════════════════════════════════════════════ */
+
+let fileHandle = null, fallbackFile = null;
+const mdHandles = { ideas: null, method: null }; // persistent handles for .md files
+
+async function readHandle(handle, fallback) {
+  if (handle) return await (await handle.getFile()).text();
+  if (fallback) return await fallback.text();
+  return null;
+}
+
+async function pickFileHandle(opts) {
+  if (window.showOpenFilePicker) {
+    try { const [h] = await window.showOpenFilePicker(opts); return h; }
+    catch(e) { if (e.name === 'AbortError') return null; }
+  }
+  return null;
+}
+
+let cachedLines = null, cachedSegments = null, cachedProjData = null;
+
+function renderAll() {
+  if (!cachedLines) return;
+  const lines = cachedLines, segments = cachedSegments, projData = cachedProjData;
+
+  document.getElementById('loader').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+
+  const tot = segments.reduce((s,g)=>s+g.runs.length,0);
+  const kept = segments.reduce((s,g)=>s+g.runs.filter(r=>r.status==='keep').length,0);
+  const full = segments.filter(g=>{const k=g.runs.filter(r=>r.status==='keep');return k.length&&k[k.length-1].metrics?.coverage_pct===100;}).length;
+  document.getElementById('subtitle').innerHTML =
+    `${segments.length} segments &middot; ${tot} runs &middot; <span style="color:#58a6ff">${fileHandle?.name||fallbackFile?.name||'autoresearch.jsonl'}</span>`;
   document.getElementById('summary').innerHTML = `
     <div class="stat"><div class="stat-value">${segments.length}</div><div class="stat-label">segments</div></div>
     <div class="stat"><div class="stat-value">${tot}</div><div class="stat-label">total runs</div></div>
     <div class="stat"><div class="stat-value">${kept}</div><div class="stat-label">kept</div></div>
     <div class="stat"><div class="stat-value">${full}</div><div class="stat-label">at 100%</div></div>`;
 
-  const c = document.getElementById('segments'); c.innerHTML = '';
-  const filt = document.getElementById('filter').value.toLowerCase();
-  const hide1 = document.getElementById('hideComplete').checked;
-  const collapse = document.getElementById('collapseAll').checked;
-
-  for (const seg of segments) {
-    if (filt && !seg.name.toLowerCase().includes(filt)) continue;
-    if (hide1 && seg.runs.length <= 1) continue;
-    const keeps = seg.runs.filter(r => r.status === 'keep'), discs = seg.runs.filter(r => r.status === 'discard');
-    const lk = keeps[keeps.length - 1], lm = lk?.metrics || {};
-    const cov = lm.coverage_pct, eff = lk?.metric;
-    const maxE = Math.max(...seg.runs.map(r => r.metric || 0).filter(v => v < 1000), 1);
-
-    const d = document.createElement('div');
-    d.className = 'segment' + (collapse ? '' : ' open');
-    d.innerHTML = `
-      <div class="segment-header">
-        <span class="segment-name"><span class="arrow">&#9654;</span> ${seg.name}</span>
-        <span class="segment-badges">
-          <span class="badge ${cov===100?'badge-cov':'badge-cov-partial'}">${cov!=null?cov+'%':'?'}</span>
-          <span class="badge badge-eff">eff ${eff!=null?eff.toFixed(2):'?'}</span>
-          <span class="badge badge-runs">${keeps.length}k/${discs.length}d of ${seg.runs.length}</span>
-        </span>
-      </div>
-      <div class="segment-body">
-        ${seg.runs.map(r => {
-          const m=r.metrics||{}, st=r.status||'?';
-          const ic={keep:'\u2713',discard:'\u2717',crash:'\u26a0',checks_failed:'\u26a0'}[st]||'?';
-          const bw=r.metric&&r.metric<1000?Math.max(2,(r.metric/maxE)*100):(st==='keep'?5:2);
-          return `<div class="chart-row">
-            <span class="chart-run">#${r.run}</span>
-            <span class="chart-status ${st}">${ic}</span>
-            <div class="chart-bar-container"><div class="chart-bar ${st}" style="width:${bw}%"></div></div>
-            <div class="chart-metrics">
-              <span class="metric-eff">eff ${r.metric!=null?r.metric.toFixed(2):'\u2014'}</span>
-              <span class="metric-cov">${m.coverage_pct!=null?m.coverage_pct+'%':'\u2014'}</span>
-              <span class="metric-loc">${m.test_loc!=null?m.test_loc+' loc':'\u2014'}</span>
-              <span class="metric-miss">${m.miss!=null?m.miss+' miss':'\u2014'}</span>
-              <span class="metric-time">${m.test_time_s!=null?m.test_time_s+'s':'\u2014'}</span>
-            </div></div>`;
-        }).join('')}
-      </div>`;
-    d.querySelector('.segment-header').onclick = () => d.classList.toggle('open');
-    c.appendChild(d);
-  }
-}
-
-/* ── File handling with persistent handle ─────────────────── */
-
-let fileHandle = null;  // File System Access API handle (persists across reloads within session)
-let fallbackFile = null; // Plain File object fallback
-
-async function readFromHandle() {
-  if (fileHandle) {
-    const file = await fileHandle.getFile();
-    return await file.text();
-  }
-  if (fallbackFile) {
-    return await fallbackFile.text();
-  }
-  return null;
-}
-
-async function loadAndRender() {
-  const text = await readFromHandle();
-  if (!text) return;
-  const lines = text.trim().split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
-  const segments = parseSegments(lines);
-  const projData = buildProjectTimeline(lines);
-
-  document.getElementById('loader').style.display = 'none';
-  document.getElementById('dashboard').style.display = 'block';
-  document.getElementById('subtitle').innerHTML =
-    `${segments.length} segments &middot; ${segments.reduce((s,g)=>s+g.runs.length,0)} runs &middot; <span style="color:#58a6ff">${fileHandle ? fileHandle.name : (fallbackFile?.name || 'autoresearch.jsonl')}</span>`;
-
   renderSegs(segments);
   drawProject(projData);
   drawSegChart(segments, curMetric);
+  drawHealth(lines);
+  renderLog(lines);
+  renderEfficiency(segments);
+}
 
-  document.querySelectorAll('.timeline-tab').forEach(tab => {
-    tab.onclick = () => {
-      document.querySelectorAll('.timeline-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      curMetric = tab.dataset.metric;
-      drawSegChart(segments, curMetric);
-    };
+function parseAndCache(text) {
+  cachedLines = text.trim().split('\n').filter(l=>l.trim()).map(l=>JSON.parse(l));
+  cachedSegments = parseSegments(cachedLines);
+  cachedProjData = buildProjectTimeline(cachedLines);
+}
+
+async function loadAndRender() {
+  const text = await readHandle(fileHandle, fallbackFile);
+  if (!text) return;
+  parseAndCache(text);
+  // Yield to event loop before heavy DOM work (fixes Safari freeze)
+  await new Promise(r => setTimeout(r, 0));
+  renderAll();
+}
+
+function loadFromText(text, name) {
+  parseAndCache(text);
+  document.getElementById('loader').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+  renderAll();
+}
+
+/* ── Markdown file loading ── */
+
+async function loadMdFromHandle(key, containerId) {
+  const h = mdHandles[key];
+  if (!h) return;
+  try {
+    const text = await (await h.getFile()).text();
+    renderMd(containerId, text);
+  } catch(e) { /* handle stale */ }
+}
+
+function renderMd(containerId, text) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = marked.parse(text);
+  el.querySelectorAll('pre code').forEach(block => Prism.highlightElement(block));
+}
+
+async function loadMdFromFetch(url, key, containerId) {
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) return false;
+    const text = await resp.text();
+    // Stash a fake "handle" so reload works via re-fetch
+    mdHandles[key] = { getFile: () => ({ text: async () => (await fetch(url)).then(r=>r.text()) }) };
+    renderMd(containerId, text);
+    return true;
+  } catch(e) { return false; }
+}
+
+async function pickMd(key, containerId) {
+  const h = await pickFileHandle({
+    types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }],
   });
-
-  document.getElementById('filter').oninput = () => renderSegs(segments);
-  document.getElementById('hideComplete').onchange = () => renderSegs(segments);
-  document.getElementById('collapseAll').onchange = () => renderSegs(segments);
-  window.onresize = () => { drawProject(projData); drawSegChart(segments, curMetric); };
+  if (!h) return;
+  mdHandles[key] = h;
+  await loadMdFromHandle(key, containerId);
 }
 
-async function pickFile() {
-  // Try File System Access API first (Chrome/Edge) — gives us a persistent handle
-  if (window.showOpenFilePicker) {
-    try {
-      const [handle] = await window.showOpenFilePicker({
-        types: [{ description: 'JSONL', accept: { 'application/jsonl': ['.jsonl', '.json'] } }],
-      });
-      fileHandle = handle;
-      fallbackFile = null;
-      await loadAndRender();
-      return;
-    } catch (e) {
-      if (e.name === 'AbortError') return; // user cancelled
-      // Fall through to legacy input
-    }
-  }
-  // Fallback: click the hidden file input
-  document.getElementById('file-input').click();
-}
+document.getElementById('pick-ideas').onclick = () => pickMd('ideas', 'ideas-content');
+document.getElementById('pick-method').onclick = () => pickMd('method', 'method-content');
 
-// Reload: re-read from the same handle (gets fresh bytes from disk)
-document.getElementById('reload-btn').onclick = () => loadAndRender();
+/* ── Event listeners (registered once) ── */
 
-// Drop zone
-const dz = document.getElementById('drop-zone');
-dz.onclick = () => pickFile();
+document.querySelectorAll('.timeline-tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.timeline-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    curMetric = tab.dataset.metric;
+    if (cachedSegments) drawSegChart(cachedSegments, curMetric);
+  };
+});
 
-document.getElementById('file-input').onchange = async (e) => {
-  if (e.target.files[0]) {
-    fallbackFile = e.target.files[0];
-    fileHandle = null;
-    await loadAndRender();
-  }
+document.getElementById('filter').oninput = () => { if (cachedSegments) renderSegs(cachedSegments); };
+document.getElementById('hideComplete').onchange = () => { if (cachedSegments) renderSegs(cachedSegments); };
+document.getElementById('collapseAll').onchange = () => { if (cachedSegments) renderSegs(cachedSegments); };
+
+window.onresize = () => {
+  if (cachedProjData) drawProject(cachedProjData);
+  if (cachedSegments) drawSegChart(cachedSegments, curMetric);
 };
 
+document.querySelectorAll('.nav-tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'charts' && cachedLines) {
+      requestAnimationFrame(() => {
+        drawProject(cachedProjData);
+        drawSegChart(cachedSegments, curMetric);
+      });
+    }
+    if (tab.dataset.tab === 'ideas' && mdHandles.ideas) loadMdFromHandle('ideas', 'ideas-content');
+    if (tab.dataset.tab === 'methodology' && mdHandles.method) loadMdFromHandle('method', 'method-content');
+  };
+});
+
+document.getElementById('reload-btn').onclick = () => loadAndRender();
+
+// JSONL file picker / drop zone (fallback if auto-load fails)
+const dz = document.getElementById('drop-zone');
+const jsonlOpts = { types:[{description:'JSONL',accept:{'application/jsonl':['.jsonl','.json']}}] };
+
+dz.onclick = async () => {
+  const h = await pickFileHandle(jsonlOpts);
+  if (h) { fileHandle = h; fallbackFile = null; await loadAndRender(); }
+  else document.getElementById('file-input').click();
+};
+document.getElementById('file-input').onchange = async e => {
+  if (e.target.files[0]) { fallbackFile = e.target.files[0]; fileHandle = null; await loadAndRender(); }
+};
 dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag-over'); };
 dz.ondragleave = () => dz.classList.remove('drag-over');
 dz.ondrop = async e => {
   e.preventDefault(); dz.classList.remove('drag-over');
-  // Try to get handle from DataTransfer (Chrome 86+)
   if (e.dataTransfer.items?.[0]?.getAsFileSystemHandle) {
-    fileHandle = await e.dataTransfer.items[0].getAsFileSystemHandle();
-    fallbackFile = null;
-  } else if (e.dataTransfer.files[0]) {
-    fallbackFile = e.dataTransfer.files[0];
-    fileHandle = null;
-  }
+    fileHandle = await e.dataTransfer.items[0].getAsFileSystemHandle(); fallbackFile = null;
+  } else if (e.dataTransfer.files[0]) { fallbackFile = e.dataTransfer.files[0]; fileHandle = null; }
   await loadAndRender();
 };
+
+/* ── Auto-load sibling files on startup ── */
+(async () => {
+  // Try to fetch autoresearch.jsonl from same directory
+  try {
+    const resp = await fetch('autoresearch.jsonl');
+    if (resp.ok) {
+      const text = await resp.text();
+      parseAndCache(text);
+      await new Promise(r => setTimeout(r, 0));
+      document.getElementById('loader').style.display = 'none';
+      document.getElementById('dashboard').style.display = 'block';
+      renderAll();
+
+      // Also try to auto-load companion .md files
+      await Promise.all([
+        loadMdFromFetch('autoresearch.ideas.md', 'ideas', 'ideas-content'),
+        loadMdFromFetch('autoresearch.md', 'method', 'method-content'),
+      ]);
+      return;
+    }
+  } catch(e) { /* fetch failed (file:// or not found) — show drop zone */ }
+})();
 </script>
 </body>
 </html>

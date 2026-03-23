@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# content.filters coverage efficiency benchmark
+# embeddings.chunker coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.content.filters"
-TARGET_FILE="src/siftd/content/filters.py"
-TEST_FILES="tests/test_content_filters.py"
+INCLUDE_ARGS="--cov=siftd.embeddings.chunker"
+TARGET_FILE="src/siftd/embeddings/chunker.py"
+TEST_FILES="tests/test_chunker.py tests/test_embeddings.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
@@ -20,8 +20,8 @@ done
 echo "Running full test suite with coverage..."
 uv run python -m pytest tests/ -x -q --tb=short -p no:randomly \
     $INCLUDE_ARGS --cov-report=json:coverage.json \
-    --override-ini="addopts=" -m "not embeddings" \
-    -k "not test_import_rules and not test_basics and not test_follow_session and not test_doctor_fix_shows_fix_commands and not test_remaining_error_and_edge_branches and not TestHealth and not TestPush and not TestPull and not TestQuery and not TestStats and not TestSearch and not TestAuthNoAuth and not TestAuthOIDC and not TestAttribution and not TestCLI" 2>&1 | tail -5
+    --override-ini="addopts=" \
+    -k "not test_import_rules and not test_basics and not test_follow_session and not test_doctor_fix_shows_fix_commands and not test_remaining_error_and_edge_branches and not TestHealth and not TestPush and not TestPull and not TestQuery and not TestStats and not TestSearch and not TestAuthNoAuth and not TestAuthOIDC and not TestAttribution and not TestCLI and not mmr" 2>&1 | tail -5
 
 COVERAGE_JSON=$(cat coverage.json)
 rm -f coverage.json
@@ -49,7 +49,7 @@ BEST_TIME=99999
 for i in 1 2 3 4 5; do
     START=$(python3 -c "import time; print(time.monotonic())")
     uv run python -m pytest $TEST_FILES -x -q --tb=short -p no:xdist \
-        --override-ini="addopts=" -m "not embeddings" 2>&1 | tail -1
+        --override-ini="addopts=" 2>&1 | tail -1
     END=$(python3 -c "import time; print(time.monotonic())")
     RUN_TIME=$(python3 -c "print(round($END - $START, 3))")
     BEST_TIME=$(python3 -c "print(min($BEST_TIME, $RUN_TIME))")

@@ -648,7 +648,7 @@ Single tool-call search result.
 Unified search pipeline — FTS5, semantic, or hybrid.
 
 ```python
-def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., backend: str | None = ...) -> list[dict]
+def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ...) -> list[dict]
 ```
 
 **Parameters:**
@@ -659,6 +659,7 @@ def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None
 - `n`: Desired result count after all processing.
 - `mode`: "hybrid" (FTS5 + semantic), "fts" (keyword only), "semantic" (embeddings only).
 - `rerank`: "mmr" for diversity reranking, "relevance" for pure score order.
+- `backend`: Preferred embedding backend name (ollama, fastembed).
 
 **Returns:** List of result dicts with: conversation_id, score, text, chunk_type, source_ids, breakdown (ScoreBreakdown or None), file_refs.
 

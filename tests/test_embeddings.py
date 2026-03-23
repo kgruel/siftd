@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Tests for the embeddings subsystem.
 
 Covers:
