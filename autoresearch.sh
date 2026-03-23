@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# API stats step-down coverage efficiency benchmark
+# API merge coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.api.stats"
-TARGET_FILE="src/siftd/api/stats.py"
-TEST_FILES="tests/test_api_stats_edges.py"
+INCLUDE_ARGS="--cov=siftd.api.merge"
+TARGET_FILE="src/siftd/api/merge.py"
+TEST_FILES="tests/test_api_merge_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

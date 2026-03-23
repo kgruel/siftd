@@ -22,7 +22,7 @@
 - `api/auth.py` (30/30) — timeout branch covered and step-down pass complete (to 0.34)
 - `api/file_refs.py` (49/49) — guard branch covered and step-down passes complete (to 0.19)
 - `api/search.py` (155/155) — step-up to 100% and initial step-down pass (to 0.18)
-- `api/stats.py` (232/232) — edge coverage complete with focused step-down benchmark (to 0.06)
+- `api/stats.py` (232/232) — edge coverage complete with focused step-down benchmark (to 0.05)
 - `api/tags.py` (73/73) — wrapper branches covered and focused step-down benchmark (to 0.12)
 - `api/migrations.py` (15/15) — wrapper coverage complete with step-down pass (to 0.40)
 - `api/conversations.py` (424/424) — final edge branches covered (prompt-without-response and empty SQL result) with focused lane; follow-up step-down attempt was flat at metric floor.
@@ -36,13 +36,15 @@
 
 ## Highest ROI next targets
 
-### 1) `api/stats.py` optional additional step-down follow-up
-- Focused edge lane already at 100%; only pursue if primary metric can move below 0.06.
+### 1) `api/merge.py`
+- Small remaining deterministic branch surface (FK-violation atomic rollback path).
+- Focused lane: `tests/test_api_merge_edges.py`.
 
-### 2) `output/painted_bridge.py` documentation/closure pass
+### 2) `api/stats.py` optional additional step-down follow-up
+- Focused edge lane at 100%; re-check only if metric can move below current 0.05 floor.
+
+### 3) `output/painted_bridge.py` documentation/closure pass
 - Remaining miss lines likely structurally unreachable; document and de-prioritize unless new evidence appears.
-
-### 3) targeted `api/*` deterministic leaf modules if new non-100 probe appears
 
 ## Deferred but promising
 
