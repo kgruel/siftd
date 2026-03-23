@@ -42,6 +42,8 @@
 - `adapters/sdk.py` (328/328) — seek_last_lines binary-open OSError branch closed; lane now saturated.
 - `tool_query.py` (80/80) — ToolQueryTerm.is_fielded property branch closed with focused edge test.
 - `peek/reader.py` (162/162) — derived peek_scan wrapper invocation path covered; step-down pass to 0.02.
+- `doctor/checks/freelist.py` (19/19) — MB-format branch covered; step-down pass to 0.13.
+- `serve/client.py` (81/81) — serve pivot baseline + edge step-up completed; lane saturated.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -52,12 +54,12 @@
 
 ## Highest ROI next targets
 
-### 1) `serve/client.py` (pivot start)
-- Open deterministic serve lane first: URL parsing, HTTP status/error handling, JSON shape validation, and health payload guards.
-- Focused lane: `tests/test_serve_client.py` + `tests/test_serve_client_edges.py`.
+### 1) `serve/delegation.py` next
+- First post-pivot serve lane: delegation fallback, unavailable-serve, and timeout behavior branches.
+- Candidate focused lane: `tests/test_serve_delegation_edges.py`.
 
-### 2) `serve/delegation.py` next
-- After client saturation, target delegation fallback and unavailable-serve behavior branches.
+### 2) broader `serve/routes.py` / `serve/html_routes.py`
+- After delegation, probe route-layer branches with test client fixtures; likely biggest remaining serve surface.
 
 ### 3) documented likely-unreachable branches (skip for now)
 - `content/filters.py` L64–65: exception guard in `is_binary_content` appears structurally unreachable after `isinstance(content, str)` and `encode(..., errors='ignore')`.

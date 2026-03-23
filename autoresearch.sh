@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# serve.client coverage efficiency benchmark
+# serve.delegation coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.serve.client"
-TARGET_FILE="src/siftd/serve/client.py"
-TEST_FILES="tests/test_serve_client.py tests/test_serve_client_edges.py"
+INCLUDE_ARGS="--cov=siftd.serve.delegation"
+TARGET_FILE="src/siftd/serve/delegation.py"
+TEST_FILES="tests/test_serve_delegation.py tests/test_serve_delegation_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
