@@ -12,9 +12,7 @@ from siftd.embeddings.chunker import chunk_text
 
 @pytest.fixture(scope="module")
 def tokenizer():
-    TextEmbedding = pytest.importorskip("fastembed", exc_type=ImportError).TextEmbedding
-    emb = TextEmbedding("BAAI/bge-small-en-v1.5")
-    return emb.model.tokenizer
+    return _FakeTokenizer()
 
 
 def test_short_text_passthrough(tokenizer):
@@ -74,6 +72,9 @@ def test_overlap_exists(tokenizer):
 
 
 class _FakeTokenizer:
+    def no_truncation(self):
+        return None
+
     def encode(self, text):
         n = len(str(text).split())
         return SimpleNamespace(ids=list(range(n + 2)))
@@ -87,6 +88,20 @@ def test_split_helpers_cover_long_sentence_path():
     assert ch._split_sentences("a. b\n\nc") == ["a.", "b", "c"]
 
 
+def test_split_with_overlap_flush_and_overlap_parts():
+    tok = _FakeTokenizer()
+    text = "one two. three four. five six. seven eight."
+    chunks = ch._split_with_overlap(tok, text, target_tokens=3, max_tokens=10, overlap_tokens=2)
+    assert len(chunks) >= 2 and chunks[0]
+
+
+def test_split_with_overlap_flushes_before_oversized_sentence():
+    tok = _FakeTokenizer()
+    text = "small one. this sentence is intentionally way too long for max tokens branch now."
+    out = ch._split_with_overlap(tok, text, target_tokens=20, max_tokens=5, overlap_tokens=1)
+    assert len(out) >= 2
+
+
 def test_window_exchanges_handles_oversized_exchange():
     tok = _FakeTokenizer()
     exchanges = [
@@ -98,6 +113,17 @@ def test_window_exchanges_handles_oversized_exchange():
     assert out and any(ids == ["p2"] for _, _, ids in out)
 
 
+def test_window_exchanges_target_overflow_flushes_current_window():
+    tok = _FakeTokenizer()
+    exchanges = [
+        {"text": "one two", "prompt_id": "p1"},
+        {"text": "three four", "prompt_id": "p2"},
+        {"text": "five six", "prompt_id": "p3"},
+    ]
+    out = ch._window_exchanges(exchanges, tok, target_tokens=4, max_tokens=20, overlap_tokens=1)
+    assert len(out) >= 2 and out[0][2] == ["p1", "p2"]
+
+
 def test_extract_exchange_window_chunks_with_stubbed_loader(monkeypatch):
     tok = _FakeTokenizer()
     monkeypatch.setattr(
@@ -107,6 +133,17 @@ def test_extract_exchange_window_chunks_with_stubbed_loader(monkeypatch):
     )
     out = ch.extract_exchange_window_chunks(sqlite3.connect(":memory:"), tok)
     assert out[0]["conversation_id"] == "c1" and out[0]["chunk_type"] == "exchange"
+
+
+def test_load_exchanges_forwards_to_storage_query(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    monkeypatch.setattr(
+        ch,
+        "fetch_conversation_exchanges",
+        lambda _c, **k: {"x": [{"text": "t", "prompt_id": "p"}], "args": [k["conversation_id"], k["exclude_conversation_ids"]]},
+    )
+    out = ch._load_exchanges(conn, {"c2"}, "c1")
+    assert out["x"][0]["prompt_id"] == "p" and out["args"] == ["c1", {"c2"}]
 
 
 def test_extract_tool_summary_chunks_branches_and_filters():
@@ -131,6 +168,15 @@ def test_extract_tool_summary_chunks_branches_and_filters():
         ("c1", "t3", json.dumps({"pattern": "TODO"}), "success", "3"),
     )
     conn.execute("INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)", ("c2", None, "{bad", "success", "4"))
+    # Explicit malformed JSON by category to cover parser-exception branches
+    conn.execute("INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)", ("c3", "t1", "{bad", "success", "5"))
+    conn.execute("INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)", ("c3", "t2", "{bad", "success", "6"))
+    conn.execute("INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)", ("c3", "t3", "{bad", "success", "7"))
+    for i in range(25):
+        conn.execute(
+            "INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)",
+            ("c4", "t1", json.dumps({"file_path": f"/tmp/path_{i}.txt"}), "success", f"f{i}"),
+        )
     conn.commit()
 
     all_chunks = ch.extract_tool_summary_chunks(conn)
@@ -138,6 +184,10 @@ def test_extract_tool_summary_chunks_branches_and_filters():
     assert "Files accessed" in c1["text"]
     assert "Shell commands" in c1["text"] and "Grep patterns" in c1["text"]
     assert "Tool errors" in c1["text"]
+
+    c4 = next(c for c in all_chunks if c["conversation_id"] == "c4")
+    file_line = next(line for line in c4["text"].splitlines() if line.startswith("Files accessed:"))
+    assert len(file_line.split(",")) <= 20
 
     filtered = ch.extract_tool_summary_chunks(conn, conversation_ids={"c1"})
     assert len(filtered) == 1 and filtered[0]["conversation_id"] == "c1"
