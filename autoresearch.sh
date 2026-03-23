@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# Output terminal formatter coverage efficiency benchmark
+# Output painted bridge coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.output.terminal_fmt"
-TEST_FILES="tests/test_output_terminal_fmt.py"
+INCLUDE_ARGS="--cov=siftd.output.painted_bridge"
+TEST_FILES="tests/test_output_painted_bridge_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

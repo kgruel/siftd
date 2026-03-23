@@ -16,17 +16,18 @@
 - `cli/tags.py` (426/426)
 - `cli/sessions.py` (50/50) — step-down complete (efficiency improved to 0.25)
 - `output/format_registry.py` (52/52) — step-down complete (efficiency improved to 0.05)
+- `output/terminal_fmt.py` (125/125) — step-down complete (efficiency returned to 0.04)
 
 ## Pruned stale ideas
 
-- Removed stale `cli/tags.py`, `cli/sessions.py`, and `output/format_registry.py` targets after saturation.
+- Removed stale `cli/tags.py`, `cli/sessions.py`, `output/format_registry.py`, and `output/terminal_fmt.py` targets after saturation.
 - Removed completed CLI sweep leftovers; keep only unsaturated post-CLI lanes.
 
 ## Highest ROI next targets
 
-### 1) `output/terminal_fmt.py`
-- Small remaining uncovered branch in `render_detail` raw-turns compatibility path.
-- Focused lane: `tests/test_output_terminal_fmt.py`.
+### 1) `output/painted_bridge.py`
+- Still has a handful of deterministic edge branches (styling helpers, multiline edge handling, tool title count formatting).
+- Focused lane: `tests/test_output_painted_bridge_edges.py`.
 
 ### 2) other `output/*` formatter edge branches (if still not saturated)
 ### 3) targeted `api/*` deterministic leaf modules
