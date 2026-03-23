@@ -86,19 +86,13 @@ class TestListBuiltins:
 
 
 class TestResourceEdgeBranches:
-    def test_copy_adapter_package_lookup_error(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "importlib.resources.files",
-            lambda pkg: (_ for _ in ()).throw(TypeError("bad package")),
-        )
-        with pytest.raises(CopyError, match="Cannot locate adapter package"):
-            copy_adapter("claude_code", dest_dir=tmp_path)
-
-    def test_copy_query_default_dest_and_package_errors(self, tmp_path, monkeypatch):
+    def test_default_destinations_and_package_lookup_errors(self, tmp_path, monkeypatch):
         queries = list_builtin_queries()
         if queries:
             monkeypatch.setattr("siftd.api.resources.queries_dir", lambda: tmp_path)
             assert copy_query(queries[0]).exists()
+        monkeypatch.setattr("siftd.api.resources.formatters_dir", lambda: tmp_path)
+        assert copy_formatter("terminal").exists()
 
         monkeypatch.setattr(
             "importlib.resources.files",
@@ -106,6 +100,16 @@ class TestResourceEdgeBranches:
         )
         with pytest.raises(CopyError, match="Cannot locate built-in queries package"):
             copy_query("anything", dest_dir=tmp_path)
+        with pytest.raises(CopyError, match="Cannot locate formatter package"):
+            copy_formatter("terminal", dest_dir=tmp_path)
+
+        monkeypatch.setattr(
+            "importlib.resources.files",
+            lambda pkg: (_ for _ in ()).throw(TypeError("bad package")),
+        )
+        with pytest.raises(CopyError, match="Cannot locate adapter package"):
+            copy_adapter("claude_code", dest_dir=tmp_path)
+        assert list_builtin_queries() == []
 
     def test_copy_query_no_builtin_queries_available_message(self, tmp_path, monkeypatch):
         class _Ref:
@@ -119,21 +123,3 @@ class TestResourceEdgeBranches:
         monkeypatch.setattr("siftd.api.resources.list_builtin_queries", lambda: [])
         with pytest.raises(CopyError, match="No built-in queries available"):
             copy_query("missing", dest_dir=tmp_path)
-
-    def test_list_builtin_queries_lookup_error_returns_empty(self, monkeypatch):
-        monkeypatch.setattr(
-            "importlib.resources.files",
-            lambda pkg: (_ for _ in ()).throw(TypeError("bad package")),
-        )
-        assert list_builtin_queries() == []
-
-    def test_copy_formatter_default_dest_and_package_error(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.api.resources.formatters_dir", lambda: tmp_path)
-        assert copy_formatter("terminal").exists()
-
-        monkeypatch.setattr(
-            "importlib.resources.files",
-            lambda pkg: (_ for _ in ()).throw(ModuleNotFoundError("missing")),
-        )
-        with pytest.raises(CopyError, match="Cannot locate formatter package"):
-            copy_formatter("terminal", dest_dir=tmp_path)
