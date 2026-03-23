@@ -1,7 +1,10 @@
 """Tests for search module."""
 
+from types import SimpleNamespace
+
 import pytest
 
+import siftd.search as search_mod
 from siftd.search import ScoreBreakdown, apply_temporal_weight, mmr_rerank
 
 
@@ -291,3 +294,115 @@ class TestResolveCandidates:
         assert result is not None
         assert "c0" not in result
         assert "c1" in result and "c2" in result
+
+
+class TestHybridSearchBranches:
+    def _stub_embed_exports(self, monkeypatch, backend):
+        import siftd.embeddings as emb
+
+        monkeypatch.setattr(emb, "require_embeddings", lambda _op: None, raising=False)
+        monkeypatch.setattr(emb, "SCHEMA_VERSION", 1, raising=False)
+        monkeypatch.setattr(emb, "get_backend", lambda **_k: backend, raising=False)
+        monkeypatch.setattr(emb, "invalidate_backend_cache", lambda: None, raising=False)
+
+    def test_missing_paths_raise(self, monkeypatch, tmp_path):
+        self._stub_embed_exports(monkeypatch, SimpleNamespace(embed_one=lambda _q: [1.0], name="b", model="m", dimension=1))
+        with pytest.raises(FileNotFoundError, match="Database not found"):
+            search_mod.hybrid_search("q", db_path=tmp_path / "missing.db", embed_db_path=tmp_path / "e.db")
+
+        db = tmp_path / "main.db"
+        db.write_text("x")
+        with pytest.raises(FileNotFoundError, match="Embeddings database not found"):
+            search_mod.hybrid_search("q", db_path=db, embed_db_path=tmp_path / "missing_embed.db")
+
+    def test_passthrough_and_exclusion_filters(self, monkeypatch, tmp_path):
+        db = tmp_path / "main.db"
+        embed = tmp_path / "embed.db"
+        db.write_text("x")
+        embed.write_text("x")
+
+        backend = SimpleNamespace(embed_one=lambda _q: [1.0], name="b", model="m", dimension=1)
+        self._stub_embed_exports(monkeypatch, backend)
+
+        class _Conn:
+            def close(self):
+                return None
+
+        monkeypatch.setattr(search_mod, "open_database", lambda *_a, **_k: _Conn())
+        monkeypatch.setattr(search_mod, "_filter_conversations_conn", lambda *_a, **_k: {"c1"})
+        monkeypatch.setattr(search_mod, "get_active_conversation_ids", lambda _db: {"c0"})
+        monkeypatch.setattr(
+            "siftd.storage.fts.fts5_recall_details",
+            lambda *_a, **_k: SimpleNamespace(conversation_ids=["c0", "c2", "c1"], mode="and", fts_query="q*"),
+        )
+        monkeypatch.setattr("siftd.storage.fts.fts5_best_hit_for_conversation", lambda *_a, **_k: {"snippet": "hit", "rank": 1.2})
+        monkeypatch.setattr(search_mod, "batched_in_query", lambda *_a, **_k: [{"id": "c1", "workspace": "/w", "started_at": "t"}])
+
+        out = search_mod.hybrid_search("q", db_path=db, embed_db_path=embed, n=1, fts5_passthrough=True)
+        assert len(out) == 1 and out[0].conversation_id == "c1"
+
+    def test_retry_index_compat_and_recency_non_mmr_paths(self, monkeypatch, tmp_path):
+        db = tmp_path / "main.db"
+        embed = tmp_path / "embed.db"
+        db.write_text("x")
+        embed.write_text("x")
+
+        calls = {"n": 0, "invalidate": 0}
+
+        class _Backend:
+            name = "b"
+            model = "m"
+            dimension = 2
+
+            def embed_one(self, _q):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise RuntimeError("down")
+                return [1.0, 0.0]
+
+        import siftd.embeddings as emb
+
+        monkeypatch.setattr(emb, "require_embeddings", lambda _op: None, raising=False)
+        monkeypatch.setattr(emb, "SCHEMA_VERSION", 1, raising=False)
+        monkeypatch.setattr(emb, "get_backend", lambda **_k: _Backend(), raising=False)
+        monkeypatch.setattr(emb, "invalidate_backend_cache", lambda: calls.__setitem__("invalidate", calls["invalidate"] + 1), raising=False)
+
+        class _Conn:
+            def close(self):
+                return None
+
+        monkeypatch.setattr(search_mod, "open_database", lambda *_a, **_k: _Conn())
+        monkeypatch.setattr(search_mod, "get_active_conversation_ids", lambda _db: set())
+        monkeypatch.setattr(search_mod, "_filter_conversations_conn", lambda *_a, **_k: set())
+        monkeypatch.setattr("siftd.storage.fts.fts5_recall_details", lambda *_a, **_k: SimpleNamespace(conversation_ids=[], mode="and", fts_query="q"))
+
+        class _EmbConn:
+            def close(self):
+                return None
+
+        monkeypatch.setattr("siftd.storage.embeddings.open_embeddings_db", lambda *_a, **_k: _EmbConn())
+
+        class CompatErr(Exception):
+            pass
+
+        monkeypatch.setattr("siftd.storage.embeddings.IndexCompatError", CompatErr)
+        monkeypatch.setattr("siftd.storage.embeddings.validate_index_compat", lambda *_a, **_k: (_ for _ in ()).throw(CompatErr("x")))
+        monkeypatch.setattr("siftd.storage.embeddings.search_similar", lambda *_a, **_k: [])
+
+        with pytest.raises(CompatErr):
+            search_mod.hybrid_search("q", db_path=db, embed_db_path=embed)
+        assert calls["invalidate"] == 1 and calls["n"] == 2
+
+        monkeypatch.setattr("siftd.storage.embeddings.validate_index_compat", lambda *_a, **_k: None)
+        monkeypatch.setattr(
+            "siftd.storage.embeddings.search_similar",
+            lambda *_a, **_k: [
+                {"conversation_id": "c2", "score": 0.2, "text": "t2", "chunk_type": "exchange", "chunk_id": "b", "source_ids": []},
+                {"conversation_id": "c1", "score": 0.1, "text": "t1", "chunk_type": "exchange", "chunk_id": "a", "source_ids": []},
+            ],
+        )
+        monkeypatch.setattr("siftd.storage.queries.fetch_conversation_timestamps", lambda *_a, **_k: {"c1": "2026-01-01T00:00:00Z", "c2": "2024-01-01T00:00:00Z"})
+        monkeypatch.setattr(search_mod, "batched_in_query", lambda *_a, **_k: [{"id": "c1", "workspace": "/w1", "started_at": "s1"}, {"id": "c2", "workspace": "/w2", "started_at": "s2"}])
+
+        out = search_mod.hybrid_search("q", db_path=db, embed_db_path=embed, recency=True, rerank="relevance", threshold=0.0)
+        assert out and out[0].conversation_id in {"c1", "c2"}
