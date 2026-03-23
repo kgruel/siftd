@@ -52,16 +52,16 @@
 
 ## Highest ROI next targets
 
-### 1) `doctor/checks/freelist.py`
-- Single deterministic miss in MB-format branch for large freelist waste.
-- Focused lane: `tests/test_doctor_freelist_edges.py`.
+### 1) `serve/client.py` (pivot start)
+- Open deterministic serve lane first: URL parsing, HTTP status/error handling, JSON shape validation, and health payload guards.
+- Focused lane: `tests/test_serve_client.py` + `tests/test_serve_client_edges.py`.
 
-### 2) documented likely-unreachable branches (skip for now)
+### 2) `serve/delegation.py` next
+- After client saturation, target delegation fallback and unavailable-serve behavior branches.
+
+### 3) documented likely-unreachable branches (skip for now)
 - `content/filters.py` L64–65: exception guard in `is_binary_content` appears structurally unreachable after `isinstance(content, str)` and `encode(..., errors='ignore')`.
 - `backfill.py` L341–342: `new_hash == old_hash` path appears redundant after identity/no-change guard.
-
-### 3) `output/painted_bridge.py` documentation/closure pass
-- Remaining miss lines likely structurally unreachable; document and de-prioritize unless new evidence appears.
 
 ## Deferred but promising
 
@@ -69,6 +69,6 @@
 
 ## De-prioritized
 
-- `serve/*`, `embeddings/*` (marker/runtime heavy)
+- `embeddings/*` (marker/runtime heavy)
 - `adapters/template.py` (example code)
 - brittle terminal/TTY-only defensive branches unless they block practical milestones

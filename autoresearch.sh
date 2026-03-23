@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# doctor.freelist coverage efficiency benchmark
+# serve.client coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.doctor.checks.freelist"
-TARGET_FILE="src/siftd/doctor/checks/freelist.py"
-TEST_FILES="tests/test_doctor_freelist_edges.py"
+INCLUDE_ARGS="--cov=siftd.serve.client"
+TARGET_FILE="src/siftd/serve/client.py"
+TEST_FILES="tests/test_serve_client.py tests/test_serve_client_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
@@ -20,7 +20,7 @@ done
 echo "Running full test suite with coverage..."
 uv run python -m pytest tests/ -x -q --tb=short -p no:randomly \
     $INCLUDE_ARGS --cov-report=json:coverage.json \
-    --override-ini="addopts=" -m "not embeddings and not serve" \
+    --override-ini="addopts=" -m "not embeddings" \
     -k "not test_import_rules and not test_basics and not test_follow_session and not test_doctor_fix_shows_fix_commands" 2>&1 | tail -5
 
 COVERAGE_JSON=$(cat coverage.json)
@@ -43,7 +43,7 @@ BEST_TIME=99999
 for i in 1 2 3 4 5; do
     START=$(python3 -c "import time; print(time.monotonic())")
     uv run python -m pytest $TEST_FILES -x -q --tb=short -p no:xdist \
-        --override-ini="addopts=" -m "not embeddings and not serve" 2>&1 | tail -1
+        --override-ini="addopts=" -m "not embeddings" 2>&1 | tail -1
     END=$(python3 -c "import time; print(time.monotonic())")
     RUN_TIME=$(python3 -c "print(round($END - $START, 3))")
     BEST_TIME=$(python3 -c "print(min($BEST_TIME, $RUN_TIME))")
