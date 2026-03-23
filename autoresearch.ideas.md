@@ -23,6 +23,7 @@
 - `api/file_refs.py` (49/49) — guard branch covered and step-down passes complete (to 0.19)
 - `api/search.py` (155/155) — step-up to 100% and initial step-down pass (to 0.18)
 - `api/stats.py` (232/232) — edge coverage complete with focused step-down benchmark (to 0.06)
+- `api/tags.py` (73/73) — wrapper branches covered and focused step-down benchmark (to 0.12)
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -33,9 +34,9 @@
 
 ## Highest ROI next targets
 
-### 1) `api/tags.py`
-- Deterministic wrapper branches still open around modify/remove paths and auto-open rename path.
-- Focused lane: `tests/test_tags_temporal.py` + `tests/test_api_tags_edges.py`.
+### 1) `api/migrations.py`
+- Small deterministic wrapper module with likely low-effort remaining misses.
+- Focused lane: `tests/test_api_migrations_edges.py`.
 
 ### 2) other `output/*` formatter edge branches (if still not saturated)
 ### 3) targeted `api/*` deterministic leaf modules (post-search sweep)

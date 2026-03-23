@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# API tags coverage efficiency benchmark
+# API migrations coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.api.tags"
-TARGET_FILE="src/siftd/api/tags.py"
-TEST_FILES="tests/test_api_tags_edges.py"
+INCLUDE_ARGS="--cov=siftd.api.migrations"
+TARGET_FILE="src/siftd/api/migrations.py"
+TEST_FILES="tests/test_api_migrations_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
