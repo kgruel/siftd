@@ -54,3 +54,16 @@ class TestFetchFileRefs:
         conn = open_database(test_db, read_only=True)
         assert fetch_file_refs(conn, []) == {}
         conn.close()
+
+    def test_skips_rows_without_file_path(self):
+        from siftd.api.file_refs import fetch_file_refs
+
+        class FakeCursor:
+            def fetchall(self):
+                return [{"prompt_id": "p1", "tool_name": "file.read", "input_json": "{}", "result_json": "{}"}]
+
+        class FakeConn:
+            def execute(self, *_a, **_k):
+                return FakeCursor()
+
+        assert fetch_file_refs(FakeConn(), ["p1"]) == {}
