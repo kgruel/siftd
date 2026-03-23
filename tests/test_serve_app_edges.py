@@ -15,5 +15,4 @@ def test_create_app_with_auth_adds_middleware_and_dependencies(monkeypatch, tmp_
     db = tmp_path / "team.db"
     app = serve_app.create_app(db_path=db, auth_config={"issuer": "https://idp"}, fts_rebuild="scheduled")
     assert app.middleware == [marker]
-    assert asyncio.run(app.dependencies["db_path"].dependency()) == db
-    assert asyncio.run(app.dependencies["fts_rebuild"].dependency()) == "scheduled"
+    assert (asyncio.run(app.dependencies["db_path"].dependency()), asyncio.run(app.dependencies["fts_rebuild"].dependency())) == (db, "scheduled")
