@@ -31,6 +31,7 @@
 - `api/export.py` (66/66) — default-fidelity branch covered with focused lane; step-down attempt was flat at metric floor (discarded).
 - `api/sessions.py` (17/17) — wrapper gap closed; step-down pass completed (to 0.17).
 - `api/adapters.py` (30/30) — final entrypoint loop branch covered; focused lane currently at step-down 0.11.
+- `api/__init__.py` (25/25) — unknown-symbol defensive AttributeError path covered.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -41,12 +42,12 @@
 
 ## Highest ROI next targets
 
-### 1) `api/__init__.py`
-- One missing defensive branch in `__getattr__` unknown-symbol error path.
-- Focused lane: `tests/test_api_init_edges.py`.
+### 1) `adapters/_jsonl.py`
+- One missing deterministic branch (`parse_block` string input fast path).
+- Focused lane: `tests/adapters/test_jsonl_edges.py`.
 
-### 2) Remaining non-100 probe after API saturation
-- Re-probe full package to choose next unsaturated deterministic target once `api/__init__.py` is closed.
+### 2) Remaining tiny adapter misses after `_jsonl`
+- `adapters/opencode.py`, `adapters/aider.py`, `adapters/claude_code.py`, `adapters/registry.py` each have 1-line residual misses; pick deterministic ones first.
 
 ### 3) `output/painted_bridge.py` documentation/closure pass
 - Remaining miss lines likely structurally unreachable; document and de-prioritize unless new evidence appears.
