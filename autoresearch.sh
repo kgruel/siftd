@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# peek.reader coverage efficiency benchmark
+# doctor.freelist coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.peek.reader"
-TARGET_FILE="src/siftd/peek/reader.py"
-TEST_FILES="tests/test_reader_edges.py"
+INCLUDE_ARGS="--cov=siftd.doctor.checks.freelist"
+TARGET_FILE="src/siftd/doctor/checks/freelist.py"
+TEST_FILES="tests/test_doctor_freelist_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

@@ -41,6 +41,7 @@
 - `adapters/pi_agent.py` (154/154) — deterministic residual branches closed; focused step-down reached 0.02.
 - `adapters/sdk.py` (328/328) — seek_last_lines binary-open OSError branch closed; lane now saturated.
 - `tool_query.py` (80/80) — ToolQueryTerm.is_fielded property branch closed with focused edge test.
+- `peek/reader.py` (162/162) — derived peek_scan wrapper invocation path covered; step-down pass to 0.02.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -51,9 +52,9 @@
 
 ## Highest ROI next targets
 
-### 1) `peek/reader.py`
-- Single deterministic miss in derived `peek_scan` wrapper invocation path.
-- Focused lane: `tests/test_reader_edges.py`.
+### 1) `doctor/checks/freelist.py`
+- Single deterministic miss in MB-format branch for large freelist waste.
+- Focused lane: `tests/test_doctor_freelist_edges.py`.
 
 ### 2) documented likely-unreachable branches (skip for now)
 - `content/filters.py` L64–65: exception guard in `is_binary_content` appears structurally unreachable after `isinstance(content, str)` and `encode(..., errors='ignore')`.
