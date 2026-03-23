@@ -94,10 +94,11 @@
   .eff-bar-container { flex: 1; height: 16px; background: #0d1117; border-radius: 2px; }
   .eff-bar { height: 100%; border-radius: 2px; min-width: 2px; }
   .eff-bar-value { min-width: 60px; text-align: right; font-size: 11px; }
-  /* Health donut */
-  .health-row { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
-  .health-canvas { width: 120px; height: 120px; }
-  .health-stats { font-size: 12px; line-height: 2; }
+  /* Donut charts in header */
+  .summary-donuts { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+  .donut-group { display: flex; align-items: center; gap: 10px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px 14px; }
+  .donut-canvas { width: 80px; height: 80px; }
+  .donut-label { font-size: 11px; color: #7d8590; line-height: 1.7; }
   /* Markdown */
   .md-container { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 20px 24px; }
   .md-container h1,.md-container h2,.md-container h3 { color: #e6edf3; margin: 16px 0 8px; }
@@ -134,6 +135,16 @@
 
 <div id="dashboard" style="display:none">
 <div class="summary" id="summary"></div>
+<div class="summary-donuts">
+  <div class="donut-group">
+    <canvas class="donut-canvas" id="coverage-donut" width="80" height="80"></canvas>
+    <div class="donut-label" id="coverage-donut-label"></div>
+  </div>
+  <div class="donut-group">
+    <canvas class="donut-canvas" id="health-donut" width="80" height="80"></canvas>
+    <div class="donut-label" id="health-donut-label"></div>
+  </div>
+</div>
 
 <div class="nav-tabs" id="nav-tabs">
   <div class="nav-tab active" data-tab="charts">Charts</div>
@@ -183,11 +194,6 @@
     <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#7a4a2a"></div> crash/fail</div>
     <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="border-top:1px dashed #30363d;width:16px;height:0"></div> segment boundary</div>
   </div>
-</div>
-
-<div class="health-row" id="health-row">
-  <canvas class="health-canvas" id="health-canvas" width="120" height="120"></canvas>
-  <div class="health-stats" id="health-stats"></div>
 </div>
 
 <div class="filter-bar">
@@ -277,9 +283,9 @@ function buildProjectTimeline(lines) {
       ms[seg.name] = { covered: m.covered_lines, total: Math.round(m.covered_lines/(m.coverage_pct/100)) };
       const tc = Object.values(ms).reduce((s,v)=>s+v.covered,0);
       const tt = Object.values(ms).reduce((s,v)=>s+v.total,0);
-      const ec = tc + Math.round(Math.max(0,T-tt)*0.7);
+      const ec = Math.min(T, tc + Math.round(Math.max(0,T-tt)*0.7));
       pts.push({ timestamp: r.timestamp, segment: seg.name, run: r.run, commit: r.commit,
-        est_pct: Math.round(ec/T*1000)/10, est_covered: ec, est_total: T,
+        est_pct: Math.min(100, Math.round(ec/T*1000)/10), est_covered: ec, est_total: T,
         tracked_covered: tc, tracked_total: tt, tracked_modules: Object.keys(ms).length, real: false });
     }
   }
@@ -458,6 +464,32 @@ function drawSegChart(segments,metric) {
    Health donut
    ═══════════════════════════════════════════════════════════════ */
 
+function drawDonut(canvasId, slices, centerText, bgColor) {
+  const c = document.getElementById(canvasId);
+  const dpr = devicePixelRatio || 1;
+  const size = 80;
+  c.width = size * dpr; c.height = size * dpr;
+  c.style.width = size + 'px'; c.style.height = size + 'px';
+  const ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const cx = size/2, cy = size/2, ro = 36, ri = 23;
+  const total = slices.reduce((s, sl) => s + sl.count, 0);
+  if (!total) return;
+  let angle = -Math.PI/2;
+  for (const sl of slices) {
+    if (!sl.count) continue;
+    const sweep = (sl.count / total) * Math.PI * 2;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, ro, angle, angle + sweep); ctx.closePath();
+    ctx.fillStyle = sl.color; ctx.fill();
+    angle += sweep;
+  }
+  ctx.beginPath(); ctx.arc(cx, cy, ri, 0, Math.PI * 2);
+  ctx.fillStyle = bgColor || '#161b22'; ctx.fill();
+  ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 13px SF Mono,Menlo,monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(centerText, cx, cy);
+}
+
 function drawHealth(lines) {
   const runs = lines.filter(e => 'run' in e);
   const counts = {keep:0,discard:0,crash:0,checks_failed:0};
@@ -466,34 +498,53 @@ function drawHealth(lines) {
   const ts = runs.filter(r=>r.timestamp).map(r=>r.timestamp);
   const hours = ts.length >= 2 ? ((Math.max(...ts)-Math.min(...ts))/1000/3600) : 0;
 
-  // Donut
-  const c = document.getElementById('health-canvas');
-  const ctx = c.getContext('2d');
-  const cx=60,cy=60,r=50,rInner=32;
-  ctx.clearRect(0,0,120,120);
-  const slices = [
+  drawDonut('health-donut', [
     {count: counts.keep, color: '#3fb950'},
     {count: counts.discard, color: '#f85149'},
     {count: (counts.crash||0)+(counts.checks_failed||0), color: '#d29922'},
-  ];
-  let angle = -Math.PI/2;
-  for (const sl of slices) {
-    if (!sl.count) continue;
-    const sweep = (sl.count/total)*Math.PI*2;
-    ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r,angle,angle+sweep);ctx.closePath();
-    ctx.fillStyle=sl.color;ctx.fill();
-    angle+=sweep;
-  }
-  ctx.beginPath();ctx.arc(cx,cy,rInner,0,Math.PI*2);ctx.fillStyle='#161b22';ctx.fill();
-  ctx.fillStyle='#e6edf3';ctx.font='bold 16px SF Mono,Menlo,monospace';ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.fillText(total,cx,cy);
+  ], total.toString());
 
-  document.getElementById('health-stats').innerHTML = `
-    <div><span style="color:#3fb950">\u2713 ${counts.keep} kept</span> (${(counts.keep/total*100).toFixed(0)}%)</div>
-    <div><span style="color:#f85149">\u2717 ${counts.discard} discarded</span></div>
-    <div><span style="color:#d29922">\u26a0 ${(counts.crash||0)+(counts.checks_failed||0)} crashed/failed</span></div>
-    <div style="margin-top:8px;color:#7d8590">${hours.toFixed(1)} hours &middot; ${(total/Math.max(hours,0.1)).toFixed(1)} runs/hr</div>
+  document.getElementById('health-donut-label').innerHTML =
+    `<div style="font-weight:600;color:#e6edf3;margin-bottom:2px">Loop health</div>
+    <div><span style="color:#3fb950">\u2713 ${counts.keep}</span> kept (${(counts.keep/total*100).toFixed(0)}%)</div>
+    <div><span style="color:#f85149">\u2717 ${counts.discard}</span> &middot; <span style="color:#d29922">\u26a0 ${(counts.crash||0)+(counts.checks_failed||0)}</span></div>
+    <div>${hours.toFixed(1)}h &middot; ${(total/Math.max(hours,0.1)).toFixed(1)} runs/hr</div>
   `;
+}
+
+function drawCoverageDonut(projData, segments) {
+  if (!projData.length) return;
+
+  // Project coverage from latest data point
+  const last = projData[projData.length - 1];
+  const covPct = last.est_pct;
+  const covLines = last.est_covered;
+  const totalLines = last.est_total;
+  const missLines = Math.max(0, totalLines - covLines);
+
+  // Weighted average efficiency across segments (only those with keeps)
+  let totalEff = 0, effCount = 0;
+  for (const seg of segments) {
+    const keeps = seg.runs.filter(r => r.status === 'keep');
+    if (!keeps.length) continue;
+    const last = keeps[keeps.length - 1];
+    if (last.metric != null && last.metric < 500) {
+      totalEff += last.metric;
+      effCount++;
+    }
+  }
+  const avgEff = effCount > 0 ? (totalEff / effCount) : 0;
+
+  drawDonut('coverage-donut', [
+    {count: covLines, color: '#58a6ff'},
+    {count: missLines, color: '#30363d'},
+  ], covPct + '%');
+
+  document.getElementById('coverage-donut-label').innerHTML =
+    `<div style="font-weight:600;color:#e6edf3;margin-bottom:2px">Project coverage</div>
+    <div><span style="color:#58a6ff">${covLines.toLocaleString()}</span> / ${totalLines.toLocaleString()} lines</div>
+    <div><span style="color:#f85149">${missLines.toLocaleString()}</span> missing</div>
+    <div>avg eff <span style="color:#bc8cff">${avgEff.toFixed(2)}</span> across ${effCount} modules</div>`;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -646,6 +697,7 @@ function renderAll() {
   drawProject(projData);
   drawSegChart(segments, curMetric);
   drawHealth(lines);
+  drawCoverageDonut(projData, segments);
   renderLog(lines);
   renderEfficiency(segments);
 }

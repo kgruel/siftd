@@ -35,7 +35,7 @@ if errors:
     for e in errors:
         print(f'  {e}')
     sys.exit(1)
-" tests/adapters/test_copilot_cli.py
+" tests/test_embeddings_indexer_edges.py
 
 # Lint
-uv run python -m ruff check tests/adapters/test_copilot_cli.py 2>&1 | tail -10
+uv run python -m ruff check tests/test_embeddings_indexer_edges.py 2>&1 | tail -10

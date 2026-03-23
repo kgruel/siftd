@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# adapters.copilot_cli coverage efficiency benchmark
+# embeddings.indexer coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.adapters.copilot_cli"
-TARGET_FILE="src/siftd/adapters/copilot_cli.py"
-TEST_FILES="tests/adapters/test_copilot_cli.py"
+INCLUDE_ARGS="--cov=siftd.embeddings.indexer"
+TARGET_FILE="src/siftd/embeddings/indexer.py"
+TEST_FILES="tests/test_embeddings_indexer_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

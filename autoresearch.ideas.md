@@ -40,6 +40,7 @@
 - `adapters/claude_code.py` (147/147) — `_normalize_content` fallback branch closed with focused edge test.
 - `adapters/opencode.py` (174/174) — `_part_to_content_block` tool-skip branch closed with focused edge test.
 - `adapters/gemini_cli.py` (158/158) — workspace-hash PermissionError branch covered; lane saturated.
+- `adapters/copilot_cli.py` (132/132) — discover/can_handle/timestamp-order/windows-location residual branches closed.
 - `adapters/pi_agent.py` (154/154) — deterministic residual branches closed; focused step-down reached 0.02.
 - `adapters/sdk.py` (328/328) — seek_last_lines binary-open OSError branch closed; lane now saturated.
 - `tool_query.py` (80/80) — ToolQueryTerm.is_fielded property branch closed with focused edge test.
@@ -66,8 +67,8 @@
 
 ## Highest ROI next targets
 
-### 1) `adapters/copilot_cli.py`
-- Active lane: close remaining deterministic misses (discover wrapper, can_handle fallback false branch, parse timestamp-min update path).
+### 1) `embeddings/indexer.py`
+- Active embed-runtime lane: close deterministic helper/compat/incremental branches without heavy model/runtime dependency.
 
 ### 2) warning/stability cleanup lane
 - Investigate recurring `requests` dependency warning and sqlite `ResourceWarning` noise in tests; reduce warning overhead/noise without masking real failures.
