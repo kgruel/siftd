@@ -65,11 +65,11 @@
 
 ## Highest ROI next targets
 
-### 1) warning/stability cleanup lane
-- Active lane: investigate recurring `requests` dependency warning and sqlite `ResourceWarning` noise in tests; reduce warning overhead/noise without masking real failures.
+### 1) `content/filters.py`
+- Active lane: close the remaining encode-exception guard branch in `is_binary_content` (currently 67/69).
 
-### 2) embed runtime stability follow-up
-- Remove temporary `not mmr` exclusion by fixing numpy/fastembed re-import instability under pytest-cov.
+### 2) warning/stability cleanup lane
+- Investigate recurring `requests` dependency warning and sqlite `ResourceWarning` noise in tests; reduce warning overhead/noise without masking real failures.
 
 ### 3) stability follow-up (serve + embed)
 - Long full-suite runs under coverage show intermittent 500s in `tests/test_serve.py` integration classes; currently excluded in autoresearch filter for stability. Root-cause and re-enable when deterministic.
@@ -81,6 +81,5 @@
 
 ## De-prioritized
 
-- `embeddings/*` (marker/runtime heavy)
 - `adapters/template.py` (example code)
 - brittle terminal/TTY-only defensive branches unless they block practical milestones

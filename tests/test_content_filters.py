@@ -105,9 +105,16 @@ class TestIsBinaryContent:
         assert is_binary_content(123) is False
 
     def test_encode_error_branch_returns_false(self):
-        class BrokenStr(str):
+        class BrokenSlice:
+            def __contains__(self, _item):
+                return False
+
             def encode(self, *_a, **_k):
                 raise AttributeError("broken")
+
+        class BrokenStr(str):
+            def __getitem__(self, _key):
+                return BrokenSlice()
 
         assert is_binary_content(BrokenStr("text")) is False
 
