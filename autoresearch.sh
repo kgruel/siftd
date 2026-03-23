@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# model_names coverage efficiency benchmark
+# adapters.aider coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.model_names"
-TARGET_FILE="src/siftd/model_names.py"
-TEST_FILES="tests/test_model_names_edges.py"
+INCLUDE_ARGS="--cov=siftd.adapters.aider"
+TARGET_FILE="src/siftd/adapters/aider.py"
+TEST_FILES="tests/adapters/test_aider_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

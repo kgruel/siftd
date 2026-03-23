@@ -34,6 +34,7 @@
 - `api/__init__.py` (25/25) — unknown-symbol defensive AttributeError path covered.
 - `adapters/_jsonl.py` (21/21) — string fast-path covered with focused edge test.
 - `adapters/registry.py` (35/35) — config path-override branch covered; step-down pass to 0.08.
+- `model_names.py` (41/41) — gemini unknown-variant fallback covered; step-down pass to 0.03.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -44,12 +45,12 @@
 
 ## Highest ROI next targets
 
-### 1) `model_names.py`
-- One residual fallback branch in `_parse_gemini` for unrecognized gemini variants.
-- Focused lane: `tests/test_model_names_edges.py`.
+### 1) `adapters/aider.py`
+- One deterministic miss in analytics location matching loop (`DEFAULT_LOCATIONS` path hit).
+- Focused lane: `tests/adapters/test_aider_edges.py`.
 
 ### 2) Remaining tiny adapter misses
-- `adapters/opencode.py`, `adapters/aider.py`, `adapters/claude_code.py`, `adapters/pi_agent.py`, `adapters/sdk.py` have small residual misses; pick deterministic non-fixture-heavy branches first.
+- `adapters/opencode.py`, `adapters/claude_code.py`, `adapters/pi_agent.py`, `adapters/sdk.py` still have small residual misses; pick deterministic non-fixture-heavy branches first.
 
 ### 3) `output/painted_bridge.py` documentation/closure pass
 - Remaining miss lines likely structurally unreachable; document and de-prioritize unless new evidence appears.
