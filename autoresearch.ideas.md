@@ -44,6 +44,7 @@
 - `peek/reader.py` (162/162) — derived peek_scan wrapper invocation path covered; step-down pass to 0.02.
 - `doctor/checks/freelist.py` (19/19) — MB-format branch covered; step-down pass to 0.13.
 - `serve/client.py` (81/81) — serve pivot baseline + edge step-up completed; lane saturated.
+- `serve/delegation.py` (130/130) — delegation fallback/unavailable/timeout and config parsing branches fully covered.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -54,12 +55,11 @@
 
 ## Highest ROI next targets
 
-### 1) `serve/delegation.py` next
-- First post-pivot serve lane: delegation fallback, unavailable-serve, and timeout behavior branches.
-- Candidate focused lane: `tests/test_serve_delegation_edges.py`.
+### 1) broader `serve/routes.py` / `serve/html_routes.py`
+- Next serve lane: route-layer behavior with Litestar TestClient fixtures; likely biggest remaining serve surface.
 
-### 2) broader `serve/routes.py` / `serve/html_routes.py`
-- After delegation, probe route-layer branches with test client fixtures; likely biggest remaining serve surface.
+### 2) `serve/app.py` / `serve/auth.py`
+- Follow routes with app wiring and auth middleware edge branches if still unsaturated.
 
 ### 3) documented likely-unreachable branches (skip for now)
 - `content/filters.py` L64–65: exception guard in `is_binary_content` appears structurally unreachable after `isinstance(content, str)` and `encode(..., errors='ignore')`.
@@ -67,6 +67,7 @@
 
 ## Deferred but promising
 
+- Investigate full-suite interaction causing intermittent `tests/test_serve.py::TestHealth::test_health_returns_ok` 500 when running long non-randomly ordered suites under coverage; currently excluded from autoresearch k-filter for stability.
 - Reduce `tests/test_api_search_edges.py` LOC via shared hybrid stub fixtures; prior aggressive rewrite triggered early acceptance failure (`test_doctor.t`) during full-suite benchmark, so retry in smaller safe increments.
 
 ## De-prioritized

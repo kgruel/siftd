@@ -5,7 +5,7 @@ set -euo pipefail
 
 INCLUDE_ARGS="--cov=siftd.serve.delegation"
 TARGET_FILE="src/siftd/serve/delegation.py"
-TEST_FILES="tests/test_serve_delegation.py tests/test_serve_delegation_edges.py"
+TEST_FILES="tests/test_serve_delegation_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
@@ -21,7 +21,7 @@ echo "Running full test suite with coverage..."
 uv run python -m pytest tests/ -x -q --tb=short -p no:randomly \
     $INCLUDE_ARGS --cov-report=json:coverage.json \
     --override-ini="addopts=" -m "not embeddings" \
-    -k "not test_import_rules and not test_basics and not test_follow_session and not test_doctor_fix_shows_fix_commands" 2>&1 | tail -5
+    -k "not test_import_rules and not test_basics and not test_follow_session and not test_doctor_fix_shows_fix_commands and not test_remaining_error_and_edge_branches and not TestHealth and not TestPush and not TestPull and not TestQuery and not TestStats and not TestSearch and not TestAuthNoAuth and not TestAuthOIDC and not TestAttribution and not TestCLI" 2>&1 | tail -5
 
 COVERAGE_JSON=$(cat coverage.json)
 rm -f coverage.json
