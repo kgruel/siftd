@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# adapters.opencode coverage efficiency benchmark
+# adapters.pi_agent coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.adapters.opencode"
-TARGET_FILE="src/siftd/adapters/opencode.py"
-TEST_FILES="tests/adapters/test_opencode_edges.py"
+INCLUDE_ARGS="--cov=siftd.adapters.pi_agent"
+TARGET_FILE="src/siftd/adapters/pi_agent.py"
+TEST_FILES="tests/adapters/test_pi_agent_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

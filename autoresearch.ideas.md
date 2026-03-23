@@ -37,6 +37,7 @@
 - `model_names.py` (41/41) — gemini unknown-variant fallback covered; step-down pass to 0.03.
 - `adapters/aider.py` (156/156) — analytics location-match branch closed; step-down attempt hit flat metric floor.
 - `adapters/claude_code.py` (147/147) — `_normalize_content` fallback branch closed with focused edge test.
+- `adapters/opencode.py` (174/174) — `_part_to_content_block` tool-skip branch closed with focused edge test.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -47,12 +48,12 @@
 
 ## Highest ROI next targets
 
-### 1) `adapters/opencode.py`
-- One deterministic miss in `_part_to_content_block` tool-type skip branch.
-- Focused lane: `tests/adapters/test_opencode_edges.py`.
+### 1) `adapters/pi_agent.py`
+- Two small residual misses in deterministic helper branches.
+- Focused lane: `tests/adapters/test_pi_agent_edges.py`.
 
-### 2) Remaining tiny adapter misses
-- `adapters/pi_agent.py`, `adapters/sdk.py` still have small residual misses; pick deterministic non-fixture-heavy branches first.
+### 2) `adapters/sdk.py`
+- Small residual misses remain; follow pi_agent with focused deterministic edges.
 
 ### 3) `output/painted_bridge.py` documentation/closure pass
 - Remaining miss lines likely structurally unreachable; document and de-prioritize unless new evidence appears.
