@@ -47,6 +47,7 @@
 - `serve/delegation.py` (130/130) — delegation fallback/unavailable/timeout and config parsing branches fully covered.
 - `serve/auth.py` (84/84) — auth mode dispatch, OIDC/introspection, and JWKS paths covered; focused step-down reached 0.02.
 - `serve/routes.py` (185/185) — direct route-function tests closed all branches; focused step-down reached 0.35.
+- `serve/html_routes.py` (288/288) — helper + fragment route branches fully covered with direct async route tests.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -57,15 +58,14 @@
 
 ## Highest ROI next targets
 
-### 1) `serve/html_routes.py`
-- Next serve lane: HTML fragment handlers and helper functions (htmx/detail/search/follow/stats/tools/export).
-- Prefer direct function tests + selective TestClient usage to avoid flaky full-suite integration classes.
+### 1) `serve/app.py`
+- Next serve lane: app wiring, route registration, and optional-auth/static-router branches.
 
-### 2) `serve/app.py`
-- Follow html routes with app wiring branches once route-level setup is stable.
-
-### 3) serve integration instability follow-up
+### 2) serve integration instability follow-up
 - Long full-suite runs under coverage show intermittent 500s in `tests/test_serve.py` integration classes; currently excluded in autoresearch filter for stability. Root-cause and re-enable when deterministic.
+
+### 3) post-serve sweep
+- Re-probe project for remaining deterministic unsaturated tiny misses once app lane is closed.
 
 ## Deferred but promising
 

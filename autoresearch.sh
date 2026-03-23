@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# serve.html_routes coverage efficiency benchmark
+# serve.app coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.serve.html_routes"
-TARGET_FILE="src/siftd/serve/html_routes.py"
-TEST_FILES="tests/test_serve_html_routes_edges.py tests/test_serve_html_routes_stepup.py"
+INCLUDE_ARGS="--cov=siftd.serve.app"
+TARGET_FILE="src/siftd/serve/app.py"
+TEST_FILES="tests/test_serve_app_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
