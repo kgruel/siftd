@@ -39,6 +39,7 @@
 - `adapters/claude_code.py` (147/147) — `_normalize_content` fallback branch closed with focused edge test.
 - `adapters/opencode.py` (174/174) — `_part_to_content_block` tool-skip branch closed with focused edge test.
 - `adapters/pi_agent.py` (154/154) — deterministic residual branches closed; focused step-down reached 0.02.
+- `adapters/sdk.py` (328/328) — seek_last_lines binary-open OSError branch closed; lane now saturated.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -49,12 +50,13 @@
 
 ## Highest ROI next targets
 
-### 1) `adapters/sdk.py`
-- Small deterministic residual misses remain; next focused lane.
-- Candidate file: `tests/adapters/test_sdk_edges.py`.
+### 1) `tool_query.py`
+- Single deterministic miss: `ToolQueryTerm.is_fielded` property branch.
+- Focused lane: `tests/test_tool_query_edges.py`.
 
-### 2) re-probe remaining adapter residuals
-- Quick scout after sdk to confirm if any tiny misses remain worth deterministic closure.
+### 2) documented likely-unreachable branches (skip for now)
+- `content/filters.py` L64–65: exception guard in `is_binary_content` appears structurally unreachable after `isinstance(content, str)` and `encode(..., errors='ignore')`.
+- `backfill.py` L341–342: `new_hash == old_hash` path appears redundant after identity/no-change guard.
 
 ### 3) `output/painted_bridge.py` documentation/closure pass
 - Remaining miss lines likely structurally unreachable; document and de-prioritize unless new evidence appears.

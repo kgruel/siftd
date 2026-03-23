@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# adapters.sdk coverage efficiency benchmark
+# tool_query coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.adapters.sdk"
-TARGET_FILE="src/siftd/adapters/sdk.py"
-TEST_FILES="tests/adapters/test_sdk_edges.py"
+INCLUDE_ARGS="--cov=siftd.tool_query"
+TARGET_FILE="src/siftd/tool_query.py"
+TEST_FILES="tests/test_tool_query_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
