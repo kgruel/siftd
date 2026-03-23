@@ -76,3 +76,44 @@ def test_probe_health_rejects_unrecognized_payload(monkeypatch):
     monkeypatch.setattr("siftd.serve.client._get_json", lambda *a, **k: {"status": "bad"})
     with pytest.raises(client.ServeUnavailable, match="unrecognized health payload"):
         client.probe_health(base_url="http://127.0.0.1:8484")
+
+
+def test_get_json_success_query_and_shape_error(monkeypatch):
+    ok = _Conn(_Resp(status=200, body=b'{"ok":true}'))
+    monkeypatch.setattr("siftd.serve.client._conn", lambda *_a, **_k: ok)
+    out = client._get_json("http://127.0.0.1:8484/base", "/v1/search", params={"tag": ["a", "b"]})
+    assert out == {"ok": True}
+    assert ok.req[1].startswith("/base/v1/search?") and "tag=a" in ok.req[1] and "tag=b" in ok.req[1]
+
+    bad_shape = _Conn(_Resp(status=200, body=b"[]"))
+    monkeypatch.setattr("siftd.serve.client._conn", lambda *_a, **_k: bad_shape)
+    with pytest.raises(client.ServeUnavailable, match="expected object"):
+        client._get_json("http://127.0.0.1:8484", "/v1/search")
+
+
+def test_post_json_non_200_and_invalid_json(monkeypatch):
+    c1 = _Conn(_Resp(status=500, body=b"{}"))
+    monkeypatch.setattr("siftd.serve.client._conn", lambda *_a, **_k: c1)
+    with pytest.raises(client.ServeUnavailable, match="HTTP 500"):
+        client._post_json("http://127.0.0.1:8484", "/v1/x", body={})
+
+    c2 = _Conn(_Resp(status=200, body=b"not-json"))
+    monkeypatch.setattr("siftd.serve.client._conn", lambda *_a, **_k: c2)
+    with pytest.raises(client.ServeUnavailable, match="Invalid JSON"):
+        client._post_json("http://127.0.0.1:8484", "/v1/x", body={})
+
+
+def test_probe_health_success_and_wrappers(monkeypatch):
+    calls = []
+
+    def fake_get(base_url, path, **kwargs):
+        calls.append((base_url, path, kwargs))
+        if path == "/v1/health":
+            return {"status": "ok", "service": "siftd"}
+        return {"items": []}
+
+    monkeypatch.setattr("siftd.serve.client._get_json", fake_get)
+    assert client.probe_health(base_url="http://127.0.0.1:8484")["service"] == "siftd"
+    client.search(base_url="http://127.0.0.1:8484", params={"q": "x"})
+    client.stats(base_url="http://127.0.0.1:8484")
+    assert [c[1] for c in calls] == ["/v1/health", "/v1/search", "/v1/stats"]
