@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# API file_refs coverage efficiency benchmark
+# API search coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.api.file_refs"
-TARGET_FILE="src/siftd/api/file_refs.py"
-TEST_FILES="tests/test_file_refs.py"
+INCLUDE_ARGS="--cov=siftd.api.search"
+TARGET_FILE="src/siftd/api/search.py"
+TEST_FILES="tests/test_api_search_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

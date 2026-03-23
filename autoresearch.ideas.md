@@ -20,6 +20,7 @@
 - `output/narrative.py` (139/139) — step-up to 100% then step-down efficiency pass (to 0.10)
 - `api/resources.py` (69/69) — step-up to 100% plus step-down compression pass (to 0.42)
 - `api/auth.py` (30/30) — timeout branch covered and step-down pass complete (to 0.34)
+- `api/file_refs.py` (49/49) — guard branch covered and step-down passes complete (to 0.19)
 - `output/painted_bridge.py` (372/374) — near-saturated; remaining 2 lines appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -30,9 +31,9 @@
 
 ## Highest ROI next targets
 
-### 1) `api/file_refs.py`
-- Near-saturated leaf with one deterministic guard branch (`missing file_path`) to finish.
-- Focused lane: `tests/test_file_refs.py`.
+### 1) `api/search.py`
+- High remaining deterministic branch surface in wrappers and hybrid/fts orchestration logic.
+- Candidate focused lane: `tests/test_api_search_edges.py` (new) to avoid bloating legacy broad tests.
 
 ### 2) other `output/*` formatter edge branches (if still not saturated)
 ### 3) targeted `api/*` deterministic leaf modules
