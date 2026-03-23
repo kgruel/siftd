@@ -1,4 +1,5 @@
 import asyncio
+import sys
 import time
 from types import SimpleNamespace
 
@@ -51,3 +52,136 @@ def test_get_jwks_cache_hit_returns_cached_value():
     MW._jwks_fetched_at = time.time()
     mw = object.__new__(MW)
     assert _run(mw._get_jwks()) == {"k": 1}
+
+
+def test_authenticate_request_delegates_to_mode_validators(monkeypatch):
+    oidc_cls = create_auth_middleware({"issuer": "https://idp"})
+    oidc = object.__new__(oidc_cls)
+    monkeypatch.setattr(oidc, "_validate_oidc", lambda _t: asyncio.sleep(0, result=UserIdentity(sub="o")))
+    conn = SimpleNamespace(scope={}, headers={"authorization": "Bearer tok"})
+    out = _run(oidc.authenticate_request(conn))
+    assert out.user.sub == "o" and out.auth == "tok"
+
+    intro_cls = create_auth_middleware({"introspection_url": "https://idp/i"})
+    intro = object.__new__(intro_cls)
+    monkeypatch.setattr(intro, "_validate_introspection", lambda _t: asyncio.sleep(0, result=UserIdentity(sub="i")))
+    out2 = _run(intro.authenticate_request(conn))
+    assert out2.user.sub == "i"
+
+
+def test_validate_oidc_success_and_error(monkeypatch):
+    class _JWT:
+        class PyJWTError(Exception):
+            pass
+
+        @staticmethod
+        def decode(token, jwks, algorithms, audience):
+            if token == "bad":
+                raise _JWT.PyJWTError("bad token")
+            return {"email": "x@y"}
+
+    monkeypatch.setitem(sys.modules, "jwt", _JWT)
+    MW = create_auth_middleware({"issuer": "https://idp", "identity_claim": "email", "audience": "siftd"})
+    mw = object.__new__(MW)
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result={"k": 1}))
+
+    assert _run(mw._validate_oidc("ok")).sub == "x@y"
+    with pytest.raises(NotAuthorizedException, match="Invalid token"):
+        _run(mw._validate_oidc("bad"))
+
+
+def test_validate_introspection_network_paths(monkeypatch):
+    calls = []
+
+    class _Resp:
+        def __init__(self, status, body):
+            self.status_code = status
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, **kwargs):
+            calls.append((url, kwargs))
+            if kwargs["data"]["token"] == "bad-status":
+                return _Resp(500, {})
+            if kwargs["data"]["token"] == "inactive":
+                return _Resp(200, {"active": False})
+            return _Resp(200, {"active": True, "username": "bob"})
+
+    class _HTTPX:
+        AsyncClient = _Client
+
+    monkeypatch.setitem(sys.modules, "httpx", _HTTPX)
+    monkeypatch.setenv("CLIENT_SECRET", "s3cr3t")
+    MW = create_auth_middleware({
+        "introspection_url": "https://idp/introspect",
+        "client_id": "cid",
+        "client_secret": "env:CLIENT_SECRET",
+    })
+    mw = object.__new__(MW)
+
+    with pytest.raises(NotAuthorizedException, match="Introspection request failed"):
+        _run(mw._validate_introspection("bad-status"))
+    with pytest.raises(NotAuthorizedException, match="Token is not active"):
+        _run(mw._validate_introspection("inactive"))
+    assert _run(mw._validate_introspection("ok")).sub == "bob"
+    assert calls[-1][1]["auth"] == ("cid", "s3cr3t")
+
+
+def test_get_jwks_fetch_paths(monkeypatch):
+    class _Resp:
+        def __init__(self, body):
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    class _Client:
+        def __init__(self):
+            self.calls = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            self.calls.append(url)
+            if url.endswith("openid-configuration"):
+                return _Resp({"jwks_uri": "https://idp/jwks"})
+            return _Resp({"keys": []})
+
+    class _HTTPX:
+        AsyncClient = _Client
+
+    class _JWT:
+        class PyJWKSet:
+            @staticmethod
+            def from_dict(d):
+                return {"parsed": d}
+
+    monkeypatch.setitem(sys.modules, "httpx", _HTTPX)
+    monkeypatch.setitem(sys.modules, "jwt", _JWT)
+
+    MW = create_auth_middleware({"issuer": "https://idp"})
+    MW._jwks_cache = None
+    MW._jwks_fetched_at = 0
+    mw = object.__new__(MW)
+    out = _run(mw._get_jwks())
+    assert out == {"parsed": {"keys": []}}
+
+    MW2 = create_auth_middleware({"issuer": "https://idp", "jwks_url": "https://idp/jwks2"})
+    MW2._jwks_cache = None
+    MW2._jwks_fetched_at = 0
+    mw2 = object.__new__(MW2)
+    out2 = _run(mw2._get_jwks())
+    assert out2 == {"parsed": {"keys": []}}
