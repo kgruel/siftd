@@ -65,10 +65,10 @@ def test_embed_batch_one_and_error_paths(monkeypatch):
 def test_list_models_connection_and_json_errors(monkeypatch):
     b = object.__new__(OllamaBackend)
     b.base_url = "http://x"
-    monkeypatch.setattr("urllib.request.urlopen", lambda *_a, **_k: (_ for _ in ()).throw(urllib.error.URLError("nope")))
-    with pytest.raises(ConnectionError, match="Cannot connect to Ollama"):
-        b._list_models()
-
-    monkeypatch.setattr("urllib.request.urlopen", lambda *_a, **_k: io.BytesIO(b"not-json"))
-    with pytest.raises(ConnectionError, match="Cannot connect to Ollama"):
-        b._list_models()
+    for fn in (
+        lambda *_a, **_k: (_ for _ in ()).throw(urllib.error.URLError("nope")),
+        lambda *_a, **_k: io.BytesIO(b"not-json"),
+    ):
+        monkeypatch.setattr("urllib.request.urlopen", fn)
+        with pytest.raises(ConnectionError, match="Cannot connect to Ollama"):
+            b._list_models()
