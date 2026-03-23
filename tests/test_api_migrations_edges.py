@@ -7,35 +7,19 @@ import siftd.api.migrations as mig
 def test_migration_wrappers_delegate(monkeypatch):
     calls = {}
 
-    def backfill(conn, on_progress=None, dry_run=False):
-        calls["backfill"] = (on_progress, dry_run)
-        return {"ok": 1}
+    def _mk(tag, ok):
+        def fn(*args, **kwargs):
+            calls[tag] = kwargs
+            return {"ok": ok}
 
-    def merge(conn, on_progress=None, dry_run=False):
-        calls["merge"] = (on_progress, dry_run)
-        return {"ok": 2}
+        return fn
 
-    def verify(conn):
-        return {"ok": 3}
-
-    def blobs(conn, batch_size=1000, on_progress=None):
-        calls["blobs"] = (batch_size, on_progress)
-        return {"ok": 4}
-
-    monkeypatch.setitem(
-        sys.modules,
-        "siftd.storage.migrate_workspaces",
-        SimpleNamespace(
-            backfill_git_remotes=backfill,
-            merge_duplicate_workspaces=merge,
-            verify_workspace_identity=verify,
-        ),
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "siftd.storage.migrate_blobs",
-        SimpleNamespace(migrate_existing_results=blobs),
-    )
+    monkeypatch.setitem(sys.modules, "siftd.storage.migrate_workspaces", SimpleNamespace(
+        backfill_git_remotes=_mk("backfill", 1),
+        merge_duplicate_workspaces=_mk("merge", 2),
+        verify_workspace_identity=lambda conn: {"ok": 3},
+    ))
+    monkeypatch.setitem(sys.modules, "siftd.storage.migrate_blobs", SimpleNamespace(migrate_existing_results=_mk("blobs", 4)))
 
     def cb(*_a):
         return None
@@ -44,4 +28,4 @@ def test_migration_wrappers_delegate(monkeypatch):
     assert mig.merge_duplicate_workspaces(object(), on_progress=cb, dry_run=True)["ok"] == 2
     assert mig.migrate_blobs(object(), batch_size=5, on_progress=cb)["ok"] == 4
     assert mig.verify_workspace_identity(object())["ok"] == 3
-    assert calls["backfill"][1] is True and calls["merge"][1] is True and calls["blobs"][0] == 5
+    assert calls["backfill"]["dry_run"] is True and calls["merge"]["dry_run"] is True and calls["blobs"]["batch_size"] == 5
