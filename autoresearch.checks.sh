@@ -35,7 +35,7 @@ if errors:
     for e in errors:
         print(f'  {e}')
     sys.exit(1)
-" tests/test_mmr.py tests/test_search.py
+" tests/test_mmr_focus.py
 
 # Lint
-uv run python -m ruff check src/siftd/search.py tests/test_mmr.py tests/test_search.py 2>&1 | tail -10
+uv run python -m ruff check src/siftd/search.py tests/test_mmr_focus.py 2>&1 | tail -10

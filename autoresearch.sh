@@ -5,7 +5,7 @@ set -euo pipefail
 
 INCLUDE_ARGS="--cov=siftd.search"
 TARGET_FILE="src/siftd/search.py"
-TEST_FILES="tests/test_mmr.py"
+TEST_FILES="tests/test_mmr_focus.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
