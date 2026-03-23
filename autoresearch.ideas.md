@@ -17,6 +17,7 @@
 - `cli/sessions.py` (50/50) — step-down complete (efficiency improved to 0.25)
 - `output/format_registry.py` (52/52) — step-down complete (efficiency improved to 0.05)
 - `output/terminal_fmt.py` (125/125) — step-down complete (efficiency returned to 0.04)
+- `output/narrative.py` (139/139) — step-up to 100% then step-down efficiency pass (to 0.10)
 - `output/painted_bridge.py` (372/374) — near-saturated; remaining 2 lines appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -27,9 +28,9 @@
 
 ## Highest ROI next targets
 
-### 1) `output/narrative.py`
-- Large deterministic branch surface remains (especially `HtmlEmitter`/`MarkdownEmitter` presentation paths).
-- Focused lane: `tests/test_output_narrative.py`.
+### 1) `api/resources.py`
+- Deterministic copy/list helper branches still open (default-dir resolution and importlib error guards).
+- Focused lane: `tests/test_resources.py`.
 
 ### 2) other `output/*` formatter edge branches (if still not saturated)
 ### 3) targeted `api/*` deterministic leaf modules

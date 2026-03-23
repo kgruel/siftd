@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# Output narrative coverage efficiency benchmark
+# API resources coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.output.narrative"
-TEST_FILES="tests/test_output_narrative.py"
+INCLUDE_ARGS="--cov=siftd.api.resources"
+TEST_FILES="tests/test_resources.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
