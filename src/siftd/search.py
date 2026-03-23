@@ -202,7 +202,10 @@ def mmr_rerank(
     if not results:
         return []
 
-    import numpy as np
+    try:
+        import numpy as np
+    except ImportError:
+        return _mmr_rerank_python(results, lambda_=lambda_, limit=limit)
 
     n = len(results)
 
@@ -296,6 +299,91 @@ def mmr_rerank(
             )
 
         reranked.append(r)
+    return reranked
+
+
+def _mmr_rerank_python(
+    results: list[dict],
+    *,
+    lambda_: float,
+    limit: int,
+) -> list[dict]:
+    """Pure-Python MMR fallback when numpy cannot be imported."""
+    import math
+
+    def _vec(raw):
+        if hasattr(raw, "tolist"):
+            raw = raw.tolist()
+        return [float(x) for x in raw]
+
+    def _norm(vec):
+        return math.sqrt(sum(x * x for x in vec))
+
+    def _cos(a, b):
+        na = _norm(a)
+        nb = _norm(b)
+        if na == 0 or nb == 0:
+            return 0.0
+        return sum(x * y for x, y in zip(a, b)) / (na * nb)
+
+    embeddings = [_vec(r["embedding"]) for r in results]
+    relevances = [float(r["score"]) for r in results]
+    conv_ids = [r["conversation_id"] for r in results]
+    chunk_ids = [r.get("chunk_id", "") for r in results]
+
+    remaining = set(range(len(results)))
+    selected: list[int] = []
+    selected_convs: set[str] = set()
+
+    while remaining and len(selected) < limit:
+        best_idx = -1
+        best_score = float("-inf")
+        best_chunk_id = ""
+
+        for idx in remaining:
+            conv_id = conv_ids[idx]
+            if conv_id in selected_convs:
+                penalty = 1.0
+            elif selected:
+                penalty = max(_cos(embeddings[idx], embeddings[j]) for j in selected)
+            else:
+                penalty = 0.0
+
+            mmr_score = lambda_ * relevances[idx] - (1 - lambda_) * penalty
+            cid = chunk_ids[idx]
+            if (mmr_score, cid) > (best_score, best_chunk_id):
+                best_score = mmr_score
+                best_idx = idx
+                best_chunk_id = cid
+
+        remaining.remove(best_idx)
+        selected.append(best_idx)
+        selected_convs.add(conv_ids[best_idx])
+
+    reranked: list[dict] = []
+    for rank, idx in enumerate(selected):
+        r = dict(results[idx])
+        r.pop("embedding", None)
+
+        breakdown = r.get("breakdown")
+        if breakdown and isinstance(breakdown, ScoreBreakdown):
+            conv_id = conv_ids[idx]
+            convs_before = {conv_ids[i] for i in selected[:rank]}
+            if conv_id in convs_before:
+                penalty = 1.0
+            elif rank == 0:
+                penalty = 0.0
+            else:
+                penalty = max(_cos(embeddings[idx], embeddings[i]) for i in selected[:rank])
+            breakdown.mmr_penalty = penalty
+            breakdown.mmr_rank = rank + 1
+            breakdown.final_score = (
+                lambda_ * (breakdown.pre_mmr_score or breakdown.embedding_sim)
+                - (1 - lambda_) * penalty
+            )
+
+        reranked.append(r)
+
     return reranked
 
 

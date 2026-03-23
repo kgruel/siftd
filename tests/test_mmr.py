@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Tests for MMR diversity reranking in search.py."""
 
 import pytest
@@ -61,6 +62,20 @@ class TestMmrRerankBasics:
         out = mmr_rerank(results, query_embedding=E1, limit=5)
         assert out[0]["text"] == "hello"
         assert out[0]["chunk_type"] == "prompt"
+
+    def test_falls_back_without_numpy(self, monkeypatch):
+        import builtins
+
+        orig_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "numpy":
+                raise ImportError("no numpy")
+            return orig_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        out = mmr_rerank([_chunk("c1", E1, score=0.9), _chunk("c2", E2, score=0.8)], query_embedding=E1, limit=2)
+        assert [r["conversation_id"] for r in out] == ["c1", "c2"] and "embedding" not in out[0]
 
 
 # ---------------------------------------------------------------------------

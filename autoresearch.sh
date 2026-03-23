@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# embeddings.indexer coverage efficiency benchmark
+# search.mmr coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.embeddings.indexer"
-TARGET_FILE="src/siftd/embeddings/indexer.py"
-TEST_FILES="tests/test_embeddings_indexer_edges.py"
+INCLUDE_ARGS="--cov=siftd.search"
+TARGET_FILE="src/siftd/search.py"
+TEST_FILES="tests/test_mmr.py tests/test_search.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
@@ -21,7 +21,7 @@ echo "Running full test suite with coverage..."
 uv run python -m pytest tests/ -x -q --tb=short -p no:randomly \
     $INCLUDE_ARGS --cov-report=json:coverage.json \
     --override-ini="addopts=" \
-    -k "not test_import_rules and not test_basics and not test_follow_session and not test_doctor_fix_shows_fix_commands and not test_remaining_error_and_edge_branches and not TestHealth and not TestPush and not TestPull and not TestQuery and not TestStats and not TestSearch and not TestAuthNoAuth and not TestAuthOIDC and not TestAttribution and not TestCLI and not mmr" 2>&1 | tail -5
+    -k "not test_import_rules and not test_basics and not test_follow_session and not test_doctor_fix_shows_fix_commands and not test_remaining_error_and_edge_branches and not TestHealth and not TestPush and not TestPull and not TestQuery and not TestStats and not TestSearch and not TestAuthNoAuth and not TestAuthOIDC and not TestAttribution and not TestCLI" 2>&1 | tail -5
 
 COVERAGE_JSON=$(cat coverage.json)
 rm -f coverage.json
