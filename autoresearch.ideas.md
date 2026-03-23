@@ -54,6 +54,7 @@
 - `embeddings/chunker.py` (208/208) — embed pivot lane saturated via deterministic chunking + tool-summary branch tests.
 - `embeddings/base.py` (45/45) — backend cache/fallback/error selection paths fully covered.
 - `embeddings/fastembed_backend.py` (20/20) — deterministic constructor/import/embed/probe paths saturated.
+- `embeddings/ollama_backend.py` (44/44) — model discovery + API error handling branches saturated.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -64,11 +65,11 @@
 
 ## Highest ROI next targets
 
-### 1) `embeddings/ollama_backend.py`
-- Active lane: model discovery priority/fallback, embed API error handling, and URL/JSON failure branches.
+### 1) warning/stability cleanup lane
+- Active lane: investigate recurring `requests` dependency warning and sqlite `ResourceWarning` noise in tests; reduce warning overhead/noise without masking real failures.
 
-### 2) warning/stability cleanup lane
-- Investigate recurring `requests` dependency warning and sqlite `ResourceWarning` noise in tests; reduce warning overhead/noise without masking real failures.
+### 2) embed runtime stability follow-up
+- Remove temporary `not mmr` exclusion by fixing numpy/fastembed re-import instability under pytest-cov.
 
 ### 3) stability follow-up (serve + embed)
 - Long full-suite runs under coverage show intermittent 500s in `tests/test_serve.py` integration classes; currently excluded in autoresearch filter for stability. Root-cause and re-enable when deterministic.
