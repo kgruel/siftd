@@ -10,6 +10,6 @@ def test_can_handle_analytics_jsonl_under_default_location(monkeypatch, tmp_path
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text('{"event":"x"}\n')
 
-    monkeypatch.setattr(aider, "DEFAULT_LOCATIONS", [str(root)])
+    monkeypatch.setattr(aider, "DEFAULT_LOCATIONS", [str(root).lower()])
 
     assert aider.can_handle(Source(kind="file", location=Path(p)))
