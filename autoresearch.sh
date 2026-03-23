@@ -5,7 +5,7 @@ set -euo pipefail
 
 INCLUDE_ARGS="--cov=siftd.serve.routes"
 TARGET_FILE="src/siftd/serve/routes.py"
-TEST_FILES="tests/test_serve_routes_edges.py"
+TEST_FILES="tests/test_serve_routes_edges.py tests/test_serve_routes_stepup.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
