@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# Output painted bridge coverage efficiency benchmark
+# Output narrative coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.output.painted_bridge"
-TEST_FILES="tests/test_output_painted_bridge_edges.py"
+INCLUDE_ARGS="--cov=siftd.output.narrative"
+TEST_FILES="tests/test_output_narrative.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
