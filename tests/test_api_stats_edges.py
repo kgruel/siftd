@@ -21,7 +21,7 @@ class _SeqConn:
     def close(self): self.closed = True
 
 
-def test_open_close_paths(monkeypatch, tmp_path):
+def test_open_close_and_cache_cleanup_paths(monkeypatch, tmp_path):
     c = _SeqConn([[0]])
     monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *a, **k: c)
     assert get_cost_coverage(db_path=tmp_path / "db.sqlite") is None and c.closed
@@ -31,8 +31,6 @@ def test_open_close_paths(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.stats.fetch_top_workspaces", lambda conn, limit=10: [{"path": "p", "convs": 1}])
     assert list_workspaces(n=1, db_path=tmp_path / "db.sqlite") and c2.closed
 
-
-def test_write_stats_cache_cleanup_branch(monkeypatch, tmp_path):
     db = tmp_path / "s.db"
     db.write_text("x")
     monkeypatch.setattr("siftd.api.stats.cache_dir", lambda: tmp_path / "cache")
@@ -45,23 +43,8 @@ def test_write_stats_cache_cleanup_branch(monkeypatch, tmp_path):
 def test_usage_functions_with_stats_table(tmp_path):
     db = tmp_path / "u.db"
     conn = sqlite3.connect(db)
-    conn.executescript(
-        """
-        CREATE TABLE conversations (id TEXT PRIMARY KEY, workspace_id TEXT);
-        CREATE TABLE responses (conversation_id TEXT, model_id TEXT, input_tokens INTEGER, output_tokens INTEGER);
-        CREATE TABLE models (id TEXT PRIMARY KEY, raw_name TEXT);
-        CREATE TABLE workspaces (id TEXT PRIMARY KEY, path TEXT);
-        CREATE TABLE conversation_stats (conversation_id TEXT, cost REAL, total_tokens INTEGER);
-        INSERT INTO models VALUES ('m1','model-a');
-        INSERT INTO workspaces VALUES ('w1','/tmp/ws');
-        INSERT INTO conversations VALUES ('c1','w1');
-        INSERT INTO responses VALUES ('c1','m1',10,20);
-        INSERT INTO conversation_stats VALUES ('c1',1.5,30);
-        """
-    )
+    conn.executescript("CREATE TABLE conversations (id TEXT PRIMARY KEY, workspace_id TEXT);CREATE TABLE responses (conversation_id TEXT, model_id TEXT, input_tokens INTEGER, output_tokens INTEGER);CREATE TABLE models (id TEXT PRIMARY KEY, raw_name TEXT);CREATE TABLE workspaces (id TEXT PRIMARY KEY, path TEXT);CREATE TABLE conversation_stats (conversation_id TEXT, cost REAL, total_tokens INTEGER);INSERT INTO models VALUES ('m1','model-a');INSERT INTO workspaces VALUES ('w1','/tmp/ws');INSERT INTO conversations VALUES ('c1','w1');INSERT INTO responses VALUES ('c1','m1',10,20);INSERT INTO conversation_stats VALUES ('c1',1.5,30);")
     conn.close()
 
     s = get_usage_summary(db_path=db)
-    by_model = get_usage_by_model(db_path=db)
-    by_ws = get_usage_by_workspace(db_path=db)
-    assert s.total_conversations == 1 and s.total_cost == 1.5 and by_model[0].name == "model-a" and by_ws[0].name == "/tmp/ws"
+    assert s.total_conversations == 1 and s.total_cost == 1.5 and get_usage_by_model(db_path=db)[0].name == "model-a" and get_usage_by_workspace(db_path=db)[0].name == "/tmp/ws"
