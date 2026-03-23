@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# API resources coverage efficiency benchmark
+# API auth coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.api.resources"
-TEST_FILES="tests/test_resources.py"
+INCLUDE_ARGS="--cov=siftd.api.auth"
+TEST_FILES="tests/test_auth.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

@@ -1,5 +1,7 @@
 """Tests for siftd.api.auth — token acquisition."""
 
+import subprocess
+
 import pytest
 
 from siftd.api.auth import AuthError, acquire_token
@@ -16,6 +18,14 @@ class TestAcquireToken:
     def test_token_command_failure(self):
         with pytest.raises(AuthError, match="failed"):
             acquire_token({"token_command": "exit 1"})
+
+    def test_token_command_timeout(self, monkeypatch):
+        def _timeout(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd="sleep 999", timeout=30)
+
+        monkeypatch.setattr("subprocess.run", _timeout)
+        with pytest.raises(AuthError, match="timed out"):
+            acquire_token({"token_command": "sleep 999"})
 
     def test_env_token(self, monkeypatch):
         monkeypatch.setenv("SIFTD_TEST_TOKEN", "env_secret")

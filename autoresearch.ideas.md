@@ -18,6 +18,7 @@
 - `output/format_registry.py` (52/52) — step-down complete (efficiency improved to 0.05)
 - `output/terminal_fmt.py` (125/125) — step-down complete (efficiency returned to 0.04)
 - `output/narrative.py` (139/139) — step-up to 100% then step-down efficiency pass (to 0.10)
+- `api/resources.py` (69/69) — step-up to 100% plus step-down compression pass (to 0.42)
 - `output/painted_bridge.py` (372/374) — near-saturated; remaining 2 lines appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -28,9 +29,9 @@
 
 ## Highest ROI next targets
 
-### 1) `api/resources.py`
-- Deterministic copy/list helper branches still open (default-dir resolution and importlib error guards).
-- Focused lane: `tests/test_resources.py`.
+### 1) `api/auth.py`
+- Small deterministic leaf with one remaining timeout branch in token command flow.
+- Focused lane: `tests/test_auth.py`.
 
 ### 2) other `output/*` formatter edge branches (if still not saturated)
 ### 3) targeted `api/*` deterministic leaf modules
