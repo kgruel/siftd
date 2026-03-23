@@ -80,7 +80,7 @@ def test_push_and_pull_light_paths(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.receive.receive_database", lambda *a, **k: {"status": "created", "conversations": 2})
     monkeypatch.setattr(routes, "_get_push_identity", lambda _r: "u")
     monkeypatch.setattr(routes, "_record_push_log", lambda *a, **k: None)
-    monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: {"ok": True})
+    monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: (_ for _ in ()).throw(RuntimeError("cache")))
     monkeypatch.setattr("siftd.api.stats.write_stats_cache", lambda _s: None)
     ok_req = _Req(b"x" * 32, client=SimpleNamespace(host="127.0.0.1"))
     ok = _run(routes.push.fn(ok_req, db, "on_push"))
