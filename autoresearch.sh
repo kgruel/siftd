@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# adapters._jsonl coverage efficiency benchmark
+# adapters.registry coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.adapters._jsonl"
-TARGET_FILE="src/siftd/adapters/_jsonl.py"
-TEST_FILES="tests/adapters/test_jsonl_edges.py"
+INCLUDE_ARGS="--cov=siftd.adapters.registry"
+TARGET_FILE="src/siftd/adapters/registry.py"
+TEST_FILES="tests/adapters/test_registry_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
