@@ -22,7 +22,7 @@
 - `api/auth.py` (30/30) — timeout branch covered and step-down pass complete (to 0.34)
 - `api/file_refs.py` (49/49) — guard branch covered and step-down passes complete (to 0.19)
 - `api/search.py` (155/155) — step-up to 100% and initial step-down pass (to 0.18)
-- `output/painted_bridge.py` (372/374) — near-saturated; remaining 2 lines appear structurally unreachable (`if not parts` after unconditional header append).
+- `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
 
@@ -32,8 +32,9 @@
 
 ## Highest ROI next targets
 
-### 1) `output/painted_bridge.py` cleanup lane
-- Re-validate remaining 2 uncovered lines; if structurally unreachable, document and stop, else add tiny targeted tests.
+### 1) `api/stats.py`
+- Largest deterministic unsaturated API leaf in current probes.
+- Focused lane: `tests/test_stats_cache.py` + `tests/test_api_stats_edges.py`.
 
 ### 2) other `output/*` formatter edge branches (if still not saturated)
 ### 3) targeted `api/*` deterministic leaf modules (post-search sweep)
