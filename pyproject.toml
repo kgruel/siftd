@@ -52,6 +52,7 @@ dev = [
     "syrupy",
     "ruff>=0.4",
     "ty",
+    "chardet<6",
 ]
 
 [tool.hatch.build.targets.wheel]
