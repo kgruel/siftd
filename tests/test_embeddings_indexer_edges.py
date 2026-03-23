@@ -133,3 +133,19 @@ def test_validate_incremental_compat_mismatch_paths(monkeypatch):
 
     monkeypatch.setattr(indexer, "chunk_count", lambda _c: 0)
     indexer._validate_incremental_compat(object(), backend)
+
+
+def test_tokenizer_and_count_tokens_helpers(monkeypatch):
+    indexer = _load_indexer(monkeypatch)
+
+    class _Tok:
+        def encode(self, text):
+            return SimpleNamespace(ids=[0] * (len(text.split()) + 2))
+
+    class _Emb:
+        def __init__(self, _name):
+            self.model = SimpleNamespace(tokenizer=_Tok())
+
+    monkeypatch.setitem(__import__("sys").modules, "fastembed", types.SimpleNamespace(TextEmbedding=_Emb))
+    tok = indexer._get_tokenizer()
+    assert indexer._count_tokens(tok, "a b c") == 3 and indexer._count_tokens(tok, "") == 0
