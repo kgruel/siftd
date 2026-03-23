@@ -25,6 +25,7 @@
 - `api/stats.py` (232/232) — edge coverage complete with focused step-down benchmark (to 0.06)
 - `api/tags.py` (73/73) — wrapper branches covered and focused step-down benchmark (to 0.12)
 - `api/migrations.py` (15/15) — wrapper coverage complete with step-down pass (to 0.40)
+- `api/conversations.py` (424/424) — final edge branches covered (prompt-without-response and empty SQL result) with focused lane; follow-up step-down attempt was flat at metric floor.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -35,12 +36,13 @@
 
 ## Highest ROI next targets
 
-### 1) `api/conversations.py`
-- Near-saturated with a few deterministic misses in get_conversation / run_query_file branches.
-- Focused lane: `tests/test_api_conversations_edges.py`.
+### 1) `api/stats.py` optional additional step-down follow-up
+- Focused edge lane already at 100%; only pursue if primary metric can move below 0.06.
 
-### 2) `api/stats.py` optional additional step-down follow-up
-### 3) other `output/*` formatter edge branches (if still not saturated)
+### 2) `output/painted_bridge.py` documentation/closure pass
+- Remaining miss lines likely structurally unreachable; document and de-prioritize unless new evidence appears.
+
+### 3) targeted `api/*` deterministic leaf modules if new non-100 probe appears
 
 ## Deferred but promising
 
