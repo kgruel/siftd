@@ -99,7 +99,7 @@ def test_search_route_importerror_and_dispatch_error(monkeypatch, tmp_path):
     real_import = builtins.__import__
 
     def fake_import(name, *a, **k):
-        if name == "siftd.api.search":
+        if name.startswith("siftd.api.search"):
             raise ImportError("no embed")
         return real_import(name, *a, **k)
 
@@ -111,3 +111,79 @@ def test_search_route_importerror_and_dispatch_error(monkeypatch, tmp_path):
     monkeypatch.setattr(routes, "_dispatch", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     r2 = _run(routes.search_route.fn(db, q="hi"))
     assert r2.status_code == 501
+
+
+def test_health_existing_db_and_pull_nonempty(monkeypatch, tmp_path):
+    db = tmp_path / "team.db"
+    db.write_bytes(b"x")
+
+    class _Conn:
+        def execute(self, _sql):
+            return SimpleNamespace(fetchone=lambda: [3])
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *_a, **_k: _Conn())
+    h = _run(routes.health.fn(db))
+    assert h["conversations"] == 3 and h["db_size_bytes"] > 0
+
+    def fake_slice(**kwargs):
+        kwargs["target_path"].write_bytes(b"abc")
+        return {"conversations": 2}
+
+    monkeypatch.setattr("siftd.api.slice.slice_database", fake_slice)
+    resp = _run(routes.pull.fn(db))
+    assert resp.status_code == 200 and resp.headers["X-Siftd-Conversations"] == "2"
+
+
+def test_tag_write_rename_delete_remove_apply_paths(monkeypatch, tmp_path):
+    events = {"commits": 0}
+
+    class _Conn:
+        def commit(self):
+            events["commits"] += 1
+
+        def close(self):
+            events["closed"] = True
+
+    monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda _p: _Conn())
+
+    # rename and delete
+    called = {}
+    monkeypatch.setattr("siftd.api.tags.rename_tag", lambda c, o, n, commit=True: called.setdefault("renamed", (o, n, commit)))
+    monkeypatch.setattr("siftd.api.tags.delete_tag", lambda c, t, commit=True: called.setdefault("deleted", (t, commit)))
+    assert _run(routes.tag_write_route.fn(_Req(json.dumps({"action": "rename", "old_name": "a", "new_name": "b"}).encode()), tmp_path / "db.db"))["status"] == "renamed"
+    assert _run(routes.tag_write_route.fn(_Req(json.dumps({"action": "delete", "tag_name": "x"}).encode()), tmp_path / "db.db"))["status"] == "deleted"
+
+    # remove path with not_found + removed
+    monkeypatch.setattr("siftd.api.conversations.resolve_entity_id", lambda *a, **k: "cid")
+    monkeypatch.setattr("siftd.api.tags.get_tag_id", lambda _c, t: None if t == "t1" else "tid")
+    monkeypatch.setattr("siftd.api.tags.remove_tag", lambda *a, **k: True)
+    monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: (_ for _ in ()).throw(RuntimeError("cache")))
+    out_r = _run(routes.tag_write_route.fn(_Req(json.dumps({"action": "remove", "tags": ["t1", "t2"], "entity_id": "cid"}).encode()), tmp_path / "db.db"))
+    assert out_r["action"] == "remove" and len(out_r["results"]) == 2
+
+    # apply path via last_n
+    monkeypatch.setattr("siftd.api.conversations.get_recent_conversation_ids", lambda _c, _n: ["a", "b"])
+    monkeypatch.setattr("siftd.api.tags.get_or_create_tag", lambda _c, _t: "tid")
+    monkeypatch.setattr("siftd.api.tags.apply_tag", lambda c, et, eid, tid, commit=False: eid == "a")
+    out_a = _run(routes.tag_write_route.fn(_Req(json.dumps({"action": "apply", "tags": ["t"], "last": 2}).encode()), tmp_path / "db.db"))
+    assert out_a["results"][0]["count"] == 1 and events["commits"] >= 2
+
+
+def test_search_success_and_identity_exception_paths(monkeypatch, tmp_path):
+    db = tmp_path / "db.db"
+    monkeypatch.setattr(routes, "_dispatch", lambda *a, **k: {"ok": True})
+    out = _run(routes.search_route.fn(db, q="hi", embeddings_only=False))
+    assert out == {"ok": True}
+
+    class _BadUser:
+        @property
+        def user(self):
+            raise RuntimeError("no user")
+
+    req2 = _BadUser()
+    req2.headers = {}
+    assert routes._get_push_identity(req2) == "anonymous"
+    assert routes._get_push_identity(SimpleNamespace(user=SimpleNamespace(sub="anonymous"), headers={})) == "anonymous"
