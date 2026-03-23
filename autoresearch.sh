@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# embeddings.fastembed_backend coverage efficiency benchmark
+# embeddings.ollama_backend coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.embeddings.fastembed_backend"
-TARGET_FILE="src/siftd/embeddings/fastembed_backend.py"
-TEST_FILES="tests/test_embeddings_fastembed_backend_edges.py"
+INCLUDE_ARGS="--cov=siftd.embeddings.ollama_backend"
+TARGET_FILE="src/siftd/embeddings/ollama_backend.py"
+TEST_FILES="tests/test_embeddings_ollama_backend_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
