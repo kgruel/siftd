@@ -53,12 +53,45 @@
   .legend { display: flex; gap: 16px; margin-bottom: 16px; font-size: 11px; color: #7d8590; }
   .legend-item { display: flex; align-items: center; gap: 4px; }
   .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+
+  /* Timeline chart */
+  .timeline-container { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin-bottom: 24px; position: relative; }
+  .timeline-title { font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 12px; }
+  .timeline-canvas-wrap { position: relative; }
+  .timeline-canvas-wrap canvas { display: block; width: 100%; }
+  .timeline-tooltip { position: absolute; background: #1c2128; border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px; font-size: 11px; color: #c9d1d9; pointer-events: none; display: none; z-index: 10; white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+  .timeline-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 11px; color: #7d8590; justify-content: center; }
+  .timeline-legend-item { display: flex; align-items: center; gap: 4px; }
+  .timeline-legend-swatch { width: 16px; height: 3px; border-radius: 1px; }
+  .timeline-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+  .timeline-tab { padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; background: #0d1117; border: 1px solid #30363d; color: #7d8590; }
+  .timeline-tab.active { background: #1a2a3a; border-color: #58a6ff; color: #58a6ff; }
 </style>
 </head>
 <body>
 <h1>autoresearch efficiency trajectory</h1>
 <div class="subtitle" id="subtitle"></div>
 <div class="summary" id="summary"></div>
+<div class="timeline-container">
+  <div class="timeline-title">Run timeline</div>
+  <div class="timeline-tabs">
+    <div class="timeline-tab active" data-metric="coverage">Coverage %</div>
+    <div class="timeline-tab" data-metric="miss">Lines missing</div>
+    <div class="timeline-tab" data-metric="loc">Test LOC</div>
+    <div class="timeline-tab" data-metric="efficiency">Efficiency</div>
+  </div>
+  <div class="timeline-canvas-wrap">
+    <canvas id="timeline" height="220"></canvas>
+    <div class="timeline-tooltip" id="timeline-tooltip"></div>
+  </div>
+  <div class="timeline-legend">
+    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#3fb950"></div> keep</div>
+    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#f85149"></div> discard</div>
+    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#d29922"></div> crash/fail</div>
+    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="border-top: 1px dashed #30363d; width:16px; height:0"></div> segment boundary</div>
+  </div>
+</div>
+
 <div class="filter-bar">
   <input type="text" id="filter" placeholder="Filter segments...">
   <label><input type="checkbox" id="hideComplete" checked> Hide single-run segments</label>
@@ -180,6 +213,216 @@ render(segments);
 document.getElementById('filter').addEventListener('input', () => render(segments));
 document.getElementById('hideComplete').addEventListener('change', () => render(segments));
 document.getElementById('collapseAll').addEventListener('change', () => render(segments));
+
+// --- Timeline chart ---
+let currentTimelineMetric = 'coverage';
+
+function buildTimeline(segments) {
+  // Flatten all runs in order, tagging with segment name and boundary indices
+  const points = [];
+  const boundaries = []; // indices where segments change
+  for (const seg of segments) {
+    if (seg.runs.length === 0) continue;
+    boundaries.push(points.length);
+    for (const r of seg.runs) {
+      points.push({ ...r, segName: seg.name });
+    }
+  }
+  return { points, boundaries };
+}
+
+function getMetricValue(point, metric) {
+  const m = point.metrics || {};
+  switch (metric) {
+    case 'coverage': return m.coverage_pct;
+    case 'miss': return m.miss;
+    case 'loc': return m.test_loc;
+    case 'efficiency': return (point.metric != null && point.metric < 500) ? point.metric : null;
+  }
+  return null;
+}
+
+function getMetricLabel(metric) {
+  return { coverage: 'Coverage %', miss: 'Lines missing', loc: 'Test LOC', efficiency: 'Efficiency' }[metric] || metric;
+}
+
+function drawTimeline(segments, metric) {
+  const canvas = document.getElementById('timeline');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const W = rect.width;
+  const H = 220;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const pad = { top: 20, right: 20, bottom: 30, left: 55 };
+  const cw = W - pad.left - pad.right;
+  const ch = H - pad.top - pad.bottom;
+
+  const { points, boundaries } = buildTimeline(segments);
+  if (points.length === 0) return;
+
+  // Extract values
+  const vals = points.map(p => getMetricValue(p, metric));
+  const validVals = vals.filter(v => v != null);
+  if (validVals.length === 0) return;
+
+  let minV = Math.min(...validVals);
+  let maxV = Math.max(...validVals);
+  if (minV === maxV) { minV -= 1; maxV += 1; }
+  // For coverage, anchor to 0-100
+  if (metric === 'coverage') { minV = Math.min(minV, 0); maxV = 100; }
+  // For miss, invert is more intuitive but keep natural for now
+  const rangeV = maxV - minV || 1;
+
+  function xFor(i) { return pad.left + (i / (points.length - 1 || 1)) * cw; }
+  function yFor(v) { return pad.top + ch - ((v - minV) / rangeV) * ch; }
+
+  // Clear
+  ctx.clearRect(0, 0, W, H);
+
+  // Grid lines
+  ctx.strokeStyle = '#21262d';
+  ctx.lineWidth = 1;
+  const gridSteps = 5;
+  for (let i = 0; i <= gridSteps; i++) {
+    const v = minV + (rangeV / gridSteps) * i;
+    const y = yFor(v);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(W - pad.right, y);
+    ctx.stroke();
+    // Label
+    ctx.fillStyle = '#484f58';
+    ctx.font = '10px SF Mono, Menlo, monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(metric === 'efficiency' ? v.toFixed(1) : Math.round(v).toString(), pad.left - 8, y + 3);
+  }
+
+  // Segment boundaries
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = '#30363d';
+  ctx.lineWidth = 1;
+  for (const bi of boundaries) {
+    if (bi === 0) continue;
+    const x = xFor(bi);
+    ctx.beginPath();
+    ctx.moveTo(x, pad.top);
+    ctx.lineTo(x, pad.top + ch);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Connect line (only between non-null consecutive)
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#30363d';
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < points.length; i++) {
+    const v = vals[i];
+    if (v == null) { started = false; continue; }
+    const x = xFor(i);
+    const y = yFor(v);
+    if (!started) { ctx.moveTo(x, y); started = true; }
+    else { ctx.lineTo(x, y); }
+  }
+  ctx.stroke();
+
+  // Dots
+  const statusColors = { keep: '#3fb950', discard: '#f85149', crash: '#d29922', checks_failed: '#d29922' };
+  const dotPositions = []; // for hover
+  for (let i = 0; i < points.length; i++) {
+    const v = vals[i];
+    if (v == null) { dotPositions.push(null); continue; }
+    const x = xFor(i);
+    const y = yFor(v);
+    const color = statusColors[points[i].status] || '#7d8590';
+    ctx.beginPath();
+    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    dotPositions.push({ x, y, idx: i });
+  }
+
+  // X-axis: run index labels (sparse)
+  ctx.fillStyle = '#484f58';
+  ctx.font = '10px SF Mono, Menlo, monospace';
+  ctx.textAlign = 'center';
+  const labelEvery = Math.max(1, Math.floor(points.length / 15));
+  for (let i = 0; i < points.length; i += labelEvery) {
+    ctx.fillText(i + 1, xFor(i), H - pad.bottom + 16);
+  }
+
+  // Store for hover
+  canvas._dotPositions = dotPositions;
+  canvas._points = points;
+  canvas._metric = metric;
+}
+
+// Hover tooltip
+const timelineCanvas = document.getElementById('timeline');
+const tooltip = document.getElementById('timeline-tooltip');
+
+timelineCanvas.addEventListener('mousemove', (e) => {
+  const rect = timelineCanvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const dots = timelineCanvas._dotPositions || [];
+  const points = timelineCanvas._points || [];
+  const metric = timelineCanvas._metric || 'coverage';
+
+  let closest = null;
+  let closestDist = 20; // max pixel distance
+  for (const d of dots) {
+    if (!d) continue;
+    const dist = Math.sqrt((d.x - mx) ** 2 + (d.y - my) ** 2);
+    if (dist < closestDist) { closest = d; closestDist = dist; }
+  }
+
+  if (closest) {
+    const p = points[closest.idx];
+    const m = p.metrics || {};
+    const val = getMetricValue(p, metric);
+    tooltip.style.display = 'block';
+    tooltip.style.left = (closest.x + 12) + 'px';
+    tooltip.style.top = (closest.y - 10) + 'px';
+    tooltip.innerHTML = `
+      <div style="color:#e6edf3;font-weight:600;margin-bottom:3px">${p.segName}</div>
+      <div>run #${p.run} · <span style="color:${({keep:'#3fb950',discard:'#f85149',crash:'#d29922',checks_failed:'#d29922'})[p.status]||'#7d8590'}">${p.status}</span></div>
+      <div style="margin-top:3px">
+        ${getMetricLabel(metric)}: <b>${val != null ? (metric === 'efficiency' ? val.toFixed(2) : val) : '—'}</b>
+      </div>
+      <div style="color:#7d8590">cov ${m.coverage_pct ?? '—'}% · miss ${m.miss ?? '—'} · ${m.test_loc ?? '—'} loc · ${m.test_time_s ?? '—'}s</div>
+    `;
+    // Keep tooltip in bounds
+    const tr = tooltip.getBoundingClientRect();
+    const cr = timelineCanvas.parentElement.getBoundingClientRect();
+    if (tr.right > cr.right) tooltip.style.left = (closest.x - tr.width - 8) + 'px';
+  } else {
+    tooltip.style.display = 'none';
+  }
+});
+
+timelineCanvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+
+// Tab switching
+document.querySelectorAll('.timeline-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.timeline-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentTimelineMetric = tab.dataset.metric;
+    drawTimeline(segments, currentTimelineMetric);
+  });
+});
+
+// Initial draw + resize
+drawTimeline(segments, currentTimelineMetric);
+window.addEventListener('resize', () => drawTimeline(segments, currentTimelineMetric));
 </script>
 </body>
 </html>
