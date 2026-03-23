@@ -9,7 +9,6 @@ def test_render_detail_accepts_raw_turns_list(monkeypatch):
     def _fake_render(detail, *, turns, fidelity, tool_chars):
         calls["detail"] = detail
         calls["turns"] = turns
-        calls["fidelity"] = fidelity
         calls["tool_chars"] = tool_chars
         return "ok"
 
@@ -23,3 +22,24 @@ def test_render_detail_accepts_raw_turns_list(monkeypatch):
     assert calls["detail"] is detail
     assert calls["turns"] == turns
     assert calls["tool_chars"] == 42
+
+
+def test_render_detail_uses_result_turns_by_default(monkeypatch):
+    calls = {}
+
+    def _fake_render(detail, *, turns, fidelity, tool_chars):
+        calls["detail"] = detail
+        calls["turns"] = turns
+        return "ok"
+
+    monkeypatch.setattr("siftd.output.painted_bridge.render_query_detail_block", _fake_render)
+
+    class Detail:
+        turns = [{"role": "assistant", "content": "yo"}]
+
+    detail = Detail()
+    out = terminal_fmt.render_detail(detail, fidelity=object())
+
+    assert out == "ok"
+    assert calls["detail"] is detail
+    assert calls["turns"] == detail.turns
