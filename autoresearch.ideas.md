@@ -38,6 +38,7 @@
 - `adapters/aider.py` (156/156) — analytics location-match branch closed; step-down attempt hit flat metric floor.
 - `adapters/claude_code.py` (147/147) — `_normalize_content` fallback branch closed with focused edge test.
 - `adapters/opencode.py` (174/174) — `_part_to_content_block` tool-skip branch closed with focused edge test.
+- `adapters/pi_agent.py` (154/154) — deterministic residual branches closed; focused step-down reached 0.02.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -48,12 +49,12 @@
 
 ## Highest ROI next targets
 
-### 1) `adapters/pi_agent.py`
-- Two small residual misses in deterministic helper branches.
-- Focused lane: `tests/adapters/test_pi_agent_edges.py`.
+### 1) `adapters/sdk.py`
+- Small deterministic residual misses remain; next focused lane.
+- Candidate file: `tests/adapters/test_sdk_edges.py`.
 
-### 2) `adapters/sdk.py`
-- Small residual misses remain; follow pi_agent with focused deterministic edges.
+### 2) re-probe remaining adapter residuals
+- Quick scout after sdk to confirm if any tiny misses remain worth deterministic closure.
 
 ### 3) `output/painted_bridge.py` documentation/closure pass
 - Remaining miss lines likely structurally unreachable; document and de-prioritize unless new evidence appears.
