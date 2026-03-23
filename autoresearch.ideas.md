@@ -38,6 +38,7 @@
 - `adapters/aider.py` (156/156) — analytics location-match branch closed; step-down attempt hit flat metric floor.
 - `adapters/claude_code.py` (147/147) — `_normalize_content` fallback branch closed with focused edge test.
 - `adapters/opencode.py` (174/174) — `_part_to_content_block` tool-skip branch closed with focused edge test.
+- `adapters/gemini_cli.py` (158/158) — workspace-hash PermissionError branch covered; lane saturated.
 - `adapters/pi_agent.py` (154/154) — deterministic residual branches closed; focused step-down reached 0.02.
 - `adapters/sdk.py` (328/328) — seek_last_lines binary-open OSError branch closed; lane now saturated.
 - `tool_query.py` (80/80) — ToolQueryTerm.is_fielded property branch closed with focused edge test.
@@ -59,14 +60,14 @@
 
 ## Highest ROI next targets
 
-### 1) `adapters/gemini_cli.py`
-- Active lane: close last deterministic misses (currently PermissionError/scan branch around workspace-hash resolution).
+### 1) `backfill.py`
+- Active lane: close final deterministic skip branch (`new_hash == old_hash`) and re-run with full-suite coverage.
 
 ### 2) serve integration instability follow-up
 - Long full-suite runs under coverage show intermittent 500s in `tests/test_serve.py` integration classes; currently excluded in autoresearch filter for stability. Root-cause and re-enable when deterministic.
 
 ### 3) post-serve sweep
-- Re-probe remaining deterministic tiny misses (`backfill.py`, `content/filters.py`, `adapters/copilot_cli.py`, `cli/query.py`) after gemini lane closes.
+- Next deterministic tiny misses: `content/filters.py`, `adapters/copilot_cli.py`, and `cli/query.py`.
 
 ## Deferred but promising
 

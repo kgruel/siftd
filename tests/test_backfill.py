@@ -245,3 +245,16 @@ class TestBackfillFilterBinary:
         db.execute("INSERT INTO content_blobs (hash, content, ref_count, created_at) VALUES (?, ?, 1, '2024-01-01')", (compute_content_hash(content), content))
         db.commit()
         assert backfill_filter_binary(db)["filtered"] == 1
+
+    def test_reencoded_but_same_hash_skips(self, db, monkeypatch):
+        from siftd.storage.blobs import compute_content_hash
+
+        content = json.dumps({"type": "base64", "data": "iVBORw0KGgo"})
+        h = compute_content_hash(content)
+        db.execute("INSERT INTO content_blobs (hash, content, ref_count, created_at) VALUES (?, ?, 1, '2024-01-01')", (h, content))
+        db.commit()
+
+        monkeypatch.setattr("siftd.content.filters.filter_tool_result_binary", lambda d: dict(d))
+        monkeypatch.setattr("siftd.storage.blobs.compute_content_hash", lambda _s: h)
+        stats = backfill_filter_binary(db)
+        assert stats["skipped"] == 1 and stats["filtered"] == 0

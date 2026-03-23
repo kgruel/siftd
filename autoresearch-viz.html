@@ -32,7 +32,7 @@
   .chart-status.crash { color: #d29922; }
   .chart-status.checks_failed { color: #d29922; }
   .chart-bar-container { flex: 1; position: relative; height: 18px; }
-  .chart-bar { height: 100%; border-radius: 2px; min-width: 2px; transition: width 0.3s; position: relative; }
+  .chart-bar { height: 100%; border-radius: 2px; min-width: 2px; }
   .chart-bar.keep { background: linear-gradient(90deg, #1a6334, #238636); }
   .chart-bar.discard { background: linear-gradient(90deg, #6e2b28, #8b3530); }
   .chart-bar.crash { background: linear-gradient(90deg, #5a3a1a, #7a4a2a); }
@@ -46,16 +46,14 @@
   .metric-miss { color: #f85149; }
   .arrow { transition: transform 0.2s; display: inline-block; color: #7d8590; }
   .segment.open .arrow { transform: rotate(90deg); }
-  .filter-bar { margin-bottom: 16px; display: flex; gap: 8px; align-items: center; }
-  .filter-bar input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 6px; font-family: inherit; font-size: 12px; width: 240px; }
+  .filter-bar { margin-bottom: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .filter-bar input[type=text] { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 6px; font-family: inherit; font-size: 12px; width: 240px; }
   .filter-bar label { font-size: 12px; color: #7d8590; display: flex; align-items: center; gap: 4px; }
   .filter-bar input[type=checkbox] { accent-color: #58a6ff; }
   .legend { display: flex; gap: 16px; margin-bottom: 16px; font-size: 11px; color: #7d8590; }
   .legend-item { display: flex; align-items: center; gap: 4px; }
   .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
-
-  /* Timeline chart */
-  .timeline-container { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin-bottom: 24px; position: relative; }
+  .timeline-container { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin-bottom: 24px; }
   .timeline-title { font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 12px; }
   .timeline-canvas-wrap { position: relative; }
   .timeline-canvas-wrap canvas { display: block; width: 100%; }
@@ -66,22 +64,40 @@
   .timeline-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
   .timeline-tab { padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; background: #0d1117; border: 1px solid #30363d; color: #7d8590; }
   .timeline-tab.active { background: #1a2a3a; border-color: #58a6ff; color: #58a6ff; }
+  .loader { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; gap: 16px; }
+  .loader-drop { border: 2px dashed #30363d; border-radius: 12px; padding: 48px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; max-width: 500px; width: 100%; }
+  .loader-drop:hover, .loader-drop.drag-over { border-color: #58a6ff; background: rgba(88, 166, 255, 0.05); }
+  .loader-drop input { display: none; }
+  .reload-btn { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 10px; border-radius: 4px; font-family: inherit; font-size: 11px; cursor: pointer; margin-left: 8px; }
+  .reload-btn:hover { background: #30363d; }
 </style>
 </head>
 <body>
 <h1>autoresearch efficiency trajectory</h1>
-<div class="subtitle" id="subtitle"></div>
+<div class="subtitle" id="subtitle">Load autoresearch.jsonl to begin</div>
+
+<div class="loader" id="loader">
+  <div class="loader-drop" id="drop-zone">
+    <div style="font-size:32px;margin-bottom:12px;color:#58a6ff">&#8682;</div>
+    <div>Drop <code>autoresearch.jsonl</code> here</div>
+    <div style="color:#7d8590;font-size:12px;margin-top:4px">or click to browse</div>
+    <input type="file" id="file-input" accept=".jsonl,.json">
+  </div>
+</div>
+
+<div id="dashboard" style="display:none">
 <div class="summary" id="summary"></div>
-<div class="timeline-container" id="project-chart-container">
-  <div class="timeline-title">Project-wide coverage</div>
+
+<div class="timeline-container">
+  <div class="timeline-title">Project-wide coverage <button class="reload-btn" id="reload-btn">&#x21bb; Reload</button></div>
   <div class="timeline-canvas-wrap">
     <canvas id="project-timeline" height="200"></canvas>
     <div class="timeline-tooltip" id="project-tooltip"></div>
   </div>
   <div class="timeline-legend">
-    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#58a6ff"></div> estimated total coverage</div>
+    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#58a6ff"></div> project coverage</div>
     <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#3fb950"></div> tracked module coverage</div>
-    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="border-top: 1px dashed #30363d; width:16px; height:0"></div> segment boundary</div>
+    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="border-top:1px dashed #30363d;width:16px;height:0"></div> segment boundary</div>
   </div>
 </div>
 
@@ -99,15 +115,15 @@
   </div>
   <div class="timeline-legend">
     <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#3fb950"></div> keep</div>
-    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#f85149"></div> discard</div>
-    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#d29922"></div> crash/fail</div>
-    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="border-top: 1px dashed #30363d; width:16px; height:0"></div> segment boundary</div>
+    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#8b3530"></div> discard</div>
+    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="background:#7a4a2a"></div> crash/fail</div>
+    <div class="timeline-legend-item"><div class="timeline-legend-swatch" style="border-top:1px dashed #30363d;width:16px;height:0"></div> segment boundary</div>
   </div>
 </div>
 
 <div class="filter-bar">
   <input type="text" id="filter" placeholder="Filter segments...">
-  <label><input type="checkbox" id="hideComplete" checked> Hide single-run segments</label>
+  <label><input type="checkbox" id="hideComplete" checked> Hide single-run</label>
   <label><input type="checkbox" id="collapseAll"> Collapse all</label>
 </div>
 <div class="legend">
@@ -116,480 +132,380 @@
   <div class="legend-item"><div class="legend-dot" style="background:#7a4a2a"></div> crash/fail</div>
 </div>
 <div id="segments"></div>
+</div>
 
 <script>
-const DATA = [{"type": "config", "name": "Optimizing siftd ingest performance", "metricName": "ingest_s", "metricUnit": "s", "bestDirection": "lower"}, {"run": 1, "commit": "b59b901", "metric": 121.096, "metrics": {"conversations": 6150}, "status": "checks_failed", "description": "Baseline: fresh ingest 121s, 6150 conversations. Checks script needs fix for numpy.", "timestamp": 1774058643606, "segment": 0}, {"run": 2, "commit": "b59b901", "metric": 114.459, "metrics": {"conversations": 6150}, "status": "checks_failed", "description": "Baseline attempt 2: 114s. Still fixing checks script (numpy tests).", "timestamp": 1774058785268, "segment": 0}, {"run": 3, "commit": "b59b901", "metric": 117.194, "metrics": {"conversations": 6150}, "status": "checks_failed", "description": "Baseline attempt 3: 117s. Fixing checks to use project test markers.", "timestamp": 1774058937719, "segment": 0}, {"run": 4, "commit": "382c732", "metric": 115.121, "metrics": {"conversations": 6150}, "status": "keep", "description": "Baseline: fresh ingest 115s, 6150 conversations. All tests pass.", "timestamp": 1774059074591, "segment": 0}, {"run": 5, "commit": "e660c3c", "metric": 76.983, "metrics": {"conversations": 6150}, "status": "keep", "description": "Cache workspace identity lookups during ingest to avoid repeated git subprocess calls (115s\u219277s, -33%)", "timestamp": 1774059533536, "segment": 0}, {"run": 11, "commit": "7624481", "metric": 53.25, "metrics": {"conversations": 6150}, "status": "keep", "description": "Optimize binary filter (length check shortcut), blob storage (batch timestamp), import cleanup in insert_tool_call", "timestamp": 1774060876085, "segment": 0}, {"run": 14, "commit": "f7c4a5c", "metric": 48.355, "metrics": {"conversations": 6150}, "status": "keep", "description": "Increase SQLite cache to 64MB and enable 256MB mmap for faster I/O (53s\u219248s)", "timestamp": 1774061588912, "segment": 0}, {"run": 15, "commit": "c465a01", "metric": 45.798, "metrics": {"conversations": 6150}, "status": "keep", "description": "Use hashlib.file_digest() for faster file hashing (48s\u219246s)", "timestamp": 1774061730762, "segment": 0}, {"run": 16, "commit": "9be1853", "metric": 45.225, "metrics": {"conversations": 6150}, "status": "keep", "description": "Add PRAGMA temp_store=MEMORY for faster temp table operations (46s\u219245s)", "timestamp": 1774061879241, "segment": 0}, {"run": 10, "commit": "60de341", "metric": 41.927, "metrics": {"conversations": 6150}, "status": "keep", "description": "Fix lint (ULID semicolons), reset blob timestamp on new connection, prune ideas. Cleanup only \u2014 no perf change.", "timestamp": 1774063226517, "segment": 0}, {"type": "config", "name": "Storage layer test coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "f5c1ff9", "metric": 6.87, "metrics": {"coverage_pct": 18.4, "test_time_s": 2.854, "test_loc": 532, "covered_lines": 221}, "status": "keep", "description": "Baseline: 532 test LOC, 2.85s, 221/1201 lines covered (18.4%). Efficiency=6.87", "timestamp": 1774070767839, "segment": 0}, {"run": 2, "commit": "f7ccf01", "metric": 2.55, "metrics": {"coverage_pct": 87.8, "test_time_s": 2.018, "test_loc": 1333, "covered_lines": 1054}, "status": "keep", "description": "Add comprehensive storage tests: 90 tests covering store_conversation, vocabulary, FTS, filters, sessions, tags, queries, stats, tool_search. Fix xdist coverage issue. 18.4%\u219287.8% coverage, efficiency 6.87\u21922.55", "timestamp": 1774071049596, "segment": 0}, {"run": 3, "commit": "f7ccf01", "metric": 3.81, "metrics": {"coverage_pct": 91.2, "test_time_s": 2.795, "test_loc": 1493, "covered_lines": 1095}, "status": "discard", "description": "Add entity type tag tests, FTS edge cases, query edge cases, tool_search helpers. Coverage 87.8\u219291.2% but +160 LOC and slower tests made efficiency worse (2.55\u21923.81)", "timestamp": 1774071172607, "segment": 0}, {"run": 4, "commit": "1475670", "metric": 1.35, "metrics": {"coverage_pct": 90.9, "test_time_s": 1.751, "test_loc": 842, "covered_lines": 1092}, "status": "keep", "description": "Refactor test_blobs.py (715\u2192264 LOC) with shared fixtures, consolidate test_storage.py imports to module level, compress tests. Same 130 tests, 90.9% coverage, efficiency 2.55\u21921.35", "timestamp": 1774071417246, "segment": 0}, {"run": 5, "commit": "9f5e093", "metric": 1.15, "metrics": {"coverage_pct": 91.3, "test_time_s": 1.485, "test_loc": 852, "covered_lines": 1096}, "status": "keep", "description": "Add fetch_last_ingest_time and no-filter exchanges tests. Coverage 90.9\u219291.3%, efficiency 1.35\u21921.15. +10 LOC for +4 covered lines.", "timestamp": 1774071504013, "segment": 0}, {"run": 6, "commit": "6324470", "metric": 1, "metrics": {"coverage_pct": 91.3, "test_time_s": 1.416, "test_loc": 777, "covered_lines": 1096}, "status": "keep", "description": "Merge test_blobs.py into test_storage.py, eliminating duplicate imports/fixtures/scaffold. 852\u2192777 LOC, same 130 tests, 91.3% coverage. Efficiency 1.15\u21921.0", "timestamp": 1774071635787, "segment": 0}, {"run": 7, "commit": "6324470", "metric": 1.24, "metrics": {"coverage_pct": 91.4, "test_time_s": 1.738, "test_loc": 785, "covered_lines": 1098}, "status": "discard", "description": "Add FTS short token and filter join dependency tests. +8 LOC for +2 covered lines \u2014 not efficient enough (1.0\u21921.24, mostly timing noise)", "timestamp": 1774071720463, "segment": 0}, {"run": 8, "commit": "6d20f4e", "metric": 0.85, "metrics": {"coverage_pct": 91.3, "test_time_s": 1.269, "test_loc": 738, "covered_lines": 1096}, "status": "keep", "description": "Merge related tests into denser test methods (130\u2192109 tests). 777\u2192738 LOC, tests faster (fewer fixture setups). Efficiency 1.0\u21920.85", "timestamp": 1774071843784, "segment": 0}, {"run": 9, "commit": "ec0b59d", "metric": 0.66, "metrics": {"coverage_pct": 91.3, "test_time_s": 1.071, "test_loc": 674, "covered_lines": 1096}, "status": "keep", "description": "Aggressively merge test methods: WhereBuilder, queries, tags, sessions, db ops. 109\u219270 tests, 738\u2192674 LOC, faster fixture setup (1.27\u21921.07s). Efficiency 0.85\u21920.66", "timestamp": 1774071970065, "segment": 0}, {"run": 10, "commit": "207f5bf", "metric": 0.48, "metrics": {"coverage_pct": 91.3, "test_time_s": 0.877, "test_loc": 602, "covered_lines": 1096}, "status": "keep", "description": "Continue merging: blob tests, tool call tests, file dedup tests, migration tests. 70\u219245 tests, 674\u2192602 LOC, test time 1.07\u21920.88s. Efficiency 0.66\u21920.48", "timestamp": 1774072100984, "segment": 0}, {"run": 21, "commit": "00d4db8", "metric": 0.66, "metrics": {"coverage_pct": 95.4, "test_time_s": 0.834, "test_loc": 908, "covered_lines": 1146, "conversations": 0}, "status": "keep", "description": "Add test_migrations.py: 12 tests covering schema version check, labels\u2192tags, add_error, add_file_stat, add_branch, cascade_deletes, sessions last_seen_at, full migration path. Coverage 91.3\u219295.4% (+50 lines). Metric 0.48\u21920.66 (migration schemas are bulky but coverage gain is deliberate)", "timestamp": 1774072676769, "segment": 1}, {"run": 22, "commit": "c8e6788", "metric": 0.74, "metrics": {"coverage_pct": 97, "test_time_s": 0.922, "test_loc": 930, "covered_lines": 1165, "conversations": 0}, "status": "keep", "description": "Add edge case tests: vocabulary cache-miss paths, FTS short-token/malformed query, transitive join deps, tag cache reload, display_name harness, record_ingested_file error, _normalize_tool_tokens. Coverage 95.4\u219297.0%, 6 modules at 100%. 36 lines remain (mostly dead code + git remote paths)", "timestamp": 1774072987369, "segment": 1}, {"run": 23, "commit": "1fafb4d", "metric": 0.54, "metrics": {"coverage_pct": 97, "test_time_s": 0.877, "test_loc": 711, "covered_lines": 1165, "conversations": 0}, "status": "keep", "description": "Compress migration tests: generate legacy schema from schema.sql with _strip_cascade instead of hardcoded 80-line LEGACY_SCHEMA. Fix FTS ensure coverage (drop+recreate path). 930\u2192711 LOC, 97.0% coverage (1165 lines), efficiency 0.74\u21920.54", "timestamp": 1774073248417, "segment": 1}, {"run": 24, "commit": "7e89000", "metric": 0.64, "metrics": {"coverage_pct": 98, "test_time_s": 1.056, "test_loc": 714, "covered_lines": 1177, "conversations": 0}, "status": "keep", "description": "Cover get_or_create_tool with kwargs, ensure_tool_aliases skip path. Coverage 97.0\u219298.0% (1177/1201, 24 remaining). +3 LOC for +12 covered lines. Efficiency 0.54\u21920.64 (timing noise)", "timestamp": 1774073341795, "segment": 1}, {"run": 25, "commit": "b237967", "metric": 0.51, "metrics": {"coverage_pct": 98.2, "test_time_s": 0.832, "test_loc": 728, "covered_lines": 1179, "conversations": 0}, "status": "keep", "description": "Cover cascade skip-missing-tables path, ensure_push_log_table. 98.2% coverage (1179/1201, 22 remaining). All easy-to-reach lines now covered. Efficiency 0.64\u21920.51", "timestamp": 1774073419749, "segment": 1}, {"run": 26, "commit": "f5ca8be", "metric": 0.5, "metrics": {"coverage_pct": 98.2, "test_time_s": 0.851, "test_loc": 691, "covered_lines": 1179, "conversations": 0}, "status": "keep", "description": "Compress migration tests: merge label noop tests, merge column tests, shorten helpers. 728\u2192691 LOC, same 98.2% coverage (1179/1201). Efficiency 0.51\u21920.50", "timestamp": 1774073587894, "segment": 1}, {"type": "config", "name": "Adapter layer test coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "c23d742", "metric": 0.77, "metrics": {"coverage_pct": 60.3, "test_time_s": 0.935, "test_loc": 899, "covered_lines": 1093}, "status": "keep", "description": "Baseline: 899 test LOC, 0.94s, 1093/1814 lines covered (60.3%). Efficiency=0.77", "timestamp": 1774075697275, "segment": 1}, {"run": 2, "commit": "a43a7a3", "metric": 0.52, "metrics": {"coverage_pct": 74.5, "test_time_s": 0.64, "test_loc": 1100, "covered_lines": 1351}, "status": "keep", "description": "Add SDK tests (open_external_db, discover_files, build_harness, timestamp_bounds, load_jsonl, ToolCallLinker, seek_last_lines, text helpers, peek_scan/exchanges/tail), registry tests, validation edge cases, discover functions for all adapters. Introduced _jsonl_file/_peek_session builders. Coverage 60.3\u219274.5%, efficiency 0.77\u21920.52", "timestamp": 1774076171016, "segment": 1}, {"run": 5, "commit": "7ccf85c", "metric": 0.49, "metrics": {"coverage_pct": 86.8, "test_time_s": 0.665, "test_loc": 1171, "covered_lines": 1574}, "status": "keep", "description": "Enrich codex peek fixture with usage/tool_call/multi-exchange data. Coverage 85.6\u219286.8% (+21 lines from codex peek_exchanges/peek_scan paths). Efficiency 0.53\u21920.49", "timestamp": 1774076423994, "segment": 1}, {"run": 6, "commit": "7ccf85c", "metric": 0.61, "metrics": {"coverage_pct": 87.9, "test_time_s": 0.8, "test_loc": 1222, "covered_lines": 1594}, "status": "discard", "description": "Refactor: replace hand-written JSON with builders (_claude_rec, _codex_meta/msg/tool/usage, _text_block, _tool_use_block, _write_jsonl). Coverage 86.8\u219287.9% (+20 lines from seek binary path, sessionId). Efficiency 0.49\u21920.61 (builders add LOC but enable future density)", "timestamp": 1774076676530, "segment": 1}, {"run": 7, "commit": "7ccf85c", "metric": 0.75, "metrics": {"coverage_pct": 87.4, "test_time_s": 1.06, "test_loc": 1115, "covered_lines": 1585}, "status": "discard", "description": "Refactor: move session builders (ClaudeSession, CodexSession, PeekSession, write_jsonl) to conftest.py as shared test infrastructure. Randomized data by default, builder pattern for customization. Coverage 86.8\u219287.4%, efficiency worse due to timing noise and builder overhead", "timestamp": 1774077044003, "segment": 1}, {"run": 8, "commit": "ca38107", "metric": 0.64, "metrics": {"coverage_pct": 87.4, "test_time_s": 0.913, "test_loc": 1115, "covered_lines": 1585}, "status": "discard", "description": "Baseline after builder refactor. 87.4% coverage, 1115 LOC, 0.91s. Builders in conftest enable dense future tests.", "timestamp": 1774077084239, "segment": 1}, {"type": "config", "name": "Adapter layer test coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 5, "commit": "a78b1e8", "metric": 0.44, "metrics": {"coverage_pct": 90.9, "test_time_s": 1.325, "test_loc": 520, "covered_lines": 1565}, "status": "keep", "description": "Pure LOC compression: merge assertions, remove redundant imports, compress setup. 567\u2192520 LOC, same 90.9% coverage", "timestamp": 1774133904032, "segment": 2}, {"run": 6, "commit": "2cd075e", "metric": 0.37, "metrics": {"coverage_pct": 90.9, "test_time_s": 1.145, "test_loc": 511, "covered_lines": 1565}, "status": "keep", "description": "More LOC compression: inline vars, compress records, convert lambdas to defs. 520\u2192511 LOC, efficiency 0.44\u21920.37", "timestamp": 1774134017927, "segment": 2}, {"type": "config", "name": "Adapter layer test coverage efficiency (median-of-3 timing)", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "83ec00e", "metric": 0.27, "metrics": {"coverage_pct": 90.9, "test_time_s": 0.849, "test_loc": 502, "covered_lines": 1565}, "status": "keep", "description": "Baseline with median-of-5 timing. 502 LOC, 90.9% coverage, ~0.85s median", "timestamp": 1774134539834, "segment": 2}, {"run": 2, "commit": "fb42237", "metric": 0.27, "metrics": {"coverage_pct": 93.7, "test_time_s": 0.836, "test_loc": 526, "covered_lines": 1612}, "status": "keep", "description": "Add copilot+pi normalizer tests. +24 LOC, +47 covered (90.9\u219293.7%), zero time impact. Efficiency holds at 0.27", "timestamp": 1774134608846, "segment": 2}, {"run": 5, "commit": "c67e629", "metric": 0.27, "metrics": {"coverage_pct": 94.7, "test_time_s": 0.724, "test_loc": 604, "covered_lines": 1629}, "status": "keep", "description": "Split monolith test_adapters.py \u2192 per-adapter files under tests/adapters/. Same efficiency, 94.7% coverage, clean structure for per-adapter optimization", "timestamp": 1774135344630, "segment": 2}, {"run": 6, "commit": "561ff2d", "metric": 0.36, "metrics": {"coverage_pct": 94.7, "test_time_s": 1.013, "test_loc": 576, "covered_lines": 1629}, "status": "keep", "description": "Deduplicate _fixture_source \u2192 conftest.fixture_source. 604\u2192576 LOC (-28), same 94.7% coverage. Time variance elevated this run", "timestamp": 1774135521741, "segment": 2}, {"run": 7, "commit": "f0c82e3", "metric": 0.24, "metrics": {"coverage_pct": 94.7, "test_time_s": 0.68, "test_loc": 574, "covered_lines": 1629}, "status": "keep", "description": "Compress vscode + opencode tests, merge classes. 576\u2192574 LOC, stable timing. Efficiency 0.36\u21920.24", "timestamp": 1774135649938, "segment": 2}, {"type": "config", "name": "Optimizing VSCode adapter test coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "cc1d648", "metric": 0.25, "metrics": {"coverage_pct": 92.8, "test_time_s": 0.546, "test_loc": 84, "covered_lines": 181}, "status": "keep", "description": "Baseline: vscode-only benchmark. 84 LOC, 92.8% coverage (181/195), 14 miss lines", "timestamp": 1774135787969, "segment": 2}, {"run": 2, "commit": "ad48bcc", "metric": 0.26, "metrics": {"coverage_pct": 99.5, "test_time_s": 0.449, "test_loc": 111, "covered_lines": 194}, "status": "keep", "description": "Cover 13 edge-case lines (discover, workspace paths, path helpers, replay edges). 92.8\u219299.5% coverage, efficiency 0.25\u21920.26 (edge zone: +6.7% coverage, only 4% regression). Only L124 (dead code) remains uncovered.", "timestamp": 1774136223902, "segment": 2}, {"run": 3, "commit": "ff06534", "metric": 0.25, "metrics": {"coverage_pct": 100, "test_time_s": 0.426, "test_loc": 111, "covered_lines": 193}, "status": "keep", "description": "Extract yield_conversation to SDK, remove dead guard from vscode/claude_code/aider/template. VSCode now 100% coverage (193/193), efficiency back to 0.25", "timestamp": 1774137636883, "segment": 2}, {"type": "config", "name": "Optimizing OpenCode adapter test coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "9970c28", "metric": 0.21, "metrics": {"coverage_pct": 89.1, "test_time_s": 0.411, "test_loc": 78, "covered_lines": 155}, "status": "keep", "description": "Baseline: opencode adapter. 78 LOC, 89.1% coverage (155/174), 19 miss lines, normal zone", "timestamp": 1774138299546, "segment": 2}, {"run": 2, "commit": "0f50879", "metric": 0.39, "metrics": {"coverage_pct": 99.4, "test_time_s": 0.538, "test_loc": 124, "covered_lines": 173}, "status": "keep", "description": "Cover 18 error-handling lines: corrupt DB, missing tables, bad JSON, pending tools, unknown parts. 89.1\u219299.4% coverage. Only L241 (tool\u2192None by design) remains. Efficiency regressed due to DB setup LOC cost.", "timestamp": 1774138579762, "segment": 2}, {"type": "config", "name": "Optimizing Codex CLI adapter test coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 2, "commit": "1c6aa8f", "metric": 0.21, "metrics": {"coverage_pct": 100, "test_time_s": 0.464, "test_loc": 86, "covered_lines": 194}, "status": "discard", "description": "Benchmark misconfigured \u2014 was measuring codex_cli not gemini_cli. Add default_location_source helper, apply to gemini/codex/copilot/pi_agent. Fix fts.py merge conflict.", "timestamp": 1774139741557, "segment": 2}, {"run": 3, "commit": "e687f29", "metric": 0.26, "metrics": {"coverage_pct": 97.5, "test_time_s": 0.543, "test_loc": 74, "covered_lines": 154}, "status": "keep", "description": "Add normalizer, discover, DEFAULT_LOCATIONS, peek_tail, thinking edge tests. 90.5\u219297.5% coverage. Only _resolve_project hash traversal (L254,259-261) remains uncovered.", "timestamp": 1774139817844, "segment": 2}, {"type": "config", "name": "Optimizing Claude Code adapter test coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "1e0d397", "metric": 0.14, "metrics": {"coverage_pct": 93.2, "test_time_s": 0.529, "test_loc": 37, "covered_lines": 137}, "status": "keep", "description": "Baseline: claude_code adapter. 37 LOC, 93.2% coverage (137/147), 10 miss lines, edge zone", "timestamp": 1774139963459, "segment": 2}, {"run": 2, "commit": "8382ed9", "metric": 0.24, "metrics": {"coverage_pct": 99.3, "test_time_s": 0.588, "test_loc": 59, "covered_lines": 146}, "status": "keep", "description": "Add normalizer edges (str/list/other content, tool_result, agentId), discover, empty parse, non-user/assistant skip. 93.2\u219299.3% coverage. Only L279 (_normalize_content fallback) remains.", "timestamp": 1774140230715, "segment": 2}, {"run": 3, "commit": "4d1ddbb", "metric": 0.19, "metrics": {"coverage_pct": 99.3, "test_time_s": 0.461, "test_loc": 59, "covered_lines": 146}, "status": "keep", "description": "Add wrapped.discover() and default dropin_path tests for registry (89\u219294%). Claude_code unchanged at 99.3%. Better timing this run.", "timestamp": 1774140429913, "segment": 2}, {"type": "config", "name": "Optimizing SDK test coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "b5d6e8a", "metric": 0.27, "metrics": {"coverage_pct": 94.2, "test_time_s": 0.555, "test_loc": 152, "covered_lines": 309}, "status": "keep", "description": "Baseline: sdk.py via test_infra.py. 152 LOC, 94.2% coverage (309/328), 19 miss lines, edge zone", "timestamp": 1774140601089, "segment": 2}, {"run": 2, "commit": "dbaefb0", "metric": 0.33, "metrics": {"coverage_pct": 98.5, "test_time_s": 0.577, "test_loc": 187, "covered_lines": 323}, "status": "keep", "description": "Cover 14 SDK lines: timestamp_bounds None, iter_jsonl blanks, peek_jsonl_tail bad JSON, tool hint whitespace, assistant-before-user scan, path-based subagent, tool-placeholder text, non-dict blocks, seek bad encoding. 94.2\u219298.5%.", "timestamp": 1774140931597, "segment": 2}, {"type": "config", "name": "Output layer test coverage (miss + efficiency)", "metricName": "score", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "2f8d009", "metric": 267.07, "metrics": {"miss": 267, "coverage_pct": 78.2, "test_time_s": 0.322, "test_loc": 201, "covered_lines": 955, "efficiency": 0.07}, "status": "keep", "description": "Baseline: output/ package. 201 test LOC, 78.2% coverage (955/1222), 267 miss. Score=267.07. Full-suite coverage measurement avoids redundant tests.", "timestamp": 1774143871745, "segment": 9}, {"run": 2, "commit": "9f1f405", "metric": 160.22, "metrics": {"miss": 160, "coverage_pct": 86.9, "test_time_s": 0.395, "test_loc": 579, "covered_lines": 1062, "efficiency": 0.22}, "status": "keep", "description": "Cover common.py (fmt_tokens/workspace/ago/model, truncate, refs_annotation, print_refs_content, print_indented), json/markdown/terminal render_search (all 3 modes), json render_detail fallback, markdown render_detail, MarkdownEmitter. 267\u2192160 miss, 78\u219287% coverage.", "timestamp": 1774144487175, "segment": 9}, {"run": 3, "commit": "4e21f74", "metric": 52.04, "metrics": {"miss": 51, "coverage_pct": 95.8, "test_time_s": 1.316, "test_loc": 927, "covered_lines": 1171, "efficiency": 1.04}, "status": "keep", "description": "Add painted_bridge tests (emit_output, format_generic_input/result, render_narrative_block, render_query_detail_block, render_peek_detail_block, render_follow_event_block, render_peek_list_block), terminal render_detail, select_format, MarkdownEmitter edges. Switch to pytest --cov + single timing run. 267\u219251 miss, 78\u219296% coverage.", "timestamp": 1774145939078, "segment": 9}, {"run": 4, "commit": "cfd64a6", "metric": 21.63, "metrics": {"miss": 21, "coverage_pct": 98.3, "test_time_s": 0.71, "test_loc": 1068, "covered_lines": 1201, "efficiency": 0.63}, "status": "keep", "description": "Add tool presenter tests (shell raw fallback, overflow preview, file_read/edit/write/glob raw+error, search_grep raw, todo tasks), query detail with narrative, peek prompt-only + preview_unavailable, follow event no-content, json chunk file_refs+breakdown, terminal context_data response. 51\u219221 miss, 96\u219298% coverage.", "timestamp": 1774146409285, "segment": 9}, {"run": 5, "commit": "d7094a7", "metric": 17.54, "metrics": {"miss": 17, "coverage_pct": 98.6, "test_time_s": 0.602, "test_loc": 1076, "covered_lines": 1205, "efficiency": 0.54}, "status": "keep", "description": "Add json_fmt render_workspaces + render_tags tests, fix file_read raw input test. 21\u219217 miss, 98.3\u219298.6% coverage.", "timestamp": 1774146630292, "segment": 9}, {"run": 130, "commit": "f336544", "metric": 0, "metrics": {"conversations": 0, "coverage_pct": 0, "test_time_s": 0, "test_loc": 0, "covered_lines": 0, "miss": 0, "efficiency": 0}, "status": "crash", "description": "Run failed immediately: autoresearch.sh points to stale output-only benchmark and exited on acceptance test failure. Reset benchmark config/workload before continuing.", "timestamp": 1774202360990, "segment": 30}, {"type": "config", "name": "sync transport coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "f336544", "metric": 0, "metrics": {}, "status": "crash", "description": "Baseline run failed: quoting bug in autoresearch.sh missing-lines parser caused Python SyntaxError before metrics emission.", "timestamp": 1774202562902, "segment": 30}, {"run": 2, "commit": "f336544", "metric": 1.14, "metrics": {"covered_lines": 288, "coverage_pct": 97.3, "miss": 8, "test_time_s": 0.621, "test_loc": 528}, "status": "checks_failed", "description": "Baseline sync benchmark established: 97.3% (288/296), miss=8, efficiency=1.14. checks_failed only due ruff import order in tests/test_sync_transport.py after adding it to checks scope.", "timestamp": 1774202728315, "segment": 30}, {"run": 3, "commit": "acfa724", "metric": 1.06, "metrics": {"covered_lines": 288, "coverage_pct": 97.3, "miss": 8, "test_time_s": 0.578, "test_loc": 528}, "status": "keep", "description": "Baseline (checks-passing) for new sync benchmark: 97.3% (288/296), miss=8, efficiency=1.06. Included tests/test_sync_transport.py in benchmark timing/LOC for honest accounting and fixed its import-order lint.", "timestamp": 1774202883902, "segment": 30}, {"run": 4, "commit": "899f066", "metric": 1.06, "metrics": {"covered_lines": 296, "coverage_pct": 100, "miss": 0, "test_time_s": 0.569, "test_loc": 554}, "status": "keep", "description": "Step up: sync.py to 100% (288\u2192296, miss 8\u21920). Added HTTP transport tests, sync_push/sync_pull branch tests, _pull_local dry-run/merge tests, and SSH error-path coverage. Reordered asyncssh exception handlers so PermissionDenied/ConnectionLost are reachable before DisconnectError superclass.", "timestamp": 1774203142158, "segment": 30}, {"run": 5, "commit": "b7c40ea", "metric": 0.96, "metrics": {"covered_lines": 296, "coverage_pct": 100, "miss": 0, "test_time_s": 0.644, "test_loc": 439}, "status": "keep", "description": "Step-down: test_sync now independently covers sync.py at 100%, so benchmark timing/LOC narrowed to tests/test_sync.py only (sync_transport remains in full-suite checks). Covered unchanged 296/296; efficiency improved 1.06\u21920.96.", "timestamp": 1774204059880, "segment": 30}, {"type": "config", "name": "cli-db coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "b7c40ea", "metric": 0.21, "metrics": {"covered_lines": 236, "coverage_pct": 59.3, "miss": 162, "test_time_s": 0.559, "test_loc": 88}, "status": "checks_failed", "description": "Baseline for cli-db benchmark: 59.3% (236/398), 162 miss, efficiency 0.21 with tests/cli/test_db.py (88 LOC). checks_failed only due unused pytest import in tests/cli/test_db.py.", "timestamp": 1774205157315, "segment": 30}, {"run": 2, "commit": "4830d3f", "metric": 0.2, "metrics": {"covered_lines": 236, "coverage_pct": 59.3, "miss": 162, "test_time_s": 0.533, "test_loc": 87}, "status": "keep", "description": "Baseline (checks-passing) for cli-db benchmark: 59.3% (236/398), 162 miss, 87 LOC, 0.533s. Fixed lint-only unused import in tests/cli/test_db.py.", "timestamp": 1774205381089, "segment": 30}, {"run": 3, "commit": "b082f64", "metric": 0.41, "metrics": {"covered_lines": 327, "coverage_pct": 82.2, "miss": 71, "test_time_s": 0.663, "test_loc": 201}, "status": "keep", "description": "Step up: +91 covered (236\u2192327) in cli/db by adding command tests for remote add/list/remove and push/pull success/error/dry-run flows. cli/db coverage 59.3%\u219282.2%, miss 162\u219271.", "timestamp": 1774205713051, "segment": 30}, {"run": 4, "commit": "21f31ff", "metric": 0.62, "metrics": {"covered_lines": 366, "coverage_pct": 92, "miss": 32, "test_time_s": 0.774, "test_loc": 291}, "status": "keep", "description": "Step up: +39 covered (327\u2192366) in cli/db by adding send/receive command tests (tty/stdin empty, binary stream, slice errors, receive ValueError/sqlite locked) plus push FileNotFound/zero-conversation branches. Coverage 82.2%\u219292.0%, miss 71\u219232.", "timestamp": 1774206046077, "segment": 30}, {"run": 5, "commit": "732a89f", "metric": 0.79, "metrics": {"covered_lines": 393, "coverage_pct": 98.7, "miss": 5, "test_time_s": 0.93, "test_loc": 335}, "status": "keep", "description": "Step up: +27 covered (366\u2192393). Added cli/db error-path tests for info/vacuum/backup/restore missing DBs, slice force+FileNotFoundError, merge missing source/db/runtime, and merge detail print branches (replaced/tags/workspaces). cli/db coverage 92.0%\u219298.7%, miss 32\u21925.", "timestamp": 1774206351148, "segment": 30}, {"run": 6, "commit": "6c12da8", "metric": 0.96, "metrics": {"covered_lines": 398, "coverage_pct": 100, "miss": 0, "test_time_s": 1.07, "test_loc": 358}, "status": "keep", "description": "Step up: cli/db to 100% (393\u2192398, miss 5\u21920). Added targeted tests for cmd_db_send tty branch, cmd_db_receive RuntimeError branch, and cmd_db_vacuum saved-space branch via patched resolve_db/open_database. Also fixed send tty test to use existing DB path.", "timestamp": 1774206699933, "segment": 30}, {"type": "config", "name": "cli-search no-embed coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "c0d8362", "metric": 0.13, "metrics": {"covered_lines": 265, "coverage_pct": 66.2, "miss": 135, "test_time_s": 0.417, "test_loc": 83}, "status": "keep", "description": "Baseline for cli-search no-embed benchmark using new tests/cli/test_search_noembed.py. Coverage 66.2% (265/400), miss 135, LOC 83, time 0.417s.", "timestamp": 1774208785488, "segment": 30}, {"run": 2, "commit": "e2de771", "metric": 0.26, "metrics": {"covered_lines": 324, "coverage_pct": 81, "miss": 76, "test_time_s": 0.422, "test_loc": 198}, "status": "keep", "description": "Step up: +59 covered (265\u2192324) for cli/search no-embed paths. Added unit tests for helper branches: empty-json renderer, delegation gating, metadata/tier/context/exchange enrichment, build-index error handling via stubbed indexer module, and FTS-only error/empty/non-empty JSON branches.", "timestamp": 1774209170943, "segment": 30}, {"run": 3, "commit": "1da07f1", "metric": 0.31, "metrics": {"covered_lines": 376, "coverage_pct": 94, "miss": 24, "test_time_s": 0.477, "test_loc": 244}, "status": "keep", "description": "Step up: +52 covered (324\u2192376) for cli/search no-embed paths. Added cmd_search branch tests for execute RuntimeError/ValueError, threshold and first no-hit JSON handling, mode-specific processing (chunks/thread/conversations), refs dump path, plus expanded FTS-only unsupported-flag warnings and output handling.", "timestamp": 1774209568865, "segment": 30}, {"run": 4, "commit": "171a107", "metric": 0.4, "metrics": {"covered_lines": 398, "coverage_pct": 99.5, "miss": 2, "test_time_s": 0.493, "test_loc": 324}, "status": "keep", "description": "Step up: +22 covered (376\u2192398) for cli/search no-embed, now 99.5% (398/400). Added targeted tests for remaining cmd_search branches: index delegation, semantic missing-embed DB, json+thread warning, empty-json helper path, threshold/first no-result messages, serve-delegation + formatter error, and FTS invalid-syntax/generic DB errors + warning injection.", "timestamp": 1774209880847, "segment": 30}, {"run": 5, "commit": "0262823", "metric": 0.44, "metrics": {"covered_lines": 400, "coverage_pct": 100, "miss": 0, "test_time_s": 0.514, "test_loc": 344}, "status": "keep", "description": "Step up: cli/search no-embed benchmark to 100% (398\u2192400, miss 2\u21920). Added tiny targeted tests for semantic-mode branch with existing embed DB and first-result kept branch when first_mention returns a hit.", "timestamp": 1774210149040, "segment": 30}, {"type": "config", "name": "cli-data coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "4fc2c89", "metric": 0, "metrics": {}, "status": "crash", "description": "First cli-data baseline attempt timed out after benchmark emission (test_data timing loop too long at ~44s/run \u00d75 plus full-suite coverage). Need shorter timing strategy/longer timeout before continuing.", "timestamp": 1774210779323, "segment": 30}, {"run": 2, "commit": "4fc2c89", "metric": 40.53, "metrics": {"covered_lines": 492, "coverage_pct": 73, "miss": 182, "test_time_s": 46.591, "test_loc": 428}, "status": "checks_failed", "description": "Baseline attempt for cli-data benchmark completed with 73.0% (492/674), but checks failed due pre-existing lint in tests/cli/test_data.py (unused pytest import). Need lint cleanup before establishing checks-passing baseline.", "timestamp": 1774211181578, "segment": 30}, {"run": 3, "commit": "d615e7b", "metric": 38.86, "metrics": {"covered_lines": 492, "coverage_pct": 73, "miss": 182, "test_time_s": 44.881, "test_loc": 426}, "status": "keep", "description": "Baseline (checks-passing) for cli-data benchmark. Switched benchmark/check target to tests/cli/test_data.py + siftd.cli.data and fixed pre-existing lint in test_data imports. Coverage 73.0% (492/674), miss 182, LOC 426, time 44.881s.", "timestamp": 1774211638757, "segment": 30}, {"run": 4, "commit": "07255aa", "metric": 42.11, "metrics": {"covered_lines": 589, "coverage_pct": 87.4, "miss": 85, "test_time_s": 46.106, "test_loc": 538}, "status": "keep", "description": "Step up: +97 covered (492\u2192589) in cli/data by adding direct branch tests for cmd_copy query/formatter/unknown paths, doctor fix + fix-registry helpers, doctor run json/plain/painted error branches, migrate merge verbose/dry-run flows, and ingest/backfill edge branches.", "timestamp": 1774212192530, "segment": 30}, {"run": 5, "commit": "d207260", "metric": 44.24, "metrics": {"covered_lines": 663, "coverage_pct": 98.4, "miss": 11, "test_time_s": 46.194, "test_loc": 635}, "status": "keep", "description": "Step up: +74 covered (589\u2192663) in cli/data by covering copy all/error branches, renderer total-update/error-table paths, ingest stats-cache exception path, doctor legacy dispatch branches, doctor fix missing-db/error summary, and deeper _doctor_run_painted routing/on_done/exception behavior.", "timestamp": 1774212859183, "segment": 30}, {"run": 6, "commit": "0538a09", "metric": 45.67, "metrics": {"covered_lines": 674, "coverage_pct": 100, "miss": 0, "test_time_s": 46.013, "test_loc": 669}, "status": "keep", "description": "Step up: cli/data to 100% (663\u2192674, miss 11\u21920). Added targeted tests for migrate non-dry-run merge summary, duplicate-group status hint, copy formatter usage listing branch, and doctor fix pending-tags non-json cleanup message.", "timestamp": 1774213301652, "segment": 30}, {"type": "config", "name": "cli-install coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "6893231", "metric": 0.71, "metrics": {"covered_lines": 148, "coverage_pct": 48.8, "miss": 155, "test_time_s": 0.51, "test_loc": 207}, "status": "keep", "description": "Pivot to cli-install benchmark and establish baseline. Updated benchmark/check targets to siftd.cli.install with tests/cli/test_install.py and pruned ideas backlog (marked cli/data complete, set install/meta/query/peek priorities). Baseline: 48.8% (148/303), miss 155, LOC 207, time 0.51s.", "timestamp": 1774213587698, "segment": 30}, {"run": 2, "commit": "9137800", "metric": 0.62, "metrics": {"covered_lines": 234, "coverage_pct": 77.2, "miss": 69, "test_time_s": 0.448, "test_loc": 322}, "status": "keep", "description": "Step up: +86 covered (148\u2192234) for cli/install. Added direct tests for install-method detection variants, editable URL parsing, hint/command builders, _run_extra_install failure branches (unknown/editable missing root/nonzero exit/tool missing), cmd_install help+unknown extra, and editable fallback in _find_plugin_source.", "timestamp": 1774213874074, "segment": 30}, {"run": 3, "commit": "68da7c3", "metric": 0.64, "metrics": {"covered_lines": 272, "coverage_pct": 89.8, "miss": 31, "test_time_s": 0.421, "test_loc": 414}, "status": "keep", "description": "Step up: +38 covered (234\u2192272) for cli/install. Added tests for pip_venv/pip_user detection, fastembed/litestar import checks, _run_extra_install dry-run and post-install warning path, install skill/plugin missing-source errors, custom harness scope resolution (~, absolute, relative, single-scope override), and cmd_install dispatch branches.", "timestamp": 1774214157060, "segment": 30}, {"run": 4, "commit": "197124a", "metric": 0.72, "metrics": {"covered_lines": 303, "coverage_pct": 100, "miss": 0, "test_time_s": 0.449, "test_loc": 489}, "status": "keep", "description": "Step up: cli/install to 100% (272\u2192303, miss 31\u21920). Added targeted tests for remaining error/edge branches: unknown detection fallback, fastembed/litestar ImportError paths, pipx tool-missing guidance, success verification print path, _install_embed/_install_serve wrappers, _find_plugin_source exception fallback, _install_skill invalid-scope/symlink cleanup/missing-SKILL warning/instructions dry-run, and _install_plugin manifest-missing + stale skill symlink cleanup.", "timestamp": 1774214488901, "segment": 30}, {"type": "config", "name": "cli-meta coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "97d7a37", "metric": 0.21, "metrics": {"covered_lines": 183, "coverage_pct": 79.9, "miss": 46, "test_time_s": 0.378, "test_loc": 100}, "status": "keep", "description": "Baseline for cli-meta benchmark after pivot from saturated cli-install lane. Added initial tests/cli/test_meta.py and switched benchmark/check targets to siftd.cli.meta + test_meta.py. Baseline: 79.9% (183/229), miss 46, LOC 100, time 0.378s.", "timestamp": 1774214939898, "segment": 30}, {"run": 2, "commit": "50b3a32", "metric": 0.2, "metrics": {"covered_lines": 227, "coverage_pct": 99.1, "miss": 2, "test_time_s": 0.309, "test_loc": 144}, "status": "keep", "description": "Step up: +44 covered (183\u2192227) for cli/meta with targeted branch tests. Added coverage for status serve->dict conversion, status FileNotFound fallback, embeddings-installed output, workspaces serve rows + FileNotFound json/non-json handling, config usage/value-error branches (get/set/append/remove), config-missing-file message, and adapters empty non-json output.", "timestamp": 1774215241988, "segment": 30}, {"run": 3, "commit": "68c11c1", "metric": 0.2, "metrics": {"covered_lines": 229, "coverage_pct": 100, "miss": 0, "test_time_s": 0.314, "test_loc": 147}, "status": "keep", "description": "Step up: cli/meta to 100% (227\u2192229, miss 2\u21920) by adding latest-only activity-window assertion path in cmd_status text output.", "timestamp": 1774215504854, "segment": 30}, {"type": "config", "name": "cli-query coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "b2234ca", "metric": 0.33, "metrics": {"covered_lines": 189, "coverage_pct": 65.9, "miss": 98, "test_time_s": 0.556, "test_loc": 113}, "status": "keep", "description": "Pivot to cli-query benchmark after saturating cli-meta. Updated benchmark/check targets to siftd.cli.query + tests/cli/test_query_tools.py and established baseline: 65.9% (189/287), miss 98, LOC 113, time 0.556s.", "timestamp": 1774215846764, "segment": 30}, {"run": 2, "commit": "7ec4306", "metric": 0.42, "metrics": {"covered_lines": 282, "coverage_pct": 98.3, "miss": 5, "test_time_s": 0.468, "test_loc": 251}, "status": "keep", "description": "Step up: +93 covered (189\u2192282) for cli/query by adding tests/cli/test_query_noembed.py and including it in benchmark/checks. Covered cmd_tools serve/local/json/empty branches, _query_detail validation/serve/json/error/summary/render paths, _query_sql list/var/error/result branches, and cmd_query dispatch/list/error/no-result hint/stats paths.", "timestamp": 1774216187823, "segment": 30}, {"run": 3, "commit": "5599599", "metric": 0.48, "metrics": {"covered_lines": 287, "coverage_pct": 100, "miss": 0, "test_time_s": 0.523, "test_loc": 261}, "status": "keep", "description": "Step up: cli/query to 100% (282\u2192287, miss 5\u21920). Added tiny targeted branch tests for cmd_tools serve JSON output, cmd_tools by-workspace empty JSON output, _query_detail tool-filter assignment path, and cmd_query verbose fidelity depth override path.", "timestamp": 1774216495312, "segment": 30}, {"type": "config", "name": "cli-peek coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "ebf48f6", "metric": 1.05, "metrics": {"covered_lines": 132, "coverage_pct": 61.7, "miss": 82, "test_time_s": 0.432, "test_loc": 321}, "status": "keep", "description": "Pivot to cli-peek benchmark after saturating cli-query lane. Updated benchmark/check targets to siftd.cli.peek + tests/cli/test_cmd_peek.py and established baseline: 61.7% (132/214), miss 82, LOC 321, time 0.432s.", "timestamp": 1774216765980, "segment": 30}, {"run": 2, "commit": "5528451", "metric": 1.09, "metrics": {"covered_lines": 202, "coverage_pct": 94.4, "miss": 12, "test_time_s": 0.535, "test_loc": 411}, "status": "keep", "description": "Step up: +70 covered (132\u2192202) for cli/peek. Added edge-path tests for last-response/last-prompt extraction branches (ambiguous/not-found/no-active/no-exchange/no-text/success), follow default no-session and follow --json NDJSON path, detail tail text/json parsing branch, detail read-failure and JSON output, plus list-mode ignored-flags combo warning.", "timestamp": 1774217163014, "segment": 30}, {"run": 3, "commit": "5528451", "metric": 1.4, "metrics": {"covered_lines": 209, "coverage_pct": 97.7, "miss": 5, "test_time_s": 0.618, "test_loc": 474}, "status": "discard", "description": "Attempted to cover remaining follow session-id error branches via additional direct cmd_peek tests and list/follow edge checks. Coverage unchanged at 209/214 (missing L128-133), efficiency regressed from 1.09 to 1.40 due added LOC/timing variance.", "timestamp": 1774217730555, "segment": 30}, {"run": 4, "commit": "2945e9e", "metric": 1.19, "metrics": {"covered_lines": 214, "coverage_pct": 100, "miss": 0, "test_time_s": 0.538, "test_loc": 474}, "status": "keep", "description": "Step up: cli/peek to 100% (202\u2192214, miss 12\u21920). Added targeted tests for remaining follow/detail edge branches: follow with --last-prompt exclusivity, follow session-id ambiguous/not-found handling, follow default session resolution path, and detail mode ambiguous/not-found handling. Also fixed benchmark exclusion interaction by renaming tests that unintentionally matched -k 'not test_follow_session'.", "timestamp": 1774218041521, "segment": 30}, {"type": "config", "name": "cli-tool-search coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "cb23529", "metric": 0.19, "metrics": {"covered_lines": 148, "coverage_pct": 94.3, "miss": 9, "test_time_s": 0.295, "test_loc": 97}, "status": "keep", "description": "Pivot to cli-tool-search benchmark after saturating cli-peek. Added tests/cli/test_tool_search_cli.py and switched benchmark/check targets to siftd.cli.tool_search + test_tool_search_cli.py. Baseline: 94.3% (148/157), miss 9, LOC 97, time 0.295s.", "timestamp": 1774218364140, "segment": 30}, {"run": 2, "commit": "54582e9", "metric": 0.2, "metrics": {"covered_lines": 157, "coverage_pct": 100, "miss": 0, "test_time_s": 0.298, "test_loc": 107}, "status": "keep", "description": "Step up: cli/tool_search to 100% (148\u2192157, miss 9\u21920). Expanded CLI tests to cover ungrouped path/pattern output lines, workspace formatting fallback branches, compact subject pattern/arg branches, summarize-group non-duplicate break path, and 4-part path compaction.", "timestamp": 1774218622858, "segment": 30}, {"type": "config", "name": "cli-upgrade coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "18ee727", "metric": 0.37, "metrics": {"covered_lines": 73, "coverage_pct": 54.1, "miss": 62, "test_time_s": 0.345, "test_loc": 78}, "status": "keep", "description": "Pivot to cli-upgrade benchmark after saturating cli-tool-search. Updated benchmark/check targets to siftd.cli.upgrade + tests/cli/test_upgrade.py and established baseline. Also auto-fixed pre-existing lint/import-order noise in test_upgrade.py. Baseline: 54.1% (73/135), miss 62, LOC 78, time 0.345s.", "timestamp": 1774218922731, "segment": 30}, {"run": 2, "commit": "b7aa830", "metric": 0.39, "metrics": {"covered_lines": 126, "coverage_pct": 93.3, "miss": 9, "test_time_s": 0.323, "test_loc": 151}, "status": "keep", "description": "Step up: +53 covered (73\u2192126) for cli/upgrade. Added tests for latest-version fetch/background cache update, maybe_start_check env/config/fresh/thread branches, upgrade command builder variants, and cmd_upgrade paths for PyPI failure, already-updated, check-only, editable install, unknown method, brew update+upgrade, and missing executable handling.", "timestamp": 1774219194649, "segment": 30}, {"run": 3, "commit": "f828c8b", "metric": 0.41, "metrics": {"covered_lines": 135, "coverage_pct": 100, "miss": 0, "test_time_s": 0.325, "test_loc": 170}, "status": "keep", "description": "Step up: cli/upgrade to 100% (126\u2192135, miss 9\u21920). Added targeted tests for _cache_is_fresh none/invalid branches, _fetch_latest_version exception path, _is_newer tuple fallback when packaging import fails, and maybe_print_notice early returns for config=false and missing cache.", "timestamp": 1774219468542, "segment": 30}, {"type": "config", "name": "cli-export coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "5ffce2f", "metric": 3.59, "metrics": {"covered_lines": 54, "coverage_pct": 98.2, "miss": 1, "test_time_s": 0.608, "test_loc": 319}, "status": "keep", "description": "Pivot to cli-export benchmark after saturating cli-upgrade. Updated benchmark/check targets to siftd.cli.export + tests/test_export.py and fixed pre-existing import-order lint in test_export.py. Baseline: 98.2% (54/55), miss 1 (L67), LOC 319, time 0.608s.", "timestamp": 1774219743066, "segment": 30}, {"run": 2, "commit": "e9c20ae", "metric": 3.79, "metrics": {"covered_lines": 55, "coverage_pct": 100, "miss": 0, "test_time_s": 0.633, "test_loc": 329}, "status": "keep", "description": "Step up: cli/export to 100% (54\u219255, miss 1\u21920). Added targeted CLI test for generic sqlite OperationalError path to verify 'Database error: ...' messaging when non-FTS failures occur.", "timestamp": 1774220025707, "segment": 30}, {"type": "config", "name": "cli-tags coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "c3ea9e0", "metric": 0.95, "metrics": {"covered_lines": 358, "coverage_pct": 84, "miss": 68, "test_time_s": 1.157, "test_loc": 295}, "status": "keep", "description": "Pivot to cli-tags benchmark after saturating cli-export. Updated benchmark/check targets to siftd.cli.tags + tests/cli/test_tags.py, pruned ideas backlog to mark export complete and prioritize tags, and fixed pre-existing lint/import-order noise in test_tags.py. Baseline: 84.0% (358/426), miss 68, LOC 295, time 1.157s.", "timestamp": 1774220794695, "segment": 30}, {"run": 2, "commit": "ba772c9", "metric": 1.07, "metrics": {"covered_lines": 393, "coverage_pct": 92.3, "miss": 33, "test_time_s": 1.235, "test_loc": 342}, "status": "keep", "description": "Step up: +35 covered (358\u2192393) for cli/tags. Added edge tests for _detect_current_session fallback/exception paths, _tag_session remove/usage/already-queued branches, _cmd_tag_list temporal+prefix empty branches, _cmd_tag_rename usage/value-error branches, _cmd_tag_delete missing-db branch, cmd_tag delegated result reporting, and local remove not-applied messaging.", "timestamp": 1774221131870, "segment": 30}, {"run": 3, "commit": "b708063", "metric": 1.14, "metrics": {"covered_lines": 424, "coverage_pct": 99.5, "miss": 2, "test_time_s": 1.254, "test_loc": 384}, "status": "keep", "description": "Step up: +31 covered (393\u2192424) for cli/tags. Added targeted tests for _detect_current_session active-session fallback return, queued-exchange message path, drill-down FileNotFound + limit-tip branch, serve-tag conversion with workspace/tool counts, rename serve-success and FileNotFound paths, delete warning/deleted messages with workspace/tool/prompt counts, cmd_tag --last ignored with --session, --last zero validation, no-recent-conversations branch, remove-not-applied existing-tag branch, and deprecated 'tags <name>' bridge path.", "timestamp": 1774221453524, "segment": 30}, {"run": 4, "commit": "2e8d370", "metric": 1.15, "metrics": {"covered_lines": 426, "coverage_pct": 100, "miss": 0, "test_time_s": 1.249, "test_loc": 392}, "status": "keep", "description": "Step up: cli/tags to 100% (424\u2192426, miss 2\u21920). Added final targeted coverage for _cmd_tag_list temporal no-tags message branch and --remove --last path where tag exists but is not applied to any selected conversations.", "timestamp": 1774221705119, "segment": 30}, {"type": "config", "name": "cli-sessions coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "aa087c4", "metric": 0.47, "metrics": {"covered_lines": 50, "coverage_pct": 100, "miss": 0, "test_time_s": 0.298, "test_loc": 79}, "status": "keep", "description": "Pivoted from saturated cli/tags (100%) to cli/sessions lane. Updated benchmark/check targets to siftd.cli.sessions + tests/cli/test_sessions_cli.py, fixed accidental partial test file by adding focused register/session-id CLI tests, and pruned ideas backlog to mark tags complete and prioritize sessions/output/api post-CLI lanes. Baseline: 100.0% (50/50), miss 0, LOC 79, time 0.298s.", "timestamp": 1774222219817, "segment": 30}, {"run": 2, "commit": "ca3028a", "metric": 0.25, "metrics": {"covered_lines": 50, "coverage_pct": 100, "miss": 0, "test_time_s": 0.28, "test_loc": 44}, "status": "keep", "description": "Step down at equal coverage for cli/sessions: refactored tests/cli/test_sessions_cli.py from 79\u219244 LOC while preserving 100% coverage (50/50). Consolidated fixtures/helpers and removed redundant parser-level integration assertions; kept direct register/state-file/DB-fallback/not-found behavior assertions.", "timestamp": 1774222455926, "segment": 30}, {"type": "config", "name": "output-format-registry coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "ee542d9", "metric": 0.08, "metrics": {"covered_lines": 52, "coverage_pct": 100, "miss": 0, "test_time_s": 0.263, "test_loc": 15}, "status": "keep", "description": "Pivoted from saturated cli/sessions to output/format_registry lane. Updated benchmark/check targets and added focused tests/test_output_format_registry.py covering select_format fallback-to-first-available and empty-registry ValueError branches. Baseline: 100.0% (52/52), miss 0, LOC 15, time 0.263s.", "timestamp": 1774223159701, "segment": 30}, {"run": 2, "commit": "79433a9", "metric": 0.05, "metrics": {"covered_lines": 52, "coverage_pct": 100, "miss": 0, "test_time_s": 0.266, "test_loc": 9}, "status": "keep", "description": "Step down at equal coverage for output/format_registry: compressed focused tests from 15\u21929 LOC by merging fallback and empty-registry assertions into one concise test while preserving 100% coverage (52/52).", "timestamp": 1774223385227, "segment": 30}, {"type": "config", "name": "output-terminal-fmt coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "a3f9d63", "metric": 0.04, "metrics": {"covered_lines": 123, "coverage_pct": 98.4, "miss": 2, "test_time_s": 0.284, "test_loc": 18}, "status": "keep", "description": "Pivoted from saturated output/format_registry to output/terminal_fmt lane. Updated benchmark/check targets to siftd.output.terminal_fmt + tests/test_output_terminal_fmt.py, pruned ideas to mark format_registry done, and established baseline: 98.4% (123/125), miss 2 (L31-32), LOC 18, time 0.284s.", "timestamp": 1774224526108, "segment": 30}, {"run": 2, "commit": "38b8588", "metric": 0.07, "metrics": {"covered_lines": 125, "coverage_pct": 100, "miss": 0, "test_time_s": 0.281, "test_loc": 31}, "status": "keep", "description": "Step up: output/terminal_fmt to 100% (123\u2192125, miss 2\u21920). Added targeted test for render_detail path where result has .turns and context default uses detail.turns; kept raw-turns compatibility coverage.", "timestamp": 1774224769900, "segment": 30}, {"run": 3, "commit": "7068345", "metric": 0.04, "metrics": {"covered_lines": 125, "coverage_pct": 100, "miss": 0, "test_time_s": 0.278, "test_loc": 16}, "status": "keep", "description": "Step down at equal 100% coverage for output/terminal_fmt: compressed focused tests from 31\u219216 LOC by combining raw-turns and detail.turns assertions into one concise test while preserving 125/125 coverage.", "timestamp": 1774225016247, "segment": 30}, {"type": "config", "name": "output-painted-bridge coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "1309e90", "metric": 0.03, "metrics": {"covered_lines": 372, "coverage_pct": 99.5, "miss": 2, "test_time_s": 0.276, "test_loc": 43}, "status": "keep", "description": "Pivoted from saturated output/terminal_fmt to output/painted_bridge lane. Updated benchmark/check targets, added focused tests/test_output_painted_bridge_edges.py for styling helper, empty-lines block, multiline empty/continuation handling, and tool title count suffix branches, and pruned ideas to mark terminal_fmt complete. Baseline now 99.5% (372/374), miss 2 (L464,563), LOC 43, time 0.276s.", "timestamp": 1774226246586, "segment": 30}, {"run": 2, "commit": "5a1478d", "metric": 0.02, "metrics": {"covered_lines": 372, "coverage_pct": 99.5, "miss": 2, "test_time_s": 0.268, "test_loc": 33}, "status": "keep", "description": "Step down at equal painted_bridge coverage (372/374): compressed edge tests from 43\u219233 LOC by merging style/empty/multiline checks and tightening tool-title assertion scaffolding, while preserving miss set (L464,L563).", "timestamp": 1774226465074, "segment": 30}, {"type": "config", "name": "output-narrative coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "39c616b", "metric": 0.11, "metrics": {"covered_lines": 119, "coverage_pct": 85.6, "miss": 20, "test_time_s": 0.272, "test_loc": 48}, "status": "keep", "description": "Pivoted from near-saturated output/painted_bridge to output/narrative lane. Updated benchmark/check targets, added focused tests/test_output_narrative.py covering MarkdownEmitter summary/content/output behavior plus HtmlEmitter helper/tool-content/fallback paths, and pruned ideas to demote painted_bridge and prioritize narrative. Baseline: 85.6% (119/139), miss 20, LOC 48, time 0.272s.", "timestamp": 1774226734024, "segment": 30}, {"run": 2, "commit": "e2b53fd", "metric": 0.13, "metrics": {"covered_lines": 139, "coverage_pct": 100, "miss": 0, "test_time_s": 0.266, "test_loc": 68}, "status": "keep", "description": "Step up: output/narrative to 100% (119\u2192139, miss 20\u21920). Added targeted HtmlEmitter coverage for mistune render path, thinking/placeholder/tool_summary styling, unknown extension fallback, summary_meta in no-content branch, removed-only/added-only diff branches, and tool_output; retained markdown emitter checks.", "timestamp": 1774227004993, "segment": 30}, {"run": 3, "commit": "305a0b5", "metric": 0.1, "metrics": {"covered_lines": 139, "coverage_pct": 100, "miss": 0, "test_time_s": 0.262, "test_loc": 53}, "status": "keep", "description": "Step down at equal 100% coverage for output/narrative: compressed focused tests from 68\u219253 LOC by consolidating HtmlEmitter branch sweeps and assertions into two denser tests while preserving all targeted markdown/html/fallback/diff/task/tool-output paths.", "timestamp": 1774227252146, "segment": 30}, {"type": "config", "name": "api-resources coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "a994047", "metric": 0.48, "metrics": {"covered_lines": 69, "coverage_pct": 100, "miss": 0, "test_time_s": 0.303, "test_loc": 109}, "status": "keep", "description": "Pivoted from saturated output/narrative to api/resources lane. Updated benchmark/check targets to siftd.api.resources + tests/test_resources.py, added edge-branch tests for adapter/query/formatter package-lookup errors, query default destination and no-builtins-available message, list_builtin_queries import error fallback, and formatter default destination. Baseline now 100% (69/69), miss 0, LOC 109, time 0.303s.", "timestamp": 1774228455795, "segment": 30}, {"run": 2, "commit": "2b67a64", "metric": 0.42, "metrics": {"covered_lines": 69, "coverage_pct": 100, "miss": 0, "test_time_s": 0.298, "test_loc": 98}, "status": "keep", "description": "Step down at equal api/resources coverage (69/69): compressed edge-branch tests from 5 methods to 2 denser methods, reducing benchmark LOC 109\u219298 while preserving default-destination and importlib-error/no-builtins branches.", "timestamp": 1774228681908, "segment": 30}, {"type": "config", "name": "api-auth coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "058417b", "metric": 0.37, "metrics": {"covered_lines": 30, "coverage_pct": 100, "miss": 0, "test_time_s": 0.297, "test_loc": 37}, "status": "keep", "description": "Pivoted from saturated api/resources to api/auth lane. Updated benchmark/check targets to siftd.api.auth + tests/test_auth.py, added timeout branch test for token_command TimeoutExpired -> AuthError path, and updated ideas backlog to prioritize api/auth. Baseline now 100% (30/30), miss 0, LOC 37, time 0.297s.", "timestamp": 1774229071947, "segment": 30}, {"run": 2, "commit": "058417b", "metric": 0, "metrics": {"covered_lines": 10915, "coverage_pct": 70, "miss": 4678, "test_time_s": 0.379, "test_loc": 33}, "status": "discard", "description": "Step-down attempt on tests/test_auth.py produced invalid benchmark output: coverage scope drifted to whole-package totals (10915 covered) instead of api/auth lane, making efficiency=0.0 non-comparable to baseline. Discarding this run due benchmark measurement anomaly; no trusted decision from this metric.", "timestamp": 1774229461703, "segment": 30}, {"run": 3, "commit": "058417b", "metric": 0, "metrics": {"covered_lines": 13108, "coverage_pct": 84.1, "miss": 2485, "test_time_s": 0.33, "test_loc": 33}, "status": "discard", "description": "Re-run confirmed benchmark anomaly: coverage metrics still drift to whole-project totals (13108 covered, 84.1%) despite api/auth lane configuration. Discarding as non-comparable measurement; need benchmark parser fix to read target-file coverage instead of global totals.", "timestamp": 1774229771635, "segment": 30}, {"run": 4, "commit": "98036c3", "metric": 0.34, "metrics": {"covered_lines": 30, "coverage_pct": 100, "miss": 0, "test_time_s": 0.305, "test_loc": 33}, "status": "keep", "description": "Step down at equal api/auth coverage (30/30): compressed tests/test_auth.py from 37\u219233 LOC via parametrized error cases and grouped success checks. Also fixed benchmark parser drift by reading coverage for target file (src/siftd/api/auth.py) instead of global totals, restoring stable comparable metrics.", "timestamp": 1774230052900, "segment": 30}, {"type": "config", "name": "api-file-refs coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "eeb10e7", "metric": 0.28, "metrics": {"covered_lines": 49, "coverage_pct": 100, "miss": 0, "test_time_s": 0.289, "test_loc": 48}, "status": "keep", "description": "Pivoted from saturated api/auth to api/file_refs lane. Updated benchmark/check targets to siftd.api.file_refs + tests/test_file_refs.py, added targeted guard test for fetch_file_refs rows missing file_path, and pruned ideas to mark auth complete and prioritize file_refs. Baseline: 100% (49/49), miss 0, LOC 48, time 0.289s.", "timestamp": 1774230478719, "segment": 30}, {"run": 2, "commit": "36bd9f6", "metric": 0.23, "metrics": {"covered_lines": 49, "coverage_pct": 100, "miss": 0, "test_time_s": 0.294, "test_loc": 39}, "status": "keep", "description": "Step down at equal api/file_refs coverage (49/49): compressed tests/test_file_refs.py from 48\u219239 LOC by parameterizing basic content cases and collapsing class scaffolding, while preserving list-block and fetch_file_refs guard-path assertions.", "timestamp": 1774230695701, "segment": 30}, {"run": 3, "commit": "92031b8", "metric": 0.19, "metrics": {"covered_lines": 49, "coverage_pct": 100, "miss": 0, "test_time_s": 0.298, "test_loc": 31}, "status": "keep", "description": "Step down again at equal api/file_refs coverage (49/49): further compressed tests/test_file_refs.py from 39\u219231 LOC by merging helper assertions and condensing fetch_file_refs edge scaffolding while preserving empty-ids and missing-file_path guard behavior.", "timestamp": 1774231058071, "segment": 30}, {"type": "config", "name": "api-search coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "ca2308e", "metric": 0.12, "metrics": {"covered_lines": 110, "coverage_pct": 71, "miss": 45, "test_time_s": 0.281, "test_loc": 48}, "status": "keep", "description": "Pivoted from saturated api/file_refs to api/search lane. Updated benchmark/check targets to siftd.api.search + tests/test_api_search_edges.py and added focused no-numpy edge tests for lazy __getattr__, storage-wrapper delegation via stubbed modules, list_conversation_ids/build_index wrappers, and hybrid_search FTS-mode candidate filtering. Baseline now 71.0% (110/155), miss 45, LOC 48, time 0.281s.", "timestamp": 1774231364464, "segment": 30}, {"run": 2, "commit": "39bdbe8", "metric": 0.16, "metrics": {"covered_lines": 152, "coverage_pct": 98.1, "miss": 3, "test_time_s": 0.27, "test_loc": 91}, "status": "keep", "description": "Step up: +42 covered (110\u2192152) for api/search. Added focused hybrid-mode tests for candidate-empty early return, no-results return, and recency+MMR orchestration with stubbed search/embeddings modules (no numpy dependency). Remaining miss reduced to 3 lines (L483,L484,L511).", "timestamp": 1774231616773, "segment": 30}, {"run": 3, "commit": "079e81f", "metric": 0.2, "metrics": {"covered_lines": 155, "coverage_pct": 100, "miss": 0, "test_time_s": 0.271, "test_loc": 113}, "status": "keep", "description": "Step up: api/search to 100% (152\u2192155, miss 3\u21920). Added targeted hybrid test covering embed_backend=None path (imports SCHEMA_VERSION/get_backend) and candidate_ids=None fallback to FTS recall IDs, plus search_similar call through that path.", "timestamp": 1774231864398, "segment": 30}, {"run": 4, "commit": "079e81f", "metric": 0, "metrics": {"covered_lines": 0, "coverage_pct": 0, "miss": 0, "test_time_s": 0, "test_loc": 0}, "status": "crash", "description": "Step-down attempt on api/search test file aborted before benchmark metrics: full-suite coverage run failed in acceptance test_doctor.t (early -x failure). Crash logged and changes should be reverted.", "timestamp": 1774231928704, "segment": 30}, {"run": 5, "commit": "6908842", "metric": 0.18, "metrics": {"covered_lines": 155, "coverage_pct": 100, "miss": 0, "test_time_s": 0.263, "test_loc": 104}, "status": "keep", "description": "Step down at equal api/search coverage (155/155): trimmed tests/test_api_search_edges.py from 113\u2192104 LOC by removing repeated per-test connection class scaffolding while preserving full branch coverage of hybrid/fts/lazy-wrapper paths.", "timestamp": 1774232232530, "segment": 30}, {"type": "config", "name": "output-painted-bridge cleanup coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "829ced6", "metric": 0.02, "metrics": {"covered_lines": 372, "coverage_pct": 99.5, "miss": 2, "test_time_s": 0.259, "test_loc": 33}, "status": "keep", "description": "Pivoted from api/search (now 100%) back to output/painted_bridge cleanup lane. Updated benchmark/check targets to siftd.output.painted_bridge + tests/test_output_painted_bridge_edges.py and pruned ideas backlog (marking api/search complete, promoting painted_bridge cleanup). Baseline remains 99.5% (372/374), miss 2 at L464/L563, efficiency 0.02.", "timestamp": 1774232490938, "segment": 30}, {"run": 2, "commit": "829ced6", "metric": 0.02, "metrics": {"covered_lines": 372, "coverage_pct": 99.5, "miss": 2, "test_time_s": 0.258, "test_loc": 27}, "status": "discard", "description": "Step-down attempt on painted_bridge edge tests merged into one compact test (33\u219227 LOC), but primary efficiency stayed flat at 0.02 with unchanged coverage 372/374. Discard per stairstep rule (no primary improvement).", "timestamp": 1774232737378, "segment": 30}, {"type": "config", "name": "api-stats coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "d19f979", "metric": 41.94, "metrics": {"covered_lines": 232, "coverage_pct": 100, "miss": 0, "test_time_s": 41.585, "test_loc": 234}, "status": "keep", "description": "Pivoted from painted_bridge cleanup to api/stats lane. Updated benchmark/check targets to siftd.api.stats with tests/test_stats_cache.py + new tests/test_api_stats_edges.py, and added edge coverage for get_cost_coverage open/close no-table path, list_workspaces conn=None close path, write_stats_cache cleanup-on-replace-error path, and usage summary/model/workspace queries with conversation_stats table. Baseline now 100% (232/232), miss 0, LOC 234, time 41.585s.", "timestamp": 1774233701084, "segment": 30}, {"run": 2, "commit": "205960c", "metric": 0.08, "metrics": {"covered_lines": 232, "coverage_pct": 100, "miss": 0, "test_time_s": 0.274, "test_loc": 71}, "status": "keep", "description": "Step down at equal api/stats coverage (232/232): narrowed benchmark timing/LOC scope to focused edge-lane file tests/test_api_stats_edges.py while retaining full-suite coverage measurement and full checks. Primary coverage unchanged at 100%; efficiency improved 41.94\u21920.08 by removing slow integration/cache-roundtrip tests from benchmark timing set.", "timestamp": 1774233915000, "segment": 30}, {"run": 3, "commit": "f71210b", "metric": 0.06, "metrics": {"covered_lines": 232, "coverage_pct": 100, "miss": 0, "test_time_s": 0.274, "test_loc": 55}, "status": "keep", "description": "Step down at equal api/stats coverage (232/232): compressed tests/test_api_stats_edges.py from 71\u219255 LOC by consolidating open/close path assertions, switching to executescript seed setup, and using pytest.raises for cache cleanup error path while preserving all targeted branches.", "timestamp": 1774234133499, "segment": 30}, {"run": 4, "commit": "f71210b", "metric": 0.06, "metrics": {"covered_lines": 232, "coverage_pct": 100, "miss": 0, "test_time_s": 0.271, "test_loc": 53}, "status": "discard", "description": "Step-down attempt on api/stats edge file reduced LOC 55\u219253, but rounded primary efficiency remained 0.06 at unchanged coverage 232/232. Discard per stairstep rule (no primary improvement).", "timestamp": 1774234356532, "segment": 30}, {"type": "config", "name": "api-tags coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "c03dd55", "metric": 0.52, "metrics": {"covered_lines": 73, "coverage_pct": 100, "miss": 0, "test_time_s": 0.315, "test_loc": 121}, "status": "keep", "description": "Pivoted from saturated api/stats to api/tags lane. Updated benchmark/check targets to siftd.api.tags with tests/test_tags_temporal.py + new tests/test_api_tags_edges.py, and added wrapper-branch coverage for modify_conversation_tag (not-found/apply/remove) plus rename_tag auto-open/auto-commit/close path. Baseline now 100% (73/73), miss 0, LOC 121, time 0.315s.", "timestamp": 1774234640157, "segment": 30}, {"run": 2, "commit": "751bf98", "metric": 0.12, "metrics": {"covered_lines": 73, "coverage_pct": 100, "miss": 0, "test_time_s": 0.269, "test_loc": 32}, "status": "keep", "description": "Step down at equal api/tags coverage (73/73): narrowed benchmark timing/LOC scope to focused edge-lane file tests/test_api_tags_edges.py while retaining full-suite coverage measurement and checks. Efficiency improved 0.52\u21920.12 with unchanged 100% target coverage.", "timestamp": 1774234839019, "segment": 30}, {"type": "config", "name": "api-migrations coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "45249a3", "metric": 0.69, "metrics": {"covered_lines": 15, "coverage_pct": 100, "miss": 0, "test_time_s": 0.28, "test_loc": 37}, "status": "keep", "description": "Pivoted from saturated api/tags to api/migrations lane. Updated benchmark/check targets to siftd.api.migrations + tests/test_api_migrations_edges.py and added focused wrapper-delegation test covering backfill/merge/migrate_blobs/verify calls with on_progress/dry_run/batch_size propagation. Baseline now 100% (15/15), miss 0, LOC 37, time 0.28s.", "timestamp": 1774235139120, "segment": 30}, {"run": 2, "commit": "e7505c9", "metric": 0.4, "metrics": {"covered_lines": 15, "coverage_pct": 100, "miss": 0, "test_time_s": 0.261, "test_loc": 23}, "status": "keep", "description": "Step down at equal api/migrations coverage (15/15): compressed tests/test_api_migrations_edges.py from 37\u219223 LOC by generating delegation stubs via a small helper and asserting propagated kwargs from recorded call maps.", "timestamp": 1774235372506, "segment": 30}, {"type": "config", "name": "api-conversations coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "0b7300f", "metric": 0.02, "metrics": {"covered_lines": 424, "coverage_pct": 100, "miss": 0, "test_time_s": 0.289, "test_loc": 30}, "status": "keep", "description": "Pivoted from api/migrations to api/conversations lane. Updated benchmark/check targets to siftd.api.conversations + tests/test_api_conversations_edges.py, excluded newly added slow test_doctor_fix_shows_fix_commands from full-suite filter per user request, and added targeted tests for prompt-without-response turn construction and run_query_file non-SELECT empty-result branch. Baseline now 100% (424/424), miss 0, LOC 30, time 0.289s.", "timestamp": 1774235867589, "segment": 30}, {"run": 2, "commit": "0b7300f", "metric": 0.02, "metrics": {"covered_lines": 424, "coverage_pct": 100, "miss": 0, "test_time_s": 0.265, "test_loc": 28}, "status": "discard", "description": "Step-down attempt on api/conversations edge lane merged two focused tests into one and reduced LOC 30\u219228, but rounded primary efficiency remained 0.02 at unchanged 100% coverage (424/424). Discard per stairstep rule (no primary improvement).", "timestamp": 1774236133310, "segment": 30}, {"type": "config", "name": "api-stats stepdown coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "4696b58", "metric": 0.07, "metrics": {"covered_lines": 232, "coverage_pct": 100, "miss": 0, "test_time_s": 0.277, "test_loc": 55}, "status": "keep", "description": "Pivoted from saturated api/conversations floor lane to api/stats step-down follow-up. Updated benchmark/check targets to siftd.api.stats + tests/test_api_stats_edges.py and pruned ideas with conversation floor note. Baseline: 100% (232/232), miss 0, LOC 55, time 0.277s.", "timestamp": 1774236338771, "segment": 30}, {"run": 2, "commit": "2faedca", "metric": 0.05, "metrics": {"covered_lines": 232, "coverage_pct": 100, "miss": 0, "test_time_s": 0.284, "test_loc": 39}, "status": "keep", "description": "Step down at equal api/stats coverage (232/232): compressed focused edge tests from 55\u219239 LOC by merging open/close + cache-cleanup checks and denser usage fixture setup/assertions, improving efficiency 0.07\u21920.05.", "timestamp": 1774236554708, "segment": 30}, {"run": 3, "commit": "2faedca", "metric": 0.06, "metrics": {"covered_lines": 232, "coverage_pct": 100, "miss": 0, "test_time_s": 0.32, "test_loc": 42}, "status": "discard", "description": "Follow-up step-down attempt on api/stats edge tests regressed efficiency from 0.05\u21920.06 at unchanged 100% coverage (232/232) after alternate helper refactor; discard and revert.", "timestamp": 1774236801442, "segment": 30}, {"type": "config", "name": "api-merge coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "bacded9", "metric": 0.08, "metrics": {"covered_lines": 134, "coverage_pct": 100, "miss": 0, "test_time_s": 0.287, "test_loc": 36}, "status": "keep", "description": "Pivoted from api-stats stepdown to api-merge lane. Updated benchmark/check targets to siftd.api.merge + tests/test_api_merge_edges.py, added focused foreign-key-violation rollback path test for merge_database, and pruned ideas to prioritize api/merge. Baseline now 100% (134/134), miss 0, LOC 36, time 0.287s.", "timestamp": 1774237467974, "segment": 30}, {"run": 2, "commit": "696a693", "metric": 0.05, "metrics": {"covered_lines": 134, "coverage_pct": 100, "miss": 0, "test_time_s": 0.304, "test_loc": 23}, "status": "keep", "description": "Step down at equal api/merge coverage (134/134): compressed tests/test_api_merge_edges.py from 36\u219223 LOC by inlining lightweight cursor stubs and condensing no-op methods, preserving FK-violation rollback/close assertions.", "timestamp": 1774237649561, "segment": 30}, {"type": "config", "name": "api-slice coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "13657c5", "metric": 0.09, "metrics": {"covered_lines": 70, "coverage_pct": 100, "miss": 0, "test_time_s": 0.28, "test_loc": 23}, "status": "keep", "description": "Pivoted from saturated api/merge to api/slice lane. Updated benchmark/check targets to siftd.api.slice + tests/test_api_slice_edges.py, added focused tests for missing source DB FileNotFound and _populate_slice foreign-key-violation guard error branch, and updated ideas to prioritize api/slice. Baseline now 100% (70/70), miss 0, LOC 23, time 0.28s.", "timestamp": 1774237912413, "segment": 30}, {"run": 2, "commit": "6d11d32", "metric": 0.07, "metrics": {"covered_lines": 70, "coverage_pct": 100, "miss": 0, "test_time_s": 0.285, "test_loc": 17}, "status": "keep", "description": "Step down at equal api/slice coverage (70/70): compressed tests/test_api_slice_edges.py from 23\u219217 LOC by replacing dedicated result helper class with compact row-stub factory while preserving missing-source and FK-violation guard assertions.", "timestamp": 1774238091302, "segment": 30}, {"type": "config", "name": "api-export coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "1aa0216", "metric": 0.03, "metrics": {"covered_lines": 66, "coverage_pct": 100, "miss": 0, "test_time_s": 0.26, "test_loc": 8}, "status": "keep", "description": "Pivoted from saturated api/slice lane to api/export. Updated benchmark/check targets to siftd.api.export + tests/test_api_export_edges.py, added focused test covering export_document fidelity=None default branch, and pruned ideas to promote api/export. Baseline now 100% (66/66), miss 0, LOC 8, time 0.26s.", "timestamp": 1774238463032, "segment": 30}, {"run": 2, "commit": "1aa0216", "metric": 0.03, "metrics": {"covered_lines": 66, "coverage_pct": 100, "miss": 0, "test_time_s": 0.273, "test_loc": 7}, "status": "discard", "description": "Tried api/export step-down by collapsing assertions in tests/test_api_export_edges.py (LOC 8\u21927) at equal coverage 66/66. Efficiency remained flat at 0.03, so discarded per stairstep rule.", "timestamp": 1774238631992, "segment": 30}, {"type": "config", "name": "api-sessions coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "883e900", "metric": 0.41, "metrics": {"covered_lines": 17, "coverage_pct": 100, "miss": 0, "test_time_s": 0.27, "test_loc": 26}, "status": "keep", "description": "Pivoted from api/export to api/sessions lane. Updated benchmark/check targets to siftd.api.sessions + tests/test_api_sessions_edges.py, added focused wrapper test for register_session argument forwarding (workspace_path + commit), and pruned ideas toward remaining tiny API misses. Baseline now 100% (17/17), miss 0, LOC 26, time 0.27s.", "timestamp": 1774238855423, "segment": 30}, {"run": 2, "commit": "b12c6ee", "metric": 0.17, "metrics": {"covered_lines": 17, "coverage_pct": 100, "miss": 0, "test_time_s": 0.282, "test_loc": 10}, "status": "keep", "description": "Step down at equal api/sessions coverage (17/17): compressed tests/test_api_sessions_edges.py from 26\u219210 LOC using tuple capture for wrapper forwarding assertions while preserving commit/workspace propagation check.", "timestamp": 1774239018578, "segment": 30}, {"type": "config", "name": "api-adapters coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "aa942b5", "metric": 0.04, "metrics": {"covered_lines": 29, "coverage_pct": 96.7, "miss": 1, "test_time_s": 0.282, "test_loc": 4}, "status": "keep", "description": "Pivoted from api/sessions to api/adapters lane. Updated benchmark/check targets to siftd.api.adapters + tests/test_api_adapters_edges.py and established baseline with one new focused test; current target coverage is 29/30 with remaining miss at entrypoint adapter append loop (L86).", "timestamp": 1774239226493, "segment": 30}, {"run": 2, "commit": "3cb78b7", "metric": 0.12, "metrics": {"covered_lines": 30, "coverage_pct": 100, "miss": 0, "test_time_s": 0.277, "test_loc": 13}, "status": "keep", "description": "Step up api/adapters coverage from 29\u219230 lines by adding entrypoint-adapter loop test in tests/test_api_adapters_edges.py (mocked builtin/dropin empty and entrypoint non-empty). Closed final miss L86; target now 100% (30/30).", "timestamp": 1774239394848, "segment": 30}, {"run": 3, "commit": "861fd98", "metric": 0.11, "metrics": {"covered_lines": 30, "coverage_pct": 100, "miss": 0, "test_time_s": 0.375, "test_loc": 9}, "status": "keep", "description": "Step down at equal api/adapters coverage (30/30): removed redundant builtin-key assertion test and kept only entrypoint-loop coverage test, reducing LOC 13\u21929 while preserving full coverage.", "timestamp": 1774239561389, "segment": 30}, {"type": "config", "name": "api-init coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "5f5700d", "metric": 0.05, "metrics": {"covered_lines": 25, "coverage_pct": 100, "miss": 0, "test_time_s": 0.269, "test_loc": 5}, "status": "keep", "description": "Pivoted from api/adapters to api/__init__ lane. Updated benchmark/check targets to --cov=siftd.api with TARGET_FILE src/siftd/api/__init__.py and added focused unknown-symbol __getattr__ AttributeError test in tests/test_api_init_edges.py. Baseline now 100% (25/25), miss 0, LOC 5, time 0.269s.", "timestamp": 1774239759050, "segment": 30}, {"type": "config", "name": "adapters-jsonl coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "32fe4a6", "metric": 0.06, "metrics": {"covered_lines": 21, "coverage_pct": 100, "miss": 0, "test_time_s": 0.27, "test_loc": 5}, "status": "keep", "description": "Pivoted from api/__init__ to adapters._jsonl lane. Updated benchmark/check targets to siftd.adapters._jsonl + tests/adapters/test_jsonl_edges.py, added focused parse_block string-input fast-path test, and pruned ideas to adapter residuals. Baseline now 100% (21/21), miss 0, LOC 5, time 0.27s.", "timestamp": 1774240011090, "segment": 30}, {"type": "config", "name": "adapters-registry coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "4aed43c", "metric": 0.09, "metrics": {"covered_lines": 35, "coverage_pct": 100, "miss": 0, "test_time_s": 0.269, "test_loc": 12}, "status": "keep", "description": "Pivoted from adapters._jsonl to adapters.registry lane. Updated benchmark/check targets to siftd.adapters.registry + tests/adapters/test_registry_edges.py and added focused test covering adapter path override branch in load_all_adapters (configured locations -> wrap_adapter_paths). Baseline now 100% (35/35), miss 0, LOC 12, time 0.269s.", "timestamp": 1774240193498, "segment": 30}, {"run": 2, "commit": "b6e70db", "metric": 0.08, "metrics": {"covered_lines": 35, "coverage_pct": 100, "miss": 0, "test_time_s": 0.297, "test_loc": 10}, "status": "keep", "description": "Step down at equal adapters.registry coverage (35/35): compacted tests/adapters/test_registry_edges.py from 12\u219210 LOC by inlining result assertion and removing redundant equality check while preserving path-override branch coverage.", "timestamp": 1774240375619, "segment": 30}, {"type": "config", "name": "model-names coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "b2db3ae", "metric": 0.07, "metrics": {"covered_lines": 41, "coverage_pct": 100, "miss": 0, "test_time_s": 0.26, "test_loc": 11}, "status": "keep", "description": "Pivoted from adapters.registry to model_names lane. Updated benchmark/check targets to siftd.model_names + tests/test_model_names_edges.py and added focused test for _parse_gemini unknown-variant fallback branch. Baseline now 100% (41/41), miss 0, LOC 11, time 0.26s.", "timestamp": 1774240580643, "segment": 30}, {"run": 2, "commit": "d175965", "metric": 0.03, "metrics": {"covered_lines": 41, "coverage_pct": 100, "miss": 0, "test_time_s": 0.267, "test_loc": 5}, "status": "keep", "description": "Step down at equal model_names coverage (41/41): compressed tests/test_model_names_edges.py from 11\u21925 LOC by asserting fallback structure via key checks/comprehension while preserving unknown gemini variant behavior coverage.", "timestamp": 1774240766320, "segment": 30}, {"type": "config", "name": "adapters-aider coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "d72431b", "metric": 0.02, "metrics": {"covered_lines": 155, "coverage_pct": 99.4, "miss": 1, "test_time_s": 0.274, "test_loc": 10}, "status": "keep", "description": "Pivoted from model_names to adapters.aider lane. Updated benchmark/check targets to siftd.adapters.aider + tests/adapters/test_aider_edges.py and added focused analytics.jsonl location-matching test. Baseline at 155/156 (99.4%) with one remaining miss at line 89 in DEFAULT_LOCATIONS loop.", "timestamp": 1774240968768, "segment": 30}, {"run": 2, "commit": "cc69fd0", "metric": 0.03, "metrics": {"covered_lines": 156, "coverage_pct": 100, "miss": 0, "test_time_s": 0.393, "test_loc": 10}, "status": "keep", "description": "Step up adapters.aider coverage from 155\u2192156 by making DEFAULT_LOCATIONS match deterministic against lowercased path in edge test, exercising the location-loop positive return branch (L89). Target now 100% (156/156).", "timestamp": 1774241158591, "segment": 30}, {"run": 3, "commit": "cc69fd0", "metric": 0.02, "metrics": {"covered_lines": 156, "coverage_pct": 100, "miss": 0, "test_time_s": 0.386, "test_loc": 8}, "status": "discard", "description": "Attempted adapters.aider step-down by compressing tests/adapters/test_aider_edges.py LOC 10\u21928 at equal 156/156 coverage. Rounded efficiency stayed flat at 0.02, so discarded per stairstep rule.", "timestamp": 1774241370792, "segment": 30}, {"type": "config", "name": "adapters-claude-code coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "e7ad4cf", "metric": 0.01, "metrics": {"covered_lines": 147, "coverage_pct": 100, "miss": 0, "test_time_s": 0.394, "test_loc": 3}, "status": "keep", "description": "Pivoted from adapters.aider to adapters.claude_code lane. Updated benchmark/check targets to siftd.adapters.claude_code + tests/adapters/test_claude_code_edges.py and added focused _normalize_content unknown-type fallback test. Baseline now 100% (147/147), miss 0, LOC 3, time 0.394s.", "timestamp": 1774241611541, "segment": 30}, {"type": "config", "name": "adapters-opencode coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "ee6642b", "metric": 0.01, "metrics": {"covered_lines": 174, "coverage_pct": 100, "miss": 0, "test_time_s": 0.377, "test_loc": 3}, "status": "keep", "description": "Pivoted from adapters.claude_code to adapters.opencode lane. Updated benchmark/check targets to siftd.adapters.opencode + tests/adapters/test_opencode_edges.py and added focused _part_to_content_block tool-type skip branch test. Baseline now 100% (174/174), miss 0, LOC 3, time 0.377s.", "timestamp": 1774241847689, "segment": 30}, {"type": "config", "name": "adapters-pi-agent coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "ee6642b", "metric": 0, "metrics": {"covered_lines": 154, "coverage_pct": 100, "miss": 0, "test_time_s": 0.398, "test_loc": 14}, "status": "crash", "description": "Pivoted to adapters.pi_agent lane with focused edge tests, but run_experiment timed out despite benchmark emitting metrics (154/154, eff 0.04). Treating as crash per timeout policy; will rerun baseline from reverted state.", "timestamp": 1774272597212, "segment": 30}, {"run": 2, "commit": "13c35d3", "metric": 0.04, "metrics": {"covered_lines": 154, "coverage_pct": 100, "miss": 0, "test_time_s": 0.385, "test_loc": 14}, "status": "keep", "description": "Reran adapters.pi_agent baseline after prior timeout anomaly (using explicit checks timeout). Focused lane with tests/adapters/test_pi_agent_edges.py now completes cleanly: 100% (154/154), miss 0, LOC 14, time 0.385s.", "timestamp": 1774272821240, "segment": 30}, {"run": 3, "commit": "a0434d6", "metric": 0.02, "metrics": {"covered_lines": 154, "coverage_pct": 100, "miss": 0, "test_time_s": 0.244, "test_loc": 13}, "status": "keep", "description": "Step down at equal adapters.pi_agent coverage (154/154): compacted tests/adapters/test_pi_agent_edges.py (LOC 14\u219213) by inlining mocked load_jsonl fixture setup, preserving non-jsonl rejection and started_at fallback branch checks. Efficiency improved 0.04\u21920.02.", "timestamp": 1774272985448, "segment": 30}, {"type": "config", "name": "adapters-sdk coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "cb2f20d", "metric": 0.01, "metrics": {"covered_lines": 328, "coverage_pct": 100, "miss": 0, "test_time_s": 0.27, "test_loc": 12}, "status": "keep", "description": "Pivoted from adapters.pi_agent to adapters.sdk lane. Updated benchmark/check targets to siftd.adapters.sdk + tests/adapters/test_sdk_edges.py and added focused seek_last_lines OSError branch test for binary open failure path. Baseline now 100% (328/328), miss 0, LOC 12, time 0.27s.", "timestamp": 1774273239570, "segment": 30}, {"type": "config", "name": "tool-query coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "8299252", "metric": 0.01, "metrics": {"covered_lines": 80, "coverage_pct": 100, "miss": 0, "test_time_s": 0.28, "test_loc": 3}, "status": "keep", "description": "Pivoted from adapters.sdk to tool_query lane. Updated benchmark/check targets to siftd.tool_query + tests/test_tool_query_edges.py and added focused ToolQueryTerm.is_fielded property test. Baseline now 100% (80/80), miss 0, LOC 3, time 0.28s.", "timestamp": 1774273603430, "segment": 30}, {"type": "config", "name": "peek-reader coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "c065dca", "metric": 0.04, "metrics": {"covered_lines": 162, "coverage_pct": 100, "miss": 0, "test_time_s": 0.29, "test_loc": 20}, "status": "keep", "description": "Pivoted from tool_query to peek.reader lane. Updated benchmark/check targets to siftd.peek.reader + tests/test_reader_edges.py, added focused test that invokes derived _resolve_peek_scan wrapper and verifies SDK peek_scan_from_records call wiring. Baseline now 100% (162/162), miss 0, LOC 20, time 0.29s.", "timestamp": 1774273880952, "segment": 30}, {"run": 2, "commit": "f723706", "metric": 0.02, "metrics": {"covered_lines": 162, "coverage_pct": 100, "miss": 0, "test_time_s": 0.272, "test_loc": 12}, "status": "keep", "description": "Step down at equal peek.reader coverage (162/162): compressed tests/test_reader_edges.py from 20\u219212 LOC by returning tuple from peek_scan_from_records stub and asserting full tuple directly, preserving derived-wrapper wiring checks.", "timestamp": 1774274068650, "segment": 30}, {"type": "config", "name": "doctor-freelist coverage efficiency", "metricName": "efficiency", "metricUnit": "", "bestDirection": "lower"}, {"run": 1, "commit": "cc41a21", "metric": 0.16, "metrics": {"covered_lines": 19, "coverage_pct": 100, "miss": 0, "test_time_s": 0.279, "test_loc": 11}, "status": "keep", "description": "Pivoted from peek.reader to doctor/checks/freelist lane. Updated benchmark/check targets to siftd.doctor.checks.freelist + tests/test_doctor_freelist_edges.py and added focused MB-format branch test for large freelist waste in FreelistCheck.run. Baseline now 100% (19/19), miss 0, LOC 11, time 0.279s.", "timestamp": 1774274372565, "segment": 30}, {"run": 2, "commit": "624cd69", "metric": 0.13, "metrics": {"covered_lines": 19, "coverage_pct": 100, "miss": 0, "test_time_s": 0.401, "test_loc": 6}, "status": "keep", "description": "Step down at equal doctor/freelist coverage (19/19): compressed tests/test_doctor_freelist_edges.py from 11\u21926 LOC by inlining monkeypatch/context setup and consolidating assertions while preserving MB-format and wasted_bytes checks.", "timestamp": 1774274664533, "segment": 30}]
-;
+/* ── Data parsing ─────────────────────────────────────────── */
 
-function parseData(lines) {
-  const segments = [];
+function parseSegments(lines) {
+  const segs = [];
   for (const e of lines) {
-    if (e.type === 'config') {
-      segments.push({ name: e.name, runs: [] });
-    } else if ('run' in e && segments.length) {
-      segments[segments.length - 1].runs.push(e);
-    }
+    if (e.type === 'config') segs.push({ name: e.name, runs: [] });
+    else if ('run' in e && segs.length) segs[segs.length - 1].runs.push(e);
   }
-  return segments;
+  return segs;
 }
 
-function render(segments) {
-  const totalRuns = segments.reduce((s, seg) => s + seg.runs.length, 0);
-  const totalKeeps = segments.reduce((s, seg) => s + seg.runs.filter(r => r.status === 'keep').length, 0);
-  const at100 = segments.filter(s => {
-    const keeps = s.runs.filter(r => r.status === 'keep');
-    return keeps.length && (keeps[keeps.length-1].metrics?.coverage_pct === 100);
-  }).length;
+function buildProjectTimeline(lines) {
+  const segs = parseSegments(lines);
+  const hasReal = lines.some(e => e.metrics && e.metrics.project_coverage_pct != null);
+  const pts = [];
 
-  document.getElementById('subtitle').textContent =
-    `${segments.length} segments · ${totalRuns} runs · loaded from autoresearch.jsonl`;
+  if (hasReal) {
+    for (const seg of segs) for (const r of seg.runs) {
+      if (r.status !== 'keep') continue;
+      const m = r.metrics || {};
+      if (m.project_coverage_pct == null) continue;
+      pts.push({
+        timestamp: r.timestamp, segment: seg.name, run: r.run, commit: r.commit,
+        est_pct: m.project_coverage_pct,
+        est_covered: m.project_covered || 0, est_total: m.project_statements || 0,
+        tracked_covered: m.covered_lines || 0,
+        tracked_total: (m.covered_lines || 0) + (m.miss || 0),
+        tracked_modules: 0, real: true,
+      });
+    }
+  }
+
+  if (!pts.length) {
+    // Estimate from per-module data
+    const T = 15593;
+    const ms = {};
+    for (const seg of segs) for (const r of seg.runs) {
+      if (r.status !== 'keep') continue;
+      const m = r.metrics || {};
+      if (m.covered_lines == null || !m.coverage_pct) continue;
+      const tot = Math.round(m.covered_lines / (m.coverage_pct / 100));
+      ms[seg.name] = { covered: m.covered_lines, total: tot };
+      const tc = Object.values(ms).reduce((s, v) => s + v.covered, 0);
+      const tt = Object.values(ms).reduce((s, v) => s + v.total, 0);
+      const ut = Math.max(0, T - tt);
+      const ec = tc + Math.round(ut * 0.7);
+      pts.push({
+        timestamp: r.timestamp, segment: seg.name, run: r.run, commit: r.commit,
+        est_pct: Math.round(ec / T * 1000) / 10,
+        est_covered: ec, est_total: T,
+        tracked_covered: tc, tracked_total: tt,
+        tracked_modules: Object.keys(ms).length, real: false,
+      });
+    }
+  }
+  pts.sort((a, b) => a.timestamp - b.timestamp);
+  return pts;
+}
+
+/* ── Canvas helpers ───────────────────────────────────────── */
+
+const SC = { keep:'#3fb950', discard:'#f85149', crash:'#d29922', checks_failed:'#d29922' };
+
+function mkCanvas(id, h) {
+  const c = document.getElementById(id);
+  const dpr = devicePixelRatio || 1;
+  const W = c.parentElement.getBoundingClientRect().width, H = h;
+  c.width = W * dpr; c.height = H * dpr;
+  c.style.width = W + 'px'; c.style.height = H + 'px';
+  const ctx = c.getContext('2d'); ctx.scale(dpr, dpr);
+  return { c, ctx, W, H };
+}
+
+function grid(ctx, pad, W, H, lo, hi, n, fmt) {
+  const ch = H - pad.top - pad.bottom, rng = hi - lo || 1;
+  ctx.strokeStyle = '#21262d'; ctx.lineWidth = 1;
+  ctx.fillStyle = '#484f58'; ctx.font = '10px SF Mono,Menlo,monospace'; ctx.textAlign = 'right';
+  for (let i = 0; i <= n; i++) {
+    const v = lo + (hi - lo) / n * i, y = pad.top + ch - ((v - lo) / rng) * ch;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    ctx.fillText(fmt(v), pad.left - 8, y + 3);
+  }
+}
+
+function segLines(ctx, pad, H, bounds, xFor) {
+  ctx.save(); ctx.setLineDash([4,4]); ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
+  const ch = H - pad.top - pad.bottom;
+  for (const bi of bounds) { if (!bi) continue; const x = xFor(bi); ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + ch); ctx.stroke(); }
+  ctx.restore();
+}
+
+function addHover(cId, tId, dots, fn) {
+  const c = document.getElementById(cId), t = document.getElementById(tId);
+  c.onmousemove = e => {
+    const r = c.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    let best = null, bd = 25;
+    for (const d of dots) { if (!d) continue; const dd = Math.hypot(d.x - mx, d.y - my); if (dd < bd) { best = d; bd = dd; } }
+    if (best) {
+      t.style.display = 'block'; t.style.left = (best.x + 12) + 'px'; t.style.top = (best.y - 10) + 'px';
+      t.innerHTML = fn(best.idx);
+      const tr = t.getBoundingClientRect(), cr = c.parentElement.getBoundingClientRect();
+      if (tr.right > cr.right) t.style.left = (best.x - tr.width - 8) + 'px';
+    } else t.style.display = 'none';
+  };
+  c.onmouseleave = () => { t.style.display = 'none'; };
+}
+
+/* ── Project chart ────────────────────────────────────────── */
+
+function drawProject(data) {
+  if (!data.length) return;
+  const { ctx, W, H } = mkCanvas('project-timeline', 200);
+  const pad = { top: 20, right: 20, bottom: 30, left: 55 };
+  const cw = W - pad.left - pad.right, ch = H - pad.top - pad.bottom, n = data.length;
+  const xF = i => pad.left + (i / (n - 1 || 1)) * cw;
+  const yF = v => pad.top + ch - (v / 100) * ch;
+
+  grid(ctx, pad, W, H, 0, 100, 5, v => Math.round(v) + '%');
+
+  const bounds = []; let ls = null;
+  for (let i = 0; i < n; i++) { if (data[i].segment !== ls) { if (ls) bounds.push(i); ls = data[i].segment; } }
+  segLines(ctx, pad, H, bounds, xF);
+
+  // area
+  ctx.beginPath(); ctx.moveTo(xF(0), yF(0));
+  for (let i = 0; i < n; i++) ctx.lineTo(xF(i), yF(data[i].est_pct));
+  ctx.lineTo(xF(n - 1), yF(0)); ctx.closePath();
+  ctx.fillStyle = 'rgba(88,166,255,0.08)'; ctx.fill();
+
+  // blue line
+  ctx.beginPath(); ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 2;
+  for (let i = 0; i < n; i++) { const x = xF(i), y = yF(data[i].est_pct); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+  ctx.stroke();
+
+  // green line
+  ctx.beginPath(); ctx.strokeStyle = '#3fb950'; ctx.lineWidth = 1.5;
+  for (let i = 0; i < n; i++) {
+    const p = data[i].tracked_total > 0 ? data[i].tracked_covered / data[i].tracked_total * 100 : 0;
+    const x = xF(i), y = yF(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.stroke();
+
+  const dots = [];
+  for (let i = 0; i < n; i++) { const x = xF(i), y = yF(data[i].est_pct); ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI*2); ctx.fillStyle = '#58a6ff'; ctx.fill(); dots.push({x, y, idx: i}); }
+
+  ctx.fillStyle = '#484f58'; ctx.font = '10px SF Mono,Menlo,monospace'; ctx.textAlign = 'center';
+  const ev = Math.max(1, Math.floor(n / 12));
+  for (let i = 0; i < n; i += ev) ctx.fillText(i + 1, xF(i), H - pad.bottom + 14);
+
+  addHover('project-timeline', 'project-tooltip', dots, idx => {
+    const p = data[idx], tp = p.tracked_total > 0 ? (p.tracked_covered / p.tracked_total * 100).toFixed(1) : '0';
+    const lbl = p.real ? 'Project coverage' : 'Est. project coverage';
+    return `<div style="color:#e6edf3;font-weight:600;margin-bottom:3px">${p.segment}</div>
+      <div style="color:#58a6ff">${lbl}: <b>${p.est_pct}%</b> (${p.est_covered}/${p.est_total})</div>
+      <div style="color:#3fb950">Tracked: <b>${tp}%</b> (${p.tracked_covered}/${p.tracked_total}${p.tracked_modules ? ' in '+p.tracked_modules+' mods' : ''})</div>`;
+  });
+}
+
+/* ── Per-segment chart ────────────────────────────────────── */
+
+let curMetric = 'coverage';
+
+function mVal(p, m) {
+  const d = p.metrics || {};
+  if (m === 'coverage') return d.coverage_pct;
+  if (m === 'miss') return d.miss;
+  if (m === 'loc') return d.test_loc;
+  if (m === 'efficiency') return (p.metric != null && p.metric < 500) ? p.metric : null;
+  return null;
+}
+
+function drawSegChart(segments, metric) {
+  const pts = [], bounds = [];
+  for (const seg of segments) { if (!seg.runs.length) continue; bounds.push(pts.length); for (const r of seg.runs) pts.push({...r, segName: seg.name}); }
+  if (!pts.length) return;
+
+  const { ctx, W, H } = mkCanvas('timeline', 220);
+  const pad = { top: 20, right: 20, bottom: 30, left: 55 };
+  const cw = W - pad.left - pad.right, ch = H - pad.top - pad.bottom, n = pts.length;
+  const vals = pts.map(p => mVal(p, metric)), valid = vals.filter(v => v != null);
+  if (!valid.length) return;
+
+  let lo = Math.min(...valid), hi = Math.max(...valid);
+  if (lo === hi) { lo -= 1; hi += 1; }
+  if (metric === 'coverage') { lo = Math.min(lo, 0); hi = 100; }
+  const rng = hi - lo || 1;
+  const xF = i => pad.left + (i / (n - 1 || 1)) * cw;
+  const yF = v => pad.top + ch - ((v - lo) / rng) * ch;
+
+  grid(ctx, pad, W, H, lo, hi, 5, metric === 'efficiency' ? v => v.toFixed(1) : v => Math.round(v).toString());
+  segLines(ctx, pad, H, bounds, xF);
+
+  // line
+  ctx.lineWidth = 1.5; ctx.strokeStyle = '#30363d'; ctx.beginPath(); let s = false;
+  for (let i = 0; i < n; i++) { if (vals[i] == null) { s = false; continue; } const x = xF(i), y = yF(vals[i]); s ? ctx.lineTo(x, y) : ctx.moveTo(x, y); s = true; }
+  ctx.stroke();
+
+  // dots
+  const dots = [];
+  for (let i = 0; i < n; i++) { if (vals[i] == null) { dots.push(null); continue; } const x = xF(i), y = yF(vals[i]); ctx.beginPath(); ctx.arc(x, y, 3.5, 0, Math.PI*2); ctx.fillStyle = SC[pts[i].status] || '#7d8590'; ctx.fill(); dots.push({x, y, idx: i}); }
+
+  ctx.fillStyle = '#484f58'; ctx.font = '10px SF Mono,Menlo,monospace'; ctx.textAlign = 'center';
+  const ev = Math.max(1, Math.floor(n / 15));
+  for (let i = 0; i < n; i += ev) ctx.fillText(i + 1, xF(i), H - pad.bottom + 16);
+
+  const ml = {coverage:'Coverage %', miss:'Lines missing', loc:'Test LOC', efficiency:'Efficiency'}[metric]||metric;
+  addHover('timeline', 'timeline-tooltip', dots, idx => {
+    const p = pts[idx], m = p.metrics||{}, v = vals[idx];
+    return `<div style="color:#e6edf3;font-weight:600;margin-bottom:3px">${p.segName}</div>
+      <div>run #${p.run} &middot; <span style="color:${SC[p.status]||'#7d8590'}">${p.status}</span></div>
+      <div style="margin-top:3px">${ml}: <b>${v != null ? (metric==='efficiency' ? v.toFixed(2) : v) : '\u2014'}</b></div>
+      <div style="color:#7d8590">cov ${m.coverage_pct??'\u2014'}% &middot; miss ${m.miss??'\u2014'} &middot; ${m.test_loc??'\u2014'} loc &middot; ${m.test_time_s??'\u2014'}s</div>`;
+  });
+}
+
+/* ── Segment list ─────────────────────────────────────────── */
+
+function renderSegs(segments) {
+  const tot = segments.reduce((s, g) => s + g.runs.length, 0);
+  const kept = segments.reduce((s, g) => s + g.runs.filter(r => r.status === 'keep').length, 0);
+  const full = segments.filter(g => { const k = g.runs.filter(r => r.status === 'keep'); return k.length && k[k.length-1].metrics?.coverage_pct === 100; }).length;
 
   document.getElementById('summary').innerHTML = `
     <div class="stat"><div class="stat-value">${segments.length}</div><div class="stat-label">segments</div></div>
-    <div class="stat"><div class="stat-value">${totalRuns}</div><div class="stat-label">total runs</div></div>
-    <div class="stat"><div class="stat-value">${totalKeeps}</div><div class="stat-label">kept</div></div>
-    <div class="stat"><div class="stat-value">${at100}</div><div class="stat-label">at 100%</div></div>
-  `;
+    <div class="stat"><div class="stat-value">${tot}</div><div class="stat-label">total runs</div></div>
+    <div class="stat"><div class="stat-value">${kept}</div><div class="stat-label">kept</div></div>
+    <div class="stat"><div class="stat-value">${full}</div><div class="stat-label">at 100%</div></div>`;
 
-  const container = document.getElementById('segments');
-  container.innerHTML = '';
-
-  const filter = document.getElementById('filter').value.toLowerCase();
-  const hideComplete = document.getElementById('hideComplete').checked;
-  const collapseAll = document.getElementById('collapseAll').checked;
+  const c = document.getElementById('segments'); c.innerHTML = '';
+  const filt = document.getElementById('filter').value.toLowerCase();
+  const hide1 = document.getElementById('hideComplete').checked;
+  const collapse = document.getElementById('collapseAll').checked;
 
   for (const seg of segments) {
-    if (filter && !seg.name.toLowerCase().includes(filter)) continue;
-    if (hideComplete && seg.runs.length <= 1) continue;
+    if (filt && !seg.name.toLowerCase().includes(filt)) continue;
+    if (hide1 && seg.runs.length <= 1) continue;
+    const keeps = seg.runs.filter(r => r.status === 'keep'), discs = seg.runs.filter(r => r.status === 'discard');
+    const lk = keeps[keeps.length - 1], lm = lk?.metrics || {};
+    const cov = lm.coverage_pct, eff = lk?.metric;
+    const maxE = Math.max(...seg.runs.map(r => r.metric || 0).filter(v => v < 1000), 1);
 
-    const keeps = seg.runs.filter(r => r.status === 'keep');
-    const discards = seg.runs.filter(r => r.status === 'discard');
-    const lastKeep = keeps[keeps.length - 1];
-    const lastM = lastKeep?.metrics || {};
-    const cov = lastM.coverage_pct;
-    const eff = lastKeep?.metric;
-
-    // Find max efficiency for bar scaling
-    const maxEff = Math.max(...seg.runs.map(r => r.metric || 0).filter(v => v < 1000), 1);
-
-    const div = document.createElement('div');
-    div.className = 'segment' + (collapseAll ? '' : ' open');
-
-    const covClass = cov === 100 ? 'badge-cov' : 'badge-cov-partial';
-    const covText = cov != null ? cov + '%' : '?';
-    const effText = eff != null ? eff.toFixed(2) : '?';
-
-    div.innerHTML = `
+    const d = document.createElement('div');
+    d.className = 'segment' + (collapse ? '' : ' open');
+    d.innerHTML = `
       <div class="segment-header">
-        <span class="segment-name"><span class="arrow">▶</span> ${seg.name}</span>
+        <span class="segment-name"><span class="arrow">&#9654;</span> ${seg.name}</span>
         <span class="segment-badges">
-          <span class="badge ${covClass}">${covText}</span>
-          <span class="badge badge-eff">eff ${effText}</span>
-          <span class="badge badge-runs">${keeps.length}k/${discards.length}d of ${seg.runs.length}</span>
+          <span class="badge ${cov===100?'badge-cov':'badge-cov-partial'}">${cov!=null?cov+'%':'?'}</span>
+          <span class="badge badge-eff">eff ${eff!=null?eff.toFixed(2):'?'}</span>
+          <span class="badge badge-runs">${keeps.length}k/${discs.length}d of ${seg.runs.length}</span>
         </span>
       </div>
       <div class="segment-body">
         ${seg.runs.map(r => {
-          const m = r.metrics || {};
-          const status = r.status || '?';
-          const statusIcon = {keep:'✓', discard:'✗', crash:'⚠', checks_failed:'⚠'}[status] || '?';
-          const barWidth = r.metric && r.metric < 1000 ? Math.max(2, (r.metric / maxEff) * 100) : (status === 'keep' ? 5 : 2);
+          const m=r.metrics||{}, st=r.status||'?';
+          const ic={keep:'\u2713',discard:'\u2717',crash:'\u26a0',checks_failed:'\u26a0'}[st]||'?';
+          const bw=r.metric&&r.metric<1000?Math.max(2,(r.metric/maxE)*100):(st==='keep'?5:2);
           return `<div class="chart-row">
             <span class="chart-run">#${r.run}</span>
-            <span class="chart-status ${status}">${statusIcon}</span>
-            <div class="chart-bar-container">
-              <div class="chart-bar ${status}" style="width:${barWidth}%"></div>
-            </div>
+            <span class="chart-status ${st}">${ic}</span>
+            <div class="chart-bar-container"><div class="chart-bar ${st}" style="width:${bw}%"></div></div>
             <div class="chart-metrics">
-              <span class="metric-eff">eff ${r.metric != null ? r.metric.toFixed(2) : '—'}</span>
-              <span class="metric-cov">${m.coverage_pct != null ? m.coverage_pct + '%' : '—'}</span>
-              <span class="metric-loc">${m.test_loc != null ? m.test_loc + ' loc' : '—'}</span>
-              <span class="metric-miss">${m.miss != null ? m.miss + ' miss' : '—'}</span>
-              <span class="metric-time">${m.test_time_s != null ? m.test_time_s + 's' : '—'}</span>
-            </div>
-          </div>`;
+              <span class="metric-eff">eff ${r.metric!=null?r.metric.toFixed(2):'\u2014'}</span>
+              <span class="metric-cov">${m.coverage_pct!=null?m.coverage_pct+'%':'\u2014'}</span>
+              <span class="metric-loc">${m.test_loc!=null?m.test_loc+' loc':'\u2014'}</span>
+              <span class="metric-miss">${m.miss!=null?m.miss+' miss':'\u2014'}</span>
+              <span class="metric-time">${m.test_time_s!=null?m.test_time_s+'s':'\u2014'}</span>
+            </div></div>`;
         }).join('')}
-      </div>
-    `;
-
-    div.querySelector('.segment-header').addEventListener('click', () => {
-      div.classList.toggle('open');
-    });
-
-    container.appendChild(div);
+      </div>`;
+    d.querySelector('.segment-header').onclick = () => d.classList.toggle('open');
+    c.appendChild(d);
   }
 }
 
-const segments = parseData(DATA);
-render(segments);
+/* ── File handling with persistent handle ─────────────────── */
 
-document.getElementById('filter').addEventListener('input', () => render(segments));
-document.getElementById('hideComplete').addEventListener('change', () => render(segments));
-document.getElementById('collapseAll').addEventListener('change', () => render(segments));
+let fileHandle = null;  // File System Access API handle (persists across reloads within session)
+let fallbackFile = null; // Plain File object fallback
 
-// --- Project-wide chart ---
-const PROJECT_DATA = [{"timestamp": 1774070767839, "segment": "Storage layer test coverage efficiency", "run": 1, "commit": "f5c1ff9", "est_covered": 10295, "est_total": 15593, "est_pct": 66.0, "tracked_modules": 1, "tracked_covered": 221, "tracked_total": 1201}, {"timestamp": 1774071049596, "segment": "Storage layer test coverage efficiency", "run": 2, "commit": "f7ccf01", "est_covered": 11129, "est_total": 15593, "est_pct": 71.4, "tracked_modules": 1, "tracked_covered": 1054, "tracked_total": 1200}, {"timestamp": 1774071417246, "segment": "Storage layer test coverage efficiency", "run": 4, "commit": "1475670", "est_covered": 11166, "est_total": 15593, "est_pct": 71.6, "tracked_modules": 1, "tracked_covered": 1092, "tracked_total": 1201}, {"timestamp": 1774071504013, "segment": "Storage layer test coverage efficiency", "run": 5, "commit": "9f5e093", "est_covered": 11171, "est_total": 15593, "est_pct": 71.6, "tracked_modules": 1, "tracked_covered": 1096, "tracked_total": 1200}, {"timestamp": 1774071635787, "segment": "Storage layer test coverage efficiency", "run": 6, "commit": "6324470", "est_covered": 11171, "est_total": 15593, "est_pct": 71.6, "tracked_modules": 1, "tracked_covered": 1096, "tracked_total": 1200}, {"timestamp": 1774071843784, "segment": "Storage layer test coverage efficiency", "run": 8, "commit": "6d20f4e", "est_covered": 11171, "est_total": 15593, "est_pct": 71.6, "tracked_modules": 1, "tracked_covered": 1096, "tracked_total": 1200}, {"timestamp": 1774071970065, "segment": "Storage layer test coverage efficiency", "run": 9, "commit": "ec0b59d", "est_covered": 11171, "est_total": 15593, "est_pct": 71.6, "tracked_modules": 1, "tracked_covered": 1096, "tracked_total": 1200}, {"timestamp": 1774072100984, "segment": "Storage layer test coverage efficiency", "run": 10, "commit": "207f5bf", "est_covered": 11171, "est_total": 15593, "est_pct": 71.6, "tracked_modules": 1, "tracked_covered": 1096, "tracked_total": 1200}, {"timestamp": 1774072676769, "segment": "Storage layer test coverage efficiency", "run": 21, "commit": "00d4db8", "est_covered": 11220, "est_total": 15593, "est_pct": 72.0, "tracked_modules": 1, "tracked_covered": 1146, "tracked_total": 1201}, {"timestamp": 1774072987369, "segment": "Storage layer test coverage efficiency", "run": 22, "commit": "c8e6788", "est_covered": 11239, "est_total": 15593, "est_pct": 72.1, "tracked_modules": 1, "tracked_covered": 1165, "tracked_total": 1201}, {"timestamp": 1774073248417, "segment": "Storage layer test coverage efficiency", "run": 23, "commit": "1fafb4d", "est_covered": 11239, "est_total": 15593, "est_pct": 72.1, "tracked_modules": 1, "tracked_covered": 1165, "tracked_total": 1201}, {"timestamp": 1774073341795, "segment": "Storage layer test coverage efficiency", "run": 24, "commit": "7e89000", "est_covered": 11251, "est_total": 15593, "est_pct": 72.2, "tracked_modules": 1, "tracked_covered": 1177, "tracked_total": 1201}, {"timestamp": 1774073419749, "segment": "Storage layer test coverage efficiency", "run": 25, "commit": "b237967", "est_covered": 11253, "est_total": 15593, "est_pct": 72.2, "tracked_modules": 1, "tracked_covered": 1179, "tracked_total": 1201}, {"timestamp": 1774073587894, "segment": "Storage layer test coverage efficiency", "run": 26, "commit": "f5ca8be", "est_covered": 11253, "est_total": 15593, "est_pct": 72.2, "tracked_modules": 1, "tracked_covered": 1179, "tracked_total": 1201}, {"timestamp": 1774075697275, "segment": "Adapter layer test coverage efficiency", "run": 1, "commit": "c23d742", "est_covered": 11077, "est_total": 15593, "est_pct": 71.0, "tracked_modules": 2, "tracked_covered": 2272, "tracked_total": 3014}, {"timestamp": 1774076171016, "segment": "Adapter layer test coverage efficiency", "run": 2, "commit": "a43a7a3", "est_covered": 11335, "est_total": 15593, "est_pct": 72.7, "tracked_modules": 2, "tracked_covered": 2530, "tracked_total": 3014}, {"timestamp": 1774076423994, "segment": "Adapter layer test coverage efficiency", "run": 5, "commit": "7ccf85c", "est_covered": 11558, "est_total": 15593, "est_pct": 74.1, "tracked_modules": 2, "tracked_covered": 2753, "tracked_total": 3014}, {"timestamp": 1774133904032, "segment": "Adapter layer test coverage efficiency", "run": 5, "commit": "a78b1e8", "est_covered": 11613, "est_total": 15593, "est_pct": 74.5, "tracked_modules": 2, "tracked_covered": 2744, "tracked_total": 2923}, {"timestamp": 1774134017927, "segment": "Adapter layer test coverage efficiency", "run": 6, "commit": "2cd075e", "est_covered": 11613, "est_total": 15593, "est_pct": 74.5, "tracked_modules": 2, "tracked_covered": 2744, "tracked_total": 2923}, {"timestamp": 1774134539834, "segment": "Adapter layer test coverage efficiency (median-of-3 timing)", "run": 1, "commit": "83ec00e", "est_covered": 11972, "est_total": 15593, "est_pct": 76.8, "tracked_modules": 3, "tracked_covered": 4309, "tracked_total": 4645}, {"timestamp": 1774134608846, "segment": "Adapter layer test coverage efficiency (median-of-3 timing)", "run": 2, "commit": "fb42237", "est_covered": 12020, "est_total": 15593, "est_pct": 77.1, "tracked_modules": 3, "tracked_covered": 4356, "tracked_total": 4643}, {"timestamp": 1774135344630, "segment": "Adapter layer test coverage efficiency (median-of-3 timing)", "run": 5, "commit": "c67e629", "est_covered": 12037, "est_total": 15593, "est_pct": 77.2, "tracked_modules": 3, "tracked_covered": 4373, "tracked_total": 4643}, {"timestamp": 1774135521741, "segment": "Adapter layer test coverage efficiency (median-of-3 timing)", "run": 6, "commit": "561ff2d", "est_covered": 12037, "est_total": 15593, "est_pct": 77.2, "tracked_modules": 3, "tracked_covered": 4373, "tracked_total": 4643}, {"timestamp": 1774135649938, "segment": "Adapter layer test coverage efficiency (median-of-3 timing)", "run": 7, "commit": "f0c82e3", "est_covered": 12037, "est_total": 15593, "est_pct": 77.2, "tracked_modules": 3, "tracked_covered": 4373, "tracked_total": 4643}, {"timestamp": 1774135787969, "segment": "Optimizing VSCode adapter test coverage efficiency", "run": 1, "commit": "cc1d648", "est_covered": 12082, "est_total": 15593, "est_pct": 77.5, "tracked_modules": 4, "tracked_covered": 4554, "tracked_total": 4838}, {"timestamp": 1774136223902, "segment": "Optimizing VSCode adapter test coverage efficiency", "run": 2, "commit": "ad48bcc", "est_covered": 12095, "est_total": 15593, "est_pct": 77.6, "tracked_modules": 4, "tracked_covered": 4567, "tracked_total": 4838}, {"timestamp": 1774137636883, "segment": "Optimizing VSCode adapter test coverage efficiency", "run": 3, "commit": "ff06534", "est_covered": 12095, "est_total": 15593, "est_pct": 77.6, "tracked_modules": 4, "tracked_covered": 4566, "tracked_total": 4836}, {"timestamp": 1774138299546, "segment": "Optimizing OpenCode adapter test coverage efficiency", "run": 1, "commit": "9970c28", "est_covered": 12129, "est_total": 15593, "est_pct": 77.8, "tracked_modules": 5, "tracked_covered": 4721, "tracked_total": 5010}, {"timestamp": 1774138579762, "segment": "Optimizing OpenCode adapter test coverage efficiency", "run": 2, "commit": "0f50879", "est_covered": 12147, "est_total": 15593, "est_pct": 77.9, "tracked_modules": 5, "tracked_covered": 4739, "tracked_total": 5010}, {"timestamp": 1774139817844, "segment": "Optimizing Codex CLI adapter test coverage efficiency", "run": 3, "commit": "e687f29", "est_covered": 12190, "est_total": 15593, "est_pct": 78.2, "tracked_modules": 6, "tracked_covered": 4893, "tracked_total": 5168}, {"timestamp": 1774139963459, "segment": "Optimizing Claude Code adapter test coverage efficiency", "run": 1, "commit": "1e0d397", "est_covered": 12224, "est_total": 15593, "est_pct": 78.4, "tracked_modules": 7, "tracked_covered": 5030, "tracked_total": 5315}, {"timestamp": 1774140230715, "segment": "Optimizing Claude Code adapter test coverage efficiency", "run": 2, "commit": "8382ed9", "est_covered": 12233, "est_total": 15593, "est_pct": 78.5, "tracked_modules": 7, "tracked_covered": 5039, "tracked_total": 5315}, {"timestamp": 1774140429913, "segment": "Optimizing Claude Code adapter test coverage efficiency", "run": 3, "commit": "4d1ddbb", "est_covered": 12233, "est_total": 15593, "est_pct": 78.5, "tracked_modules": 7, "tracked_covered": 5039, "tracked_total": 5315}, {"timestamp": 1774140601089, "segment": "Optimizing SDK test coverage efficiency", "run": 1, "commit": "b5d6e8a", "est_covered": 12313, "est_total": 15593, "est_pct": 79.0, "tracked_modules": 8, "tracked_covered": 5348, "tracked_total": 5643}, {"timestamp": 1774140931597, "segment": "Optimizing SDK test coverage efficiency", "run": 2, "commit": "dbaefb0", "est_covered": 12327, "est_total": 15593, "est_pct": 79.1, "tracked_modules": 8, "tracked_covered": 5362, "tracked_total": 5643}, {"timestamp": 1774143871745, "segment": "Output layer test coverage (miss + efficiency)", "run": 1, "commit": "2f8d009", "est_covered": 12427, "est_total": 15593, "est_pct": 79.7, "tracked_modules": 9, "tracked_covered": 6317, "tracked_total": 6864}, {"timestamp": 1774144487175, "segment": "Output layer test coverage (miss + efficiency)", "run": 2, "commit": "9f1f405", "est_covered": 12533, "est_total": 15593, "est_pct": 80.4, "tracked_modules": 9, "tracked_covered": 6424, "tracked_total": 6865}, {"timestamp": 1774145939078, "segment": "Output layer test coverage (miss + efficiency)", "run": 3, "commit": "4e21f74", "est_covered": 12642, "est_total": 15593, "est_pct": 81.1, "tracked_modules": 9, "tracked_covered": 6533, "tracked_total": 6865}, {"timestamp": 1774146409285, "segment": "Output layer test coverage (miss + efficiency)", "run": 4, "commit": "cfd64a6", "est_covered": 12672, "est_total": 15593, "est_pct": 81.3, "tracked_modules": 9, "tracked_covered": 6563, "tracked_total": 6865}, {"timestamp": 1774146630292, "segment": "Output layer test coverage (miss + efficiency)", "run": 5, "commit": "d7094a7", "est_covered": 12676, "est_total": 15593, "est_pct": 81.3, "tracked_modules": 9, "tracked_covered": 6567, "tracked_total": 6865}, {"timestamp": 1774202883902, "segment": "sync transport coverage efficiency", "run": 3, "commit": "acfa724", "est_covered": 12757, "est_total": 15593, "est_pct": 81.8, "tracked_modules": 10, "tracked_covered": 6855, "tracked_total": 7161}, {"timestamp": 1774203142158, "segment": "sync transport coverage efficiency", "run": 4, "commit": "899f066", "est_covered": 12765, "est_total": 15593, "est_pct": 81.9, "tracked_modules": 10, "tracked_covered": 6863, "tracked_total": 7161}, {"timestamp": 1774204059880, "segment": "sync transport coverage efficiency", "run": 5, "commit": "b7c40ea", "est_covered": 12765, "est_total": 15593, "est_pct": 81.9, "tracked_modules": 10, "tracked_covered": 6863, "tracked_total": 7161}, {"timestamp": 1774205381089, "segment": "cli-db coverage efficiency", "run": 2, "commit": "4830d3f", "est_covered": 12722, "est_total": 15593, "est_pct": 81.6, "tracked_modules": 11, "tracked_covered": 7099, "tracked_total": 7559}, {"timestamp": 1774205713051, "segment": "cli-db coverage efficiency", "run": 3, "commit": "b082f64", "est_covered": 12813, "est_total": 15593, "est_pct": 82.2, "tracked_modules": 11, "tracked_covered": 7190, "tracked_total": 7559}, {"timestamp": 1774206046077, "segment": "cli-db coverage efficiency", "run": 4, "commit": "21f31ff", "est_covered": 12852, "est_total": 15593, "est_pct": 82.4, "tracked_modules": 11, "tracked_covered": 7229, "tracked_total": 7559}, {"timestamp": 1774206351148, "segment": "cli-db coverage efficiency", "run": 5, "commit": "732a89f", "est_covered": 12879, "est_total": 15593, "est_pct": 82.6, "tracked_modules": 11, "tracked_covered": 7256, "tracked_total": 7559}, {"timestamp": 1774206699933, "segment": "cli-db coverage efficiency", "run": 6, "commit": "6c12da8", "est_covered": 12884, "est_total": 15593, "est_pct": 82.6, "tracked_modules": 11, "tracked_covered": 7261, "tracked_total": 7559}, {"timestamp": 1774208785488, "segment": "cli-search no-embed coverage efficiency", "run": 1, "commit": "c0d8362", "est_covered": 12869, "est_total": 15593, "est_pct": 82.5, "tracked_modules": 12, "tracked_covered": 7526, "tracked_total": 7959}, {"timestamp": 1774209170943, "segment": "cli-search no-embed coverage efficiency", "run": 2, "commit": "e2de771", "est_covered": 12928, "est_total": 15593, "est_pct": 82.9, "tracked_modules": 12, "tracked_covered": 7585, "tracked_total": 7959}, {"timestamp": 1774209568865, "segment": "cli-search no-embed coverage efficiency", "run": 3, "commit": "1da07f1", "est_covered": 12980, "est_total": 15593, "est_pct": 83.2, "tracked_modules": 12, "tracked_covered": 7637, "tracked_total": 7959}, {"timestamp": 1774209880847, "segment": "cli-search no-embed coverage efficiency", "run": 4, "commit": "171a107", "est_covered": 13002, "est_total": 15593, "est_pct": 83.4, "tracked_modules": 12, "tracked_covered": 7659, "tracked_total": 7959}, {"timestamp": 1774210149040, "segment": "cli-search no-embed coverage efficiency", "run": 5, "commit": "0262823", "est_covered": 13004, "est_total": 15593, "est_pct": 83.4, "tracked_modules": 12, "tracked_covered": 7661, "tracked_total": 7959}, {"timestamp": 1774211638757, "segment": "cli-data coverage efficiency", "run": 3, "commit": "d615e7b", "est_covered": 13025, "est_total": 15593, "est_pct": 83.5, "tracked_modules": 13, "tracked_covered": 8153, "tracked_total": 8633}, {"timestamp": 1774212192530, "segment": "cli-data coverage efficiency", "run": 4, "commit": "07255aa", "est_covered": 13122, "est_total": 15593, "est_pct": 84.2, "tracked_modules": 13, "tracked_covered": 8250, "tracked_total": 8633}, {"timestamp": 1774212859183, "segment": "cli-data coverage efficiency", "run": 5, "commit": "d207260", "est_covered": 13196, "est_total": 15593, "est_pct": 84.6, "tracked_modules": 13, "tracked_covered": 8324, "tracked_total": 8633}, {"timestamp": 1774213301652, "segment": "cli-data coverage efficiency", "run": 6, "commit": "0538a09", "est_covered": 13207, "est_total": 15593, "est_pct": 84.7, "tracked_modules": 13, "tracked_covered": 8335, "tracked_total": 8633}, {"timestamp": 1774213587698, "segment": "cli-install coverage efficiency", "run": 1, "commit": "6893231", "est_covered": 13142, "est_total": 15593, "est_pct": 84.3, "tracked_modules": 14, "tracked_covered": 8483, "tracked_total": 8936}, {"timestamp": 1774213874074, "segment": "cli-install coverage efficiency", "run": 2, "commit": "9137800", "est_covered": 13228, "est_total": 15593, "est_pct": 84.8, "tracked_modules": 14, "tracked_covered": 8569, "tracked_total": 8936}, {"timestamp": 1774214157060, "segment": "cli-install coverage efficiency", "run": 3, "commit": "68da7c3", "est_covered": 13266, "est_total": 15593, "est_pct": 85.1, "tracked_modules": 14, "tracked_covered": 8607, "tracked_total": 8936}, {"timestamp": 1774214488901, "segment": "cli-install coverage efficiency", "run": 4, "commit": "197124a", "est_covered": 13297, "est_total": 15593, "est_pct": 85.3, "tracked_modules": 14, "tracked_covered": 8638, "tracked_total": 8936}, {"timestamp": 1774214939898, "segment": "cli-meta coverage efficiency", "run": 1, "commit": "97d7a37", "est_covered": 13320, "est_total": 15593, "est_pct": 85.4, "tracked_modules": 15, "tracked_covered": 8821, "tracked_total": 9165}, {"timestamp": 1774215241988, "segment": "cli-meta coverage efficiency", "run": 2, "commit": "50b3a32", "est_covered": 13364, "est_total": 15593, "est_pct": 85.7, "tracked_modules": 15, "tracked_covered": 8865, "tracked_total": 9165}, {"timestamp": 1774215504854, "segment": "cli-meta coverage efficiency", "run": 3, "commit": "68c11c1", "est_covered": 13366, "est_total": 15593, "est_pct": 85.7, "tracked_modules": 15, "tracked_covered": 8867, "tracked_total": 9165}, {"timestamp": 1774215846764, "segment": "cli-query coverage efficiency", "run": 1, "commit": "b2234ca", "est_covered": 13354, "est_total": 15593, "est_pct": 85.6, "tracked_modules": 16, "tracked_covered": 9056, "tracked_total": 9452}, {"timestamp": 1774216187823, "segment": "cli-query coverage efficiency", "run": 2, "commit": "7ec4306", "est_covered": 13447, "est_total": 15593, "est_pct": 86.2, "tracked_modules": 16, "tracked_covered": 9149, "tracked_total": 9452}, {"timestamp": 1774216495312, "segment": "cli-query coverage efficiency", "run": 3, "commit": "5599599", "est_covered": 13452, "est_total": 15593, "est_pct": 86.3, "tracked_modules": 16, "tracked_covered": 9154, "tracked_total": 9452}, {"timestamp": 1774216765980, "segment": "cli-peek coverage efficiency", "run": 1, "commit": "ebf48f6", "est_covered": 13434, "est_total": 15593, "est_pct": 86.2, "tracked_modules": 17, "tracked_covered": 9286, "tracked_total": 9666}, {"timestamp": 1774217163014, "segment": "cli-peek coverage efficiency", "run": 2, "commit": "5528451", "est_covered": 13504, "est_total": 15593, "est_pct": 86.6, "tracked_modules": 17, "tracked_covered": 9356, "tracked_total": 9666}, {"timestamp": 1774218041521, "segment": "cli-peek coverage efficiency", "run": 4, "commit": "2945e9e", "est_covered": 13516, "est_total": 15593, "est_pct": 86.7, "tracked_modules": 17, "tracked_covered": 9368, "tracked_total": 9666}, {"timestamp": 1774218364140, "segment": "cli-tool-search coverage efficiency", "run": 1, "commit": "cb23529", "est_covered": 13554, "est_total": 15593, "est_pct": 86.9, "tracked_modules": 18, "tracked_covered": 9516, "tracked_total": 9823}, {"timestamp": 1774218622858, "segment": "cli-tool-search coverage efficiency", "run": 2, "commit": "54582e9", "est_covered": 13563, "est_total": 15593, "est_pct": 87.0, "tracked_modules": 18, "tracked_covered": 9525, "tracked_total": 9823}, {"timestamp": 1774218922731, "segment": "cli-upgrade coverage efficiency", "run": 1, "commit": "18ee727", "est_covered": 13542, "est_total": 15593, "est_pct": 86.8, "tracked_modules": 19, "tracked_covered": 9598, "tracked_total": 9958}, {"timestamp": 1774219194649, "segment": "cli-upgrade coverage efficiency", "run": 2, "commit": "b7aa830", "est_covered": 13595, "est_total": 15593, "est_pct": 87.2, "tracked_modules": 19, "tracked_covered": 9651, "tracked_total": 9958}, {"timestamp": 1774219468542, "segment": "cli-upgrade coverage efficiency", "run": 3, "commit": "f828c8b", "est_covered": 13604, "est_total": 15593, "est_pct": 87.2, "tracked_modules": 19, "tracked_covered": 9660, "tracked_total": 9958}, {"timestamp": 1774219743066, "segment": "cli-export coverage efficiency", "run": 1, "commit": "5ffce2f", "est_covered": 13619, "est_total": 15593, "est_pct": 87.3, "tracked_modules": 20, "tracked_covered": 9714, "tracked_total": 10013}, {"timestamp": 1774220025707, "segment": "cli-export coverage efficiency", "run": 2, "commit": "e9c20ae", "est_covered": 13620, "est_total": 15593, "est_pct": 87.3, "tracked_modules": 20, "tracked_covered": 9715, "tracked_total": 10013}, {"timestamp": 1774220794695, "segment": "cli-tags coverage efficiency", "run": 1, "commit": "c3ea9e0", "est_covered": 13680, "est_total": 15593, "est_pct": 87.7, "tracked_modules": 21, "tracked_covered": 10073, "tracked_total": 10439}, {"timestamp": 1774221131870, "segment": "cli-tags coverage efficiency", "run": 2, "commit": "ba772c9", "est_covered": 13715, "est_total": 15593, "est_pct": 88.0, "tracked_modules": 21, "tracked_covered": 10108, "tracked_total": 10439}, {"timestamp": 1774221453524, "segment": "cli-tags coverage efficiency", "run": 3, "commit": "b708063", "est_covered": 13746, "est_total": 15593, "est_pct": 88.2, "tracked_modules": 21, "tracked_covered": 10139, "tracked_total": 10439}, {"timestamp": 1774221705119, "segment": "cli-tags coverage efficiency", "run": 4, "commit": "2e8d370", "est_covered": 13748, "est_total": 15593, "est_pct": 88.2, "tracked_modules": 21, "tracked_covered": 10141, "tracked_total": 10439}, {"timestamp": 1774222219817, "segment": "cli-sessions coverage efficiency", "run": 1, "commit": "aa087c4", "est_covered": 13763, "est_total": 15593, "est_pct": 88.3, "tracked_modules": 22, "tracked_covered": 10191, "tracked_total": 10489}, {"timestamp": 1774222455926, "segment": "cli-sessions coverage efficiency", "run": 2, "commit": "ca3028a", "est_covered": 13763, "est_total": 15593, "est_pct": 88.3, "tracked_modules": 22, "tracked_covered": 10191, "tracked_total": 10489}, {"timestamp": 1774223159701, "segment": "output-format-registry coverage efficiency", "run": 1, "commit": "ee542d9", "est_covered": 13779, "est_total": 15593, "est_pct": 88.4, "tracked_modules": 23, "tracked_covered": 10243, "tracked_total": 10541}, {"timestamp": 1774223385227, "segment": "output-format-registry coverage efficiency", "run": 2, "commit": "79433a9", "est_covered": 13779, "est_total": 15593, "est_pct": 88.4, "tracked_modules": 23, "tracked_covered": 10243, "tracked_total": 10541}, {"timestamp": 1774224526108, "segment": "output-terminal-fmt coverage efficiency", "run": 1, "commit": "a3f9d63", "est_covered": 13814, "est_total": 15593, "est_pct": 88.6, "tracked_modules": 24, "tracked_covered": 10366, "tracked_total": 10666}, {"timestamp": 1774224769900, "segment": "output-terminal-fmt coverage efficiency", "run": 2, "commit": "38b8588", "est_covered": 13816, "est_total": 15593, "est_pct": 88.6, "tracked_modules": 24, "tracked_covered": 10368, "tracked_total": 10666}, {"timestamp": 1774225016247, "segment": "output-terminal-fmt coverage efficiency", "run": 3, "commit": "7068345", "est_covered": 13816, "est_total": 15593, "est_pct": 88.6, "tracked_modules": 24, "tracked_covered": 10368, "tracked_total": 10666}, {"timestamp": 1774226246586, "segment": "output-painted-bridge coverage efficiency", "run": 1, "commit": "1309e90", "est_covered": 13927, "est_total": 15593, "est_pct": 89.3, "tracked_modules": 25, "tracked_covered": 10740, "tracked_total": 11040}, {"timestamp": 1774226465074, "segment": "output-painted-bridge coverage efficiency", "run": 2, "commit": "5a1478d", "est_covered": 13927, "est_total": 15593, "est_pct": 89.3, "tracked_modules": 25, "tracked_covered": 10740, "tracked_total": 11040}, {"timestamp": 1774226734024, "segment": "output-narrative coverage efficiency", "run": 1, "commit": "39c616b", "est_covered": 13948, "est_total": 15593, "est_pct": 89.5, "tracked_modules": 26, "tracked_covered": 10859, "tracked_total": 11179}, {"timestamp": 1774227004993, "segment": "output-narrative coverage efficiency", "run": 2, "commit": "e2b53fd", "est_covered": 13968, "est_total": 15593, "est_pct": 89.6, "tracked_modules": 26, "tracked_covered": 10879, "tracked_total": 11179}, {"timestamp": 1774227252146, "segment": "output-narrative coverage efficiency", "run": 3, "commit": "305a0b5", "est_covered": 13968, "est_total": 15593, "est_pct": 89.6, "tracked_modules": 26, "tracked_covered": 10879, "tracked_total": 11179}, {"timestamp": 1774228455795, "segment": "api-resources coverage efficiency", "run": 1, "commit": "a994047", "est_covered": 13989, "est_total": 15593, "est_pct": 89.7, "tracked_modules": 27, "tracked_covered": 10948, "tracked_total": 11248}, {"timestamp": 1774228681908, "segment": "api-resources coverage efficiency", "run": 2, "commit": "2b67a64", "est_covered": 13989, "est_total": 15593, "est_pct": 89.7, "tracked_modules": 27, "tracked_covered": 10948, "tracked_total": 11248}, {"timestamp": 1774229071947, "segment": "api-auth coverage efficiency", "run": 1, "commit": "058417b", "est_covered": 13998, "est_total": 15593, "est_pct": 89.8, "tracked_modules": 28, "tracked_covered": 10978, "tracked_total": 11278}, {"timestamp": 1774230052900, "segment": "api-auth coverage efficiency", "run": 4, "commit": "98036c3", "est_covered": 13998, "est_total": 15593, "est_pct": 89.8, "tracked_modules": 28, "tracked_covered": 10978, "tracked_total": 11278}, {"timestamp": 1774230478719, "segment": "api-file-refs coverage efficiency", "run": 1, "commit": "eeb10e7", "est_covered": 14013, "est_total": 15593, "est_pct": 89.9, "tracked_modules": 29, "tracked_covered": 11027, "tracked_total": 11327}, {"timestamp": 1774230695701, "segment": "api-file-refs coverage efficiency", "run": 2, "commit": "36bd9f6", "est_covered": 14013, "est_total": 15593, "est_pct": 89.9, "tracked_modules": 29, "tracked_covered": 11027, "tracked_total": 11327}, {"timestamp": 1774231058071, "segment": "api-file-refs coverage efficiency", "run": 3, "commit": "92031b8", "est_covered": 14013, "est_total": 15593, "est_pct": 89.9, "tracked_modules": 29, "tracked_covered": 11027, "tracked_total": 11327}, {"timestamp": 1774231364464, "segment": "api-search coverage efficiency", "run": 1, "commit": "ca2308e", "est_covered": 14014, "est_total": 15593, "est_pct": 89.9, "tracked_modules": 30, "tracked_covered": 11137, "tracked_total": 11482}, {"timestamp": 1774231616773, "segment": "api-search coverage efficiency", "run": 2, "commit": "39bdbe8", "est_covered": 14056, "est_total": 15593, "est_pct": 90.1, "tracked_modules": 30, "tracked_covered": 11179, "tracked_total": 11482}, {"timestamp": 1774231864398, "segment": "api-search coverage efficiency", "run": 3, "commit": "079e81f", "est_covered": 14059, "est_total": 15593, "est_pct": 90.2, "tracked_modules": 30, "tracked_covered": 11182, "tracked_total": 11482}, {"timestamp": 1774232232530, "segment": "api-search coverage efficiency", "run": 5, "commit": "6908842", "est_covered": 14059, "est_total": 15593, "est_pct": 90.2, "tracked_modules": 30, "tracked_covered": 11182, "tracked_total": 11482}, {"timestamp": 1774232490938, "segment": "output-painted-bridge cleanup coverage efficiency", "run": 1, "commit": "829ced6", "est_covered": 14169, "est_total": 15593, "est_pct": 90.9, "tracked_modules": 31, "tracked_covered": 11554, "tracked_total": 11856}, {"timestamp": 1774233701084, "segment": "api-stats coverage efficiency", "run": 1, "commit": "d19f979", "est_covered": 14239, "est_total": 15593, "est_pct": 91.3, "tracked_modules": 32, "tracked_covered": 11786, "tracked_total": 12088}, {"timestamp": 1774233915000, "segment": "api-stats coverage efficiency", "run": 2, "commit": "205960c", "est_covered": 14239, "est_total": 15593, "est_pct": 91.3, "tracked_modules": 32, "tracked_covered": 11786, "tracked_total": 12088}, {"timestamp": 1774234133499, "segment": "api-stats coverage efficiency", "run": 3, "commit": "f71210b", "est_covered": 14239, "est_total": 15593, "est_pct": 91.3, "tracked_modules": 32, "tracked_covered": 11786, "tracked_total": 12088}, {"timestamp": 1774234640157, "segment": "api-tags coverage efficiency", "run": 1, "commit": "c03dd55", "est_covered": 14261, "est_total": 15593, "est_pct": 91.5, "tracked_modules": 33, "tracked_covered": 11859, "tracked_total": 12161}, {"timestamp": 1774234839019, "segment": "api-tags coverage efficiency", "run": 2, "commit": "751bf98", "est_covered": 14261, "est_total": 15593, "est_pct": 91.5, "tracked_modules": 33, "tracked_covered": 11859, "tracked_total": 12161}, {"timestamp": 1774235139120, "segment": "api-migrations coverage efficiency", "run": 1, "commit": "45249a3", "est_covered": 14265, "est_total": 15593, "est_pct": 91.5, "tracked_modules": 34, "tracked_covered": 11874, "tracked_total": 12176}, {"timestamp": 1774235372506, "segment": "api-migrations coverage efficiency", "run": 2, "commit": "e7505c9", "est_covered": 14265, "est_total": 15593, "est_pct": 91.5, "tracked_modules": 34, "tracked_covered": 11874, "tracked_total": 12176}, {"timestamp": 1774235867589, "segment": "api-conversations coverage efficiency", "run": 1, "commit": "0b7300f", "est_covered": 14393, "est_total": 15593, "est_pct": 92.3, "tracked_modules": 35, "tracked_covered": 12298, "tracked_total": 12600}, {"timestamp": 1774236338771, "segment": "api-stats stepdown coverage efficiency", "run": 1, "commit": "4696b58", "est_covered": 14462, "est_total": 15593, "est_pct": 92.7, "tracked_modules": 36, "tracked_covered": 12530, "tracked_total": 12832}, {"timestamp": 1774236554708, "segment": "api-stats stepdown coverage efficiency", "run": 2, "commit": "2faedca", "est_covered": 14462, "est_total": 15593, "est_pct": 92.7, "tracked_modules": 36, "tracked_covered": 12530, "tracked_total": 12832}, {"timestamp": 1774237467974, "segment": "api-merge coverage efficiency", "run": 1, "commit": "bacded9", "est_covered": 14502, "est_total": 15593, "est_pct": 93.0, "tracked_modules": 37, "tracked_covered": 12664, "tracked_total": 12966}, {"timestamp": 1774237649561, "segment": "api-merge coverage efficiency", "run": 2, "commit": "696a693", "est_covered": 14502, "est_total": 15593, "est_pct": 93.0, "tracked_modules": 37, "tracked_covered": 12664, "tracked_total": 12966}, {"timestamp": 1774237912413, "segment": "api-slice coverage efficiency", "run": 1, "commit": "13657c5", "est_covered": 14523, "est_total": 15593, "est_pct": 93.1, "tracked_modules": 38, "tracked_covered": 12734, "tracked_total": 13036}, {"timestamp": 1774238091302, "segment": "api-slice coverage efficiency", "run": 2, "commit": "6d11d32", "est_covered": 14523, "est_total": 15593, "est_pct": 93.1, "tracked_modules": 38, "tracked_covered": 12734, "tracked_total": 13036}, {"timestamp": 1774238463032, "segment": "api-export coverage efficiency", "run": 1, "commit": "1aa0216", "est_covered": 14543, "est_total": 15593, "est_pct": 93.3, "tracked_modules": 39, "tracked_covered": 12800, "tracked_total": 13102}, {"timestamp": 1774238855423, "segment": "api-sessions coverage efficiency", "run": 1, "commit": "883e900", "est_covered": 14548, "est_total": 15593, "est_pct": 93.3, "tracked_modules": 40, "tracked_covered": 12817, "tracked_total": 13119}, {"timestamp": 1774239018578, "segment": "api-sessions coverage efficiency", "run": 2, "commit": "b12c6ee", "est_covered": 14548, "est_total": 15593, "est_pct": 93.3, "tracked_modules": 40, "tracked_covered": 12817, "tracked_total": 13119}, {"timestamp": 1774239226493, "segment": "api-adapters coverage efficiency", "run": 1, "commit": "aa942b5", "est_covered": 14556, "est_total": 15593, "est_pct": 93.3, "tracked_modules": 41, "tracked_covered": 12846, "tracked_total": 13149}, {"timestamp": 1774239394848, "segment": "api-adapters coverage efficiency", "run": 2, "commit": "3cb78b7", "est_covered": 14557, "est_total": 15593, "est_pct": 93.4, "tracked_modules": 41, "tracked_covered": 12847, "tracked_total": 13149}, {"timestamp": 1774239561389, "segment": "api-adapters coverage efficiency", "run": 3, "commit": "861fd98", "est_covered": 14557, "est_total": 15593, "est_pct": 93.4, "tracked_modules": 41, "tracked_covered": 12847, "tracked_total": 13149}, {"timestamp": 1774239759050, "segment": "api-init coverage efficiency", "run": 1, "commit": "5f5700d", "est_covered": 14565, "est_total": 15593, "est_pct": 93.4, "tracked_modules": 42, "tracked_covered": 12872, "tracked_total": 13174}, {"timestamp": 1774240011090, "segment": "adapters-jsonl coverage efficiency", "run": 1, "commit": "32fe4a6", "est_covered": 14571, "est_total": 15593, "est_pct": 93.4, "tracked_modules": 43, "tracked_covered": 12893, "tracked_total": 13195}, {"timestamp": 1774240193498, "segment": "adapters-registry coverage efficiency", "run": 1, "commit": "4aed43c", "est_covered": 14582, "est_total": 15593, "est_pct": 93.5, "tracked_modules": 44, "tracked_covered": 12928, "tracked_total": 13230}, {"timestamp": 1774240375619, "segment": "adapters-registry coverage efficiency", "run": 2, "commit": "b6e70db", "est_covered": 14582, "est_total": 15593, "est_pct": 93.5, "tracked_modules": 44, "tracked_covered": 12928, "tracked_total": 13230}, {"timestamp": 1774240580643, "segment": "model-names coverage efficiency", "run": 1, "commit": "b2db3ae", "est_covered": 14594, "est_total": 15593, "est_pct": 93.6, "tracked_modules": 45, "tracked_covered": 12969, "tracked_total": 13271}, {"timestamp": 1774240766320, "segment": "model-names coverage efficiency", "run": 2, "commit": "d175965", "est_covered": 14594, "est_total": 15593, "est_pct": 93.6, "tracked_modules": 45, "tracked_covered": 12969, "tracked_total": 13271}, {"timestamp": 1774240968768, "segment": "adapters-aider coverage efficiency", "run": 1, "commit": "d72431b", "est_covered": 14640, "est_total": 15593, "est_pct": 93.9, "tracked_modules": 46, "tracked_covered": 13124, "tracked_total": 13427}, {"timestamp": 1774241158591, "segment": "adapters-aider coverage efficiency", "run": 2, "commit": "cc69fd0", "est_covered": 14641, "est_total": 15593, "est_pct": 93.9, "tracked_modules": 46, "tracked_covered": 13125, "tracked_total": 13427}, {"timestamp": 1774241611541, "segment": "adapters-claude-code coverage efficiency", "run": 1, "commit": "e7ad4cf", "est_covered": 14685, "est_total": 15593, "est_pct": 94.2, "tracked_modules": 47, "tracked_covered": 13272, "tracked_total": 13574}, {"timestamp": 1774241847689, "segment": "adapters-opencode coverage efficiency", "run": 1, "commit": "ee6642b", "est_covered": 14737, "est_total": 15593, "est_pct": 94.5, "tracked_modules": 48, "tracked_covered": 13446, "tracked_total": 13748}, {"timestamp": 1774272821240, "segment": "adapters-pi-agent coverage efficiency", "run": 2, "commit": "13c35d3", "est_covered": 14783, "est_total": 15593, "est_pct": 94.8, "tracked_modules": 49, "tracked_covered": 13600, "tracked_total": 13902}, {"timestamp": 1774272985448, "segment": "adapters-pi-agent coverage efficiency", "run": 3, "commit": "a0434d6", "est_covered": 14783, "est_total": 15593, "est_pct": 94.8, "tracked_modules": 49, "tracked_covered": 13600, "tracked_total": 13902}, {"timestamp": 1774273239570, "segment": "adapters-sdk coverage efficiency", "run": 1, "commit": "cb2f20d", "est_covered": 14882, "est_total": 15593, "est_pct": 95.4, "tracked_modules": 50, "tracked_covered": 13928, "tracked_total": 14230}, {"timestamp": 1774273603430, "segment": "tool-query coverage efficiency", "run": 1, "commit": "8299252", "est_covered": 14906, "est_total": 15593, "est_pct": 95.6, "tracked_modules": 51, "tracked_covered": 14008, "tracked_total": 14310}, {"timestamp": 1774273880952, "segment": "peek-reader coverage efficiency", "run": 1, "commit": "c065dca", "est_covered": 14954, "est_total": 15593, "est_pct": 95.9, "tracked_modules": 52, "tracked_covered": 14170, "tracked_total": 14472}, {"timestamp": 1774274068650, "segment": "peek-reader coverage efficiency", "run": 2, "commit": "f723706", "est_covered": 14954, "est_total": 15593, "est_pct": 95.9, "tracked_modules": 52, "tracked_covered": 14170, "tracked_total": 14472}, {"timestamp": 1774274372565, "segment": "doctor-freelist coverage efficiency", "run": 1, "commit": "cc41a21", "est_covered": 14960, "est_total": 15593, "est_pct": 95.9, "tracked_modules": 53, "tracked_covered": 14189, "tracked_total": 14491}, {"timestamp": 1774274664533, "segment": "doctor-freelist coverage efficiency", "run": 2, "commit": "624cd69", "est_covered": 14960, "est_total": 15593, "est_pct": 95.9, "tracked_modules": 53, "tracked_covered": 14189, "tracked_total": 14491}, {"timestamp": 1774275839062, "segment": "serve-client coverage efficiency", "run": 1, "commit": "a5a622d", "est_covered": 14974, "est_total": 15593, "est_pct": 96.0, "tracked_modules": 54, "tracked_covered": 14260, "tracked_total": 14572}, {"timestamp": 1774276127724, "segment": "serve-client coverage efficiency", "run": 2, "commit": "f354bb6", "est_covered": 14984, "est_total": 15593, "est_pct": 96.1, "tracked_modules": 54, "tracked_covered": 14270, "tracked_total": 14572}, {"timestamp": 1774276633007, "segment": "serve-delegation coverage efficiency", "run": 1, "commit": "a074c29", "est_covered": 15001, "est_total": 15593, "est_pct": 96.2, "tracked_modules": 55, "tracked_covered": 14378, "tracked_total": 14702}, {"timestamp": 1774276919123, "segment": "serve-delegation coverage efficiency", "run": 2, "commit": "a95ea55", "est_covered": 15021, "est_total": 15593, "est_pct": 96.3, "tracked_modules": 55, "tracked_covered": 14398, "tracked_total": 14702}, {"timestamp": 1774277125642, "segment": "serve-delegation coverage efficiency", "run": 3, "commit": "7d11776", "est_covered": 15023, "est_total": 15593, "est_pct": 96.3, "tracked_modules": 55, "tracked_covered": 14400, "tracked_total": 14702}, {"timestamp": 1774278283180, "segment": "serve-delegation coverage efficiency", "run": 6, "commit": "8de0880", "est_covered": 15023, "est_total": 15593, "est_pct": 96.3, "tracked_modules": 55, "tracked_covered": 14400, "tracked_total": 14702}, {"timestamp": 1774278711398, "segment": "serve-auth coverage efficiency", "run": 1, "commit": "89a8b32", "est_covered": 15006, "est_total": 15593, "est_pct": 96.2, "tracked_modules": 56, "tracked_covered": 14442, "tracked_total": 14786}, {"timestamp": 1774279009929, "segment": "serve-auth coverage efficiency", "run": 2, "commit": "1a30afe", "est_covered": 15048, "est_total": 15593, "est_pct": 96.5, "tracked_modules": 56, "tracked_covered": 14484, "tracked_total": 14786}, {"timestamp": 1774279251728, "segment": "serve-auth coverage efficiency", "run": 3, "commit": "49015c2", "est_covered": 15048, "est_total": 15593, "est_pct": 96.5, "tracked_modules": 56, "tracked_covered": 14484, "tracked_total": 14786}, {"timestamp": 1774279579923, "segment": "serve-routes coverage efficiency", "run": 1, "commit": "c518201", "est_covered": 14987, "est_total": 15593, "est_pct": 96.1, "tracked_modules": 57, "tracked_covered": 14552, "tracked_total": 14971}, {"timestamp": 1774279943909, "segment": "serve-routes coverage efficiency", "run": 2, "commit": "27ad39e", "est_covered": 15065, "est_total": 15593, "est_pct": 96.6, "tracked_modules": 57, "tracked_covered": 14630, "tracked_total": 14971}, {"timestamp": 1774280316391, "segment": "serve-routes coverage efficiency", "run": 3, "commit": "82430a3", "est_covered": 15102, "est_total": 15593, "est_pct": 96.9, "tracked_modules": 57, "tracked_covered": 14667, "tracked_total": 14971}, {"timestamp": 1774280558471, "segment": "serve-routes coverage efficiency", "run": 4, "commit": "eeaab18", "est_covered": 15104, "est_total": 15593, "est_pct": 96.9, "tracked_modules": 57, "tracked_covered": 14669, "tracked_total": 14971}, {"timestamp": 1774280780194, "segment": "serve-routes coverage efficiency", "run": 5, "commit": "4a03c8a", "est_covered": 15104, "est_total": 15593, "est_pct": 96.9, "tracked_modules": 57, "tracked_covered": 14669, "tracked_total": 14971}]
-;
-
-function drawProjectTimeline(data) {
-  const canvas = document.getElementById('project-timeline');
-  const dpr = window.devicePixelRatio || 1;
-  const rect = canvas.parentElement.getBoundingClientRect();
-  const W = rect.width;
-  const H = 200;
-  canvas.width = W * dpr;
-  canvas.height = H * dpr;
-  canvas.style.width = W + 'px';
-  canvas.style.height = H + 'px';
-
-  const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
-
-  const pad = { top: 20, right: 20, bottom: 30, left: 55 };
-  const cw = W - pad.left - pad.right;
-  const ch = H - pad.top - pad.bottom;
-
-  if (!data.length) return;
-
-  const minV = 0, maxV = 100, rangeV = 100;
-  function xFor(i) { return pad.left + (i / (data.length - 1 || 1)) * cw; }
-  function yFor(v) { return pad.top + ch - ((v - minV) / rangeV) * ch; }
-
-  ctx.clearRect(0, 0, W, H);
-
-  // Grid
-  ctx.strokeStyle = '#21262d';
-  ctx.lineWidth = 1;
-  for (let pct = 0; pct <= 100; pct += 20) {
-    const y = yFor(pct);
-    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
-    ctx.fillStyle = '#484f58';
-    ctx.font = '10px SF Mono, Menlo, monospace';
-    ctx.textAlign = 'right';
-    ctx.fillText(pct + '%', pad.left - 8, y + 3);
+async function readFromHandle() {
+  if (fileHandle) {
+    const file = await fileHandle.getFile();
+    return await file.text();
   }
-
-  // Segment boundaries
-  let lastSeg = null;
-  const segBounds = [];
-  for (let i = 0; i < data.length; i++) {
-    if (data[i].segment !== lastSeg) {
-      if (lastSeg !== null) segBounds.push(i);
-      lastSeg = data[i].segment;
-    }
-  }
-  ctx.setLineDash([4, 4]);
-  ctx.strokeStyle = '#30363d';
-  for (const bi of segBounds) {
-    const x = xFor(bi);
-    ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + ch); ctx.stroke();
-  }
-  ctx.setLineDash([]);
-
-  // Area fill for estimated total coverage
-  ctx.beginPath();
-  ctx.moveTo(xFor(0), yFor(0));
-  for (let i = 0; i < data.length; i++) {
-    ctx.lineTo(xFor(i), yFor(data[i].est_pct));
-  }
-  ctx.lineTo(xFor(data.length - 1), yFor(0));
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(88, 166, 255, 0.08)';
-  ctx.fill();
-
-  // Line: estimated total coverage
-  ctx.beginPath();
-  ctx.strokeStyle = '#58a6ff';
-  ctx.lineWidth = 2;
-  for (let i = 0; i < data.length; i++) {
-    const x = xFor(i), y = yFor(data[i].est_pct);
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-
-  // Line: tracked module coverage (tracked_covered / tracked_total * 100)
-  ctx.beginPath();
-  ctx.strokeStyle = '#3fb950';
-  ctx.lineWidth = 1.5;
-  for (let i = 0; i < data.length; i++) {
-    const pct = data[i].tracked_total > 0 ? (data[i].tracked_covered / data[i].tracked_total * 100) : 0;
-    const x = xFor(i), y = yFor(pct);
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-
-  // Dots on the blue line
-  const dotPositions = [];
-  for (let i = 0; i < data.length; i++) {
-    const x = xFor(i), y = yFor(data[i].est_pct);
-    ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = '#58a6ff'; ctx.fill();
-    dotPositions.push({ x, y, idx: i });
-  }
-
-  // X-axis labels (segment names, sparse)
-  ctx.fillStyle = '#484f58';
-  ctx.font = '9px SF Mono, Menlo, monospace';
-  ctx.textAlign = 'center';
-  const labelEvery = Math.max(1, Math.floor(data.length / 12));
-  for (let i = 0; i < data.length; i += labelEvery) {
-    ctx.fillText((i + 1).toString(), xFor(i), H - pad.bottom + 14);
-  }
-
-  // Store for hover
-  canvas._dotPositions = dotPositions;
-  canvas._data = data;
-}
-
-// Hover for project chart
-const projCanvas = document.getElementById('project-timeline');
-const projTooltip = document.getElementById('project-tooltip');
-
-projCanvas.addEventListener('mousemove', (e) => {
-  const rect = projCanvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-  const dots = projCanvas._dotPositions || [];
-  const data = projCanvas._data || [];
-
-  let closest = null, closestDist = 25;
-  for (const d of dots) {
-    const dist = Math.sqrt((d.x - mx) ** 2 + (d.y - my) ** 2);
-    if (dist < closestDist) { closest = d; closestDist = dist; }
-  }
-
-  if (closest) {
-    const p = data[closest.idx];
-    const trackedPct = p.tracked_total > 0 ? (p.tracked_covered / p.tracked_total * 100).toFixed(1) : '0';
-    projTooltip.style.display = 'block';
-    projTooltip.style.left = (closest.x + 12) + 'px';
-    projTooltip.style.top = (closest.y - 10) + 'px';
-    projTooltip.innerHTML = `
-      <div style="color:#e6edf3;font-weight:600;margin-bottom:3px">${p.segment}</div>
-      <div style="color:#58a6ff">Est. project coverage: <b>${p.est_pct}%</b> (${p.est_covered}/${p.est_total})</div>
-      <div style="color:#3fb950">Tracked modules: <b>${trackedPct}%</b> (${p.tracked_covered}/${p.tracked_total} in ${p.tracked_modules} modules)</div>
-    `;
-    const tr = projTooltip.getBoundingClientRect();
-    const cr = projCanvas.parentElement.getBoundingClientRect();
-    if (tr.right > cr.right) projTooltip.style.left = (closest.x - tr.width - 8) + 'px';
-  } else {
-    projTooltip.style.display = 'none';
-  }
-});
-projCanvas.addEventListener('mouseleave', () => { projTooltip.style.display = 'none'; });
-
-drawProjectTimeline(PROJECT_DATA);
-window.addEventListener('resize', () => drawProjectTimeline(PROJECT_DATA));
-
-// --- Per-segment timeline chart ---
-let currentTimelineMetric = 'coverage';
-
-function buildTimeline(segments) {
-  // Flatten all runs in order, tagging with segment name and boundary indices
-  const points = [];
-  const boundaries = []; // indices where segments change
-  for (const seg of segments) {
-    if (seg.runs.length === 0) continue;
-    boundaries.push(points.length);
-    for (const r of seg.runs) {
-      points.push({ ...r, segName: seg.name });
-    }
-  }
-  return { points, boundaries };
-}
-
-function getMetricValue(point, metric) {
-  const m = point.metrics || {};
-  switch (metric) {
-    case 'coverage': return m.coverage_pct;
-    case 'miss': return m.miss;
-    case 'loc': return m.test_loc;
-    case 'efficiency': return (point.metric != null && point.metric < 500) ? point.metric : null;
+  if (fallbackFile) {
+    return await fallbackFile.text();
   }
   return null;
 }
 
-function getMetricLabel(metric) {
-  return { coverage: 'Coverage %', miss: 'Lines missing', loc: 'Test LOC', efficiency: 'Efficiency' }[metric] || metric;
-}
+async function loadAndRender() {
+  const text = await readFromHandle();
+  if (!text) return;
+  const lines = text.trim().split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
+  const segments = parseSegments(lines);
+  const projData = buildProjectTimeline(lines);
 
-function drawTimeline(segments, metric) {
-  const canvas = document.getElementById('timeline');
-  const dpr = window.devicePixelRatio || 1;
-  const rect = canvas.parentElement.getBoundingClientRect();
-  const W = rect.width;
-  const H = 220;
-  canvas.width = W * dpr;
-  canvas.height = H * dpr;
-  canvas.style.width = W + 'px';
-  canvas.style.height = H + 'px';
+  document.getElementById('loader').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+  document.getElementById('subtitle').innerHTML =
+    `${segments.length} segments &middot; ${segments.reduce((s,g)=>s+g.runs.length,0)} runs &middot; <span style="color:#58a6ff">${fileHandle ? fileHandle.name : (fallbackFile?.name || 'autoresearch.jsonl')}</span>`;
 
-  const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
+  renderSegs(segments);
+  drawProject(projData);
+  drawSegChart(segments, curMetric);
 
-  const pad = { top: 20, right: 20, bottom: 30, left: 55 };
-  const cw = W - pad.left - pad.right;
-  const ch = H - pad.top - pad.bottom;
-
-  const { points, boundaries } = buildTimeline(segments);
-  if (points.length === 0) return;
-
-  // Extract values
-  const vals = points.map(p => getMetricValue(p, metric));
-  const validVals = vals.filter(v => v != null);
-  if (validVals.length === 0) return;
-
-  let minV = Math.min(...validVals);
-  let maxV = Math.max(...validVals);
-  if (minV === maxV) { minV -= 1; maxV += 1; }
-  // For coverage, anchor to 0-100
-  if (metric === 'coverage') { minV = Math.min(minV, 0); maxV = 100; }
-  // For miss, invert is more intuitive but keep natural for now
-  const rangeV = maxV - minV || 1;
-
-  function xFor(i) { return pad.left + (i / (points.length - 1 || 1)) * cw; }
-  function yFor(v) { return pad.top + ch - ((v - minV) / rangeV) * ch; }
-
-  // Clear
-  ctx.clearRect(0, 0, W, H);
-
-  // Grid lines
-  ctx.strokeStyle = '#21262d';
-  ctx.lineWidth = 1;
-  const gridSteps = 5;
-  for (let i = 0; i <= gridSteps; i++) {
-    const v = minV + (rangeV / gridSteps) * i;
-    const y = yFor(v);
-    ctx.beginPath();
-    ctx.moveTo(pad.left, y);
-    ctx.lineTo(W - pad.right, y);
-    ctx.stroke();
-    // Label
-    ctx.fillStyle = '#484f58';
-    ctx.font = '10px SF Mono, Menlo, monospace';
-    ctx.textAlign = 'right';
-    ctx.fillText(metric === 'efficiency' ? v.toFixed(1) : Math.round(v).toString(), pad.left - 8, y + 3);
-  }
-
-  // Segment boundaries
-  ctx.setLineDash([4, 4]);
-  ctx.strokeStyle = '#30363d';
-  ctx.lineWidth = 1;
-  for (const bi of boundaries) {
-    if (bi === 0) continue;
-    const x = xFor(bi);
-    ctx.beginPath();
-    ctx.moveTo(x, pad.top);
-    ctx.lineTo(x, pad.top + ch);
-    ctx.stroke();
-  }
-  ctx.setLineDash([]);
-
-  // Connect line (only between non-null consecutive)
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = '#30363d';
-  ctx.beginPath();
-  let started = false;
-  for (let i = 0; i < points.length; i++) {
-    const v = vals[i];
-    if (v == null) { started = false; continue; }
-    const x = xFor(i);
-    const y = yFor(v);
-    if (!started) { ctx.moveTo(x, y); started = true; }
-    else { ctx.lineTo(x, y); }
-  }
-  ctx.stroke();
-
-  // Dots
-  const statusColors = { keep: '#3fb950', discard: '#f85149', crash: '#d29922', checks_failed: '#d29922' };
-  const dotPositions = []; // for hover
-  for (let i = 0; i < points.length; i++) {
-    const v = vals[i];
-    if (v == null) { dotPositions.push(null); continue; }
-    const x = xFor(i);
-    const y = yFor(v);
-    const color = statusColors[points[i].status] || '#7d8590';
-    ctx.beginPath();
-    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.fill();
-    dotPositions.push({ x, y, idx: i });
-  }
-
-  // X-axis: run index labels (sparse)
-  ctx.fillStyle = '#484f58';
-  ctx.font = '10px SF Mono, Menlo, monospace';
-  ctx.textAlign = 'center';
-  const labelEvery = Math.max(1, Math.floor(points.length / 15));
-  for (let i = 0; i < points.length; i += labelEvery) {
-    ctx.fillText(i + 1, xFor(i), H - pad.bottom + 16);
-  }
-
-  // Store for hover
-  canvas._dotPositions = dotPositions;
-  canvas._points = points;
-  canvas._metric = metric;
-}
-
-// Hover tooltip
-const timelineCanvas = document.getElementById('timeline');
-const tooltip = document.getElementById('timeline-tooltip');
-
-timelineCanvas.addEventListener('mousemove', (e) => {
-  const rect = timelineCanvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-  const dots = timelineCanvas._dotPositions || [];
-  const points = timelineCanvas._points || [];
-  const metric = timelineCanvas._metric || 'coverage';
-
-  let closest = null;
-  let closestDist = 20; // max pixel distance
-  for (const d of dots) {
-    if (!d) continue;
-    const dist = Math.sqrt((d.x - mx) ** 2 + (d.y - my) ** 2);
-    if (dist < closestDist) { closest = d; closestDist = dist; }
-  }
-
-  if (closest) {
-    const p = points[closest.idx];
-    const m = p.metrics || {};
-    const val = getMetricValue(p, metric);
-    tooltip.style.display = 'block';
-    tooltip.style.left = (closest.x + 12) + 'px';
-    tooltip.style.top = (closest.y - 10) + 'px';
-    tooltip.innerHTML = `
-      <div style="color:#e6edf3;font-weight:600;margin-bottom:3px">${p.segName}</div>
-      <div>run #${p.run} · <span style="color:${({keep:'#3fb950',discard:'#f85149',crash:'#d29922',checks_failed:'#d29922'})[p.status]||'#7d8590'}">${p.status}</span></div>
-      <div style="margin-top:3px">
-        ${getMetricLabel(metric)}: <b>${val != null ? (metric === 'efficiency' ? val.toFixed(2) : val) : '—'}</b>
-      </div>
-      <div style="color:#7d8590">cov ${m.coverage_pct ?? '—'}% · miss ${m.miss ?? '—'} · ${m.test_loc ?? '—'} loc · ${m.test_time_s ?? '—'}s</div>
-    `;
-    // Keep tooltip in bounds
-    const tr = tooltip.getBoundingClientRect();
-    const cr = timelineCanvas.parentElement.getBoundingClientRect();
-    if (tr.right > cr.right) tooltip.style.left = (closest.x - tr.width - 8) + 'px';
-  } else {
-    tooltip.style.display = 'none';
-  }
-});
-
-timelineCanvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
-
-// Tab switching
-document.querySelectorAll('.timeline-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.timeline-tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    currentTimelineMetric = tab.dataset.metric;
-    drawTimeline(segments, currentTimelineMetric);
+  document.querySelectorAll('.timeline-tab').forEach(tab => {
+    tab.onclick = () => {
+      document.querySelectorAll('.timeline-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      curMetric = tab.dataset.metric;
+      drawSegChart(segments, curMetric);
+    };
   });
-});
 
-// Initial draw + resize
-drawTimeline(segments, currentTimelineMetric);
-window.addEventListener('resize', () => drawTimeline(segments, currentTimelineMetric));
+  document.getElementById('filter').oninput = () => renderSegs(segments);
+  document.getElementById('hideComplete').onchange = () => renderSegs(segments);
+  document.getElementById('collapseAll').onchange = () => renderSegs(segments);
+  window.onresize = () => { drawProject(projData); drawSegChart(segments, curMetric); };
+}
+
+async function pickFile() {
+  // Try File System Access API first (Chrome/Edge) — gives us a persistent handle
+  if (window.showOpenFilePicker) {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: 'JSONL', accept: { 'application/jsonl': ['.jsonl', '.json'] } }],
+      });
+      fileHandle = handle;
+      fallbackFile = null;
+      await loadAndRender();
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return; // user cancelled
+      // Fall through to legacy input
+    }
+  }
+  // Fallback: click the hidden file input
+  document.getElementById('file-input').click();
+}
+
+// Reload: re-read from the same handle (gets fresh bytes from disk)
+document.getElementById('reload-btn').onclick = () => loadAndRender();
+
+// Drop zone
+const dz = document.getElementById('drop-zone');
+dz.onclick = () => pickFile();
+
+document.getElementById('file-input').onchange = async (e) => {
+  if (e.target.files[0]) {
+    fallbackFile = e.target.files[0];
+    fileHandle = null;
+    await loadAndRender();
+  }
+};
+
+dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag-over'); };
+dz.ondragleave = () => dz.classList.remove('drag-over');
+dz.ondrop = async e => {
+  e.preventDefault(); dz.classList.remove('drag-over');
+  // Try to get handle from DataTransfer (Chrome 86+)
+  if (e.dataTransfer.items?.[0]?.getAsFileSystemHandle) {
+    fileHandle = await e.dataTransfer.items[0].getAsFileSystemHandle();
+    fallbackFile = null;
+  } else if (e.dataTransfer.files[0]) {
+    fallbackFile = e.dataTransfer.files[0];
+    fileHandle = null;
+  }
+  await loadAndRender();
+};
 </script>
 </body>
 </html>

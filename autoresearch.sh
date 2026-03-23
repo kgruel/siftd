@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# adapters.gemini_cli coverage efficiency benchmark
+# backfill coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.adapters.gemini_cli"
-TARGET_FILE="src/siftd/adapters/gemini_cli.py"
-TEST_FILES="tests/adapters/test_gemini_cli.py"
+INCLUDE_ARGS="--cov=siftd.backfill"
+TARGET_FILE="src/siftd/backfill.py"
+TEST_FILES="tests/test_backfill.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"
