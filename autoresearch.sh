@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# API adapters coverage efficiency benchmark
+# API package __init__ coverage efficiency benchmark
 
-INCLUDE_ARGS="--cov=siftd.api.adapters"
-TARGET_FILE="src/siftd/api/adapters.py"
-TEST_FILES="tests/test_api_adapters_edges.py"
+INCLUDE_ARGS="--cov=siftd.api"
+TARGET_FILE="src/siftd/api/__init__.py"
+TEST_FILES="tests/test_api_init_edges.py"
 
 for f in $TEST_FILES; do
     uv run python -c "import py_compile; py_compile.compile('$f', doraise=True)"

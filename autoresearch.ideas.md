@@ -30,6 +30,7 @@
 - `api/slice.py` (70/70) — missing-source + FK-guard branches covered with focused lane; step-down pass completed (to 0.07).
 - `api/export.py` (66/66) — default-fidelity branch covered with focused lane; step-down attempt was flat at metric floor (discarded).
 - `api/sessions.py` (17/17) — wrapper gap closed; step-down pass completed (to 0.17).
+- `api/adapters.py` (30/30) — final entrypoint loop branch covered; focused lane currently at step-down 0.11.
 - `output/painted_bridge.py` (372/374) — cleanup attempt confirmed flat metric at current benchmark floor; remaining 2 lines still appear structurally unreachable (`if not parts` after unconditional header append).
 
 ## Pruned stale ideas
@@ -40,13 +41,12 @@
 
 ## Highest ROI next targets
 
-### 1) `api/adapters.py`
-- Single residual line in `list_builtin_adapters()` return path.
-- Focused lane: `tests/test_api_adapters_edges.py`.
-
-### 2) `api/__init__.py`
+### 1) `api/__init__.py`
 - One missing defensive branch in `__getattr__` unknown-symbol error path.
 - Focused lane: `tests/test_api_init_edges.py`.
+
+### 2) Remaining non-100 probe after API saturation
+- Re-probe full package to choose next unsaturated deterministic target once `api/__init__.py` is closed.
 
 ### 3) `output/painted_bridge.py` documentation/closure pass
 - Remaining miss lines likely structurally unreachable; document and de-prioritize unless new evidence appears.
