@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test.sh
-# DESC: Run tests (excluding embeddings)
+# DESC: Run tests (excluding slow)
 # Usage: ./dev test [-v]
 # Dependencies: uv, pytest
 # Idempotent: Yes
@@ -10,7 +10,7 @@ usage() {
     cli_usage <<EOF
 Usage: ./dev test [-v]
 
-Run pytest excluding embedding tests.
+Run pytest excluding slow tests.
 
 Options:
   -v, --verbose  Show verbose test output
@@ -33,12 +33,12 @@ main() {
     cd "$DEV_ROOT"
 
     if [ $verbose -eq 1 ]; then
-        uv run pytest tests/ -v --tb=short -m "not embeddings and not serve and not slow"
+        uv run pytest tests/ -v --tb=short -m "not slow"
     else
         # Quiet mode: minimal output, details only on failure
-        log_info "Running tests (excluding embeddings)..."
+        log_info "Running tests (excluding slow)..."
         set +e
-        output=$(uv run pytest tests/ -q --tb=line -m "not embeddings and not serve and not slow" 2>&1)
+        output=$(uv run pytest tests/ -q --tb=line -m "not slow" 2>&1)
         status=$?
         set -e
         if [ $status -ne 0 ]; then

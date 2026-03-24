@@ -37,9 +37,12 @@ def require_write(request) -> None:
     """
     from litestar.exceptions import PermissionDeniedException
 
-    user = getattr(request, "user", None)
+    try:
+        user = request.user
+    except Exception:
+        return  # No auth middleware installed — allow all
     if user is None or user.sub == "anonymous":
-        return  # No auth configured — allow all
+        return  # Anonymous bypass — allow all
 
     if not _write_scopes:
         return  # No write scopes configured — writes unrestricted
