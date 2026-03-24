@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-03-24
+
+### Fixed
+
+- **Homebrew install broken** — `cryptography` (transitive dep via asyncssh) failed to build from source. Formula now includes `rust` and `openssl@3` as build dependencies
+- **Write routes crash without auth** — `require_write()` crashed when no auth middleware installed (Litestar `Request.user` raises instead of returning None)
+- **`dev check` hid serve test failures** — Test scope widened from `not embeddings and not serve` to `not slow`
+
 ## [0.6.0] - 2026-03-24
 
 ### Added
