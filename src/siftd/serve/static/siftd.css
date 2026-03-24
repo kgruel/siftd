@@ -1261,6 +1261,99 @@ body.compact .stat-value {
   font-size: 1.3em;
 }
 
+/* --- Auth --- */
+
+#siftd-login {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+  min-height: 200px;
+  font-family: var(--sans);
+  text-align: center;
+  color: var(--fg-secondary);
+}
+
+#siftd-login .login-icon {
+  font-size: 2em;
+  margin-bottom: var(--space-md);
+  opacity: 0.4;
+}
+
+#siftd-login h3 {
+  margin: 0 0 var(--space-xs);
+  color: var(--fg);
+  font-weight: 600;
+  font-size: 1.1em;
+}
+
+#siftd-login p {
+  margin: 0 0 var(--space-lg);
+  font-size: 0.85em;
+}
+
+#siftd-login form {
+  display: flex;
+  gap: var(--space-sm);
+  width: 100%;
+  max-width: 360px;
+}
+
+.login-input {
+  flex: 1;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 0.9em;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.login-input:focus {
+  border-color: var(--accent);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--accent-dim);
+  outline: none;
+}
+
+.login-btn {
+  background: var(--accent-dim);
+  color: var(--fg);
+  border: 1px solid var(--accent-dim);
+  padding: var(--space-xs) var(--space-md);
+  border-radius: var(--radius-sm);
+  font-family: var(--sans);
+  font-size: 0.85em;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+}
+
+.login-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.nav-auth-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--fg-secondary);
+  font-family: var(--sans);
+  font-size: 0.8em;
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.nav-auth-btn:hover {
+  color: var(--fg);
+  border-color: var(--border-active);
+}
+
 /* --- Responsive: narrow viewport --- */
 
 @media (max-width: 768px) {

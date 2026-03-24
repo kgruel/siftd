@@ -22,3 +22,22 @@ def test_create_app_with_auth_adds_middleware_and_dependencies(monkeypatch, tmp_
     app = serve_app.create_app(db_path=db, auth_config={"issuer": "https://idp"}, fts_rebuild="scheduled")
     assert app.middleware == [marker]
     assert (asyncio.run(app.dependencies["db_path"].dependency()), asyncio.run(app.dependencies["fts_rebuild"].dependency())) == (db, "scheduled")
+
+
+def test_ui_shell_public_but_data_routes_require_auth(tmp_path):
+    """When auth is enabled, /ui (shell) is public but /ui/query returns 401."""
+    from litestar.testing import TestClient
+
+    from siftd.storage.sqlite import create_database
+
+    db = tmp_path / "team.db"
+    create_database(db)
+    auth_config = {"issuer": "https://example.com", "audience": "siftd"}
+    app = serve_app.create_app(db_path=db, auth_config=auth_config)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        # Shell is public (no_auth)
+        assert client.get("/ui").status_code == 200
+        # Data routes require auth
+        assert client.get("/ui/query").status_code == 401
+        assert client.get("/ui/stats").status_code == 401
+        assert client.get("/ui/search").status_code == 401

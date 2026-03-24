@@ -39,28 +39,10 @@ class TestDelegationEnabled:
         with patch("siftd.config.get_config", side_effect=fake_get):
             assert delegation_enabled() is False
 
-    def test_deprecated_search_serve_delegate_still_works(self, monkeypatch):
+    def test_defaults_true_when_no_config(self, monkeypatch):
         monkeypatch.delenv("SIFTD_SERVE_DELEGATE", raising=False)
         with patch("siftd.config.get_config") as mock_cfg:
-            def fake_get(key):
-                if key == "serve.delegate":
-                    return None
-                if key == "search.serve_delegate":
-                    return "false"
-                return None
-            mock_cfg.side_effect = fake_get
-            assert delegation_enabled() is False
-
-    def test_serve_delegate_overrides_search_serve_delegate(self, monkeypatch):
-        monkeypatch.delenv("SIFTD_SERVE_DELEGATE", raising=False)
-        with patch("siftd.config.get_config") as mock_cfg:
-            def fake_get(key):
-                if key == "serve.delegate":
-                    return "true"
-                if key == "search.serve_delegate":
-                    return "false"
-                return None
-            mock_cfg.side_effect = fake_get
+            mock_cfg.return_value = None
             assert delegation_enabled() is True
 
 

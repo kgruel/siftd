@@ -23,6 +23,8 @@ class _SchemaEntry(NamedTuple):
     pattern: str
     expected: str
     validator: Callable[[object], bool]
+    description: str = ""
+    default: str = ""
 
 
 def _is_str(value: object) -> bool:
@@ -56,29 +58,56 @@ def _is_str_list(value: object) -> bool:
 
 
 _CONFIG_SCHEMA: list[_SchemaEntry] = [
-    _SchemaEntry("db.path", "string", _is_str),
-    _SchemaEntry("search.formatter", "string", _is_str),
-    _SchemaEntry("search.serve_delegate", "bool", _is_bool_like),
-    _SchemaEntry("tools.limit", "int", _is_int_like),
-    _SchemaEntry("query.limit", "int", _is_int_like),
-    _SchemaEntry("query.chars", "int", _is_int_like),
-    _SchemaEntry("query.tool_chars", "int", _is_int_like),
-    _SchemaEntry("ingestion.filter_binary", "bool", _is_bool_like),
-    _SchemaEntry("serve.delegate", "bool", _is_bool_like),
-    _SchemaEntry("serve.url", "string", _is_str),
-    _SchemaEntry("serve.db", "string", _is_str),
-    _SchemaEntry("serve.host", "string", _is_str),
-    _SchemaEntry("serve.port", "int", _is_int_like),
-    _SchemaEntry("serve.fts_rebuild", "string", _is_str),
-    _SchemaEntry("adapters.*.locations", "list[string]", _is_str_list),
-    _SchemaEntry("sync.ssh.options", "list[string]", _is_str_list),
-    _SchemaEntry("sync.ssh.connect_timeout_s", "int", _is_int_like),
-    _SchemaEntry("sync.remotes.*.host", "string", _is_str),
-    _SchemaEntry("sync.remotes.*.path", "string", _is_str),
-    _SchemaEntry("sync.remotes.*.last_push", "string", _is_str),
-    _SchemaEntry("sync.remotes.*.last_pull", "string", _is_str),
-    _SchemaEntry("sync.remotes.*.ssh.options", "list[string]", _is_str_list),
-    _SchemaEntry("update.check", "bool", _is_bool_like),
+    # Database
+    _SchemaEntry("db.path", "string", _is_str,
+                 "Override default database path", "~/.local/share/siftd/siftd.db"),
+    # Tools
+    _SchemaEntry("tools.limit", "int", _is_int_like,
+                 "Default result limit for tool-search", "20"),
+    # Query
+    _SchemaEntry("query.limit", "int", _is_int_like,
+                 "Default conversation list limit", "20"),
+    _SchemaEntry("query.chars", "int", _is_int_like,
+                 "Max characters per turn in list view", "200"),
+    _SchemaEntry("query.tool_chars", "int", _is_int_like,
+                 "Max characters for tool content in detail view", "120"),
+    # Ingestion
+    _SchemaEntry("ingestion.filter_binary", "bool", _is_bool_like,
+                 "Skip binary content blobs during ingest", "true"),
+    # Serve
+    _SchemaEntry("serve.delegate", "bool", _is_bool_like,
+                 "CLI delegates read ops to running serve instance", "true"),
+    _SchemaEntry("serve.url", "string", _is_str,
+                 "Explicit serve URL for delegation (skips auto-discovery)", ""),
+    _SchemaEntry("serve.db", "string", _is_str,
+                 "Database path for serve (overrides db.path)", ""),
+    _SchemaEntry("serve.host", "string", _is_str,
+                 "Bind address", "0.0.0.0"),
+    _SchemaEntry("serve.port", "int", _is_int_like,
+                 "Listen port", "8484"),
+    _SchemaEntry("serve.fts_rebuild", "string", _is_str,
+                 "When to rebuild FTS index: on_push, scheduled, off", "on_push"),
+    # Adapters
+    _SchemaEntry("adapters.*.locations", "list[string]", _is_str_list,
+                 "Override discovery paths for a specific adapter", ""),
+    # Sync
+    _SchemaEntry("sync.ssh.options", "list[string]", _is_str_list,
+                 "Extra SSH options passed to asyncssh connect", ""),
+    _SchemaEntry("sync.ssh.connect_timeout_s", "int", _is_int_like,
+                 "SSH connection timeout in seconds", "10"),
+    _SchemaEntry("sync.remotes.*.host", "string", _is_str,
+                 "SSH host for a named remote", ""),
+    _SchemaEntry("sync.remotes.*.path", "string", _is_str,
+                 "Remote database path", ""),
+    _SchemaEntry("sync.remotes.*.last_push", "string", _is_str,
+                 "Timestamp of last push (managed by siftd)", ""),
+    _SchemaEntry("sync.remotes.*.last_pull", "string", _is_str,
+                 "Timestamp of last pull (managed by siftd)", ""),
+    _SchemaEntry("sync.remotes.*.ssh.options", "list[string]", _is_str_list,
+                 "Per-remote SSH options (overrides sync.ssh.options)", ""),
+    # Update
+    _SchemaEntry("update.check", "bool", _is_bool_like,
+                 "Check PyPI for updates after commands (24h interval)", "true"),
 ]
 
 
@@ -311,22 +340,6 @@ def remove_config_list(key: str, value: str) -> bool:
     path.write_text(tomlkit.dumps(doc))
     return True
 
-
-def get_search_defaults() -> dict:
-    """Get default values for 'siftd search' command from config.
-
-    Returns dict with keys matching argparse attribute names.
-    Only includes values that are set in config.
-    """
-    doc = load_config()
-    defaults = {}
-
-    search_config = doc.get("search", {})
-    if isinstance(search_config, dict):
-        if "formatter" in search_config:
-            defaults["format"] = str(search_config["formatter"])
-
-    return defaults
 
 
 def get_query_defaults() -> dict:

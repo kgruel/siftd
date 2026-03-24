@@ -12,7 +12,6 @@ from siftd.cli.search import (
     _enrich_context,
     _enrich_exchanges,
     _fetch_search_metadata,
-    _has_explicit_formatter,
     _print_empty_json_results,
     _search_build_index,
     _search_fts_only,
@@ -66,10 +65,6 @@ def make_args(**kwargs):
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
 
-
-def test_has_explicit_formatter():
-    assert _has_explicit_formatter(make_args(json=True))
-    assert not _has_explicit_formatter(make_args())
 
 
 def test_search_missing_db(tmp_path, capsys):

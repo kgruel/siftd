@@ -7,7 +7,6 @@ import tomlkit
 
 from siftd import config as cfg
 from siftd.cli._common import apply_config_defaults
-from siftd.cli.search import _has_explicit_formatter
 from siftd.config import (
     _coerce_value,
     _ensure_parent_table,
@@ -24,7 +23,6 @@ from siftd.config import (
     get_config,
     get_ingestion_filter_binary,
     get_query_defaults,
-    get_search_defaults,
     get_ssh_options,
     get_sync_remote,
     get_sync_remotes,
@@ -80,7 +78,7 @@ class TestSchema:
     def test_is_str_list(self, val, expected):
         assert _is_str_list(val) is expected
 
-    @pytest.mark.parametrize("key,typ", [("search.formatter", "string"), (_L, "list[string]")])
+    @pytest.mark.parametrize("key,typ", [("serve.host", "string"), (_L, "list[string]")])
     def test_match(self, key, typ):
         assert _match_schema(key).expected == typ
 
@@ -88,8 +86,8 @@ class TestSchema:
         assert _match_schema("totally.unknown.deep.key") is None
 
     def test_iter_config_items(self):
-        keys = [k for k, _ in _iter_config_items({"search": {"formatter": "json"}})]
-        assert "search" in keys and "search.formatter" in keys
+        keys = [k for k, _ in _iter_config_items({"serve": {"host": "0.0.0.0"}})]
+        assert "serve" in keys and "serve.host" in keys
         assert list(_iter_config_items("not a dict")) == []
 
     def test_validate_warns(self, capsys):
@@ -99,7 +97,7 @@ class TestSchema:
         assert "Unknown config key" in err and "expects int" in err
 
     def test_validate_clean(self, capsys):
-        _validate_config(tomlkit.parse('[search]\nformatter = "verbose"\n'))
+        _validate_config(tomlkit.parse('[serve]\nhost = "0.0.0.0"\n'))
         assert capsys.readouterr().err == ""
 
     def test_ensure_parent(self):
@@ -118,31 +116,31 @@ class TestSchema:
 class TestConfigCRUD:
     def test_load(self, config_dir, capsys):
         assert len(load_config()) == 0
-        _w(config_dir, '[search]\nformatter = "verbose"\n')
-        assert load_config()["search"]["formatter"] == "verbose"
+        _w(config_dir, '[serve]\nhost = "localhost"\n')
+        assert load_config()["serve"]["host"] == "localhost"
         _w(config_dir, "invalid [ toml")
         assert len(load_config()) == 0
         assert "Warning" in capsys.readouterr().err
 
     @pytest.mark.parametrize("key,expected", [
-        ("search.formatter", "json"), ("search.nonexistent", None),
-        ("nonexistent.key", None), ("search", None), (_L, None),
+        ("serve.host", "localhost"), ("serve.nonexistent", None),
+        ("nonexistent.key", None), ("serve", None), (_L, None),
     ])
     def test_get(self, config_dir, key, expected):
-        _w(config_dir, '[adapters.claude_code]\nlocations = ["/a"]\n[search]\nformatter = "json"\n')
+        _w(config_dir, '[adapters.claude_code]\nlocations = ["/a"]\n[serve]\nhost = "localhost"\n')
         assert get_config(key) == expected
 
     def test_set(self, config_dir):
-        set_config("search.formatter", "verbose")
-        assert "verbose" in (config_dir / "config.toml").read_text()
-        set_config("search.formatter", "json")
-        assert get_config("search.formatter") == "json"
+        set_config("serve.host", "localhost")
+        assert "localhost" in (config_dir / "config.toml").read_text()
+        set_config("serve.host", "0.0.0.0")
+        assert get_config("serve.host") == "0.0.0.0"
 
     def test_set_preserves_comments(self, config_dir):
-        _w(config_dir, '# My config\n[search]\nformatter = "json"\n')
+        _w(config_dir, '# My config\n[serve]\nhost = "localhost"\n')
         set_config("query.limit", "20")
         content = (config_dir / "config.toml").read_text()
-        assert "# My config" in content and "json" in content
+        assert "# My config" in content and "localhost" in content
 
     def test_set_rejects_unknown(self, config_dir):
         with pytest.raises(ValueError, match="Unknown config key"):
@@ -150,8 +148,8 @@ class TestConfigCRUD:
 
     def test_set_corrupt_recovery(self, config_dir):
         _w(config_dir, "invalid [ toml")
-        set_config("search.formatter", "json")
-        assert get_config("search.formatter") == "json"
+        set_config("serve.host", "localhost")
+        assert get_config("serve.host") == "localhost"
 
     @pytest.mark.parametrize("val,expected", [
         ("true", True), ("TRUE", True), ("false", False), ("FALSE", False),
@@ -165,8 +163,8 @@ class TestConfigCRUD:
         assert load_config()["ingestion"]["filter_binary"] is False
         set_config("ingestion.filter_binary", "true")
         assert load_config()["ingestion"]["filter_binary"] is True
-        set_config("search.formatter", "verbose")
-        assert isinstance(load_config()["search"]["formatter"], str)
+        set_config("serve.host", "localhost")
+        assert isinstance(load_config()["serve"]["host"], str)
 
 
 class TestConfigListOps:
@@ -192,9 +190,9 @@ class TestConfigListOps:
 
     @pytest.mark.parametrize("fn", [append_config_list, remove_config_list])
     def test_non_list_raises(self, config_dir, fn):
-        _w(config_dir, '[search]\nformatter = "json"\n')
+        _w(config_dir, '[serve]\nhost = "localhost"\n')
         with pytest.raises(ValueError):
-            fn("search.formatter", "x")
+            fn("serve.host", "x")
 
     @pytest.mark.parametrize("setup", [None, "invalid [ toml", "[search]\n", "[adapters.claude_code]\n"])
     def test_remove_returns_false(self, config_dir, setup):
@@ -204,11 +202,6 @@ class TestConfigListOps:
 
 
 class TestDefaultsAndLookups:
-    def test_search_defaults(self, config_dir):
-        assert get_search_defaults() == {}
-        _w(config_dir, '[search]\nformatter = "thread"\n')
-        assert get_search_defaults() == {"format": "thread"}
-
     def test_query_defaults(self, config_dir):
         assert get_query_defaults() == {}
         _w(config_dir, "[query]\nlimit = 25\nchars = 300\ntool_chars = 80\n")
@@ -281,7 +274,7 @@ class TestSyncRemotes:
         assert get_sync_remote("fresh") is not None
 
     @pytest.mark.parametrize("setup", [
-        None, "invalid [ toml", '[search]\nformatter = "json"\n', "[sync]\n",
+        None, "invalid [ toml", '[serve]\nhost = "localhost"\n', "[sync]\n",
     ])
     def test_remove_error_paths(self, config_dir, setup):
         if setup is not None:
@@ -305,7 +298,7 @@ class TestSyncRemotes:
 
     @pytest.mark.parametrize("fn_name", ["update_last_push", "update_last_pull"])
     @pytest.mark.parametrize("setup", [
-        '[search]\nformatter = "json"\n', "[sync]\n", "invalid [ toml",
+        '[serve]\nhost = "localhost"\n', "[sync]\n", "invalid [ toml",
     ])
     def test_timestamp_error_paths(self, config_dir, fn_name, setup):
         _w(config_dir, setup)
@@ -363,16 +356,3 @@ class TestCLIConfigIntegration:
         apply_config_defaults(args, get_tools_defaults, {"limit": 20})
         assert args.limit == 10
 
-    def _sa(self, **kw):
-        base = dict(format=None, json=False, verbose=False, full=False,
-                    thread=False, context=None, conversations=False)
-        return argparse.Namespace(**{**base, **kw})
-
-    @pytest.mark.parametrize("kw,expected", [
-        ({}, "verbose"), ({"json": True}, None), ({"format": "json"}, "json"),
-    ])
-    def test_search_formatter(self, config_dir, kw, expected):
-        _w(config_dir, '[search]\nformatter = "verbose"\n')
-        args = self._sa(**kw)
-        apply_config_defaults(args, get_search_defaults, skip_if=_has_explicit_formatter)
-        assert args.format == expected

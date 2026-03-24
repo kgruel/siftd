@@ -664,12 +664,97 @@ def generate_cli_docs() -> str:
 
 
 # =============================================================================
+# Config Reference Generation
+# =============================================================================
+
+
+def generate_config_docs() -> str:
+    """Generate config reference documentation from _CONFIG_SCHEMA."""
+    from siftd.config import _CONFIG_SCHEMA
+
+    lines = [
+        "# Configuration Reference",
+        "",
+        "_Auto-generated from `src/siftd/config.py`._",
+        "",
+        "Config file: `~/.config/siftd/config.toml`",
+        "",
+        "Set values with `siftd config set <key> <value>` or edit the file directly.",
+        "",
+        "The `[serve.auth]` section is a TOML table (not a flat key) — edit the file directly.",
+        "",
+    ]
+
+    # Group by top-level section
+    sections: dict[str, list] = {}
+    for entry in _CONFIG_SCHEMA:
+        section = entry.pattern.split(".")[0]
+        sections.setdefault(section, []).append(entry)
+
+    for section, entries in sections.items():
+        lines.append(f"## [{section}]")
+        lines.append("")
+        lines.append("| Key | Type | Default | Description |")
+        lines.append("|-----|------|---------|-------------|")
+
+        for entry in entries:
+            key = entry.pattern
+            default = f"`{entry.default}`" if entry.default else "—"
+            lines.append(
+                f"| `{key}` | {entry.expected} | {default} | {escape_pipe(entry.description)} |"
+            )
+
+        lines.append("")
+
+    # Document auth section separately (not in _CONFIG_SCHEMA since it's a table)
+    lines.extend([
+        "## [serve.auth]",
+        "",
+        "Authentication for `siftd serve`. Omit this section to disable auth.",
+        "Use `--no-auth` flag to skip even when configured.",
+        "",
+        "### Static token (simplest)",
+        "",
+        "```toml",
+        "[serve.auth]",
+        'static_token = "your-secret-token"',
+        'identity = "username"  # optional, defaults to "local"',
+        "```",
+        "",
+        "Supports `env:VAR_NAME` syntax: `static_token = \"env:SIFTD_TOKEN\"`",
+        "",
+        "### OIDC (JWT)",
+        "",
+        "```toml",
+        "[serve.auth]",
+        'issuer = "https://your-idp.example.com"',
+        'audience = "siftd"          # optional, defaults to "siftd"',
+        'identity_claim = "email"    # optional, defaults to "sub"',
+        '# jwks_url = "..."         # optional, auto-discovered from issuer',
+        "```",
+        "",
+        "### Token introspection (RFC 7662)",
+        "",
+        "```toml",
+        "[serve.auth]",
+        'introspection_url = "https://your-idp.example.com/introspect"',
+        'client_id = "siftd"',
+        'client_secret = "env:SIFTD_CLIENT_SECRET"',
+        'identity_claim = "username"  # optional, defaults to "username"',
+        "```",
+        "",
+    ])
+
+    return "\n".join(lines)
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
 
 def main() -> None:
-    targets = sys.argv[1:] if len(sys.argv) > 1 else ["cli", "api", "schema"]
+    targets = sys.argv[1:] if len(sys.argv) > 1 else ["cli", "api", "schema", "config"]
 
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -689,6 +774,12 @@ def main() -> None:
         elif target == "schema":
             content = generate_schema_docs()
             out_path = DOCS_DIR / "schema.md"
+            out_path.write_text(content)
+            print(f"Generated: {out_path}")
+
+        elif target == "config":
+            content = generate_config_docs()
+            out_path = DOCS_DIR / "config.md"
             out_path.write_text(content)
             print(f"Generated: {out_path}")
 

@@ -170,6 +170,46 @@ document.body.addEventListener('htmx:afterSettle', function() {{
   if (window.Prism) Prism.highlightAll();
 }});
 </script>
+<script>
+(function() {{
+  var token = sessionStorage.getItem('siftd_token');
+  if (token) {{
+    document.body.setAttribute('hx-headers',
+      JSON.stringify({{"Authorization": "Bearer " + token}}));
+    htmx.process(document.body);
+    var btn = document.createElement('button');
+    btn.className = 'nav-auth-btn';
+    btn.textContent = 'Sign out';
+    btn.onclick = function() {{
+      sessionStorage.removeItem('siftd_token');
+      location.reload();
+    }};
+    document.querySelector('nav').appendChild(btn);
+  }}
+
+  document.body.addEventListener('htmx:responseError', function(e) {{
+    if (e.detail.xhr.status !== 401) return;
+    if (document.getElementById('siftd-login')) return;
+    document.getElementById('list').innerHTML =
+      '<div id="siftd-login">' +
+      '<div class="login-icon">&#x1f512;</div>' +
+      '<h3>Sign in to siftd</h3>' +
+      '<p>Enter a bearer token to authenticate.</p>' +
+      '<form onsubmit="return siftdLogin(this)">' +
+      '<input type="password" name="token" placeholder="Bearer token" autofocus ' +
+      'class="login-input">' +
+      '<button type="submit" class="login-btn">Sign in</button>' +
+      '</form></div>';
+    document.getElementById('detail').innerHTML = '';
+  }});
+
+  window.siftdLogin = function(form) {{
+    sessionStorage.setItem('siftd_token', form.token.value);
+    location.reload();
+    return false;
+  }};
+}})();
+</script>
 </body>
 </html>"""
 
@@ -198,7 +238,7 @@ async def ui_shell(
 # ---------------------------------------------------------------------------
 
 
-@get("/ui/meta", opt={"no_auth": True})
+@get("/ui/meta")
 async def ui_meta(db_path: Path) -> Response:
     """Return filter dropdowns populated from the database."""
     from html import escape
@@ -265,7 +305,7 @@ async def ui_meta(db_path: Path) -> Response:
     return _html_response("".join(parts))
 
 
-@get("/ui/query", opt={"no_auth": True})
+@get("/ui/query")
 async def ui_query(
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
@@ -361,7 +401,7 @@ async def ui_query(
     return _html_response(dispatch(op, fmt=fmt))
 
 
-@get("/ui/search", opt={"no_auth": True})
+@get("/ui/search")
 async def ui_search(
     db_path: Path,
     q: str = Parameter(query="q", default=""),
@@ -471,7 +511,7 @@ async def ui_search(
 # ---------------------------------------------------------------------------
 
 
-@get("/ui/peek", opt={"no_auth": True})
+@get("/ui/peek")
 async def ui_peek() -> Response:
     """List active sessions as HTML — the entry point for follow mode."""
     from html import escape
@@ -512,7 +552,7 @@ async def ui_peek() -> Response:
     return _html_response("\n".join(parts))
 
 
-@get("/ui/follow", opt={"no_auth": True})
+@get("/ui/follow")
 async def ui_follow(
     sid: str = Parameter(query="sid", default=""),
     poll: bool = Parameter(query="poll", default=False),
@@ -596,7 +636,7 @@ async def ui_follow(
 # ---------------------------------------------------------------------------
 
 
-@get("/ui/stats", opt={"no_auth": True})
+@get("/ui/stats")
 async def ui_stats(db_path: Path) -> Response:
     """Render cost/token dashboard as HTML fragment."""
     from siftd.api.dispatch import Operation, execute
@@ -660,7 +700,7 @@ async def ui_stats(db_path: Path) -> Response:
 # ---------------------------------------------------------------------------
 
 
-@get("/ui/tools", opt={"no_auth": True})
+@get("/ui/tools")
 async def ui_tools(
     db_path: Path,
     q: str = Parameter(query="q", default=""),
@@ -754,7 +794,7 @@ async def ui_tools(
 # ---------------------------------------------------------------------------
 
 
-@post("/ui/tag", opt={"no_auth": True})
+@post("/ui/tag")
 async def ui_tag(request: Request, db_path: Path) -> Response:
     """Apply or remove a tag, return updated tag section fragment."""
     from siftd.api.tags import modify_conversation_tag
@@ -777,7 +817,7 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
     ))
 
 
-@get("/ui/tags/suggest", opt={"no_auth": True})
+@get("/ui/tags/suggest")
 async def ui_tags_suggest(
     db_path: Path,
     tag: str = Parameter(query="tag", default=""),
@@ -802,7 +842,7 @@ async def ui_tags_suggest(
 # ---------------------------------------------------------------------------
 
 
-@get("/ui/export", opt={"no_auth": True})
+@get("/ui/export")
 async def ui_export(
     db_path: Path,
     id: str = Parameter(query="id", default=""),

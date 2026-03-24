@@ -26,8 +26,7 @@ def _parse_bool_like(value: str | None) -> bool | None:
 def delegation_enabled() -> bool:
     """Check if serve delegation is enabled.
 
-    Precedence: SIFTD_SERVE_DELEGATE env > serve.delegate config
-    > search.serve_delegate config (deprecated) > default True.
+    Precedence: SIFTD_SERVE_DELEGATE env > serve.delegate config > default True.
     """
     env = _parse_bool_like(os.environ.get("SIFTD_SERVE_DELEGATE"))
     if env is not None:
@@ -38,13 +37,7 @@ def delegation_enabled() -> bool:
     except Exception:
         return True
 
-    # New general key
     cfg = _parse_bool_like(get_config("serve.delegate"))
-    if cfg is not None:
-        return cfg
-
-    # Deprecated per-command key (backward compat)
-    cfg = _parse_bool_like(get_config("search.serve_delegate"))
     return True if cfg is None else cfg
 
 

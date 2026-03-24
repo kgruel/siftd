@@ -39,10 +39,14 @@ def cmd_serve(args) -> int:
     port = int(getattr(args, "port", None) or get_config("serve.port") or 8484)
     fts_rebuild = str(get_config("serve.fts_rebuild") or "on_push")
 
-    # Auth config
+    # Auth config — load_config() returns the full TOML document;
+    # get_config() flattens dicts to None, so we read the section directly.
     auth_config = None
     if not args.no_auth:
-        auth_section = get_config("serve.auth")
+        from siftd.config import load_config
+
+        doc = load_config()
+        auth_section = doc.get("serve", {}).get("auth")
         if isinstance(auth_section, dict):
             auth_config = dict(auth_section)
 

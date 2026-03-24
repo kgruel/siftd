@@ -1,9 +1,11 @@
 """Authentication middleware for siftd serve.
 
-Supports two modes:
+Supports three modes:
+- static_token: Compare against a configured secret (local dev/testing)
 - OIDC: JWT validation against a configurable issuer's JWKS
 - Introspection: RFC 7662 token introspection
-- None (no auth): all requests pass through
+
+When no auth_config is provided, middleware is not installed.
 """
 
 from __future__ import annotations
@@ -52,7 +54,9 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
 
             token = auth_header[7:]
 
-            if "issuer" in self._config:
+            if "static_token" in self._config:
+                identity = self._validate_static(token)
+            elif "issuer" in self._config:
                 identity = await self._validate_oidc(token)
             elif "introspection_url" in self._config:
                 identity = await self._validate_introspection(token)
@@ -60,6 +64,21 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
                 raise NotAuthorizedException("No auth mode configured")
 
             return AuthenticationResult(user=identity, auth=token)
+
+        def _validate_static(self, token: str) -> UserIdentity:
+            """Compare token against a configured static secret."""
+            import hmac
+
+            expected = self._config["static_token"]
+            # Resolve env: prefix
+            if expected.startswith("env:"):
+                import os
+
+                expected = os.environ.get(expected[4:], "")
+
+            if not hmac.compare_digest(token, expected):
+                raise NotAuthorizedException("Invalid token")
+            return UserIdentity(sub=self._config.get("identity", "local"))
 
         async def _validate_oidc(self, token: str) -> UserIdentity:
             """Validate JWT against OIDC issuer's JWKS."""

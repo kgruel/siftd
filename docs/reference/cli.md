@@ -82,7 +82,7 @@ usage: siftd config [-h] [{get,set,path,append,remove}] [key] [value]
 positional arguments:
   {get,set,path,append,remove}
                         Action to perform
-  key                   Config key (dotted path, e.g., search.formatter)
+  key                   Config key (dotted path, e.g., serve.host)
   value                 Value to use (for 'set', 'append', 'remove')
 
 options:
@@ -91,8 +91,8 @@ options:
 examples:
   siftd config                        # show all config
   siftd config path                   # show config file path
-  siftd config get search.formatter      # get specific value
-  siftd config set search.formatter verbose  # set value
+  siftd config get serve.host             # get specific value
+  siftd config set serve.port 9090        # set value
   siftd config append adapters.claude_code.locations ~/.claude/projects
   siftd config remove adapters.claude_code.locations ~/.claude/projects
 ```

@@ -298,7 +298,7 @@ def cmd_config(args) -> int:
     if args.action == "get":
         if not args.key:
             print("Usage: siftd config get <key>")
-            print("Example: siftd config get search.formatter")
+            print("Example: siftd config get serve.host")
             return 1
         value = get_config(args.key)
         if value is None:
@@ -311,7 +311,7 @@ def cmd_config(args) -> int:
     if args.action == "set":
         if not args.key or not args.value:
             print("Usage: siftd config set <key> <value>")
-            print("Example: siftd config set search.formatter verbose")
+            print("Example: siftd config set serve.port 9090")
             return 1
         try:
             set_config(args.key, args.value)
@@ -419,8 +419,8 @@ def build_meta_parser(subparsers) -> None:
         epilog="""examples:
   siftd config                        # show all config
   siftd config path                   # show config file path
-  siftd config get search.formatter      # get specific value
-  siftd config set search.formatter verbose  # set value
+  siftd config get serve.host             # get specific value
+  siftd config set serve.port 9090        # set value
   siftd config append adapters.claude_code.locations ~/.claude/projects
   siftd config remove adapters.claude_code.locations ~/.claude/projects""",
     )
@@ -430,7 +430,7 @@ def build_meta_parser(subparsers) -> None:
         choices=["get", "set", "path", "append", "remove"],
         help="Action to perform",
     )
-    p_config.add_argument("key", nargs="?", help="Config key (dotted path, e.g., search.formatter)")
+    p_config.add_argument("key", nargs="?", help="Config key (dotted path, e.g., serve.host)")
     p_config.add_argument(
         "value",
         nargs="?",

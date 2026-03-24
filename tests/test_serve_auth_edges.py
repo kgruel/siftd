@@ -54,6 +54,23 @@ def test_get_jwks_cache_hit_returns_cached_value():
     assert _run(mw._get_jwks()) == {"k": 1}
 
 
+def test_validate_static_token_success_and_failure():
+    MW = create_auth_middleware({"static_token": "s3cret", "identity": "tester"})
+    mw = object.__new__(MW)
+    assert mw._validate_static("s3cret").sub == "tester"
+    with pytest.raises(NotAuthorizedException, match="Invalid token"):
+        mw._validate_static("wrong")
+
+
+def test_validate_static_token_env_resolution(monkeypatch):
+    monkeypatch.setenv("MY_TOKEN", "from-env")
+    MW = create_auth_middleware({"static_token": "env:MY_TOKEN"})
+    mw = object.__new__(MW)
+    assert mw._validate_static("from-env").sub == "local"
+    with pytest.raises(NotAuthorizedException):
+        mw._validate_static("wrong")
+
+
 def test_authenticate_request_delegates_to_mode_validators(monkeypatch):
     oidc_cls = create_auth_middleware({"issuer": "https://idp"})
     oidc = object.__new__(oidc_cls)
