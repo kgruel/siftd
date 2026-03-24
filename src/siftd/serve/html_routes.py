@@ -797,6 +797,10 @@ async def ui_tools(
 @post("/tag")
 async def ui_tag(request: Request, db_path: Path) -> Response:
     """Apply or remove a tag, return updated tag section fragment."""
+    from siftd.serve.auth import require_write
+
+    require_write(request)
+
     from siftd.api.tags import modify_conversation_tag
     from siftd.output.html_fmt import render_tag_section
 

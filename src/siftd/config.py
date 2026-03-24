@@ -106,6 +106,10 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
                  "Client ID for introspection auth", ""),
     _SchemaEntry("serve.auth.client_secret", "string", _is_str,
                  "Client secret for introspection (supports env:VAR syntax)", ""),
+    _SchemaEntry("serve.auth.required_scopes", "list[string]", _is_str_list,
+                 "Scopes the token must have for any access (all-of)", ""),
+    _SchemaEntry("serve.auth.write_scopes", "list[string]", _is_str_list,
+                 "Additional scopes required for write operations (any-of)", ""),
     # Adapters
     _SchemaEntry("adapters.*.locations", "list[string]", _is_str_list,
                  "Override discovery paths for a specific adapter", ""),

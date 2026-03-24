@@ -11,7 +11,7 @@ pytestmark = pytest.mark.serve
 
 from litestar.exceptions import NotAuthorizedException
 
-from siftd.serve.auth import UserIdentity, create_auth_middleware
+from siftd.serve.auth import UserIdentity, _parse_scope_string, create_auth_middleware, require_write
 
 
 def _run(coro):
@@ -207,3 +207,87 @@ def test_get_jwks_fetch_paths(monkeypatch):
     mw2 = object.__new__(MW2)
     out2 = _run(mw2._get_jwks())
     assert out2 == {"parsed": {"keys": []}}
+
+
+# --- Scope checking ---
+
+
+def test_parse_scope_string():
+    assert _parse_scope_string(None) == frozenset()
+    assert _parse_scope_string("") == frozenset()
+    assert _parse_scope_string("read write") == frozenset({"read", "write"})
+    assert _parse_scope_string(["read", "write"]) == frozenset({"read", "write"})
+
+
+def test_required_scopes_rejects_missing():
+    MW = create_auth_middleware({"static_token": "tok", "required_scopes": ["siftd:read"]})
+    mw = object.__new__(MW)
+    # Static tokens get all configured scopes — passes
+    identity = mw._validate_static("tok")
+    assert "siftd:read" in identity.scopes
+
+    # Simulate a token with wrong scopes via introspection cache
+    MW2 = create_auth_middleware({
+        "introspection_url": "https://idp/i",
+        "required_scopes": ["siftd:read"],
+    })
+    MW2._introspection_cache = {"tok": ({"active": True, "username": "u", "scope": "other"}, time.time())}
+    mw2 = object.__new__(MW2)
+    conn = SimpleNamespace(scope={}, headers={"authorization": "Bearer tok"})
+    with pytest.raises(NotAuthorizedException, match="Missing required scopes"):
+        _run(mw2.authenticate_request(conn))
+
+
+def test_introspection_populates_scopes():
+    MW = create_auth_middleware({"introspection_url": "https://idp/i"})
+    MW._introspection_cache = {
+        "tok": ({"active": True, "username": "u", "scope": "siftd:read siftd:write"}, time.time()),
+    }
+    mw = object.__new__(MW)
+    out = _run(mw._validate_introspection("tok"))
+    assert out.scopes == frozenset({"siftd:read", "siftd:write"})
+
+
+def test_require_write_allows_anonymous():
+    """No auth configured — anonymous users can write."""
+    request = SimpleNamespace(user=UserIdentity(sub="anonymous"))
+    require_write(request)  # should not raise
+
+
+def test_require_write_allows_when_no_write_scopes_configured():
+    """Auth configured but no write_scopes — all authenticated users can write."""
+    import siftd.serve.auth as auth_mod
+    old = auth_mod._write_scopes
+    auth_mod._write_scopes = frozenset()
+    try:
+        request = SimpleNamespace(user=UserIdentity(sub="u", scopes=frozenset({"siftd:read"})))
+        require_write(request)  # should not raise
+    finally:
+        auth_mod._write_scopes = old
+
+
+def test_require_write_rejects_missing_scope():
+    """Write scopes configured — user without them gets 403."""
+    from litestar.exceptions import PermissionDeniedException
+
+    import siftd.serve.auth as auth_mod
+    old = auth_mod._write_scopes
+    auth_mod._write_scopes = frozenset({"siftd:write"})
+    try:
+        request = SimpleNamespace(user=UserIdentity(sub="u", scopes=frozenset({"siftd:read"})))
+        with pytest.raises(PermissionDeniedException, match="Insufficient scope"):
+            require_write(request)
+    finally:
+        auth_mod._write_scopes = old
+
+
+def test_require_write_allows_with_scope():
+    """User with write scope passes."""
+    import siftd.serve.auth as auth_mod
+    old = auth_mod._write_scopes
+    auth_mod._write_scopes = frozenset({"siftd:write"})
+    try:
+        request = SimpleNamespace(user=UserIdentity(sub="u", scopes=frozenset({"siftd:read", "siftd:write"})))
+        require_write(request)  # should not raise
+    finally:
+        auth_mod._write_scopes = old

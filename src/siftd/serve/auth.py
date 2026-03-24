@@ -23,6 +23,38 @@ class UserIdentity:
     """Authenticated user from token validation."""
 
     sub: str  # subject / identity string
+    scopes: frozenset[str] = frozenset()
+
+
+_write_scopes: frozenset[str] = frozenset()
+
+
+def require_write(request) -> None:
+    """Check that the authenticated user has write scopes. Raises 403 if not.
+
+    Call from write route handlers. No-op when auth is not configured
+    (user is anonymous) or no write_scopes are configured.
+    """
+    from litestar.exceptions import PermissionDeniedException
+
+    user = getattr(request, "user", None)
+    if user is None or user.sub == "anonymous":
+        return  # No auth configured — allow all
+
+    if not _write_scopes:
+        return  # No write scopes configured — writes unrestricted
+
+    if not user.scopes & _write_scopes:
+        raise PermissionDeniedException("Insufficient scope for write operation")
+
+
+def _parse_scope_string(scope_value: str | list | None) -> frozenset[str]:
+    """Parse a scope value into a frozenset — handles space-delimited string or list."""
+    if not scope_value:
+        return frozenset()
+    if isinstance(scope_value, list):
+        return frozenset(scope_value)
+    return frozenset(scope_value.split())
 
 
 def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMiddleware]:
@@ -31,6 +63,10 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
     Uses a closure because AbstractAuthenticationMiddleware.__init__ doesn't
     accept custom kwargs.
     """
+    global _write_scopes
+
+    required = frozenset(auth_config.get("required_scopes", []))
+    _write_scopes = frozenset(auth_config.get("write_scopes", []))
 
     class SiftdAuthMiddleware(AbstractAuthenticationMiddleware):
         """Bearer token authentication middleware."""
@@ -52,6 +88,15 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
             if handler and getattr(handler, "opt", {}).get("no_auth"):
                 return AuthenticationResult(user=UserIdentity(sub="anonymous"), auth=None)
 
+            # Loopback API requests bypass auth — CLI delegation on same
+            # machine has filesystem access to the DB anyway.
+            if path.startswith("/api/"):
+                client = connection.scope.get("client")
+                if client:
+                    addr = client[0] if isinstance(client, (list, tuple)) else getattr(client, "host", "")
+                    if addr in ("127.0.0.1", "::1"):
+                        return AuthenticationResult(user=UserIdentity(sub="local-cli"), auth=None)
+
             auth_header = connection.headers.get("authorization", "")
             if not auth_header.startswith("Bearer "):
                 raise NotAuthorizedException("Missing bearer token")
@@ -66,6 +111,11 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
                 identity = await self._validate_introspection(token)
             else:
                 raise NotAuthorizedException("No auth mode configured")
+
+            # Check required scopes (applies to all modes)
+            if required and not required <= identity.scopes:
+                missing = required - identity.scopes
+                raise NotAuthorizedException(f"Missing required scopes: {', '.join(sorted(missing))}")
 
             return AuthenticationResult(user=identity, auth=token)
 
@@ -82,7 +132,11 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
 
             if not hmac.compare_digest(token, expected):
                 raise NotAuthorizedException("Invalid token")
-            return UserIdentity(sub=self._config.get("identity", "local"))
+            # Static tokens get all configured scopes (full access for dev)
+            return UserIdentity(
+                sub=self._config.get("identity", "local"),
+                scopes=required | _write_scopes,
+            )
 
         async def _validate_oidc(self, token: str) -> UserIdentity:
             """Validate JWT against OIDC issuer's JWKS."""
@@ -99,7 +153,8 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
                     audience=audience,
                 )
                 return UserIdentity(
-                    sub=payload.get(identity_claim, payload.get("sub", "unknown"))
+                    sub=payload.get(identity_claim, payload.get("sub", "unknown")),
+                    scopes=_parse_scope_string(payload.get("scope")),
                 )
             except jwt.PyJWTError as e:
                 raise NotAuthorizedException(f"Invalid token: {e}") from e
@@ -113,7 +168,10 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
                 cached, cached_at = SiftdAuthMiddleware._introspection_cache[token]
                 if now - cached_at < 60:
                     identity_claim = self._config.get("identity_claim", "username")
-                    return UserIdentity(sub=cached.get(identity_claim, "unknown"))
+                    return UserIdentity(
+                        sub=cached.get(identity_claim, "unknown"),
+                        scopes=_parse_scope_string(cached.get("scope")),
+                    )
 
             url = self._config["introspection_url"]
             client_id = self._config.get("client_id", "")
@@ -141,7 +199,10 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
 
             SiftdAuthMiddleware._introspection_cache[token] = (body, now)
             identity_claim = self._config.get("identity_claim", "username")
-            return UserIdentity(sub=body.get(identity_claim, "unknown"))
+            return UserIdentity(
+                sub=body.get(identity_claim, "unknown"),
+                scopes=_parse_scope_string(body.get("scope")),
+            )
 
         async def _get_jwks(self):
             """Fetch and cache JWKS from OIDC issuer."""

@@ -168,6 +168,10 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
       old_name: str, new_name: str — for rename
       tag_name: str                — for delete
     """
+    from siftd.serve.auth import require_write
+
+    require_write(request)
+
     import json as json_mod
 
     from siftd.api.conversations import (
@@ -301,6 +305,10 @@ async def export_route(
 @post("/api/v1/push")
 async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | dict:
     """Receive a pushed slice and merge into team DB."""
+    from siftd.serve.auth import require_write
+
+    require_write(request)
+
     body = await request.body()
     if len(body) < 16:
         return Response(content={"error": "empty or invalid slice"}, status_code=400)
