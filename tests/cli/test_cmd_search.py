@@ -323,7 +323,7 @@ class TestSearchServeDelegation:
                 "breakdown": None,
             }
         ]
-        monkeypatch.setattr("siftd.cli.search._delegate_search_via_serve", lambda *a, **k: fake_results)
+        monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda *a, **k: fake_results)
 
         # If local semantic path is used, this would be called.
         import siftd.embeddings as embeddings
@@ -346,12 +346,10 @@ class TestSearchServeDelegation:
 
     def test_delegation_rejects_mismatched_db_path(self, monkeypatch, tmp_path):
         """Delegate path should reject serve instances pointing at a different DB."""
-        from siftd.cli.search import _delegate_search_via_serve
-
-        args = make_args()
+        from siftd.serve.delegation import try_delegate
 
         cli_db = tmp_path / "cli.db"
-        cli_db.write_text("")  # path existence isn't required, but keep it realistic
+        cli_db.write_text("")
         other_db = tmp_path / "other.db"
         other_db.write_text("")
 
@@ -365,17 +363,10 @@ class TestSearchServeDelegation:
         def _should_not_call_search(**_k):
             raise AssertionError("expected DB mismatch rejection before calling /v1/search")
 
-        monkeypatch.setattr("siftd.serve.client.search", _should_not_call_search)
+        monkeypatch.setattr("siftd.serve.client._get_json", _should_not_call_search)
 
-        out = _delegate_search_via_serve(
-            args,
-            query="q",
-            n=10,
-            embeddings_only=False,
-            rerank="mmr",
-            exclude_active=True,
-            db=cli_db,
-        )
+        # try_delegate should return None when serve DB doesn't match CLI DB
+        out = try_delegate("/v1/search", {"q": "test"}, db=cli_db)
         assert out is None
 
     def test_resolves_default_url_from_serve_port_config(self, monkeypatch, tmp_path):

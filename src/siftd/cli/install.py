@@ -69,12 +69,9 @@ def detect_install_method() -> str:
 
 def embed_installed() -> bool:
     """Check if embed dependencies are already installed."""
-    try:
-        import fastembed  # noqa: F401
+    from importlib.util import find_spec
 
-        return True
-    except ImportError:
-        return False
+    return find_spec("fastembed") is not None
 
 
 def _pip_cmd() -> str:
@@ -236,12 +233,9 @@ def _install_embed(args) -> int:
 
 def _serve_installed() -> bool:
     """Check if serve dependencies are already installed."""
-    try:
-        import litestar  # noqa: F401
+    from importlib.util import find_spec
 
-        return True
-    except ImportError:
-        return False
+    return find_spec("litestar") is not None
 
 
 def _install_serve(args) -> int:

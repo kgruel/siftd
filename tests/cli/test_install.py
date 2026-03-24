@@ -450,8 +450,14 @@ class TestInstallRemainingBranches:
         assert detect_install_method() == "pip_user"
 
     def test_embed_serve_import_checks(self, monkeypatch):
-        monkeypatch.setitem(__import__("sys").modules, "fastembed", object())
-        monkeypatch.setitem(__import__("sys").modules, "litestar", object())
+        """embed_installed/serve_installed return True when deps are findable."""
+        import importlib.util
+        _real = importlib.util.find_spec
+        def _mock(name, *a, **kw):
+            if name in ("fastembed", "litestar"):
+                return True  # truthy = found
+            return _real(name, *a, **kw)
+        monkeypatch.setattr(importlib.util, "find_spec", _mock)
         from siftd.cli.install import _serve_installed, embed_installed
 
         assert embed_installed()
@@ -550,11 +556,17 @@ class TestInstallRemainingBranches:
         monkeypatch.setattr("siftd.cli.install.distribution", lambda name: (_ for _ in ()).throw(RuntimeError("x")))
         assert detect_install_method() == "unknown"
 
-        # import error paths
-        __import__("sys").modules.pop("fastembed", None)
-        __import__("sys").modules.pop("litestar", None)
-        from siftd.cli.install import _serve_installed, embed_installed
+        # find_spec paths — simulate missing deps
+        import importlib.util
+        _real_find_spec = importlib.util.find_spec
+        _blocked = {"fastembed", "litestar"}
+        def _mock_find_spec(name, *a, **kw):
+            if name in _blocked:
+                return None
+            return _real_find_spec(name, *a, **kw)
+        monkeypatch.setattr(importlib.util, "find_spec", _mock_find_spec)
 
+        from siftd.cli.install import _serve_installed, embed_installed
         assert not embed_installed()
         assert not _serve_installed()
 

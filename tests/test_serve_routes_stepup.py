@@ -151,7 +151,7 @@ def test_tag_write_rename_delete_remove_apply_paths(monkeypatch, tmp_path):
 
     # rename and delete
     called = {}
-    monkeypatch.setattr("siftd.api.tags.rename_tag", lambda c, o, n, commit=True: called.setdefault("renamed", (o, n, commit)))
+    monkeypatch.setattr("siftd.api.tags.rename_tag", lambda o, n, conn=None, commit=True: called.setdefault("renamed", (o, n, commit)))
     monkeypatch.setattr("siftd.api.tags.delete_tag", lambda c, t, commit=True: called.setdefault("deleted", (t, commit)))
     assert _run(routes.tag_write_route.fn(_Req(json.dumps({"action": "rename", "old_name": "a", "new_name": "b"}).encode()), tmp_path / "db.db"))["status"] == "renamed"
     assert _run(routes.tag_write_route.fn(_Req(json.dumps({"action": "delete", "tag_name": "x"}).encode()), tmp_path / "db.db"))["status"] == "deleted"

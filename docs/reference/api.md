@@ -1022,6 +1022,8 @@ Export conversations as a complete document.
 
 - `format`: Output format — "md" (markdown) or "json".
 - `fidelity`: Rendering fidelity. Defaults to full (show everything).
+- `no_header`: Omit per-conversation metadata headers.
+- `last`: Export N most recent conversations (takes precedence over n).
 
 **Returns:** ExportArtifact with serialized content, media_type, and filename.
 
@@ -1217,14 +1219,14 @@ def remove_tag(conn: Connection, entity_type: str, entity_id: str, tag_id: str, 
 Rename a tag.
 
 ```python
-def rename_tag(conn: sqlite3.Connection | None = ..., old_name: str = ..., new_name: str = ..., *, db_path: pathlib._local.Path | None = ..., commit: bool = ...) -> bool
+def rename_tag(old_name: str = ..., new_name: str = ..., *, conn: sqlite3.Connection | None = ..., db_path: pathlib._local.Path | None = ..., commit: bool = ...) -> bool
 ```
 
 **Parameters:**
 
-- `conn`: Database connection. Opened from db_path if not provided.
 - `old_name`: Current tag name.
 - `new_name`: New tag name.
+- `conn`: Database connection. Opened from db_path if not provided.
 - `db_path`: Path to database. Ignored if conn provided.
 
 **Returns:** True if renamed, False if old_name not found.
