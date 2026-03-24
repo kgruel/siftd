@@ -137,7 +137,7 @@ class TestTryDelegate:
         monkeypatch.delenv("SIFTD_SERVE_DELEGATE", raising=False)
         monkeypatch.delenv("SIFTD_SERVE_URL", raising=False)
         with patch("siftd.config.get_config", return_value=None):
-            result = try_delegate("/v1/stats", db=tmp_path / "test.db")
+            result = try_delegate("/api/v1/stats", db=tmp_path / "test.db")
             assert result is None
 
     def test_returns_none_when_db_path_mismatch(self, tmp_path, monkeypatch):
@@ -151,10 +151,10 @@ class TestTryDelegate:
             }):
                 db = tmp_path / "test.db"
                 db.touch()
-                result = try_delegate("/v1/stats", db=db)
+                result = try_delegate("/api/v1/stats", db=db)
                 assert result is None
 
     def test_returns_none_when_delegation_disabled(self, tmp_path, monkeypatch):
         monkeypatch.setenv("SIFTD_SERVE_DELEGATE", "false")
-        result = try_delegate("/v1/stats", db=tmp_path / "test.db")
+        result = try_delegate("/api/v1/stats", db=tmp_path / "test.db")
         assert result is None

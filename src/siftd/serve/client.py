@@ -126,7 +126,7 @@ def _post_json(
 
 def probe_health(*, base_url: str, timeout_s: float = 0.02) -> dict[str, Any]:
     """Return health payload if siftd-serve is running, else raise ServeUnavailable."""
-    body = _get_json(base_url, "/v1/health", timeout_s=timeout_s)
+    body = _get_json(base_url, "/api/v1/health", timeout_s=timeout_s)
     if body.get("status") != "ok" or body.get("service") != "siftd":
         raise ServeUnavailable("unrecognized health payload")
     return body
@@ -139,7 +139,7 @@ def search(
     timeout_s: float = 1.0,
 ) -> dict[str, Any]:
     """Call the serve search endpoint and return parsed JSON body."""
-    return _get_json(base_url, "/v1/search", params=params, timeout_s=timeout_s)
+    return _get_json(base_url, "/api/v1/search", params=params, timeout_s=timeout_s)
 
 
 def stats(
@@ -148,4 +148,4 @@ def stats(
     timeout_s: float = 1.0,
 ) -> dict[str, Any]:
     """Call the serve stats endpoint and return parsed JSON body."""
-    return _get_json(base_url, "/v1/stats", timeout_s=timeout_s)
+    return _get_json(base_url, "/api/v1/stats", timeout_s=timeout_s)

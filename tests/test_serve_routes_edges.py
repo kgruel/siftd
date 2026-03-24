@@ -17,8 +17,8 @@ def test_dispatch_builds_operation_and_calls_dispatch(monkeypatch, tmp_path):
 
     monkeypatch.setattr("siftd.api.dispatch.Operation", _Op)
     monkeypatch.setattr("siftd.api.dispatch.dispatch", lambda op, fmt: {"ok": True, "fmt": fmt is not None})
-    out = routes._dispatch("/v1/x", "GET", lambda: None, {"a": 1}, "stats", tmp_path / "db.db")
-    assert out["ok"] and seen["path"] == "/v1/x" and seen["method"] == "GET"
+    out = routes._dispatch("/api/v1/x", "GET", lambda: None, {"a": 1}, "stats", tmp_path / "db.db")
+    assert out["ok"] and seen["path"] == "/api/v1/x" and seen["method"] == "GET"
 
 
 def test_dispatch_returns_structured_error_on_exception(monkeypatch, tmp_path):
@@ -26,7 +26,7 @@ def test_dispatch_returns_structured_error_on_exception(monkeypatch, tmp_path):
     def _raise(*_a, **_kw):
         raise RuntimeError("boom")
     monkeypatch.setattr("siftd.api.dispatch.dispatch", _raise)
-    out = routes._dispatch("/v1/x", "GET", lambda: None, {}, "stats", tmp_path / "db.db")
+    out = routes._dispatch("/api/v1/x", "GET", lambda: None, {}, "stats", tmp_path / "db.db")
     # Returns a Response, not a raised exception
     assert hasattr(out, "status_code")
     assert out.status_code == 500

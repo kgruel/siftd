@@ -366,7 +366,7 @@ class TestSearchServeDelegation:
         monkeypatch.setattr("siftd.serve.client._get_json", _should_not_call_search)
 
         # try_delegate should return None when serve DB doesn't match CLI DB
-        out = try_delegate("/v1/search", {"q": "test"}, db=cli_db)
+        out = try_delegate("/api/v1/search", {"q": "test"}, db=cli_db)
         assert out is None
 
     def test_resolves_default_url_from_serve_port_config(self, monkeypatch, tmp_path):

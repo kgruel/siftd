@@ -28,7 +28,7 @@ def cmd_export(args) -> int:
     fmt = "json" if getattr(args, "json", False) else "md"
 
     op = Operation(
-        path="/v1/export",
+        path="/api/v1/export",
         method="GET",
         fn=export_document,
         params={

@@ -43,7 +43,11 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
         async def authenticate_request(
             self, connection: ASGIConnection,
         ) -> AuthenticationResult:
-            # Check opt-out on route handler
+            # Static assets and opt-out routes bypass auth
+            path = connection.scope.get("path", "")
+            if path.startswith("/static/"):
+                return AuthenticationResult(user=UserIdentity(sub="anonymous"), auth=None)
+
             handler = connection.scope.get("route_handler")
             if handler and getattr(handler, "opt", {}).get("no_auth"):
                 return AuthenticationResult(user=UserIdentity(sub="anonymous"), auth=None)

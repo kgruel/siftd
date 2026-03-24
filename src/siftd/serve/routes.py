@@ -46,31 +46,31 @@ def _dispatch(
         )
 
 
-@get("/", opt={"no_auth": True})
+@get("/api/v1")
 async def index() -> dict:
-    """Root — list available API endpoints."""
+    """API index — list available endpoints."""
     return {
         "service": "siftd",
         "endpoints": [
-            {"method": "GET", "path": "/v1/health", "description": "Health check and DB status"},
-            {"method": "POST", "path": "/v1/push", "description": "Push a database slice"},
-            {"method": "GET", "path": "/v1/pull", "description": "Pull a filtered database slice"},
-            {"method": "GET", "path": "/v1/conversations", "description": "List conversations"},
-            {"method": "GET", "path": "/v1/conversations/{id}", "description": "Get conversation detail"},
-            {"method": "GET", "path": "/v1/search", "description": "Semantic + FTS search"},
-            {"method": "GET", "path": "/v1/stats", "description": "Database statistics"},
-            {"method": "GET", "path": "/v1/workspaces", "description": "List workspaces"},
-            {"method": "GET", "path": "/v1/tools", "description": "Tool tag usage summary"},
-            {"method": "GET", "path": "/v1/tools/workspaces", "description": "Tool tags by workspace"},
-            {"method": "GET", "path": "/v1/tags", "description": "List tags with counts"},
-            {"method": "GET", "path": "/v1/tool-search", "description": "Search tool calls"},
-            {"method": "GET", "path": "/v1/export", "description": "Export full conversations"},
-            {"method": "POST", "path": "/v1/tag", "description": "Apply, remove, rename, or delete tags"},
+            {"method": "GET", "path": "/api/v1/health", "description": "Health check and DB status"},
+            {"method": "POST", "path": "/api/v1/push", "description": "Push a database slice"},
+            {"method": "GET", "path": "/api/v1/pull", "description": "Pull a filtered database slice"},
+            {"method": "GET", "path": "/api/v1/conversations", "description": "List conversations"},
+            {"method": "GET", "path": "/api/v1/conversations/{id}", "description": "Get conversation detail"},
+            {"method": "GET", "path": "/api/v1/search", "description": "Semantic + FTS search"},
+            {"method": "GET", "path": "/api/v1/stats", "description": "Database statistics"},
+            {"method": "GET", "path": "/api/v1/workspaces", "description": "List workspaces"},
+            {"method": "GET", "path": "/api/v1/tools", "description": "Tool tag usage summary"},
+            {"method": "GET", "path": "/api/v1/tools/workspaces", "description": "Tool tags by workspace"},
+            {"method": "GET", "path": "/api/v1/tags", "description": "List tags with counts"},
+            {"method": "GET", "path": "/api/v1/tool-search", "description": "Search tool calls"},
+            {"method": "GET", "path": "/api/v1/export", "description": "Export full conversations"},
+            {"method": "POST", "path": "/api/v1/tag", "description": "Apply, remove, rename, or delete tags"},
         ],
     }
 
 
-@get("/v1/health", opt={"no_auth": True})
+@get("/api/v1/health", opt={"no_auth": True})
 async def health(db_path: Path) -> dict:
     """Health check — returns DB status."""
     from siftd.storage.sqlite import open_database
@@ -95,15 +95,15 @@ async def health(db_path: Path) -> dict:
     }
 
 
-@get("/v1/stats")
+@get("/api/v1/stats")
 async def stats_route(db_path: Path) -> dict:
     """Return database statistics. Server has DB warm, so this is fast."""
     from siftd.api.stats import get_stats
 
-    return _dispatch("/v1/stats", "GET", get_stats, {"db_path": db_path}, "stats", db_path)
+    return _dispatch("/api/v1/stats", "GET", get_stats, {"db_path": db_path}, "stats", db_path)
 
 
-@get("/v1/workspaces")
+@get("/api/v1/workspaces")
 async def workspaces_route(
     db_path: Path,
     n: int = Parameter(query="n", default=10000),
@@ -111,10 +111,10 @@ async def workspaces_route(
     """List workspaces with conversation counts."""
     from siftd.api.stats import list_workspaces
 
-    return _dispatch("/v1/workspaces", "GET", list_workspaces, {"db_path": db_path, "n": n}, "workspaces", db_path)
+    return _dispatch("/api/v1/workspaces", "GET", list_workspaces, {"db_path": db_path, "n": n}, "workspaces", db_path)
 
 
-@get("/v1/tools")
+@get("/api/v1/tools")
 async def tools_route(
     db_path: Path,
     prefix: str = Parameter(query="prefix", default="shell:"),
@@ -123,12 +123,12 @@ async def tools_route(
     from siftd.api.tools import get_tool_tag_summary
 
     return _dispatch(
-        "/v1/tools", "GET", get_tool_tag_summary,
+        "/api/v1/tools", "GET", get_tool_tag_summary,
         {"db_path": db_path, "prefix": prefix}, "tools", db_path,
     )
 
 
-@get("/v1/tools/workspaces")
+@get("/api/v1/tools/workspaces")
 async def tools_by_workspace_route(
     db_path: Path,
     prefix: str = Parameter(query="prefix", default="shell:"),
@@ -138,12 +138,12 @@ async def tools_by_workspace_route(
     from siftd.api.tools import get_tool_tags_by_workspace
 
     return _dispatch(
-        "/v1/tools/workspaces", "GET", get_tool_tags_by_workspace,
+        "/api/v1/tools/workspaces", "GET", get_tool_tags_by_workspace,
         {"db_path": db_path, "prefix": prefix, "n": n}, "tools_by_workspace", db_path,
     )
 
 
-@get("/v1/tags")
+@get("/api/v1/tags")
 async def tags_route(
     db_path: Path,
     since: str | None = Parameter(query="since", default=None),
@@ -152,10 +152,10 @@ async def tags_route(
     """List tags with usage counts."""
     from siftd.api.tags import list_tags
 
-    return _dispatch("/v1/tags", "GET", list_tags, {"db_path": db_path, "since": since, "before": before}, "tags", db_path)
+    return _dispatch("/api/v1/tags", "GET", list_tags, {"db_path": db_path, "since": since, "before": before}, "tags", db_path)
 
 
-@post("/v1/tag")
+@post("/api/v1/tag")
 async def tag_write_route(request: Request, db_path: Path) -> dict:
     """Apply, remove, rename, or delete tags.
 
@@ -246,7 +246,7 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
         conn.close()
 
 
-@get("/v1/tool-search")
+@get("/api/v1/tool-search")
 async def tool_search_route(
     db_path: Path,
     q: str = Parameter(query="q"),
@@ -266,7 +266,7 @@ async def tool_search_route(
     from siftd.api.tool_search import search_tool_calls
 
     return _dispatch(
-        "/v1/tool-search", "GET", search_tool_calls,
+        "/api/v1/tool-search", "GET", search_tool_calls,
         {"q": q, "db_path": db_path, "n": n, "workspace": workspace, "model": model,
          "since": since, "before": before, "tag": tag, "all_tags": all_tags,
          "no_tag": no_tag, "tool": tool, "tool_tag": tool_tag, "owner": owner},
@@ -274,7 +274,7 @@ async def tool_search_route(
     )
 
 
-@get("/v1/export")
+@get("/api/v1/export")
 async def export_route(
     db_path: Path,
     id: list[str] | None = Parameter(query="id", default=None),
@@ -290,7 +290,7 @@ async def export_route(
     from siftd.api.export import export_conversations
 
     return _dispatch(
-        "/v1/export", "GET", export_conversations,
+        "/api/v1/export", "GET", export_conversations,
         {"id": id, "workspace": workspace, "since": since, "before": before,
          "tag": tag, "no_tag": no_tag, "n": n, "db_path": db_path,
          "owner": owner},
@@ -298,7 +298,7 @@ async def export_route(
     )
 
 
-@post("/v1/push")
+@post("/api/v1/push")
 async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | dict:
     """Receive a pushed slice and merge into team DB."""
     body = await request.body()
@@ -353,7 +353,7 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
             tmp_path.unlink()
 
 
-@get("/v1/pull")
+@get("/api/v1/pull")
 async def pull(
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
@@ -404,7 +404,7 @@ async def pull(
         )
 
 
-@get("/v1/conversations/{id:str}")
+@get("/api/v1/conversations/{id:str}")
 async def conversation_detail(
     db_path: Path,
     id: str,
@@ -416,14 +416,14 @@ async def conversation_detail(
     from siftd.api.conversations import get_conversation
 
     return _dispatch(
-        "/v1/conversations", "GET", get_conversation,
+        "/api/v1/conversations", "GET", get_conversation,
         {"id": id, "db_path": db_path, "include_thinking": include_thinking,
          "include_tool_content": include_tool_content, "tool_filter": tool_filter},
         "detail", db_path,
     )
 
 
-@get("/v1/conversations")
+@get("/api/v1/conversations")
 async def conversation_list(
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
@@ -444,7 +444,7 @@ async def conversation_list(
     from siftd.api.conversations import list_conversations
 
     return _dispatch(
-        "/v1/conversations", "GET", list_conversations,
+        "/api/v1/conversations", "GET", list_conversations,
         {"db_path": db_path, "workspace": workspace, "model": model,
          "since": since, "before": before, "search": search, "tool": tool,
          "tag": tag, "all_tags": all_tags, "no_tag": no_tag,
@@ -453,7 +453,7 @@ async def conversation_list(
     )
 
 
-@get("/v1/search")
+@get("/api/v1/search")
 async def search_route(
     db_path: Path,
     q: str = Parameter(query="q"),
@@ -490,7 +490,7 @@ async def search_route(
     mode = "semantic" if embeddings_only else "hybrid"
     try:
         return _dispatch(
-            "/v1/search", "GET", hybrid_search,
+            "/api/v1/search", "GET", hybrid_search,
             {"q": q, "db_path": db_path, "n": n, "recall": recall,
              "mode": mode, "workspace": workspace,
              "model": model, "since": since, "before": before,

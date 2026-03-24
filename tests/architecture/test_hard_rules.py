@@ -293,7 +293,7 @@ class TestServeRouteBoundary:
             pytest.skip("No serve/html_routes.py")
 
         v1_re = re.compile(r'["\']/v1/')
-        # Operation(path="/v1/...") is serve delegation, not HTML output
+        # Operation(path="/api/v1/...") is serve delegation, not HTML output
         op_path_re = re.compile(r'path\s*=\s*["\']|path\s*=\s*f["\']')
         violations = []
         for i, line in enumerate(html_routes_file.read_text().splitlines(), 1):

@@ -9,8 +9,8 @@ def _run(coro):
 
 def test_html_helpers_detail_and_tool_chars():
     assert hr._hx_detail("", "cid") == ""
-    detail = hr._hx_detail("/ui/query", "cid", "/ui")
-    assert 'hx-get="/ui/query?id=cid"' in detail and 'hx-push-url="/ui?id=cid"' in detail
+    detail = hr._hx_detail("/query", "cid", "/")
+    assert 'hx-get="/query?id=cid"' in detail and 'hx-push-url="/?id=cid"' in detail
 
     f_full = hr._fidelity(depth=3, tools=True, thinking=True)
     f_brief = hr._fidelity(depth=1)
@@ -22,9 +22,9 @@ def test_page_shell_modes():
     shell_q = hr._page_shell(search_q="abc")
     shell_follow = hr._page_shell(follow_sid="sid-1")
     shell_id = hr._page_shell(conv_id="cid-1")
-    assert '/ui/search?q=abc' in shell_q
-    assert '/ui/follow?sid=sid-1' in shell_follow
-    assert '/ui/query?id=cid-1' in shell_id
+    assert '/search?q=abc' in shell_q
+    assert '/follow?sid=sid-1' in shell_follow
+    assert '/query?id=cid-1' in shell_id
 
 
 def test_ui_shell_returns_html_response():

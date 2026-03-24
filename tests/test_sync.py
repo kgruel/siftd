@@ -299,7 +299,7 @@ class TestPushHttp:
         monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: "tok")
         assert _push_http(_remote(path="http://srv", name="r"), slice_path) is False
         _, url, content, headers = client.calls[0]
-        assert url.endswith("/v1/push") and content == b"db"
+        assert url.endswith("/api/v1/push") and content == b"db"
         assert headers["Authorization"] == "Bearer tok"
 
     def test_status_error(self, tmp_path, monkeypatch):
@@ -346,7 +346,7 @@ class TestPullLocalAndHttp:
         conv, size = _pull_http(_remote(path="http://srv"), _db(tmp_path), "2024-01", "proj", True)
         assert conv == 2 and size == len(b"sqlite-bytes")
         _, url, params, _headers = client.calls[0]
-        assert url.endswith("/v1/pull") and params == {"since": "2024-01", "workspace": "proj"}
+        assert url.endswith("/api/v1/pull") and params == {"since": "2024-01", "workspace": "proj"}
 
     def test_pull_http_merge_path(self, tmp_path, monkeypatch):
         resp = _Resp(body={}, content=b"sqlite-bytes", headers={"X-Siftd-Conversations": "1"})

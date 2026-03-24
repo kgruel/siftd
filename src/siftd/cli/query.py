@@ -30,7 +30,7 @@ def cmd_tools(args) -> int:
     # Build Operation based on mode
     if args.by_workspace:
         op = Operation(
-            path="/v1/tools/workspaces",
+            path="/api/v1/tools/workspaces",
             method="GET",
             fn=get_tool_tags_by_workspace,
             params={"db_path": db, "prefix": prefix, "n": args.limit},
@@ -40,7 +40,7 @@ def cmd_tools(args) -> int:
         )
     else:
         op = Operation(
-            path="/v1/tools",
+            path="/api/v1/tools",
             method="GET",
             fn=get_tool_tag_summary,
             params={"db_path": db, "prefix": prefix},
@@ -176,7 +176,7 @@ def _query_detail(args) -> int:
         tool_filter = tools_flag
 
     op = Operation(
-        path=f"/v1/conversations/{args.conversation_id}",
+        path=f"/api/v1/conversations/{args.conversation_id}",
         method="GET",
         fn=get_conversation,
         params={
@@ -343,7 +343,7 @@ def cmd_query(args) -> int:
     fidelity = fidelity_from_args(args)
 
     op = Operation(
-        path="/v1/conversations",
+        path="/api/v1/conversations",
         method="GET",
         fn=list_conversations,
         params={

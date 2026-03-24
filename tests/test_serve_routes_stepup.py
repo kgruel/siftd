@@ -13,7 +13,7 @@ def _run(coro):
 def test_index_lists_core_endpoints():
     out = _run(routes.index.fn())
     assert out["service"] == "siftd"
-    assert any(e["path"] == "/v1/health" for e in out["endpoints"])
+    assert any(e["path"] == "/api/v1/health" for e in out["endpoints"])
 
 
 def test_dispatch_wrappers_forward_params(monkeypatch, tmp_path):
@@ -36,9 +36,9 @@ def test_dispatch_wrappers_forward_params(monkeypatch, tmp_path):
     _run(routes.conversation_detail.fn(db, id="abc", include_thinking=True, include_tool_content=True, tool_filter="shell"))
     _run(routes.conversation_list.fn(db, n=5, oldest=True))
 
-    assert seen[0][0] == "/v1/stats"
-    assert any(p == "/v1/tool-search" and prm["q"] == "q" for p, _, _, prm, _ in seen)
-    assert any(p == "/v1/conversations" and prm["id"] == "abc" for p, _, _, prm, _ in seen)
+    assert seen[0][0] == "/api/v1/stats"
+    assert any(p == "/api/v1/tool-search" and prm["q"] == "q" for p, _, _, prm, _ in seen)
+    assert any(p == "/api/v1/conversations" and prm["id"] == "abc" for p, _, _, prm, _ in seen)
 
 
 class _Req:

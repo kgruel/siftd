@@ -32,7 +32,7 @@ def cmd_tool_search(args) -> int:
     from siftd.serve.delegation import try_serve
 
     op = Operation(
-        path="/v1/tool-search",
+        path="/api/v1/tool-search",
         method="GET",
         fn=search_tool_calls,
         params={

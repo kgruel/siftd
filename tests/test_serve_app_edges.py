@@ -36,8 +36,8 @@ def test_ui_shell_public_but_data_routes_require_auth(tmp_path):
     app = serve_app.create_app(db_path=db, auth_config=auth_config)
     with TestClient(app, raise_server_exceptions=False) as client:
         # Shell is public (no_auth)
-        assert client.get("/ui").status_code == 200
+        assert client.get("/").status_code == 200
         # Data routes require auth
-        assert client.get("/ui/query").status_code == 401
-        assert client.get("/ui/stats").status_code == 401
-        assert client.get("/ui/search").status_code == 401
+        assert client.get("/query").status_code == 401
+        assert client.get("/stats").status_code == 401
+        assert client.get("/search").status_code == 401

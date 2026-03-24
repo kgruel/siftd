@@ -76,18 +76,18 @@ def _page_shell(
 
     # List pane: search results, peek sessions, or conversation list
     if search_q:
-        list_url = f"/ui/search?q={urlquote(search_q)}"
+        list_url = f"/search?q={urlquote(search_q)}"
     elif follow_sid:
-        list_url = "/ui/peek"
+        list_url = "/peek"
     else:
-        list_url = "/ui/query"
+        list_url = "/query"
 
     # Detail pane: auto-load conversation, follow session, or empty
     if follow_sid:
-        detail_attr = f' hx-get="/ui/follow?sid={esc(follow_sid)}" hx-trigger="load" hx-swap="innerHTML"'
+        detail_attr = f' hx-get="/follow?sid={esc(follow_sid)}" hx-trigger="load" hx-swap="innerHTML"'
         detail_content = '<p class="empty">Loading session...</p>'
     elif conv_id:
-        detail_attr = f' hx-get="/ui/query?id={esc(conv_id)}" hx-trigger="load" hx-swap="innerHTML"'
+        detail_attr = f' hx-get="/query?id={esc(conv_id)}" hx-trigger="load" hx-swap="innerHTML"'
         detail_content = '<p class="empty">Loading...</p>'
     else:
         detail_attr = ""
@@ -111,18 +111,18 @@ def _page_shell(
 <nav>
   <span class="brand">siftd</span>
   <input type="search" name="q" placeholder="Search..."{search_val}
-    hx-get="/ui/search" hx-target="#list" hx-trigger="keyup changed delay:300ms"
+    hx-get="/search" hx-target="#list" hx-trigger="keyup changed delay:300ms"
     hx-include="this">
-  <a href="/ui" hx-get="/ui/query" hx-target="#list" hx-push-url="/ui"
+  <a href="/" hx-get="/query" hx-target="#list" hx-push-url="/"
     hx-on::before-request="document.querySelectorAll('#filters select,#filters input').forEach(e=>e.value='')">Recent</a>
-  <a href="#" hx-get="/ui/peek" hx-target="#list">Live</a>
-  <a href="#" hx-get="/ui/tools" hx-target="#list">Tools</a>
-  <a href="#" hx-get="/ui/stats" hx-target="#detail" hx-swap="innerHTML">Stats</a>
+  <a href="#" hx-get="/peek" hx-target="#list">Live</a>
+  <a href="#" hx-get="/tools" hx-target="#list">Tools</a>
+  <a href="#" hx-get="/stats" hx-target="#detail" hx-swap="innerHTML">Stats</a>
   <button class="density-toggle" onclick="document.body.classList.toggle('compact')" title="Toggle compact mode">Compact</button>
 </nav>
 <main>
   <div id="list-pane">
-    <div id="filters" hx-get="/ui/meta" hx-trigger="load" hx-swap="innerHTML">
+    <div id="filters" hx-get="/meta" hx-trigger="load" hx-swap="innerHTML">
     </div>
     <div id="list" hx-get="{esc(list_url)}" hx-trigger="load" hx-swap="innerHTML"
       hx-include="#filters">
@@ -214,7 +214,7 @@ document.body.addEventListener('htmx:afterSettle', function() {{
 </html>"""
 
 
-@get("/ui", opt={"no_auth": True})
+@get("/", opt={"no_auth": True})
 async def ui_shell(
     id: str | None = Parameter(query="id", default=None),
     q: str | None = Parameter(query="q", default=None),
@@ -238,7 +238,7 @@ async def ui_shell(
 # ---------------------------------------------------------------------------
 
 
-@get("/ui/meta")
+@get("/meta")
 async def ui_meta(db_path: Path) -> Response:
     """Return filter dropdowns populated from the database."""
     from html import escape
@@ -272,7 +272,7 @@ async def ui_meta(db_path: Path) -> Response:
                 opts.append(f'<option value="{escape(val)}">{escape(display)}</option>')
         return (
             f'<select name="{name}"'
-            f' hx-get="/ui/query" hx-target="#list" hx-trigger="change"'
+            f' hx-get="/query" hx-target="#list" hx-trigger="change"'
             f' hx-include="#filters">'
             f'{"".join(opts)}</select>'
         )
@@ -286,7 +286,7 @@ async def ui_meta(db_path: Path) -> Response:
     def _date(name: str, label: str) -> str:
         return (
             f'<input type="date" name="{name}" title="{label}"'
-            f' hx-get="/ui/query" hx-target="#list" hx-trigger="change"'
+            f' hx-get="/query" hx-target="#list" hx-trigger="change"'
             f' hx-include="#filters">'
         )
 
@@ -296,7 +296,7 @@ async def ui_meta(db_path: Path) -> Response:
         _select("tag", "tags", tag_opts),
         (
             '<input type="text" name="owner" placeholder="Owner"'
-            ' hx-get="/ui/query" hx-target="#list" hx-trigger="change"'
+            ' hx-get="/query" hx-target="#list" hx-trigger="change"'
             ' hx-include="#filters" class="filter-input">'
         ),
         _date("since", "Since"),
@@ -305,7 +305,7 @@ async def ui_meta(db_path: Path) -> Response:
     return _html_response("".join(parts))
 
 
-@get("/ui/query")
+@get("/query")
 async def ui_query(
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
@@ -338,7 +338,7 @@ async def ui_query(
     tag = [t for t in (tag or []) if t] or None
 
     fmt = get_format("html")
-    ctx = {"detail_base": "/ui/query", "shell_base": "/ui"}
+    ctx = {"detail_base": "/query", "shell_base": "/"}
 
     if id is not None:
         # Build fidelity from query params — same logic as CLI flags
@@ -350,7 +350,7 @@ async def ui_query(
             fidelity = _fidelity(depth=2, chars=0, tools=tools, thinking=thinking)
 
         op = Operation(
-            path=f"/v1/conversations/{id}",
+            path=f"/api/v1/conversations/{id}",
             method="GET",
             fn=get_conversation,
             params={
@@ -368,9 +368,9 @@ async def ui_query(
                 "controls": {"id": id, "tools": tools, "thinking": thinking,
                              "full": full, "brief": brief},
                 "interactive_tags": True,
-                "tag_action_url": "/ui/tag",
-                "tag_suggest_url": "/ui/tags/suggest",
-                "export_base_url": "/ui/export",
+                "tag_action_url": "/tag",
+                "tag_suggest_url": "/tags/suggest",
+                "export_base_url": "/export",
             },
         )
         detail = execute(op)
@@ -379,7 +379,7 @@ async def ui_query(
         return _html_response(fmt.render_detail(detail, op.fidelity, **op.render_context))
 
     op = Operation(
-        path="/v1/conversations",
+        path="/api/v1/conversations",
         method="GET",
         fn=list_conversations,
         params={
@@ -401,7 +401,7 @@ async def ui_query(
     return _html_response(dispatch(op, fmt=fmt))
 
 
-@get("/ui/search")
+@get("/search")
 async def ui_search(
     db_path: Path,
     q: str = Parameter(query="q", default=""),
@@ -421,14 +421,14 @@ async def ui_search(
         return _html_response('<p class="empty">Type to search...</p>')
 
     fmt = get_format("html")
-    ctx = {"detail_base": "/ui/query", "shell_base": "/ui", "query": q, "mode": mode}
+    ctx = {"detail_base": "/query", "shell_base": "/", "query": q, "mode": mode}
 
     # Mode toggle tabs
     def _tab(label: str, m: str) -> str:
         active = " active" if m == mode else ""
         return (
             f'<button class="toggle{active}"'
-            f' hx-get="/ui/search?q={escape(q)}&mode={m}"'
+            f' hx-get="/search?q={escape(q)}&mode={m}"'
             f' hx-target="#list" hx-swap="innerHTML">{label}</button>'
         )
 
@@ -444,7 +444,7 @@ async def ui_search(
         from siftd.api.search import aggregate_by_conversation, hybrid_search
 
         op = Operation(
-            path="/v1/search",
+            path="/api/v1/search",
             method="GET",
             fn=hybrid_search,
             params={"q": q, "db_path": db_path, "n": 30},
@@ -489,7 +489,7 @@ async def ui_search(
     from siftd.api.conversations import list_conversations
 
     op = Operation(
-        path="/v1/conversations",
+        path="/api/v1/conversations",
         method="GET",
         fn=list_conversations,
         params={"db_path": db_path, "search": q, "n": 20},
@@ -511,7 +511,7 @@ async def ui_search(
 # ---------------------------------------------------------------------------
 
 
-@get("/ui/peek")
+@get("/peek")
 async def ui_peek() -> Response:
     """List active sessions as HTML — the entry point for follow mode."""
     from html import escape
@@ -538,9 +538,9 @@ async def ui_peek() -> Response:
         if s.branch:
             ws = f"{ws} [{s.branch}]" if ws else f"[{s.branch}]"
         parts.append(
-            f'<tr hx-get="/ui/follow?sid={escape(s.session_id)}"'
+            f'<tr hx-get="/follow?sid={escape(s.session_id)}"'
             f' hx-target="#detail" hx-swap="innerHTML"'
-            f' hx-push-url="/ui?follow={escape(s.session_id)}">'
+            f' hx-push-url="/?follow={escape(s.session_id)}">'
             f'<td class="identifier">{escape(s.session_id[:8])}</td>'
             f'<td class="workspace">{escape(ws)}</td>'
             f'<td class="model">{escape(s.model or "")}</td>'
@@ -552,7 +552,7 @@ async def ui_peek() -> Response:
     return _html_response("\n".join(parts))
 
 
-@get("/ui/follow")
+@get("/follow")
 async def ui_follow(
     sid: str = Parameter(query="sid", default=""),
     poll: bool = Parameter(query="poll", default=False),
@@ -593,8 +593,8 @@ async def ui_follow(
         fidelity,
         no_header=True,
         tool_chars=tc,
-        detail_base="/ui/query",
-        shell_base="/ui",
+        detail_base="/query",
+        shell_base="/",
     )
 
     if poll:
@@ -617,7 +617,7 @@ async def ui_follow(
         f'</div></header>'
     )
 
-    poll_url = f"/ui/follow?sid={escape(sid)}&poll=true"
+    poll_url = f"/follow?sid={escape(sid)}&poll=true"
     body = (
         f'<article class="conversation-detail follow-mode">'
         f'{header}'
@@ -636,7 +636,7 @@ async def ui_follow(
 # ---------------------------------------------------------------------------
 
 
-@get("/ui/stats")
+@get("/stats")
 async def ui_stats(db_path: Path) -> Response:
     """Render cost/token dashboard as HTML fragment."""
     from siftd.api.dispatch import Operation, execute
@@ -650,7 +650,7 @@ async def ui_stats(db_path: Path) -> Response:
     from siftd.output.format_registry import get_format
 
     op = Operation(
-        path="/v1/stats",
+        path="/api/v1/stats",
         method="GET",
         fn=get_stats,
         params={"db_path": db_path},
@@ -700,7 +700,7 @@ async def ui_stats(db_path: Path) -> Response:
 # ---------------------------------------------------------------------------
 
 
-@get("/ui/tools")
+@get("/tools")
 async def ui_tools(
     db_path: Path,
     q: str = Parameter(query="q", default=""),
@@ -717,7 +717,7 @@ async def ui_tools(
     input_html = (
         '<div class="tool-search-bar">'
         f'<input type="search" name="q" value="{escape(q)}" placeholder="Search tool calls..."'
-        f' hx-get="/ui/tools" hx-target="#list" hx-trigger="keyup changed delay:300ms"'
+        f' hx-get="/tools" hx-target="#list" hx-trigger="keyup changed delay:300ms"'
         f' hx-include="this" class="tool-search-input">'
         '</div>'
     )
@@ -729,7 +729,7 @@ async def ui_tools(
         )
 
     op = Operation(
-        path="/v1/tool-search",
+        path="/api/v1/tool-search",
         method="GET",
         fn=search_tool_calls,
         params={"q": q, "db_path": db_path, "n": n},
@@ -767,8 +767,8 @@ async def ui_tools(
         "</tr></thead><tbody>"
     )
 
-    detail_base = "/ui/query"
-    shell_base = "/ui"
+    detail_base = "/query"
+    shell_base = "/"
     for g in groups:
         cid = g.conversation_id
         ts = fmt_timestamp(g.first_timestamp) if g.first_timestamp else ""
@@ -794,7 +794,7 @@ async def ui_tools(
 # ---------------------------------------------------------------------------
 
 
-@post("/ui/tag")
+@post("/tag")
 async def ui_tag(request: Request, db_path: Path) -> Response:
     """Apply or remove a tag, return updated tag section fragment."""
     from siftd.api.tags import modify_conversation_tag
@@ -813,11 +813,11 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
     )
     return _html_response(render_tag_section(
         conv_id, tags,
-        tag_action_url="/ui/tag", tag_suggest_url="/ui/tags/suggest",
+        tag_action_url="/tag", tag_suggest_url="/tags/suggest",
     ))
 
 
-@get("/ui/tags/suggest")
+@get("/tags/suggest")
 async def ui_tags_suggest(
     db_path: Path,
     tag: str = Parameter(query="tag", default=""),
@@ -842,7 +842,7 @@ async def ui_tags_suggest(
 # ---------------------------------------------------------------------------
 
 
-@get("/ui/export")
+@get("/export")
 async def ui_export(
     db_path: Path,
     id: str = Parameter(query="id", default=""),
@@ -856,7 +856,7 @@ async def ui_export(
         return _html_response('<p class="empty">No conversation ID specified</p>')
 
     op = Operation(
-        path="/v1/export",
+        path="/api/v1/export",
         method="GET",
         fn=export_document,
         params={

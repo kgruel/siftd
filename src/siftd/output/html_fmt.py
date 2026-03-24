@@ -328,7 +328,7 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     """Render conversation list as an HTML table fragment.
 
     Context keys:
-        detail_base: str — URL prefix for detail links (e.g., "/ui/query").
+        detail_base: str — URL prefix for detail links (e.g., "/query").
             Rows get hx-get="{detail_base}?id=..." when provided,
             otherwise they're static (no htmx navigation).
     """

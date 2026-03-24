@@ -69,7 +69,7 @@ class TestHealth:
         create_database(db)
         app = create_app(db_path=db, auth_config=None)
         with TestClient(app) as client:
-            resp = client.get("/v1/health")
+            resp = client.get("/api/v1/health")
         assert resp.status_code == 200
         body = resp.json()
         assert body["service"] == "siftd"
@@ -86,7 +86,7 @@ class TestPush:
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
             resp = client.post(
-                "/v1/push",
+                "/api/v1/push",
                 content=slice_bytes,
                 headers={"Content-Type": "application/octet-stream"},
             )
@@ -103,7 +103,7 @@ class TestPush:
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
             resp = client.post(
-                "/v1/push",
+                "/api/v1/push",
                 content=slice_bytes,
                 headers={"Content-Type": "application/octet-stream"},
             )
@@ -121,7 +121,7 @@ class TestPull:
         )
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
-            resp = client.get("/v1/pull")
+            resp = client.get("/api/v1/pull")
         assert resp.status_code == 200
         assert resp.headers["Content-Type"] == "application/octet-stream"
         assert int(resp.headers["X-Siftd-Conversations"]) >= 1
@@ -133,7 +133,7 @@ class TestPull:
         create_database(team_db)
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
-            resp = client.get("/v1/pull")
+            resp = client.get("/api/v1/pull")
         assert resp.status_code == 200
         assert int(resp.headers.get("X-Siftd-Conversations", 0)) == 0
 
@@ -146,7 +146,7 @@ class TestQuery:
         )
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
-            resp = client.get("/v1/conversations")
+            resp = client.get("/api/v1/conversations")
         assert resp.status_code == 200
         body = resp.json()
         assert "conversations" in body
@@ -159,7 +159,7 @@ class TestQuery:
         )
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
-            resp = client.get("/v1/conversations", params={"n": 1})
+            resp = client.get("/api/v1/conversations", params={"n": 1})
         body = resp.json()
         assert len(body["conversations"]) == 1
 
@@ -171,10 +171,10 @@ class TestQuery:
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
             # First get the list to find the ID
-            resp = client.get("/v1/conversations")
+            resp = client.get("/api/v1/conversations")
             conv_id = resp.json()["conversations"][0]["id"]
             # Then get the detail
-            resp = client.get(f"/v1/conversations/{conv_id}")
+            resp = client.get(f"/api/v1/conversations/{conv_id}")
         assert resp.status_code == 200
         body = resp.json()
         assert "conversation" in body
@@ -189,7 +189,7 @@ class TestStats:
         )
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
-            resp = client.get("/v1/stats")
+            resp = client.get("/api/v1/stats")
         assert resp.status_code == 200
         body = resp.json()
         assert body["counts"]["conversations"] == 2
@@ -204,7 +204,7 @@ class TestStats:
         create_database(db)
         app = create_app(db_path=db, auth_config=None)
         with TestClient(app) as client:
-            resp = client.get("/v1/stats")
+            resp = client.get("/api/v1/stats")
         assert resp.status_code == 200
         body = resp.json()
         assert body["counts"]["conversations"] == 0
@@ -219,7 +219,7 @@ class TestSearch:
         )
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
-            resp = client.get("/v1/search", params={"q": "hello"})
+            resp = client.get("/api/v1/search", params={"q": "hello"})
         # Either 200 (if embeddings available) or 501 (if not)
         assert resp.status_code in (200, 501)
 
@@ -230,7 +230,7 @@ class TestAuthNoAuth:
         create_database(db)
         app = create_app(db_path=db, auth_config=None)
         with TestClient(app) as client:
-            resp = client.get("/v1/health")
+            resp = client.get("/api/v1/health")
             assert resp.status_code == 200
 
 
@@ -242,7 +242,7 @@ class TestAuthOIDC:
         app = create_app(db_path=db, auth_config=auth_config)
         with TestClient(app, raise_server_exceptions=False) as client:
             resp = client.post(
-                "/v1/push",
+                "/api/v1/push",
                 content=b"x" * 100,
                 headers={"Content-Type": "application/octet-stream"},
             )
@@ -254,7 +254,7 @@ class TestAuthOIDC:
         auth_config = {"issuer": "https://example.com", "audience": "siftd"}
         app = create_app(db_path=db, auth_config=auth_config)
         with TestClient(app) as client:
-            resp = client.get("/v1/health")
+            resp = client.get("/api/v1/health")
             assert resp.status_code == 200
 
 
@@ -268,7 +268,7 @@ class TestAttribution:
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
             resp = client.post(
-                "/v1/push",
+                "/api/v1/push",
                 content=slice_bytes,
                 headers={"Content-Type": "application/octet-stream"},
             )
@@ -288,7 +288,7 @@ class TestAttribution:
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
             resp = client.post(
-                "/v1/push",
+                "/api/v1/push",
                 content=slice_bytes,
                 headers={
                     "Content-Type": "application/octet-stream",

@@ -272,7 +272,7 @@ def cmd_search(args) -> int:
     rerank = "mmr" if not args.no_diversity else "relevance"
 
     op = Operation(
-        path="/v1/search",
+        path="/api/v1/search",
         method="GET",
         fn=hybrid_search,
         params={
@@ -466,7 +466,7 @@ def cmd_search(args) -> int:
 def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     """FTS5-only search mode — keyword search without embeddings.
 
-    No serve delegation: the /v1/search endpoint requires embeddings
+    No serve delegation: the /api/v1/search endpoint requires embeddings
     (hybrid_search import), so FTS-only mode always runs locally.
     """
     import sqlite3

@@ -26,7 +26,7 @@ def cmd_status(args) -> int:
     from painted import Fidelity
 
     op = Operation(
-        path="/v1/stats",
+        path="/api/v1/stats",
         method="GET",
         fn=get_stats,
         params={"db_path": db},
@@ -214,7 +214,7 @@ def cmd_workspaces(args) -> int:
     limit = args.limit if args.limit > 0 else 10000
 
     op = Operation(
-        path="/v1/workspaces",
+        path="/api/v1/workspaces",
         method="GET",
         fn=list_workspaces,
         params={"db_path": db, "n": limit},

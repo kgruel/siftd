@@ -214,7 +214,7 @@ def _cmd_tag_list(args, db: Path) -> int:
     from siftd.serve.delegation import try_serve
 
     op = Operation(
-        path="/v1/tags",
+        path="/api/v1/tags",
         method="GET",
         fn=list_tags,
         params={"db_path": db, "since": since, "before": before},
@@ -300,7 +300,7 @@ def _cmd_tag_rename(args, db: Path) -> int:
     from siftd.serve.delegation import try_serve
 
     op = Operation(
-        path="/v1/tag",
+        path="/api/v1/tag",
         method="POST",
         fn=rename_tag,
         params={
@@ -349,7 +349,7 @@ def _cmd_tag_delete(args, db: Path) -> int:
 
     tag_name = positional[1]
 
-    # Try serve delegation (POST /v1/tag with action=delete)
+    # Try serve delegation (POST /api/v1/tag with action=delete)
     force = getattr(args, "force", False)
 
     from painted import Fidelity
@@ -358,7 +358,7 @@ def _cmd_tag_delete(args, db: Path) -> int:
     from siftd.serve.delegation import try_serve
 
     op = Operation(
-        path="/v1/tag",
+        path="/api/v1/tag",
         method="POST",
         fn=delete_tag,
         params={
@@ -511,7 +511,7 @@ def cmd_tag(args) -> int:
 
     if "tags" in body:
         op = Operation(
-            path="/v1/tag",
+            path="/api/v1/tag",
             method="POST",
             fn=remove_tag if removing else apply_tag,
             params={**body, "db_path": db},

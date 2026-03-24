@@ -276,7 +276,7 @@ def _push_local(remote: SyncRemote, slice_path: Path, db_path: Path) -> bool:
 
 
 def _push_http(remote: SyncRemote, slice_path: Path) -> bool:
-    """Push via HTTP POST to remote /v1/push endpoint.
+    """Push via HTTP POST to remote /api/v1/push endpoint.
 
     Returns whether remote DB already existed.
     """
@@ -294,7 +294,7 @@ def _push_http(remote: SyncRemote, slice_path: Path) -> bool:
     except AuthError:
         pass  # --no-auth server
 
-    url = remote.path.rstrip("/") + "/v1/push"
+    url = remote.path.rstrip("/") + "/api/v1/push"
     data = slice_path.read_bytes()
 
     try:
@@ -545,7 +545,7 @@ def _pull_http(
     workspace: str | None,
     dry_run: bool,
 ) -> tuple[int, int]:
-    """Pull via HTTP GET from remote /v1/pull endpoint.
+    """Pull via HTTP GET from remote /api/v1/pull endpoint.
 
     Returns (conversations, size_bytes).
     """
@@ -563,7 +563,7 @@ def _pull_http(
     except AuthError:
         pass
 
-    url = remote.path.rstrip("/") + "/v1/pull"
+    url = remote.path.rstrip("/") + "/api/v1/pull"
     params: dict[str, str] = {}
     if since is not None:
         params["since"] = since
