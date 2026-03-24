@@ -1,17 +1,10 @@
 import asyncio
-from types import SimpleNamespace
 
 from siftd.serve import html_routes as hr
 
 
 def _run(coro):
     return asyncio.run(coro)
-
-
-def test_wants_html_header_and_accept_logic():
-    assert hr._wants_html(SimpleNamespace(headers={"HX-Request": "true"}))
-    assert hr._wants_html(SimpleNamespace(headers={"Accept": "text/html"}))
-    assert not hr._wants_html(SimpleNamespace(headers={"Accept": "text/html,application/json"}))
 
 
 def test_html_helpers_detail_and_tool_chars():

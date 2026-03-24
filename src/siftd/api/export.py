@@ -158,6 +158,10 @@ def export_document(
         format: Output format — "md" (markdown) or "json".
         fidelity: Rendering fidelity. Defaults to full (show everything).
         no_header: Omit per-conversation metadata headers.
+        last: Export N most recent conversations (takes precedence over n).
+        n: Max conversations when neither id nor last is given. Passed through
+            to export_conversations where it defaults to 10 when 0. CLI callers
+            use ``last`` instead; ``n`` exists for programmatic use.
         Other args: passed through to export_conversations.
 
     Returns:

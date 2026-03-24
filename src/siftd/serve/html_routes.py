@@ -16,14 +16,6 @@ from litestar.params import Parameter
 from litestar.response import Response
 
 
-def _wants_html(request: Request) -> bool:
-    """True if this is an htmx request or explicitly wants HTML."""
-    if request.headers.get("HX-Request"):
-        return True
-    accept = request.headers.get("Accept", "")
-    return "text/html" in accept and "application/json" not in accept
-
-
 def _html_response(content: str) -> Response:
     return Response(content=content, media_type="text/html")
 

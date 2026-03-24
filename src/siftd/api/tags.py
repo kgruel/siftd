@@ -218,19 +218,19 @@ def modify_conversation_tag(
 
 
 def rename_tag(
-    conn: sqlite3.Connection | None = None,
     old_name: str = "",
     new_name: str = "",
     *,
+    conn: sqlite3.Connection | None = None,
     db_path: Path | None = None,
     commit: bool = False,
 ) -> bool:
     """Rename a tag.
 
     Args:
-        conn: Database connection. Opened from db_path if not provided.
         old_name: Current tag name.
         new_name: New tag name.
+        conn: Database connection. Opened from db_path if not provided.
         db_path: Path to database. Ignored if conn provided.
         commit: Whether to commit the transaction.
 

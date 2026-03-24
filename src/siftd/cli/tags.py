@@ -349,6 +349,37 @@ def _cmd_tag_delete(args, db: Path) -> int:
 
     tag_name = positional[1]
 
+    # Try serve delegation (POST /v1/tag with action=delete)
+    force = getattr(args, "force", False)
+
+    from painted import Fidelity
+
+    from siftd.api.dispatch import Operation
+    from siftd.serve.delegation import try_serve
+
+    op = Operation(
+        path="/v1/tag",
+        method="POST",
+        fn=delete_tag,
+        params={
+            "action": "delete",
+            "tag_name": tag_name,
+            "db_path": db,
+        },
+        render_method="raw",
+        fidelity=Fidelity(),
+        db=db,
+    )
+
+    # Only delegate when --force or 0 associations (we can't check
+    # association counts over HTTP, so skip delegation without --force
+    # to preserve the interactive confirmation guard).
+    if force:
+        result = try_serve(op)
+        if result is not None and isinstance(result, dict) and result.get("status") == "deleted":
+            print(f"Deleted tag '{tag_name}'")
+            return 0
+
     if not db.exists():
         print(f"Database not found: {db}")
         print("Run 'siftd ingest' to create it.")

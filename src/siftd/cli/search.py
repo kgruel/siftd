@@ -478,7 +478,11 @@ def cmd_search(args) -> int:
 
 
 def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
-    """FTS5-only search mode — keyword search without embeddings."""
+    """FTS5-only search mode — keyword search without embeddings.
+
+    No serve delegation: the /v1/search endpoint requires embeddings
+    (hybrid_search import), so FTS-only mode always runs locally.
+    """
     import sqlite3
 
     from siftd.api import open_database
