@@ -8,6 +8,7 @@ bench/runs/
 .pytest_cache/
 .ruff_cache/
 .obsidian/
+docs/dev/
 .venv/
 dist/
 .claude/
