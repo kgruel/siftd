@@ -21,17 +21,29 @@ def _dispatch(
     Shared helper for simple routes: extract params → execute → render.
     Uses serve_fmt (serialization layer) instead of output/json_fmt
     to respect the architecture boundary (serve cannot import output).
+
+    Catches exceptions and returns a structured JSON error response
+    instead of letting raw tracebacks propagate as 500 errors.
     """
+    import logging
+
     from painted import Fidelity
 
     from siftd.api.dispatch import Operation, dispatch
     from siftd.serialization import serve_fmt
 
-    op = Operation(
-        path=path, method=method, fn=fn, params=params,
-        render_method=render_method, fidelity=Fidelity(), db=db,
-    )
-    return dispatch(op, fmt=serve_fmt)
+    try:
+        op = Operation(
+            path=path, method=method, fn=fn, params=params,
+            render_method=render_method, fidelity=Fidelity(), db=db,
+        )
+        return dispatch(op, fmt=serve_fmt)
+    except Exception as exc:
+        logging.getLogger("siftd.serve").exception("dispatch error on %s %s", method, path)
+        return Response(
+            content={"error": f"{path} failed: {exc}"},
+            status_code=500,
+        )
 
 
 @get("/", opt={"no_auth": True})

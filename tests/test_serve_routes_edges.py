@@ -21,6 +21,17 @@ def test_dispatch_builds_operation_and_calls_dispatch(monkeypatch, tmp_path):
     assert out["ok"] and seen["path"] == "/v1/x" and seen["method"] == "GET"
 
 
+def test_dispatch_returns_structured_error_on_exception(monkeypatch, tmp_path):
+    monkeypatch.setattr("siftd.api.dispatch.Operation", lambda **kw: None)
+    def _raise(*_a, **_kw):
+        raise RuntimeError("boom")
+    monkeypatch.setattr("siftd.api.dispatch.dispatch", _raise)
+    out = routes._dispatch("/v1/x", "GET", lambda: None, {}, "stats", tmp_path / "db.db")
+    # Returns a Response, not a raised exception
+    assert hasattr(out, "status_code")
+    assert out.status_code == 500
+
+
 def test_health_nonexistent_db_returns_zero_counts(tmp_path):
     out = _run(routes.health.fn(tmp_path / "missing.db"))
     assert out["status"] == "ok" and out["db_size_bytes"] == 0 and out["conversations"] == 0
