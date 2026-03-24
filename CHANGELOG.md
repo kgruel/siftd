@@ -5,17 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-03-24
 
 ### Added
 
-- **htmx web UI** — Browse, search, and analyze conversations in the browser at `/ui`:
+- **htmx web UI** — Browse, search, and analyze conversations in the browser at `/`:
   - Conversation list with workspace/model/tag/date filters
   - Full detail view with collapsible turns, tool cards, and sticky header
   - Markdown rendering (mistune) and syntax highlighting (Prism.js)
   - Live search — semantic + FTS5 hybrid when embeddings available, FTS5 fallback
   - Search modes — chunks/conversations toggle with `aggregate_by_conversation()` API
-  - Follow mode — live session tailing via `/ui/follow` with 2s polling
+  - Follow mode — live session tailing via `/follow` with 2s polling
   - Stats dashboard — summary cards, by-model token breakdown, by-workspace cost, top tools
   - Deep links — bookmarkable `?id=`, `?q=`, `?follow=` URLs via `hx-push-url`
   - Resizable panes — draggable divider between list and detail (JS, 15%-85% clamp)
@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Export as document artifact from detail view
   - "The Instrument" design system with dedicated CSS (`siftd.css`)
   - Architecture tests enforcing route boundary separation
+- **Authentication** — Three auth modes for `siftd serve`:
+  - Static password (`serve.auth.static_token`) for local dev/testing
+  - OIDC JWT validation against configurable issuer JWKS
+  - RFC 7662 token introspection for OAuth2 deployments
+  - Scope-based authorization: `required_scopes` gates all access (all-of), `write_scopes` gates tag/push operations (any-of)
+  - Browser login form via htmx — 401 triggers token input, stored in sessionStorage
+  - Loopback API bypass — CLI delegation on same machine works transparently with auth enabled
+  - `env:VAR_NAME` syntax for secrets in config
 - **Multi-tenancy** — Conversation ownership for shared databases:
   - `conversation_owners` table with push-time identity stamping
   - Owner-scoped queries across list, search, tool-search, and export
@@ -33,13 +41,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Unified parameter names across CLI/HTTP/API — dissolves `_SERVE_PARAM_MAP`
   - HTML output format as fourth peer to terminal/markdown/JSON
 - **Unified exception handling** — `safecall` module with codebase-wide migration
-- **Serve as general daemon** — Stats cache, read-path delegation for query/workspaces/tools/tags/tool-search/export/detail, tag write delegation via `POST /v1/tag`
+- **Serve as general daemon** — Stats cache, read-path delegation for query/workspaces/tools/tags/tool-search/export/detail, tag write delegation via `POST /api/v1/tag`
 - **Serialization layer** — Extracted JSON output unification across CLI and API
 - **Tool presenters** — Format-neutral extraction layer with 7 tool-specific extractors (file.read, file.edit, file.write, shell.execute, search.grep, file.glob, ui.todo) plus generic fallback. Consumed by both painted bridge and HTML formatter
 - **Narrative emitter protocol** — `PaintedEmitter` and `HtmlEmitter` share `walk_narrative()` as single source of truth for fidelity gating
+- **Configuration reference docs** — Auto-generated from config schema via `./dev docs`. All config keys documented with types, defaults, and descriptions
+- **`get_config_table()`** — New API for reading TOML sections as dicts (e.g., `serve.auth`)
 
 ### Changed
 
+- **URL restructure** — UI serves from `/` (was `/ui`), JSON API at `/api/v1/` (was `/v1/`). Health endpoint at `/api/v1/health`
 - **Adapter SDK: record normalizer pattern** — Adapters that implement `normalize_record()` get `peek_scan`, `peek_exchanges`, and `peek_tail` for free via `make_peek_hooks()`. Replaces per-adapter custom peek implementations with a single SDK code path
 - **Peek coverage: 3/8 → 7/8 adapters** — Pi Agent, Copilot CLI, and VSCode gain peek support. Claude Code, Codex CLI, and Gemini CLI migrated from custom peek to normalizer-derived
 - **Adapter boilerplate reduction** — All adapters now use `build_harness()`, `flush_pending_calls()`, and `discover_files()` from the SDK. Net ~580 lines removed from adapters
@@ -49,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`siftd query` is ~50× faster** — Covering index on `response_attributes`, two-phase query, `WhereBuilder` JOIN tracking, `EXISTS` subquery for model filter, materialized `conversation_stats` table. Default query from ~3.5s to ~70ms
 - **Storage test coverage** — 18.4% → 100% via 27 autoresearch runs. All 10 storage modules at 100% coverage
 - **Adapter test coverage** — Per-adapter test files split from monolith. Claude Code 99.3%, Codex CLI 99.5%, VSCode 100%, OpenCode 99.4%, cross-format normalizer validation (50 tests)
+- **CLI refactored to package** — `cli/` is now a proper package with focused submodules per command
+- **Dead config removed** — `search.formatter` and `search.serve_delegate` config keys removed (superseded by Operation IR and `serve.delegate`)
+- **Structured error responses** — `_dispatch()` catches exceptions and returns JSON errors instead of raw tracebacks
 - **`~110 lines removed`** — Dead `_delegate_search_via_serve` code path removed
 
 ### Fixed
@@ -57,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Editable install detection** — `siftd upgrade` now detects editable `uv tool` installs
 - **HTML route escaping** — XSS-relevant escaping bugs fixed in html_routes
 - **Connection leak** — Fixed in html_routes detail endpoint
+- **`embed_installed()` / `_serve_installed()`** — Use `importlib.util.find_spec` instead of try/import to avoid side effects
+- **`rename_tag` signature** — `conn` moved to keyword-only, consistent with other tag functions
+- **Serve auth config loading** — `get_config()` returns None for dicts; fixed to use `get_config_table()`
 
 ## [0.5.5] - 2026-03-20
 
