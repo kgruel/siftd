@@ -87,6 +87,25 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
                  "Listen port", "8484"),
     _SchemaEntry("serve.fts_rebuild", "string", _is_str,
                  "When to rebuild FTS index: on_push, scheduled, off", "on_push"),
+    # Serve auth — static_token, OIDC, or introspection
+    _SchemaEntry("serve.auth.static_token", "string", _is_str,
+                 "Static bearer token for auth (supports env:VAR syntax)", ""),
+    _SchemaEntry("serve.auth.identity", "string", _is_str,
+                 "User identity for static_token mode", "local"),
+    _SchemaEntry("serve.auth.issuer", "string", _is_str,
+                 "OIDC issuer URL for JWT validation", ""),
+    _SchemaEntry("serve.auth.audience", "string", _is_str,
+                 "OIDC audience claim", "siftd"),
+    _SchemaEntry("serve.auth.identity_claim", "string", _is_str,
+                 "Token claim to use as user identity", "sub"),
+    _SchemaEntry("serve.auth.jwks_url", "string", _is_str,
+                 "JWKS URL (auto-discovered from issuer if omitted)", ""),
+    _SchemaEntry("serve.auth.introspection_url", "string", _is_str,
+                 "RFC 7662 token introspection endpoint", ""),
+    _SchemaEntry("serve.auth.client_id", "string", _is_str,
+                 "Client ID for introspection auth", ""),
+    _SchemaEntry("serve.auth.client_secret", "string", _is_str,
+                 "Client secret for introspection (supports env:VAR syntax)", ""),
     # Adapters
     _SchemaEntry("adapters.*.locations", "list[string]", _is_str_list,
                  "Override discovery paths for a specific adapter", ""),
@@ -187,6 +206,23 @@ def get_config(key: str) -> str | None:
     if isinstance(current, (dict, list)):
         return None
     return str(current) if current is not None else None
+
+
+def get_config_table(prefix: str) -> dict | None:
+    """Get a config section as a dict by dotted prefix (e.g., 'serve.auth').
+
+    Returns None if the section doesn't exist or isn't a table.
+    """
+    doc = load_config()
+    current = doc
+    for part in prefix.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+
+    if not isinstance(current, dict):
+        return None
+    return dict(current)
 
 
 def _coerce_value(value: str) -> str | bool:

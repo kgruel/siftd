@@ -668,6 +668,19 @@ def generate_cli_docs() -> str:
 # =============================================================================
 
 
+def _toml_section(pattern: str) -> str:
+    """Derive TOML section header from a schema pattern.
+
+    Two-part keys (serve.host) → [serve].
+    Three+-part keys (serve.auth.issuer) → [serve.auth].
+    Wildcard sections (sync.remotes.*) keep the wildcard for display.
+    """
+    parts = pattern.split(".")
+    if len(parts) <= 2:
+        return parts[0]
+    return ".".join(parts[:-1])
+
+
 def generate_config_docs() -> str:
     """Generate config reference documentation from _CONFIG_SCHEMA."""
     from siftd.config import _CONFIG_SCHEMA
@@ -679,16 +692,14 @@ def generate_config_docs() -> str:
         "",
         "Config file: `~/.config/siftd/config.toml`",
         "",
-        "Set values with `siftd config set <key> <value>` or edit the file directly.",
-        "",
-        "The `[serve.auth]` section is a TOML table (not a flat key) — edit the file directly.",
+        "All keys can be managed via `siftd config set <key> <value>`.",
         "",
     ]
 
-    # Group by top-level section
+    # Group by TOML section
     sections: dict[str, list] = {}
     for entry in _CONFIG_SCHEMA:
-        section = entry.pattern.split(".")[0]
+        section = _toml_section(entry.pattern)
         sections.setdefault(section, []).append(entry)
 
     for section, entries in sections.items():
@@ -698,49 +709,32 @@ def generate_config_docs() -> str:
         lines.append("|-----|------|---------|-------------|")
 
         for entry in entries:
-            key = entry.pattern
+            # Show just the leaf key for readability
+            leaf = entry.pattern.split(".")[-1]
             default = f"`{entry.default}`" if entry.default else "—"
             lines.append(
-                f"| `{key}` | {entry.expected} | {default} | {escape_pipe(entry.description)} |"
+                f"| `{leaf}` | {entry.expected} | {default} | {escape_pipe(entry.description)} |"
             )
 
         lines.append("")
 
-    # Document auth section separately (not in _CONFIG_SCHEMA since it's a table)
+    # Add usage examples for non-obvious sections
     lines.extend([
-        "## [serve.auth]",
+        "## Examples",
         "",
-        "Authentication for `siftd serve`. Omit this section to disable auth.",
-        "Use `--no-auth` flag to skip even when configured.",
+        "```bash",
+        "# Set static auth token",
+        "siftd config set serve.auth.static_token mytoken123",
+        "siftd config set serve.auth.identity kaygee",
         "",
-        "### Static token (simplest)",
+        "# Configure OIDC",
+        "siftd config set serve.auth.issuer https://your-idp.example.com",
         "",
-        "```toml",
-        "[serve.auth]",
-        'static_token = "your-secret-token"',
-        'identity = "username"  # optional, defaults to "local"',
-        "```",
+        "# Override adapter discovery paths",
+        "siftd config append adapters.claude_code.locations ~/.claude/projects",
         "",
-        "Supports `env:VAR_NAME` syntax: `static_token = \"env:SIFTD_TOKEN\"`",
-        "",
-        "### OIDC (JWT)",
-        "",
-        "```toml",
-        "[serve.auth]",
-        'issuer = "https://your-idp.example.com"',
-        'audience = "siftd"          # optional, defaults to "siftd"',
-        'identity_claim = "email"    # optional, defaults to "sub"',
-        '# jwks_url = "..."         # optional, auto-discovered from issuer',
-        "```",
-        "",
-        "### Token introspection (RFC 7662)",
-        "",
-        "```toml",
-        "[serve.auth]",
-        'introspection_url = "https://your-idp.example.com/introspect"',
-        'client_id = "siftd"',
-        'client_secret = "env:SIFTD_CLIENT_SECRET"',
-        'identity_claim = "username"  # optional, defaults to "username"',
+        "# Disable update checks",
+        "siftd config set update.check false",
         "```",
         "",
     ])
