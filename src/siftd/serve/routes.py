@@ -96,7 +96,7 @@ async def health(db_path: Path) -> dict:
 
 
 @get("/api/v1/stats")
-async def stats_route(db_path: Path) -> dict:
+async def stats_route(db_path: Path) -> dict | Response:
     """Return database statistics. Server has DB warm, so this is fast."""
     from siftd.api.stats import get_stats
 
@@ -107,7 +107,7 @@ async def stats_route(db_path: Path) -> dict:
 async def workspaces_route(
     db_path: Path,
     n: int = Parameter(query="n", default=10000),
-) -> dict:
+) -> dict | Response:
     """List workspaces with conversation counts."""
     from siftd.api.stats import list_workspaces
 
@@ -118,7 +118,7 @@ async def workspaces_route(
 async def tools_route(
     db_path: Path,
     prefix: str = Parameter(query="prefix", default="shell:"),
-) -> dict:
+) -> dict | Response:
     """Tool tag usage summary."""
     from siftd.api.tools import get_tool_tag_summary
 
@@ -133,7 +133,7 @@ async def tools_by_workspace_route(
     db_path: Path,
     prefix: str = Parameter(query="prefix", default="shell:"),
     n: int = Parameter(query="n", default=20),
-) -> dict:
+) -> dict | Response:
     """Tool tag usage broken down by workspace."""
     from siftd.api.tools import get_tool_tags_by_workspace
 
@@ -148,7 +148,7 @@ async def tags_route(
     db_path: Path,
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),
-) -> dict:
+) -> dict | Response:
     """List tags with usage counts."""
     from siftd.api.tags import list_tags
 
@@ -265,7 +265,7 @@ async def tool_search_route(
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
     n: int = Parameter(query="n", default=20),
     owner: str | None = Parameter(query="owner", default=None),
-) -> dict:
+) -> dict | Response:
     """Search tool calls via FTS."""
     from siftd.api.tool_search import search_tool_calls
 
@@ -289,7 +289,7 @@ async def export_route(
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
     n: int = Parameter(query="n", default=0),
     owner: str | None = Parameter(query="owner", default=None),
-) -> dict:
+) -> dict | Response:
     """Export full conversation data."""
     from siftd.api.export import export_conversations
 
@@ -419,7 +419,7 @@ async def conversation_detail(
     include_thinking: bool = Parameter(query="include_thinking", default=False),
     include_tool_content: bool = Parameter(query="include_tool_content", default=False),
     tool_filter: str | None = Parameter(query="tool_filter", default=None),
-) -> dict:
+) -> dict | Response:
     """Get a single conversation by ID (supports prefix match)."""
     from siftd.api.conversations import get_conversation
 
@@ -447,7 +447,7 @@ async def conversation_list(
     n: int = Parameter(query="n", default=20),
     oldest: bool = Parameter(query="oldest", default=False),
     owner: str | None = Parameter(query="owner", default=None),
-) -> dict:
+) -> dict | Response:
     """List conversations with filtering."""
     from siftd.api.conversations import list_conversations
 

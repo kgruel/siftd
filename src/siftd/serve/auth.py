@@ -66,7 +66,8 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
     global _write_scopes
 
     required = frozenset(auth_config.get("required_scopes", []))
-    _write_scopes = frozenset(auth_config.get("write_scopes", []))
+    write = frozenset(auth_config.get("write_scopes", []))
+    _write_scopes = write  # module-level for require_write()
 
     class SiftdAuthMiddleware(AbstractAuthenticationMiddleware):
         """Bearer token authentication middleware."""
@@ -95,7 +96,10 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
                 if client:
                     addr = client[0] if isinstance(client, (list, tuple)) else getattr(client, "host", "")
                     if addr in ("127.0.0.1", "::1"):
-                        return AuthenticationResult(user=UserIdentity(sub="local-cli"), auth=None)
+                        return AuthenticationResult(
+                            user=UserIdentity(sub="local-cli", scopes=required | write),
+                            auth=None,
+                        )
 
             auth_header = connection.headers.get("authorization", "")
             if not auth_header.startswith("Bearer "):
@@ -130,12 +134,14 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
 
                 expected = os.environ.get(expected[4:], "")
 
+            if not expected:
+                raise NotAuthorizedException("Static token is not configured (empty or missing env var)")
             if not hmac.compare_digest(token, expected):
                 raise NotAuthorizedException("Invalid token")
             # Static tokens get all configured scopes (full access for dev)
             return UserIdentity(
                 sub=self._config.get("identity", "local"),
-                scopes=required | _write_scopes,
+                scopes=required | write,
             )
 
         async def _validate_oidc(self, token: str) -> UserIdentity:

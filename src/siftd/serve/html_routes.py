@@ -425,10 +425,12 @@ async def ui_search(
 
     # Mode toggle tabs
     def _tab(label: str, m: str) -> str:
+        from urllib.parse import quote as urlquote
+
         active = " active" if m == mode else ""
         return (
             f'<button class="toggle{active}"'
-            f' hx-get="/search?q={escape(q)}&mode={m}"'
+            f' hx-get="/search?q={urlquote(q)}&mode={m}"'
             f' hx-target="#list" hx-swap="innerHTML">{label}</button>'
         )
 

@@ -39,12 +39,19 @@ Commands are discovered from `scripts/*.sh`. Add a command by creating `scripts/
 
 ```
 src/siftd/
-├── adapters/       # Log parsing per tool
-├── storage/        # SQLite ops, schema, content blobs
+├── adapters/       # Log parsing per tool (SDK in adapters/sdk.py)
+├── api/            # Public API layer (CLI and serve consume this)
+├── cli/            # CLI package — thin dispatcher + per-command modules
+├── doctor/         # Health check system (per-check modules)
 ├── embeddings/     # Semantic search (optional [embed] extra)
-├── search.py       # Hybrid FTS5 + vector search
-├── cli.py          # Thin dispatcher
-└── cli_*.py        # Subcommand implementations
+├── output/         # Format registry, terminal/markdown/json/html renderers
+├── peek/           # Live session introspection (bypasses DB)
+├── serialization/  # Serve-layer JSON formatting (architecture boundary)
+├── serve/          # HTTP server (optional [serve] extra) — routes, auth, htmx UI
+├── storage/        # SQLite ops, schema, content blobs
+├── search.py       # Hybrid FTS5 + vector search, MMR reranking
+├── config.py       # Config management (~/.config/siftd/config.toml)
+└── safecall.py     # Unified exception handling
 tests/              # Pytest, mirrors src structure
 ```
 
@@ -55,7 +62,9 @@ tests/              # Pytest, mirrors src structure
 - XDG paths: data `~/.local/share/siftd`, config `~/.config/siftd`
 - Adapters: implement `can_handle()`, `parse()`, `discover()`, set `ADAPTER_INTERFACE_VERSION = 1`
 - Queries: `~/.config/siftd/queries/*.sql` with `$var` or `:var` substitution
-- CLI is thin dispatcher; logic lives in `cli_*.py` submodules or `search.py`/`api.py`
+- CLI is a package; logic lives in `cli/<command>.py` submodules
+- API layer (`api/`) is the boundary — CLI and serve both consume it, neither touches storage directly
+- Operation IR: `dispatch()` in `api/dispatch.py` — normalize→execute→render pipeline for all query commands
 
 ## CLI Quick Reference
 

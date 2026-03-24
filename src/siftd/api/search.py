@@ -410,6 +410,8 @@ def hybrid_search(
     recency: bool = False,
     recency_half_life: float = 30.0,
     recency_max_boost: float = 1.15,
+    # Threshold
+    threshold: float = 0.0,
     # Backend
     backend: str | None = None,
     embed_backend: EmbeddingBackend | None = None,
@@ -562,5 +564,9 @@ def hybrid_search(
     # MMR diversity reranking
     if use_mmr and results:
         results = mmr_rerank(results, query_embedding, lambda_=lambda_, limit=n)
+
+    # Score threshold filtering
+    if threshold > 0:
+        results = [r for r in results if r.get("score", 0) >= threshold]
 
     return results
