@@ -111,6 +111,13 @@ jobs:
               # Enqueue transitive deps
               queue.extend(d for d in _core_deps(dp["info"].get("requires_dist")) if d not in seen)
 
+          # cryptography/cffi/pycparser need native compilation — install via
+          # pip with binary wheels instead of building from source as resources.
+          PIP_INSTALL_DEPS = {"cryptography", "cffi", "pycparser"}
+
+          pip_deps = [(n, u, s) for n, u, s in resources if n in PIP_INSTALL_DEPS]
+          resources = [(n, u, s) for n, u, s in resources if n not in PIP_INSTALL_DEPS]
+
           lines = [
               'class Siftd < Formula',
               '  include Language::Python::Virtualenv',
@@ -123,7 +130,6 @@ jobs:
               '',
               '  depends_on "openssl@3"',
               '  depends_on "python@3.12"',
-              '  depends_on "rust" => :build',
               '',
           ]
 
@@ -136,9 +142,13 @@ jobs:
                   '',
               ]
 
+          # Build the pip install line for native deps (binary wheels)
+          pip_names = " ".join(n for n, _, _ in pip_deps)
+
           lines += [
               '  def install',
               '    virtualenv_create(libexec, "python3.12")',
+              f'    system libexec/"bin/pip", "install", {", ".join(repr(n) for n, _, _ in pip_deps)}',
               '    virtualenv_install_with_resources',
               '  end',
               '',
