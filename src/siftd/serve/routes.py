@@ -180,7 +180,7 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
         if action == "rename":
             old_name = body["old_name"]
             new_name = body["new_name"]
-            rename_tag(conn, old_name, new_name, commit=True)
+            rename_tag(old_name, new_name, conn=conn, commit=True)
             return {"status": "renamed", "old_name": old_name, "new_name": new_name}
 
         if action == "delete":
