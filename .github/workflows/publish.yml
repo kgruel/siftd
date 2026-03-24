@@ -121,7 +121,9 @@ jobs:
               f'  sha256 "{sdist["digests"]["sha256"]}"',
               '  license "MIT"',
               '',
+              '  depends_on "openssl@3"',
               '  depends_on "python@3.12"',
+              '  depends_on "rust" => :build',
               '',
           ]
 
