@@ -2,6 +2,12 @@ import asyncio
 import sys
 from types import SimpleNamespace
 
+import pytest
+
+pytest.importorskip("litestar")
+
+pytestmark = pytest.mark.serve
+
 from siftd.serve import html_routes as hr
 
 

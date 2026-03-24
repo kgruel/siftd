@@ -1,3 +1,9 @@
+import pytest
+
+pytest.importorskip("litestar")
+
+pytestmark = pytest.mark.serve
+
 from siftd.serve.auth import create_auth_middleware
 
 

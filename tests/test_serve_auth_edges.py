@@ -4,6 +4,11 @@ import time
 from types import SimpleNamespace
 
 import pytest
+
+pytest.importorskip("litestar")
+
+pytestmark = pytest.mark.serve
+
 from litestar.exceptions import NotAuthorizedException
 
 from siftd.serve.auth import UserIdentity, create_auth_middleware
