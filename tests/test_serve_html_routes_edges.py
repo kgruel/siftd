@@ -1,5 +1,11 @@
 import asyncio
 
+import pytest
+
+pytest.importorskip("litestar")
+
+pytestmark = pytest.mark.serve
+
 from siftd.serve import html_routes as hr
 
 

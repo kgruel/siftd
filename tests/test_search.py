@@ -296,6 +296,7 @@ class TestResolveCandidates:
         assert "c1" in result and "c2" in result
 
 
+@pytest.mark.embeddings
 class TestHybridSearchBranches:
     def _stub_embed_exports(self, monkeypatch, backend):
         import siftd.embeddings as emb

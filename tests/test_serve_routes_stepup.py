@@ -3,6 +3,12 @@ import builtins
 import json
 from types import SimpleNamespace
 
+import pytest
+
+pytest.importorskip("litestar")
+
+pytestmark = pytest.mark.serve
+
 from siftd.serve import routes
 
 
