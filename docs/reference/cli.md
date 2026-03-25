@@ -111,10 +111,10 @@ options:
 
 ```
 usage: siftd db [-h]
-                {info,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,send,remote,push,pull} ...
+                {info,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull} ...
 
 positional arguments:
-  {info,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,send,remote,push,pull}
+  {info,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull}
     info                Show database file metadata and schema info
     stats               Show database statistics
     workspaces          List workspaces with conversation counts
@@ -128,6 +128,8 @@ positional arguments:
                         database
     receive             Receive a database from stdin and create-or-merge into
                         the local database
+    process             Merge staged inbox payloads into the database
+    sync-status         Report sync capabilities and inbox status (JSON)
     send                Slice the database and write binary SQLite to stdout
     remote              Manage sync remotes (add, list, remove)
     push                Push conversations to a sync remote

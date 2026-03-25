@@ -308,6 +308,22 @@ BEGIN
 END;
 
 --------------------------------------------------------------------------------
+-- SYNC INBOX
+-- Tracks staged payloads from push operations pending merge
+--------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS sync_inbox (
+    id           TEXT PRIMARY KEY,
+    received_at  TEXT NOT NULL,
+    processed_at TEXT,
+    status       TEXT NOT NULL DEFAULT 'staged',
+    error        TEXT,
+    source_host  TEXT,
+    size_bytes   INTEGER,
+    conversations INTEGER
+);
+
+--------------------------------------------------------------------------------
 -- FTS5 FULL-TEXT SEARCH INDEX
 -- Indexes text content from prompt_content and response_content
 --------------------------------------------------------------------------------

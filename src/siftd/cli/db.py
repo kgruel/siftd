@@ -328,6 +328,14 @@ def cmd_db_receive(args) -> int:
             )
             return 1
 
+        if getattr(args, "stage", False):
+            from siftd.api.inbox import stage_payload
+
+            data = tmp_path.read_bytes()
+            result = stage_payload(data, db)
+            print(json.dumps(result))
+            return 0
+
         from siftd.api.receive import receive_database
 
         rebuild_fts = not args.no_fts
@@ -352,6 +360,46 @@ def cmd_db_receive(args) -> int:
     finally:
         if tmp_path is not None and tmp_path.exists():
             tmp_path.unlink()
+
+
+def cmd_db_process(args) -> int:
+    """Merge all staged inbox payloads into the database."""
+    from siftd.api.inbox import process_inbox
+
+    db = resolve_db(args)
+    results = process_inbox(db)
+
+    if not results:
+        print("No staged payloads to process.")
+        return 0
+
+    errors = 0
+    for r in results:
+        if r["status"] == "done":
+            print(f"  {r['id']}: merged ({r.get('conversations', 0)} conversations)")
+        else:
+            print(f"  {r['id']}: error — {r.get('error', 'unknown')}", file=sys.stderr)
+            errors += 1
+
+    print(f"Processed {len(results)} payload(s), {errors} error(s).")
+    return 1 if errors else 0
+
+
+def cmd_db_sync_status(args) -> int:
+    """Report sync capabilities and inbox status as JSON."""
+    from siftd.api.inbox import get_inbox_status
+    from siftd.api.sync import SYNC_CAPABILITIES, SYNC_PROTOCOL_VERSION
+
+    db = resolve_db(args)
+    inbox = get_inbox_status(db)
+
+    status = {
+        "capabilities": sorted(SYNC_CAPABILITIES),
+        "inbox": inbox,
+        "protocol_version": SYNC_PROTOCOL_VERSION,
+    }
+    print(json.dumps(status))
+    return 0
 
 
 def cmd_db_send(args) -> int:
@@ -391,6 +439,9 @@ def cmd_db_send(args) -> int:
             target_path=tmp_path,
             since=getattr(args, "since", None),
             workspace=getattr(args, "workspace", None),
+            tag=getattr(args, "tag", None),
+            no_tag=getattr(args, "no_tag", None),
+            owner=getattr(args, "owner", None),
             rebuild_fts=rebuild_fts,
         )
 
@@ -432,8 +483,10 @@ def cmd_db_pull(args) -> int:
         print("Run 'siftd db remote list' to see configured remotes.", file=sys.stderr)
         return 1
 
-    remote_cfg.pop("auth", None)
-    remote = SyncRemote(**remote_cfg)
+    remote = SyncRemote.from_config(remote_cfg)
+    cli_strategy = getattr(args, "strategy", None)
+    if cli_strategy is not None:
+        remote.strategy = cli_strategy
 
     db = resolve_db(args)
 
@@ -539,8 +592,10 @@ def cmd_db_push(args) -> int:
         print("Run 'siftd db remote list' to see configured remotes.", file=sys.stderr)
         return 1
 
-    remote_cfg.pop("auth", None)
-    remote = SyncRemote(**remote_cfg)
+    remote = SyncRemote.from_config(remote_cfg)
+    cli_strategy = getattr(args, "strategy", None)
+    if cli_strategy is not None:
+        remote.strategy = cli_strategy
 
     db = resolve_db(args)
     if not db.exists():
@@ -695,7 +750,35 @@ examples:
   ssh host siftd --db /path/team.db db receive --no-fts < slice.db""",
     )
     p_receive.add_argument("--no-fts", action="store_true", help="Skip FTS5 index rebuild")
+    p_receive.add_argument("--stage", action="store_true",
+                           help="Stage payload in inbox for deferred merge (fast ACK)")
     p_receive.set_defaults(func=cmd_db_receive)
+
+    # process
+    p_process = db_sub.add_parser(
+        "process",
+        help="Merge staged inbox payloads into the database",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Process all staged payloads from push operations that used --stage.
+
+examples:
+  siftd db process                           # merge all pending payloads""",
+    )
+    p_process.set_defaults(func=cmd_db_process)
+
+    # sync-status
+    p_sync_status = db_sub.add_parser(
+        "sync-status",
+        help="Report sync capabilities and inbox status (JSON)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Returns JSON with receiver capabilities and inbox state.
+Used by push pre-flight to negotiate the protocol.
+
+examples:
+  siftd db sync-status
+  ssh host siftd --db /path/team.db db sync-status""",
+    )
+    p_sync_status.set_defaults(func=cmd_db_sync_status)
 
     # send
     p_send = db_sub.add_parser(
@@ -715,6 +798,12 @@ examples:
                         help="Send conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
     p_send.add_argument("-w", "--workspace", metavar="SUBSTR",
                         help="Filter by workspace path substring")
+    p_send.add_argument("--tag", action="append", metavar="TAG",
+                        help="Only send conversations with these tags (repeatable)")
+    p_send.add_argument("--no-tag", action="append", metavar="TAG",
+                        help="Exclude conversations with these tags (repeatable)")
+    p_send.add_argument("--owner", metavar="USER",
+                        help="Filter by conversation owner")
     p_send.add_argument("--no-fts", action="store_true", default=True,
                         help="Skip FTS5 index rebuild (default: skip)")
     p_send.set_defaults(func=cmd_db_send)
@@ -767,6 +856,8 @@ examples:
                         help="Preview what would be pushed without transferring")
     p_push.add_argument("-w", "--workspace", metavar="SUBSTR",
                         help="Filter by workspace path substring")
+    p_push.add_argument("--strategy", choices=["incremental", "full"],
+                        help="Override push strategy (default: from config or incremental)")
     p_push.set_defaults(func=cmd_db_push)
 
     # pull
@@ -790,6 +881,8 @@ examples:
                         help="Preview what would be pulled without merging")
     p_pull.add_argument("-w", "--workspace", metavar="SUBSTR",
                         help="Filter by workspace path substring")
+    p_pull.add_argument("--strategy", choices=["incremental", "full"],
+                        help="Override pull strategy (default: from config or incremental)")
     p_pull.set_defaults(func=cmd_db_pull)
 
     # bare 'siftd db' prints help

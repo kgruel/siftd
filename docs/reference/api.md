@@ -1069,6 +1069,9 @@ A registered sync remote.
 | `path` | `str` |  |
 | `last_push` | `str \| None` |  |
 | `last_pull` | `str \| None` |  |
+| `last_sent` | `str \| None` |  |
+| `strategy` | `str` |  |
+| `filters` | `siftd.domain.sync.SyncFilters \| None` |  |
 
 ### Exceptions
 
@@ -1302,7 +1305,7 @@ def slice_database(source_db: Path, target_path: Path, *, workspace: str | None 
 Push conversations to a remote database.
 
 ```python
-def sync_push(db_path: Path, remote: SyncRemote, *, since: str | None = ..., push_all: bool = ..., workspace: str | None = ..., dry_run: bool = ...) -> PushResult
+def sync_push(db_path: Path, remote: SyncRemote, *, since: str | None = ..., push_all: bool = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., owner: str | None = ..., dry_run: bool = ...) -> PushResult
 ```
 
 **Parameters:**
@@ -1310,8 +1313,7 @@ def sync_push(db_path: Path, remote: SyncRemote, *, since: str | None = ..., pus
 - `db_path`: Path to the local siftd database.
 - `remote`: The remote to push to.
 - `since`: Only push conversations started after this date.
-- `push_all`: Push all conversations (ignore last_push).
-- `workspace`: Filter by workspace substring.
+- `push_all`: Push all conversations (ignore last_push). workspace..owner: Filter kwargs (override remote config filters).
 
 **Returns:** PushResult with stats.
 

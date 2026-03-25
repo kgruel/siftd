@@ -26,6 +26,7 @@ from siftd.config import (
     get_ssh_options,
     get_sync_remote,
     get_sync_remotes,
+    get_sync_timeouts,
     get_tools_defaults,
     load_config,
     remove_config_list,
@@ -329,6 +330,63 @@ class TestSSHOptions:
         if setup is not None:
             _w(config_dir, setup)
         assert get_ssh_options() == []
+
+
+class TestSyncTimeouts:
+    def test_hardcoded_defaults(self, config_dir):
+        from siftd.config import get_sync_timeouts
+        assert get_sync_timeouts() == (30, 600)
+
+    def test_sync_global(self, config_dir):
+        from siftd.config import get_sync_timeouts
+        _w(config_dir, "[sync]\nconnect_timeout_s = 15\ncommand_timeout_s = 900\n")
+        assert get_sync_timeouts() == (15, 900)
+
+    def test_transport_overrides_global(self, config_dir):
+        from siftd.config import get_sync_timeouts
+        _w(config_dir, (
+            "[sync]\nconnect_timeout_s = 15\ncommand_timeout_s = 900\n"
+            "[sync.ssh]\nconnect_timeout_s = 20\ncommand_timeout_s = 1200\n"
+        ))
+        assert get_sync_timeouts(transport="ssh") == (20, 1200)
+        # HTTP still uses sync global
+        assert get_sync_timeouts(transport="http") == (15, 900)
+
+    def test_per_remote_overrides_transport(self, config_dir):
+        from siftd.config import get_sync_timeouts
+        _w(config_dir, (
+            "[sync.ssh]\nconnect_timeout_s = 20\ncommand_timeout_s = 300\n"
+            "[sync.remotes.alcove]\ncommand_timeout_s = 900\n"
+        ))
+        # per-remote overrides transport for command, connect falls through
+        assert get_sync_timeouts("alcove", "ssh") == (20, 900)
+
+    def test_per_remote_transport_overrides_all(self, config_dir):
+        from siftd.config import get_sync_timeouts
+        _w(config_dir, (
+            "[sync]\nconnect_timeout_s = 10\ncommand_timeout_s = 300\n"
+            "[sync.ssh]\ncommand_timeout_s = 600\n"
+            "[sync.remotes.alcove]\ncommand_timeout_s = 900\n"
+            "[sync.remotes.alcove.ssh]\nconnect_timeout_s = 5\ncommand_timeout_s = 1800\n"
+        ))
+        assert get_sync_timeouts("alcove", "ssh") == (5, 1800)
+
+    def test_partial_override(self, config_dir):
+        from siftd.config import get_sync_timeouts
+        _w(config_dir, "[sync.remotes.box.ssh]\ncommand_timeout_s = 120\n")
+        # connect falls through all layers to hardcoded default
+        assert get_sync_timeouts("box", "ssh") == (30, 120)
+
+    def test_bad_values_ignored(self, config_dir):
+        from siftd.config import get_sync_timeouts
+        _w(config_dir, '[sync]\nconnect_timeout_s = "bad"\ncommand_timeout_s = 100\n')
+        # bad connect falls through to hardcoded, command resolves normally
+        assert get_sync_timeouts() == (30, 100)
+
+    def test_nonexistent_remote(self, config_dir):
+        from siftd.config import get_sync_timeouts
+        _w(config_dir, "[sync.ssh]\ncommand_timeout_s = 400\n")
+        assert get_sync_timeouts("nonexistent", "ssh") == (30, 400)
 
 
 class TestCLIConfigIntegration:

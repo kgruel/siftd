@@ -123,7 +123,7 @@ class TestPullSSHSuccess:
 
         with _patch_connect(fake):
             convos, size = _run(_pull_ssh(
-                _remote(), tmp_path / "local.db", None, None, dry_run=True,
+                _remote(), tmp_path / "local.db", None, {}, dry_run=True,
             ))
 
         assert convos == 1
@@ -140,14 +140,25 @@ class TestPullSSHSuccess:
         with _patch_connect(fake):
             _run(_pull_ssh(
                 _remote(), tmp_path / "local.db",
-                since="2024-01", workspace="proj", dry_run=True,
+                since="2024-01",
+                filters={
+                    "workspace": "proj",
+                    "tag": ["public", "release"],
+                    "no_tag": ["private", "draft"],
+                    "owner": "alice",
+                },
+                dry_run=True,
             ))
 
         cmd = fake.commands_run[0]
-        assert "--since" in cmd
-        assert "2024-01" in cmd
-        assert "-w" in cmd
-        assert "proj" in cmd
+        assert "--since" in cmd and "2024-01" in cmd
+        assert "-w" in cmd and "proj" in cmd
+        # Each tag/no_tag value gets its own --tag/--no-tag flag
+        assert cmd.count("--tag") == 2
+        assert "public" in cmd and "release" in cmd
+        assert cmd.count("--no-tag") == 2
+        assert "private" in cmd and "draft" in cmd
+        assert "--owner" in cmd and "alice" in cmd
 
 
 class TestPullSSHEmpty:
@@ -162,7 +173,7 @@ class TestPullSSHEmpty:
 
         with _patch_connect(fake):
             convos, size = _run(_pull_ssh(
-                _remote(), tmp_path / "local.db", None, None, dry_run=True,
+                _remote(), tmp_path / "local.db", None, {}, dry_run=True,
             ))
 
         assert convos == 0
@@ -177,7 +188,7 @@ class TestPullSSHConnectionError:
         with patch("siftd.api.sync.asyncssh.connect", side_effect=OSError("Connection refused")):
             with pytest.raises(SyncError, match="running"):
                 _run(_pull_ssh(
-                    _remote(), tmp_path / "local.db", None, None, dry_run=True,
+                    _remote(), tmp_path / "local.db", None, {}, dry_run=True,
                 ))
 
 

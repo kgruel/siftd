@@ -88,6 +88,11 @@ def embeddings_db_path() -> Path:
     return data_dir() / "embeddings.db"
 
 
+def inbox_dir() -> Path:
+    """Return the sync inbox directory (~/.local/share/siftd/inbox)."""
+    return data_dir() / "inbox"
+
+
 def ensure_dirs() -> None:
     """Create all XDG directories if they don't exist."""
     data_dir().mkdir(parents=True, exist_ok=True)
@@ -96,3 +101,4 @@ def ensure_dirs() -> None:
     adapters_dir().mkdir(parents=True, exist_ok=True)
     formatters_dir().mkdir(parents=True, exist_ok=True)
     cache_dir().mkdir(parents=True, exist_ok=True)
+    inbox_dir().mkdir(parents=True, exist_ok=True)

@@ -369,6 +369,7 @@ async def pull(
     before: str | None = Parameter(query="before", default=None),
     model: str | None = Parameter(query="model", default=None),
     tag: list[str] | None = Parameter(query="tag", default=None),
+    no_tag: list[str] | None = Parameter(query="no_tag", default=None),
     owner: str | None = Parameter(query="owner", default=None),
 ) -> Response:
     """Slice and stream the team DB based on filters."""
@@ -384,6 +385,7 @@ async def pull(
             before=before,
             model=model,
             tag=tag,
+            no_tag=no_tag,
             rebuild_fts=False,
             owner=owner,
         )
@@ -410,6 +412,20 @@ async def pull(
                 "X-Siftd-Size": str(len(data)),
             },
         )
+
+
+@get("/api/v1/sync/status", opt={"no_auth": True})
+async def sync_status_route(db_path: Path) -> dict:
+    """Return sync capabilities and inbox status."""
+    from siftd.api.inbox import get_inbox_status
+    from siftd.domain.sync import SYNC_CAPABILITIES, SYNC_PROTOCOL_VERSION
+
+    inbox = get_inbox_status(db_path)
+    return {
+        "capabilities": sorted(SYNC_CAPABILITIES),
+        "inbox": inbox,
+        "protocol_version": SYNC_PROTOCOL_VERSION,
+    }
 
 
 @get("/api/v1/conversations/{id:str}")

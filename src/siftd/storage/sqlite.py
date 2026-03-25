@@ -102,6 +102,7 @@ def open_database(
         _ensure_response_attributes_key_index(conn)
         _ensure_conversation_stats_table(conn)
         ensure_conversation_owners_table(conn)
+        ensure_sync_inbox_table(conn)
 
         # Stamp schema version after successful migrations
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -580,6 +581,22 @@ def ensure_conversation_owners_table(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_conversation_owners_user
         ON conversation_owners(user_id)
+    """)
+
+
+def ensure_sync_inbox_table(conn: sqlite3.Connection) -> None:
+    """Create sync_inbox table for staged push payloads. Idempotent."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sync_inbox (
+            id           TEXT PRIMARY KEY,
+            received_at  TEXT NOT NULL,
+            processed_at TEXT,
+            status       TEXT NOT NULL DEFAULT 'staged',
+            error        TEXT,
+            source_host  TEXT,
+            size_bytes   INTEGER,
+            conversations INTEGER
+        )
     """)
 
 
