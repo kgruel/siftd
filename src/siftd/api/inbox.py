@@ -96,7 +96,7 @@ def _process_one(db_path: Path, payload_id: str, payload_path: Path) -> dict:
     try:
         from siftd.api.receive import receive_database
 
-        result = receive_database(payload_path, db_path, rebuild_fts=False)
+        result = receive_database(payload_path, db_path, rebuild_fts=True)
         conversations = result.get("conversations", 0)
 
         _update_status(db_path, payload_id, "done", now,

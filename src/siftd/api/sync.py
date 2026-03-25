@@ -143,10 +143,19 @@ def sync_push(
     last_push_updated = False
     if should_update_last_push:
         if use_staged:
-            # Staged: record last_sent immediately (fast, before merge)
+            # Staged: record last_sent immediately (doom-loop fix — even
+            # if processing below times out, next push is incremental).
             from siftd.config import update_last_sent
 
             update_last_sent(remote.name, now)
+
+            # Trigger processing on the remote so it isn't left stale.
+            # This may be slow, but last_sent is already recorded above.
+            if remote.host and not _is_http_remote(remote):
+                try:
+                    asyncio.run(_process_remote_ssh(remote))
+                except SyncError:
+                    pass  # Data is staged; can be processed later
         else:
             # Blocking: record last_push only after confirmed merge
             from siftd.config import update_last_push
@@ -306,6 +315,32 @@ def _build_ssh_options(remote: SyncRemote) -> tuple[str, dict[str, Any]]:
             opts["username"] = parsed_user
 
     return hostname, opts
+
+
+async def _process_remote_ssh(remote: SyncRemote) -> None:
+    """Trigger ``siftd db process`` on the remote to merge staged payloads."""
+    assert remote.host is not None
+
+    remote_db = shlex.quote(remote.path)
+    cmd = f"siftd --db {remote_db} db process"
+
+    hostname, connect_opts = _build_ssh_options(remote)
+
+    from siftd.config import get_sync_timeouts
+
+    connect_timeout, command_timeout = get_sync_timeouts(remote.name, "ssh")
+    if "connect_timeout" not in connect_opts:
+        connect_opts["connect_timeout"] = connect_timeout
+
+    try:
+        async with asyncssh.connect(hostname, **connect_opts) as conn:
+            result = await conn.run(cmd, encoding="utf-8", timeout=command_timeout)
+    except Exception as e:
+        raise SyncError(f"Remote process failed: {e}") from e
+
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        raise SyncError(f"Remote process failed: {stderr}")
 
 
 def _friendly_os_error(host: str, message: str) -> str:
@@ -524,20 +559,20 @@ def sync_pull(
     # Merge CLI filters with remote config filters
     filters = _merge_filters(remote, workspace=workspace, tag=tag,
                              no_tag=no_tag, owner=owner)
-    effective_workspace = filters.get("workspace")
 
     if _is_http_remote(remote):
         conversations, size_bytes = _pull_http(
-            remote, db_path, effective_since, effective_workspace, dry_run,
+            remote, db_path, effective_since, filters, dry_run,
         )
     elif remote.host:
+        # SSH pull (db send) only supports workspace/since filtering
         conversations, size_bytes = asyncio.run(
-            _pull_ssh(remote, db_path, effective_since, effective_workspace,
-                      dry_run)
+            _pull_ssh(remote, db_path, effective_since,
+                      filters.get("workspace"), dry_run)
         )
     else:
         conversations, size_bytes = _pull_local(
-            remote, db_path, effective_since, effective_workspace, dry_run,
+            remote, db_path, effective_since, filters, dry_run,
         )
 
     if conversations == 0:
@@ -686,7 +721,7 @@ def _pull_local(
     remote: SyncRemote,
     local_db: Path,
     since: str | None,
-    workspace: str | None,
+    filters: dict,
     dry_run: bool,
 ) -> tuple[int, int]:
     """Pull from a local-path remote. Returns (conversations, size_bytes)."""
@@ -702,8 +737,8 @@ def _pull_local(
             source_db=source,
             target_path=slice_path,
             since=since,
-            workspace=workspace,
             rebuild_fts=False,
+            **filters,
         )
 
         conversations = result["conversations"]
@@ -725,7 +760,7 @@ def _pull_http(
     remote: SyncRemote,
     local_db: Path,
     since: str | None,
-    workspace: str | None,
+    filters: dict,
     dry_run: bool,
 ) -> tuple[int, int]:
     """Pull via HTTP GET from remote /api/v1/pull endpoint.
@@ -747,11 +782,18 @@ def _pull_http(
         pass
 
     url = remote.path.rstrip("/") + "/api/v1/pull"
-    params: dict[str, str] = {}
+    params: dict[str, Any] = {}
     if since is not None:
         params["since"] = since
+    workspace = filters.get("workspace")
     if workspace is not None:
         params["workspace"] = workspace
+    owner = filters.get("owner")
+    if owner is not None:
+        params["owner"] = owner
+    tag = filters.get("tag")
+    if tag:
+        params["tag"] = tag
 
     from siftd.config import get_sync_timeouts
 

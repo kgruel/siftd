@@ -371,8 +371,8 @@ class TestPullLocalAndHttp:
         monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, rebuild_fts=True: got.append((s, d)))
         remote = _remote(path=str(_db(tmp_path, "remote.db")))
         local = _db(tmp_path, "local.db")
-        assert _pull_local(remote, local, None, None, True) == (2, 11)
-        assert _pull_local(remote, local, None, None, False) == (2, 11)
+        assert _pull_local(remote, local, None, {}, True) == (2, 11)
+        assert _pull_local(remote, local, None, {}, False) == (2, 11)
         assert got
 
     def test_pull_http_dry_run(self, tmp_path, monkeypatch):
@@ -381,7 +381,7 @@ class TestPullLocalAndHttp:
         _patch_httpx_module(monkeypatch, lambda timeout=None: client)
         monkeypatch.setattr("siftd.config.get_sync_remote", lambda n: None)
         monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: (_ for _ in ()).throw(AuthError("no-auth")))
-        conv, size = _pull_http(_remote(path="http://srv"), _db(tmp_path), "2024-01", "proj", True)
+        conv, size = _pull_http(_remote(path="http://srv"), _db(tmp_path), "2024-01", {"workspace": "proj"}, True)
         assert conv == 2 and size == len(b"sqlite-bytes")
         _, url, params, _headers = client.calls[0]
         assert url.endswith("/api/v1/pull") and params == {"since": "2024-01", "workspace": "proj"}
@@ -394,7 +394,7 @@ class TestPullLocalAndHttp:
         monkeypatch.setattr("siftd.config.get_sync_remote", lambda n: None)
         monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: (_ for _ in ()).throw(AuthError("no-auth")))
         monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, rebuild_fts=True: got.append((s, d)))
-        conv, size = _pull_http(_remote(path="http://srv"), _db(tmp_path), None, None, False)
+        conv, size = _pull_http(_remote(path="http://srv"), _db(tmp_path), None, {}, False)
         assert conv == 1 and size == len(b"sqlite-bytes") and got
 
     def test_pull_http_zero_and_errors(self, tmp_path, monkeypatch):
@@ -402,12 +402,12 @@ class TestPullLocalAndHttp:
         _patch_httpx_module(monkeypatch, lambda timeout=None: zero_client)
         monkeypatch.setattr("siftd.config.get_sync_remote", lambda n: None)
         monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: (_ for _ in ()).throw(AuthError("no-auth")))
-        assert _pull_http(_remote(path="http://srv"), _db(tmp_path), None, None, True) == (0, 0)
+        assert _pull_http(_remote(path="http://srv"), _db(tmp_path), None, {}, True) == (0, 0)
 
         err_client = _Client(get_exc=_ConnectError("down"))
         _patch_httpx_module(monkeypatch, lambda timeout=None: err_client)
         with pytest.raises(SyncError, match="Cannot connect"):
-            _pull_http(_remote(path="http://srv"), _db(tmp_path), None, None, True)
+            _pull_http(_remote(path="http://srv"), _db(tmp_path), None, {}, True)
 
 
 class _Conn:
@@ -588,7 +588,7 @@ class TestPullHttpAuthAndStatus:
         monkeypatch.setattr("siftd.config.get_sync_remote", lambda n: {"auth": {"token": "x"}})
         monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: "tok")
         with pytest.raises(SyncError, match="HTTP 401"):
-            _pull_http(_remote(path="http://srv"), _db(tmp_path), None, None, True)
+            _pull_http(_remote(path="http://srv"), _db(tmp_path), None, {}, True)
 
 
 class TestPushLocalError:
