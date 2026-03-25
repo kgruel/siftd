@@ -10,7 +10,7 @@ import pytest
 from fakes.ssh import FakeSSH, FakeSSHResult
 
 from siftd.api.sync import SyncError, _build_ssh_options, _pull_ssh, _push_ssh
-from siftd.domain.sync import SyncRemote
+from siftd.domain.sync import SYNC_HEADER, SyncRemote
 
 
 def _remote(path="/r/db", name="t", host="box", **kw):
@@ -54,7 +54,7 @@ class TestPushSSHSuccess:
         assert len(fake.commands_run) == 1
         assert "siftd" in fake.commands_run[0]
         assert "db receive" in fake.commands_run[0]
-        assert fake.inputs_received[0] == slice_data
+        assert fake.inputs_received[0] == SYNC_HEADER + slice_data
 
     def test_new_remote_returns_false(self, tmp_path, monkeypatch):
         monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})

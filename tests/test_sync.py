@@ -27,7 +27,13 @@ from siftd.api.sync import (
     sync_pull,
     sync_push,
 )
-from siftd.domain.sync import SyncRemote
+from siftd.domain.sync import (
+    SYNC_HEADER,
+    SYNC_MAGIC,
+    SYNC_PROTOCOL_VERSION,
+    SyncRemote,
+    parse_sync_header,
+)
 from siftd.storage.sqlite import open_database
 
 
@@ -582,3 +588,76 @@ class TestPushLocalError:
         monkeypatch.setattr("siftd.api.merge.merge_database", _boom)
         with pytest.raises(SyncError, match="Local merge failed"):
             _push_local(_remote(path=str(target)), slice_db, _db(tmp_path, "local.db"))
+
+
+class TestSyncProtocolHeader:
+    def test_parse_valid_header(self):
+        assert parse_sync_header(SYNC_HEADER) == SYNC_PROTOCOL_VERSION
+
+    def test_parse_future_version(self):
+        import struct
+        header = SYNC_MAGIC + struct.pack(">H", 99)
+        assert parse_sync_header(header) == 99
+
+    def test_parse_no_magic(self):
+        assert parse_sync_header(b"SQLite format 3\x00") is None
+
+    def test_parse_too_short(self):
+        assert parse_sync_header(b"SIFTD") is None
+
+    def test_parse_empty(self):
+        assert parse_sync_header(b"") is None
+
+    def test_push_ssh_prepends_header(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+        conn = _Conn(SimpleNamespace(returncode=0, stdout='{"status":"ok"}', stderr=""))
+        monkeypatch.setattr("siftd.api.sync.asyncssh.connect", lambda *_a, **_kw: conn)
+        slice_path = tmp_path / "slice.db"
+        slice_path.write_bytes(b"db-payload")
+        asyncio.run(_push_ssh(_remote(host="box"), slice_path))
+        sent_input = conn.runs[0][1]["input"]
+        assert sent_input[:8] == SYNC_HEADER
+        assert sent_input[8:] == b"db-payload"
+
+    def test_pull_ssh_strips_header(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+        payload = b"sqlite-data"
+        stdout = SYNC_HEADER + payload
+        conn = _Conn(SimpleNamespace(returncode=0, stdout=stdout, stderr='{"conversations":1}'))
+        monkeypatch.setattr("siftd.api.sync.asyncssh.connect", lambda *_a, **_kw: conn)
+        contents = []
+        def _capture(s, d, rebuild_fts=True):
+            contents.append(s.read_bytes())
+        monkeypatch.setattr("siftd.api.receive.receive_database", _capture)
+        conv, size = asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, None, False))
+        assert conv == 1
+        assert size == len(payload)
+        assert contents[0] == payload
+
+    def test_pull_ssh_no_header_backwards_compat(self, tmp_path, monkeypatch):
+        """Old remote without protocol header still works."""
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+        conn = _Conn(SimpleNamespace(returncode=0, stdout=b"raw-db", stderr='{"conversations":1}'))
+        monkeypatch.setattr("siftd.api.sync.asyncssh.connect", lambda *_a, **_kw: conn)
+        contents = []
+        def _capture(s, d, rebuild_fts=True):
+            contents.append(s.read_bytes())
+        monkeypatch.setattr("siftd.api.receive.receive_database", _capture)
+        conv, size = asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, None, False))
+        assert conv == 1 and size == 6
+        assert contents[0] == b"raw-db"
+
+    def test_pull_ssh_future_version_error(self, tmp_path, monkeypatch):
+        """Remote with a higher protocol version than we support raises SyncError."""
+        import struct
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+        future_header = SYNC_MAGIC + struct.pack(">H", SYNC_PROTOCOL_VERSION + 1)
+        stdout = future_header + b"payload"
+        conn = _Conn(SimpleNamespace(returncode=0, stdout=stdout, stderr='{"conversations":1}'))
+        monkeypatch.setattr("siftd.api.sync.asyncssh.connect", lambda *_a, **_kw: conn)
+        with pytest.raises(SyncError, match="sync protocol version"):
+            asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, None, False))

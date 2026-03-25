@@ -288,13 +288,38 @@ def cmd_db_receive(args) -> int:
         )
         return 1
 
+    from siftd.api.sync import SYNC_PROTOCOL_VERSION, parse_sync_header
+
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(
             prefix="siftd-receive-", suffix=".db", delete=False,
         ) as tmp:
             tmp_path = Path(tmp.name)
-            shutil.copyfileobj(sys.stdin.buffer, tmp)
+            # Read enough bytes to detect the protocol header.
+            preamble = sys.stdin.buffer.read(8)
+            version = parse_sync_header(preamble)
+            if version is not None:
+                if version > SYNC_PROTOCOL_VERSION:
+                    print(
+                        json.dumps({
+                            "error": (
+                                f"Incompatible sync protocol version {version}, "
+                                f"max supported is {SYNC_PROTOCOL_VERSION}. "
+                                "Upgrade this host."
+                            ),
+                            "error_type": "protocol_mismatch",
+                        }),
+                        file=sys.stderr,
+                    )
+                    return 1
+                # Strip header, write remaining data.
+                shutil.copyfileobj(sys.stdin.buffer, tmp)
+            else:
+                # No header (old sender) — write the preamble we already
+                # read, then stream the rest.
+                tmp.write(preamble)
+                shutil.copyfileobj(sys.stdin.buffer, tmp)
 
         if tmp_path.stat().st_size == 0:
             print(
@@ -336,6 +361,7 @@ def cmd_db_send(args) -> int:
     Designed for SSH pipe usage — the inverse of ``db receive``.
     """
     from siftd.api.slice import slice_database
+    from siftd.api.sync import SYNC_HEADER
 
     db = resolve_db(args)
     if not db.exists():
@@ -377,6 +403,7 @@ def cmd_db_send(args) -> int:
             return 0
 
         size_bytes = tmp_path.stat().st_size
+        sys.stdout.buffer.write(SYNC_HEADER)
         with open(tmp_path, "rb") as f:
             shutil.copyfileobj(f, sys.stdout.buffer)
 

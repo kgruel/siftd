@@ -21,7 +21,14 @@ from typing import Any
 
 import asyncssh
 
-from siftd.domain.sync import PullResult, PushResult, SyncRemote
+from siftd.domain.sync import (
+    SYNC_HEADER,
+    SYNC_PROTOCOL_VERSION,
+    PullResult,
+    PushResult,
+    SyncRemote,
+    parse_sync_header,
+)
 from siftd.safecall import parse_json
 
 
@@ -172,7 +179,7 @@ async def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
     if "connect_timeout" not in connect_opts:
         connect_opts["connect_timeout"] = timeout
 
-    slice_data = slice_path.read_bytes()
+    slice_data = SYNC_HEADER + slice_path.read_bytes()
 
     try:
         async with asyncssh.connect(hostname, **connect_opts) as conn:
@@ -498,8 +505,18 @@ async def _pull_ssh(
     if conversations == 0:
         return 0, 0
 
-    # stdout is binary DB data (encoding=None gives us bytes directly)
+    # stdout is binary DB data (encoding=None gives us bytes directly).
+    # Strip the protocol header if present; validate version.
     raw_bytes = result.stdout or b""
+    remote_version = parse_sync_header(raw_bytes)
+    if remote_version is not None:
+        if remote_version > SYNC_PROTOCOL_VERSION:
+            raise SyncError(
+                f"Remote {hostname} uses sync protocol version {remote_version}, "
+                f"max supported locally is {SYNC_PROTOCOL_VERSION}. "
+                "Upgrade the local installation."
+            )
+        raw_bytes = raw_bytes[8:]
 
     size_bytes = len(raw_bytes)
 

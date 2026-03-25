@@ -338,7 +338,8 @@ class TestDbSendReceive:
         monkeypatch.setattr("siftd.api.slice.slice_database", _slice)
         monkeypatch.setattr("shutil.copyfileobj", lambda src, dst: dst.write(src.read()))
         assert main(["--db", str(test_db), "db", "send", "--since", "2024-01-01", "-w", "proj"]) == 0
-        assert fake_out.buffer.getvalue() == b"sqlite"
+        from siftd.domain.sync import SYNC_HEADER
+        assert fake_out.buffer.getvalue() == SYNC_HEADER + b"sqlite"
 
     def test_receive_tty_empty_success_and_errors(self, test_db, monkeypatch, capsys):
         monkeypatch.setattr("sys.stdin", _FakeStdin(is_tty=True))
