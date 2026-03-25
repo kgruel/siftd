@@ -176,7 +176,9 @@ async def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
 
     try:
         async with asyncssh.connect(hostname, **connect_opts) as conn:
-            result = await conn.run(receive_cmd, input=slice_data, timeout=timeout)
+            result = await conn.run(
+                receive_cmd, input=slice_data, encoding=None, timeout=timeout,
+            )
     except asyncssh.PermissionDenied as e:
         raise SyncError(_friendly_os_error(remote.host, "Permission denied")) from e
     except asyncssh.ConnectionLost as e:
@@ -194,10 +196,10 @@ async def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
         raise SyncError(_friendly_os_error(remote.host, str(e))) from e
 
     if result.returncode is not None and result.returncode != 0:
-        stderr = result.stderr.strip() if result.stderr else ""
+        stderr = (result.stderr.strip() if result.stderr else b"").decode()
         raise SyncError(_friendly_remote_error(remote.host, remote.path, stderr))
 
-    stdout = result.stdout.strip() if result.stdout else ""
+    stdout = (result.stdout.strip() if result.stdout else b"").decode()
     try:
         response = json.loads(stdout)
     except (json.JSONDecodeError, ValueError) as e:
@@ -467,7 +469,7 @@ async def _pull_ssh(
 
     try:
         async with asyncssh.connect(hostname, **connect_opts) as conn:
-            result = await conn.run(send_cmd, timeout=timeout)
+            result = await conn.run(send_cmd, encoding=None, timeout=timeout)
     except asyncssh.PermissionDenied as e:
         raise SyncError(_friendly_os_error(remote.host, "Permission denied")) from e
     except asyncssh.ConnectionLost as e:
@@ -485,23 +487,19 @@ async def _pull_ssh(
         raise SyncError(_friendly_os_error(remote.host, str(e))) from e
 
     if result.returncode is not None and result.returncode != 0:
-        stderr = result.stderr.strip() if result.stderr else ""
+        stderr = (result.stderr.strip() if result.stderr else b"").decode()
         raise SyncError(_friendly_remote_error(remote.host, remote.path, stderr))
 
     # Parse metadata from stderr (JSON line from db send)
-    stderr_text = result.stderr.strip() if result.stderr else ""
+    stderr_text = (result.stderr.strip() if result.stderr else b"").decode()
     meta = _parse_send_metadata(stderr_text)
     conversations = meta.get("conversations", 0)
 
     if conversations == 0:
         return 0, 0
 
-    # stdout is the binary DB data — asyncssh returns it as str
-    stdout_data = result.stdout or ""
-    if isinstance(stdout_data, str):
-        raw_bytes = stdout_data.encode("latin-1")
-    else:
-        raw_bytes = stdout_data
+    # stdout is binary DB data (encoding=None gives us bytes directly)
+    raw_bytes = result.stdout or b""
 
     size_bytes = len(raw_bytes)
 

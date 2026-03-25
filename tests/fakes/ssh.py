@@ -38,9 +38,17 @@ class FakeProcess:
 class FakeSSHResult:
     """Fake SSH command result."""
 
-    stdout: str = ""
-    stderr: str = ""
+    stdout: str | bytes = ""
+    stderr: str | bytes = ""
     returncode: int = 0
+
+    def as_binary(self) -> "FakeSSHResult":
+        """Return a copy with stdout/stderr as bytes."""
+        return FakeSSHResult(
+            stdout=self.stdout.encode() if isinstance(self.stdout, str) else self.stdout,
+            stderr=self.stderr.encode() if isinstance(self.stderr, str) else self.stderr,
+            returncode=self.returncode,
+        )
 
 
 class FakeSSH:
@@ -73,6 +81,7 @@ class FakeSSH:
         cmd: str,
         *,
         input: bytes | str | None = None,  # noqa: A002
+        encoding: str | None = "utf-8",
         timeout: float | None = None,
     ) -> FakeSSHResult:
         """Run a command and return matching response."""
@@ -81,12 +90,15 @@ class FakeSSH:
 
         # Dynamic response function takes precedence
         if self.response_func is not None:
-            return self.response_func(cmd, input=input, timeout=timeout)
+            result = self.response_func(cmd, input=input, timeout=timeout)
+        else:
+            result = FakeSSHResult(stderr="no match", returncode=1)
+            for pattern, r in self.responses.items():
+                if pattern in cmd:
+                    result = r
+                    break
 
-        for pattern, result in self.responses.items():
-            if pattern in cmd:
-                return result
-        return FakeSSHResult(stderr="no match", returncode=1)
+        return result.as_binary() if encoding is None else result
 
     async def __aenter__(self) -> "FakeSSH":
         return self

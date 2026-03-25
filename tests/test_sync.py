@@ -397,7 +397,13 @@ class _Conn:
 
     async def run(self, *args, **kwargs):
         self.runs.append((args, kwargs))
-        return self._result
+        r = self._result
+        if kwargs.get("encoding") is None:
+            # Binary mode: convert str fields to bytes
+            stdout = r.stdout.encode() if isinstance(r.stdout, str) else r.stdout
+            stderr = r.stderr.encode() if isinstance(r.stderr, str) else r.stderr
+            return SimpleNamespace(returncode=r.returncode, stdout=stdout, stderr=stderr)
+        return r
 
     async def __aenter__(self):
         return self
