@@ -798,10 +798,10 @@ examples:
                         help="Send conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
     p_send.add_argument("-w", "--workspace", metavar="SUBSTR",
                         help="Filter by workspace path substring")
-    p_send.add_argument("--tag", nargs="+", metavar="TAG",
-                        help="Only send conversations with these tags")
-    p_send.add_argument("--no-tag", nargs="+", metavar="TAG",
-                        help="Exclude conversations with these tags")
+    p_send.add_argument("--tag", action="append", metavar="TAG",
+                        help="Only send conversations with these tags (repeatable)")
+    p_send.add_argument("--no-tag", action="append", metavar="TAG",
+                        help="Exclude conversations with these tags (repeatable)")
     p_send.add_argument("--owner", metavar="USER",
                         help="Filter by conversation owner")
     p_send.add_argument("--no-fts", action="store_true", default=True,

@@ -141,15 +141,24 @@ class TestPullSSHSuccess:
             _run(_pull_ssh(
                 _remote(), tmp_path / "local.db",
                 since="2024-01",
-                filters={"workspace": "proj", "tag": ["public"], "no_tag": ["private"]},
+                filters={
+                    "workspace": "proj",
+                    "tag": ["public", "release"],
+                    "no_tag": ["private", "draft"],
+                    "owner": "alice",
+                },
                 dry_run=True,
             ))
 
         cmd = fake.commands_run[0]
         assert "--since" in cmd and "2024-01" in cmd
         assert "-w" in cmd and "proj" in cmd
-        assert "--tag" in cmd and "public" in cmd
-        assert "--no-tag" in cmd and "private" in cmd
+        # Each tag/no_tag value gets its own --tag/--no-tag flag
+        assert cmd.count("--tag") == 2
+        assert "public" in cmd and "release" in cmd
+        assert cmd.count("--no-tag") == 2
+        assert "private" in cmd and "draft" in cmd
+        assert "--owner" in cmd and "alice" in cmd
 
 
 class TestPullSSHEmpty:
