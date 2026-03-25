@@ -565,10 +565,8 @@ def sync_pull(
             remote, db_path, effective_since, filters, dry_run,
         )
     elif remote.host:
-        # SSH pull (db send) only supports workspace/since filtering
         conversations, size_bytes = asyncio.run(
-            _pull_ssh(remote, db_path, effective_since,
-                      filters.get("workspace"), dry_run)
+            _pull_ssh(remote, db_path, effective_since, filters, dry_run)
         )
     else:
         conversations, size_bytes = _pull_local(
@@ -621,7 +619,7 @@ async def _pull_ssh(
     remote: SyncRemote,
     local_db: Path,
     since: str | None,
-    workspace: str | None,
+    filters: dict,
     dry_run: bool,
 ) -> tuple[int, int]:
     """Pull via asyncssh by running ``siftd db send`` on the remote.
@@ -637,8 +635,16 @@ async def _pull_ssh(
     send_cmd = f"siftd --db {remote_db} db send --no-fts"
     if since is not None:
         send_cmd += f" --since {shlex.quote(since)}"
+    workspace = filters.get("workspace")
     if workspace is not None:
         send_cmd += f" -w {shlex.quote(workspace)}"
+    for t in filters.get("tag") or []:
+        send_cmd += f" --tag {shlex.quote(t)}"
+    for t in filters.get("no_tag") or []:
+        send_cmd += f" --no-tag {shlex.quote(t)}"
+    owner = filters.get("owner")
+    if owner is not None:
+        send_cmd += f" --owner {shlex.quote(owner)}"
 
     hostname, connect_opts = _build_ssh_options(remote)
 
@@ -794,6 +800,9 @@ def _pull_http(
     tag = filters.get("tag")
     if tag:
         params["tag"] = tag
+    no_tag = filters.get("no_tag")
+    if no_tag:
+        params["no_tag"] = no_tag
 
     from siftd.config import get_sync_timeouts
 

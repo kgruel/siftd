@@ -439,6 +439,9 @@ def cmd_db_send(args) -> int:
             target_path=tmp_path,
             since=getattr(args, "since", None),
             workspace=getattr(args, "workspace", None),
+            tag=getattr(args, "tag", None),
+            no_tag=getattr(args, "no_tag", None),
+            owner=getattr(args, "owner", None),
             rebuild_fts=rebuild_fts,
         )
 
@@ -795,6 +798,12 @@ examples:
                         help="Send conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
     p_send.add_argument("-w", "--workspace", metavar="SUBSTR",
                         help="Filter by workspace path substring")
+    p_send.add_argument("--tag", nargs="+", metavar="TAG",
+                        help="Only send conversations with these tags")
+    p_send.add_argument("--no-tag", nargs="+", metavar="TAG",
+                        help="Exclude conversations with these tags")
+    p_send.add_argument("--owner", metavar="USER",
+                        help="Filter by conversation owner")
     p_send.add_argument("--no-fts", action="store_true", default=True,
                         help="Skip FTS5 index rebuild (default: skip)")
     p_send.set_defaults(func=cmd_db_send)

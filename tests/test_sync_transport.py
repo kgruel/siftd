@@ -123,7 +123,7 @@ class TestPullSSHSuccess:
 
         with _patch_connect(fake):
             convos, size = _run(_pull_ssh(
-                _remote(), tmp_path / "local.db", None, None, dry_run=True,
+                _remote(), tmp_path / "local.db", None, {}, dry_run=True,
             ))
 
         assert convos == 1
@@ -140,14 +140,16 @@ class TestPullSSHSuccess:
         with _patch_connect(fake):
             _run(_pull_ssh(
                 _remote(), tmp_path / "local.db",
-                since="2024-01", workspace="proj", dry_run=True,
+                since="2024-01",
+                filters={"workspace": "proj", "tag": ["public"], "no_tag": ["private"]},
+                dry_run=True,
             ))
 
         cmd = fake.commands_run[0]
-        assert "--since" in cmd
-        assert "2024-01" in cmd
-        assert "-w" in cmd
-        assert "proj" in cmd
+        assert "--since" in cmd and "2024-01" in cmd
+        assert "-w" in cmd and "proj" in cmd
+        assert "--tag" in cmd and "public" in cmd
+        assert "--no-tag" in cmd and "private" in cmd
 
 
 class TestPullSSHEmpty:
@@ -162,7 +164,7 @@ class TestPullSSHEmpty:
 
         with _patch_connect(fake):
             convos, size = _run(_pull_ssh(
-                _remote(), tmp_path / "local.db", None, None, dry_run=True,
+                _remote(), tmp_path / "local.db", None, {}, dry_run=True,
             ))
 
         assert convos == 0
@@ -177,7 +179,7 @@ class TestPullSSHConnectionError:
         with patch("siftd.api.sync.asyncssh.connect", side_effect=OSError("Connection refused")):
             with pytest.raises(SyncError, match="running"):
                 _run(_pull_ssh(
-                    _remote(), tmp_path / "local.db", None, None, dry_run=True,
+                    _remote(), tmp_path / "local.db", None, {}, dry_run=True,
                 ))
 
 

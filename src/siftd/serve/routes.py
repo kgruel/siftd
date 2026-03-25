@@ -369,6 +369,7 @@ async def pull(
     before: str | None = Parameter(query="before", default=None),
     model: str | None = Parameter(query="model", default=None),
     tag: list[str] | None = Parameter(query="tag", default=None),
+    no_tag: list[str] | None = Parameter(query="no_tag", default=None),
     owner: str | None = Parameter(query="owner", default=None),
 ) -> Response:
     """Slice and stream the team DB based on filters."""
@@ -384,6 +385,7 @@ async def pull(
             before=before,
             model=model,
             tag=tag,
+            no_tag=no_tag,
             rebuild_fts=False,
             owner=owner,
         )
