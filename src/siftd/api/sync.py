@@ -156,7 +156,7 @@ async def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
     remote_db = shlex.quote(remote.path)
     receive_cmd = f"siftd --db {remote_db} db receive --no-fts"
 
-    connect_opts = _build_ssh_options(remote)
+    hostname, connect_opts = _build_ssh_options(remote)
 
     from siftd.config import get_config
 
@@ -175,7 +175,7 @@ async def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
     slice_data = slice_path.read_bytes()
 
     try:
-        async with asyncssh.connect(remote.host, **connect_opts) as conn:
+        async with asyncssh.connect(hostname, **connect_opts) as conn:
             result = await conn.run(receive_cmd, input=slice_data, timeout=timeout)
     except asyncssh.PermissionDenied as e:
         raise SyncError(_friendly_os_error(remote.host, "Permission denied")) from e
@@ -188,7 +188,7 @@ async def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
     except OSError as e:
         if isinstance(e, TimeoutError):
             raise SyncError(
-                f"Push to {remote.host} timed out after {timeout}s. "
+                f"Push to {hostname} timed out after {timeout}s. "
                 "The remote may be slow or unreachable."
             ) from e
         raise SyncError(_friendly_os_error(remote.host, str(e))) from e
@@ -208,11 +208,37 @@ async def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
     return response.get("status") != "created"
 
 
+def _parse_ssh_host(host: str) -> tuple[str, str | None]:
+    """Parse ``user@host`` into (hostname, username).
+
+    Returns (host, None) when there is no ``@``.
+    """
+    if "@" in host:
+        username, hostname = host.rsplit("@", 1)
+        return hostname, username
+    return host, None
+
+
 def _build_ssh_options(remote: SyncRemote) -> dict[str, Any]:
-    """Build asyncssh connect kwargs from config for this remote."""
+    """Build asyncssh connect kwargs from config for this remote.
+
+    Parses ``user@host`` from ``remote.host`` and sets ``username`` unless
+    an explicit username is already configured in ``[sync.remotes.<name>.ssh]``.
+
+    Returns (hostname, connect_opts) so callers pass the bare hostname to
+    ``asyncssh.connect()``.
+    """
     from siftd.config import get_ssh_connect_kwargs
 
-    return get_ssh_connect_kwargs(remote.name)
+    opts = get_ssh_connect_kwargs(remote.name)
+
+    hostname = remote.host or ""
+    if remote.host:
+        hostname, parsed_user = _parse_ssh_host(remote.host)
+        if parsed_user and "username" not in opts:
+            opts["username"] = parsed_user
+
+    return hostname, opts
 
 
 def _friendly_os_error(host: str, message: str) -> str:
@@ -424,7 +450,7 @@ async def _pull_ssh(
     if workspace is not None:
         send_cmd += f" -w {shlex.quote(workspace)}"
 
-    connect_opts = _build_ssh_options(remote)
+    hostname, connect_opts = _build_ssh_options(remote)
 
     from siftd.config import get_config
 
@@ -440,7 +466,7 @@ async def _pull_ssh(
         connect_opts["connect_timeout"] = timeout
 
     try:
-        async with asyncssh.connect(remote.host, **connect_opts) as conn:
+        async with asyncssh.connect(hostname, **connect_opts) as conn:
             result = await conn.run(send_cmd, timeout=timeout)
     except asyncssh.PermissionDenied as e:
         raise SyncError(_friendly_os_error(remote.host, "Permission denied")) from e
@@ -453,7 +479,7 @@ async def _pull_ssh(
     except OSError as e:
         if isinstance(e, TimeoutError):
             raise SyncError(
-                f"Pull from {remote.host} timed out after {timeout}s. "
+                f"Pull from {hostname} timed out after {timeout}s. "
                 "The remote may be slow or unreachable."
             ) from e
         raise SyncError(_friendly_os_error(remote.host, str(e))) from e

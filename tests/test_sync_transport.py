@@ -184,38 +184,39 @@ class TestPullSSHConnectionError:
 class TestBuildSSHOptions:
     def test_empty_config(self, monkeypatch):
         monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
-        result = _build_ssh_options(_remote())
-        assert result == {}
+        hostname, opts = _build_ssh_options(_remote())
+        assert hostname == "box"
+        assert opts == {}
 
     def test_identity_file(self, monkeypatch):
         monkeypatch.setattr(
             "siftd.config.get_ssh_connect_kwargs",
             lambda n: {"client_keys": ["/home/user/.ssh/id_ed25519"]},
         )
-        result = _build_ssh_options(_remote())
-        assert result["client_keys"] == ["/home/user/.ssh/id_ed25519"]
+        _, opts = _build_ssh_options(_remote())
+        assert opts["client_keys"] == ["/home/user/.ssh/id_ed25519"]
 
     def test_username_and_port(self, monkeypatch):
         monkeypatch.setattr(
             "siftd.config.get_ssh_connect_kwargs",
             lambda n: {"username": "deploy", "port": 2222},
         )
-        result = _build_ssh_options(_remote())
-        assert result["username"] == "deploy"
-        assert result["port"] == 2222
+        _, opts = _build_ssh_options(_remote())
+        assert opts["username"] == "deploy"
+        assert opts["port"] == 2222
 
     def test_known_hosts_disabled(self, monkeypatch):
         monkeypatch.setattr(
             "siftd.config.get_ssh_connect_kwargs",
             lambda n: {"known_hosts": None},
         )
-        result = _build_ssh_options(_remote())
-        assert result["known_hosts"] is None
+        _, opts = _build_ssh_options(_remote())
+        assert opts["known_hosts"] is None
 
     def test_connect_timeout(self, monkeypatch):
         monkeypatch.setattr(
             "siftd.config.get_ssh_connect_kwargs",
             lambda n: {"connect_timeout": 30},
         )
-        result = _build_ssh_options(_remote())
-        assert result["connect_timeout"] == 30
+        _, opts = _build_ssh_options(_remote())
+        assert opts["connect_timeout"] == 30

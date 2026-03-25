@@ -99,11 +99,29 @@ class TestFriendlyRemoteError:
 
 
 class TestBuildSshOptions:
-    def test_returns_dict(self, monkeypatch):
+    def test_returns_tuple(self, monkeypatch):
         monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {"username": "user"})
-        result = _build_ssh_options(_remote())
-        assert isinstance(result, dict)
-        assert result["username"] == "user"
+        hostname, opts = _build_ssh_options(_remote())
+        assert hostname == ""
+        assert opts["username"] == "user"
+
+    def test_parses_user_at_host(self, monkeypatch):
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        hostname, opts = _build_ssh_options(_remote(host="deploy@192.168.1.44"))
+        assert hostname == "192.168.1.44"
+        assert opts["username"] == "deploy"
+
+    def test_explicit_username_wins(self, monkeypatch):
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {"username": "override"})
+        hostname, opts = _build_ssh_options(_remote(host="deploy@192.168.1.44"))
+        assert hostname == "192.168.1.44"
+        assert opts["username"] == "override"
+
+    def test_bare_host(self, monkeypatch):
+        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        hostname, opts = _build_ssh_options(_remote(host="192.168.1.44"))
+        assert hostname == "192.168.1.44"
+        assert "username" not in opts
 
 
 class TestPushLocal:
