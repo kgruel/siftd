@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-03-25
+
+### Added
+
+- **Sync protocol v2 — staged receive and capability negotiation**
+  - `siftd db receive --stage` writes payload to inbox for deferred merge (fast ACK)
+  - `siftd db process` merges all staged inbox payloads
+  - `siftd db sync-status` reports receiver capabilities and inbox state as JSON
+  - Pre-flight capability negotiation: push auto-detects staged support on the remote and adapts; falls back to blocking receive for old receivers
+  - `SYNC_CAPABILITIES` replaces version-based negotiation — new features are capability strings, not version bumps
+- **Split sync timeouts** — separate `connect_timeout_s` (TCP/SSH handshake) from `command_timeout_s` (total operation) at sync global, per-transport, and per-remote config levels
+- **Per-remote sync filters** — `[sync.remotes.*.filters]` for workspace, tag, no_tag, owner scoping; CLI flags override config
+- **Sync strategy config** — `strategy = "incremental" | "full"` at global and per-remote level; `--strategy` CLI flag on push/pull
+- **`db send` filter flags** — `--tag`, `--no-tag`, `--owner` flags for filtered slice export over SSH
+- **`GET /api/v1/sync/status`** — serve endpoint for HTTP capability negotiation
+- **`no_tag` on pull endpoint** — `/api/v1/pull` now accepts `no_tag` query parameter
+- **`sync_inbox` table** — tracks staged payload lifecycle (staged → processing → done/error)
+
+### Fixed
+
+- **Push timeout doom loop** — failed pushes now record `last_sent` before remote processing, so subsequent pushes are incremental even if merge times out
+- **HTTP timeout not configurable** — `httpx.Client(timeout=300)` replaced with configurable `httpx.Timeout` using split connect/command values
+- **`_build_ssh_options` return type** — annotation corrected from `dict` to `tuple[str, dict]`
+
 ## [0.6.2] - 2026-03-24
 
 ### Fixed
