@@ -113,21 +113,61 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     # Adapters
     _SchemaEntry("adapters.*.locations", "list[string]", _is_str_list,
                  "Override discovery paths for a specific adapter", ""),
-    # Sync
+    # Sync — global defaults
+    _SchemaEntry("sync.connect_timeout_s", "int", _is_int_like,
+                 "TCP/SSH handshake timeout in seconds", "30"),
+    _SchemaEntry("sync.command_timeout_s", "int", _is_int_like,
+                 "Total operation timeout (transfer + remote processing)", "600"),
+    # Sync — SSH transport defaults
     _SchemaEntry("sync.ssh.options", "list[string]", _is_str_list,
                  "Extra SSH options passed to asyncssh connect", ""),
     _SchemaEntry("sync.ssh.connect_timeout_s", "int", _is_int_like,
-                 "SSH connection timeout in seconds", "10"),
+                 "SSH connection timeout in seconds", "30"),
+    _SchemaEntry("sync.ssh.command_timeout_s", "int", _is_int_like,
+                 "SSH command timeout in seconds", "600"),
+    # Sync — HTTP transport defaults
+    _SchemaEntry("sync.http.connect_timeout_s", "int", _is_int_like,
+                 "HTTP connection timeout in seconds", "30"),
+    _SchemaEntry("sync.http.command_timeout_s", "int", _is_int_like,
+                 "HTTP request timeout in seconds", "600"),
+    # Sync — per-remote settings
     _SchemaEntry("sync.remotes.*.host", "string", _is_str,
                  "SSH host for a named remote", ""),
     _SchemaEntry("sync.remotes.*.path", "string", _is_str,
                  "Remote database path", ""),
     _SchemaEntry("sync.remotes.*.last_push", "string", _is_str,
-                 "Timestamp of last push (managed by siftd)", ""),
+                 "Timestamp of last confirmed push (managed by siftd)", ""),
     _SchemaEntry("sync.remotes.*.last_pull", "string", _is_str,
                  "Timestamp of last pull (managed by siftd)", ""),
+    _SchemaEntry("sync.remotes.*.last_sent", "string", _is_str,
+                 "Timestamp of last staged delivery (managed by siftd)", ""),
+    _SchemaEntry("sync.remotes.*.connect_timeout_s", "int", _is_int_like,
+                 "Per-remote connection timeout override", ""),
+    _SchemaEntry("sync.remotes.*.command_timeout_s", "int", _is_int_like,
+                 "Per-remote command timeout override", ""),
     _SchemaEntry("sync.remotes.*.ssh.options", "list[string]", _is_str_list,
                  "Per-remote SSH options (overrides sync.ssh.options)", ""),
+    _SchemaEntry("sync.remotes.*.ssh.connect_timeout_s", "int", _is_int_like,
+                 "Per-remote SSH connection timeout", ""),
+    _SchemaEntry("sync.remotes.*.ssh.command_timeout_s", "int", _is_int_like,
+                 "Per-remote SSH command timeout", ""),
+    _SchemaEntry("sync.remotes.*.http.connect_timeout_s", "int", _is_int_like,
+                 "Per-remote HTTP connection timeout", ""),
+    _SchemaEntry("sync.remotes.*.http.command_timeout_s", "int", _is_int_like,
+                 "Per-remote HTTP request timeout", ""),
+    # Sync — strategy and filters
+    _SchemaEntry("sync.strategy", "string", _is_str,
+                 "Default sync strategy: incremental or full", "incremental"),
+    _SchemaEntry("sync.remotes.*.strategy", "string", _is_str,
+                 "Per-remote sync strategy override", ""),
+    _SchemaEntry("sync.remotes.*.filters.workspace", "string", _is_str,
+                 "Default workspace filter for this remote", ""),
+    _SchemaEntry("sync.remotes.*.filters.tag", "list[string]", _is_str_list,
+                 "Only sync conversations with these tags", ""),
+    _SchemaEntry("sync.remotes.*.filters.no_tag", "list[string]", _is_str_list,
+                 "Exclude conversations with these tags", ""),
+    _SchemaEntry("sync.remotes.*.filters.owner", "string", _is_str,
+                 "Default owner filter for this remote", ""),
     # Update
     _SchemaEntry("update.check", "bool", _is_bool_like,
                  "Check PyPI for updates after commands (24h interval)", "true"),
@@ -444,6 +484,24 @@ def get_adapter_locations(name: str) -> list[str] | None:
     return None
 
 
+def _parse_sync_filters(cfg: dict) -> dict:
+    """Parse a [sync.remotes.*.filters] table into a SyncFilters-compatible dict."""
+    result: dict = {}
+    workspace = cfg.get("workspace")
+    if isinstance(workspace, str):
+        result["workspace"] = workspace
+    tag = cfg.get("tag")
+    if isinstance(tag, list):
+        result["tag"] = [str(t) for t in tag]
+    no_tag = cfg.get("no_tag")
+    if isinstance(no_tag, list):
+        result["no_tag"] = [str(t) for t in no_tag]
+    owner = cfg.get("owner")
+    if isinstance(owner, str):
+        result["owner"] = owner
+    return result
+
+
 def get_sync_remotes() -> list[dict]:
     """Get all configured sync remotes.
 
@@ -463,14 +521,22 @@ def get_sync_remotes() -> list[dict]:
     for name, cfg in remotes_config.items():
         if not isinstance(cfg, dict):
             continue
-        remotes.append({
+        entry: dict = {
             "name": name,
             "host": cfg.get("host"),
             "path": str(cfg.get("path", "")),
             "last_push": cfg.get("last_push"),
             "last_pull": cfg.get("last_pull"),
+            "last_sent": cfg.get("last_sent"),
             "auth": dict(cfg["auth"]) if "auth" in cfg and isinstance(cfg.get("auth"), dict) else None,
-        })
+        }
+        strategy = cfg.get("strategy")
+        if isinstance(strategy, str):
+            entry["strategy"] = strategy
+        filters_cfg = cfg.get("filters")
+        if isinstance(filters_cfg, dict):
+            entry["filters"] = _parse_sync_filters(filters_cfg)
+        remotes.append(entry)
     return remotes
 
 
@@ -613,6 +679,31 @@ def update_last_pull(name: str, timestamp: str) -> None:
     cfg_path.write_text(tomlkit.dumps(doc))
 
 
+def update_last_sent(name: str, timestamp: str) -> None:
+    """Write last_sent timestamp for a sync remote (staged delivery)."""
+    cfg_path = config_file()
+
+    if cfg_path.exists():
+        try:
+            doc = tomlkit.parse(cfg_path.read_text())
+        except tomlkit.exceptions.TOMLKitError:
+            doc = tomlkit.document()
+    else:
+        doc = tomlkit.document()
+
+    sync_config = doc.get("sync")
+    if not isinstance(sync_config, dict):
+        return
+    remotes_config = sync_config.get("remotes")
+    if not isinstance(remotes_config, dict):
+        return
+    if name not in remotes_config:
+        return
+
+    cast(Container, remotes_config[name])["last_sent"] = timestamp
+    cfg_path.write_text(tomlkit.dumps(doc))
+
+
 def get_ssh_options(remote_name: str | None = None) -> list[str]:
     """Build SSH CLI options from config.
 
@@ -732,6 +823,84 @@ def get_ssh_connect_kwargs(remote_name: str | None = None) -> dict:
             pass
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Sync timeout resolution
+# ---------------------------------------------------------------------------
+
+_DEFAULT_CONNECT_TIMEOUT = 30
+_DEFAULT_COMMAND_TIMEOUT = 600
+
+
+def get_sync_timeouts(
+    remote_name: str | None = None,
+    transport: str = "ssh",
+) -> tuple[int, int]:
+    """Return (connect_timeout, command_timeout) for a sync operation.
+
+    Resolution order (first non-None wins):
+      1. sync.remotes.<name>.<transport>.connect_timeout_s / command_timeout_s
+      2. sync.remotes.<name>.connect_timeout_s / command_timeout_s
+      3. sync.<transport>.connect_timeout_s / command_timeout_s
+      4. sync.connect_timeout_s / sync.command_timeout_s
+      5. Hardcoded defaults (30, 600)
+    """
+    doc = load_config()
+    sync_config = doc.get("sync", {})
+    if not isinstance(sync_config, dict):
+        return _DEFAULT_CONNECT_TIMEOUT, _DEFAULT_COMMAND_TIMEOUT
+
+    def _int_or_none(d: dict, key: str) -> int | None:
+        val = d.get(key)
+        if val is None:
+            return None
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return None
+
+    # Layer 1: per-remote transport-specific
+    remote_transport: dict = {}
+    # Layer 2: per-remote general
+    remote_general: dict = {}
+    if remote_name is not None:
+        remotes = sync_config.get("remotes", {})
+        if isinstance(remotes, dict):
+            rcfg = remotes.get(remote_name, {})
+            if isinstance(rcfg, dict):
+                remote_general = rcfg
+                tsub = rcfg.get(transport, {})
+                if isinstance(tsub, dict):
+                    remote_transport = tsub
+
+    # Layer 3: transport-global
+    transport_global = sync_config.get(transport, {})
+    if not isinstance(transport_global, dict):
+        transport_global = {}
+
+    # Layer 4: sync-global
+    sync_global = sync_config
+
+    # Resolve connect_timeout
+    connect = (
+        _int_or_none(remote_transport, "connect_timeout_s")
+        or _int_or_none(remote_general, "connect_timeout_s")
+        or _int_or_none(transport_global, "connect_timeout_s")
+        or _int_or_none(sync_global, "connect_timeout_s")
+        or _DEFAULT_CONNECT_TIMEOUT
+    )
+
+    # Resolve command_timeout
+    command = (
+        _int_or_none(remote_transport, "command_timeout_s")
+        or _int_or_none(remote_general, "command_timeout_s")
+        or _int_or_none(transport_global, "command_timeout_s")
+        or _int_or_none(sync_global, "command_timeout_s")
+        or _DEFAULT_COMMAND_TIMEOUT
+    )
+
+    return connect, command
 
 
 def get_ingestion_filter_binary() -> bool:

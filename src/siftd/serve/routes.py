@@ -412,6 +412,20 @@ async def pull(
         )
 
 
+@get("/api/v1/sync/status", opt={"no_auth": True})
+async def sync_status_route(db_path: Path) -> dict:
+    """Return sync capabilities and inbox status."""
+    from siftd.api.inbox import get_inbox_status
+    from siftd.domain.sync import SYNC_CAPABILITIES, SYNC_PROTOCOL_VERSION
+
+    inbox = get_inbox_status(db_path)
+    return {
+        "capabilities": sorted(SYNC_CAPABILITIES),
+        "inbox": inbox,
+        "protocol_version": SYNC_PROTOCOL_VERSION,
+    }
+
+
 @get("/api/v1/conversations/{id:str}")
 async def conversation_detail(
     db_path: Path,

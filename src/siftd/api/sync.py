@@ -22,11 +22,13 @@ from typing import Any
 import asyncssh
 
 from siftd.domain.sync import (
+    SYNC_CAPABILITIES,  # noqa: F401 — re-exported for CLI
     SYNC_HEADER,
     SYNC_PROTOCOL_VERSION,
     PullResult,
     PushResult,
     SyncRemote,
+    SyncStatus,
     parse_sync_header,
 )
 from siftd.safecall import parse_json
@@ -48,6 +50,9 @@ def sync_push(
     since: str | None = None,
     push_all: bool = False,
     workspace: str | None = None,
+    tag: list[str] | None = None,
+    no_tag: list[str] | None = None,
+    owner: str | None = None,
     dry_run: bool = False,
 ) -> PushResult:
     """Push conversations to a remote database.
@@ -57,7 +62,7 @@ def sync_push(
         remote: The remote to push to.
         since: Only push conversations started after this date.
         push_all: Push all conversations (ignore last_push).
-        workspace: Filter by workspace substring.
+        workspace..owner: Filter kwargs (override remote config filters).
         dry_run: If True, slice and report but don't transfer.
 
     Returns:
@@ -70,8 +75,16 @@ def sync_push(
     if not db_path.exists():
         raise FileNotFoundError(f"Database not found: {db_path}")
 
+    # Strategy "full" forces push_all
+    if remote.strategy == "full" and not push_all:
+        push_all = True
+
     effective_since = _resolve_since(since, push_all, remote)
     should_update_last_push = since is None
+
+    # Merge CLI filters with remote config filters (CLI overrides config)
+    filters = _merge_filters(remote, workspace=workspace, tag=tag,
+                             no_tag=no_tag, owner=owner)
 
     # Slice to a temp file (no FTS — remote doesn't need it)
     from siftd.api.slice import slice_database
@@ -82,8 +95,8 @@ def sync_push(
             source_db=db_path,
             target_path=slice_path,
             since=effective_since,
-            workspace=workspace,
             rebuild_fts=False,
+            **filters,
         )
 
         conversations = result["conversations"]
@@ -109,19 +122,36 @@ def sync_push(
                 last_push_updated=False,
             )
 
+        # Negotiate capabilities with the remote
+        use_staged = False
         if _is_http_remote(remote):
+            status = _preflight_http(remote)
+            if status and "staged" in status.capabilities:
+                use_staged = True
             remote_existed = _push_http(remote, slice_path)
         elif remote.host:
-            remote_existed = asyncio.run(_push_ssh(remote, slice_path))
+            status = asyncio.run(_preflight_ssh(remote))
+            if status and "staged" in status.capabilities:
+                use_staged = True
+            remote_existed = asyncio.run(
+                _push_ssh(remote, slice_path, staged=use_staged),
+            )
         else:
             remote_existed = _push_local(remote, slice_path, db_path)
 
+    now = datetime.now(UTC).isoformat()
     last_push_updated = False
     if should_update_last_push:
-        from siftd.config import update_last_push
+        if use_staged:
+            # Staged: record last_sent immediately (fast, before merge)
+            from siftd.config import update_last_sent
 
-        now = datetime.now(UTC).isoformat()
-        update_last_push(remote.name, now)
+            update_last_sent(remote.name, now)
+        else:
+            # Blocking: record last_push only after confirmed merge
+            from siftd.config import update_last_push
+
+            update_last_push(remote.name, now)
         last_push_updated = True
 
     return PushResult(
@@ -141,20 +171,52 @@ def _resolve_since(
 ) -> str | None:
     """Determine the effective --since value.
 
-    Priority: explicit flag > push_all (None) > last_push > None (all).
+    Priority: explicit flag > push_all (None) > last_sent > last_push > None.
+    ``last_sent`` is preferred because it records the most recent successful
+    delivery (staged or blocking), whereas ``last_push`` only records
+    confirmed blocking merges.
     """
     if explicit is not None:
         return explicit
     if push_all:
         return None
-    return remote.last_push
+    return remote.last_sent or remote.last_push
 
 
-async def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
+def _merge_filters(
+    remote: SyncRemote,
+    *,
+    workspace: str | None = None,
+    tag: list[str] | None = None,
+    no_tag: list[str] | None = None,
+    owner: str | None = None,
+) -> dict:
+    """Merge CLI filter kwargs with remote config filters.
+
+    CLI values override config values (replace, not intersect).
+    Returns a dict suitable for passing as **kwargs to slice_database().
+    """
+    result: dict = {}
+    cfg = remote.filters
+
+    # For each filter: use CLI value if provided, else fall back to config
+    result["workspace"] = workspace if workspace is not None else (cfg.workspace if cfg else None)
+    result["tag"] = tag if tag is not None else (cfg.tag if cfg else None)
+    result["no_tag"] = no_tag if no_tag is not None else (cfg.no_tag if cfg else None)
+    result["owner"] = owner if owner is not None else (cfg.owner if cfg else None)
+
+    return result
+
+
+async def _push_ssh(
+    remote: SyncRemote, slice_path: Path, *, staged: bool = False,
+) -> bool:
     """Push via asyncssh to ``siftd db receive`` on the remote.
 
     Streams the slice DB over stdin in a single SSH connection:
         asyncssh.connect(host, **opts) -> conn.run(cmd, input=data)
+
+    When *staged* is True, uses ``receive --stage --no-fts`` for a fast ACK.
 
     Returns whether the remote DB already existed (status != "created").
     """
@@ -162,29 +224,25 @@ async def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
 
     remote_db = shlex.quote(remote.path)
     receive_cmd = f"siftd --db {remote_db} db receive --no-fts"
+    if staged:
+        receive_cmd += " --stage"
 
     hostname, connect_opts = _build_ssh_options(remote)
 
-    from siftd.config import get_config
+    from siftd.config import get_sync_timeouts
 
-    timeout_raw = get_config("sync.ssh.connect_timeout_s")
-    timeout = 300
-    if timeout_raw is not None:
-        try:
-            timeout = int(timeout_raw)
-        except (ValueError, TypeError):
-            pass
+    connect_timeout, command_timeout = get_sync_timeouts(remote.name, "ssh")
 
-    # Ensure connect_timeout is set (command timeout is separate)
     if "connect_timeout" not in connect_opts:
-        connect_opts["connect_timeout"] = timeout
+        connect_opts["connect_timeout"] = connect_timeout
 
     slice_data = SYNC_HEADER + slice_path.read_bytes()
 
     try:
         async with asyncssh.connect(hostname, **connect_opts) as conn:
             result = await conn.run(
-                receive_cmd, input=slice_data, encoding=None, timeout=timeout,
+                receive_cmd, input=slice_data, encoding=None,
+                timeout=command_timeout,
             )
     except asyncssh.PermissionDenied as e:
         raise SyncError(_friendly_os_error(remote.host, "Permission denied")) from e
@@ -197,7 +255,7 @@ async def _push_ssh(remote: SyncRemote, slice_path: Path) -> bool:
     except OSError as e:
         if isinstance(e, TimeoutError):
             raise SyncError(
-                f"Push to {hostname} timed out after {timeout}s. "
+                f"Push to {hostname} timed out after {command_timeout}s. "
                 "The remote may be slow or unreachable."
             ) from e
         raise SyncError(_friendly_os_error(remote.host, str(e))) from e
@@ -228,7 +286,7 @@ def _parse_ssh_host(host: str) -> tuple[str, str | None]:
     return host, None
 
 
-def _build_ssh_options(remote: SyncRemote) -> dict[str, Any]:
+def _build_ssh_options(remote: SyncRemote) -> tuple[str, dict[str, Any]]:
     """Build asyncssh connect kwargs from config for this remote.
 
     Parses ``user@host`` from ``remote.host`` and sets ``username`` unless
@@ -284,6 +342,70 @@ def _friendly_remote_error(host: str, path: str, stderr: str) -> str:
     return f"Remote error on {host}: {first_line}"
 
 
+# ---------------------------------------------------------------------------
+# Pre-flight capability negotiation
+# ---------------------------------------------------------------------------
+
+
+async def _preflight_ssh(remote: SyncRemote) -> SyncStatus | None:
+    """Query receiver capabilities via SSH. Returns None if unsupported."""
+    assert remote.host is not None
+
+    remote_db = shlex.quote(remote.path)
+    cmd = f"siftd --db {remote_db} db sync-status"
+
+    hostname, connect_opts = _build_ssh_options(remote)
+
+    from siftd.config import get_sync_timeouts
+
+    connect_timeout, _ = get_sync_timeouts(remote.name, "ssh")
+    if "connect_timeout" not in connect_opts:
+        connect_opts["connect_timeout"] = connect_timeout
+
+    try:
+        async with asyncssh.connect(hostname, **connect_opts) as conn:
+            result = await conn.run(cmd, encoding="utf-8", timeout=connect_timeout)
+    except Exception:
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    try:
+        data = json.loads(result.stdout.strip())
+        return SyncStatus.from_json(data)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return None
+
+
+def _preflight_http(remote: SyncRemote) -> SyncStatus | None:
+    """Query receiver capabilities via HTTP. Returns None if unsupported."""
+    import httpx
+
+    from siftd.api.auth import AuthError, acquire_token
+    from siftd.config import get_sync_remote, get_sync_timeouts
+
+    remote_cfg = get_sync_remote(remote.name)
+    auth = remote_cfg.get("auth") if remote_cfg else None
+    headers: dict[str, str] = {}
+    try:
+        token = acquire_token(auth)
+        headers["Authorization"] = f"Bearer {token}"
+    except AuthError:
+        pass
+
+    url = remote.path.rstrip("/") + "/api/v1/sync/status"
+    connect_timeout, _ = get_sync_timeouts(remote.name, "http")
+
+    try:
+        with httpx.Client(timeout=connect_timeout) as client:
+            resp = client.get(url, headers=headers)
+            resp.raise_for_status()
+        return SyncStatus.from_json(resp.json())
+    except Exception:
+        return None
+
+
 def _push_local(remote: SyncRemote, slice_path: Path, db_path: Path) -> bool:
     """Push to a local path. Returns whether the remote DB existed."""
     target = Path(remote.path)
@@ -332,8 +454,19 @@ def _push_http(remote: SyncRemote, slice_path: Path) -> bool:
     url = remote.path.rstrip("/") + "/api/v1/push"
     data = slice_path.read_bytes()
 
+    from siftd.config import get_sync_timeouts
+
+    connect_timeout, command_timeout = get_sync_timeouts(remote.name, "http")
+
     try:
-        with httpx.Client(timeout=300) as client:
+        with httpx.Client(
+            timeout=httpx.Timeout(
+                connect=connect_timeout,
+                read=command_timeout,
+                write=command_timeout,
+                pool=connect_timeout,
+            ),
+        ) as client:
             resp = client.post(
                 url, content=data,
                 headers={**headers, "Content-Type": "application/octet-stream"},
@@ -360,6 +493,9 @@ def sync_pull(
     since: str | None = None,
     pull_all: bool = False,
     workspace: str | None = None,
+    tag: list[str] | None = None,
+    no_tag: list[str] | None = None,
+    owner: str | None = None,
     dry_run: bool = False,
 ) -> PullResult:
     """Pull conversations from a remote database.
@@ -369,7 +505,7 @@ def sync_pull(
         remote: The remote to pull from.
         since: Only pull conversations started after this date.
         pull_all: Pull all conversations (ignore last_pull).
-        workspace: Filter by workspace substring.
+        workspace..owner: Filter kwargs (override remote config filters).
         dry_run: If True, query remote but don't merge locally.
 
     Returns:
@@ -378,20 +514,30 @@ def sync_pull(
     Raises:
         SyncError: On transport or merge failure.
     """
+    # Strategy "full" forces pull_all
+    if remote.strategy == "full" and not pull_all:
+        pull_all = True
+
     effective_since = _resolve_pull_since(since, pull_all, remote)
     should_update_last_pull = since is None
 
+    # Merge CLI filters with remote config filters
+    filters = _merge_filters(remote, workspace=workspace, tag=tag,
+                             no_tag=no_tag, owner=owner)
+    effective_workspace = filters.get("workspace")
+
     if _is_http_remote(remote):
         conversations, size_bytes = _pull_http(
-            remote, db_path, effective_since, workspace, dry_run,
+            remote, db_path, effective_since, effective_workspace, dry_run,
         )
     elif remote.host:
         conversations, size_bytes = asyncio.run(
-            _pull_ssh(remote, db_path, effective_since, workspace, dry_run)
+            _pull_ssh(remote, db_path, effective_since, effective_workspace,
+                      dry_run)
         )
     else:
         conversations, size_bytes = _pull_local(
-            remote, db_path, effective_since, workspace, dry_run,
+            remote, db_path, effective_since, effective_workspace, dry_run,
         )
 
     if conversations == 0:
@@ -461,22 +607,18 @@ async def _pull_ssh(
 
     hostname, connect_opts = _build_ssh_options(remote)
 
-    from siftd.config import get_config
+    from siftd.config import get_sync_timeouts
 
-    timeout_raw = get_config("sync.ssh.connect_timeout_s")
-    timeout = 300
-    if timeout_raw is not None:
-        try:
-            timeout = int(timeout_raw)
-        except (ValueError, TypeError):
-            pass
+    connect_timeout, command_timeout = get_sync_timeouts(remote.name, "ssh")
 
     if "connect_timeout" not in connect_opts:
-        connect_opts["connect_timeout"] = timeout
+        connect_opts["connect_timeout"] = connect_timeout
 
     try:
         async with asyncssh.connect(hostname, **connect_opts) as conn:
-            result = await conn.run(send_cmd, encoding=None, timeout=timeout)
+            result = await conn.run(
+                send_cmd, encoding=None, timeout=command_timeout,
+            )
     except asyncssh.PermissionDenied as e:
         raise SyncError(_friendly_os_error(remote.host, "Permission denied")) from e
     except asyncssh.ConnectionLost as e:
@@ -488,7 +630,7 @@ async def _pull_ssh(
     except OSError as e:
         if isinstance(e, TimeoutError):
             raise SyncError(
-                f"Pull from {hostname} timed out after {timeout}s. "
+                f"Pull from {hostname} timed out after {command_timeout}s. "
                 "The remote may be slow or unreachable."
             ) from e
         raise SyncError(_friendly_os_error(remote.host, str(e))) from e
@@ -611,8 +753,19 @@ def _pull_http(
     if workspace is not None:
         params["workspace"] = workspace
 
+    from siftd.config import get_sync_timeouts
+
+    connect_timeout, command_timeout = get_sync_timeouts(remote.name, "http")
+
     try:
-        with httpx.Client(timeout=300) as client:
+        with httpx.Client(
+            timeout=httpx.Timeout(
+                connect=connect_timeout,
+                read=command_timeout,
+                write=command_timeout,
+                pool=connect_timeout,
+            ),
+        ) as client:
             resp = client.get(url, params=params, headers=headers)
             resp.raise_for_status()
     except httpx.HTTPStatusError as e:

@@ -560,6 +560,7 @@ class TestSchemaStability:
         "pending_tags",
         "prompt_tags",
         "conversation_owners",
+        "sync_inbox",
         # FTS5 virtual table (shows as type='table' in sqlite_master)
         "content_fts",
     }

@@ -283,6 +283,21 @@ Content blocks in responses (text, thinking, tool references)
 | `ref_count` | INTEGER | DEFAULT 1 |  |
 | `created_at` | TEXT | NOT NULL | ISO timestamp |
 
+## SYNC INBOX
+
+### sync_inbox
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | TEXT | PRIMARY KEY |  |
+| `received_at` | TEXT | NOT NULL |  |
+| `processed_at` | TEXT |  |  |
+| `status` | TEXT | NOT NULL DEFAULT 'staged' |  |
+| `error` | TEXT |  |  |
+| `source_host` | TEXT |  |  |
+| `size_bytes` | INTEGER |  |  |
+| `conversations` | INTEGER |  |  |
+
 ## FTS5 FULL-TEXT SEARCH INDEX
 
 ### content_fts

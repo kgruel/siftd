@@ -65,12 +65,28 @@ All keys can be managed via `siftd config set <key> <value>`.
 |-----|------|---------|-------------|
 | `locations` | list[string] | — | Override discovery paths for a specific adapter |
 
+## [sync]
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `connect_timeout_s` | int | `30` | TCP/SSH handshake timeout in seconds |
+| `command_timeout_s` | int | `600` | Total operation timeout (transfer + remote processing) |
+| `strategy` | string | `incremental` | Default sync strategy: incremental or full |
+
 ## [sync.ssh]
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `options` | list[string] | — | Extra SSH options passed to asyncssh connect |
-| `connect_timeout_s` | int | `10` | SSH connection timeout in seconds |
+| `connect_timeout_s` | int | `30` | SSH connection timeout in seconds |
+| `command_timeout_s` | int | `600` | SSH command timeout in seconds |
+
+## [sync.http]
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `connect_timeout_s` | int | `30` | HTTP connection timeout in seconds |
+| `command_timeout_s` | int | `600` | HTTP request timeout in seconds |
 
 ## [sync.remotes.*]
 
@@ -78,14 +94,36 @@ All keys can be managed via `siftd config set <key> <value>`.
 |-----|------|---------|-------------|
 | `host` | string | — | SSH host for a named remote |
 | `path` | string | — | Remote database path |
-| `last_push` | string | — | Timestamp of last push (managed by siftd) |
+| `last_push` | string | — | Timestamp of last confirmed push (managed by siftd) |
 | `last_pull` | string | — | Timestamp of last pull (managed by siftd) |
+| `last_sent` | string | — | Timestamp of last staged delivery (managed by siftd) |
+| `connect_timeout_s` | int | — | Per-remote connection timeout override |
+| `command_timeout_s` | int | — | Per-remote command timeout override |
+| `strategy` | string | — | Per-remote sync strategy override |
 
 ## [sync.remotes.*.ssh]
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `options` | list[string] | — | Per-remote SSH options (overrides sync.ssh.options) |
+| `connect_timeout_s` | int | — | Per-remote SSH connection timeout |
+| `command_timeout_s` | int | — | Per-remote SSH command timeout |
+
+## [sync.remotes.*.http]
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `connect_timeout_s` | int | — | Per-remote HTTP connection timeout |
+| `command_timeout_s` | int | — | Per-remote HTTP request timeout |
+
+## [sync.remotes.*.filters]
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `workspace` | string | — | Default workspace filter for this remote |
+| `tag` | list[string] | — | Only sync conversations with these tags |
+| `no_tag` | list[string] | — | Exclude conversations with these tags |
+| `owner` | string | — | Default owner filter for this remote |
 
 ## [update]
 
