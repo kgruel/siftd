@@ -89,6 +89,34 @@ def test_db_backup_force_overwrite(test_db, tmp_path):
     assert rc == 0
 
 
+def test_db_backup_includes_uncheckpointed_wal_commits(test_db, tmp_path):
+    """Backup reads the live WAL state instead of only the main DB file."""
+    writer = sqlite3.connect(str(test_db))
+    try:
+        writer.execute("PRAGMA journal_mode = WAL")
+        writer.execute(
+            "INSERT INTO tags VALUES ('tag-wal', 'wal-backup', NULL, '2024-01-01T00:00:00Z')"
+        )
+        writer.commit()
+        assert Path(f"{test_db}-wal").exists()
+
+        target = tmp_path / "backup.db"
+        rc = main(["--db", str(test_db), "db", "backup", str(target)])
+        assert rc == 0
+    finally:
+        writer.close()
+
+    conn = sqlite3.connect(str(target))
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM tags WHERE name = 'wal-backup'"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row is not None
+
+
 def test_db_restore_roundtrip(test_db, tmp_path, capsys):
     """Backup then restore produces working database."""
     backup_path = tmp_path / "backup.db"
@@ -122,6 +150,59 @@ def test_db_restore_refuses_overwrite(test_db, tmp_path, capsys):
     rc = main(["--db", str(test_db), "db", "restore", str(backup_path)])
     assert rc == 1
     assert "already exists" in capsys.readouterr().err
+
+
+def test_db_restore_force_removes_stale_sidecars(test_db, tmp_path):
+    """Forced restore removes stale -wal/-shm files before copying the backup."""
+    seed = sqlite3.connect(str(test_db))
+    try:
+        seed.execute(
+            "INSERT INTO tags VALUES ('tag-backup', 'backup-tag', NULL, '2024-01-01T00:00:00Z')"
+        )
+        seed.commit()
+    finally:
+        seed.close()
+
+    backup_path = tmp_path / "backup.db"
+    assert main(["--db", str(test_db), "db", "backup", str(backup_path)]) == 0
+
+    target = tmp_path / "restored.db"
+    assert main(["--db", str(target), "db", "restore", str(backup_path)]) == 0
+
+    writer = sqlite3.connect(str(target))
+    reader = sqlite3.connect(str(target))
+    try:
+        writer.execute("PRAGMA journal_mode = WAL")
+        reader.execute("PRAGMA journal_mode = WAL")
+        reader.execute("SELECT COUNT(*) FROM tags").fetchone()
+        writer.execute(
+            "INSERT INTO tags VALUES ('tag-stale', 'stale-tag', NULL, '2024-01-02T00:00:00Z')"
+        )
+        writer.commit()
+        writer.close()
+        assert Path(f"{target}-wal").exists()
+        assert Path(f"{target}-shm").exists()
+
+        rc = main(["--db", str(target), "db", "restore", str(backup_path), "--force"])
+        assert rc == 0
+        assert not Path(f"{target}-wal").exists()
+        assert not Path(f"{target}-shm").exists()
+    finally:
+        reader.close()
+
+    conn = sqlite3.connect(str(target))
+    try:
+        backup_row = conn.execute(
+            "SELECT 1 FROM tags WHERE name = 'backup-tag'"
+        ).fetchone()
+        stale_row = conn.execute(
+            "SELECT 1 FROM tags WHERE name = 'stale-tag'"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert backup_row is not None
+    assert stale_row is None
 
 
 def _remote_cfg(path="/remote.db", host=None, name="r"):

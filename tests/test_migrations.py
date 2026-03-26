@@ -135,6 +135,45 @@ class TestMigrateAddCascadeDeletes:
         assert conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0] == 0
         conn.close()
 
+    def test_preserves_runtime_columns_and_data(self, tmp_path):
+        from siftd.storage.sqlite import _migrate_add_cascade_deletes
+
+        conn = _legacy_db(tmp_path, schema_sql=_NO_CASCADE)
+        conn.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
+        conn.execute("INSERT INTO workspaces VALUES ('w1','/test',NULL,'2024-01-01T00:00:00Z')")
+        conn.execute("INSERT INTO conversations VALUES ('c1','ext1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)")
+        conn.execute("INSERT INTO prompts VALUES ('p1','c1','ep1','2024-01-01T00:00:00Z')")
+        conn.execute("INSERT INTO responses VALUES ('r1','c1','p1',NULL,NULL,'er1','2024-01-01T00:00:01Z',100,200)")
+        conn.execute(
+            "INSERT INTO content_blobs VALUES ('blob1','blob-content',1,'2024-01-01T00:00:00Z')"
+        )
+        conn.execute(
+            "INSERT INTO tool_calls VALUES ('tc1','r1','c1',NULL,'etc1','{}','result','blob1','success','2024-01-01T00:00:02Z')"
+        )
+        conn.execute(
+            "INSERT INTO ingested_files VALUES ('if1','/f.jsonl','hash1','h1','c1','2024-01-01T00:00:00Z',NULL,123.5,456)"
+        )
+        conn.commit()
+
+        _migrate_add_cascade_deletes(conn)
+
+        assert "result_hash" in _cols(conn, "tool_calls")
+        assert "file_mtime" in _cols(conn, "ingested_files")
+        assert "file_size" in _cols(conn, "ingested_files")
+
+        tool_call = conn.execute(
+            "SELECT result_hash FROM tool_calls WHERE id='tc1'"
+        ).fetchone()
+        ingested = conn.execute(
+            "SELECT file_mtime, file_size FROM ingested_files WHERE id='if1'"
+        ).fetchone()
+
+        assert tool_call[0] == "blob1"
+        assert ingested[0] == 123.5
+        assert ingested[1] == 456
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        conn.close()
+
     def test_skips_missing_tables(self, tmp_path):
         from siftd.storage.sqlite import _migrate_add_cascade_deletes
         conn = _legacy_db(tmp_path, schema_sql=_NO_CASCADE)

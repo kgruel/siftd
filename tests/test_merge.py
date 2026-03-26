@@ -1,5 +1,6 @@
 """Tests for siftd db merge — importing a slice into the main database."""
 
+import re
 import sqlite3
 
 import pytest
@@ -7,7 +8,55 @@ from conftest import make_db as _make_db
 
 from siftd.api.merge import merge_database
 from siftd.cli import main
+from siftd.storage.sqlite import SCHEMA_PATH, SCHEMA_VERSION
 from siftd.storage.tags import apply_tag, get_or_create_tag
+
+
+def _legacy_merge_schema(*, include_content_blobs: bool, include_result_hash: bool) -> str:
+    schema = SCHEMA_PATH.read_text()
+    if not include_content_blobs:
+        schema = re.sub(r"\nCREATE TABLE content_blobs \(\n.*?\n\);\n", "\n", schema, flags=re.S)
+        schema = re.sub(
+            r"\nCREATE INDEX idx_content_blobs_ref_count ON content_blobs\(ref_count\);\n",
+            "\n",
+            schema,
+        )
+        schema = re.sub(
+            r"\nCREATE TRIGGER tr_tool_calls_delete_release_blob\n.*?\nEND;\n",
+            "\n",
+            schema,
+            flags=re.S,
+        )
+    if not include_result_hash:
+        schema = re.sub(
+            r"^\s*result_hash\s+TEXT REFERENCES content_blobs\(hash\),.*$",
+            "",
+            schema,
+            flags=re.M,
+        )
+        schema = re.sub(
+            r"\nCREATE TRIGGER tr_tool_calls_delete_release_blob\n.*?\nEND;\n",
+            "\n",
+            schema,
+            flags=re.S,
+        )
+        schema = re.sub(r",(\s*\n\s*\))", r"\1", schema)
+    return schema
+
+
+def _write_legacy_merge_db(path, *, include_content_blobs: bool, include_result_hash: bool) -> None:
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.executescript(
+            _legacy_merge_schema(
+                include_content_blobs=include_content_blobs,
+                include_result_hash=include_result_hash,
+            )
+        )
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def test_disjoint_merge(tmp_path):
@@ -113,6 +162,44 @@ def test_workspace_git_remote_match(tmp_path):
     conn.close()
     assert len(workspace_ids) == 1
     assert workspaces == 1
+
+
+def test_workspace_path_fallback_skips_conflicting_non_null_remotes(tmp_path):
+    """Same path but conflicting non-null remotes should stay as distinct workspaces."""
+    target = _make_db(
+        tmp_path / "target.db",
+        workspace_path="/shared/project",
+        workspace_git_remote="git@github.com:user/target.git",
+        conversations=[{"external_id": "conv-A"}],
+    )
+    source = _make_db(
+        tmp_path / "source.db",
+        workspace_path="/shared/project",
+        workspace_git_remote="git@github.com:user/source.git",
+        conversations=[{"external_id": "conv-B"}],
+    )
+
+    result = merge_database(target, source)
+    assert result["conversations"] == 1
+    assert result["workspaces_matched"] == 0
+
+    conn = sqlite3.connect(str(target))
+    conn.row_factory = sqlite3.Row
+    workspace_count = conn.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0]
+    workspace_ids = conn.execute(
+        "SELECT DISTINCT workspace_id FROM conversations"
+    ).fetchall()
+    remotes = {
+        row["git_remote"] for row in conn.execute("SELECT git_remote FROM workspaces").fetchall()
+    }
+    conn.close()
+
+    assert workspace_count == 2
+    assert len(workspace_ids) == 2
+    assert remotes == {
+        "git@github.com:user/target.git",
+        "git@github.com:user/source.git",
+    }
 
 
 def test_tag_name_dedup(tmp_path):
@@ -670,6 +757,34 @@ def test_schema_version_mismatch(tmp_path):
     conn.close()
 
     with pytest.raises(RuntimeError, match="Schema version mismatch"):
+        merge_database(target, source)
+
+
+def test_merge_rejects_source_missing_runtime_schema(tmp_path):
+    """Same user_version but missing required runtime tables is rejected early."""
+    target = _make_db(tmp_path / "target.db", conversations=[])
+    source = tmp_path / "source.db"
+    _write_legacy_merge_db(
+        source,
+        include_content_blobs=False,
+        include_result_hash=False,
+    )
+
+    with pytest.raises(RuntimeError, match="missing required runtime schema: content_blobs table"):
+        merge_database(target, source)
+
+
+def test_merge_rejects_source_missing_result_hash_column(tmp_path):
+    """Same user_version but missing runtime columns is rejected before merge SQL runs."""
+    target = _make_db(tmp_path / "target.db", conversations=[])
+    source = tmp_path / "source.db"
+    _write_legacy_merge_db(
+        source,
+        include_content_blobs=True,
+        include_result_hash=False,
+    )
+
+    with pytest.raises(RuntimeError, match="tool_calls.result_hash column"):
         merge_database(target, source)
 
 

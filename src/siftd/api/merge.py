@@ -57,6 +57,15 @@ def merge_database(
                 f"schema version to merge."
             )
 
+        source_missing = _missing_merge_runtime_schema(conn, "src")
+        if source_missing:
+            conn.execute("DETACH DATABASE src")
+            missing = ", ".join(source_missing)
+            raise RuntimeError(
+                "Source database is missing required runtime schema: "
+                f"{missing}. Open it with the current build before merging."
+            )
+
         conn.execute("PRAGMA foreign_keys = OFF")
 
         if dry_run:
@@ -519,7 +528,8 @@ def _map_workspaces(conn) -> int:
         SELECT 'workspaces', s.id, t.id
         FROM src.workspaces s
         JOIN main.workspaces t ON t.path = s.path
-        WHERE NOT EXISTS (
+        WHERE (s.git_remote IS NULL OR t.git_remote IS NULL)
+          AND NOT EXISTS (
             SELECT 1 FROM _id_map m
             WHERE m.table_name = 'workspaces' AND m.source_id = s.id
         )
@@ -527,8 +537,23 @@ def _map_workspaces(conn) -> int:
 
     # Phase 3: Insert genuinely new workspaces
     conn.execute("""
-        INSERT OR IGNORE INTO workspaces
-        SELECT s.* FROM src.workspaces s
+        INSERT OR IGNORE INTO workspaces (id, path, git_remote, discovered_at)
+        SELECT
+            s.id,
+            CASE
+                WHEN EXISTS (
+                    SELECT 1 FROM main.workspaces t
+                    WHERE t.path = s.path
+                      AND t.git_remote IS NOT NULL
+                      AND s.git_remote IS NOT NULL
+                      AND t.git_remote != s.git_remote
+                )
+                THEN s.path || ' [remote=' || s.git_remote || ']'
+                ELSE s.path
+            END,
+            s.git_remote,
+            s.discovered_at
+        FROM src.workspaces s
         WHERE NOT EXISTS (
             SELECT 1 FROM _id_map m
             WHERE m.table_name = 'workspaces' AND m.source_id = s.id
@@ -547,6 +572,27 @@ def _map_workspaces(conn) -> int:
     """)
 
     return matched_by_remote
+
+
+def _missing_merge_runtime_schema(conn, schema_name: str) -> list[str]:
+    """Return runtime schema objects merge depends on but the DB does not have."""
+    missing = []
+
+    content_blobs = conn.execute(
+        f"SELECT 1 FROM {schema_name}.sqlite_master "
+        "WHERE type='table' AND name='content_blobs'"
+    ).fetchone()
+    if not content_blobs:
+        missing.append("content_blobs table")
+
+    tool_call_columns = {
+        row[1]
+        for row in conn.execute(f"PRAGMA {schema_name}.table_info(tool_calls)").fetchall()
+    }
+    if "result_hash" not in tool_call_columns:
+        missing.append("tool_calls.result_hash column")
+
+    return missing
 
 
 def _map_tool_aliases(conn) -> None:

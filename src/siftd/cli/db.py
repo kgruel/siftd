@@ -20,6 +20,11 @@ from siftd.cli._common import resolve_db
 from siftd.dateparse import parse_date
 
 
+def _database_artifacts(db_path: Path) -> list[Path]:
+    """Return the SQLite database file and its WAL sidecars."""
+    return [db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm")]
+
+
 def cmd_db_info(args) -> int:
     """Show database file metadata and schema information."""
     db = resolve_db(args)
@@ -158,6 +163,9 @@ def cmd_db_restore(args) -> int:
         return 1
 
     db.parent.mkdir(parents=True, exist_ok=True)
+    for artifact in _database_artifacts(db):
+        if artifact.exists():
+            artifact.unlink()
     shutil.copy2(source, db)
     size = db.stat().st_size
     print(f"Restored to: {db} ({size / 1024:.1f} KB)")

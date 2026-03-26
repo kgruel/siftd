@@ -140,7 +140,8 @@ def backup_database(source_path: Path, target_path: Path) -> None:
     if not source_path.exists():
         raise FileNotFoundError(f"Database not found: {source_path}")
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    source_conn = open_database(source_path, read_only=True)
+    source_uri = f"file:{source_path.as_posix()}?mode=ro"
+    source_conn = sqlite3.connect(source_uri, uri=True)
     try:
         dest_conn = sqlite3.connect(str(target_path))
         try:
@@ -233,6 +234,27 @@ def _migrate_add_cascade_deletes(conn: sqlite3.Connection) -> None:
     # Disable FK enforcement during migration (required for table recreation)
     conn.execute("PRAGMA foreign_keys = OFF")
 
+    tool_call_columns = {row[1] for row in conn.execute("PRAGMA table_info(tool_calls)")}
+    ingested_file_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(ingested_files)")
+    }
+    tool_calls_result_hash_ddl = ""
+    tool_calls_result_hash_columns = ""
+    if "result_hash" in tool_call_columns:
+        tool_calls_result_hash_ddl = (
+            "\n                result_hash     TEXT REFERENCES content_blobs(hash),"
+        )
+        tool_calls_result_hash_columns = ", result_hash"
+
+    ingested_files_file_stat_ddl = ""
+    ingested_files_file_stat_columns = ""
+    if "file_mtime" in ingested_file_columns:
+        ingested_files_file_stat_ddl = (
+            ",\n                file_mtime      REAL,"
+            "\n                file_size       INTEGER"
+        )
+        ingested_files_file_stat_columns = ", file_mtime, file_size"
+
     # Tables that need migration, in order that respects dependencies
     # (parent tables first for drops, child tables first for creates)
     tables_to_migrate = [
@@ -260,7 +282,7 @@ def _migrate_add_cascade_deletes(conn: sqlite3.Connection) -> None:
                 UNIQUE (conversation_id, external_id)
             )
         """, "id, conversation_id, prompt_id, model_id, provider_id, external_id, timestamp, input_tokens, output_tokens"),
-        ("tool_calls", """
+        ("tool_calls", f"""
             CREATE TABLE tool_calls_new (
                 id              TEXT PRIMARY KEY,
                 response_id     TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
@@ -268,11 +290,11 @@ def _migrate_add_cascade_deletes(conn: sqlite3.Connection) -> None:
                 tool_id         TEXT REFERENCES tools(id) ON DELETE SET NULL,
                 external_id     TEXT,
                 input           TEXT,
-                result          TEXT,
+                result          TEXT,{tool_calls_result_hash_ddl}
                 status          TEXT,
                 timestamp       TEXT
             )
-        """, "id, response_id, conversation_id, tool_id, external_id, input, result, status, timestamp"),
+        """, f"id, response_id, conversation_id, tool_id, external_id, input, result{tool_calls_result_hash_columns}, status, timestamp"),
         ("prompt_content", """
             CREATE TABLE prompt_content_new (
                 id              TEXT PRIMARY KEY,
@@ -351,7 +373,7 @@ def _migrate_add_cascade_deletes(conn: sqlite3.Connection) -> None:
                 UNIQUE (tool_call_id, tag_id)
             )
         """, "id, tool_call_id, tag_id, applied_at"),
-        ("ingested_files", """
+        ("ingested_files", f"""
             CREATE TABLE ingested_files_new (
                 id              TEXT PRIMARY KEY,
                 path            TEXT NOT NULL UNIQUE,
@@ -359,9 +381,9 @@ def _migrate_add_cascade_deletes(conn: sqlite3.Connection) -> None:
                 harness_id      TEXT NOT NULL REFERENCES harnesses(id) ON DELETE CASCADE,
                 conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
                 ingested_at     TEXT NOT NULL,
-                error           TEXT
+                error           TEXT{ingested_files_file_stat_ddl}
             )
-        """, "id, path, file_hash, harness_id, conversation_id, ingested_at, error"),
+        """, f"id, path, file_hash, harness_id, conversation_id, ingested_at, error{ingested_files_file_stat_columns}"),
     ]
 
     for table_name, new_ddl, columns in tables_to_migrate:
