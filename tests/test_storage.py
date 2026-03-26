@@ -512,6 +512,25 @@ class TestTags:
         with pytest.raises(ValueError, match="already exists"):
             tags.rename_tag(db, "a2", "b2")
 
+    def test_rename_invalidates_same_connection_cache(self, db):
+        original_id = tags.get_or_create_tag(db, "cache-old")
+
+        assert tags.rename_tag(db, "cache-old", "cache-new", commit=True)
+        assert tags.get_tag_id(db, "cache-old") is None
+        assert tags.get_or_create_tag(db, "cache-new") == original_id
+
+        recreated_id = tags.get_or_create_tag(db, "cache-old")
+        assert recreated_id != original_id
+
+    def test_delete_invalidates_same_connection_cache(self, db):
+        original_id = tags.get_or_create_tag(db, "cache-delete")
+
+        assert tags.delete_tag(db, "cache-delete", commit=True) == 0
+        assert tags.get_tag_id(db, "cache-delete") is None
+
+        recreated_id = tags.get_or_create_tag(db, "cache-delete")
+        assert recreated_id != original_id
+
     def test_apply_remove_all_entities(self, populated_db):
         conn, cid = populated_db
         tid = tags.get_or_create_tag(conn, "r")

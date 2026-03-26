@@ -10,6 +10,12 @@ from siftd.ids import ulid as _ulid
 _tag_cache: dict[str, str] = {}
 
 
+def _invalidate_tag_cache(*names: str) -> None:
+    """Drop cached tag-name lookups that are no longer valid."""
+    for name in names:
+        _tag_cache.pop(name, None)
+
+
 def get_or_create_tag(conn: sqlite3.Connection, name: str, description: str | None = None) -> str:
     """Get or create a tag by name, return id (ULID)."""
     if name in _tag_cache:
@@ -118,12 +124,23 @@ def rename_tag(conn: sqlite3.Connection, old_name: str, new_name: str, *, commit
 
     Raises ValueError if new_name already exists.
     """
+    from siftd.storage.sessions import rename_pending_tag
+
     # Check new_name doesn't already exist
     cur = conn.execute("SELECT id FROM tags WHERE name = ?", (new_name,))
     if cur.fetchone():
         raise ValueError(f"Tag '{new_name}' already exists")
 
+    cur = conn.execute("SELECT id FROM tags WHERE name = ?", (old_name,))
+    row = cur.fetchone()
+    if not row:
+        return False
+
+    tag_id = row["id"]
     cur = conn.execute("UPDATE tags SET name = ? WHERE name = ?", (new_name, old_name))
+    rename_pending_tag(conn, old_name, new_name)
+    _invalidate_tag_cache(old_name, new_name)
+    _tag_cache[new_name] = tag_id
     if commit:
         conn.commit()
     return cur.rowcount > 0
@@ -131,6 +148,8 @@ def rename_tag(conn: sqlite3.Connection, old_name: str, new_name: str, *, commit
 
 def delete_tag(conn: sqlite3.Connection, name: str, *, commit: bool = False) -> int:
     """Delete a tag and all its associations. Returns count of entity associations removed."""
+    from siftd.storage.sessions import delete_pending_tag
+
     cur = conn.execute("SELECT id FROM tags WHERE name = ?", (name,))
     row = cur.fetchone()
     if not row:
@@ -146,6 +165,8 @@ def delete_tag(conn: sqlite3.Connection, name: str, *, commit: bool = False) -> 
 
     # Delete the tag itself
     conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+    delete_pending_tag(conn, name)
+    _invalidate_tag_cache(name)
 
     if commit:
         conn.commit()

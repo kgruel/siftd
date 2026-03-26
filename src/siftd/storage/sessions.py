@@ -176,6 +176,68 @@ def queue_tag(
     return ulid
 
 
+def rename_pending_tag(
+    conn: sqlite3.Connection,
+    old_name: str,
+    new_name: str,
+    *,
+    commit: bool = False,
+) -> int:
+    """Rename queued pending tags, collapsing duplicates onto the new name."""
+    if old_name == new_name:
+        return 0
+
+    removed_duplicates = conn.execute(
+        """
+        DELETE FROM pending_tags
+        WHERE tag_name = ?
+          AND EXISTS (
+              SELECT 1
+              FROM pending_tags existing
+              WHERE existing.harness_session_id = pending_tags.harness_session_id
+                AND existing.tag_name = ?
+                AND existing.entity_type = pending_tags.entity_type
+                AND (
+                    existing.exchange_index = pending_tags.exchange_index
+                    OR (
+                        existing.exchange_index IS NULL
+                        AND pending_tags.exchange_index IS NULL
+                    )
+                )
+          )
+        """,
+        (old_name, new_name),
+    ).rowcount
+
+    renamed = conn.execute(
+        "UPDATE pending_tags SET tag_name = ? WHERE tag_name = ?",
+        (new_name, old_name),
+    ).rowcount
+
+    if commit:
+        conn.commit()
+
+    return removed_duplicates + renamed
+
+
+def delete_pending_tag(
+    conn: sqlite3.Connection,
+    tag_name: str,
+    *,
+    commit: bool = False,
+) -> int:
+    """Delete queued pending tags for a removed tag name."""
+    removed = conn.execute(
+        "DELETE FROM pending_tags WHERE tag_name = ?",
+        (tag_name,),
+    ).rowcount
+
+    if commit:
+        conn.commit()
+
+    return removed
+
+
 def get_pending_tags(
     conn: sqlite3.Connection,
     harness_session_id: str,

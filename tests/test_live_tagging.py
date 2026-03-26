@@ -16,6 +16,7 @@ from siftd.storage.sessions import (
     queue_tag,
     register_session,
 )
+from siftd.storage.tags import delete_tag, get_or_create_tag, rename_tag
 from siftd.storage.sqlite import create_database, open_database
 from conftest import make_conversation
 
@@ -302,6 +303,77 @@ class TestLiveTaggingFlow:
 
         for tag in tags_to_queue:
             assert tag in applied_tags
+
+    def test_renamed_pending_tags_apply_under_new_name(self, live_db, tmp_path):
+        """Renaming a queued tag updates pending rows instead of forking names."""
+        session_id = "renamed-pending-session"
+        old_name = "decision:legacy"
+        new_name = "decision:current"
+
+        test_file = tmp_path / "session.jsonl"
+        test_file.write_text("{}")
+
+        conversation = make_conversation(
+            external_id=session_id,
+            workspace_path="/test/project",
+            started_at="2024-01-15T10:00:00Z",
+        )
+
+        register_session(live_db["conn"], session_id, "live_test", commit=True)
+        get_or_create_tag(live_db["conn"], old_name)
+        queue_tag(live_db["conn"], session_id, old_name, commit=True)
+        queue_tag(live_db["conn"], session_id, new_name, commit=True)
+
+        assert rename_tag(live_db["conn"], old_name, new_name, commit=True)
+
+        pending = get_pending_tags(live_db["conn"], session_id)
+        assert [tag.tag_name for tag in pending] == [new_name]
+
+        adapter = make_live_adapter(str(test_file), conversation)
+        ingest_all(live_db["conn"], [adapter])
+
+        cur = live_db["conn"].execute("""
+            SELECT t.name FROM tags t
+            JOIN conversation_tags ct ON ct.tag_id = t.id
+            JOIN conversations c ON c.id = ct.conversation_id
+            WHERE c.external_id = ?
+        """, (session_id,))
+        applied_tags = [row[0] for row in cur.fetchall()]
+        assert applied_tags == [new_name]
+        assert live_db["conn"].execute("SELECT COUNT(*) FROM tags WHERE name = ?", (old_name,)).fetchone()[0] == 0
+
+    def test_deleted_pending_tags_are_not_resurrected_at_ingest(self, live_db, tmp_path):
+        """Deleting a tag removes queued pending rows before ingest can recreate it."""
+        session_id = "deleted-pending-session"
+        tag_name = "decision:remove-me"
+
+        test_file = tmp_path / "session.jsonl"
+        test_file.write_text("{}")
+
+        conversation = make_conversation(
+            external_id=session_id,
+            workspace_path="/test/project",
+            started_at="2024-01-15T10:00:00Z",
+        )
+
+        register_session(live_db["conn"], session_id, "live_test", commit=True)
+        get_or_create_tag(live_db["conn"], tag_name)
+        queue_tag(live_db["conn"], session_id, tag_name, commit=True)
+
+        assert delete_tag(live_db["conn"], tag_name, commit=True) == 0
+        assert get_pending_tags(live_db["conn"], session_id) == []
+
+        adapter = make_live_adapter(str(test_file), conversation)
+        ingest_all(live_db["conn"], [adapter])
+
+        cur = live_db["conn"].execute("""
+            SELECT t.name FROM tags t
+            JOIN conversation_tags ct ON ct.tag_id = t.id
+            JOIN conversations c ON c.id = ct.conversation_id
+            WHERE c.external_id = ?
+        """, (session_id,))
+        assert cur.fetchall() == []
+        assert live_db["conn"].execute("SELECT COUNT(*) FROM tags WHERE name = ?", (tag_name,)).fetchone()[0] == 0
 
     def test_namespaced_session_id_matches_adapter_format(self, live_db, tmp_path):
         """Verify namespaced session IDs work end-to-end.
