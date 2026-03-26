@@ -449,10 +449,14 @@ def ingest_all(
                 )
 
                 if existing:
-                    # Compare timestamps
+                    # Compare timestamps — only semantic changes trigger replacement.
+                    # Hash-only drift (formatting, adapter-ignored fields) updates the
+                    # file record but preserves the conversation and its manual state
+                    # (tags, ownership).
                     should_replace = _compare_timestamps(
                         conversation.ended_at, existing["ended_at"]
-                    ) or (
+                    )
+                    hash_drifted = (
                         existing_file_info is not None
                         and current_hash is not None
                         and current_hash != existing_file_info["file_hash"]
@@ -489,6 +493,21 @@ def ingest_all(
                                 st = location.stat()
                             file_hash = current_hash or compute_file_hash(location)
                             record_ingested_file(conn, file_path, file_hash, existing["id"], file_mtime=st.st_mtime, file_size=st.st_size)
+                            conn.commit()
+                        elif hash_drifted:
+                            # File bytes changed but conversation is semantically
+                            # the same (no timestamp advance). Update the stored
+                            # hash so the fast path works next time, but preserve
+                            # the conversation and its manual state.
+                            if st is None:
+                                st = location.stat()
+                            file_hash = current_hash or compute_file_hash(location)
+                            conn.execute(
+                                """UPDATE ingested_files
+                                   SET file_hash = ?, file_mtime = ?, file_size = ?
+                                   WHERE path = ?""",
+                                (file_hash, st.st_mtime, st.st_size, file_path),
+                            )
                             conn.commit()
                         stats.files_skipped += 1
                         if on_file:
@@ -584,19 +603,34 @@ def _record_file_error(
     on_file: Callable[[Source, str], None] | None,
     emit_event: Callable[[str, object | None], None] | None,
 ) -> None:
-    """Record a file that failed ingestion so it won't retry."""
+    """Record a file that failed ingestion so it won't retry.
+
+    If the file was previously recorded as a success, update the row to
+    reflect the new error state so the failure is queryable and the stale
+    conversation link is cleared.
+    """
     try:
-        if get_ingested_file_info(conn, file_path):
-            return  # Already recorded from a previous run
+        existing = get_ingested_file_info(conn, file_path)
         location = source.as_path
         st = location.stat()
         file_hash = compute_file_hash(location)
-        harness_kwargs = {}
-        if hasattr(adapter, "HARNESS_SOURCE"):
-            harness_kwargs["source"] = adapter.HARNESS_SOURCE
-        harness_id = get_or_create_harness(conn, adapter.NAME, **harness_kwargs)
-        record_failed_file(conn, file_path, file_hash, harness_id, error, file_mtime=st.st_mtime, file_size=st.st_size)
-        conn.commit()
+        if existing:
+            # Update existing row: clear conversation link, set error
+            conn.execute(
+                """UPDATE ingested_files
+                   SET file_hash = ?, conversation_id = NULL, error = ?,
+                       file_mtime = ?, file_size = ?
+                   WHERE path = ?""",
+                (file_hash, error, st.st_mtime, st.st_size, file_path),
+            )
+            conn.commit()
+        else:
+            harness_kwargs = {}
+            if hasattr(adapter, "HARNESS_SOURCE"):
+                harness_kwargs["source"] = adapter.HARNESS_SOURCE
+            harness_id = get_or_create_harness(conn, adapter.NAME, **harness_kwargs)
+            record_failed_file(conn, file_path, file_hash, harness_id, error, file_mtime=st.st_mtime, file_size=st.st_size)
+            conn.commit()
     except Exception:
         pass  # Don't fail the whole ingest because we couldn't record the error
     stats.files_errored += 1

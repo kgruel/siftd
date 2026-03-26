@@ -154,27 +154,36 @@ class TestIngestEdgeCases:
         assert "missing a messages array" in info["error"]
         assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
 
-    def test_session_dedup_replaces_changed_source_when_timestamp_is_stale(self, tmp_path):
+    def test_session_dedup_replaces_when_timestamp_advances(self, tmp_path):
+        """Hash change + timestamp advance triggers replacement."""
         src = tmp_path / "sessions" / "session.json"
         src.parent.mkdir(parents=True)
         src.write_text("old")
 
-        def parse_fn(source):
-            marker = source.location.read_text()
-            yield make_conversation(
-                external_id="session-adapter::shared-session",
-                harness_name="session_adapter",
-                prompt_text="prompt",
-                response_text=marker,
-                started_at="2024-01-01T00:00:00Z",
-                ended_at="2024-01-01T00:05:00Z",
-            )
+        call_count = [0]
 
-        adapter = make_session_adapter(
-            src,
-            name="session_adapter",
-            parse_fn=parse_fn,
-        )
+        def parse_fn(source):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                yield make_conversation(
+                    external_id="session-adapter::shared-session",
+                    harness_name="session_adapter",
+                    prompt_text="prompt",
+                    response_text="old",
+                    started_at="2024-01-01T00:00:00Z",
+                    ended_at="2024-01-01T00:05:00Z",
+                )
+            else:
+                yield make_conversation(
+                    external_id="session-adapter::shared-session",
+                    harness_name="session_adapter",
+                    prompt_text="prompt",
+                    response_text="new",
+                    started_at="2024-01-01T00:00:00Z",
+                    ended_at="2024-01-01T00:10:00Z",  # newer timestamp
+                )
+
+        adapter = make_session_adapter(src, name="session_adapter", parse_fn=parse_fn)
 
         db_path = tmp_path / "test.db"
         conn = open_database(db_path)
@@ -182,7 +191,7 @@ class TestIngestEdgeCases:
         first = ingest_all(conn, [adapter])
         assert first.files_ingested == 1
 
-        src.write_text("new content that keeps the same timestamp semantics")
+        src.write_text("new content with newer timestamp")
 
         second = ingest_all(conn, [adapter])
         assert second.files_replaced == 1
@@ -191,7 +200,109 @@ class TestIngestEdgeCases:
         summaries = list_conversations(db_path=db_path)
         assert len(summaries) == 1
         detail = get_conversation(summaries[0].id, db_path=db_path)
-        assert detail.exchanges[0].response_text == "new content that keeps the same timestamp semantics"
+        assert detail.exchanges[0].response_text == "new"
+
+    def test_session_dedup_hash_drift_preserves_conversation_and_tags(self, tmp_path):
+        """Hash change without timestamp advance updates the file record
+        but preserves the conversation and its manual tags."""
+        src = tmp_path / "sessions" / "session.json"
+        src.parent.mkdir(parents=True)
+        src.write_text("original bytes")
+
+        def parse_fn(source):
+            yield make_conversation(
+                external_id="session-adapter::hash-drift",
+                harness_name="session_adapter",
+                prompt_text="prompt",
+                response_text="same semantics",
+                started_at="2024-01-01T00:00:00Z",
+                ended_at="2024-01-01T00:05:00Z",
+            )
+
+        adapter = make_session_adapter(src, name="session_adapter", parse_fn=parse_fn)
+
+        db_path = tmp_path / "test.db"
+        conn = open_database(db_path)
+
+        first = ingest_all(conn, [adapter])
+        assert first.files_ingested == 1
+        original_hash = get_ingested_file_info(conn, str(src))["file_hash"]
+
+        # Apply a manual tag
+        conv_id = conn.execute("SELECT id FROM conversations").fetchone()[0]
+        from siftd.storage.tags import apply_tag, get_or_create_tag
+        tag_id = get_or_create_tag(conn, "manual-tag")
+        apply_tag(conn, "conversation", conv_id, tag_id)
+        conn.commit()
+
+        # Mutate file bytes without changing parsed conversation semantics
+        src.write_text("different bytes same semantics")
+
+        second = ingest_all(conn, [adapter])
+        assert second.files_skipped == 1
+        assert second.files_replaced == 0
+
+        # Hash updated in file record
+        updated_info = get_ingested_file_info(conn, str(src))
+        assert updated_info["file_hash"] != original_hash
+
+        # Conversation and tag preserved
+        assert updated_info["conversation_id"] == conv_id
+        tag_row = conn.execute(
+            "SELECT 1 FROM conversation_tags WHERE conversation_id = ? AND tag_id = ?",
+            (conv_id, tag_id),
+        ).fetchone()
+        assert tag_row is not None
+        conn.close()
+
+    def test_previously_ingested_file_that_becomes_invalid_updates_error_state(self, tmp_path):
+        """A file that was successfully ingested but later becomes unparseable
+        should have its error state updated, not leave a stale success record."""
+        src = tmp_path / "sessions" / "session.json"
+        src.parent.mkdir(parents=True)
+        src.write_text("valid")
+
+        call_count = [0]
+
+        def parse_fn(source):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                yield make_conversation(
+                    external_id="session-adapter::goes-bad",
+                    harness_name="session_adapter",
+                    prompt_text="prompt",
+                    response_text="good",
+                    started_at="2024-01-01T00:00:00Z",
+                    ended_at="2024-01-01T00:05:00Z",
+                )
+            else:
+                from siftd.adapters.sdk import AdapterParseError
+                raise AdapterParseError("file became corrupt")
+
+        adapter = make_session_adapter(src, name="session_adapter", parse_fn=parse_fn)
+
+        db_path = tmp_path / "test.db"
+        conn = open_database(db_path)
+
+        first = ingest_all(conn, [adapter])
+        assert first.files_ingested == 1
+        info_before = get_ingested_file_info(conn, str(src))
+        assert info_before["conversation_id"] is not None
+        assert info_before["error"] is None
+
+        # Mutate the file so hash changes (triggers re-parse)
+        src.write_text("corrupt data")
+
+        second = ingest_all(conn, [adapter])
+        assert second.files_errored == 1
+
+        info_after = get_ingested_file_info(conn, str(src))
+        assert info_after["conversation_id"] is None
+        assert "file became corrupt" in info_after["error"]
+
+        errors = get_ingest_errors(conn)
+        assert any("file became corrupt" in e["error"] for e in errors)
+        conn.close()
 
 
 class TestStoreConversationRoundTrip:
