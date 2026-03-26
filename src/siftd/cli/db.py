@@ -331,8 +331,7 @@ def cmd_db_receive(args) -> int:
         if getattr(args, "stage", False):
             from siftd.api.inbox import stage_payload
 
-            data = tmp_path.read_bytes()
-            result = stage_payload(data, db)
+            result = stage_payload(tmp_path, db)
             print(json.dumps(result))
             return 0
 
@@ -377,6 +376,8 @@ def cmd_db_process(args) -> int:
     for r in results:
         if r["status"] == "done":
             print(f"  {r['id']}: merged ({r.get('conversations', 0)} conversations)")
+        elif r["status"] == "skipped":
+            print(f"  {r['id']}: skipped (claimed by another processor)")
         else:
             print(f"  {r['id']}: error — {r.get('error', 'unknown')}", file=sys.stderr)
             errors += 1
@@ -503,6 +504,9 @@ def cmd_db_pull(args) -> int:
             since=getattr(args, "since", None),
             pull_all=getattr(args, "pull_all", False),
             workspace=getattr(args, "workspace", None),
+            tag=getattr(args, "tag", None),
+            no_tag=getattr(args, "no_tag", None),
+            owner=getattr(args, "owner", None),
             dry_run=dry_run,
         )
     except SyncError as e:
@@ -616,6 +620,9 @@ def cmd_db_push(args) -> int:
             since=getattr(args, "since", None),
             push_all=getattr(args, "push_all", False),
             workspace=getattr(args, "workspace", None),
+            tag=getattr(args, "tag", None),
+            no_tag=getattr(args, "no_tag", None),
+            owner=getattr(args, "owner", None),
             dry_run=dry_run,
         )
     except SyncError as e:
@@ -856,6 +863,12 @@ examples:
                         help="Preview what would be pushed without transferring")
     p_push.add_argument("-w", "--workspace", metavar="SUBSTR",
                         help="Filter by workspace path substring")
+    p_push.add_argument("--tag", action="append", metavar="TAG",
+                        help="Only push conversations with these tags (repeatable)")
+    p_push.add_argument("--no-tag", action="append", metavar="TAG",
+                        help="Exclude conversations with these tags (repeatable)")
+    p_push.add_argument("--owner", metavar="USER",
+                        help="Filter by conversation owner")
     p_push.add_argument("--strategy", choices=["incremental", "full"],
                         help="Override push strategy (default: from config or incremental)")
     p_push.set_defaults(func=cmd_db_push)
@@ -881,6 +894,12 @@ examples:
                         help="Preview what would be pulled without merging")
     p_pull.add_argument("-w", "--workspace", metavar="SUBSTR",
                         help="Filter by workspace path substring")
+    p_pull.add_argument("--tag", action="append", metavar="TAG",
+                        help="Only pull conversations with these tags (repeatable)")
+    p_pull.add_argument("--no-tag", action="append", metavar="TAG",
+                        help="Exclude conversations with these tags (repeatable)")
+    p_pull.add_argument("--owner", metavar="USER",
+                        help="Filter by conversation owner")
     p_pull.add_argument("--strategy", choices=["incremental", "full"],
                         help="Override pull strategy (default: from config or incremental)")
     p_pull.set_defaults(func=cmd_db_pull)

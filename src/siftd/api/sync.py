@@ -125,9 +125,6 @@ def sync_push(
         # Negotiate capabilities with the remote
         use_staged = False
         if _is_http_remote(remote):
-            status = _preflight_http(remote)
-            if status and "staged" in status.capabilities:
-                use_staged = True
             remote_existed = _push_http(remote, slice_path)
         elif remote.host:
             status = asyncio.run(_preflight_ssh(remote))

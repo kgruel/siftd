@@ -10,6 +10,7 @@ tracked in the ``sync_inbox`` table of the target database.
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,12 +19,12 @@ from siftd.storage.sqlite import open_database
 
 
 def stage_payload(
-    data: bytes,
+    payload_path: Path,
     db_path: Path,
     *,
     source_host: str | None = None,
 ) -> dict:
-    """Write a push payload to the inbox and record it in sync_inbox.
+    """Move a push payload into the inbox and record it in sync_inbox.
 
     Returns a dict with ``id`` and ``status`` suitable for JSON response.
     """
@@ -35,8 +36,10 @@ def stage_payload(
     from siftd.ids import ulid
 
     payload_id = ulid()
-    payload_path = inbox / f"{payload_id}.db"
-    payload_path.write_bytes(data)
+    inbox_payload_path = inbox / f"{payload_id}.db"
+    size_bytes = payload_path.stat().st_size
+
+    shutil.move(str(payload_path), str(inbox_payload_path))
 
     conn = open_database(db_path)
     try:
@@ -45,9 +48,12 @@ def stage_payload(
                (id, received_at, status, source_host, size_bytes)
                VALUES (?, ?, 'staged', ?, ?)""",
             (payload_id, datetime.now(UTC).isoformat(), source_host,
-             len(data)),
+             size_bytes),
         )
         conn.commit()
+    except Exception:
+        inbox_payload_path.unlink(missing_ok=True)
+        raise
     finally:
         conn.close()
 
@@ -84,14 +90,27 @@ def _process_one(db_path: Path, payload_id: str, payload_path: Path) -> dict:
     """Process a single staged payload. Returns a result dict."""
     now = datetime.now(UTC).isoformat()
 
+    # Atomically claim staged payload (avoid double-processing with concurrent processors).
+    conn = open_database(db_path)
+    try:
+        cur = conn.execute(
+            """UPDATE sync_inbox
+               SET status = 'processing', processed_at = NULL, error = NULL, conversations = NULL
+               WHERE id = ? AND status = 'staged'""",
+            (payload_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    if cur.rowcount == 0:
+        return {"id": payload_id, "status": "skipped"}
+
     if not payload_path.exists():
         _update_status(db_path, payload_id, "error", now,
                        error="Staged file missing")
         return {"id": payload_id, "status": "error",
                 "error": "Staged file missing"}
-
-    # Mark as processing
-    _update_status(db_path, payload_id, "processing", processed_at=None)
 
     try:
         from siftd.api.receive import receive_database

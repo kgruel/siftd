@@ -377,6 +377,26 @@ class TestDbSendReceive:
         assert '"error_type": "database_locked"' in capsys.readouterr().err
 
 
+class TestDbProcess:
+    def test_process_skipped_is_benign(self, test_db, monkeypatch, capsys):
+        monkeypatch.setattr(
+            "siftd.api.inbox.process_inbox",
+            lambda db_path: [
+                {"id": "p1", "status": "done", "conversations": 2},
+                {"id": "p2", "status": "skipped"},
+            ],
+        )
+
+        rc = main(["--db", str(test_db), "db", "process"])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "p1: merged (2 conversations)" in captured.out
+        assert "p2: skipped (claimed by another processor)" in captured.out
+        assert "Processed 2 payload(s), 0 error(s)." in captured.out
+        assert captured.err == ""
+
+
 class TestDbErrorPaths:
     def test_info_vacuum_backup_restore_missing_db(self, tmp_path, capsys):
         missing = tmp_path / "missing.db"
