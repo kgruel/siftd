@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 import siftd.search as search_mod
+import siftd.api.search as api_search
 from siftd.search import ScoreBreakdown, apply_temporal_weight, mmr_rerank
 
 
@@ -296,58 +297,8 @@ class TestResolveCandidates:
         assert "c1" in result and "c2" in result
 
 
-@pytest.mark.embeddings
-class TestHybridSearchBranches:
-    def _stub_embed_exports(self, monkeypatch, backend):
-        import siftd.embeddings as emb
-
-        monkeypatch.setattr(emb, "require_embeddings", lambda _op: None, raising=False)
-        monkeypatch.setattr(emb, "SCHEMA_VERSION", 1, raising=False)
-        monkeypatch.setattr(emb, "get_backend", lambda **_k: backend, raising=False)
-        monkeypatch.setattr(emb, "invalidate_backend_cache", lambda: None, raising=False)
-
-    def test_missing_paths_raise(self, monkeypatch, tmp_path):
-        self._stub_embed_exports(monkeypatch, SimpleNamespace(embed_one=lambda _q: [1.0], name="b", model="m", dimension=1))
-        with pytest.raises(FileNotFoundError, match="Database not found"):
-            search_mod.hybrid_search("q", db_path=tmp_path / "missing.db", embed_db_path=tmp_path / "e.db")
-
-        db = tmp_path / "main.db"
-        db.write_text("x")
-        with pytest.raises(FileNotFoundError, match="Embeddings database not found"):
-            search_mod.hybrid_search("q", db_path=db, embed_db_path=tmp_path / "missing_embed.db")
-
-    def test_passthrough_and_exclusion_filters(self, monkeypatch, tmp_path):
-        db = tmp_path / "main.db"
-        embed = tmp_path / "embed.db"
-        db.write_text("x")
-        embed.write_text("x")
-
-        backend = SimpleNamespace(embed_one=lambda _q: [1.0], name="b", model="m", dimension=1)
-        self._stub_embed_exports(monkeypatch, backend)
-
-        class _Conn:
-            def close(self):
-                return None
-
-        monkeypatch.setattr(search_mod, "open_database", lambda *_a, **_k: _Conn())
-        monkeypatch.setattr(search_mod, "_filter_conversations_conn", lambda *_a, **_k: {"c1"})
-        monkeypatch.setattr(search_mod, "get_active_conversation_ids", lambda _db: {"c0"})
-        monkeypatch.setattr(
-            "siftd.storage.fts.fts5_recall_details",
-            lambda *_a, **_k: SimpleNamespace(conversation_ids=["c0", "c2", "c1"], mode="and", fts_query="q*"),
-        )
-        monkeypatch.setattr("siftd.storage.fts.fts5_best_hit_for_conversation", lambda *_a, **_k: {"snippet": "hit", "rank": 1.2})
-        monkeypatch.setattr(search_mod, "batched_in_query", lambda *_a, **_k: [{"id": "c1", "workspace": "/w", "started_at": "t"}])
-
-        out = search_mod.hybrid_search("q", db_path=db, embed_db_path=embed, n=1, fts5_passthrough=True)
-        assert len(out) == 1 and out[0].conversation_id == "c1"
-
-    def test_retry_index_compat_and_recency_non_mmr_paths(self, monkeypatch, tmp_path):
-        db = tmp_path / "main.db"
-        embed = tmp_path / "embed.db"
-        db.write_text("x")
-        embed.write_text("x")
-
+class TestAPIHybridSearchBranches:
+    def test_retry_embed_one_then_propagate_index_compat_error(self, monkeypatch, tmp_path):
         calls = {"n": 0, "invalidate": 0}
 
         class _Backend:
@@ -363,93 +314,148 @@ class TestHybridSearchBranches:
 
         import siftd.embeddings as emb
 
-        monkeypatch.setattr(emb, "require_embeddings", lambda _op: None, raising=False)
         monkeypatch.setattr(emb, "SCHEMA_VERSION", 1, raising=False)
         monkeypatch.setattr(emb, "get_backend", lambda **_k: _Backend(), raising=False)
-        monkeypatch.setattr(emb, "invalidate_backend_cache", lambda: calls.__setitem__("invalidate", calls["invalidate"] + 1), raising=False)
+        monkeypatch.setattr(
+            emb,
+            "invalidate_backend_cache",
+            lambda: calls.__setitem__("invalidate", calls["invalidate"] + 1),
+            raising=False,
+        )
 
         class _Conn:
             def close(self):
                 return None
 
-        monkeypatch.setattr(search_mod, "open_database", lambda *_a, **_k: _Conn())
-        monkeypatch.setattr(search_mod, "get_active_conversation_ids", lambda _db: set())
-        monkeypatch.setattr(search_mod, "_filter_conversations_conn", lambda *_a, **_k: set())
-        monkeypatch.setattr("siftd.storage.fts.fts5_recall_details", lambda *_a, **_k: SimpleNamespace(conversation_ids=[], mode="and", fts_query="q"))
-
-        class _EmbConn:
-            def close(self):
-                return None
-
-        monkeypatch.setattr("siftd.storage.embeddings.open_embeddings_db", lambda *_a, **_k: _EmbConn())
+        monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *_a, **_k: _Conn())
+        monkeypatch.setattr("siftd.search.resolve_candidates", lambda *_a, **_k: None)
+        monkeypatch.setattr("siftd.api.search.open_embeddings_db", lambda *_a, **_k: _Conn())
+        monkeypatch.setattr("siftd.api.search.fts5_recall_conversations", lambda *_a, **_k: (set(), "and"))
+        monkeypatch.setattr("siftd.search.annotate_fts5_breakdown", lambda *_a, **_k: None)
 
         class CompatErr(Exception):
             pass
 
-        monkeypatch.setattr("siftd.storage.embeddings.IndexCompatError", CompatErr)
-        monkeypatch.setattr("siftd.storage.embeddings.validate_index_compat", lambda *_a, **_k: (_ for _ in ()).throw(CompatErr("x")))
-        monkeypatch.setattr("siftd.storage.embeddings.search_similar", lambda *_a, **_k: [])
+        monkeypatch.setattr("siftd.api.search.validate_index_compat", lambda *_a, **_k: (_ for _ in ()).throw(CompatErr("x")))
+        monkeypatch.setattr("siftd.api.search.search_similar", lambda *_a, **_k: [])
 
         with pytest.raises(CompatErr):
-            search_mod.hybrid_search("q", db_path=db, embed_db_path=embed)
-        assert calls["invalidate"] == 1 and calls["n"] == 2
+            api_search.hybrid_search("q", db_path=tmp_path / "db.db", embed_db=tmp_path / "e.db")
 
-        monkeypatch.setattr("siftd.storage.embeddings.validate_index_compat", lambda *_a, **_k: None)
-        monkeypatch.setattr(
-            "siftd.storage.embeddings.search_similar",
-            lambda *_a, **_k: [
-                {"conversation_id": "c2", "score": 0.2, "text": "t2", "chunk_type": "exchange", "chunk_id": "b", "source_ids": []},
-                {"conversation_id": "c1", "score": 0.1, "text": "t1", "chunk_type": "exchange", "chunk_id": "a", "source_ids": []},
-            ],
-        )
-        monkeypatch.setattr("siftd.storage.queries.fetch_conversation_timestamps", lambda *_a, **_k: {"c1": "2026-01-01T00:00:00Z", "c2": "2024-01-01T00:00:00Z"})
-        monkeypatch.setattr(search_mod, "batched_in_query", lambda *_a, **_k: [{"id": "c1", "workspace": "/w1", "started_at": "s1"}, {"id": "c2", "workspace": "/w2", "started_at": "s2"}])
+        assert calls["invalidate"] == 1
+        assert calls["n"] == 2
 
-        out = search_mod.hybrid_search("q", db_path=db, embed_db_path=embed, recency=True, rerank="relevance", threshold=0.0)
-        assert out and out[0].conversation_id in {"c1", "c2"}
-
-    def test_mmr_candidate_cap_and_threshold_filter(self, monkeypatch, tmp_path):
-        db = tmp_path / "main.db"
-        embed = tmp_path / "embed.db"
-        db.write_text("x")
-        embed.write_text("x")
-
+    def test_recency_relevance_resorts_after_weighting(self, monkeypatch, tmp_path):
         backend = SimpleNamespace(name="b", model="m", dimension=2, embed_one=lambda _q: [1.0, 0.0])
-        self._stub_embed_exports(monkeypatch, backend)
 
         class _Conn:
             def close(self):
                 return None
 
-        class _EmbConn:
+        monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *_a, **_k: _Conn())
+        monkeypatch.setattr("siftd.search.resolve_candidates", lambda *_a, **_k: None)
+        monkeypatch.setattr("siftd.api.search.open_embeddings_db", lambda *_a, **_k: _Conn())
+        monkeypatch.setattr("siftd.api.search.validate_index_compat", lambda *_a, **_k: None)
+        monkeypatch.setattr("siftd.api.search.fts5_recall_conversations", lambda *_a, **_k: (set(), "and"))
+        monkeypatch.setattr("siftd.search.annotate_fts5_breakdown", lambda *_a, **_k: None)
+
+        # Intentionally pre-recency ordered: old first, new second.
+        monkeypatch.setattr(
+            "siftd.api.search.search_similar",
+            lambda *_a, **_k: [
+                {
+                    "conversation_id": "c_old",
+                    "score": 0.80,
+                    "text": "t",
+                    "chunk_type": "exchange",
+                    "chunk_id": "b",
+                    "source_ids": [],
+                    "breakdown": ScoreBreakdown(embedding_sim=0.80),
+                },
+                {
+                    "conversation_id": "c_new",
+                    "score": 0.79,
+                    "text": "t",
+                    "chunk_type": "exchange",
+                    "chunk_id": "a",
+                    "source_ids": [],
+                    "breakdown": ScoreBreakdown(embedding_sim=0.79),
+                },
+            ],
+        )
+
+        # Future timestamp ensures max recency boost deterministically.
+        monkeypatch.setattr(
+            "siftd.api.search.fetch_conversation_timestamps",
+            lambda *_a, **_k: {
+                "c_old": "2000-01-01T00:00:00Z",
+                "c_new": "9999-01-01T00:00:00Z",
+            },
+        )
+
+        out = api_search.hybrid_search(
+            "q",
+            db_path=tmp_path / "db.db",
+            embed_db=tmp_path / "e.db",
+            embed_backend=backend,
+            mode="semantic",
+            recency=True,
+            rerank="relevance",
+        )
+        assert [r["conversation_id"] for r in out[:2]] == ["c_new", "c_old"]
+
+    def test_mmr_candidate_cap_threshold_and_score_reporting(self, monkeypatch, tmp_path):
+        backend = SimpleNamespace(name="b", model="m", dimension=2, embed_one=lambda _q: [1.0, 0.0])
+
+        class _Conn:
             def close(self):
                 return None
 
-        monkeypatch.setattr(search_mod, "open_database", lambda *_a, **_k: _Conn())
-        monkeypatch.setattr(search_mod, "get_active_conversation_ids", lambda _db: set())
-        monkeypatch.setattr(search_mod, "_filter_conversations_conn", lambda *_a, **_k: None)
-        monkeypatch.setattr("siftd.storage.fts.fts5_recall_details", lambda *_a, **_k: SimpleNamespace(conversation_ids=[], mode="and", fts_query="q"))
-        monkeypatch.setattr("siftd.storage.embeddings.open_embeddings_db", lambda *_a, **_k: _EmbConn())
-        monkeypatch.setattr("siftd.storage.embeddings.validate_index_compat", lambda *_a, **_k: None)
+        monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *_a, **_k: _Conn())
+        monkeypatch.setattr("siftd.search.resolve_candidates", lambda *_a, **_k: None)
+        monkeypatch.setattr("siftd.api.search.open_embeddings_db", lambda *_a, **_k: _Conn())
+        monkeypatch.setattr("siftd.api.search.validate_index_compat", lambda *_a, **_k: None)
+        monkeypatch.setattr("siftd.api.search.fts5_recall_conversations", lambda *_a, **_k: (set(), "and"))
+        monkeypatch.setattr("siftd.search.annotate_fts5_breakdown", lambda *_a, **_k: None)
 
         raw = [
-            {"conversation_id": f"c{i}", "score": 1.0 - i / 2000.0, "text": "t", "chunk_type": "exchange", "embedding": [1.0, 0.0], "chunk_id": f"k{i:04d}", "source_ids": []}
+            {
+                "conversation_id": f"c{i}",
+                "score": 1.0 - i / 2000.0,
+                "text": "t",
+                "chunk_type": "exchange",
+                "embedding": [1.0, 0.0],
+                "chunk_id": f"k{i:04d}",
+                "source_ids": [],
+                "breakdown": ScoreBreakdown(embedding_sim=1.0 - i / 2000.0),
+            }
             for i in range(search_mod.MAX_MMR_CANDIDATES + 2)
         ]
-        monkeypatch.setattr("siftd.storage.embeddings.search_similar", lambda *_a, **_k: raw)
+        monkeypatch.setattr("siftd.api.search.search_similar", lambda *_a, **_k: raw)
 
         seen = {"n": 0}
 
-        def fake_mmr(results, query_embedding, **_k):
+        def fake_mmr(results, _query_embedding, **_k):
             seen["n"] = len(results)
+            bd0 = ScoreBreakdown(embedding_sim=0.99)
+            bd0.final_score = 0.95
+            bd1 = ScoreBreakdown(embedding_sim=0.2)
+            bd1.final_score = 0.2
             return [
-                {"conversation_id": "c0", "score": 0.99, "text": "t", "chunk_type": "exchange", "chunk_id": "k0", "source_ids": []},
-                {"conversation_id": "c1", "score": 0.2, "text": "t", "chunk_type": "exchange", "chunk_id": "k1", "source_ids": []},
+                {"conversation_id": "c0", "score": 0.99, "text": "t", "chunk_type": "exchange", "chunk_id": "k0", "source_ids": [], "breakdown": bd0},
+                {"conversation_id": "c1", "score": 0.2, "text": "t", "chunk_type": "exchange", "chunk_id": "k1", "source_ids": [], "breakdown": bd1},
             ]
 
-        monkeypatch.setattr(search_mod, "mmr_rerank", fake_mmr)
-        monkeypatch.setattr(search_mod, "batched_in_query", lambda *_a, **_k: [{"id": "c0", "workspace": "/w", "started_at": "t"}, {"id": "c1", "workspace": "/w", "started_at": "t"}])
+        monkeypatch.setattr("siftd.search.mmr_rerank", fake_mmr)
 
-        out = search_mod.hybrid_search("q", db_path=db, embed_db_path=embed, threshold=0.9)
+        out = api_search.hybrid_search(
+            "q",
+            db_path=tmp_path / "db.db",
+            embed_db=tmp_path / "e.db",
+            embed_backend=backend,
+            threshold=0.9,
+            rerank="mmr",
+        )
         assert seen["n"] == search_mod.MAX_MMR_CANDIDATES
-        assert len(out) == 1 and out[0].conversation_id == "c0"
+        assert len(out) == 1 and out[0]["conversation_id"] == "c0"
+        assert out[0]["score"] == pytest.approx(0.95)

@@ -440,6 +440,10 @@ def hybrid_search(
         RuntimeError: If embedding backend unavailable.
     """
     from siftd.search import annotate_fts5_breakdown, mmr_rerank, resolve_candidates
+    try:
+        from siftd.search import MAX_MMR_CANDIDATES
+    except ImportError:  # pragma: no cover
+        MAX_MMR_CANDIDATES = 1000
     from siftd.storage.sqlite import open_database
 
     # --- FTS-only mode ---
@@ -480,10 +484,24 @@ def hybrid_search(
     if embed_backend is not None:
         _backend = embed_backend
         # Caller injected a backend — still need SCHEMA_VERSION for compat check
-        from siftd.embeddings import SCHEMA_VERSION
+        try:
+            from siftd.embeddings import SCHEMA_VERSION
+        except ImportError:  # pragma: no cover
+            # Allows unit tests to inject a backend without requiring the optional
+            # [embed] extra to be installed.
+            SCHEMA_VERSION = 1
     else:
         from siftd.embeddings import SCHEMA_VERSION, get_backend
-        _backend = get_backend(preferred=backend, verbose=False)
+        try:
+            from siftd.embeddings import invalidate_backend_cache
+        except ImportError:  # pragma: no cover
+            def invalidate_backend_cache() -> None:
+                return None
+
+        def _resolve_backend() -> EmbeddingBackend:
+            return get_backend(preferred=backend, verbose=False)
+
+        _backend = _resolve_backend()
 
     embeddings_only = mode == "semantic"
 
@@ -517,7 +535,16 @@ def hybrid_search(
 
     # Embed query and search
     use_mmr = rerank == "mmr"
-    query_embedding = _backend.embed_one(q)
+    try:
+        query_embedding = _backend.embed_one(q)
+    except (RuntimeError, ConnectionError, OSError):
+        # Cached backend may have become unavailable (e.g., ollama stopped).
+        # Invalidate and retry with fallback chain (production path only).
+        if embed_backend is not None:
+            raise
+        invalidate_backend_cache()
+        _backend = _resolve_backend()
+        query_embedding = _backend.embed_one(q)
     embed_conn = open_embeddings_db(effective_embed_db, read_only=True)
 
     try:
@@ -560,10 +587,23 @@ def hybrid_search(
             results, timestamps,
             half_life_days=recency_half_life, max_boost=recency_max_boost,
         )
+        # Re-sort by weighted score (MMR does its own reranking).
+        # Use chunk_id as deterministic tie-breaker (ULIDs sort by creation time).
+        if not use_mmr:
+            results = sorted(results, key=lambda r: (-r["score"], r.get("chunk_id", "")))
 
     # MMR diversity reranking
     if use_mmr and results:
+        # Cap candidates to prevent unbounded memory usage in np.vstack inside mmr_rerank().
+        if len(results) > MAX_MMR_CANDIDATES:
+            results = sorted(results, key=lambda r: -r["score"])[:MAX_MMR_CANDIDATES]
         results = mmr_rerank(results, query_embedding, lambda_=lambda_, limit=n)
+        # Ensure outward score matches MMR-adjusted final score for display and downstream sorting.
+        for r in results:
+            breakdown = r.get("breakdown")
+            final_score = getattr(breakdown, "final_score", None)
+            if final_score is not None:
+                r["score"] = float(final_score)
 
     # Score threshold filtering
     if threshold > 0:
