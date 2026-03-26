@@ -352,6 +352,55 @@ class TestServeRouteBoundary:
                 + "\n".join(violations)
             )
 
+    def test_cli_and_serve_no_direct_search_import(self, src_dir):
+        """CLI and serve modules must not import siftd.search directly.
+
+        Rationale: siftd.search is an internal module with lower-level
+        functions (MMR, temporal weight, candidate resolution). CLI and
+        serve must go through siftd.api.search, which is the public
+        boundary with safety behaviors (retry, candidate cap, re-sort).
+
+        Suppress with ``# arch: allow-search`` on the import line.
+        """
+        import ast
+
+        forbidden_module = "siftd.search"
+        violations = []
+
+        for subdir in ("cli", "serve"):
+            pkg = src_dir / subdir
+            if not pkg.exists():
+                continue
+            for py_file in pkg.rglob("*.py"):
+                source = py_file.read_text()
+                lines = source.splitlines()
+                try:
+                    tree = ast.parse(source)
+                except SyntaxError:
+                    continue
+                for node in ast.walk(tree):
+                    module = None
+                    if isinstance(node, ast.ImportFrom) and node.module:
+                        module = node.module
+                    elif isinstance(node, ast.Import):
+                        for alias in node.names:
+                            if alias.name.startswith(forbidden_module):
+                                module = alias.name
+
+                    if module and (module == forbidden_module or module.startswith(forbidden_module + ".")):
+                        line = node.lineno
+                        if 0 < line <= len(lines) and "arch: allow-search" in lines[line - 1]:
+                            continue
+                        rel = py_file.relative_to(src_dir.parent.parent)
+                        violations.append(f"{rel}:{line}: imports {module}")
+
+        if violations:
+            pytest.fail(
+                "CLI/serve modules must import from siftd.api.search, "
+                "not siftd.search directly:\n"
+                + "\n".join(violations)
+            )
+
 
 # =============================================================================
 # 6. Raw SQL in CLI Modules

@@ -503,7 +503,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     if filters is None:
         filters = extract_filter_args(args)
 
-    from siftd.search import resolve_candidates
+    from siftd.api.search import resolve_candidates
 
     candidate_ids = resolve_candidates(
         db,

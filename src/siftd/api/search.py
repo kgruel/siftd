@@ -69,6 +69,8 @@ __all__ = [
     "search_similar",
     "validate_index_compat",
     "IndexCompatError",
+    # Candidate resolution
+    "resolve_candidates",
     # FTS5
     "fts5_recall_conversations",
     "rebuild_fts_index",
@@ -214,6 +216,42 @@ def fts5_search_content(
 def list_conversation_ids(conn: sqlite3.Connection) -> set[str]:
     """Return all conversation IDs."""
     return set(fetch_all_conversation_ids(conn))
+
+
+def resolve_candidates(
+    db: Path,
+    *,
+    workspace: str | None = None,
+    model: str | None = None,
+    since: str | None = None,
+    before: str | None = None,
+    tag: list[str] | None = None,
+    all_tags: list[str] | None = None,
+    no_tag: list[str] | None = None,
+    exclude_active: bool = True,
+    include_derivative: bool = False,
+    owner: str | None = None,
+) -> set[str] | None:
+    """Resolve candidate conversation IDs from filters + scope options.
+
+    Composes filter_conversations() with active-session exclusion and
+    the derivative-tag default. Returns None if no constraints apply.
+    """
+    from siftd.search import resolve_candidates as _resolve
+
+    return _resolve(
+        db,
+        workspace=workspace,
+        model=model,
+        since=since,
+        before=before,
+        tag=tag,
+        all_tags=all_tags,
+        no_tag=no_tag,
+        exclude_active=exclude_active,
+        include_derivative=include_derivative,
+        owner=owner,
+    )
 
 
 @dataclass
