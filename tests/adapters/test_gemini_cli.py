@@ -3,9 +3,12 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from conftest import FIXTURES_DIR, default_location_source, fixture_source
 
 from siftd.adapters import gemini_cli
+from siftd.adapters.sdk import AdapterParseError
 from siftd.domain.source import Source
 
 
@@ -51,8 +54,21 @@ class TestGeminiCliParseEdgeCases:
     def test_parse_empty_peek_discover_tail(self, tmp_path):
         (tmp_path / "e.json").write_text("{}")
         (tmp_path / "n.json").write_text(json.dumps({"sessionId": "x"}))
-        assert list(gemini_cli.parse(Source(kind="file", location=tmp_path / "e.json"))) == []
-        assert list(gemini_cli.parse(Source(kind="file", location=tmp_path / "n.json"))) == []
+        with pytest.raises(AdapterParseError, match="missing a messages array"):
+            list(gemini_cli.parse(Source(kind="file", location=tmp_path / "e.json")))
+        with pytest.raises(AdapterParseError, match="missing a messages array"):
+            list(gemini_cli.parse(Source(kind="file", location=tmp_path / "n.json")))
+        (tmp_path / "empty-session.json").write_text(
+            json.dumps({"sessionId": "empty", "messages": []})
+        )
+        assert (
+            list(
+                gemini_cli.parse(
+                    Source(kind="file", location=tmp_path / "empty-session.json")
+                )
+            )
+            == []
+        )
         assert gemini_cli.peek_scan(FIXTURES_DIR / "gemini_cli_minimal.json").exchange_count >= 1
         assert gemini_cli.peek_exchanges(FIXTURES_DIR / "gemini_cli_minimal.json", last_n=5)
         assert gemini_cli.peek_scan(tmp_path / "e.json") is None

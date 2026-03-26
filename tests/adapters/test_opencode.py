@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from siftd.adapters import opencode
+from siftd.adapters.sdk import AdapterParseError
 from siftd.domain.source import Source
 
 S = Source
@@ -81,7 +82,8 @@ class TestOpenCodeAdapter:
 
     def test_parse_edge_cases(self, tmp_path):
         assert list(opencode.parse(_make_db(tmp_path / "empty.db"))) == []
-        assert list(opencode.parse(S(kind="sqlite", location=tmp_path / "nope.db"))) == []
+        with pytest.raises(AdapterParseError, match="does not exist"):
+            list(opencode.parse(S(kind="sqlite", location=tmp_path / "nope.db")))
         src = _make_db(tmp_path / "edge.db", sessions=[{
             "session": ("s2", "p2", "/ws", "Test", 1, _TS, _TS + 60000),
             "messages": [
@@ -111,10 +113,13 @@ class TestOpenCodeAdapter:
 
     def test_parse_missing_tables(self, tmp_path):
         (tmp_path / "isdir.db").mkdir()
-        assert list(opencode.parse(S(kind="sqlite", location=tmp_path / "isdir.db"))) == []
-        assert list(opencode.parse(_partial_db(tmp_path / "notable.db", []))) == []
+        with pytest.raises(AdapterParseError, match="is not a file"):
+            list(opencode.parse(S(kind="sqlite", location=tmp_path / "isdir.db")))
+        with pytest.raises(AdapterParseError, match="missing the session table"):
+            list(opencode.parse(_partial_db(tmp_path / "notable.db", [])))
         ses_row = ("INSERT INTO session VALUES ('s','p','/w','T',1,?,?)", (_TS, _TS + 60000))
-        assert list(opencode.parse(_partial_db(tmp_path / "nomsg.db", [0], [ses_row]))) == []
+        with pytest.raises(AdapterParseError, match="missing the message table"):
+            list(opencode.parse(_partial_db(tmp_path / "nomsg.db", [0], [ses_row])))
         msg_row = ("INSERT INTO message VALUES ('m','s',?,?,?)", (_TS, _TS, json.dumps({"role": "assistant", "modelID": "m"})))
         usr_row = ("INSERT INTO message VALUES ('u','s',?,?,?)", (_TS, _TS, json.dumps({"role": "user", "summary": {"title": "Hi"}})))
         assert list(opencode.parse(_partial_db(tmp_path / "nopart.db", [0, 1], [ses_row, usr_row, msg_row])))

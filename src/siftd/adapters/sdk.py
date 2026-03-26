@@ -19,6 +19,10 @@ if TYPE_CHECKING:
     from siftd.domain.peek import PeekExchange, PeekScanResult
 
 
+class AdapterParseError(RuntimeError):
+    """Raised when a source matches an adapter but cannot be parsed safely."""
+
+
 def open_external_db(path: Path) -> sqlite3.Connection:
     """Open an external SQLite database in read-only mode.
 

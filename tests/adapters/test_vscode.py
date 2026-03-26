@@ -4,9 +4,12 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+
 from conftest import FIXTURES_DIR
 
 from siftd.adapters import vscode
+from siftd.adapters.sdk import AdapterParseError
 from siftd.domain.source import Source
 
 S = Source
@@ -123,6 +126,11 @@ class TestVscode:
         (cs / "j.jsonl").write_text("\n".join(lines) + "\n")
         assert list(vscode.parse(S(kind="file", location=cs / "j.jsonl")))
         (cs / "bad.json").write_bytes(b'\xff\xfe bad')
-        assert list(vscode.parse(S(kind="file", location=cs / "bad.json"))) == []
+        with pytest.raises(AdapterParseError, match="could not be read"):
+            list(vscode.parse(S(kind="file", location=cs / "bad.json")))
         (cs / "b.jsonl").write_text('not json\n{"kind":0,"v":null}\n')
-        assert list(vscode.parse(S(kind="file", location=cs / "b.jsonl"))) == []
+        with pytest.raises(AdapterParseError, match="invalid JSONL"):
+            list(vscode.parse(S(kind="file", location=cs / "b.jsonl")))
+        (cs / "missing-requests.json").write_text(json.dumps({"sessionId": "x"}))
+        with pytest.raises(AdapterParseError, match="missing a requests array"):
+            list(vscode.parse(S(kind="file", location=cs / "missing-requests.json")))

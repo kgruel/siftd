@@ -7,7 +7,7 @@ one conversation. This is intentional: most adapters produce one conversation pe
 file (JSONL session logs, markdown exports, etc.).
 
 If an adapter's parse() yields multiple conversations from a single source, we
-warn and take only the first. Supporting multi-conversation sources (e.g., SQLite
+fail that source explicitly. Supporting multi-conversation sources (e.g., SQLite
 DBs containing many sessions) would require schema changes to ingested_files —
 revisit if a real use case emerges.
 """
@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from siftd.adapters.sdk import AdapterParseError
 from siftd.domain import Source
 from siftd.storage.sessions import consume_pending_tags, unregister_session
 from siftd.storage.sqlite import (
@@ -119,19 +120,30 @@ def _compare_timestamps(new_ts: str | None, existing_ts: str | None) -> bool:
 def _get_single_conversation(conversations: list, source_path: str):
     """Enforce 0/1 conversation per source file.
 
-    If multiple conversations are parsed, warn and return only the first.
     Returns None if the list is empty.
+    Raises AdapterParseError when a source yields multiple conversations.
     """
     if not conversations:
         return None
     if len(conversations) > 1:
-        logger.warning(
-            "Source %s yielded %d conversations; taking first only "
-            "(schema requires 1:1 file→conversation mapping)",
-            source_path,
-            len(conversations),
+        raise AdapterParseError(
+            f"Source {source_path} yielded {len(conversations)} conversations; "
+            "ingest currently requires exactly one conversation per source"
         )
     return conversations[0]
+
+
+def _parse_source_conversation(
+    source: Source,
+    adapter: AdapterModule,
+    source_path: str,
+):
+    """Parse a source and enforce the current ingest contract."""
+    if not adapter.can_handle(source):
+        raise AdapterParseError(
+            f"Adapter {adapter.NAME} cannot handle source {source_path}"
+        )
+    return _get_single_conversation(list(adapter.parse(source)), source_path)
 
 
 def _normalize_status(status: str) -> tuple[str, str | None]:
@@ -384,8 +396,10 @@ def ingest_all(
             elif dedup_strategy == "session":
                 # Fast path: stat-only skip for unchanged session files
                 existing_file_info = get_ingested_file_info(conn, file_path)
+                location = source.as_path
+                st = None
+                current_hash = None
                 if existing_file_info:
-                    location = source.as_path
                     st = location.stat()
                     stored_mtime = existing_file_info["file_mtime"]
                     stored_size = existing_file_info["file_size"]
@@ -400,9 +414,18 @@ def ingest_all(
                         emit_event("skipped")
                         continue
 
+                    current_hash = compute_file_hash(location)
+                    if current_hash == existing_file_info["file_hash"]:
+                        update_file_stat(conn, file_path, st.st_mtime, st.st_size)
+                        conn.commit()
+                        stats.files_skipped += 1
+                        if on_file:
+                            on_file(source, "skipped")
+                        emit_event("skipped")
+                        continue
+
                 # We need to parse to get the conversation and check timestamps
-                conversations = list(adapter.parse(source))
-                conversation = _get_single_conversation(conversations, file_path)
+                conversation = _parse_source_conversation(source, adapter, file_path)
                 if conversation is None:
                     stats.files_skipped += 1
                     if on_file:
@@ -427,15 +450,22 @@ def ingest_all(
 
                 if existing:
                     # Compare timestamps
-                    if _compare_timestamps(conversation.ended_at, existing["ended_at"]):
+                    should_replace = _compare_timestamps(
+                        conversation.ended_at, existing["ended_at"]
+                    ) or (
+                        existing_file_info is not None
+                        and current_hash is not None
+                        and current_hash != existing_file_info["file_hash"]
+                    )
+                    if should_replace:
                         # New is newer, replace
                         delete_conversation(conn, existing["id"])
                         conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
 
                         # Record file ingestion
-                        location = source.as_path
-                        st = location.stat()
-                        file_hash = compute_file_hash(location)
+                        if st is None:
+                            st = location.stat()
+                        file_hash = current_hash or compute_file_hash(location)
                         record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=st.st_mtime, file_size=st.st_size)
 
                         # Apply pending tags from live session
@@ -455,9 +485,9 @@ def ingest_all(
                         # Existing is newer or same, skip
                         # Record file so it's tracked (not shown as pending)
                         if not get_ingested_file_info(conn, file_path):
-                            location = source.as_path
-                            st = location.stat()
-                            file_hash = compute_file_hash(location)
+                            if st is None:
+                                st = location.stat()
+                            file_hash = current_hash or compute_file_hash(location)
                             record_ingested_file(conn, file_path, file_hash, existing["id"], file_mtime=st.st_mtime, file_size=st.st_size)
                             conn.commit()
                         stats.files_skipped += 1
@@ -468,9 +498,9 @@ def ingest_all(
                     # New conversation
                     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
 
-                    location = source.as_path
-                    st = location.stat()
-                    file_hash = compute_file_hash(location)
+                    if st is None:
+                        st = location.stat()
+                    file_hash = current_hash or compute_file_hash(location)
                     record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=st.st_mtime, file_size=st.st_size)
 
                     # Apply pending tags from live session
@@ -497,8 +527,7 @@ def ingest_all(
             if is_duplicate_conversation:
                 # Race condition: conversation was inserted between our check and store
                 try:
-                    conversations_retry = list(adapter.parse(source))
-                    conv = _get_single_conversation(conversations_retry, file_path)
+                    conv = _parse_source_conversation(source, adapter, file_path)
                     if conv is not None:
                         harness_kwargs = {}
                         if conv.harness.source:
@@ -593,8 +622,7 @@ def _ingest_file(
     st = location.stat()
     file_hash = compute_file_hash(location)
 
-    conversations = list(adapter.parse(source))
-    conversation = _get_single_conversation(conversations, file_path)
+    conversation = _parse_source_conversation(source, adapter, file_path)
 
     if conversation is None:
         # Empty file - record with NULL conversation_id
@@ -641,8 +669,7 @@ def _reingest_file(
     """
     harness_name = adapter.NAME
 
-    conversations = list(adapter.parse(source))
-    conversation = _get_single_conversation(conversations, file_path)
+    conversation = _parse_source_conversation(source, adapter, file_path)
 
     if conversation is None:
         # File became empty - record with NULL conversation_id

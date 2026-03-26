@@ -54,6 +54,23 @@ class _AdapterPathOverride:
             return self._paths
         return getattr(self._adapter, name)
 
+    def _is_under_override(self, source) -> bool:
+        source_path = Path(source.location).expanduser().resolve(strict=False)
+        for base in self._paths:
+            base_path = Path(base).expanduser().resolve(strict=False)
+            try:
+                source_path.relative_to(base_path)
+                return True
+            except ValueError:
+                continue
+        return False
+
+    def can_handle(self, source):
+        """Constrain can_handle() to configured override roots."""
+        if not self._is_under_override(source):
+            return False
+        return self._adapter.can_handle(source)
+
     def discover(self, locations=None):
         """Discover using overridden paths, delegating to the adapter."""
         return self._adapter.discover(locations=self._paths)

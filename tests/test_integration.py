@@ -4,9 +4,9 @@ These test the full flow: parse fixture → ingest → query → detail.
 Each test creates an isolated database and runs real adapters.
 """
 
-from conftest import FIXTURES_DIR, make_conversation
+from conftest import FIXTURES_DIR, make_conversation, make_session_adapter, make_test_adapter
 
-from siftd.adapters import claude_code
+from siftd.adapters import claude_code, gemini_cli
 from siftd.api import get_conversation, get_stats, list_conversations
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall, Usage
 from siftd.domain.source import Source
@@ -15,6 +15,8 @@ from siftd.storage.fts import rebuild_fts_index, search_content
 from siftd.storage.sqlite import (
     create_database,
     delete_conversation,
+    get_ingest_errors,
+    get_ingested_file_info,
     open_database,
     record_ingested_file,
     store_conversation,
@@ -79,6 +81,117 @@ class TestIngestToQueryFlow:
         db_stats = get_stats(db_path=db_path)
         assert db_stats.counts.conversations == 1
         assert db_stats.counts.prompts >= 1
+
+
+class TestIngestEdgeCases:
+    def test_rejects_multi_conversation_source_and_records_failure(self, tmp_path):
+        src = tmp_path / "multi-source.json"
+        src.write_text("multi")
+
+        adapter = make_test_adapter(
+            src,
+            name="multi_source",
+            parse_fn=lambda source: [
+                make_conversation(
+                    external_id="multi-1",
+                    harness_name="multi_source",
+                    prompt_text="first",
+                ),
+                make_conversation(
+                    external_id="multi-2",
+                    harness_name="multi_source",
+                    prompt_text="second",
+                ),
+            ],
+        )
+
+        conn = open_database(tmp_path / "test.db")
+        stats = ingest_all(conn, [adapter])
+
+        info = get_ingested_file_info(conn, str(src))
+        errors = get_ingest_errors(conn)
+
+        assert stats.files_errored == 1
+        assert stats.files_ingested == 0
+        assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+        assert info is not None
+        assert info["conversation_id"] is None
+        assert "yielded 2 conversations" in info["error"]
+        assert errors[0]["path"] == str(src)
+
+    def test_records_adapter_parse_failures_as_failed_files(self, tmp_path):
+        chats = tmp_path / "hash" / "chats"
+        chats.mkdir(parents=True)
+        bad = chats / "bad.json"
+        bad.write_text("{}")
+
+        class _GeminiAdapter:
+            NAME = gemini_cli.NAME
+            DEDUP_STRATEGY = gemini_cli.DEDUP_STRATEGY
+            HARNESS_SOURCE = gemini_cli.HARNESS_SOURCE
+
+            @staticmethod
+            def can_handle(source):
+                return gemini_cli.can_handle(source)
+
+            @staticmethod
+            def parse(source):
+                return gemini_cli.parse(source)
+
+            @staticmethod
+            def discover():
+                yield Source(kind="file", location=bad)
+
+        conn = open_database(tmp_path / "test.db")
+        stats = ingest_all(conn, [_GeminiAdapter])
+
+        info = get_ingested_file_info(conn, str(bad))
+
+        assert stats.files_errored == 1
+        assert stats.files_ingested == 0
+        assert info is not None
+        assert info["conversation_id"] is None
+        assert "missing a messages array" in info["error"]
+        assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+
+    def test_session_dedup_replaces_changed_source_when_timestamp_is_stale(self, tmp_path):
+        src = tmp_path / "sessions" / "session.json"
+        src.parent.mkdir(parents=True)
+        src.write_text("old")
+
+        def parse_fn(source):
+            marker = source.location.read_text()
+            yield make_conversation(
+                external_id="session-adapter::shared-session",
+                harness_name="session_adapter",
+                prompt_text="prompt",
+                response_text=marker,
+                started_at="2024-01-01T00:00:00Z",
+                ended_at="2024-01-01T00:05:00Z",
+            )
+
+        adapter = make_session_adapter(
+            src,
+            name="session_adapter",
+            parse_fn=parse_fn,
+        )
+
+        db_path = tmp_path / "test.db"
+        conn = open_database(db_path)
+
+        first = ingest_all(conn, [adapter])
+        assert first.files_ingested == 1
+
+        src.write_text("new content that keeps the same timestamp semantics")
+
+        second = ingest_all(conn, [adapter])
+        assert second.files_replaced == 1
+        conn.close()
+
+        summaries = list_conversations(db_path=db_path)
+        assert len(summaries) == 1
+        detail = get_conversation(summaries[0].id, db_path=db_path)
+        assert detail.exchanges[0].response_text == "new content that keeps the same timestamp semantics"
 
 
 class TestStoreConversationRoundTrip:

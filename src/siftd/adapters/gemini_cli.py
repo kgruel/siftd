@@ -5,11 +5,18 @@ No storage coupling.
 """
 
 import hashlib
+import json
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 from siftd.adapters._jsonl import now_iso
-from siftd.adapters.sdk import NormalizedRecord, build_harness, make_peek_hooks
+from siftd.adapters.sdk import (
+    AdapterParseError,
+    NormalizedRecord,
+    build_harness,
+    make_peek_hooks,
+    yield_conversation,
+)
 from siftd.domain import (
     ContentBlock,
     Conversation,
@@ -79,9 +86,12 @@ def can_handle(source: Source) -> bool:
 def parse(source: Source) -> Iterable[Conversation]:
     """Parse a Gemini CLI session JSON file and yield Conversation objects."""
     path = Path(source.location)
-    data = _load_json(path)
-    if not data or "messages" not in data:
-        return
+    data = _load_json_strict(path)
+    messages = data.get("messages")
+    if not isinstance(messages, list):
+        raise AdapterParseError(
+            f"Gemini CLI source {path} is missing a messages array"
+        )
 
     # Extract session metadata
     session_id = data.get("sessionId", path.stem)
@@ -114,7 +124,7 @@ def parse(source: Source) -> Iterable[Conversation]:
     # Process messages
     current_prompt: Prompt | None = None
 
-    for message in data.get("messages", []):
+    for message in messages:
         msg_type = message.get("type")
         msg_id = message.get("id")
         timestamp = message.get("timestamp", "")
@@ -219,7 +229,7 @@ def parse(source: Source) -> Iterable[Conversation]:
             if current_prompt is not None:
                 current_prompt.responses.append(response)
 
-    yield conversation
+    yield from yield_conversation(conversation)
 
 
 def _load_json(path: Path) -> dict | None:
@@ -227,6 +237,30 @@ def _load_json(path: Path) -> dict | None:
     from siftd.safecall import load_json
 
     return load_json(path, context="gemini_cli")
+
+
+def _load_json_strict(path: Path) -> dict:
+    """Load and validate a Gemini CLI session file for ingest."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        raise AdapterParseError(
+            f"Gemini CLI source {path} could not be read: {e}"
+        ) from e
+
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        raise AdapterParseError(
+            f"Gemini CLI source {path} contains invalid JSON: {e}"
+        ) from e
+
+    if not isinstance(data, dict):
+        raise AdapterParseError(
+            f"Gemini CLI source {path} must contain a JSON object"
+        )
+
+    return data
 
 
 def _resolve_workspace_from_hash(project_hash: str) -> str | None:

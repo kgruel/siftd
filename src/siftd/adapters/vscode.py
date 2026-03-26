@@ -15,7 +15,14 @@ from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-from siftd.adapters.sdk import NormalizedRecord, build_harness, discover_files, make_peek_hooks, yield_conversation
+from siftd.adapters.sdk import (
+    AdapterParseError,
+    NormalizedRecord,
+    build_harness,
+    discover_files,
+    make_peek_hooks,
+    yield_conversation,
+)
 from siftd.domain import (
     ContentBlock,
     Conversation,
@@ -77,24 +84,21 @@ def parse(source: Source) -> Iterable[Conversation]:
     """Parse a VSCode chat session file and yield Conversation objects."""
     path = Path(source.location)
 
-    try:
-        if path.suffix == ".jsonl":
-            data = _replay_jsonl(path)
-        else:
-            data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
-        log.warning("vscode: failed to parse %s: %s", path, e)
-        return
-
-    if data is None:
-        return
+    if path.suffix == ".jsonl":
+        data = _replay_jsonl_strict(path)
+    else:
+        data = _load_json_strict(path)
 
     yield from _session_to_conversation(data, path)
 
 
 def _session_to_conversation(data: dict, path: Path) -> Iterable[Conversation]:
     """Convert a reconstructed session dict into a Conversation."""
-    requests = data.get("requests", [])
+    requests = data.get("requests")
+    if not isinstance(requests, list):
+        raise AdapterParseError(
+            f"VSCode source {path} is missing a requests array"
+        )
     if not requests:
         return
 
@@ -123,7 +127,7 @@ def _session_to_conversation(data: dict, path: Path) -> Iterable[Conversation]:
     yield from yield_conversation(conversation)
 
 
-def _replay_jsonl(path: Path) -> dict | None:
+def _replay_jsonl(path: Path, *, strict: bool = False) -> dict | None:
     """Reconstruct a session from JSONL patch operations.
 
     VSCode's JSONL format uses three patch kinds:
@@ -131,22 +135,42 @@ def _replay_jsonl(path: Path) -> dict | None:
     - kind=1: Set value at key path 'k' (replace)
     - kind=2: Append items to array at key path 'k' (extend)
     """
-    state = None
+    # Lenient path preserved for peek; ingest uses strict=True.
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as e:
+        if strict:
+            raise AdapterParseError(
+                f"VSCode source {path} could not be read: {e}"
+            ) from e
+        return None
 
-    for line in path.read_text(encoding="utf-8").splitlines():
+    state = None
+    saw_content = False
+
+    for line in lines:
         line = line.strip()
         if not line:
             continue
+        saw_content = True
 
         try:
             patch = json.loads(line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            if strict:
+                raise AdapterParseError(
+                    f"VSCode source {path} contains invalid JSONL: {e}"
+                ) from e
             continue
 
         kind = patch.get("kind")
         value = patch.get("v")
 
         if kind == 0:
+            if strict and not isinstance(value, dict):
+                raise AdapterParseError(
+                    f"VSCode source {path} has an invalid initial session payload"
+                )
             state = value
             continue
 
@@ -162,7 +186,22 @@ def _replay_jsonl(path: Path) -> dict | None:
         elif kind == 2:
             _append_at_path(state, key_path, value)
 
+    if strict and state is None and saw_content:
+        raise AdapterParseError(
+            f"VSCode source {path} did not reconstruct a session"
+        )
+
     return state
+
+
+def _replay_jsonl_strict(path: Path) -> dict:
+    """Strict JSONL replay for ingest paths that require a session object."""
+    data = _replay_jsonl(path, strict=True)
+    if not isinstance(data, dict):
+        raise AdapterParseError(
+            f"VSCode source {path} did not reconstruct a session object"
+        )
+    return data
 
 
 def _set_at_path(obj: dict | list, path: list, value) -> None:
@@ -305,6 +344,27 @@ def _load_session(path: Path) -> dict | None:
     if path.suffix == ".jsonl":
         return _replay_jsonl(path)
     return load_json(path, context="vscode")
+
+
+def _load_json_strict(path: Path) -> dict:
+    """Load and validate a VSCode JSON session file for ingest."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as e:
+        raise AdapterParseError(
+            f"VSCode source {path} could not be read: {e}"
+        ) from e
+    except json.JSONDecodeError as e:
+        raise AdapterParseError(
+            f"VSCode source {path} contains invalid JSON: {e}"
+        ) from e
+
+    if not isinstance(data, dict):
+        raise AdapterParseError(
+            f"VSCode source {path} must contain a JSON object"
+        )
+
+    return data
 
 
 def iter_vscode_records(path: Path) -> Iterator[dict]:

@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from siftd.adapters._jsonl import now_iso
-from siftd.adapters.sdk import build_harness, open_external_db
+from siftd.adapters.sdk import AdapterParseError, build_harness, open_external_db
 from siftd.domain import (
     ContentBlock,
     Conversation,
@@ -61,28 +61,44 @@ def parse(source: Source) -> Iterable[Conversation]:
     """Parse an OpenCode SQLite database and yield Conversation objects."""
     path = Path(source.location)
     if not path.exists():
-        return
+        raise AdapterParseError(f"OpenCode source {path} does not exist")
+    if not path.is_file():
+        raise AdapterParseError(f"OpenCode source {path} is not a file")
 
     harness = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
     try:
         conn = open_external_db(path)
-    except sqlite3.Error:
-        return
+    except sqlite3.Error as e:
+        raise AdapterParseError(
+            f"OpenCode source {path} could not be opened as SQLite: {e}"
+        ) from e
 
     try:
-        yield from _parse_sessions(conn, harness)
+        yield from _parse_sessions(conn, harness, path=path, strict=True)
     finally:
         conn.close()
 
 
-def _parse_sessions(conn: sqlite3.Connection, harness: Harness) -> Iterable[Conversation]:
+def _parse_sessions(
+    conn: sqlite3.Connection,
+    harness: Harness,
+    *,
+    path: Path | None = None,
+    strict: bool = False,
+) -> Iterable[Conversation]:
     """Query sessions and yield Conversation objects."""
+    # Lenient path preserved for peek; ingest uses strict=True.
     try:
         sessions = conn.execute(
             "SELECT id, directory, title, time_created, time_updated FROM session ORDER BY time_created"
         ).fetchall()
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as e:
+        if strict:
+            target = path or "<sqlite>"
+            raise AdapterParseError(
+                f"OpenCode source {target} is missing the session table: {e}"
+            ) from e
         return
 
     for session in sessions:
@@ -110,7 +126,12 @@ def _parse_sessions(conn: sqlite3.Connection, harness: Harness) -> Iterable[Conv
                 "SELECT id, data, time_created FROM message WHERE session_id = ? ORDER BY time_created",
                 (session_id,),
             ).fetchall()
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as e:
+            if strict:
+                target = path or "<sqlite>"
+                raise AdapterParseError(
+                    f"OpenCode source {target} is missing the message table: {e}"
+                ) from e
             continue
 
         current_prompt: Prompt | None = None
@@ -294,5 +315,3 @@ def _parse_json(data: str | None) -> dict | None:
         return result if isinstance(result, dict) else None
     except (json.JSONDecodeError, TypeError):
         return None
-
-

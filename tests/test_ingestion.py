@@ -2,6 +2,9 @@
 
 from datetime import UTC
 
+import pytest
+
+from siftd.adapters.sdk import AdapterParseError
 from siftd.ingestion.orchestration import (
     _compare_timestamps,
     _extract_first_text,
@@ -54,9 +57,9 @@ class TestGetSingleConversation:
     def test_single(self):
         assert _get_single_conversation(["conv1"], "test.jsonl") == "conv1"
 
-    def test_multiple_returns_first(self):
-        result = _get_single_conversation(["conv1", "conv2"], "test.jsonl")
-        assert result == "conv1"
+    def test_multiple_raises(self):
+        with pytest.raises(AdapterParseError, match="yielded 2 conversations"):
+            _get_single_conversation(["conv1", "conv2"], "test.jsonl")
 
 
 class TestNormalizeStatus:
