@@ -23,7 +23,11 @@ from siftd.storage.queries import (
     fetch_tool_calls_for_conversation,
     has_pricing_table,
 )
-from siftd.storage.sql_helpers import batched_in_query, has_conversation_owners_table
+from siftd.storage.sql_helpers import (
+    batched_in_query,
+    has_conversation_owners_table,
+    owner_predicate,
+)
 from siftd.storage.sqlite import open_database
 
 
@@ -465,10 +469,10 @@ def get_conversation(
             conn.close()
             return None
         row = conn.execute(
-            "SELECT user_id FROM conversation_owners WHERE conversation_id = ?",
-            (conv_id,),
+            f"SELECT 1 FROM conversations c WHERE c.id = ? AND {owner_predicate('c.id')} LIMIT 1",
+            (conv_id, owner),
         ).fetchone()
-        if not row or row["user_id"] != owner:
+        if not row:
             conn.close()
             return None
 
@@ -1048,21 +1052,20 @@ def get_recent_conversation_ids(
     Returns:
         List of conversation IDs, most recent first.
     """
+    if owner and not has_conversation_owners_table(conn):
+        return []
+
+    where: list[str] = []
+    params: list[object] = []
     if owner:
-        if not has_conversation_owners_table(conn):
-            return []
-        rows = conn.execute(
-            "SELECT c.id FROM conversations c "
-            "JOIN conversation_owners co ON co.conversation_id = c.id "
-            "WHERE co.user_id = ? "
-            "ORDER BY c.started_at DESC LIMIT ?",
-            (owner, limit),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT id FROM conversations ORDER BY started_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        where.append(owner_predicate("c.id"))
+        params.append(owner)
+
+    where_sql = f" WHERE {' AND '.join(where)}" if where else ""
+    rows = conn.execute(
+        f"SELECT c.id FROM conversations c{where_sql} ORDER BY c.started_at DESC LIMIT ?",
+        (*params, limit),
+    ).fetchall()
     return [row["id"] for row in rows]
 
 
@@ -1084,20 +1087,19 @@ def resolve_entity_id(
         Resolved full ID, or None if not found.
     """
     if entity_type == "conversation":
+        if owner and not has_conversation_owners_table(conn):
+            return None
+
+        where = ["(c.id = ? OR c.id LIKE ?)"]
+        params: list[object] = [entity_id, f"{entity_id}%"]
         if owner:
-            if not has_conversation_owners_table(conn):
-                return None
-            row = conn.execute(
-                "SELECT c.id FROM conversations c "
-                "JOIN conversation_owners co ON co.conversation_id = c.id "
-                "WHERE co.user_id = ? AND (c.id = ? OR c.id LIKE ?)",
-                (owner, entity_id, f"{entity_id}%"),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT id FROM conversations WHERE id = ? OR id LIKE ?",
-                (entity_id, f"{entity_id}%"),
-            ).fetchone()
+            where.append(owner_predicate("c.id"))
+            params.append(owner)
+
+        row = conn.execute(
+            f"SELECT c.id FROM conversations c WHERE {' AND '.join(where)}",
+            params,
+        ).fetchone()
     elif entity_type == "workspace":
         row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
     elif entity_type == "tool_call":
