@@ -34,6 +34,15 @@ def test_authenticate_request_missing_bearer_token_raises():
         _run(mw.authenticate_request(conn))
 
 
+def test_authenticate_request_loopback_api_requires_token():
+    """Loopback clients must not bypass auth for /api/* routes."""
+    MW = create_auth_middleware({"issuer": "https://idp"})
+    mw = object.__new__(MW)
+    conn = SimpleNamespace(scope={"path": "/api/v1/conversations", "client": ("127.0.0.1", 123)}, headers={})
+    with pytest.raises(NotAuthorizedException, match="Missing bearer token"):
+        _run(mw.authenticate_request(conn))
+
+
 def test_authenticate_request_no_mode_configured_raises():
     MW = create_auth_middleware({})
     mw = object.__new__(MW)
@@ -248,10 +257,19 @@ def test_introspection_populates_scopes():
     assert out.scopes == frozenset({"siftd:read", "siftd:write"})
 
 
-def test_require_write_allows_anonymous():
-    """No auth configured — anonymous users can write."""
-    request = SimpleNamespace(user=UserIdentity(sub="anonymous"))
+def test_require_write_allows_when_auth_off():
+    """No auth middleware installed — writes are allowed."""
+    request = SimpleNamespace()  # no request.user attribute -> auth is off
     require_write(request)  # should not raise
+
+
+def test_require_write_rejects_anonymous_when_auth_on():
+    """Auth middleware installed — anonymous writes must be rejected."""
+    from litestar.exceptions import PermissionDeniedException
+
+    request = SimpleNamespace(user=UserIdentity(sub="anonymous"))
+    with pytest.raises(PermissionDeniedException, match="Authentication required"):
+        require_write(request)
 
 
 def test_require_write_allows_when_no_write_scopes_configured():

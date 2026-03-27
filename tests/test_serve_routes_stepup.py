@@ -31,27 +31,31 @@ def test_dispatch_wrappers_forward_params(monkeypatch, tmp_path):
 
     monkeypatch.setattr(routes, "_dispatch", fake_dispatch)
     db = tmp_path / "team.db"
+    req = SimpleNamespace()  # no auth middleware installed
 
-    _run(routes.stats_route.fn(db))
-    _run(routes.workspaces_route.fn(db, n=7))
-    _run(routes.tools_route.fn(db, prefix="x:"))
-    _run(routes.tools_by_workspace_route.fn(db, prefix="x:", n=3))
-    _run(routes.tags_route.fn(db, since="a", before="b"))
-    _run(routes.tool_search_route.fn(db, q="q", n=2))
-    _run(routes.export_route.fn(db, n=1))
-    _run(routes.conversation_detail.fn(db, id="abc", include_thinking=True, include_tool_content=True, tool_filter="shell"))
-    _run(routes.conversation_list.fn(db, n=5, oldest=True))
-
+    _run(routes.stats_route.fn(req, db))
+    _run(routes.workspaces_route.fn(req, db, n=7))
+    _run(routes.tools_route.fn(req, db, prefix="x:"))
+    _run(routes.tools_by_workspace_route.fn(req, db, prefix="x:", n=3))
+    _run(routes.tags_route.fn(req, db, since="a", before="b"))
+    _run(routes.tool_search_route.fn(req, db, q="q", n=2))
+    _run(routes.export_route.fn(req, db, n=1))
+    _run(routes.conversation_detail.fn(req, db, id="abc", include_thinking=True, include_tool_content=True, tool_filter="shell"))
+    _run(routes.conversation_list.fn(req, db, n=5, oldest=True))
     assert seen[0][0] == "/api/v1/stats"
     assert any(p == "/api/v1/tool-search" and prm["q"] == "q" for p, _, _, prm, _ in seen)
     assert any(p == "/api/v1/conversations" and prm["id"] == "abc" for p, _, _, prm, _ in seen)
 
 
+_UNSET = object()
+
+
 class _Req:
-    def __init__(self, body: bytes, headers=None, user=None, client=None):
+    def __init__(self, body: bytes, headers=None, user=_UNSET, client=None):
         self._body = body
         self.headers = headers or {}
-        self.user = user
+        if user is not _UNSET:
+            self.user = user
         self.client = client
 
     async def body(self):
@@ -94,7 +98,7 @@ def test_push_and_pull_light_paths(monkeypatch, tmp_path):
 
     # pull empty slice path
     monkeypatch.setattr("siftd.api.slice.slice_database", lambda **k: {"conversations": 0})
-    pull = _run(routes.pull.fn(db))
+    pull = _run(routes.pull.fn(SimpleNamespace(), db))
     assert pull.status_code == 200
     assert pull.headers["X-Siftd-Conversations"] == "0"
 
@@ -110,13 +114,13 @@ def test_search_route_importerror_and_dispatch_error(monkeypatch, tmp_path):
         return real_import(name, *a, **k)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    r1 = _run(routes.search_route.fn(db, q="hi"))
+    r1 = _run(routes.search_route.fn(SimpleNamespace(), db, q="hi"))
     assert r1.status_code == 501
 
     monkeypatch.setattr(builtins, "__import__", real_import)
     monkeypatch.setattr(routes, "_dispatch", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    r2 = _run(routes.search_route.fn(db, q="hi"))
-    assert r2.status_code == 501
+    r2 = _run(routes.search_route.fn(SimpleNamespace(), db, q="hi"))
+    assert r2.status_code == 500
 
 
 def test_health_existing_db_and_pull_nonempty(monkeypatch, tmp_path):
@@ -139,7 +143,7 @@ def test_health_existing_db_and_pull_nonempty(monkeypatch, tmp_path):
         return {"conversations": 2}
 
     monkeypatch.setattr("siftd.api.slice.slice_database", fake_slice)
-    resp = _run(routes.pull.fn(db))
+    resp = _run(routes.pull.fn(SimpleNamespace(), db))
     assert resp.status_code == 200 and resp.headers["X-Siftd-Conversations"] == "2"
 
 
@@ -171,7 +175,7 @@ def test_tag_write_rename_delete_remove_apply_paths(monkeypatch, tmp_path):
     assert out_r["action"] == "remove" and len(out_r["results"]) == 2
 
     # apply path via last_n
-    monkeypatch.setattr("siftd.api.conversations.get_recent_conversation_ids", lambda _c, _n: ["a", "b"])
+    monkeypatch.setattr("siftd.api.conversations.get_recent_conversation_ids", lambda _c, _n, owner=None: ["a", "b"])
     monkeypatch.setattr("siftd.api.tags.get_or_create_tag", lambda _c, _t: "tid")
     monkeypatch.setattr("siftd.api.tags.apply_tag", lambda c, et, eid, tid, commit=False: eid == "a")
     out_a = _run(routes.tag_write_route.fn(_Req(json.dumps({"action": "apply", "tags": ["t"], "last": 2}).encode()), tmp_path / "db.db"))
@@ -181,7 +185,7 @@ def test_tag_write_rename_delete_remove_apply_paths(monkeypatch, tmp_path):
 def test_search_success_and_identity_exception_paths(monkeypatch, tmp_path):
     db = tmp_path / "db.db"
     monkeypatch.setattr(routes, "_dispatch", lambda *a, **k: {"ok": True})
-    out = _run(routes.search_route.fn(db, q="hi", embeddings_only=False))
+    out = _run(routes.search_route.fn(SimpleNamespace(), db, q="hi", embeddings_only=False))
     assert out == {"ok": True}
 
     class _BadUser:

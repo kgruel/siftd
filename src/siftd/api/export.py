@@ -67,6 +67,7 @@ def export_conversations(
                 db_path=db_path,
                 include_thinking=include_thinking,
                 include_tool_content=include_tool_content,
+                owner=owner,
             )
             if detail:
                 results.append(_detail_to_export(detail))
@@ -92,6 +93,7 @@ def export_conversations(
             db_path=db_path,
             include_thinking=include_thinking,
             include_tool_content=include_tool_content,
+            owner=owner,
         )
         if detail:
             results.append(_detail_to_export(detail))

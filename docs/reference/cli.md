@@ -810,7 +810,7 @@ Serve the siftd database over HTTP for team sync.
 
 options:
   -h, --help   show this help message and exit
-  --host ADDR  Bind address (default: 0.0.0.0)
+  --host ADDR  Bind address (default: 127.0.0.1)
   --port PORT  Listen port (default: 8484)
   --no-auth    Disable authentication (development only)
 ```

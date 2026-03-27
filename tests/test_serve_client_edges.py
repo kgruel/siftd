@@ -91,6 +91,14 @@ def test_get_json_success_query_and_shape_error(monkeypatch):
         client._get_json("http://127.0.0.1:8484", "/api/v1/search")
 
 
+def test_client_attaches_authorization_header_when_token_available(monkeypatch):
+    ok = _Conn(_Resp(status=200, body=b'{"ok":true}'))
+    monkeypatch.setattr("siftd.serve.client._conn", lambda *_a, **_k: ok)
+    monkeypatch.setenv("SIFTD_SERVE_TOKEN", "t0k")
+    out = client._get_json("http://127.0.0.1:8484", "/api/v1/health")
+    assert out == {"ok": True}
+    assert ok.req[3]["Authorization"] == "Bearer t0k"
+
 def test_post_json_non_200_and_invalid_json(monkeypatch):
     c1 = _Conn(_Resp(status=500, body=b"{}"))
     monkeypatch.setattr("siftd.serve.client._conn", lambda *_a, **_k: c1)

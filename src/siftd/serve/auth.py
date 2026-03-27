@@ -32,8 +32,12 @@ _write_scopes: frozenset[str] = frozenset()
 def require_write(request) -> None:
     """Check that the authenticated user has write scopes. Raises 403 if not.
 
-    Call from write route handlers. No-op when auth is not configured
-    (user is anonymous) or no write_scopes are configured.
+    Call from write route handlers.
+
+    Behavior:
+    - If auth middleware is not installed (auth off): allow (no-op).
+    - If auth middleware is installed: require an authenticated, non-anonymous user.
+    - If write scopes are configured: require at least one write scope.
     """
     from litestar.exceptions import PermissionDeniedException
 
@@ -41,13 +45,14 @@ def require_write(request) -> None:
         user = request.user
     except Exception:
         return  # No auth middleware installed — allow all
-    if user is None or user.sub == "anonymous":
-        return  # Anonymous bypass — allow all
+    if user is None or getattr(user, "sub", None) in (None, "anonymous"):
+        raise PermissionDeniedException("Authentication required for write operation")
 
     if not _write_scopes:
         return  # No write scopes configured — writes unrestricted
 
-    if not user.scopes & _write_scopes:
+    scopes = getattr(user, "scopes", frozenset()) or frozenset()
+    if not scopes & _write_scopes:
         raise PermissionDeniedException("Insufficient scope for write operation")
 
 
@@ -91,18 +96,6 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
             handler = connection.scope.get("route_handler")
             if handler and getattr(handler, "opt", {}).get("no_auth"):
                 return AuthenticationResult(user=UserIdentity(sub="anonymous"), auth=None)
-
-            # Loopback API requests bypass auth — CLI delegation on same
-            # machine has filesystem access to the DB anyway.
-            if path.startswith("/api/"):
-                client = connection.scope.get("client")
-                if client:
-                    addr = client[0] if isinstance(client, (list, tuple)) else getattr(client, "host", "")
-                    if addr in ("127.0.0.1", "::1"):
-                        return AuthenticationResult(
-                            user=UserIdentity(sub="local-cli", scopes=required | write),
-                            auth=None,
-                        )
 
             auth_header = connection.headers.get("authorization", "")
             if not auth_header.startswith("Bearer "):

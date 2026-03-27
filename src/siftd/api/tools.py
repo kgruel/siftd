@@ -32,6 +32,7 @@ def get_tool_tag_summary(
     *,
     db_path: Path | None = None,
     prefix: str = "shell:",
+    owner: str | None = None,
 ) -> list[TagUsage]:
     """Get summary of tool call tags by category.
 
@@ -52,7 +53,7 @@ def get_tool_tag_summary(
 
     conn = open_database(db, read_only=True)
 
-    rows = fetch_tool_tags_by_prefix(conn, prefix)
+    rows = fetch_tool_tags_by_prefix(conn, prefix, owner=owner)
 
     conn.close()
 
@@ -64,6 +65,7 @@ def get_tool_tags_by_workspace(
     db_path: Path | None = None,
     prefix: str = "shell:",
     n: int = 20,
+    owner: str | None = None,
 ) -> list[WorkspaceTagUsage]:
     """Get tool tag usage broken down by workspace.
 
@@ -86,7 +88,7 @@ def get_tool_tags_by_workspace(
     conn = open_database(db, read_only=True)
 
     # Get per-workspace, per-tag counts
-    rows = fetch_tool_tags_by_workspace(conn, prefix)
+    rows = fetch_tool_tags_by_workspace(conn, prefix, owner=owner)
 
     conn.close()
 

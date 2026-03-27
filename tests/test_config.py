@@ -83,6 +83,10 @@ class TestSchema:
     def test_match(self, key, typ):
         assert _match_schema(key).expected == typ
 
+    def test_serve_defaults(self):
+        assert _match_schema("serve.host").default == "127.0.0.1"
+        assert _match_schema("serve.auth.delegation_token").expected == "string"
+
     def test_no_match(self):
         assert _match_schema("totally.unknown.deep.key") is None
 
@@ -413,4 +417,3 @@ class TestCLIConfigIntegration:
         args = argparse.Namespace(limit=10)
         apply_config_defaults(args, get_tools_defaults, {"limit": 20})
         assert args.limit == 10
-

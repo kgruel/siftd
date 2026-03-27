@@ -189,6 +189,7 @@ def list_workspaces(
     n: int = 10,
     *,
     db_path: Path | None = None,
+    owner: str | None = None,
 ) -> list[sqlite3.Row]:
     """List workspaces with conversation counts.
 
@@ -206,6 +207,32 @@ def list_workspaces(
         conn = open_database(db, read_only=True)
         should_close = True
     try:
+        if owner:
+            has_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+            ).fetchone()
+            if not has_table:
+                return []
+            return conn.execute(
+                """
+                SELECT w.path, counts.convs, counts.last_activity
+                FROM (
+                    SELECT
+                        c.workspace_id,
+                        COUNT(*) as convs,
+                        MAX(COALESCE(c.ended_at, c.started_at)) as last_activity
+                    FROM conversations c
+                    JOIN conversation_owners co ON co.conversation_id = c.id
+                    WHERE co.user_id = ?
+                    GROUP BY c.workspace_id
+                    ORDER BY convs DESC
+                    LIMIT ?
+                ) counts
+                LEFT JOIN workspaces w ON w.id = counts.workspace_id
+                ORDER BY counts.convs DESC
+                """,
+                (owner, n),
+            ).fetchall()
         return fetch_top_workspaces(conn, limit=n)
     finally:
         if should_close:
@@ -317,7 +344,7 @@ def read_stats_cache(*, db_path: Path | None = None) -> DatabaseStats | None:
     return _dict_to_stats(data)
 
 
-def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
+def get_stats(*, db_path: Path | None = None, owner: str | None = None) -> DatabaseStats:
     """Get comprehensive database statistics.
 
     Args:
@@ -336,6 +363,272 @@ def get_stats(*, db_path: Path | None = None) -> DatabaseStats:
 
     conn = open_database(db, read_only=True)
     try:
+        if owner:
+            has_owner_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+            ).fetchone()
+            if not has_owner_table:
+                empty_counts = TableCounts(
+                    conversations=0, prompts=0, responses=0, tool_calls=0,
+                    harnesses=0, workspaces=0, tools=0, models=0, ingested_files=0,
+                )
+                empty_token = TokenCoverage(responses=0, with_tokens=0, pct_with_tokens=0.0, by_harness=[])
+                return DatabaseStats(
+                    db_path=db,
+                    db_size_bytes=db.stat().st_size,
+                    counts=empty_counts,
+                    harnesses=[],
+                    harness_counts=[],
+                    top_workspaces=[],
+                    models=[],
+                    top_tools=[],
+                    top_tags=[],
+                    token_coverage=empty_token,
+                    activity_window=(None, None),
+                    last_ingest_at=None,
+                )
+
+            # Row counts scoped to owned conversations
+            conversations = conn.execute(
+                "SELECT COUNT(*) FROM conversations c "
+                "JOIN conversation_owners co ON co.conversation_id = c.id "
+                "WHERE co.user_id = ?",
+                (owner,),
+            ).fetchone()[0]
+            prompts = conn.execute(
+                "SELECT COUNT(*) FROM prompts p "
+                "JOIN conversation_owners co ON co.conversation_id = p.conversation_id "
+                "WHERE co.user_id = ?",
+                (owner,),
+            ).fetchone()[0]
+            responses = conn.execute(
+                "SELECT COUNT(*) FROM responses r "
+                "JOIN conversation_owners co ON co.conversation_id = r.conversation_id "
+                "WHERE co.user_id = ?",
+                (owner,),
+            ).fetchone()[0]
+            tool_calls = conn.execute(
+                "SELECT COUNT(*) FROM tool_calls tc "
+                "JOIN conversation_owners co ON co.conversation_id = tc.conversation_id "
+                "WHERE co.user_id = ?",
+                (owner,),
+            ).fetchone()[0]
+            harnesses_count = conn.execute(
+                "SELECT COUNT(DISTINCT c.harness_id) FROM conversations c "
+                "JOIN conversation_owners co ON co.conversation_id = c.id "
+                "WHERE co.user_id = ? AND c.harness_id IS NOT NULL",
+                (owner,),
+            ).fetchone()[0]
+            workspaces_count = conn.execute(
+                "SELECT COUNT(DISTINCT c.workspace_id) FROM conversations c "
+                "JOIN conversation_owners co ON co.conversation_id = c.id "
+                "WHERE co.user_id = ? AND c.workspace_id IS NOT NULL",
+                (owner,),
+            ).fetchone()[0]
+            tools_count = conn.execute(
+                "SELECT COUNT(DISTINCT tc.tool_id) FROM tool_calls tc "
+                "JOIN conversation_owners co ON co.conversation_id = tc.conversation_id "
+                "WHERE co.user_id = ? AND tc.tool_id IS NOT NULL",
+                (owner,),
+            ).fetchone()[0]
+            models_count = conn.execute(
+                "SELECT COUNT(DISTINCT r.model_id) FROM responses r "
+                "JOIN conversation_owners co ON co.conversation_id = r.conversation_id "
+                "WHERE co.user_id = ? AND r.model_id IS NOT NULL",
+                (owner,),
+            ).fetchone()[0]
+            ingested_files = conn.execute(
+                "SELECT COUNT(*) FROM ingested_files f "
+                "JOIN conversation_owners co ON co.conversation_id = f.conversation_id "
+                "WHERE co.user_id = ?",
+                (owner,),
+            ).fetchone()[0]
+            counts = TableCounts(
+                conversations=conversations,
+                prompts=prompts,
+                responses=responses,
+                tool_calls=tool_calls,
+                harnesses=harnesses_count,
+                workspaces=workspaces_count,
+                tools=tools_count,
+                models=models_count,
+                ingested_files=ingested_files,
+            )
+
+            # Harness metadata limited to owned conversations
+            harness_rows = conn.execute(
+                "SELECT DISTINCT h.name, h.source, h.log_format "
+                "FROM harnesses h "
+                "JOIN conversations c ON c.harness_id = h.id "
+                "JOIN conversation_owners co ON co.conversation_id = c.id "
+                "WHERE co.user_id = ? "
+                "ORDER BY h.name",
+                (owner,),
+            ).fetchall()
+            harnesses = [
+                HarnessInfo(name=row["name"], source=row["source"], log_format=row["log_format"])
+                for row in harness_rows
+            ]
+
+            # Top workspaces
+            workspace_rows = list_workspaces(conn=conn, n=10, owner=owner)
+            top_workspaces = [
+                WorkspaceStats(path=row["path"], conversation_count=row["convs"], last_activity=row["last_activity"])
+                for row in workspace_rows
+                if row["path"] is not None
+            ]
+
+            # Models used by owned conversations
+            model_rows = conn.execute(
+                "SELECT DISTINCT COALESCE(m.raw_name, 'unknown') AS name "
+                "FROM responses r "
+                "LEFT JOIN models m ON m.id = r.model_id "
+                "JOIN conversation_owners co ON co.conversation_id = r.conversation_id "
+                "WHERE co.user_id = ? "
+                "ORDER BY name",
+                (owner,),
+            ).fetchall()
+            models = [row["name"] for row in model_rows if row["name"]]
+
+            # Top tools by usage
+            tool_rows = conn.execute(
+                """
+                SELECT t.name, counts.uses
+                FROM (
+                    SELECT tc.tool_id, COUNT(*) as uses
+                    FROM tool_calls tc
+                    JOIN conversation_owners co ON co.conversation_id = tc.conversation_id
+                    WHERE co.user_id = ? AND tc.tool_id IS NOT NULL
+                    GROUP BY tc.tool_id
+                    ORDER BY uses DESC
+                    LIMIT 10
+                ) counts
+                JOIN tools t ON t.id = counts.tool_id
+                ORDER BY counts.uses DESC
+                """,
+                (owner,),
+            ).fetchall()
+            top_tools = [ToolStats(name=row["name"], usage_count=row["uses"]) for row in tool_rows]
+
+            # Harness conversation counts
+            harness_count_rows = conn.execute(
+                """
+                SELECT h.name, COUNT(c.id) AS conversations
+                FROM harnesses h
+                JOIN conversations c ON c.harness_id = h.id
+                JOIN conversation_owners co ON co.conversation_id = c.id
+                WHERE co.user_id = ?
+                GROUP BY h.id
+                ORDER BY conversations DESC, h.name
+                """,
+                (owner,),
+            ).fetchall()
+            harness_counts = [
+                HarnessCount(name=row["name"], conversation_count=row["conversations"])
+                for row in harness_count_rows
+            ]
+
+            # Top conversation tags
+            tag_rows = conn.execute(
+                """
+                SELECT t.name, COUNT(ct.id) AS count
+                FROM tags t
+                JOIN conversation_tags ct ON ct.tag_id = t.id
+                JOIN conversation_owners co ON co.conversation_id = ct.conversation_id
+                WHERE co.user_id = ?
+                GROUP BY t.id
+                ORDER BY count DESC, t.name
+                LIMIT 5
+                """,
+                (owner,),
+            ).fetchall()
+            top_tags = [TagStats(name=row["name"], count=row["count"]) for row in tag_rows]
+
+            # Token coverage scoped to owned responses
+            row = conn.execute(
+                "SELECT COUNT(*) AS total, "
+                "SUM(CASE WHEN input_tokens IS NOT NULL OR output_tokens IS NOT NULL THEN 1 ELSE 0 END) "
+                "AS with_tokens "
+                "FROM responses r "
+                "JOIN conversation_owners co ON co.conversation_id = r.conversation_id "
+                "WHERE co.user_id = ?",
+                (owner,),
+            ).fetchone()
+            total_responses = row["total"] if row else 0
+            responses_with_tokens = row["with_tokens"] if row and row["with_tokens"] is not None else 0
+            pct_with_tokens = (
+                round((responses_with_tokens / total_responses) * 100, 2)
+                if total_responses
+                else 0.0
+            )
+
+            harness_rows = conn.execute(
+                """
+                SELECT h.name AS harness,
+                       COUNT(r.id) AS responses,
+                       SUM(CASE WHEN r.input_tokens IS NOT NULL OR r.output_tokens IS NOT NULL THEN 1 ELSE 0 END)
+                           AS with_tokens
+                FROM responses r
+                JOIN conversations c ON c.id = r.conversation_id
+                JOIN harnesses h ON h.id = c.harness_id
+                JOIN conversation_owners co ON co.conversation_id = c.id
+                WHERE co.user_id = ?
+                GROUP BY h.name
+                ORDER BY responses DESC
+                """,
+                (owner,),
+            ).fetchall()
+            token_by_harness = []
+            for row in harness_rows:
+                responses_n = row["responses"]
+                with_tokens = row["with_tokens"] if row["with_tokens"] is not None else 0
+                pct = round((with_tokens / responses_n) * 100, 2) if responses_n else 0.0
+                token_by_harness.append(
+                    TokenCoverageByHarness(
+                        name=row["harness"],
+                        responses=responses_n,
+                        with_tokens=with_tokens,
+                        pct_with_tokens=pct,
+                    )
+                )
+
+            # Activity window and ingest recency
+            window_row = conn.execute(
+                "SELECT MIN(started_at) AS earliest, MAX(started_at) AS latest "
+                "FROM conversations c "
+                "JOIN conversation_owners co ON co.conversation_id = c.id "
+                "WHERE co.user_id = ?",
+                (owner,),
+            ).fetchone()
+            activity_window = (window_row["earliest"], window_row["latest"]) if window_row else (None, None)
+            last_ingest_at = conn.execute(
+                "SELECT MAX(f.ingested_at) AS last_ingest "
+                "FROM ingested_files f "
+                "JOIN conversation_owners co ON co.conversation_id = f.conversation_id "
+                "WHERE co.user_id = ?",
+                (owner,),
+            ).fetchone()["last_ingest"]
+
+            return DatabaseStats(
+                db_path=db,
+                db_size_bytes=db.stat().st_size,
+                counts=counts,
+                harnesses=harnesses,
+                harness_counts=harness_counts,
+                top_workspaces=top_workspaces,
+                models=models,
+                top_tools=top_tools,
+                top_tags=top_tags,
+                token_coverage=TokenCoverage(
+                    responses=total_responses,
+                    with_tokens=responses_with_tokens,
+                    pct_with_tokens=pct_with_tokens,
+                    by_harness=token_by_harness,
+                ),
+                activity_window=activity_window,
+                last_ingest_at=last_ingest_at,
+            )
+
         # Table counts
         table_names = [
             "conversations",

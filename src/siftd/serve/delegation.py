@@ -145,12 +145,21 @@ def try_delegate(
     except (ServeUnavailable, Exception):
         return None
 
-    # Verify DB path match
-    served_db_path = health.get("db_path")
-    if not isinstance(served_db_path, str):
-        return None
-    if served_db_path != str(db.resolve()):
-        return None
+    # Verify DB identity match (avoid leaking absolute paths over health)
+    served_db_id = health.get("db_id")
+    if isinstance(served_db_id, str):
+        import hashlib
+
+        local_db_id = hashlib.sha256(str(db.resolve()).encode("utf-8")).hexdigest()
+        if served_db_id != local_db_id:
+            return None
+    else:
+        # Backward compat: older servers returned db_path.
+        served_db_path = health.get("db_path")
+        if not isinstance(served_db_path, str):
+            return None
+        if served_db_path != str(db.resolve()):
+            return None
 
     from siftd.serve.client import _get_json
 
@@ -184,11 +193,19 @@ def try_delegate_post(
     except (ServeUnavailable, Exception):
         return None
 
-    served_db_path = health.get("db_path")
-    if not isinstance(served_db_path, str):
-        return None
-    if served_db_path != str(db.resolve()):
-        return None
+    served_db_id = health.get("db_id")
+    if isinstance(served_db_id, str):
+        import hashlib
+
+        local_db_id = hashlib.sha256(str(db.resolve()).encode("utf-8")).hexdigest()
+        if served_db_id != local_db_id:
+            return None
+    else:
+        served_db_path = health.get("db_path")
+        if not isinstance(served_db_path, str):
+            return None
+        if served_db_path != str(db.resolve()):
+            return None
 
     from siftd.serve.client import _post_json
 

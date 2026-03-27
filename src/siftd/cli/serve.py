@@ -35,7 +35,7 @@ def cmd_serve(args) -> int:
 
             db_path = default_db_path()
 
-    host = getattr(args, "host", None) or str(get_config("serve.host") or "0.0.0.0")
+    host = getattr(args, "host", None) or str(get_config("serve.host") or "127.0.0.1")
     port = int(getattr(args, "port", None) or get_config("serve.port") or 8484)
     fts_rebuild = str(get_config("serve.fts_rebuild") or "on_push")
 
@@ -52,7 +52,13 @@ def cmd_serve(args) -> int:
 
     print(f"siftd serve — listening on {host}:{port}", file=sys.stderr)
     print(f"  db: {db_path}", file=sys.stderr)
-    print(f"  auth: {'enabled' if auth_config else 'disabled (--no-auth)'}", file=sys.stderr)
+    if args.no_auth:
+        auth_state = "disabled (--no-auth)"
+    elif auth_config:
+        auth_state = "enabled"
+    else:
+        auth_state = "disabled (no [serve.auth] config)"
+    print(f"  auth: {auth_state}", file=sys.stderr)
 
     # Runtime discovery for CLI delegation: write serve state for `siftd search`.
     import json
@@ -88,7 +94,7 @@ def build_serve_parser(subparsers) -> None:
     )
     parser.add_argument(
         "--host", metavar="ADDR",
-        help="Bind address (default: 0.0.0.0)",
+        help="Bind address (default: 127.0.0.1)",
     )
     parser.add_argument(
         "--port", metavar="PORT", type=int,

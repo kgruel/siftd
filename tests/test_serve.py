@@ -65,6 +65,8 @@ def _make_slice_bytes(tmp_path, *, external_id="c1"):
 
 class TestHealth:
     def test_health_returns_ok(self, tmp_path):
+        import hashlib
+
         db = tmp_path / "team.db"
         create_database(db)
         app = create_app(db_path=db, auth_config=None)
@@ -74,7 +76,8 @@ class TestHealth:
         body = resp.json()
         assert body["service"] == "siftd"
         assert body["status"] == "ok"
-        assert body["db_path"] == str(db.resolve())
+        assert body["db_id"] == hashlib.sha256(str(db.resolve()).encode("utf-8")).hexdigest()
+        assert "db_path" not in body
         assert "db_size_bytes" in body
         assert "conversations" in body
 
@@ -256,6 +259,93 @@ class TestAuthOIDC:
         with TestClient(app) as client:
             resp = client.get("/api/v1/health")
             assert resp.status_code == 200
+
+
+class TestOwnershipEnforcement:
+    def test_owner_scoping_across_read_and_write_paths(self, tmp_path):
+        import json
+        import time
+
+        team_db = tmp_path / "team.db"
+        auth_config = {"introspection_url": "https://idp/introspect", "identity_claim": "username"}
+        app = create_app(db_path=team_db, auth_config=auth_config)
+
+        # Pre-populate introspection cache to avoid network calls and simulate two users.
+        MW = app.middleware[0]
+        MW._introspection_cache = {
+            "tokA": ({"username": "alice"}, time.time()),
+            "tokB": ({"username": "bob"}, time.time()),
+        }
+
+        slice_a = _make_slice_bytes(tmp_path, external_id="alice-1")
+        slice_b = _make_slice_bytes(tmp_path, external_id="bob-1")
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            # Push as alice and bob.
+            r1 = client.post(
+                "/api/v1/push",
+                content=slice_a,
+                headers={"Authorization": "Bearer tokA", "Content-Type": "application/octet-stream"},
+            )
+            assert r1.status_code in (200, 201)
+            r2 = client.post(
+                "/api/v1/push",
+                content=slice_b,
+                headers={"Authorization": "Bearer tokB", "Content-Type": "application/octet-stream"},
+            )
+            assert r2.status_code in (200, 201)
+
+            # Each user sees only their own conversations.
+            alice_list = client.get("/api/v1/conversations", headers={"Authorization": "Bearer tokA"})
+            bob_list = client.get("/api/v1/conversations", headers={"Authorization": "Bearer tokB"})
+            assert alice_list.status_code == 200 and bob_list.status_code == 200
+            alice_convs = alice_list.json()["conversations"]
+            bob_convs = bob_list.json()["conversations"]
+            assert len(alice_convs) == 1
+            assert len(bob_convs) == 1
+            alice_id = alice_convs[0]["id"]
+            bob_id = bob_convs[0]["id"]
+
+            # Detail is owner-scoped (404 on cross-tenant).
+            forbidden = client.get(f"/api/v1/conversations/{bob_id}", headers={"Authorization": "Bearer tokA"})
+            assert forbidden.status_code == 404
+
+            # Export-by-id is owner-scoped (empty for cross-tenant).
+            ex = client.get(
+                "/api/v1/export",
+                params={"id": alice_id},
+                headers={"Authorization": "Bearer tokB"},
+            )
+            assert ex.status_code == 200
+            assert ex.json()["conversations"] == []
+
+            # Tag mutations are scoped to owned conversations.
+            tag_other = client.post(
+                "/api/v1/tag",
+                content=json.dumps({"action": "apply", "tags": ["t"], "entity_id": bob_id}).encode(),
+                headers={"Authorization": "Bearer tokA", "Content-Type": "application/json"},
+            )
+            assert tag_other.status_code == 200
+            assert tag_other.json().get("error") == "no matching entities found"
+
+            tag_last = client.post(
+                "/api/v1/tag",
+                content=json.dumps({"action": "apply", "tags": ["t"], "last": 1}).encode(),
+                headers={"Authorization": "Bearer tokA", "Content-Type": "application/json"},
+            )
+            assert tag_last.status_code == 200
+
+            alice_detail = client.get(f"/api/v1/conversations/{alice_id}", headers={"Authorization": "Bearer tokA"})
+            bob_detail = client.get(f"/api/v1/conversations/{bob_id}", headers={"Authorization": "Bearer tokB"})
+            assert alice_detail.status_code == 200 and bob_detail.status_code == 200
+            assert "t" in (alice_detail.json()["conversation"].get("tags") or [])
+            assert "t" not in (bob_detail.json()["conversation"].get("tags") or [])
+
+            # Aggregate endpoints are scoped when auth is enabled.
+            alice_stats = client.get("/api/v1/stats", headers={"Authorization": "Bearer tokA"}).json()
+            bob_stats = client.get("/api/v1/stats", headers={"Authorization": "Bearer tokB"}).json()
+            assert alice_stats["counts"]["conversations"] == 1
+            assert bob_stats["counts"]["conversations"] == 1
 
 
 class TestAttribution:

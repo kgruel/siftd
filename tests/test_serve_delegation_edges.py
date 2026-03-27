@@ -1,4 +1,5 @@
 import builtins
+import hashlib
 from types import SimpleNamespace
 
 from siftd.serve import delegation
@@ -7,10 +8,11 @@ from siftd.serve import delegation
 def test_try_delegate_post_success_and_try_serve_post(monkeypatch, tmp_path):
     db = tmp_path / "siftd.db"
     db.touch()
+    db_id = hashlib.sha256(str(db.resolve()).encode("utf-8")).hexdigest()
 
     monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: True)
     monkeypatch.setattr("siftd.serve.delegation.resolve_serve_url", lambda: ("http://127.0.0.1:8484", False))
-    monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_path": str(db.resolve())})
+    monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_id": db_id})
     monkeypatch.setattr("siftd.serve.client._post_json", lambda *a, **k: {"ok": True})
 
     assert delegation.try_delegate_post("/api/v1/tags", {"x": 1}, db=db) == {"ok": True}
@@ -69,17 +71,18 @@ def test_can_delegate_non_loopback_autodiscovered_is_rejected(monkeypatch, tmp_p
 def test_try_delegate_success_and_failure_guards(monkeypatch, tmp_path):
     db = tmp_path / "siftd.db"
     db.touch()
+    db_id = hashlib.sha256(str(db.resolve()).encode("utf-8")).hexdigest()
 
     monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: True)
     monkeypatch.setattr("siftd.serve.delegation.resolve_serve_url", lambda: ("http://127.0.0.1:8484", True))
-    monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_path": str(db.resolve())})
+    monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_id": db_id})
     monkeypatch.setattr("siftd.serve.client._get_json", lambda *a, **k: {"ok": True})
     assert delegation.try_delegate("/api/v1/search", db=db) == {"ok": True}
 
     monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_path": 123})
     assert delegation.try_delegate("/api/v1/search", db=db) is None
 
-    monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_path": str(db.resolve())})
+    monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_id": db_id})
     monkeypatch.setattr("siftd.serve.client._get_json", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     assert delegation.try_delegate("/api/v1/search", db=db) is None
 
@@ -87,6 +90,7 @@ def test_try_delegate_success_and_failure_guards(monkeypatch, tmp_path):
 def test_try_delegate_post_guard_and_exception_paths(monkeypatch, tmp_path):
     db = tmp_path / "siftd.db"
     db.touch()
+    db_id = hashlib.sha256(str(db.resolve()).encode("utf-8")).hexdigest()
 
     monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: False)
     assert delegation.try_delegate_post("/api/v1/tags", {}, db=db) is None
@@ -99,7 +103,7 @@ def test_try_delegate_post_guard_and_exception_paths(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_path": "/wrong.db"})
     assert delegation.try_delegate_post("/api/v1/tags", {}, db=db) is None
 
-    monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_path": str(db.resolve())})
+    monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_id": db_id})
     monkeypatch.setattr("siftd.serve.client._post_json", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     assert delegation.try_delegate_post("/api/v1/tags", {}, db=db) is None
 

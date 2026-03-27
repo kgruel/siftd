@@ -431,6 +431,7 @@ def get_conversation(
     include_thinking: bool = False,
     include_tool_content: bool = False,
     tool_filter: str | None = None,
+    owner: str | None = None,
 ) -> ConversationDetail | None:
     """Get full conversation detail by ID.
 
@@ -464,6 +465,21 @@ def get_conversation(
         return None
 
     conv_id = conv["id"]
+
+    if owner:
+        has_owner_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+        ).fetchone()
+        if not has_owner_table:
+            conn.close()
+            return None
+        row = conn.execute(
+            "SELECT user_id FROM conversation_owners WHERE conversation_id = ?",
+            (conv_id,),
+        ).fetchone()
+        if not row or row["user_id"] != owner:
+            conn.close()
+            return None
 
     # Model (most frequent) and token totals
     model_name = fetch_conversation_model(conn, conv_id)
@@ -1029,6 +1045,8 @@ def run_query_file(
 def get_recent_conversation_ids(
     conn: sqlite3.Connection,
     limit: int,
+    *,
+    owner: str | None = None,
 ) -> list[str]:
     """Get IDs of the most recent conversations.
 
@@ -1039,10 +1057,24 @@ def get_recent_conversation_ids(
     Returns:
         List of conversation IDs, most recent first.
     """
-    rows = conn.execute(
-        "SELECT id FROM conversations ORDER BY started_at DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
+    if owner:
+        has_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+        ).fetchone()
+        if not has_table:
+            return []
+        rows = conn.execute(
+            "SELECT c.id FROM conversations c "
+            "JOIN conversation_owners co ON co.conversation_id = c.id "
+            "WHERE co.user_id = ? "
+            "ORDER BY c.started_at DESC LIMIT ?",
+            (owner, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id FROM conversations ORDER BY started_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
     return [row["id"] for row in rows]
 
 
@@ -1050,6 +1082,8 @@ def resolve_entity_id(
     conn: sqlite3.Connection,
     entity_type: str,
     entity_id: str,
+    *,
+    owner: str | None = None,
 ) -> str | None:
     """Resolve an entity ID, supporting prefix match for conversations.
 
@@ -1062,10 +1096,23 @@ def resolve_entity_id(
         Resolved full ID, or None if not found.
     """
     if entity_type == "conversation":
-        row = conn.execute(
-            "SELECT id FROM conversations WHERE id = ? OR id LIKE ?",
-            (entity_id, f"{entity_id}%"),
-        ).fetchone()
+        if owner:
+            has_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+            ).fetchone()
+            if not has_table:
+                return None
+            row = conn.execute(
+                "SELECT c.id FROM conversations c "
+                "JOIN conversation_owners co ON co.conversation_id = c.id "
+                "WHERE co.user_id = ? AND (c.id = ? OR c.id LIKE ?)",
+                (owner, entity_id, f"{entity_id}%"),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id FROM conversations WHERE id = ? OR id LIKE ?",
+                (entity_id, f"{entity_id}%"),
+            ).fetchone()
     elif entity_type == "workspace":
         row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
     elif entity_type == "tool_call":

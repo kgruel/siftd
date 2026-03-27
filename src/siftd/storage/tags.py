@@ -178,6 +178,7 @@ def list_tags(
     *,
     since: str | None = None,
     before: str | None = None,
+    owner: str | None = None,
 ) -> list[dict]:
     """List all tags with usage counts.
 
@@ -203,50 +204,116 @@ def list_tags(
     # When temporal filters are active, conversation_count and tool_call_count
     # join through to conversations.started_at. Workspace and prompt counts
     # remain global (workspaces and prompts lack direct temporal scope).
-    if time_filter:
-        sql = f"""
-            SELECT
-                t.name,
-                t.description,
-                t.created_at,
-                (SELECT COUNT(*) FROM conversation_tags ct
-                    JOIN conversations c ON c.id = ct.conversation_id
-                    WHERE ct.tag_id = t.id{time_filter}) as conversation_count,
-                (SELECT COUNT(*) FROM workspace_tags wt
-                    WHERE wt.tag_id = t.id) as workspace_count,
-                (SELECT COUNT(*) FROM tool_call_tags tt
-                    JOIN tool_calls tc ON tc.id = tt.tool_call_id
-                    JOIN conversations c ON c.id = tc.conversation_id
-                    WHERE tt.tag_id = t.id{time_filter}) as tool_call_count,
-                CASE WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags')
-                    THEN (SELECT COUNT(*) FROM prompt_tags pt WHERE pt.tag_id = t.id)
-                    ELSE 0
-                END as prompt_count
-            FROM tags t
-            ORDER BY t.name
-        """
-        # params are used twice: once for conversation_count, once for tool_call_count
-        all_params = params + params
+    if owner:
+        has_owner_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+        ).fetchone()
+        if not has_owner_table:
+            return []
+
+        if time_filter:
+            sql = f"""
+                SELECT
+                    t.name,
+                    t.description,
+                    t.created_at,
+                    (SELECT COUNT(*) FROM conversation_tags ct
+                        JOIN conversations c ON c.id = ct.conversation_id
+                        JOIN conversation_owners co ON co.conversation_id = c.id
+                        WHERE ct.tag_id = t.id AND co.user_id = ?{time_filter}) as conversation_count,
+                    (SELECT COUNT(DISTINCT wt.workspace_id) FROM workspace_tags wt
+                        JOIN conversations c ON c.workspace_id = wt.workspace_id
+                        JOIN conversation_owners co ON co.conversation_id = c.id
+                        WHERE wt.tag_id = t.id AND co.user_id = ?) as workspace_count,
+                    (SELECT COUNT(*) FROM tool_call_tags tt
+                        JOIN tool_calls tc ON tc.id = tt.tool_call_id
+                        JOIN conversations c ON c.id = tc.conversation_id
+                        JOIN conversation_owners co ON co.conversation_id = c.id
+                        WHERE tt.tag_id = t.id AND co.user_id = ?{time_filter}) as tool_call_count,
+                    CASE WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags')
+                        THEN (SELECT COUNT(*) FROM prompt_tags pt
+                              JOIN prompts p ON p.id = pt.prompt_id
+                              JOIN conversation_owners co ON co.conversation_id = p.conversation_id
+                              WHERE pt.tag_id = t.id AND co.user_id = ?)
+                        ELSE 0
+                    END as prompt_count
+                FROM tags t
+                ORDER BY t.name
+            """
+            all_params = [owner, *params, owner, owner, *params, owner]
+        else:
+            sql = """
+                SELECT
+                    t.name,
+                    t.description,
+                    t.created_at,
+                    (SELECT COUNT(*) FROM conversation_tags ct
+                        JOIN conversation_owners co ON co.conversation_id = ct.conversation_id
+                        WHERE ct.tag_id = t.id AND co.user_id = ?) as conversation_count,
+                    (SELECT COUNT(DISTINCT wt.workspace_id) FROM workspace_tags wt
+                        JOIN conversations c ON c.workspace_id = wt.workspace_id
+                        JOIN conversation_owners co ON co.conversation_id = c.id
+                        WHERE wt.tag_id = t.id AND co.user_id = ?) as workspace_count,
+                    (SELECT COUNT(*) FROM tool_call_tags tt
+                        JOIN tool_calls tc ON tc.id = tt.tool_call_id
+                        JOIN conversation_owners co ON co.conversation_id = tc.conversation_id
+                        WHERE tt.tag_id = t.id AND co.user_id = ?) as tool_call_count,
+                    CASE WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags')
+                        THEN (SELECT COUNT(*) FROM prompt_tags pt
+                              JOIN prompts p ON p.id = pt.prompt_id
+                              JOIN conversation_owners co ON co.conversation_id = p.conversation_id
+                              WHERE pt.tag_id = t.id AND co.user_id = ?)
+                        ELSE 0
+                    END as prompt_count
+                FROM tags t
+                ORDER BY t.name
+            """
+            all_params = [owner, owner, owner, owner]
     else:
-        sql = """
-            SELECT
-                t.name,
-                t.description,
-                t.created_at,
-                (SELECT COUNT(*) FROM conversation_tags ct WHERE ct.tag_id = t.id) as conversation_count,
-                (SELECT COUNT(*) FROM workspace_tags wt WHERE wt.tag_id = t.id) as workspace_count,
-                (SELECT COUNT(*) FROM tool_call_tags tt WHERE tt.tag_id = t.id) as tool_call_count,
-                CASE WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags')
-                    THEN (SELECT COUNT(*) FROM prompt_tags pt WHERE pt.tag_id = t.id)
-                    ELSE 0
-                END as prompt_count
-            FROM tags t
-            ORDER BY t.name
-        """
-        all_params = []
+        if time_filter:
+            sql = f"""
+                SELECT
+                    t.name,
+                    t.description,
+                    t.created_at,
+                    (SELECT COUNT(*) FROM conversation_tags ct
+                        JOIN conversations c ON c.id = ct.conversation_id
+                        WHERE ct.tag_id = t.id{time_filter}) as conversation_count,
+                    (SELECT COUNT(*) FROM workspace_tags wt
+                        WHERE wt.tag_id = t.id) as workspace_count,
+                    (SELECT COUNT(*) FROM tool_call_tags tt
+                        JOIN tool_calls tc ON tc.id = tt.tool_call_id
+                        JOIN conversations c ON c.id = tc.conversation_id
+                        WHERE tt.tag_id = t.id{time_filter}) as tool_call_count,
+                    CASE WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags')
+                        THEN (SELECT COUNT(*) FROM prompt_tags pt WHERE pt.tag_id = t.id)
+                        ELSE 0
+                    END as prompt_count
+                FROM tags t
+                ORDER BY t.name
+            """
+            # params are used twice: once for conversation_count, once for tool_call_count
+            all_params = params + params
+        else:
+            sql = """
+                SELECT
+                    t.name,
+                    t.description,
+                    t.created_at,
+                    (SELECT COUNT(*) FROM conversation_tags ct WHERE ct.tag_id = t.id) as conversation_count,
+                    (SELECT COUNT(*) FROM workspace_tags wt WHERE wt.tag_id = t.id) as workspace_count,
+                    (SELECT COUNT(*) FROM tool_call_tags tt WHERE tt.tag_id = t.id) as tool_call_count,
+                    CASE WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags')
+                        THEN (SELECT COUNT(*) FROM prompt_tags pt WHERE pt.tag_id = t.id)
+                        ELSE 0
+                    END as prompt_count
+                FROM tags t
+                ORDER BY t.name
+            """
+            all_params = []
 
     cur = conn.execute(sql, all_params)
-    return [
+    rows = [
         {
             "name": row["name"],
             "description": row["description"],
@@ -258,6 +325,9 @@ def list_tags(
         }
         for row in cur.fetchall()
     ]
+    if owner:
+        rows = [r for r in rows if (r["conversation_count"] or r["workspace_count"] or r["tool_call_count"] or r["prompt_count"])]
+    return rows
 
 
 def tag_shell_command(

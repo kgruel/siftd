@@ -188,6 +188,21 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
     new_conversations = len(new_conversation_ids)
     conn.execute("DROP TABLE _pre_merge_conv_ids")
 
+    # If we replaced stale target conversations, preserve the prior owner by
+    # re-stamping the replacement source conversation IDs to the original owner.
+    if replace and conn.execute(
+        "SELECT 1 FROM sqlite_temp_master WHERE type='table' AND name='_replaced_owner_map'"
+    ).fetchone():
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+        ).fetchone():
+            conn.execute(
+                "INSERT OR IGNORE INTO conversation_owners "
+                "(conversation_id, user_id, push_id, assigned_at) "
+                "SELECT conversation_id, user_id, push_id, assigned_at FROM _replaced_owner_map"
+            )
+        conn.execute("DROP TABLE _replaced_owner_map")
+
     src_conv_count = conn.execute("SELECT COUNT(*) FROM src.conversations").fetchone()[0]
     skipped_conversations = src_conv_count - new_conversations
 
@@ -425,6 +440,32 @@ def _replace_stale_conversations(conn) -> tuple[int, list[str]]:
 
     stale_ids = [r[0] for r in stale_rows]
     replacement_ids = [r[1] for r in stale_rows]
+
+    # Preserve ownership across replacement (target_id -> source_id) when the
+    # server-side conversation_owners table exists.
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+    ).fetchone():
+        conn.execute("CREATE TEMP TABLE _stale_to_source (target_id TEXT PRIMARY KEY, source_id TEXT NOT NULL)")
+        conn.executemany(
+            "INSERT INTO _stale_to_source (target_id, source_id) VALUES (?, ?)",
+            [(t, s) for t, s in stale_rows],
+        )
+        conn.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS _replaced_owner_map ("
+            "conversation_id TEXT PRIMARY KEY, "
+            "user_id TEXT NOT NULL, "
+            "push_id TEXT, "
+            "assigned_at TEXT NOT NULL"
+            ")"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO _replaced_owner_map (conversation_id, user_id, push_id, assigned_at) "
+            "SELECT sts.source_id, co.user_id, co.push_id, co.assigned_at "
+            "FROM conversation_owners co "
+            "JOIN _stale_to_source sts ON sts.target_id = co.conversation_id"
+        )
+        conn.execute("DROP TABLE _stale_to_source")
 
     # Build a temp table for efficient joins
     conn.execute("CREATE TEMP TABLE _stale_convs (id TEXT PRIMARY KEY)")

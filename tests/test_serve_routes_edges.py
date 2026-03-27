@@ -22,20 +22,30 @@ def test_dispatch_builds_operation_and_calls_dispatch(monkeypatch, tmp_path):
             seen.update(kwargs)
 
     monkeypatch.setattr("siftd.api.dispatch.Operation", _Op)
-    monkeypatch.setattr("siftd.api.dispatch.dispatch", lambda op, fmt: {"ok": True, "fmt": fmt is not None})
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: {"result": True})
+    monkeypatch.setattr("siftd.api.dispatch.render", lambda result, op, fmt: {"ok": True, "fmt": fmt is not None, "result": result})
     out = routes._dispatch("/api/v1/x", "GET", lambda: None, {"a": 1}, "stats", tmp_path / "db.db")
-    assert out["ok"] and seen["path"] == "/api/v1/x" and seen["method"] == "GET"
+    assert out["ok"] and out["result"] == {"result": True} and seen["path"] == "/api/v1/x" and seen["method"] == "GET"
 
 
 def test_dispatch_returns_structured_error_on_exception(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.dispatch.Operation", lambda **kw: None)
     def _raise(*_a, **_kw):
         raise RuntimeError("boom")
-    monkeypatch.setattr("siftd.api.dispatch.dispatch", _raise)
+    monkeypatch.setattr("siftd.api.dispatch.execute", _raise)
     out = routes._dispatch("/api/v1/x", "GET", lambda: None, {}, "stats", tmp_path / "db.db")
     # Returns a Response, not a raised exception
     assert hasattr(out, "status_code")
     assert out.status_code == 500
+    assert "boom" not in (out.content or {}).get("error", "")
+
+
+def test_dispatch_detail_none_returns_404(monkeypatch, tmp_path):
+    monkeypatch.setattr("siftd.api.dispatch.Operation", lambda **kw: None)
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: None)
+    monkeypatch.setattr("siftd.api.dispatch.render", lambda *_a, **_k: {"should": "not run"})
+    out = routes._dispatch("/api/v1/conversations", "GET", lambda: None, {"id": "x"}, "detail", tmp_path / "db.db")
+    assert out.status_code == 404
 
 
 def test_health_nonexistent_db_returns_zero_counts(tmp_path):
@@ -68,3 +78,12 @@ def test_record_push_log_handles_missing_client(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.storage.sqlite.ensure_push_log_table", lambda _c: calls.setdefault("ensure", True))
     routes._record_push_log(tmp_path / "db.db", "anon", 2, 10, SimpleNamespace(client=None), push_id="p1")
     assert calls["commit"] and calls["close"] and calls["params"][0] == "p1" and calls["params"][-1] is None
+
+
+def test_sync_status_redacts_inbox_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "siftd.api.inbox.get_inbox_status",
+        lambda _db: {"pending": 0, "total": 1, "last": {"status": "failed", "error": "boom"}},
+    )
+    out = _run(routes.sync_status_route.fn(tmp_path / "db.db"))
+    assert "error" not in out["inbox"]["last"]

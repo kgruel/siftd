@@ -193,6 +193,71 @@ class TestReceiveOwnership:
         assert len(owners) == 1
         assert owners[0]["user_id"] == "bob@co.com"
 
+    def test_replacement_preserves_existing_owner(self, tmp_path):
+        """Replacement merges must not reassign ownership to the pusher."""
+        import sqlite3
+
+        from siftd.storage.sqlite import (
+            create_database,
+            clear_vocabulary_caches,
+            get_or_create_harness,
+            get_or_create_workspace,
+        )
+
+        target = tmp_path / "target.db"
+        source = tmp_path / "source.db"
+
+        # Build minimal target/source DBs with the same natural key
+        # (harness name + external_id) but different conversation IDs.
+        tc = create_database(target)
+        sc = create_database(source)
+        started = "2024-01-01T00:00:00Z"
+
+        th = get_or_create_harness(tc, "h", source="t", log_format="jsonl")
+        tw = get_or_create_workspace(tc, "/proj", started)
+        clear_vocabulary_caches()
+        sh = get_or_create_harness(sc, "h", source="t", log_format="jsonl")
+        sw = get_or_create_workspace(sc, "/proj", started)
+
+        target_id = "01AAAAAAAAAAAAAAAAAAAAAAAAAA"
+        source_id = "01ZZZZZZZZZZZZZZZZZZZZZZZZ"  # lexicographically newer
+
+        tc.execute(
+            "INSERT INTO conversations (id, external_id, harness_id, workspace_id, branch, started_at, ended_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (target_id, "conv-A", th, tw, None, started, None),
+        )
+        tc.execute(
+            "INSERT INTO conversation_owners (conversation_id, user_id, push_id, assigned_at) VALUES (?, ?, ?, ?)",
+            (target_id, "alice", "p1", started),
+        )
+        tc.commit()
+        tc.close()
+
+        sc.execute(
+            "INSERT INTO conversations (id, external_id, harness_id, workspace_id, branch, started_at, ended_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (source_id, "conv-A", sh, sw, None, started, None),
+        )
+        sc.commit()
+        sc.close()
+
+        # Bob pushes a newer replacement; Alice's ownership must be preserved.
+        receive_database(source, target, user_id="bob", push_id="p2")
+
+        conn = sqlite3.connect(str(target))
+        conn.row_factory = sqlite3.Row
+        try:
+            conv_ids = [r["id"] for r in conn.execute("SELECT id FROM conversations").fetchall()]
+            assert conv_ids == [source_id]
+            row = conn.execute(
+                "SELECT user_id FROM conversation_owners WHERE conversation_id = ?",
+                (source_id,),
+            ).fetchone()
+            assert row["user_id"] == "alice"
+        finally:
+            conn.close()
+
     def test_no_user_id_skips_ownership(self, tmp_path):
         """Receive without user_id does not create ownership rows."""
         source = _make_db(

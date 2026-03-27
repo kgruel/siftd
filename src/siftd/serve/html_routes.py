@@ -15,6 +15,8 @@ from litestar import Request, get, post
 from litestar.params import Parameter
 from litestar.response import Response
 
+from siftd.serve.routes import _effective_owner
+
 
 def _html_response(content: str) -> Response:
     return Response(content=content, media_type="text/html")
@@ -239,28 +241,30 @@ async def ui_shell(
 
 
 @get("/meta")
-async def ui_meta(db_path: Path) -> Response:
+async def ui_meta(request: Request, db_path: Path) -> Response:
     """Return filter dropdowns populated from the database."""
     from html import escape
 
     from siftd.api.stats import get_stats, list_workspaces
     from siftd.api.tags import list_tags
 
+    owner = _effective_owner(request, None)
+
     stats = None
     try:
-        stats = get_stats(db_path=db_path)
+        stats = get_stats(db_path=db_path, owner=owner)
     except Exception:
         pass
 
     ws_rows: list = []
     try:
-        ws_rows = list_workspaces(db_path=db_path, n=200)
+        ws_rows = list_workspaces(db_path=db_path, n=200, owner=owner)
     except Exception:
         pass
 
     tag_names: list[str] = []
     try:
-        tag_names = [t.name for t in list_tags(db_path=db_path)]
+        tag_names = [t.name for t in list_tags(db_path=db_path, owner=owner)]
     except Exception:
         pass
 
@@ -307,6 +311,7 @@ async def ui_meta(db_path: Path) -> Response:
 
 @get("/query")
 async def ui_query(
+    request: Request,
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
     since: str | None = Parameter(query="since", default=None),
@@ -334,7 +339,7 @@ async def ui_query(
     search = search or None
     since = since or None
     before = before or None
-    owner = owner or None
+    owner = _effective_owner(request, owner or None)
     tag = [t for t in (tag or []) if t] or None
 
     fmt = get_format("html")
@@ -358,6 +363,7 @@ async def ui_query(
                 "db_path": db_path,
                 "include_thinking": fidelity.shows("thinking"),
                 "include_tool_content": fidelity.shows("tools"),
+                "owner": owner,
             },
             render_method="detail",
             fidelity=fidelity,
@@ -806,6 +812,7 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
     from siftd.api.tags import modify_conversation_tag
     from siftd.output.html_fmt import render_tag_section
 
+    owner = _effective_owner(request, None)
     form = await request.form()
     action = str(form.get("action", "apply"))
     conv_id = str(form.get("id", ""))
@@ -815,7 +822,7 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
         return _html_response('<div class="tag-section">error: missing id or tag</div>')
 
     tags = modify_conversation_tag(
-        conv_id, tag_name, action=action, db_path=db_path,
+        conv_id, tag_name, action=action, db_path=db_path, owner=owner,
     )
     return _html_response(render_tag_section(
         conv_id, tags,
@@ -825,6 +832,7 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
 
 @get("/tags/suggest")
 async def ui_tags_suggest(
+    request: Request,
     db_path: Path,
     tag: str = Parameter(query="tag", default=""),
 ) -> Response:
@@ -833,7 +841,8 @@ async def ui_tags_suggest(
 
     from siftd.api.tags import list_tags
 
-    all_tags = list_tags(db_path=db_path)
+    owner = _effective_owner(request, None)
+    all_tags = list_tags(db_path=db_path, owner=owner)
     prefix = tag.lower()
     options = [
         f'<option value="{escape(t.name)}">'
@@ -850,6 +859,7 @@ async def ui_tags_suggest(
 
 @get("/export")
 async def ui_export(
+    request: Request,
     db_path: Path,
     id: str = Parameter(query="id", default=""),
     format: str = Parameter(query="format", default="md"),
@@ -871,6 +881,7 @@ async def ui_export(
             "db_path": db_path,
             "include_thinking": True,
             "include_tool_content": True,
+            "owner": _effective_owner(request, None),
         },
         render_method="raw",
         fidelity=_fidelity(),

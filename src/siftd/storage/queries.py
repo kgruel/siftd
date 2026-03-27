@@ -639,8 +639,28 @@ def fetch_token_coverage_by_harness(conn: sqlite3.Connection) -> list[sqlite3.Ro
 def fetch_tool_tags_by_prefix(
     conn: sqlite3.Connection,
     prefix: str,
+    *,
+    owner: str | None = None,
 ) -> list[sqlite3.Row]:
     """Fetch tool call tag usage counts filtered by prefix."""
+    if owner and not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+    ).fetchone():
+        return []
+    if owner:
+        return conn.execute(
+            """
+            SELECT t.name, COUNT(tct.id) as count
+            FROM tags t
+            JOIN tool_call_tags tct ON tct.tag_id = t.id
+            JOIN tool_calls tc ON tc.id = tct.tool_call_id
+            JOIN conversation_owners co ON co.conversation_id = tc.conversation_id
+            WHERE t.name LIKE ? AND co.user_id = ?
+            GROUP BY t.id
+            ORDER BY count DESC
+            """,
+            (f"{prefix}%", owner),
+        ).fetchall()
     return conn.execute(
         """
         SELECT t.name, COUNT(tct.id) as count
@@ -657,8 +677,33 @@ def fetch_tool_tags_by_prefix(
 def fetch_tool_tags_by_workspace(
     conn: sqlite3.Connection,
     prefix: str,
+    *,
+    owner: str | None = None,
 ) -> list[sqlite3.Row]:
     """Fetch per-workspace tool tag usage counts."""
+    if owner and not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+    ).fetchone():
+        return []
+    if owner:
+        return conn.execute(
+            """
+            SELECT
+                COALESCE(w.path, '(no workspace)') as workspace,
+                t.name as tag,
+                COUNT(tct.id) as count
+            FROM tool_call_tags tct
+            JOIN tags t ON t.id = tct.tag_id
+            JOIN tool_calls tc ON tc.id = tct.tool_call_id
+            JOIN conversations c ON c.id = tc.conversation_id
+            JOIN conversation_owners co ON co.conversation_id = c.id
+            LEFT JOIN workspaces w ON w.id = c.workspace_id
+            WHERE t.name LIKE ? AND co.user_id = ?
+            GROUP BY w.id, t.id
+            ORDER BY workspace, count DESC
+            """,
+            (f"{prefix}%", owner),
+        ).fetchall()
     return conn.execute(
         """
         SELECT

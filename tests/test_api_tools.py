@@ -40,7 +40,7 @@ class TestGetToolTagSummary:
         )
         monkeypatch.setattr(
             "siftd.api.tools.fetch_tool_tags_by_prefix",
-            lambda _c, _p: [{"name": "shell:test", "count": 10}, {"name": "shell:lint", "count": 3}],
+            lambda _c, _p, owner=None: [{"name": "shell:test", "count": 10}, {"name": "shell:lint", "count": 3}],
         )
 
         result = get_tool_tag_summary(db_path=db, prefix="shell:")
@@ -63,7 +63,7 @@ class TestGetToolTagSummary:
         monkeypatch.setattr("siftd.api.tools.open_database", lambda _p, read_only=False: _Conn())
         monkeypatch.setattr(
             "siftd.api.tools.fetch_tool_tags_by_prefix",
-            lambda _c, p: (seen_prefix.update({"prefix": p}), [])[1],
+            lambda _c, p, owner=None: (seen_prefix.update({"prefix": p}), [])[1],
         )
 
         get_tool_tag_summary(db_path=db)
@@ -86,7 +86,7 @@ class TestGetToolTagsByWorkspace:
         monkeypatch.setattr("siftd.api.tools.open_database", lambda _p, read_only=False: _Conn())
         monkeypatch.setattr(
             "siftd.api.tools.fetch_tool_tags_by_workspace",
-            lambda _c, _p: [
+            lambda _c, _p, owner=None: [
                 {"workspace": "/proj-a", "tag": "shell:run", "count": 10},
                 {"workspace": "/proj-a", "tag": "shell:test", "count": 5},
                 {"workspace": "/proj-b", "tag": "shell:run", "count": 2},
@@ -114,7 +114,7 @@ class TestGetToolTagsByWorkspace:
         monkeypatch.setattr("siftd.api.tools.open_database", lambda _p, read_only=False: _Conn())
         monkeypatch.setattr(
             "siftd.api.tools.fetch_tool_tags_by_workspace",
-            lambda _c, _p: [
+            lambda _c, _p, owner=None: [
                 {"workspace": f"/proj-{i}", "tag": "shell:run", "count": 10 - i}
                 for i in range(5)
             ],

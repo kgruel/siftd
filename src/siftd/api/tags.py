@@ -64,6 +64,7 @@ def list_tags(
     *,
     since: str | None = None,
     before: str | None = None,
+    owner: str | None = None,
 ) -> list[TagInfo]:
     """List all tags with usage counts.
 
@@ -83,7 +84,7 @@ def list_tags(
         should_close = True
 
     try:
-        rows = _list_tags(conn, since=since, before=before)
+        rows = _list_tags(conn, since=since, before=before, owner=owner)
         return [
             TagInfo(
                 name=r["name"],
@@ -179,6 +180,7 @@ def modify_conversation_tag(
     *,
     action: str = "apply",
     db_path: Path | None = None,
+    owner: str | None = None,
 ) -> list[str]:
     """Apply or remove a tag on a conversation, returning the updated tag list.
 
@@ -199,7 +201,7 @@ def modify_conversation_tag(
     path = db_path or _db_path()
     conn = _open_database(path)
     try:
-        resolved = resolve_entity_id(conn, "conversation", conversation_id)
+        resolved = resolve_entity_id(conn, "conversation", conversation_id, owner=owner)
         if not resolved:
             return []
 

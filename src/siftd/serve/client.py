@@ -53,6 +53,32 @@ def _conn(target: ServeTarget, timeout_s: float):
     return HTTPConnection(target.host, target.port, timeout=timeout_s)
 
 
+def _resolve_bearer_token() -> str | None:
+    """Resolve a bearer token for serve delegation.
+
+    Precedence:
+    1) Env var: SIFTD_SERVE_TOKEN, then SIFTD_SERVE_DELEGATION_TOKEN
+    2) Config: serve.auth.delegation_token, then serve.auth.static_token
+       (supports env:VAR syntax for both)
+    """
+    env = os.environ.get("SIFTD_SERVE_TOKEN") or os.environ.get("SIFTD_SERVE_DELEGATION_TOKEN")
+    if env:
+        return env
+
+    try:
+        from siftd.config import get_config
+    except Exception:
+        return None
+
+    cfg = get_config("serve.auth.delegation_token") or get_config("serve.auth.static_token")
+    if not cfg:
+        return None
+    cfg = str(cfg)
+    if cfg.startswith("env:"):
+        return os.environ.get(cfg[4:], "") or None
+    return cfg
+
+
 def _get_json(
     base_url: str,
     path: str,
@@ -66,9 +92,14 @@ def _get_json(
     if query:
         full_path = f"{full_path}?{query}"
 
+    headers: dict[str, str] = {"Accept": "application/json"}
+    token = _resolve_bearer_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     conn = _conn(target, timeout_s)
     try:
-        conn.request("GET", full_path, headers={"Accept": "application/json"})
+        conn.request("GET", full_path, headers=headers)
         resp = conn.getresponse()
         raw = resp.read()
     finally:
@@ -99,11 +130,16 @@ def _post_json(
     full_path = f"{target.path_prefix}{path}"
     payload = json.dumps(body).encode("utf-8")
 
+    headers: dict[str, str] = {"Content-Type": "application/json", "Accept": "application/json"}
+    token = _resolve_bearer_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     conn = _conn(target, timeout_s)
     try:
         conn.request(
             "POST", full_path, body=payload,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            headers=headers,
         )
         resp = conn.getresponse()
         raw = resp.read()

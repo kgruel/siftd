@@ -13,10 +13,10 @@ def test_modify_conversation_tag_apply_remove_and_not_found(monkeypatch):
             calls["closed"] = True
 
     monkeypatch.setattr("siftd.api.tags._open_database", lambda path: _Conn())
-    monkeypatch.setattr("siftd.api.conversations.resolve_entity_id", lambda conn, typ, cid: None)
+    monkeypatch.setattr("siftd.api.conversations.resolve_entity_id", lambda conn, typ, cid, owner=None: None)
     assert api_tags.modify_conversation_tag("c", "t") == []
 
-    monkeypatch.setattr("siftd.api.conversations.resolve_entity_id", lambda conn, typ, cid: "conv")
+    monkeypatch.setattr("siftd.api.conversations.resolve_entity_id", lambda conn, typ, cid, owner=None: "conv")
     monkeypatch.setattr("siftd.storage.queries.fetch_conversation_tags", lambda conn, cid: ["t"])
     monkeypatch.setattr("siftd.api.tags._get_or_create_tag", lambda conn, name: "tid")
     monkeypatch.setattr("siftd.api.tags._apply_tag", lambda conn, et, eid, tid: None)

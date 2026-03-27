@@ -12,6 +12,23 @@ from litestar.params import Parameter
 from litestar.response import Response
 
 
+def _effective_owner(request: Request, owner: str | None) -> str | None:
+    """Bind owner filtering to the authenticated identity when auth is enabled.
+
+    When auth middleware is installed, request.user is always present for
+    non-no_auth routes and contains a UserIdentity with .sub.
+    When auth is not installed, request.user access raises — owner remains advisory.
+    """
+    try:
+        user = request.user
+    except Exception:
+        return owner
+    sub = getattr(user, "sub", None)
+    if sub and sub != "anonymous":
+        return sub
+    return owner
+
+
 def _dispatch(
     path: str, method: str, fn: Callable, params: dict[str, Any],
     render_method: str, db: Path,
@@ -29,7 +46,7 @@ def _dispatch(
 
     from painted import Fidelity
 
-    from siftd.api.dispatch import Operation, dispatch
+    from siftd.api.dispatch import Operation, execute, render
     from siftd.serialization import serve_fmt
 
     try:
@@ -37,11 +54,14 @@ def _dispatch(
             path=path, method=method, fn=fn, params=params,
             render_method=render_method, fidelity=Fidelity(), db=db,
         )
-        return dispatch(op, fmt=serve_fmt)
-    except Exception as exc:
+        result = execute(op)
+        if render_method == "detail" and result is None:
+            return Response(content={"error": "conversation not found"}, status_code=404)
+        return render(result, op, fmt=serve_fmt)
+    except Exception:
         logging.getLogger("siftd.serve").exception("dispatch error on %s %s", method, path)
         return Response(
-            content={"error": f"{path} failed: {exc}"},
+            content={"error": f"{path} failed"},
             status_code=500,
         )
 
@@ -73,9 +93,12 @@ async def index() -> dict:
 @get("/api/v1/health", opt={"no_auth": True})
 async def health(db_path: Path) -> dict:
     """Health check — returns DB status."""
+    import hashlib
+
     from siftd.storage.sqlite import open_database
 
     db_path_str = str(db_path.resolve())
+    db_id = hashlib.sha256(db_path_str.encode("utf-8")).hexdigest()
     size_bytes = db_path.stat().st_size if db_path.exists() else 0
     conversations = 0
     if db_path.exists():
@@ -89,47 +112,57 @@ async def health(db_path: Path) -> dict:
     return {
         "service": "siftd",
         "status": "ok",
-        "db_path": db_path_str,
+        "db_id": db_id,
         "db_size_bytes": size_bytes,
         "conversations": conversations,
     }
 
 
 @get("/api/v1/stats")
-async def stats_route(db_path: Path) -> dict | Response:
+async def stats_route(request: Request, db_path: Path) -> dict | Response:
     """Return database statistics. Server has DB warm, so this is fast."""
     from siftd.api.stats import get_stats
 
-    return _dispatch("/api/v1/stats", "GET", get_stats, {"db_path": db_path}, "stats", db_path)
+    owner = _effective_owner(request, None)
+    return _dispatch("/api/v1/stats", "GET", get_stats, {"db_path": db_path, "owner": owner}, "stats", db_path)
 
 
 @get("/api/v1/workspaces")
 async def workspaces_route(
+    request: Request,
     db_path: Path,
     n: int = Parameter(query="n", default=10000),
 ) -> dict | Response:
     """List workspaces with conversation counts."""
     from siftd.api.stats import list_workspaces
 
-    return _dispatch("/api/v1/workspaces", "GET", list_workspaces, {"db_path": db_path, "n": n}, "workspaces", db_path)
+    owner = _effective_owner(request, None)
+    return _dispatch(
+        "/api/v1/workspaces", "GET", list_workspaces,
+        {"db_path": db_path, "n": n, "owner": owner},
+        "workspaces", db_path,
+    )
 
 
 @get("/api/v1/tools")
 async def tools_route(
+    request: Request,
     db_path: Path,
     prefix: str = Parameter(query="prefix", default="shell:"),
 ) -> dict | Response:
     """Tool tag usage summary."""
     from siftd.api.tools import get_tool_tag_summary
 
+    owner = _effective_owner(request, None)
     return _dispatch(
         "/api/v1/tools", "GET", get_tool_tag_summary,
-        {"db_path": db_path, "prefix": prefix}, "tools", db_path,
+        {"db_path": db_path, "prefix": prefix, "owner": owner}, "tools", db_path,
     )
 
 
 @get("/api/v1/tools/workspaces")
 async def tools_by_workspace_route(
+    request: Request,
     db_path: Path,
     prefix: str = Parameter(query="prefix", default="shell:"),
     n: int = Parameter(query="n", default=20),
@@ -137,14 +170,16 @@ async def tools_by_workspace_route(
     """Tool tag usage broken down by workspace."""
     from siftd.api.tools import get_tool_tags_by_workspace
 
+    owner = _effective_owner(request, None)
     return _dispatch(
         "/api/v1/tools/workspaces", "GET", get_tool_tags_by_workspace,
-        {"db_path": db_path, "prefix": prefix, "n": n}, "tools_by_workspace", db_path,
+        {"db_path": db_path, "prefix": prefix, "n": n, "owner": owner}, "tools_by_workspace", db_path,
     )
 
 
 @get("/api/v1/tags")
 async def tags_route(
+    request: Request,
     db_path: Path,
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),
@@ -152,7 +187,12 @@ async def tags_route(
     """List tags with usage counts."""
     from siftd.api.tags import list_tags
 
-    return _dispatch("/api/v1/tags", "GET", list_tags, {"db_path": db_path, "since": since, "before": before}, "tags", db_path)
+    owner = _effective_owner(request, None)
+    return _dispatch(
+        "/api/v1/tags", "GET", list_tags,
+        {"db_path": db_path, "since": since, "before": before, "owner": owner},
+        "tags", db_path,
+    )
 
 
 @post("/api/v1/tag")
@@ -171,6 +211,7 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
     from siftd.serve.auth import require_write
 
     require_write(request)
+    owner = _effective_owner(request, None)
 
     import json as json_mod
 
@@ -193,14 +234,82 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
     conn = open_database(db_path)
 
     try:
+        def _tag_used_by_other_owners(tag_id: str) -> bool:
+            if not owner:
+                return False
+            has_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+            ).fetchone()
+            if not has_table:
+                return False
+
+            # Conversation tags
+            row = conn.execute(
+                "SELECT 1 FROM conversation_tags ct "
+                "JOIN conversation_owners co ON co.conversation_id = ct.conversation_id "
+                "WHERE ct.tag_id = ? AND co.user_id != ? LIMIT 1",
+                (tag_id, owner),
+            ).fetchone()
+            if row:
+                return True
+
+            # Tool call tags
+            row = conn.execute(
+                "SELECT 1 FROM tool_call_tags tt "
+                "JOIN tool_calls tc ON tc.id = tt.tool_call_id "
+                "JOIN conversation_owners co ON co.conversation_id = tc.conversation_id "
+                "WHERE tt.tag_id = ? AND co.user_id != ? LIMIT 1",
+                (tag_id, owner),
+            ).fetchone()
+            if row:
+                return True
+
+            # Workspace tags (conservative: if a tagged workspace has any conversations owned by
+            # another user, treat it as cross-tenant and deny rename/delete).
+            row = conn.execute(
+                "SELECT 1 FROM workspace_tags wt "
+                "JOIN conversations c ON c.workspace_id = wt.workspace_id "
+                "JOIN conversation_owners co ON co.conversation_id = c.id "
+                "WHERE wt.tag_id = ? AND co.user_id != ? LIMIT 1",
+                (tag_id, owner),
+            ).fetchone()
+            if row:
+                return True
+
+            # prompt_tags may not exist
+            if conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags'"
+            ).fetchone():
+                row = conn.execute(
+                    "SELECT 1 FROM prompt_tags pt "
+                    "JOIN prompts p ON p.id = pt.prompt_id "
+                    "JOIN conversation_owners co ON co.conversation_id = p.conversation_id "
+                    "WHERE pt.tag_id = ? AND co.user_id != ? LIMIT 1",
+                    (tag_id, owner),
+                ).fetchone()
+                if row:
+                    return True
+
+            return False
+
         if action == "rename":
+            from litestar.exceptions import PermissionDeniedException
+
             old_name = body["old_name"]
             new_name = body["new_name"]
+            tag_id = get_tag_id(conn, old_name)
+            if tag_id and _tag_used_by_other_owners(tag_id):
+                raise PermissionDeniedException("tag is in use by another owner")
             rename_tag(old_name, new_name, conn=conn, commit=True)
             return {"status": "renamed", "old_name": old_name, "new_name": new_name}
 
         if action == "delete":
+            from litestar.exceptions import PermissionDeniedException
+
             tag_name = body["tag_name"]
+            tag_id = get_tag_id(conn, tag_name)
+            if tag_id and _tag_used_by_other_owners(tag_id):
+                raise PermissionDeniedException("tag is in use by another owner")
             delete_tag(conn, tag_name, commit=True)
             return {"status": "deleted", "tag_name": tag_name}
 
@@ -210,10 +319,15 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
         entity_id = body.get("entity_id")
         last_n = body.get("last")
 
+        if owner and entity_type != "conversation":
+            from litestar.exceptions import PermissionDeniedException
+
+            raise PermissionDeniedException("tag mutation is only supported for conversations when auth is enabled")
+
         if last_n:
-            ids = get_recent_conversation_ids(conn, int(last_n))
+            ids = get_recent_conversation_ids(conn, int(last_n), owner=owner)
         elif entity_id:
-            resolved = resolve_entity_id(conn, entity_type, entity_id)
+            resolved = resolve_entity_id(conn, entity_type, entity_id, owner=owner)
             ids = [resolved] if resolved else []
         else:
             return {"error": "entity_id or last required"}
@@ -252,6 +366,7 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
 
 @get("/api/v1/tool-search")
 async def tool_search_route(
+    request: Request,
     db_path: Path,
     q: str = Parameter(query="q"),
     workspace: str | None = Parameter(query="workspace", default=None),
@@ -269,6 +384,7 @@ async def tool_search_route(
     """Search tool calls via FTS."""
     from siftd.api.tool_search import search_tool_calls
 
+    owner = _effective_owner(request, owner)
     return _dispatch(
         "/api/v1/tool-search", "GET", search_tool_calls,
         {"q": q, "db_path": db_path, "n": n, "workspace": workspace, "model": model,
@@ -280,6 +396,7 @@ async def tool_search_route(
 
 @get("/api/v1/export")
 async def export_route(
+    request: Request,
     db_path: Path,
     id: list[str] | None = Parameter(query="id", default=None),
     workspace: str | None = Parameter(query="workspace", default=None),
@@ -293,6 +410,7 @@ async def export_route(
     """Export full conversation data."""
     from siftd.api.export import export_conversations
 
+    owner = _effective_owner(request, owner)
     return _dispatch(
         "/api/v1/export", "GET", export_conversations,
         {"id": id, "workspace": workspace, "since": since, "before": before,
@@ -363,6 +481,7 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
 
 @get("/api/v1/pull")
 async def pull(
+    request: Request,
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
     since: str | None = Parameter(query="since", default=None),
@@ -375,6 +494,7 @@ async def pull(
     """Slice and stream the team DB based on filters."""
     from siftd.api.slice import slice_database
 
+    owner = _effective_owner(request, owner)
     with tempfile.TemporaryDirectory(prefix="siftd-serve-pull-") as tmp_dir:
         slice_path = Path(tmp_dir) / "pull-slice.db"
         result = slice_database(
@@ -421,6 +541,11 @@ async def sync_status_route(db_path: Path) -> dict:
     from siftd.domain.sync import SYNC_CAPABILITIES, SYNC_PROTOCOL_VERSION
 
     inbox = get_inbox_status(db_path)
+    # Redact potentially sensitive error strings on the public status endpoint.
+    if isinstance(inbox, dict):
+        last = inbox.get("last")
+        if isinstance(last, dict):
+            last.pop("error", None)
     return {
         "capabilities": sorted(SYNC_CAPABILITIES),
         "inbox": inbox,
@@ -430,6 +555,7 @@ async def sync_status_route(db_path: Path) -> dict:
 
 @get("/api/v1/conversations/{id:str}")
 async def conversation_detail(
+    request: Request,
     db_path: Path,
     id: str,
     include_thinking: bool = Parameter(query="include_thinking", default=False),
@@ -439,16 +565,18 @@ async def conversation_detail(
     """Get a single conversation by ID (supports prefix match)."""
     from siftd.api.conversations import get_conversation
 
+    owner = _effective_owner(request, None)
     return _dispatch(
         "/api/v1/conversations", "GET", get_conversation,
         {"id": id, "db_path": db_path, "include_thinking": include_thinking,
-         "include_tool_content": include_tool_content, "tool_filter": tool_filter},
+         "include_tool_content": include_tool_content, "tool_filter": tool_filter, "owner": owner},
         "detail", db_path,
     )
 
 
 @get("/api/v1/conversations")
 async def conversation_list(
+    request: Request,
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
     since: str | None = Parameter(query="since", default=None),
@@ -467,6 +595,7 @@ async def conversation_list(
     """List conversations with filtering."""
     from siftd.api.conversations import list_conversations
 
+    owner = _effective_owner(request, owner)
     return _dispatch(
         "/api/v1/conversations", "GET", list_conversations,
         {"db_path": db_path, "workspace": workspace, "model": model,
@@ -479,6 +608,7 @@ async def conversation_list(
 
 @get("/api/v1/search")
 async def search_route(
+    request: Request,
     db_path: Path,
     q: str = Parameter(query="q"),
     workspace: str | None = Parameter(query="workspace", default=None),
@@ -511,6 +641,7 @@ async def search_route(
             status_code=501,
         )
 
+    owner = _effective_owner(request, owner)
     mode = "semantic" if embeddings_only else "hybrid"
     try:
         return _dispatch(
@@ -527,10 +658,13 @@ async def search_route(
              "owner": owner},
             "search", db_path,
         )
-    except Exception as e:
+    except Exception:
+        import logging
+
+        logging.getLogger("siftd.serve").exception("search error")
         return Response(
-            content={"error": f"search failed: {e}"},
-            status_code=501,
+            content={"error": "search failed"},
+            status_code=500,
         )
 
 

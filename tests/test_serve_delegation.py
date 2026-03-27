@@ -147,7 +147,7 @@ class TestTryDelegate:
             with patch("siftd.serve.client.probe_health", return_value={
                 "service": "siftd",
                 "status": "ok",
-                "db_path": "/wrong/path.db",
+                "db_id": "not-the-right-db",
             }):
                 db = tmp_path / "test.db"
                 db.touch()

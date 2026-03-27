@@ -109,7 +109,7 @@ def _stamp_ownership(
     user_id: str,
     push_id: str | None = None,
 ) -> None:
-    """Insert or replace ownership for given conversation IDs."""
+    """Stamp ownership for conversations, preserving any existing owner."""
     if not conversation_ids:
         return
 
@@ -119,7 +119,7 @@ def _stamp_ownership(
     try:
         now = datetime.now(UTC).isoformat()
         conn.executemany(
-            "INSERT OR REPLACE INTO conversation_owners "
+            "INSERT OR IGNORE INTO conversation_owners "
             "(conversation_id, user_id, push_id, assigned_at) "
             "VALUES (?, ?, ?, ?)",
             [(cid, user_id, push_id, now) for cid in conversation_ids],

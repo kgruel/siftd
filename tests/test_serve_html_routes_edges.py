@@ -43,7 +43,7 @@ def test_ui_meta_handles_data_source_failures(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.stats.list_workspaces", lambda **k: (_ for _ in ()).throw(RuntimeError("x")))
     monkeypatch.setattr("siftd.api.tags.list_tags", lambda **k: (_ for _ in ()).throw(RuntimeError("x")))
 
-    resp = _run(hr.ui_meta.fn(tmp_path / "db.db"))
+    resp = _run(hr.ui_meta.fn(object(), tmp_path / "db.db"))
 
     assert resp.media_type == "text/html"
     assert "<select" in resp.content and 'name="workspace"' in resp.content

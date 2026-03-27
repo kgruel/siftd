@@ -82,7 +82,7 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     _SchemaEntry("serve.db", "string", _is_str,
                  "Database path for serve (overrides db.path)", ""),
     _SchemaEntry("serve.host", "string", _is_str,
-                 "Bind address", "0.0.0.0"),
+                 "Bind address", "127.0.0.1"),
     _SchemaEntry("serve.port", "int", _is_int_like,
                  "Listen port", "8484"),
     _SchemaEntry("serve.fts_rebuild", "string", _is_str,
@@ -90,6 +90,8 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     # Serve auth — static_token, OIDC, or introspection
     _SchemaEntry("serve.auth.static_token", "string", _is_str,
                  "Static bearer token for auth (supports env:VAR syntax)", ""),
+    _SchemaEntry("serve.auth.delegation_token", "string", _is_str,
+                 "Bearer token used by the CLI delegation client (supports env:VAR syntax)", ""),
     _SchemaEntry("serve.auth.identity", "string", _is_str,
                  "User identity for static_token mode", "local"),
     _SchemaEntry("serve.auth.issuer", "string", _is_str,

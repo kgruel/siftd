@@ -32,18 +32,18 @@ class _Fmt:
 def test_ui_query_detail_none_and_success(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: None)
-    not_found = _run(hr.ui_query.fn(tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", tools=False, thinking=False, full=False, brief=False))
+    not_found = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", tools=False, thinking=False, full=False, brief=False))
     assert "Not found" in not_found.content
 
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: {"id": "abc"})
-    ok = _run(hr.ui_query.fn(tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", tools=False, thinking=False, full=True, brief=False))
+    ok = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", tools=False, thinking=False, full=True, brief=False))
     assert "<detail/>" in ok.content
 
 
 def test_ui_query_list_path(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
     monkeypatch.setattr("siftd.api.dispatch.dispatch", lambda _op, fmt: "<list/>")
-    out = _run(hr.ui_query.fn(tmp_path / "db.db", workspace="", since=None, before=None, model="", tag=[""], search="", owner=None, n=5, id=None, tools=False, thinking=False, full=False, brief=False))
+    out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace="", since=None, before=None, model="", tag=[""], search="", owner=None, n=5, id=None, tools=False, thinking=False, full=False, brief=False))
     assert "<list/>" in out.content
 
 
@@ -122,14 +122,14 @@ def test_ui_stats_tools_tag_suggest_and_export(monkeypatch, tmp_path):
     assert "conversation-list" in _run(hr.ui_tools.fn(db, q="abc", n=30)).content
 
     monkeypatch.setattr("siftd.api.tags.list_tags", lambda **_k: [SimpleNamespace(name="alpha"), SimpleNamespace(name="beta")])
-    assert "alpha" in _run(hr.ui_tags_suggest.fn(db, tag="a")).content
-    assert "No conversation ID" in _run(hr.ui_export.fn(db, id="", format="md")).content
+    assert "alpha" in _run(hr.ui_tags_suggest.fn(SimpleNamespace(), db, tag="a")).content
+    assert "No conversation ID" in _run(hr.ui_export.fn(SimpleNamespace(), db, id="", format="md")).content
 
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: SimpleNamespace(count=0))
-    assert "Not found" in _run(hr.ui_export.fn(db, id="abc", format="md")).content
+    assert "Not found" in _run(hr.ui_export.fn(SimpleNamespace(), db, id="abc", format="md")).content
 
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: SimpleNamespace(count=1, content="x", media_type="text/plain", filename="x.txt"))
-    ex = _run(hr.ui_export.fn(db, id="abc", format="md"))
+    ex = _run(hr.ui_export.fn(SimpleNamespace(), db, id="abc", format="md"))
     assert "attachment" in ex.headers.get("Content-Disposition", "") and ex.media_type == "text/plain"
 
 
@@ -146,14 +146,14 @@ def test_ui_meta_populates_non_empty_options(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: SimpleNamespace(models=["m1"]))
     monkeypatch.setattr("siftd.api.stats.list_workspaces", lambda **k: [{"path": "/w1"}])
     monkeypatch.setattr("siftd.api.tags.list_tags", lambda **k: [SimpleNamespace(name="tag1")])
-    out = _run(hr.ui_meta.fn(tmp_path / "db.db"))
+    out = _run(hr.ui_meta.fn(SimpleNamespace(), tmp_path / "db.db"))
     assert "/w1" in out.content and "tag1" in out.content and "m1" in out.content
 
 
 def test_ui_query_brief_fidelity_branch(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: {"id": "abc"})
-    out = _run(hr.ui_query.fn(tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", tools=False, thinking=False, full=False, brief=True))
+    out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", tools=False, thinking=False, full=False, brief=True))
     assert "<detail/>" in out.content
 
 
