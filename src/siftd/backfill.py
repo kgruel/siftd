@@ -301,7 +301,7 @@ def backfill_filter_binary(conn: sqlite3.Connection, *, dry_run: bool = False) -
         Dict with counts: filtered, skipped, errors
     """
     from siftd.content.filters import filter_tool_result_binary
-    from siftd.storage.blobs import compute_content_hash, store_content
+    from siftd.storage.blobs import compute_content_hash
 
     stats = {"filtered": 0, "skipped": 0, "errors": 0}
 
@@ -342,47 +342,28 @@ def backfill_filter_binary(conn: sqlite3.Connection, *, dry_run: bool = False) -
             continue
 
         if not dry_run:
-            # Store the filtered content
-            store_content(conn, filtered_json)
+            # Insert blob with ref_count=0; the AFTER UPDATE trigger on
+            # tool_calls.result_hash handles all ref_count bookkeeping.
+            from datetime import datetime
+
+            conn.execute(
+                "INSERT INTO content_blobs (hash, content, ref_count, created_at) "
+                "VALUES (?, ?, 0, ?) "
+                "ON CONFLICT(hash) DO NOTHING",
+                (new_hash, filtered_json, datetime.now().isoformat()),
+            )
             hash_mapping[old_hash] = new_hash
 
         stats["filtered"] += 1
 
-    # Update tool_calls to point to new hashes, adjusting ref_counts properly
+    # Update tool_calls to point to new hashes — the AFTER UPDATE trigger
+    # decrements old blob ref_count and increments new blob ref_count for
+    # each row, then garbage-collects blobs that reach ref_count <= 0.
     if not dry_run and hash_mapping:
         for old_hash, new_hash in hash_mapping.items():
-            # Count how many tool_calls reference this old hash
-            cur = conn.execute(
-                "SELECT COUNT(*) FROM tool_calls WHERE result_hash = ?",
-                (old_hash,)
-            )
-            ref_count = cur.fetchone()[0]
-
-            if ref_count == 0:
-                continue
-
-            # Update all tool_calls to point to new hash
             conn.execute(
                 "UPDATE tool_calls SET result_hash = ? WHERE result_hash = ?",
-                (new_hash, old_hash)
-            )
-
-            # Adjust ref_counts: decrement old blob by actual count,
-            # increment new blob by (count - 1) since store_content already added 1
-            conn.execute(
-                "UPDATE content_blobs SET ref_count = ref_count - ? WHERE hash = ?",
-                (ref_count, old_hash)
-            )
-            if ref_count > 1:
-                conn.execute(
-                    "UPDATE content_blobs SET ref_count = ref_count + ? WHERE hash = ?",
-                    (ref_count - 1, new_hash)
-                )
-
-            # Clean up orphaned blobs (ref_count <= 0)
-            conn.execute(
-                "DELETE FROM content_blobs WHERE hash = ? AND ref_count <= 0",
-                (old_hash,)
+                (new_hash, old_hash),
             )
 
         conn.commit()

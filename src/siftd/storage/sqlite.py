@@ -526,6 +526,26 @@ def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
             END
         """)
 
+    # Create trigger for ref_count adjustment when result_hash changes
+    cur = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='tr_tool_calls_update_release_blob'"
+    )
+    if not cur.fetchone():
+        conn.execute("""
+            CREATE TRIGGER tr_tool_calls_update_release_blob
+            AFTER UPDATE OF result_hash ON tool_calls
+            FOR EACH ROW
+            WHEN OLD.result_hash IS NOT NEW.result_hash
+            BEGIN
+                UPDATE content_blobs SET ref_count = ref_count - 1
+                    WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
+                DELETE FROM content_blobs
+                    WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
+                UPDATE content_blobs SET ref_count = ref_count + 1
+                    WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
+            END
+        """)
+
     conn.commit()
 
 

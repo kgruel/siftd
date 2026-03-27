@@ -8,6 +8,8 @@ INSERT OR IGNORE so UNIQUE constraints handle dedup naturally.
 
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 from siftd.storage.sql_helpers import has_conversation_owners_table
@@ -21,6 +23,7 @@ def merge_database(
     rebuild_fts: bool = True,
     dry_run: bool = False,
     replace: bool = True,
+    before_commit: Callable[[sqlite3.Connection, dict], None] | None = None,
 ) -> dict:
     """Merge a source database (slice) into the target database.
 
@@ -31,6 +34,9 @@ def merge_database(
         dry_run: If True, compute counts but roll back all changes.
         replace: If True (default), replace stale conversations with newer
             versions from the source. If False, keep existing versions.
+        before_commit: Optional callback(conn, stats) invoked after merge
+            but before commit.  Runs in the same transaction as the merge,
+            so any writes are atomic with the merge itself.
 
     Returns:
         Dict with counts of merged entities.
@@ -85,6 +91,9 @@ def merge_database(
                     f"Foreign key violations after merge (tables: {', '.join(sorted(tables))}). "
                     "This may indicate a schema mismatch — please report this bug."
                 )
+
+        if before_commit and not dry_run:
+            before_commit(conn, stats)
 
         if dry_run:
             conn.execute("ROLLBACK TO merge_dry_run")

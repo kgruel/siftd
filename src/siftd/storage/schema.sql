@@ -307,6 +307,22 @@ BEGIN
     DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count = 0;
 END;
 
+-- Trigger to adjust ref_count when result_hash changes (e.g. blob migration)
+CREATE TRIGGER tr_tool_calls_update_release_blob
+AFTER UPDATE OF result_hash ON tool_calls
+FOR EACH ROW
+WHEN OLD.result_hash IS NOT NEW.result_hash
+BEGIN
+    -- Decrement old blob (if any)
+    UPDATE content_blobs SET ref_count = ref_count - 1
+        WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
+    DELETE FROM content_blobs
+        WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
+    -- Increment new blob (if any)
+    UPDATE content_blobs SET ref_count = ref_count + 1
+        WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
+END;
+
 --------------------------------------------------------------------------------
 -- SYNC INBOX
 -- Tracks staged payloads from push operations pending merge

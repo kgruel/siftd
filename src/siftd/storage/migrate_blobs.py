@@ -3,6 +3,12 @@
 Migrates inline result content to deduplicated blob storage in batches.
 Designed to be run offline or as a background task.
 
+Uses trigger-based ref_count management: blobs are inserted with ref_count=0,
+and the AFTER UPDATE trigger on tool_calls.result_hash increments ref_count
+when the hash is set.  This is safe under concurrent execution — if two
+migrators process the same row, only the first UPDATE changes result_hash
+from NULL, so the trigger fires exactly once.
+
 Usage:
     from siftd.storage.migrate_blobs import migrate_existing_results
     migrate_existing_results(conn, batch_size=1000, on_progress=print)
@@ -10,8 +16,9 @@ Usage:
 
 import sqlite3
 from collections.abc import Callable
+from datetime import datetime
 
-from siftd.storage.blobs import store_content
+from siftd.storage.blobs import compute_content_hash
 
 
 def count_pending_migrations(conn: sqlite3.Connection) -> dict:
@@ -67,6 +74,11 @@ def migrate_existing_results(
 ) -> dict:
     """Migrate existing tool_calls.result to content_blobs.
 
+    Blobs are inserted with ref_count=0 and ON CONFLICT DO NOTHING.
+    The AFTER UPDATE trigger on tool_calls.result_hash handles ref_count
+    bookkeeping, ensuring exactly-once increment even under concurrent
+    execution.
+
     Args:
         conn: Database connection
         batch_size: Number of rows to process per batch
@@ -102,6 +114,8 @@ def migrate_existing_results(
     cur = conn.execute("SELECT hash FROM content_blobs")
     existing_hashes = {row[0] for row in cur.fetchall()}
 
+    now = datetime.now().isoformat()
+
     while True:
         # Fetch batch
         cur = conn.execute("""
@@ -120,8 +134,17 @@ def migrate_existing_results(
 
             stats["bytes_before"] += len(result.encode("utf-8"))
 
-            # Store in blob (increments ref_count if exists)
-            result_hash = store_content(conn, result)
+            result_hash = compute_content_hash(result)
+
+            # Insert blob with ref_count=0; trigger handles increment.
+            # ON CONFLICT DO NOTHING — blob may already exist from a
+            # prior batch or concurrent migrator.
+            conn.execute(
+                "INSERT INTO content_blobs (hash, content, ref_count, created_at) "
+                "VALUES (?, ?, 0, ?) "
+                "ON CONFLICT(hash) DO NOTHING",
+                (result_hash, result, now),
+            )
 
             # Track new vs reused blobs
             if result_hash not in existing_hashes:
@@ -130,12 +153,14 @@ def migrate_existing_results(
             else:
                 stats["blobs_reused"] += 1
 
-            # Update tool_call to use hash, clear inline result
-            conn.execute("""
-                UPDATE tool_calls
-                SET result_hash = ?, result = NULL
-                WHERE id = ?
-            """, (result_hash, tool_call_id))
+            # Update tool_call — the AFTER UPDATE trigger on result_hash
+            # increments the blob's ref_count exactly once.
+            conn.execute(
+                "UPDATE tool_calls "
+                "SET result_hash = ?, result = NULL "
+                "WHERE id = ? AND result_hash IS NULL",
+                (result_hash, tool_call_id),
+            )
 
             stats["migrated"] += 1
 

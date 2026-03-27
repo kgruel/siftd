@@ -53,16 +53,18 @@ def receive_database(
 
     from siftd.api.merge import merge_database
 
-    result = merge_database(target_db, source_path, rebuild_fts=rebuild_fts)
-    result["status"] = "merged"
+    def _on_before_commit(conn, stats):
+        if user_id:
+            owned_ids = stats.get("new_conversation_ids", [])
+            _stamp_ownership_conn(conn, owned_ids, user_id, push_id)
+            stats["owned"] = len(owned_ids)
 
-    if user_id:
-        # new_conversation_ids is a superset of replaced_conversation_ids
-        # (replacements delete the stale target before the snapshot, so the
-        # source rows appear as new in the diff).  No need to concatenate.
-        owned_ids = result.get("new_conversation_ids", [])
-        _stamp_ownership(target_db, owned_ids, user_id, push_id)
-        result["owned"] = len(owned_ids)
+    result = merge_database(
+        target_db, source_path,
+        rebuild_fts=rebuild_fts,
+        before_commit=_on_before_commit,
+    )
+    result["status"] = "merged"
 
     return result
 
@@ -103,6 +105,24 @@ def _all_conversation_ids(db_path: Path) -> list[str]:
         conn.close()
 
 
+def _stamp_ownership_conn(
+    conn,
+    conversation_ids: list[str],
+    user_id: str,
+    push_id: str | None = None,
+) -> None:
+    """Stamp ownership on a connection. Does not commit — caller controls the transaction."""
+    if not conversation_ids:
+        return
+    now = datetime.now(UTC).isoformat()
+    conn.executemany(
+        "INSERT OR IGNORE INTO conversation_owners "
+        "(conversation_id, user_id, push_id, assigned_at) "
+        "VALUES (?, ?, ?, ?)",
+        [(cid, user_id, push_id, now) for cid in conversation_ids],
+    )
+
+
 def _stamp_ownership(
     db_path: Path,
     conversation_ids: list[str],
@@ -117,13 +137,7 @@ def _stamp_ownership(
 
     conn = open_database(db_path)
     try:
-        now = datetime.now(UTC).isoformat()
-        conn.executemany(
-            "INSERT OR IGNORE INTO conversation_owners "
-            "(conversation_id, user_id, push_id, assigned_at) "
-            "VALUES (?, ?, ?, ?)",
-            [(cid, user_id, push_id, now) for cid in conversation_ids],
-        )
+        _stamp_ownership_conn(conn, conversation_ids, user_id, push_id)
         conn.commit()
     finally:
         conn.close()
