@@ -409,6 +409,7 @@ async def ui_query(
 
 @get("/search")
 async def ui_search(
+    request: Request,
     db_path: Path,
     q: str = Parameter(query="q", default=""),
     mode: str = Parameter(query="mode", default="chunks"),
@@ -422,6 +423,8 @@ async def ui_search(
 
     from siftd.api.dispatch import Operation, execute
     from siftd.output.format_registry import get_format
+
+    owner = _effective_owner(request, None)
 
     if not q.strip():
         return _html_response('<p class="empty">Type to search...</p>')
@@ -455,7 +458,7 @@ async def ui_search(
             path="/api/v1/search",
             method="GET",
             fn=hybrid_search,
-            params={"q": q, "db_path": db_path, "n": 30},
+            params={"q": q, "db_path": db_path, "n": 30, "owner": owner},
             render_method="search",
             fidelity=_fidelity(),
             db=db_path,
@@ -500,7 +503,7 @@ async def ui_search(
         path="/api/v1/conversations",
         method="GET",
         fn=list_conversations,
-        params={"db_path": db_path, "search": q, "n": 20},
+        params={"db_path": db_path, "search": q, "n": 20, "owner": owner},
         render_method="list",
         fidelity=_fidelity(),
         db=db_path,
@@ -645,7 +648,7 @@ async def ui_follow(
 
 
 @get("/stats")
-async def ui_stats(db_path: Path) -> Response:
+async def ui_stats(request: Request, db_path: Path) -> Response:
     """Render cost/token dashboard as HTML fragment."""
     from siftd.api.dispatch import Operation, execute
     from siftd.api.stats import (
@@ -657,11 +660,13 @@ async def ui_stats(db_path: Path) -> Response:
     )
     from siftd.output.format_registry import get_format
 
+    owner = _effective_owner(request, None)
+
     op = Operation(
         path="/api/v1/stats",
         method="GET",
         fn=get_stats,
-        params={"db_path": db_path},
+        params={"db_path": db_path, "owner": owner},
         render_method="stats",
         fidelity=_fidelity(),
         db=db_path,
@@ -710,6 +715,7 @@ async def ui_stats(db_path: Path) -> Response:
 
 @get("/tools")
 async def ui_tools(
+    request: Request,
     db_path: Path,
     q: str = Parameter(query="q", default=""),
     n: int = Parameter(query="n", default=30),
@@ -720,6 +726,8 @@ async def ui_tools(
     from siftd.api.dispatch import Operation, execute
     from siftd.api.tool_search import search_tool_calls
     from siftd.output.common import fmt_timestamp, fmt_workspace
+
+    owner = _effective_owner(request, None)
 
     # Search input (always shown)
     input_html = (
@@ -740,7 +748,7 @@ async def ui_tools(
         path="/api/v1/tool-search",
         method="GET",
         fn=search_tool_calls,
-        params={"q": q, "db_path": db_path, "n": n},
+        params={"q": q, "db_path": db_path, "n": n, "owner": owner},
         render_method="raw",
         fidelity=_fidelity(),
         db=db_path,
