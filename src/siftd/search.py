@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from siftd.storage.filters import WhereBuilder
-from siftd.storage.sql_helpers import batched_in_query
+from siftd.storage.sql_helpers import batched_in_query, has_conversation_owners_table
 from siftd.storage.sqlite import open_database
 
 # Hard cap on MMR candidates to prevent unbounded memory usage.
@@ -795,9 +795,7 @@ def _filter_conversations_conn(
     if not any([workspace, model, since, before, tags, all_tags, exclude_tags, owner]):
         return None
 
-    if owner and not conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-    ).fetchone():
+    if owner and not has_conversation_owners_table(conn):
         return set()
 
     wb = WhereBuilder()

@@ -12,7 +12,11 @@ The API layer handles parameter validation and dataclass mapping.
 import sqlite3
 from dataclasses import dataclass
 
-from siftd.storage.sql_helpers import batched_in_query
+from siftd.storage.sql_helpers import (
+    batched_in_query,
+    has_conversation_owners_table,
+    owner_predicate,
+)
 
 
 @dataclass
@@ -507,56 +511,170 @@ def fetch_tags_for_conversations(
 # =============================================================================
 
 
-def fetch_table_count(conn: sqlite3.Connection, table_name: str) -> int:
-    """Get row count for a table."""
-    return conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+def fetch_table_count(
+    conn: sqlite3.Connection,
+    table_name: str,
+    *,
+    owner: str | None = None,
+) -> int:
+    """Get a row count for a table, optionally scoped to an owner.
+
+    When owner is provided, counts are computed in a tenant-safe way (e.g. distinct
+    vocabulary "in use" vs total rows) to avoid leaking cross-tenant metadata.
+    """
+    if owner and not has_conversation_owners_table(conn):
+        return 0
+    if not owner:
+        return conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+
+    if table_name == "conversations":
+        return conn.execute(
+            f"SELECT COUNT(*) FROM conversations c WHERE {owner_predicate('c.id')}",
+            (owner,),
+        ).fetchone()[0]
+    if table_name == "prompts":
+        return conn.execute(
+            f"SELECT COUNT(*) FROM prompts p WHERE {owner_predicate('p.conversation_id')}",
+            (owner,),
+        ).fetchone()[0]
+    if table_name == "responses":
+        return conn.execute(
+            f"SELECT COUNT(*) FROM responses r WHERE {owner_predicate('r.conversation_id')}",
+            (owner,),
+        ).fetchone()[0]
+    if table_name == "tool_calls":
+        return conn.execute(
+            f"SELECT COUNT(*) FROM tool_calls tc WHERE {owner_predicate('tc.conversation_id')}",
+            (owner,),
+        ).fetchone()[0]
+    if table_name == "harnesses":
+        return conn.execute(
+            f"SELECT COUNT(DISTINCT c.harness_id) FROM conversations c "
+            f"WHERE c.harness_id IS NOT NULL AND {owner_predicate('c.id')}",
+            (owner,),
+        ).fetchone()[0]
+    if table_name == "workspaces":
+        return conn.execute(
+            f"SELECT COUNT(DISTINCT c.workspace_id) FROM conversations c "
+            f"WHERE c.workspace_id IS NOT NULL AND {owner_predicate('c.id')}",
+            (owner,),
+        ).fetchone()[0]
+    if table_name == "tools":
+        return conn.execute(
+            f"SELECT COUNT(DISTINCT tc.tool_id) FROM tool_calls tc "
+            f"WHERE tc.tool_id IS NOT NULL AND {owner_predicate('tc.conversation_id')}",
+            (owner,),
+        ).fetchone()[0]
+    if table_name == "models":
+        return conn.execute(
+            f"SELECT COUNT(DISTINCT r.model_id) FROM responses r "
+            f"WHERE r.model_id IS NOT NULL AND {owner_predicate('r.conversation_id')}",
+            (owner,),
+        ).fetchone()[0]
+    if table_name == "ingested_files":
+        return conn.execute(
+            f"SELECT COUNT(*) FROM ingested_files f WHERE {owner_predicate('f.conversation_id')}",
+            (owner,),
+        ).fetchone()[0]
+
+    raise ValueError(f"Unsupported owner-scoped count table: {table_name}")
 
 
-def fetch_harnesses(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Fetch all harness records."""
+def fetch_harnesses(conn: sqlite3.Connection, *, owner: str | None = None) -> list[sqlite3.Row]:
+    """Fetch all harness records, optionally scoped to an owner."""
+    if owner and not has_conversation_owners_table(conn):
+        return []
+    if owner:
+        return conn.execute(
+            f"SELECT DISTINCT h.name, h.source, h.log_format "
+            f"FROM harnesses h "
+            f"JOIN conversations c ON c.harness_id = h.id "
+            f"WHERE {owner_predicate('c.id')} "
+            f"ORDER BY h.name",
+            (owner,),
+        ).fetchall()
     return conn.execute("SELECT name, source, log_format FROM harnesses").fetchall()
 
 
 def fetch_top_workspaces(
     conn: sqlite3.Connection,
     limit: int = 10,
+    *,
+    owner: str | None = None,
 ) -> list[sqlite3.Row]:
     """Fetch workspaces with conversation counts and last activity.
 
     Uses subquery pattern: aggregate first on indexed column (workspace_id),
     then join only the top N rows with the workspaces table for paths.
     """
+    if owner and not has_conversation_owners_table(conn):
+        return []
+    owner_where = ""
+    owner_params: tuple[object, ...] = ()
+    join_type = "JOIN"
+    if owner:
+        join_type = "LEFT JOIN"
+        owner_where = f"WHERE {owner_predicate('c.id')}"
+        owner_params = (owner,)
     return conn.execute(
-        """
+        f"""
         SELECT w.path, counts.convs, counts.last_activity
         FROM (
             SELECT
-                workspace_id,
+                c.workspace_id,
                 COUNT(*) as convs,
-                MAX(COALESCE(ended_at, started_at)) as last_activity
-            FROM conversations
-            GROUP BY workspace_id
+                MAX(COALESCE(c.ended_at, c.started_at)) as last_activity
+            FROM conversations c
+            {owner_where}
+            GROUP BY c.workspace_id
             ORDER BY convs DESC
             LIMIT ?
         ) counts
-        JOIN workspaces w ON w.id = counts.workspace_id
+        {join_type} workspaces w ON w.id = counts.workspace_id
         ORDER BY counts.convs DESC
         """,
-        (limit,),
+        (*owner_params, limit),
     ).fetchall()
 
 
-def fetch_conversation_time_window(conn: sqlite3.Connection) -> tuple[str | None, str | None]:
-    """Fetch earliest and latest conversation start times."""
-    row = conn.execute(
-        "SELECT MIN(started_at) AS earliest, MAX(started_at) AS latest FROM conversations"
-    ).fetchone()
+def fetch_conversation_time_window(
+    conn: sqlite3.Connection,
+    *,
+    owner: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Fetch earliest and latest conversation start times, optionally scoped to an owner."""
+    if owner and not has_conversation_owners_table(conn):
+        return None, None
+    sql = "SELECT MIN(started_at) AS earliest, MAX(started_at) AS latest FROM conversations c"
+    params: tuple[object, ...] = ()
+    if owner:
+        sql += f" WHERE {owner_predicate('c.id')}"
+        params = (owner,)
+    row = conn.execute(sql, params).fetchone()
     # Aggregate queries always return a row; values are None on empty table
     return row["earliest"], row["latest"]
 
 
-def fetch_harness_conversation_counts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Fetch conversation counts per harness."""
+def fetch_harness_conversation_counts(
+    conn: sqlite3.Connection,
+    *,
+    owner: str | None = None,
+) -> list[sqlite3.Row]:
+    """Fetch conversation counts per harness, optionally scoped to an owner."""
+    if owner and not has_conversation_owners_table(conn):
+        return []
+    if owner:
+        return conn.execute(
+            f"""
+            SELECT h.name, COUNT(c.id) AS conversations
+            FROM harnesses h
+            JOIN conversations c ON c.harness_id = h.id
+            WHERE {owner_predicate('c.id')}
+            GROUP BY h.id
+            ORDER BY conversations DESC, h.name
+            """,
+            (owner,),
+        ).fetchall()
     return conn.execute(
         """
         SELECT h.name, COUNT(c.id) AS conversations
@@ -571,32 +689,59 @@ def fetch_harness_conversation_counts(conn: sqlite3.Connection) -> list[sqlite3.
 def fetch_top_conversation_tags(
     conn: sqlite3.Connection,
     limit: int = 5,
+    *,
+    owner: str | None = None,
 ) -> list[sqlite3.Row]:
     """Fetch top conversation tags by usage."""
+    if owner and not has_conversation_owners_table(conn):
+        return []
+    where_sql = ""
+    params: list[object] = [limit]
+    if owner:
+        where_sql = f"WHERE {owner_predicate('ct.conversation_id')}"
+        params = [owner, limit]
     return conn.execute(
-        """
+        f"""
         SELECT t.name, COUNT(ct.id) AS count
         FROM tags t
         JOIN conversation_tags ct ON ct.tag_id = t.id
+        {where_sql}
         GROUP BY t.id
         ORDER BY count DESC, t.name
         LIMIT ?
         """,
-        (limit,),
+        params,
     ).fetchall()
 
 
-def fetch_last_ingest_time(conn: sqlite3.Connection) -> str | None:
-    """Fetch the most recent ingest timestamp."""
-    row = conn.execute(
-        "SELECT MAX(ingested_at) AS last_ingest FROM ingested_files"
-    ).fetchone()
+def fetch_last_ingest_time(conn: sqlite3.Connection, *, owner: str | None = None) -> str | None:
+    """Fetch the most recent ingest timestamp, optionally scoped to an owner."""
+    if owner and not has_conversation_owners_table(conn):
+        return None
+    sql = "SELECT MAX(ingested_at) AS last_ingest FROM ingested_files f"
+    params: tuple[object, ...] = ()
+    if owner:
+        sql += f" WHERE {owner_predicate('f.conversation_id')}"
+        params = (owner,)
+    row = conn.execute(sql, params).fetchone()
     # Aggregate queries always return a row; value is None on empty table
     return row["last_ingest"]
 
 
-def fetch_model_names(conn: sqlite3.Connection) -> list[str]:
-    """Fetch all model raw_names."""
+def fetch_model_names(conn: sqlite3.Connection, *, owner: str | None = None) -> list[str]:
+    """Fetch all model raw_names, optionally scoped to an owner."""
+    if owner and not has_conversation_owners_table(conn):
+        return []
+    if owner:
+        rows = conn.execute(
+            f"SELECT DISTINCT COALESCE(m.raw_name, 'unknown') AS name "
+            f"FROM responses r "
+            f"LEFT JOIN models m ON m.id = r.model_id "
+            f"WHERE {owner_predicate('r.conversation_id')} "
+            f"ORDER BY name",
+            (owner,),
+        ).fetchall()
+        return [row["name"] for row in rows if row["name"]]
     rows = conn.execute("SELECT raw_name FROM models").fetchall()
     return [row["raw_name"] for row in rows]
 
@@ -604,6 +749,8 @@ def fetch_model_names(conn: sqlite3.Connection) -> list[str]:
 def fetch_top_tools(
     conn: sqlite3.Connection,
     limit: int = 10,
+    *,
+    owner: str | None = None,
 ) -> list[sqlite3.Row]:
     """Fetch tools by usage count, ordered by count desc.
 
@@ -611,12 +758,20 @@ def fetch_top_tools(
     then join only the top N rows with the tools table for names.
     This avoids joining 100k+ rows before aggregating.
     """
+    if owner and not has_conversation_owners_table(conn):
+        return []
+    where_sql = ""
+    params: list[object] = [limit]
+    if owner:
+        where_sql = f"WHERE tc.tool_id IS NOT NULL AND {owner_predicate('tc.conversation_id')}"
+        params = [owner, limit]
     return conn.execute(
-        """
+        f"""
         SELECT t.name, counts.uses
         FROM (
             SELECT tool_id, COUNT(*) as uses
-            FROM tool_calls
+            FROM tool_calls tc
+            {where_sql}
             GROUP BY tool_id
             ORDER BY uses DESC
             LIMIT ?
@@ -624,26 +779,48 @@ def fetch_top_tools(
         JOIN tools t ON t.id = counts.tool_id
         ORDER BY counts.uses DESC
         """,
-        (limit,),
+        params,
     ).fetchall()
 
 
-def fetch_response_token_coverage(conn: sqlite3.Connection) -> tuple[int, int]:
-    """Fetch total responses and count with any token usage."""
-    row = conn.execute(
+def fetch_response_token_coverage(
+    conn: sqlite3.Connection,
+    *,
+    owner: str | None = None,
+) -> tuple[int, int]:
+    """Fetch total responses and count with any token usage, optionally scoped to an owner."""
+    if owner and not has_conversation_owners_table(conn):
+        return 0, 0
+    sql = (
         "SELECT COUNT(*) AS total, "
         "SUM(CASE WHEN input_tokens IS NOT NULL OR output_tokens IS NOT NULL THEN 1 ELSE 0 END) "
-        "AS with_tokens FROM responses"
-    ).fetchone()
+        "AS with_tokens FROM responses r"
+    )
+    params: tuple[object, ...] = ()
+    if owner:
+        sql += f" WHERE {owner_predicate('r.conversation_id')}"
+        params = (owner,)
+    row = conn.execute(sql, params).fetchone()
     total = row["total"] if row else 0
     with_tokens = row["with_tokens"] if row and row["with_tokens"] is not None else 0
     return total, with_tokens
 
 
-def fetch_token_coverage_by_harness(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Fetch response token coverage grouped by harness."""
+def fetch_token_coverage_by_harness(
+    conn: sqlite3.Connection,
+    *,
+    owner: str | None = None,
+) -> list[sqlite3.Row]:
+    """Fetch response token coverage grouped by harness, optionally scoped to an owner."""
+    if owner and not has_conversation_owners_table(conn):
+        return []
+    where_sql = ""
+    params: tuple[object, ...] = ()
+    if owner:
+        where_sql = f"WHERE {owner_predicate('c.id')}"
+        params = (owner,)
     return conn.execute(
-        """
+        f"""
         SELECT h.name AS harness,
                COUNT(r.id) AS responses,
                SUM(CASE WHEN r.input_tokens IS NOT NULL OR r.output_tokens IS NOT NULL THEN 1 ELSE 0 END)
@@ -651,9 +828,11 @@ def fetch_token_coverage_by_harness(conn: sqlite3.Connection) -> list[sqlite3.Ro
         FROM responses r
         JOIN conversations c ON c.id = r.conversation_id
         JOIN harnesses h ON h.id = c.harness_id
+        {where_sql}
         GROUP BY h.name
         ORDER BY responses DESC
-        """
+        """,
+        params,
     ).fetchall()
 
 
@@ -669,34 +848,25 @@ def fetch_tool_tags_by_prefix(
     owner: str | None = None,
 ) -> list[sqlite3.Row]:
     """Fetch tool call tag usage counts filtered by prefix."""
-    if owner and not conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-    ).fetchone():
+    if owner and not has_conversation_owners_table(conn):
         return []
+    where = ["t.name LIKE ?"]
+    params: list[object] = [f"{prefix}%"]
     if owner:
-        return conn.execute(
-            """
-            SELECT t.name, COUNT(tct.id) as count
-            FROM tags t
-            JOIN tool_call_tags tct ON tct.tag_id = t.id
-            JOIN tool_calls tc ON tc.id = tct.tool_call_id
-            JOIN conversation_owners co ON co.conversation_id = tc.conversation_id
-            WHERE t.name LIKE ? AND co.user_id = ?
-            GROUP BY t.id
-            ORDER BY count DESC
-            """,
-            (f"{prefix}%", owner),
-        ).fetchall()
+        where.append(owner_predicate("tc.conversation_id"))
+        params.append(owner)
+
     return conn.execute(
-        """
+        f"""
         SELECT t.name, COUNT(tct.id) as count
         FROM tags t
         JOIN tool_call_tags tct ON tct.tag_id = t.id
-        WHERE t.name LIKE ?
+        JOIN tool_calls tc ON tc.id = tct.tool_call_id
+        WHERE {' AND '.join(where)}
         GROUP BY t.id
         ORDER BY count DESC
         """,
-        (f"{prefix}%",),
+        params,
     ).fetchall()
 
 
@@ -707,31 +877,16 @@ def fetch_tool_tags_by_workspace(
     owner: str | None = None,
 ) -> list[sqlite3.Row]:
     """Fetch per-workspace tool tag usage counts."""
-    if owner and not conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-    ).fetchone():
+    if owner and not has_conversation_owners_table(conn):
         return []
+    where = ["t.name LIKE ?"]
+    params: list[object] = [f"{prefix}%"]
     if owner:
-        return conn.execute(
-            """
-            SELECT
-                COALESCE(w.path, '(no workspace)') as workspace,
-                t.name as tag,
-                COUNT(tct.id) as count
-            FROM tool_call_tags tct
-            JOIN tags t ON t.id = tct.tag_id
-            JOIN tool_calls tc ON tc.id = tct.tool_call_id
-            JOIN conversations c ON c.id = tc.conversation_id
-            JOIN conversation_owners co ON co.conversation_id = c.id
-            LEFT JOIN workspaces w ON w.id = c.workspace_id
-            WHERE t.name LIKE ? AND co.user_id = ?
-            GROUP BY w.id, t.id
-            ORDER BY workspace, count DESC
-            """,
-            (f"{prefix}%", owner),
-        ).fetchall()
+        where.append(owner_predicate("tc.conversation_id"))
+        params.append(owner)
+
     return conn.execute(
-        """
+        f"""
         SELECT
             COALESCE(w.path, '(no workspace)') as workspace,
             t.name as tag,
@@ -741,11 +896,11 @@ def fetch_tool_tags_by_workspace(
         JOIN tool_calls tc ON tc.id = tct.tool_call_id
         JOIN conversations c ON c.id = tc.conversation_id
         LEFT JOIN workspaces w ON w.id = c.workspace_id
-        WHERE t.name LIKE ?
+        WHERE {' AND '.join(where)}
         GROUP BY w.id, t.id
         ORDER BY workspace, count DESC
         """,
-        (f"{prefix}%",),
+        params,
     ).fetchall()
 
 

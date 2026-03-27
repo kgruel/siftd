@@ -117,6 +117,11 @@ def create_empty_database(db_path: Path) -> None:
     Used for slice targets that need a clean schema without
     the session/prompt_tags/etc. ensure tables.
     """
+    # Slice/export paths may be reused within a single workflow; remove any
+    # existing DB and SQLite sidecars so schema creation always starts clean.
+    for artifact in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm")):
+        if artifact.exists():
+            artifact.unlink()
     conn = sqlite3.connect(str(db_path))
     try:
         schema = SCHEMA_PATH.read_text()

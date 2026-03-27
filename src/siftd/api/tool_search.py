@@ -8,6 +8,7 @@ from pathlib import Path
 
 from siftd.api.database import open_database
 from siftd.storage.filters import tag_condition as _tag_condition
+from siftd.storage.sql_helpers import has_conversation_owners_table
 from siftd.storage.tool_search import ensure_tool_search_tables, rebuild_tool_search_index
 from siftd.tool_query import (
     ToolQuery,
@@ -144,9 +145,7 @@ def _search_tool_calls_impl(
     where: list[str] = []
     params: list[object] = []
 
-    if owner and not conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-    ).fetchone():
+    if owner and not has_conversation_owners_table(conn):
         return []
     _add_owner_clause(where, params, owner)
     _add_tool_name_clauses(where, params, parsed.fields.get("tool"))

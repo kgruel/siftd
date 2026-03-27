@@ -195,7 +195,7 @@ async def tags_route(
     )
 
 
-@post("/api/v1/tag")
+@post("/api/v1/tag", status_code=200)
 async def tag_write_route(request: Request, db_path: Path) -> dict:
     """Apply, remove, rename, or delete tags.
 
@@ -227,6 +227,7 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
         remove_tag,
         rename_tag,
     )
+    from siftd.storage.sql_helpers import has_conversation_owners_table
     from siftd.storage.sqlite import open_database
 
     body = json_mod.loads(await request.body())
@@ -237,10 +238,7 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
         def _tag_used_by_other_owners(tag_id: str) -> bool:
             if not owner:
                 return False
-            has_table = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-            ).fetchone()
-            if not has_table:
+            if not has_conversation_owners_table(conn):
                 return False
 
             # Conversation tags
@@ -297,7 +295,7 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
 
             old_name = body["old_name"]
             new_name = body["new_name"]
-            tag_id = get_tag_id(conn, old_name)
+            tag_id = get_tag_id(conn, old_name) if owner else None
             if tag_id and _tag_used_by_other_owners(tag_id):
                 raise PermissionDeniedException("tag is in use by another owner")
             rename_tag(old_name, new_name, conn=conn, commit=True)
@@ -307,7 +305,7 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
             from litestar.exceptions import PermissionDeniedException
 
             tag_name = body["tag_name"]
-            tag_id = get_tag_id(conn, tag_name)
+            tag_id = get_tag_id(conn, tag_name) if owner else None
             if tag_id and _tag_used_by_other_owners(tag_id):
                 raise PermissionDeniedException("tag is in use by another owner")
             delete_tag(conn, tag_name, commit=True)
