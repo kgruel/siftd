@@ -23,6 +23,7 @@ from siftd.storage.queries import (
     fetch_tool_calls_for_conversation,
     has_pricing_table,
 )
+from siftd.storage.sql_helpers import batched_in_query, has_conversation_owners_table
 from siftd.storage.sqlite import open_database
 
 
@@ -223,9 +224,7 @@ def _list_conversations_impl(
     wb.model(model)
     wb.since(since)
     wb.before(before)
-    if owner and not conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-    ).fetchone():
+    if owner and not has_conversation_owners_table(conn):
         return []
     wb.owner(owner)
 
@@ -398,13 +397,8 @@ def _fetch_owners_for_conversations(
         return {}
 
     # Table may not exist on DBs created outside open_database()
-    has_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-    ).fetchone()
-    if not has_table:
+    if not has_conversation_owners_table(conn):
         return {}
-
-    from siftd.storage.sql_helpers import batched_in_query
 
     rows = batched_in_query(
         conn,
@@ -467,10 +461,7 @@ def get_conversation(
     conv_id = conv["id"]
 
     if owner:
-        has_owner_table = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-        ).fetchone()
-        if not has_owner_table:
+        if not has_conversation_owners_table(conn):
             conn.close()
             return None
         row = conn.execute(
@@ -1058,10 +1049,7 @@ def get_recent_conversation_ids(
         List of conversation IDs, most recent first.
     """
     if owner:
-        has_table = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-        ).fetchone()
-        if not has_table:
+        if not has_conversation_owners_table(conn):
             return []
         rows = conn.execute(
             "SELECT c.id FROM conversations c "
@@ -1097,10 +1085,7 @@ def resolve_entity_id(
     """
     if entity_type == "conversation":
         if owner:
-            has_table = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-            ).fetchone()
-            if not has_table:
+            if not has_conversation_owners_table(conn):
                 return None
             row = conn.execute(
                 "SELECT c.id FROM conversations c "

@@ -227,6 +227,7 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
         remove_tag,
         rename_tag,
     )
+    from siftd.storage.sql_helpers import has_conversation_owners_table
     from siftd.storage.sqlite import open_database
 
     body = json_mod.loads(await request.body())
@@ -237,10 +238,7 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
         def _tag_used_by_other_owners(tag_id: str) -> bool:
             if not owner:
                 return False
-            has_table = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-            ).fetchone()
-            if not has_table:
+            if not has_conversation_owners_table(conn):
                 return False
 
             # Conversation tags

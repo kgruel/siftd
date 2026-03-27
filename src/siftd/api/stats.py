@@ -23,6 +23,7 @@ from siftd.storage.queries import (
     fetch_top_tools,
     fetch_top_workspaces,
 )
+from siftd.storage.sql_helpers import has_conversation_owners_table
 from siftd.storage.sqlite import open_database
 
 
@@ -208,10 +209,7 @@ def list_workspaces(
         should_close = True
     try:
         if owner:
-            has_table = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-            ).fetchone()
-            if not has_table:
+            if not has_conversation_owners_table(conn):
                 return []
             return conn.execute(
                 """
@@ -364,10 +362,7 @@ def get_stats(*, db_path: Path | None = None, owner: str | None = None) -> Datab
     conn = open_database(db, read_only=True)
     try:
         if owner:
-            has_owner_table = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-            ).fetchone()
-            if not has_owner_table:
+            if not has_conversation_owners_table(conn):
                 empty_counts = TableCounts(
                     conversations=0, prompts=0, responses=0, tool_calls=0,
                     harnesses=0, workspaces=0, tools=0, models=0, ingested_files=0,

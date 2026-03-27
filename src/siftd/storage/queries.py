@@ -12,7 +12,7 @@ The API layer handles parameter validation and dataclass mapping.
 import sqlite3
 from dataclasses import dataclass
 
-from siftd.storage.sql_helpers import batched_in_query
+from siftd.storage.sql_helpers import batched_in_query, has_conversation_owners_table
 
 
 @dataclass
@@ -643,9 +643,7 @@ def fetch_tool_tags_by_prefix(
     owner: str | None = None,
 ) -> list[sqlite3.Row]:
     """Fetch tool call tag usage counts filtered by prefix."""
-    if owner and not conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-    ).fetchone():
+    if owner and not has_conversation_owners_table(conn):
         return []
     if owner:
         return conn.execute(
@@ -681,9 +679,7 @@ def fetch_tool_tags_by_workspace(
     owner: str | None = None,
 ) -> list[sqlite3.Row]:
     """Fetch per-workspace tool tag usage counts."""
-    if owner and not conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-    ).fetchone():
+    if owner and not has_conversation_owners_table(conn):
         return []
     if owner:
         return conn.execute(

@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime
 
 from siftd.ids import ulid as _ulid
+from siftd.storage.sql_helpers import has_conversation_owners_table
 
 # In-process cache for tag name -> id lookups.
 # Only valid within a single connection lifetime. Cleared on module reload.
@@ -205,10 +206,7 @@ def list_tags(
     # join through to conversations.started_at. Workspace and prompt counts
     # remain global (workspaces and prompts lack direct temporal scope).
     if owner:
-        has_owner_table = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-        ).fetchone()
-        if not has_owner_table:
+        if not has_conversation_owners_table(conn):
             return []
 
         if time_filter:

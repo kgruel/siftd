@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from siftd.storage.sql_helpers import has_conversation_owners_table
 from siftd.storage.sqlite import open_database
 
 
@@ -193,9 +194,7 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
     if replace and conn.execute(
         "SELECT 1 FROM sqlite_temp_master WHERE type='table' AND name='_replaced_owner_map'"
     ).fetchone():
-        if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-        ).fetchone():
+        if has_conversation_owners_table(conn):
             conn.execute(
                 "INSERT OR IGNORE INTO conversation_owners "
                 "(conversation_id, user_id, push_id, assigned_at) "
@@ -443,9 +442,7 @@ def _replace_stale_conversations(conn) -> tuple[int, list[str]]:
 
     # Preserve ownership across replacement (target_id -> source_id) when the
     # server-side conversation_owners table exists.
-    if conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
-    ).fetchone():
+    if has_conversation_owners_table(conn):
         conn.execute("CREATE TEMP TABLE _stale_to_source (target_id TEXT PRIMARY KEY, source_id TEXT NOT NULL)")
         conn.executemany(
             "INSERT INTO _stale_to_source (target_id, source_id) VALUES (?, ?)",
@@ -513,7 +510,7 @@ def _replace_stale_conversations(conn) -> tuple[int, list[str]]:
     conn.execute("DELETE FROM conversation_tags WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     conn.execute("DELETE FROM ingested_files WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     # conversation_owners — table may not exist on pre-migration DBs
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'").fetchone():
+    if has_conversation_owners_table(conn):
         conn.execute("DELETE FROM conversation_owners WHERE conversation_id IN (SELECT id FROM _stale_convs)")
 
     # Delete the stale conversations themselves

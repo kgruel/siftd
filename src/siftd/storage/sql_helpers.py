@@ -10,6 +10,35 @@ SQLITE_MAX_VARIABLES = 999
 DEFAULT_BATCH_SIZE = 500
 
 
+def has_conversation_owners_table(conn: sqlite3.Connection) -> bool:
+    """Return True if the conversation_owners table exists.
+
+    This is used to keep owner scoping safe on pre-migration databases.
+    """
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+        ).fetchone()
+        is not None
+    )
+
+
+def owner_predicate(conversation_id_expr: str) -> str:
+    """Return a composable owner-scoping predicate for a conversation id expression."""
+    return (
+        f"{conversation_id_expr} IN "
+        "(SELECT conversation_id FROM conversation_owners WHERE user_id = ?)"
+    )
+
+
+def owner_exists(conversation_id_expr: str) -> str:
+    """Return an EXISTS form of the owner-scoping predicate."""
+    return (
+        "EXISTS (SELECT 1 FROM conversation_owners co "
+        f"WHERE co.conversation_id = {conversation_id_expr} AND co.user_id = ?)"
+    )
+
+
 def placeholders(n: int) -> str:
     """Generate placeholder string for IN clause.
 

@@ -1,5 +1,7 @@
 """Tests for siftd storage layer coverage."""
 
+import sqlite3
+
 import pytest
 
 import siftd.storage.conversation_stats as cstats
@@ -12,7 +14,16 @@ import siftd.storage.tool_search as ts
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall, Usage
 from siftd.storage import compute_content_hash, get_content, get_ref_count, release_content, store_content
 from siftd.storage.filters import WhereBuilder, tag_condition
-from siftd.storage.sql_helpers import batched_execute, batched_in_query, fetchall_dicts, in_clause, placeholders
+from siftd.storage.sql_helpers import (
+    batched_execute,
+    batched_in_query,
+    fetchall_dicts,
+    has_conversation_owners_table,
+    in_clause,
+    owner_exists,
+    owner_predicate,
+    placeholders,
+)
 from siftd.storage.sqlite import open_database
 
 
@@ -791,6 +802,27 @@ class TestDatabaseOps:
             for r in db.execute("PRAGMA table_info(conversation_owners)").fetchall()
         }
         assert cols == {"conversation_id", "user_id", "push_id", "assigned_at"}
+
+    def test_has_conversation_owners_table(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            assert not has_conversation_owners_table(conn)
+            conn.execute(
+                "CREATE TABLE conversation_owners (conversation_id TEXT, user_id TEXT)"
+            )
+            assert has_conversation_owners_table(conn)
+        finally:
+            conn.close()
+
+    def test_owner_predicate_helpers(self):
+        assert (
+            owner_predicate("c.id")
+            == "c.id IN (SELECT conversation_id FROM conversation_owners WHERE user_id = ?)"
+        )
+        assert (
+            owner_exists("c.id")
+            == "EXISTS (SELECT 1 FROM conversation_owners co WHERE co.conversation_id = c.id AND co.user_id = ?)"
+        )
 
     def test_open_and_backup(self, tmp_path):
         conn = open_database(tmp_path / "new.db")
