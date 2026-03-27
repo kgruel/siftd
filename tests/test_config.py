@@ -1,6 +1,8 @@
 """Tests for config module."""
 
 import argparse
+import os
+import stat
 
 import pytest
 import tomlkit
@@ -417,3 +419,35 @@ class TestCLIConfigIntegration:
         args = argparse.Namespace(limit=10)
         apply_config_defaults(args, get_tools_defaults, {"limit": 20})
         assert args.limit == 10
+
+
+class TestConfigPermissions:
+    def test_set_config_creates_file_with_0600(self, config_dir):
+        set_config("serve.host", "localhost")
+        path = config_dir / "config.toml"
+        assert path.exists()
+        mode = stat.S_IMODE(path.stat().st_mode)
+        assert mode == 0o600
+
+    def test_set_config_creates_dir_with_0700(self, config_dir):
+        set_config("serve.host", "localhost")
+        mode = stat.S_IMODE(config_dir.stat().st_mode)
+        assert mode == 0o700
+
+    def test_append_config_list_enforces_permissions(self, config_dir):
+        append_config_list(_L, "/a")
+        path = config_dir / "config.toml"
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+    def test_sync_remote_write_enforces_permissions(self, config_dir):
+        set_sync_remote("box", "box.local", "/data/db")
+        path = config_dir / "config.toml"
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+    def test_existing_file_gets_permissions_tightened(self, config_dir):
+        """A config file written by an older siftd version gets hardened on next write."""
+        _w(config_dir, '[serve]\nhost = "old"\n')
+        path = config_dir / "config.toml"
+        path.chmod(0o644)  # simulate lax permissions
+        set_config("serve.host", "new")
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600

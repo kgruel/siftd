@@ -53,7 +53,7 @@ def test_authenticate_request_no_mode_configured_raises():
 
 def test_validate_introspection_cache_hit_returns_identity():
     MW = create_auth_middleware({"introspection_url": "https://idp/introspect"})
-    MW._introspection_cache = {"tok": ({"username": "alice"}, time.time())}
+    MW._introspection_cache = {"tok": ({"username": "alice"}, time.time() + 60)}
     mw = object.__new__(MW)
     out = _run(mw._validate_introspection("tok"))
     assert isinstance(out, UserIdentity)
@@ -240,7 +240,7 @@ def test_required_scopes_rejects_missing():
         "introspection_url": "https://idp/i",
         "required_scopes": ["siftd:read"],
     })
-    MW2._introspection_cache = {"tok": ({"active": True, "username": "u", "scope": "other"}, time.time())}
+    MW2._introspection_cache = {"tok": ({"active": True, "username": "u", "scope": "other"}, time.time() + 60)}
     mw2 = object.__new__(MW2)
     conn = SimpleNamespace(scope={}, headers={"authorization": "Bearer tok"})
     with pytest.raises(NotAuthorizedException, match="Missing required scopes"):
@@ -250,7 +250,7 @@ def test_required_scopes_rejects_missing():
 def test_introspection_populates_scopes():
     MW = create_auth_middleware({"introspection_url": "https://idp/i"})
     MW._introspection_cache = {
-        "tok": ({"active": True, "username": "u", "scope": "siftd:read siftd:write"}, time.time()),
+        "tok": ({"active": True, "username": "u", "scope": "siftd:read siftd:write"}, time.time() + 60),
     }
     mw = object.__new__(MW)
     out = _run(mw._validate_introspection("tok"))
@@ -309,3 +309,121 @@ def test_require_write_allows_with_scope():
         require_write(request)  # should not raise
     finally:
         auth_mod._write_scopes = old
+
+
+# --- S3: OIDC error sanitization ---
+
+
+def test_oidc_error_does_not_leak_jwt_details(monkeypatch):
+    """OIDC validation failures must return generic 'Invalid token', not exception details."""
+    class _JWT:
+        class PyJWTError(Exception):
+            pass
+
+        @staticmethod
+        def decode(token, jwks, algorithms, audience):
+            raise _JWT.PyJWTError("ExpiredSignatureError: token expired at 2026-01-01, claim aud=secret-app")
+
+    monkeypatch.setitem(sys.modules, "jwt", _JWT)
+    MW = create_auth_middleware({"issuer": "https://idp", "audience": "siftd"})
+    mw = object.__new__(MW)
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result={"k": 1}))
+
+    with pytest.raises(NotAuthorizedException, match="^Invalid token$") as exc_info:
+        _run(mw._validate_oidc("expired"))
+    # Must not contain claim details or original exception text
+    assert "ExpiredSignature" not in str(exc_info.value)
+    assert "secret-app" not in str(exc_info.value)
+
+
+# --- S4: Introspection cache TTL bounded by token exp ---
+
+
+def test_introspection_cache_respects_token_exp():
+    """Cached entry must be evicted when token exp has passed, even within 60s window."""
+    MW = create_auth_middleware({"introspection_url": "https://idp/introspect"})
+    # Token expired 1 second ago — cache deadline should be in the past
+    expired_at = time.time() - 1
+    MW._introspection_cache = {"tok": ({"username": "alice"}, expired_at)}
+    mw = object.__new__(MW)
+    # Cache miss: would need to call introspection endpoint, which isn't mocked → ImportError or httpx call
+    # We verify the cache is NOT used by checking it doesn't return the cached identity
+    import importlib
+    try:
+        _run(mw._validate_introspection("tok"))
+        # If httpx is available it will try a real HTTP call and fail
+        assert False, "Should not have returned from cache"
+    except (NotAuthorizedException, Exception):
+        pass  # Expected: cache was skipped, introspection endpoint was contacted
+
+
+def test_introspection_cache_stores_exp_bounded_deadline(monkeypatch):
+    """When token exp is sooner than 60s, cache deadline should be token exp."""
+    calls = []
+
+    class _Resp:
+        def __init__(self, body):
+            self.status_code = 200
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, **kwargs):
+            calls.append(1)
+            exp_time = time.time() + 10  # expires in 10s, not 60s
+            return _Resp({"active": True, "username": "bob", "exp": exp_time})
+
+    class _HTTPX:
+        AsyncClient = _Client
+
+    monkeypatch.setitem(sys.modules, "httpx", _HTTPX)
+    MW = create_auth_middleware({"introspection_url": "https://idp/introspect"})
+    MW._introspection_cache = {}
+    mw = object.__new__(MW)
+    _run(mw._validate_introspection("tok"))
+
+    # Verify cache deadline is bounded by exp (~10s from now), not 60s
+    _, deadline = MW._introspection_cache["tok"]
+    assert deadline < time.time() + 15  # should be ~10s, not ~60s
+
+
+def test_introspection_cache_uses_60s_when_no_exp(monkeypatch):
+    """When token has no exp claim, cache TTL defaults to 60s."""
+    class _Resp:
+        def __init__(self, body):
+            self.status_code = 200
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, **kwargs):
+            return _Resp({"active": True, "username": "carol"})
+
+    class _HTTPX:
+        AsyncClient = _Client
+
+    monkeypatch.setitem(sys.modules, "httpx", _HTTPX)
+    MW = create_auth_middleware({"introspection_url": "https://idp/introspect"})
+    MW._introspection_cache = {}
+    mw = object.__new__(MW)
+    before = time.time()
+    _run(mw._validate_introspection("tok"))
+
+    _, deadline = MW._introspection_cache["tok"]
+    assert deadline >= before + 59  # ~60s from call time

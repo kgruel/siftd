@@ -10,6 +10,7 @@ When no auth_config is provided, middleware is not installed.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 
@@ -159,7 +160,8 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
                     scopes=_parse_scope_string(payload.get("scope")),
                 )
             except jwt.PyJWTError as e:
-                raise NotAuthorizedException(f"Invalid token: {e}") from e
+                logging.getLogger(__name__).debug("OIDC token validation failed: %s", e)
+                raise NotAuthorizedException("Invalid token") from e
 
         async def _validate_introspection(self, token: str) -> UserIdentity:
             """Validate token via RFC 7662 introspection endpoint."""
@@ -167,8 +169,8 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
 
             now = time.time()
             if token in SiftdAuthMiddleware._introspection_cache:
-                cached, cached_at = SiftdAuthMiddleware._introspection_cache[token]
-                if now - cached_at < 60:
+                cached, expires_at = SiftdAuthMiddleware._introspection_cache[token]
+                if now < expires_at:
                     identity_claim = self._config.get("identity_claim", "username")
                     return UserIdentity(
                         sub=cached.get(identity_claim, "unknown"),
@@ -199,7 +201,12 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
             if not body.get("active", False):
                 raise NotAuthorizedException("Token is not active")
 
-            SiftdAuthMiddleware._introspection_cache[token] = (body, now)
+            # Bound cache TTL by token exp claim — never cache past expiry
+            cache_deadline = now + 60
+            token_exp = body.get("exp")
+            if isinstance(token_exp, (int, float)) and token_exp > 0:
+                cache_deadline = min(cache_deadline, float(token_exp))
+            SiftdAuthMiddleware._introspection_cache[token] = (body, cache_deadline)
             identity_claim = self._config.get("identity_claim", "username")
             return UserIdentity(
                 sub=body.get(identity_claim, "unknown"),

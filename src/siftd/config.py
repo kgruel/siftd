@@ -7,8 +7,12 @@ Example config:
     formatter = "verbose"
 """
 
+import contextlib
+import os
 import sys
+import tempfile
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import NamedTuple, cast
 
 import tomlkit
@@ -17,6 +21,35 @@ from tomlkit import TOMLDocument
 from tomlkit.container import Container
 
 from siftd.paths import config_dir, config_file
+
+
+def _ensure_config_dir() -> Path:
+    """Create config directory with mode 0o700 if needed, return path."""
+    d = config_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    d.chmod(0o700)
+    return d
+
+
+def _write_config(path: Path, content: str) -> None:
+    """Write config atomically with restrictive permissions (0o600).
+
+    Writes to a temp file in the same directory, then replaces the target.
+    This avoids a window where the file is readable by other users.
+    """
+    _ensure_config_dir()
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        os.write(fd, content.encode())
+        os.fchmod(fd, 0o600)
+    finally:
+        os.close(fd)
+    try:
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 class _SchemaEntry(NamedTuple):
@@ -314,9 +347,7 @@ def set_config(key: str, value: str) -> None:
     # Set the final value (with type coercion)
     cast(Container, current)[parts[-1]] = _coerce_value(value)
 
-    # Ensure config directory exists and write
-    config_dir().mkdir(parents=True, exist_ok=True)
-    path.write_text(tomlkit.dumps(doc))
+    _write_config(path, tomlkit.dumps(doc))
 
 
 def _ensure_parent_table(doc: TOMLDocument, parts: list[str]) -> Container:
@@ -368,8 +399,7 @@ def append_config_list(key: str, value: str) -> bool:
         arr = tomlkit.array()
         arr.append(value)
         parent[leaf] = arr
-        config_dir().mkdir(parents=True, exist_ok=True)
-        path.write_text(tomlkit.dumps(doc))
+        _write_config(path, tomlkit.dumps(doc))
         return True
 
     if not isinstance(existing, list):
@@ -379,8 +409,7 @@ def append_config_list(key: str, value: str) -> bool:
         return False
 
     existing.append(value)
-    config_dir().mkdir(parents=True, exist_ok=True)
-    path.write_text(tomlkit.dumps(doc))
+    _write_config(path, tomlkit.dumps(doc))
     return True
 
 
@@ -419,7 +448,7 @@ def remove_config_list(key: str, value: str) -> bool:
     if not changed:
         return False
 
-    path.write_text(tomlkit.dumps(doc))
+    _write_config(path, tomlkit.dumps(doc))
     return True
 
 
@@ -588,8 +617,7 @@ def set_sync_remote(name: str, host: str | None, path: str) -> None:
         del remote_tbl["host"]
     remote_tbl["path"] = path
 
-    config_dir().mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text(tomlkit.dumps(doc))
+    _write_config(cfg_path, tomlkit.dumps(doc))
 
 
 def set_remote_auth(name: str, auth: dict) -> None:
@@ -600,7 +628,7 @@ def set_remote_auth(name: str, auth: dict) -> None:
     remotes_tbl = cast(Container, sync_tbl["remotes"])
     remote_tbl = cast(Container, remotes_tbl[name])
     remote_tbl["auth"] = auth
-    cfg_path.write_text(tomlkit.dumps(doc))
+    _write_config(cfg_path, tomlkit.dumps(doc))
 
 
 def remove_sync_remote(name: str) -> bool:
@@ -627,7 +655,7 @@ def remove_sync_remote(name: str) -> bool:
         return False
 
     del remotes_config[name]
-    cfg_path.write_text(tomlkit.dumps(doc))
+    _write_config(cfg_path, tomlkit.dumps(doc))
     return True
 
 
@@ -653,7 +681,7 @@ def update_last_push(name: str, timestamp: str) -> None:
         return
 
     cast(Container, remotes_config[name])["last_push"] = timestamp
-    cfg_path.write_text(tomlkit.dumps(doc))
+    _write_config(cfg_path, tomlkit.dumps(doc))
 
 
 def update_last_pull(name: str, timestamp: str) -> None:
@@ -678,7 +706,7 @@ def update_last_pull(name: str, timestamp: str) -> None:
         return
 
     cast(Container, remotes_config[name])["last_pull"] = timestamp
-    cfg_path.write_text(tomlkit.dumps(doc))
+    _write_config(cfg_path, tomlkit.dumps(doc))
 
 
 def update_last_sent(name: str, timestamp: str) -> None:
@@ -703,7 +731,7 @@ def update_last_sent(name: str, timestamp: str) -> None:
         return
 
     cast(Container, remotes_config[name])["last_sent"] = timestamp
-    cfg_path.write_text(tomlkit.dumps(doc))
+    _write_config(cfg_path, tomlkit.dumps(doc))
 
 
 def get_ssh_options(remote_name: str | None = None) -> list[str]:
