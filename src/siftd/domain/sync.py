@@ -51,6 +51,9 @@ class SyncRemote:
     last_push: str | None = None  # ISO 8601 timestamp
     last_pull: str | None = None  # ISO 8601 timestamp
     last_sent: str | None = None  # ISO 8601 — most recent staged delivery
+    last_push_filters: str = ""   # filter signature at time of last_push
+    last_pull_filters: str = ""   # filter signature at time of last_pull
+    last_sent_filters: str = ""   # filter signature at time of last_sent
     strategy: str = "incremental"  # "incremental" | "full"
     filters: SyncFilters | None = None
 

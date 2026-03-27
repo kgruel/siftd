@@ -12,6 +12,7 @@ from siftd.api.auth import AuthError
 from siftd.api.sync import (
     SyncError,
     _build_ssh_options,
+    _filter_signature,
     _friendly_os_error,
     _friendly_remote_error,
     _is_http_remote,
@@ -269,7 +270,7 @@ class TestSyncPushBranches:
         )
         monkeypatch.setattr("siftd.api.sync._push_http", lambda r, p: True)
         monkeypatch.setattr("siftd.api.sync._preflight_http", lambda *a: None)
-        monkeypatch.setattr("siftd.config.update_last_push", lambda n, ts: called.append((n, ts)))
+        monkeypatch.setattr("siftd.config.update_last_push", lambda n, ts, **kw: called.append((n, ts)))
         result = sync_push(_db(tmp_path), _remote(path="http://srv"))
         assert result.remote_existed and result.last_push_updated and called
 
@@ -284,7 +285,7 @@ class TestSyncPushBranches:
         monkeypatch.setattr("siftd.api.sync._push_ssh", _fake_push_ssh)
         async def _no_preflight(*a): return None
         monkeypatch.setattr("siftd.api.sync._preflight_ssh", _no_preflight)
-        monkeypatch.setattr("siftd.config.update_last_push", lambda *_: None)
+        monkeypatch.setattr("siftd.config.update_last_push", lambda *_, **__: None)
         result = sync_push(_db(tmp_path), _remote(path="/r.db", host="box"))
         assert result.remote_existed is False
 
@@ -294,7 +295,7 @@ class TestSyncPushBranches:
             lambda **kw: {"conversations": 1, "size_bytes": 7},
         )
         monkeypatch.setattr("siftd.api.sync._push_local", lambda *a, **k: True)
-        monkeypatch.setattr("siftd.config.update_last_push", lambda *_: None)
+        monkeypatch.setattr("siftd.config.update_last_push", lambda *_, **__: None)
         result = sync_push(_db(tmp_path), _remote(path=str(tmp_path / "remote.db")))
         assert result.remote_existed
 
@@ -303,7 +304,7 @@ class TestSyncPullBranches:
     def test_http_branch_updates_last_pull(self, tmp_path, monkeypatch):
         called = []
         monkeypatch.setattr("siftd.api.sync._pull_http", lambda *a, **k: (2, 33))
-        monkeypatch.setattr("siftd.config.update_last_pull", lambda n, ts: called.append((n, ts)))
+        monkeypatch.setattr("siftd.config.update_last_pull", lambda n, ts, **kw: called.append((n, ts)))
         result = sync_pull(_db(tmp_path), _remote(path="http://srv"))
         assert result.conversations == 2 and result.last_pull_updated and called
 
@@ -694,3 +695,132 @@ class TestSyncProtocolHeader:
         monkeypatch.setattr("siftd.api.sync.asyncssh.connect", lambda *_a, **_kw: conn)
         with pytest.raises(SyncError, match="sync protocol version"):
             asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, {}, False))
+
+
+class TestFilterSignature:
+    def test_empty_filters(self):
+        assert _filter_signature({}) == ""
+
+    def test_all_none_filters(self):
+        assert _filter_signature({"workspace": None, "tag": None}) == ""
+
+    def test_deterministic(self):
+        f = {"workspace": "proj", "tag": ["b", "a"]}
+        assert _filter_signature(f) == _filter_signature(f)
+
+    def test_order_independent(self):
+        """Lists are sorted, so order doesn't matter."""
+        assert _filter_signature({"tag": ["b", "a"]}) == _filter_signature({"tag": ["a", "b"]})
+
+    def test_different_filters_different_sig(self):
+        assert _filter_signature({"workspace": "a"}) != _filter_signature({"workspace": "b"})
+
+
+class TestFilterAwareCursors:
+    """C3: Cursor resets when filter signature changes."""
+
+    def test_push_same_filters_uses_cursor(self):
+        sig = _filter_signature({"workspace": "proj"})
+        r = _remote(last_push="2024-06", last_push_filters=sig)
+        assert _resolve_since(None, False, r, sig) == "2024-06"
+
+    def test_push_different_filters_resets_cursor(self):
+        old_sig = _filter_signature({"workspace": "proj"})
+        new_sig = _filter_signature({"workspace": "other"})
+        r = _remote(last_push="2024-06", last_push_filters=old_sig)
+        assert _resolve_since(None, False, r, new_sig) is None
+
+    def test_push_no_stored_sig_with_new_filters_resets(self):
+        """Pre-existing cursor without filter sig resets when filters are added."""
+        sig = _filter_signature({"workspace": "proj"})
+        r = _remote(last_push="2024-06")  # no stored filter sig
+        assert _resolve_since(None, False, r, sig) is None
+
+    def test_push_no_stored_sig_no_filters_uses_cursor(self):
+        """Pre-existing cursor without filters continues working."""
+        r = _remote(last_push="2024-06")
+        assert _resolve_since(None, False, r, "") == "2024-06"
+
+    def test_pull_same_filters_uses_cursor(self):
+        sig = _filter_signature({"tag": ["public"]})
+        r = _remote(last_pull="2024-06", last_pull_filters=sig)
+        assert _resolve_pull_since(None, False, r, sig) == "2024-06"
+
+    def test_pull_different_filters_resets_cursor(self):
+        old_sig = _filter_signature({"tag": ["public"]})
+        new_sig = _filter_signature({"tag": ["private"]})
+        r = _remote(last_pull="2024-06", last_pull_filters=old_sig)
+        assert _resolve_pull_since(None, False, r, new_sig) is None
+
+    def test_last_sent_filters_checked(self):
+        """When last_sent is used, its filter sig is checked."""
+        sig = _filter_signature({"owner": "alice"})
+        r = _remote(last_sent="2024-07", last_sent_filters=sig)
+        assert _resolve_since(None, False, r, sig) == "2024-07"
+
+        new_sig = _filter_signature({"owner": "bob"})
+        assert _resolve_since(None, False, r, new_sig) is None
+
+
+class TestStagedCursorAdvancement:
+    """C1: Cursor only advances after processing is confirmed."""
+
+    def test_staged_confirmed_advances_cursor(self, tmp_path, monkeypatch):
+        """When processing succeeds, cursor is updated."""
+        called = {}
+
+        async def _fake_push_ssh(remote, slice_path, *, staged=False):
+            return True
+
+        async def _fake_preflight(*a):
+            from siftd.domain.sync import SyncStatus
+            return SyncStatus(capabilities=frozenset({"staged"}))
+
+        async def _fake_process(*a):
+            pass  # success
+
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 10},
+        )
+        monkeypatch.setattr("siftd.api.sync._push_ssh", _fake_push_ssh)
+        monkeypatch.setattr("siftd.api.sync._preflight_ssh", _fake_preflight)
+        monkeypatch.setattr("siftd.api.sync._process_remote_ssh", _fake_process)
+        monkeypatch.setattr(
+            "siftd.config.update_last_sent",
+            lambda n, ts, **kw: called.update(sent=ts),
+        )
+
+        result = sync_push(_db(tmp_path), _remote(path="/r.db", host="box"))
+        assert result.last_push_updated
+        assert "sent" in called
+
+    def test_staged_failed_does_not_advance_cursor(self, tmp_path, monkeypatch):
+        """When processing fails, cursor is NOT updated."""
+        called = {}
+
+        async def _fake_push_ssh(remote, slice_path, *, staged=False):
+            return True
+
+        async def _fake_preflight(*a):
+            from siftd.domain.sync import SyncStatus
+            return SyncStatus(capabilities=frozenset({"staged"}))
+
+        async def _fake_process(*a):
+            raise SyncError("remote timeout")
+
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 10},
+        )
+        monkeypatch.setattr("siftd.api.sync._push_ssh", _fake_push_ssh)
+        monkeypatch.setattr("siftd.api.sync._preflight_ssh", _fake_preflight)
+        monkeypatch.setattr("siftd.api.sync._process_remote_ssh", _fake_process)
+        monkeypatch.setattr(
+            "siftd.config.update_last_sent",
+            lambda n, ts, **kw: called.update(sent=ts),
+        )
+
+        result = sync_push(_db(tmp_path), _remote(path="/r.db", host="box"))
+        assert not result.last_push_updated
+        assert "sent" not in called

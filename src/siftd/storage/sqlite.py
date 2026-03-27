@@ -635,16 +635,24 @@ def ensure_sync_inbox_table(conn: sqlite3.Connection) -> None:
     """Create sync_inbox table for staged push payloads. Idempotent."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sync_inbox (
-            id           TEXT PRIMARY KEY,
-            received_at  TEXT NOT NULL,
-            processed_at TEXT,
-            status       TEXT NOT NULL DEFAULT 'staged',
-            error        TEXT,
-            source_host  TEXT,
-            size_bytes   INTEGER,
-            conversations INTEGER
+            id                  TEXT PRIMARY KEY,
+            received_at         TEXT NOT NULL,
+            processed_at        TEXT,
+            processing_started_at TEXT,
+            status              TEXT NOT NULL DEFAULT 'staged',
+            error               TEXT,
+            source_host         TEXT,
+            size_bytes          INTEGER,
+            conversations       INTEGER
         )
     """)
+    # Migration: add processing_started_at if missing (pre-existing DBs)
+    try:
+        conn.execute("SELECT processing_started_at FROM sync_inbox LIMIT 0")
+    except sqlite3.OperationalError:
+        conn.execute(
+            "ALTER TABLE sync_inbox ADD COLUMN processing_started_at TEXT"
+        )
 
 
 # Alias for backwards compatibility

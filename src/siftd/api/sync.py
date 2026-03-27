@@ -10,6 +10,7 @@ on the remote. SSH pulls stream from ``siftd db send`` on the remote.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import shlex
@@ -79,12 +80,13 @@ def sync_push(
     if remote.strategy == "full" and not push_all:
         push_all = True
 
-    effective_since = _resolve_since(since, push_all, remote)
-    should_update_last_push = since is None
-
     # Merge CLI filters with remote config filters (CLI overrides config)
     filters = _merge_filters(remote, workspace=workspace, tag=tag,
                              no_tag=no_tag, owner=owner)
+
+    current_sig = _filter_signature(filters)
+    effective_since = _resolve_since(since, push_all, remote, current_sig)
+    should_update_cursor = since is None
 
     # Slice to a temp file (no FTS — remote doesn't need it)
     from siftd.api.slice import slice_database
@@ -138,27 +140,32 @@ def sync_push(
 
     now = datetime.now(UTC).isoformat()
     last_push_updated = False
-    if should_update_last_push:
+    if should_update_cursor:
         if use_staged:
-            # Staged: record last_sent immediately (doom-loop fix — even
-            # if processing below times out, next push is incremental).
-            from siftd.config import update_last_sent
-
-            update_last_sent(remote.name, now)
-
-            # Trigger processing on the remote so it isn't left stale.
-            # This may be slow, but last_sent is already recorded above.
+            # Staged: trigger processing, only advance cursor on confirmation.
+            # If processing fails the data is safely staged on the remote;
+            # not advancing the cursor means next push may resend (idempotent).
+            processing_confirmed = False
             if remote.host and not _is_http_remote(remote):
                 try:
                     asyncio.run(_process_remote_ssh(remote))
+                    processing_confirmed = True
                 except SyncError:
                     pass  # Data is staged; can be processed later
+
+            if processing_confirmed:
+                from siftd.config import update_last_sent
+
+                update_last_sent(remote.name, now,
+                                 filter_signature=current_sig)
+                last_push_updated = True
         else:
             # Blocking: record last_push only after confirmed merge
             from siftd.config import update_last_push
 
-            update_last_push(remote.name, now)
-        last_push_updated = True
+            update_last_push(remote.name, now,
+                             filter_signature=current_sig)
+            last_push_updated = True
 
     return PushResult(
         conversations=conversations,
@@ -174,6 +181,7 @@ def _resolve_since(
     explicit: str | None,
     push_all: bool,
     remote: SyncRemote,
+    current_filter_sig: str = "",
 ) -> str | None:
     """Determine the effective --since value.
 
@@ -181,12 +189,47 @@ def _resolve_since(
     ``last_sent`` is preferred because it records the most recent successful
     delivery (staged or blocking), whereas ``last_push`` only records
     confirmed blocking merges.
+
+    When filters change (different signature), the stored cursor no longer
+    covers the new filter set and we reset to None (full sync).
     """
     if explicit is not None:
         return explicit
     if push_all:
         return None
-    return remote.last_sent or remote.last_push
+
+    cursor = remote.last_sent or remote.last_push
+    if cursor is None:
+        return None
+
+    # Check filter signature — reset cursor if filters changed
+    stored_sig = (remote.last_sent_filters if remote.last_sent
+                  else remote.last_push_filters)
+    if current_filter_sig != (stored_sig or ""):
+        return None  # filters changed → full sync
+
+    return cursor
+
+
+def _filter_signature(filters: dict) -> str:
+    """Compute a deterministic signature for an effective filter set.
+
+    Returns a short hex digest. Empty string when no filters are active.
+    Used to detect filter changes between sync runs so the cursor can be
+    reset (avoiding silently skipping historical data).
+    """
+    normalized: dict = {}
+    for k in sorted(filters):
+        v = filters[k]
+        if v is None:
+            continue
+        if isinstance(v, list):
+            v = sorted(v)
+        normalized[k] = v
+    if not normalized:
+        return ""
+    payload = json.dumps(normalized, sort_keys=True).encode()
+    return hashlib.sha256(payload).hexdigest()[:16]
 
 
 def _merge_filters(
@@ -550,12 +593,13 @@ def sync_pull(
     if remote.strategy == "full" and not pull_all:
         pull_all = True
 
-    effective_since = _resolve_pull_since(since, pull_all, remote)
-    should_update_last_pull = since is None
-
     # Merge CLI filters with remote config filters
     filters = _merge_filters(remote, workspace=workspace, tag=tag,
                              no_tag=no_tag, owner=owner)
+
+    current_sig = _filter_signature(filters)
+    effective_since = _resolve_pull_since(since, pull_all, remote, current_sig)
+    should_update_last_pull = since is None
 
     if _is_http_remote(remote):
         conversations, size_bytes = _pull_http(
@@ -584,7 +628,8 @@ def sync_pull(
         from siftd.config import update_last_pull
 
         now = datetime.now(UTC).isoformat()
-        update_last_pull(remote.name, now)
+        update_last_pull(remote.name, now,
+                         filter_signature=current_sig)
         last_pull_updated = True
 
     return PullResult(
@@ -600,16 +645,26 @@ def _resolve_pull_since(
     explicit: str | None,
     pull_all: bool,
     remote: SyncRemote,
+    current_filter_sig: str = "",
 ) -> str | None:
     """Determine the effective --since value for pull.
 
     Priority: explicit flag > pull_all (None) > last_pull > None (all).
+    Resets cursor when filter signature changes.
     """
     if explicit is not None:
         return explicit
     if pull_all:
         return None
-    return remote.last_pull
+
+    cursor = remote.last_pull
+    if cursor is None:
+        return None
+
+    if current_filter_sig != (remote.last_pull_filters or ""):
+        return None  # filters changed → full sync
+
+    return cursor
 
 
 async def _pull_ssh(

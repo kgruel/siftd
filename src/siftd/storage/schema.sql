@@ -329,14 +329,15 @@ END;
 --------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS sync_inbox (
-    id           TEXT PRIMARY KEY,
-    received_at  TEXT NOT NULL,
-    processed_at TEXT,
-    status       TEXT NOT NULL DEFAULT 'staged',
-    error        TEXT,
-    source_host  TEXT,
-    size_bytes   INTEGER,
-    conversations INTEGER
+    id                  TEXT PRIMARY KEY,
+    received_at         TEXT NOT NULL,
+    processed_at        TEXT,
+    processing_started_at TEXT,
+    status              TEXT NOT NULL DEFAULT 'staged',
+    error               TEXT,
+    source_host         TEXT,
+    size_bytes          INTEGER,
+    conversations       INTEGER
 );
 
 --------------------------------------------------------------------------------

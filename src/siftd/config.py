@@ -559,6 +559,9 @@ def get_sync_remotes() -> list[dict]:
             "last_push": cfg.get("last_push"),
             "last_pull": cfg.get("last_pull"),
             "last_sent": cfg.get("last_sent"),
+            "last_push_filters": cfg.get("last_push_filters", ""),
+            "last_pull_filters": cfg.get("last_pull_filters", ""),
+            "last_sent_filters": cfg.get("last_sent_filters", ""),
             "auth": dict(cfg["auth"]) if "auth" in cfg and isinstance(cfg.get("auth"), dict) else None,
         }
         strategy = cfg.get("strategy")
@@ -659,8 +662,10 @@ def remove_sync_remote(name: str) -> bool:
     return True
 
 
-def update_last_push(name: str, timestamp: str) -> None:
-    """Write last_push timestamp for a sync remote."""
+def update_last_push(
+    name: str, timestamp: str, *, filter_signature: str = "",
+) -> None:
+    """Write last_push timestamp and filter signature for a sync remote."""
     cfg_path = config_file()
 
     if cfg_path.exists():
@@ -680,12 +685,16 @@ def update_last_push(name: str, timestamp: str) -> None:
     if name not in remotes_config:
         return
 
-    cast(Container, remotes_config[name])["last_push"] = timestamp
+    remote = cast(Container, remotes_config[name])
+    remote["last_push"] = timestamp
+    remote["last_push_filters"] = filter_signature
     _write_config(cfg_path, tomlkit.dumps(doc))
 
 
-def update_last_pull(name: str, timestamp: str) -> None:
-    """Write last_pull timestamp for a sync remote."""
+def update_last_pull(
+    name: str, timestamp: str, *, filter_signature: str = "",
+) -> None:
+    """Write last_pull timestamp and filter signature for a sync remote."""
     cfg_path = config_file()
 
     if cfg_path.exists():
@@ -705,12 +714,16 @@ def update_last_pull(name: str, timestamp: str) -> None:
     if name not in remotes_config:
         return
 
-    cast(Container, remotes_config[name])["last_pull"] = timestamp
+    remote = cast(Container, remotes_config[name])
+    remote["last_pull"] = timestamp
+    remote["last_pull_filters"] = filter_signature
     _write_config(cfg_path, tomlkit.dumps(doc))
 
 
-def update_last_sent(name: str, timestamp: str) -> None:
-    """Write last_sent timestamp for a sync remote (staged delivery)."""
+def update_last_sent(
+    name: str, timestamp: str, *, filter_signature: str = "",
+) -> None:
+    """Write last_sent timestamp and filter signature for a sync remote."""
     cfg_path = config_file()
 
     if cfg_path.exists():
@@ -730,7 +743,9 @@ def update_last_sent(name: str, timestamp: str) -> None:
     if name not in remotes_config:
         return
 
-    cast(Container, remotes_config[name])["last_sent"] = timestamp
+    remote = cast(Container, remotes_config[name])
+    remote["last_sent"] = timestamp
+    remote["last_sent_filters"] = filter_signature
     _write_config(cfg_path, tomlkit.dumps(doc))
 
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from siftd.storage.sqlite import open_database
@@ -60,8 +60,16 @@ def stage_payload(
     return {"id": payload_id, "status": "staged"}
 
 
+# Rows stuck in 'processing' longer than this are considered stale
+# (crashed worker) and eligible for reclaim.
+STALE_PROCESSING_MINUTES = 5
+
+
 def process_inbox(db_path: Path) -> list[dict]:
     """Merge all staged inbox payloads into the target database.
+
+    Also reclaims rows stuck in ``processing`` for longer than
+    :data:`STALE_PROCESSING_MINUTES` (crashed worker recovery).
 
     Returns a list of per-payload result dicts with ``id``, ``status``,
     ``conversations`` (on success), or ``error`` (on failure).
@@ -71,6 +79,20 @@ def process_inbox(db_path: Path) -> list[dict]:
     inbox = inbox_dir()
     conn = open_database(db_path)
     try:
+        # Reclaim stale processing rows back to staged
+        cutoff = (
+            datetime.now(UTC) - timedelta(minutes=STALE_PROCESSING_MINUTES)
+        ).isoformat()
+        conn.execute(
+            """UPDATE sync_inbox
+               SET status = 'staged', processing_started_at = NULL
+               WHERE status = 'processing'
+                 AND processing_started_at IS NOT NULL
+                 AND processing_started_at < ?""",
+            (cutoff,),
+        )
+        conn.commit()
+
         rows = conn.execute(
             "SELECT id FROM sync_inbox WHERE status = 'staged' ORDER BY received_at",
         ).fetchall()
@@ -95,9 +117,10 @@ def _process_one(db_path: Path, payload_id: str, payload_path: Path) -> dict:
     try:
         cur = conn.execute(
             """UPDATE sync_inbox
-               SET status = 'processing', processed_at = NULL, error = NULL, conversations = NULL
+               SET status = 'processing', processing_started_at = ?,
+                   processed_at = NULL, error = NULL, conversations = NULL
                WHERE id = ? AND status = 'staged'""",
-            (payload_id,),
+            (now, payload_id),
         )
         conn.commit()
     finally:

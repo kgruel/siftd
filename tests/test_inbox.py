@@ -1,11 +1,16 @@
 """Tests for siftd.api.inbox — staged receive and inbox processing."""
 
-import json
 import threading
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from siftd.api.inbox import get_inbox_status, process_inbox, stage_payload
+from siftd.api.inbox import (
+    STALE_PROCESSING_MINUTES,
+    get_inbox_status,
+    process_inbox,
+    stage_payload,
+)
 from siftd.storage.sqlite import open_database
 
 
@@ -213,3 +218,76 @@ class TestGetInboxStatus:
     def test_nonexistent_db(self, tmp_path):
         status = get_inbox_status(tmp_path / "missing.db")
         assert status == {"pending": 0, "total": 0}
+
+
+class TestStaleProcessingReclaim:
+    """C2: Rows stuck in 'processing' are reclaimed after timeout."""
+
+    def test_stale_processing_row_is_reclaimed(self, db, inbox, tmp_path):
+        """A row stuck in 'processing' past the timeout gets reclaimed and reprocessed."""
+        slice_path = _make_slice(tmp_path)
+        staged = stage_payload(slice_path, db)
+
+        # Manually set status to 'processing' with a stale timestamp
+        stale_time = (
+            datetime.now(UTC) - timedelta(minutes=STALE_PROCESSING_MINUTES + 1)
+        ).isoformat()
+        conn = open_database(db)
+        conn.execute(
+            """UPDATE sync_inbox
+               SET status = 'processing', processing_started_at = ?
+               WHERE id = ?""",
+            (stale_time, staged["id"]),
+        )
+        conn.commit()
+        conn.close()
+
+        # process_inbox should reclaim and reprocess it
+        results = process_inbox(db)
+        assert len(results) == 1
+        assert results[0]["status"] == "done"
+        assert results[0]["id"] == staged["id"]
+
+    def test_recent_processing_row_not_reclaimed(self, db, inbox, tmp_path):
+        """A row recently claimed for processing is NOT reclaimed."""
+        slice_path = _make_slice(tmp_path)
+        staged = stage_payload(slice_path, db)
+
+        # Set status to 'processing' with a recent timestamp
+        recent_time = (
+            datetime.now(UTC) - timedelta(minutes=1)
+        ).isoformat()
+        conn = open_database(db)
+        conn.execute(
+            """UPDATE sync_inbox
+               SET status = 'processing', processing_started_at = ?
+               WHERE id = ?""",
+            (recent_time, staged["id"]),
+        )
+        conn.commit()
+        conn.close()
+
+        # process_inbox should NOT reclaim it (still within timeout)
+        results = process_inbox(db)
+        assert results == []
+
+    def test_processing_without_timestamp_not_reclaimed(self, db, inbox, tmp_path):
+        """A 'processing' row without processing_started_at is left alone.
+
+        This covers pre-migration rows that lack the column value.
+        """
+        slice_path = _make_slice(tmp_path)
+        staged = stage_payload(slice_path, db)
+
+        conn = open_database(db)
+        conn.execute(
+            """UPDATE sync_inbox
+               SET status = 'processing', processing_started_at = NULL
+               WHERE id = ?""",
+            (staged["id"],),
+        )
+        conn.commit()
+        conn.close()
+
+        results = process_inbox(db)
+        assert results == []
