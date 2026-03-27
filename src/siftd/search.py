@@ -696,6 +696,12 @@ def hybrid_search(
             lambda_=lambda_,
             limit=n,
         )
+        # Ensure outward score matches MMR-adjusted final score for display and downstream sorting.
+        for r in raw_results:
+            breakdown = r.get("breakdown")
+            final_score = getattr(breakdown, "final_score", None)
+            if final_score is not None:
+                r["score"] = float(final_score)
 
     # Enrich with metadata from main DB
     main_conn_meta = open_database(db, read_only=True)

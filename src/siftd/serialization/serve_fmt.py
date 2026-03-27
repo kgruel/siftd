@@ -105,7 +105,10 @@ def render_search(results: list, fidelity: Fidelity) -> dict:
     """Serialize SearchResult list to JSON-safe dict."""
     import dataclasses
 
-    serialized = [dataclasses.asdict(r) for r in results]
+    serialized = [
+        r if isinstance(r, dict) else dataclasses.asdict(r)
+        for r in results
+    ]
     return {
         "result_count": len(serialized),
         "results": serialized,
