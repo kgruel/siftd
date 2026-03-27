@@ -97,6 +97,57 @@ def batched_in_query(
     return results
 
 
+def cost_expr_sql(
+    response_alias: str = "r",
+    pricing_alias: str = "pr",
+    *,
+    coalesce_pricing: bool = False,
+) -> str:
+    """SQL fragment: per-response cost calculation (cache-aware).
+
+    Computes:
+        (non-cached input tokens * input_rate + output tokens * output_rate) / 1M
+
+    Cache-read tokens (from response_attributes) are subtracted from input
+    tokens so they aren't double-charged.  The CASE clamps negative values
+    to zero (a response may report more cache-read than total input tokens
+    due to rounding in some providers).
+
+    Args:
+        response_alias: SQL alias for the responses table.
+        pricing_alias: SQL alias for the pricing table.
+        coalesce_pricing: If True, COALESCE per-mtok columns to 0 so missing
+            pricing produces cost=0.  If False (default), NULL propagates so
+            missing pricing yields NULL cost — preferred for materialized stats
+            where NULL signals "no pricing data" rather than "free".
+
+    Returns:
+        A SQL expression suitable for use inside SUM() or as a scalar.
+        Callers typically wrap with ``ROUND(SUM(...) / 1000000.0, 4)``.
+    """
+    r = response_alias
+    p = pricing_alias
+    input_rate = f"COALESCE({p}.input_per_mtok, 0)" if coalesce_pricing else f"{p}.input_per_mtok"
+    output_rate = f"COALESCE({p}.output_per_mtok, 0)" if coalesce_pricing else f"{p}.output_per_mtok"
+
+    cache_read = (
+        f"COALESCE("
+        f"(SELECT MAX(CAST(ra.value AS INTEGER))"
+        f" FROM response_attributes ra"
+        f" WHERE ra.response_id = {r}.id"
+        f" AND ra.key = 'cache_read_input_tokens'), 0)"
+    )
+
+    return (
+        f"CASE"
+        f" WHEN COALESCE({r}.input_tokens, 0) - {cache_read} < 0"
+        f" THEN 0"
+        f" ELSE COALESCE({r}.input_tokens, 0) - {cache_read}"
+        f" END * {input_rate}"
+        f" + COALESCE({r}.output_tokens, 0) * {output_rate}"
+    )
+
+
 def batched_execute(
     conn: sqlite3.Connection,
     sql_template: str,

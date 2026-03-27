@@ -2,6 +2,10 @@
 -- Joins responses → models → pricing to compute token costs.
 -- Results are APPROXIMATE: flat per-token pricing, cache read tokens treated as free.
 --
+-- Canonical cost formula: siftd.storage.sql_helpers.cost_expr_sql()
+-- This file duplicates the formula in pure SQL (can't import Python).
+-- If the formula changes, update both locations.
+--
 -- Usage: siftd query sql cost --var limit=50
 
 SELECT

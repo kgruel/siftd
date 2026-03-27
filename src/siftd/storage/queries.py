@@ -350,6 +350,32 @@ def fetch_prompt_text_content(
     ).fetchall()
 
 
+def fetch_prompt_text_contents(
+    conn: sqlite3.Connection,
+    prompt_ids: list[str],
+) -> dict[str, list[sqlite3.Row]]:
+    """Fetch text content blocks for multiple prompts, ordered by block_index.
+
+    Returns dict mapping prompt_id to list of rows with content.
+    """
+    if not prompt_ids:
+        return {}
+
+    rows = batched_in_query(
+        conn,
+        "SELECT prompt_id, content FROM prompt_content "
+        "WHERE prompt_id IN ({placeholders}) "
+        "AND block_type = 'text' "
+        "ORDER BY prompt_id, block_index",
+        prompt_ids,
+    )
+
+    result: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        result.setdefault(row["prompt_id"], []).append(row)
+    return result
+
+
 def fetch_responses_for_conversation(
     conn: sqlite3.Connection,
     conversation_id: str,

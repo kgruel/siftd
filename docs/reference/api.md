@@ -319,7 +319,7 @@ A prompt and its full response narrative.
 Get IDs of the most recent conversations.
 
 ```python
-def get_recent_conversation_ids(conn: Connection, limit: int) -> list[str]
+def get_recent_conversation_ids(conn: Connection, limit: int, *, owner: str | None = ...) -> list[str]
 ```
 
 **Parameters:**
@@ -363,7 +363,7 @@ def list_conversations(*, db_path: pathlib._local.Path | None = ..., workspace: 
 Get full conversation detail by ID.
 
 ```python
-def get_conversation(id: str, *, db_path: pathlib._local.Path | None = ..., include_thinking: bool = ..., include_tool_content: bool = ..., tool_filter: str | None = ...) -> siftd.api.conversations.ConversationDetail | None
+def get_conversation(id: str, *, db_path: pathlib._local.Path | None = ..., include_thinking: bool = ..., include_tool_content: bool = ..., tool_filter: str | None = ..., owner: str | None = ...) -> siftd.api.conversations.ConversationDetail | None
 ```
 
 **Parameters:**
@@ -384,7 +384,7 @@ def get_conversation(id: str, *, db_path: pathlib._local.Path | None = ..., incl
 Resolve an entity ID, supporting prefix match for conversations.
 
 ```python
-def resolve_entity_id(conn: Connection, entity_type: str, entity_id: str) -> str | None
+def resolve_entity_id(conn: Connection, entity_type: str, entity_id: str, *, owner: str | None = ...) -> str | None
 ```
 
 **Parameters:**
@@ -840,7 +840,7 @@ def get_cost_coverage(conn: sqlite3.Connection | None = ..., *, db_path: pathlib
 Get comprehensive database statistics.
 
 ```python
-def get_stats(*, db_path: pathlib._local.Path | None = ...) -> DatabaseStats
+def get_stats(*, db_path: pathlib._local.Path | None = ..., owner: str | None = ...) -> DatabaseStats
 ```
 
 **Returns:** DatabaseStats with counts, harnesses, workspaces, models, tools.
@@ -878,7 +878,7 @@ def get_usage_summary(*, db_path: pathlib._local.Path | None = ...) -> UsageSumm
 List workspaces with conversation counts.
 
 ```python
-def list_workspaces(conn: sqlite3.Connection | None = ..., n: int = ..., *, db_path: pathlib._local.Path | None = ...) -> list[Row]
+def list_workspaces(conn: sqlite3.Connection | None = ..., n: int = ..., *, db_path: pathlib._local.Path | None = ..., owner: str | None = ...) -> list[Row]
 ```
 
 **Parameters:**
@@ -942,7 +942,7 @@ Per-workspace breakdown of tool tag usage.
 Get summary of tool call tags by category.
 
 ```python
-def get_tool_tag_summary(*, db_path: pathlib._local.Path | None = ..., prefix: str = ...) -> list[TagUsage]
+def get_tool_tag_summary(*, db_path: pathlib._local.Path | None = ..., prefix: str = ..., owner: str | None = ...) -> list[TagUsage]
 ```
 
 **Parameters:**
@@ -960,7 +960,7 @@ def get_tool_tag_summary(*, db_path: pathlib._local.Path | None = ..., prefix: s
 Get tool tag usage broken down by workspace.
 
 ```python
-def get_tool_tags_by_workspace(*, db_path: pathlib._local.Path | None = ..., prefix: str = ..., n: int = ...) -> list[WorkspaceTagUsage]
+def get_tool_tags_by_workspace(*, db_path: pathlib._local.Path | None = ..., prefix: str = ..., n: int = ..., owner: str | None = ...) -> list[WorkspaceTagUsage]
 ```
 
 **Parameters:**
@@ -1189,7 +1189,7 @@ def get_or_create_tag(conn: Connection, name: str, description: str | None = ...
 List all tags with usage counts.
 
 ```python
-def list_tags(db_path: pathlib._local.Path | None = ..., conn: sqlite3.Connection | None = ..., *, since: str | None = ..., before: str | None = ...) -> list[TagInfo]
+def list_tags(db_path: pathlib._local.Path | None = ..., conn: sqlite3.Connection | None = ..., *, since: str | None = ..., before: str | None = ..., owner: str | None = ...) -> list[TagInfo]
 ```
 
 **Parameters:**

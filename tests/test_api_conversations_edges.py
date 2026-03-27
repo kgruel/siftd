@@ -16,7 +16,7 @@ def test_get_conversation_includes_prompt_with_no_response(tmp_path, monkeypatch
     monkeypatch.setattr("siftd.api.conversations.fetch_conversation_model", lambda conn, cid: "m")
     monkeypatch.setattr("siftd.api.conversations.fetch_conversation_token_totals", lambda conn, cid: (0, 0))
     monkeypatch.setattr("siftd.api.conversations.fetch_prompts_for_conversation", lambda conn, cid: [{"id": "p1", "timestamp": "2024-01-01"}])
-    monkeypatch.setattr("siftd.api.conversations.fetch_prompt_text_content", lambda conn, pid: [])
+    monkeypatch.setattr("siftd.api.conversations.fetch_prompt_text_contents", lambda conn, pids: {})
     monkeypatch.setattr("siftd.api.conversations.fetch_responses_for_conversation", lambda conn, cid: [])
     monkeypatch.setattr("siftd.api.conversations.fetch_response_content_blocks", lambda conn, ids: {})
     monkeypatch.setattr("siftd.api.conversations.fetch_tool_calls_for_conversation", lambda conn, cid, include_content=False: [])
@@ -26,8 +26,9 @@ def test_get_conversation_includes_prompt_with_no_response(tmp_path, monkeypatch
     assert detail is not None and len(detail.turns) == 1 and detail.turns[0].total_input_tokens == 0
 
 
-def test_run_query_file_returns_empty_result_for_non_select(tmp_path, monkeypatch):
+def test_run_query_file_rejects_write_operations(tmp_path, monkeypatch):
     from siftd.api import create_database
+    from siftd.api.conversations import QueryError
 
     db = tmp_path / "db.sqlite"
     create_database(db).close()
@@ -37,5 +38,7 @@ def test_run_query_file_returns_empty_result_for_non_select(tmp_path, monkeypatc
     (qdir / "q.sql").write_text("PRAGMA user_version = 1;")
     monkeypatch.setattr("siftd.paths.queries_dir", lambda: qdir)
 
-    res = conv.run_query_file("q", db_path=db)
-    assert res.columns == [] and res.rows == []
+    import pytest
+
+    with pytest.raises(QueryError, match="SQL error"):
+        conv.run_query_file("q", db_path=db)

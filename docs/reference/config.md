@@ -39,7 +39,7 @@ All keys can be managed via `siftd config set <key> <value>`.
 | `delegate` | bool | `true` | CLI delegates read ops to running serve instance |
 | `url` | string | — | Explicit serve URL for delegation (skips auto-discovery) |
 | `db` | string | — | Database path for serve (overrides db.path) |
-| `host` | string | `0.0.0.0` | Bind address |
+| `host` | string | `127.0.0.1` | Bind address |
 | `port` | int | `8484` | Listen port |
 | `fts_rebuild` | string | `on_push` | When to rebuild FTS index: on_push, scheduled, off |
 
@@ -48,6 +48,7 @@ All keys can be managed via `siftd config set <key> <value>`.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `static_token` | string | — | Static bearer token for auth (supports env:VAR syntax) |
+| `delegation_token` | string | — | Bearer token used by the CLI delegation client (supports env:VAR syntax) |
 | `identity` | string | `local` | User identity for static_token mode |
 | `issuer` | string | — | OIDC issuer URL for JWT validation |
 | `audience` | string | `siftd` | OIDC audience claim |

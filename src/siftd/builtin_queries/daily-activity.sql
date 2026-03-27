@@ -3,12 +3,10 @@
 
 SELECT
     substr(c.started_at, 1, 10) as day,
-    COUNT(DISTINCT c.id) as conversations,
-    COUNT(p.id) as prompts,
-    COUNT(r.id) as responses
+    COUNT(*) as conversations,
+    COALESCE(SUM((SELECT COUNT(*) FROM prompts p WHERE p.conversation_id = c.id)), 0) as prompts,
+    COALESCE(SUM((SELECT COUNT(*) FROM responses r WHERE r.conversation_id = c.id)), 0) as responses
 FROM conversations c
-LEFT JOIN prompts p ON p.conversation_id = c.id
-LEFT JOIN responses r ON r.conversation_id = c.id
 GROUP BY day
 ORDER BY day DESC
 LIMIT $limit

@@ -352,6 +352,46 @@ class TestServeRouteBoundary:
                 + "\n".join(violations)
             )
 
+    @staticmethod
+    def _find_forbidden_imports(
+        src_dir, *, subdirs: tuple[str, ...], forbidden_prefix: str, suppress_comment: str,
+    ) -> list[str]:
+        """Scan subdirs for imports matching forbidden_prefix.
+
+        Returns a list of "rel/path.py:line: imports module" strings.
+        Lines containing suppress_comment are excluded.
+        """
+        import ast as _ast
+
+        violations = []
+        for subdir in subdirs:
+            pkg = src_dir / subdir
+            if not pkg.exists():
+                continue
+            for py_file in pkg.rglob("*.py"):
+                source = py_file.read_text()
+                lines = source.splitlines()
+                try:
+                    tree = _ast.parse(source)
+                except SyntaxError:
+                    continue
+                for node in _ast.walk(tree):
+                    module = None
+                    if isinstance(node, _ast.ImportFrom) and node.module:
+                        module = node.module
+                    elif isinstance(node, _ast.Import):
+                        for alias in node.names:
+                            if alias.name.startswith(forbidden_prefix):
+                                module = alias.name
+
+                    if module and (module == forbidden_prefix or module.startswith(forbidden_prefix + ".")):
+                        line = node.lineno
+                        if 0 < line <= len(lines) and suppress_comment in lines[line - 1]:
+                            continue
+                        rel = py_file.relative_to(src_dir.parent.parent)
+                        violations.append(f"{rel}:{line}: imports {module}")
+        return violations
+
     def test_cli_and_serve_no_direct_search_import(self, src_dir):
         """CLI and serve modules must not import siftd.search directly.
 
@@ -362,42 +402,94 @@ class TestServeRouteBoundary:
 
         Suppress with ``# arch: allow-search`` on the import line.
         """
-        import ast
-
-        forbidden_module = "siftd.search"
-        violations = []
-
-        for subdir in ("cli", "serve"):
-            pkg = src_dir / subdir
-            if not pkg.exists():
-                continue
-            for py_file in pkg.rglob("*.py"):
-                source = py_file.read_text()
-                lines = source.splitlines()
-                try:
-                    tree = ast.parse(source)
-                except SyntaxError:
-                    continue
-                for node in ast.walk(tree):
-                    module = None
-                    if isinstance(node, ast.ImportFrom) and node.module:
-                        module = node.module
-                    elif isinstance(node, ast.Import):
-                        for alias in node.names:
-                            if alias.name.startswith(forbidden_module):
-                                module = alias.name
-
-                    if module and (module == forbidden_module or module.startswith(forbidden_module + ".")):
-                        line = node.lineno
-                        if 0 < line <= len(lines) and "arch: allow-search" in lines[line - 1]:
-                            continue
-                        rel = py_file.relative_to(src_dir.parent.parent)
-                        violations.append(f"{rel}:{line}: imports {module}")
-
+        violations = self._find_forbidden_imports(
+            src_dir,
+            subdirs=("cli", "serve"),
+            forbidden_prefix="siftd.search",
+            suppress_comment="arch: allow-search",
+        )
         if violations:
             pytest.fail(
                 "CLI/serve modules must import from siftd.api.search, "
                 "not siftd.search directly:\n"
+                + "\n".join(violations)
+            )
+
+    def test_cli_no_direct_storage_import(self, src_dir):
+        """CLI modules must not import siftd.storage directly.
+
+        Rationale: The API layer (siftd.api) owns connection lifecycle,
+        transactions, and query composition. CLI modules that reach into
+        storage bypass validation, retry logic, and the Operation IR
+        pipeline.
+
+        Suppress with ``# arch: allow-storage`` on the import line.
+        """
+        violations = self._find_forbidden_imports(
+            src_dir,
+            subdirs=("cli",),
+            forbidden_prefix="siftd.storage",
+            suppress_comment="arch: allow-storage",
+        )
+        if violations:
+            pytest.fail(
+                "CLI modules must import from siftd.api, "
+                "not siftd.storage directly:\n"
+                + "\n".join(violations)
+            )
+
+    @pytest.mark.xfail(
+        reason="known violation: serve/routes.py imports siftd.storage.sqlite (3 call sites)",
+        strict=True,
+    )
+    def test_serve_no_direct_storage_import(self, src_dir):
+        """Serve routes must not import siftd.storage directly.
+
+        Rationale: Same as CLI — the API layer owns connection lifecycle
+        and query composition. Serve routes that open databases or call
+        storage functions directly create a parallel access path that
+        bypasses the API's transaction management.
+
+        Suppress with ``# arch: allow-storage`` on the import line.
+        """
+        violations = self._find_forbidden_imports(
+            src_dir,
+            subdirs=("serve",),
+            forbidden_prefix="siftd.storage",
+            suppress_comment="arch: allow-storage",
+        )
+        if violations:
+            pytest.fail(
+                "Serve modules must import from siftd.api, "
+                "not siftd.storage directly:\n"
+                + "\n".join(violations)
+            )
+
+    @pytest.mark.xfail(
+        reason="known violation: cli/search.py and cli/meta.py import siftd.embeddings (4 call sites)",
+        strict=True,
+    )
+    def test_cli_no_direct_embeddings_import(self, src_dir):
+        """CLI modules must not import siftd.embeddings directly.
+
+        Rationale: Embeddings is an optional extra with heavyweight
+        dependencies (numpy). CLI modules should use siftd.api for
+        embedding operations. Direct imports create coupling to the
+        embeddings internals and make it harder to gate availability
+        checks in one place.
+
+        Suppress with ``# arch: allow-embeddings`` on the import line.
+        """
+        violations = self._find_forbidden_imports(
+            src_dir,
+            subdirs=("cli",),
+            forbidden_prefix="siftd.embeddings",
+            suppress_comment="arch: allow-embeddings",
+        )
+        if violations:
+            pytest.fail(
+                "CLI modules must import from siftd.api, "
+                "not siftd.embeddings directly:\n"
                 + "\n".join(violations)
             )
 

@@ -15,7 +15,7 @@ from siftd.storage.queries import (
     fetch_conversation_model,
     fetch_conversation_tags,
     fetch_conversation_token_totals,
-    fetch_prompt_text_content,
+    fetch_prompt_text_contents,
     fetch_prompts_for_conversation,
     fetch_response_content_blocks,
     fetch_responses_for_conversation,
@@ -23,6 +23,7 @@ from siftd.storage.queries import (
     fetch_tool_calls_for_conversation,
     has_pricing_table,
 )
+from siftd.storage.sql_helpers import cost_expr_sql
 from siftd.storage.sqlite import open_database
 
 
@@ -321,22 +322,7 @@ def _list_conversations_impl(
         # Fallback: compute from source tables (before first ingest rebuilds
         # the stats table, or if the table was dropped).
         cost_subquery = (
-            """(SELECT ROUND(SUM(
-                CASE
-                    WHEN COALESCE(r2.input_tokens, 0) - COALESCE(
-                        (SELECT MAX(CAST(ra.value AS INTEGER))
-                         FROM response_attributes ra
-                         WHERE ra.response_id = r2.id
-                           AND ra.key = 'cache_read_input_tokens'), 0) < 0
-                    THEN 0
-                    ELSE COALESCE(r2.input_tokens, 0) - COALESCE(
-                        (SELECT MAX(CAST(ra.value AS INTEGER))
-                         FROM response_attributes ra
-                         WHERE ra.response_id = r2.id
-                           AND ra.key = 'cache_read_input_tokens'), 0)
-                END * COALESCE(pr.input_per_mtok, 0)
-                + COALESCE(r2.output_tokens, 0) * COALESCE(pr.output_per_mtok, 0)
-            ) / 1000000.0, 4)
+            f"""(SELECT ROUND(SUM({cost_expr_sql('r2', 'pr', coalesce_pricing=True)}) / 1000000.0, 4)
             FROM responses r2
             LEFT JOIN pricing pr ON pr.model_id = r2.model_id
                                  AND pr.provider_id = r2.provider_id
@@ -485,13 +471,15 @@ def get_conversation(
     model_name = fetch_conversation_model(conn, conv_id)
     total_input, total_output = fetch_conversation_token_totals(conn, conv_id)
 
-    # Fetch prompts and their text content
+    # Fetch prompts and their text content (bulk)
     prompts = fetch_prompts_for_conversation(conn, conv_id)
+    prompt_ids = [p["id"] for p in prompts]
+    all_prompt_blocks = fetch_prompt_text_contents(conn, prompt_ids)
     prompt_texts: dict[str, str] = {}
-    for p in prompts:
-        blocks = fetch_prompt_text_content(conn, p["id"])
+    for pid in prompt_ids:
+        blocks = all_prompt_blocks.get(pid, [])
         parts = [_extract_text(b["content"]) for b in blocks]
-        prompt_texts[p["id"]] = " ".join(parts).strip()
+        prompt_texts[pid] = " ".join(parts).strip()
 
     # Fetch responses
     responses = fetch_responses_for_conversation(conn, conv_id)
@@ -1014,8 +1002,9 @@ def run_query_file(
     if unbound:
         raise QueryError(f"Missing parameter variables: {', '.join(sorted(unbound))}")
 
-    # 6. Execute with params
+    # 6. Execute with params (query_only prevents accidental mutation)
     conn = open_database(db, read_only=False)
+    conn.execute("PRAGMA query_only = ON")
 
     try:
         statements = [s.strip() for s in sql.split(";") if s.strip()]

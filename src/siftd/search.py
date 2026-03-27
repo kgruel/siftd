@@ -810,13 +810,14 @@ def _filter_conversations_conn(
     wb.tags_all(all_tags)
     wb.tags_none(exclude_tags)
 
+    joins = wb.joins_sql()
+    joins_clause = f"\n        {joins}" if joins else ""
+    group_by = "\n        GROUP BY c.id" if wb.needs_group_by else ""
+
     sql = f"""
-        SELECT DISTINCT c.id
-        FROM conversations c
-        LEFT JOIN workspaces w ON w.id = c.workspace_id
-        LEFT JOIN responses r ON r.conversation_id = c.id
-        LEFT JOIN models m ON m.id = r.model_id
-        {wb.where_sql()}
+        SELECT c.id
+        FROM conversations c{joins_clause}
+        {wb.where_sql()}{group_by}
     """
 
     rows = conn.execute(sql, wb.params).fetchall()

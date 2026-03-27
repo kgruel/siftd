@@ -9,6 +9,8 @@ conversation instead of joining/aggregating the responses table.
 import sqlite3
 from dataclasses import dataclass
 
+from siftd.storage.sql_helpers import cost_expr_sql
+
 _TABLE = "conversation_stats"
 
 _CREATE_SQL = f"""
@@ -55,22 +57,7 @@ def rebuild_conversation_stats(conn: sqlite3.Connection, *, commit: bool = False
     cost_expr = "NULL"
     cost_join = ""
     if has_pricing:
-        cost_expr = """ROUND(SUM(
-            CASE
-                WHEN COALESCE(r.input_tokens, 0) - COALESCE(
-                    (SELECT MAX(CAST(ra.value AS INTEGER))
-                     FROM response_attributes ra
-                     WHERE ra.response_id = r.id
-                       AND ra.key = 'cache_read_input_tokens'), 0) < 0
-                THEN 0
-                ELSE COALESCE(r.input_tokens, 0) - COALESCE(
-                    (SELECT MAX(CAST(ra.value AS INTEGER))
-                     FROM response_attributes ra
-                     WHERE ra.response_id = r.id
-                       AND ra.key = 'cache_read_input_tokens'), 0)
-            END * pr.input_per_mtok
-            + COALESCE(r.output_tokens, 0) * pr.output_per_mtok
-        ) / 1000000.0, 4)"""
+        cost_expr = f"ROUND(SUM({cost_expr_sql('r', 'pr')}) / 1000000.0, 4)"
         # Route pricing through harness source when responses.provider_id is NULL.
         # COALESCE(r.provider_id, p_fallback.id) means: use the response's explicit
         # provider if set, otherwise fall back to the harness source's provider.
