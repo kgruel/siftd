@@ -44,7 +44,10 @@ def acquire_token(auth: dict | None) -> str:
             path = Path(token_ref[5:]).expanduser()
             if not path.exists():
                 raise AuthError(f"token file not found: {path}")
-            return path.read_text().strip()
+            try:
+                return path.read_text().strip()
+            except OSError as e:
+                raise AuthError(f"cannot read token file: {e.strerror}") from e
         return token_ref  # literal
 
     raise AuthError("no auth configured for remote")

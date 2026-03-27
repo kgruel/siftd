@@ -46,6 +46,7 @@ def _dispatch(
 
     from painted import Fidelity
 
+    from siftd.api.conversations import QueryError
     from siftd.api.dispatch import Operation, execute, render
     from siftd.serialization import serve_fmt
 
@@ -58,6 +59,10 @@ def _dispatch(
         if render_method == "detail" and result is None:
             return Response(content={"error": "conversation not found"}, status_code=404)
         return render(result, op, fmt=serve_fmt)
+    except FileNotFoundError as e:
+        return Response(content={"error": str(e)}, status_code=404)
+    except (ValueError, KeyError, QueryError) as e:
+        return Response(content={"error": str(e)}, status_code=400)
     except Exception:
         logging.getLogger("siftd.serve").exception("dispatch error on %s %s", method, path)
         return Response(
@@ -196,7 +201,7 @@ async def tags_route(
 
 
 @post("/api/v1/tag", status_code=200)
-async def tag_write_route(request: Request, db_path: Path) -> dict:
+async def tag_write_route(request: Request, db_path: Path) -> dict | Response:
     """Apply, remove, rename, or delete tags.
 
     Request body (JSON):
@@ -230,7 +235,12 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
     from siftd.storage.sql_helpers import has_conversation_owners_table
     from siftd.storage.sqlite import open_database
 
-    body = json_mod.loads(await request.body())
+    try:
+        body = json_mod.loads(await request.body())
+    except (json_mod.JSONDecodeError, ValueError):
+        return Response(content={"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return Response(content={"error": "request body must be a JSON object"}, status_code=400)
     action = body.get("action", "apply")
     conn = open_database(db_path)
 
@@ -293,8 +303,10 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
         if action == "rename":
             from litestar.exceptions import PermissionDeniedException
 
-            old_name = body["old_name"]
-            new_name = body["new_name"]
+            old_name = body.get("old_name")
+            new_name = body.get("new_name")
+            if not old_name or not new_name:
+                return Response(content={"error": "rename requires old_name and new_name"}, status_code=400)
             tag_id = get_tag_id(conn, old_name) if owner else None
             if tag_id and _tag_used_by_other_owners(tag_id):
                 raise PermissionDeniedException("tag is in use by another owner")
@@ -304,7 +316,9 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
         if action == "delete":
             from litestar.exceptions import PermissionDeniedException
 
-            tag_name = body["tag_name"]
+            tag_name = body.get("tag_name")
+            if not tag_name:
+                return Response(content={"error": "delete requires tag_name"}, status_code=400)
             tag_id = get_tag_id(conn, tag_name) if owner else None
             if tag_id and _tag_used_by_other_owners(tag_id):
                 raise PermissionDeniedException("tag is in use by another owner")
@@ -323,15 +337,19 @@ async def tag_write_route(request: Request, db_path: Path) -> dict:
             raise PermissionDeniedException("tag mutation is only supported for conversations when auth is enabled")
 
         if last_n:
-            ids = get_recent_conversation_ids(conn, int(last_n), owner=owner)
+            try:
+                last_n_int = int(last_n)
+            except (TypeError, ValueError):
+                return Response(content={"error": "last must be an integer"}, status_code=400)
+            ids = get_recent_conversation_ids(conn, last_n_int, owner=owner)
         elif entity_id:
             resolved = resolve_entity_id(conn, entity_type, entity_id, owner=owner)
             ids = [resolved] if resolved else []
         else:
-            return {"error": "entity_id or last required"}
+            return Response(content={"error": "entity_id or last required"}, status_code=400)
 
         if not ids:
-            return {"error": "no matching entities found"}
+            return Response(content={"error": "no matching entities found"}, status_code=404)
 
         results = []
         for tag_name in tags:

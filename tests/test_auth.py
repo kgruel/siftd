@@ -34,6 +34,17 @@ def test_error_cases(auth, match, monkeypatch):
         acquire_token(auth)
 
 
+def test_unreadable_token_file_raises_auth_error(tmp_path):
+    p = tmp_path / "unreadable.txt"
+    p.write_text("secret")
+    p.chmod(0o000)
+    try:
+        with pytest.raises(AuthError, match="cannot read token file"):
+            acquire_token({"token": f"file:{p}"})
+    finally:
+        p.chmod(0o644)
+
+
 def test_env_file_and_literal_tokens(tmp_path, monkeypatch):
     monkeypatch.setenv("SIFTD_TEST_TOKEN", "env_secret")
     assert acquire_token({"token": "env:SIFTD_TEST_TOKEN"}) == "env_secret"

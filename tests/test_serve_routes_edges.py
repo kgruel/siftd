@@ -80,6 +80,131 @@ def test_record_push_log_handles_missing_client(monkeypatch, tmp_path):
     assert calls["commit"] and calls["close"] and calls["params"][0] == "p1" and calls["params"][-1] is None
 
 
+def test_dispatch_file_not_found_returns_404(monkeypatch, tmp_path):
+    monkeypatch.setattr("siftd.api.dispatch.Operation", lambda **kw: None)
+    def _raise(*_a, **_kw):
+        raise FileNotFoundError("Database not found: /tmp/missing.db")
+    monkeypatch.setattr("siftd.api.dispatch.execute", _raise)
+    out = routes._dispatch("/api/v1/x", "GET", lambda: None, {}, "stats", tmp_path / "db.db")
+    assert out.status_code == 404
+    assert "not found" in out.content["error"].lower()
+
+
+def test_dispatch_value_error_returns_400(monkeypatch, tmp_path):
+    monkeypatch.setattr("siftd.api.dispatch.Operation", lambda **kw: None)
+    def _raise(*_a, **_kw):
+        raise ValueError("invalid date format")
+    monkeypatch.setattr("siftd.api.dispatch.execute", _raise)
+    out = routes._dispatch("/api/v1/x", "GET", lambda: None, {}, "stats", tmp_path / "db.db")
+    assert out.status_code == 400
+    assert "invalid date format" in out.content["error"]
+
+
+def test_dispatch_query_error_returns_400(monkeypatch, tmp_path):
+    from siftd.api.conversations import QueryError
+
+    monkeypatch.setattr("siftd.api.dispatch.Operation", lambda **kw: None)
+    def _raise(*_a, **_kw):
+        raise QueryError("Missing template variables: foo")
+    monkeypatch.setattr("siftd.api.dispatch.execute", _raise)
+    out = routes._dispatch("/api/v1/x", "GET", lambda: None, {}, "stats", tmp_path / "db.db")
+    assert out.status_code == 400
+    assert "Missing template variables" in out.content["error"]
+
+
+def test_tag_write_invalid_json_returns_400(monkeypatch, tmp_path):
+    req = SimpleNamespace(user=SimpleNamespace(sub="anonymous"))
+
+    async def _body():
+        return b"not json"
+    req.body = _body
+
+    monkeypatch.setattr("siftd.serve.auth.require_write", lambda _r: None)
+    out = _run(routes.tag_write_route.fn(req, tmp_path / "db.db"))
+    assert hasattr(out, "status_code") and out.status_code == 400
+    assert "invalid JSON" in out.content["error"]
+
+
+def test_tag_write_rename_missing_fields_returns_400(monkeypatch, tmp_path):
+    import json as json_mod
+
+    req = SimpleNamespace(user=SimpleNamespace(sub="anonymous"))
+
+    async def _body():
+        return json_mod.dumps({"action": "rename"}).encode()
+    req.body = _body
+
+    monkeypatch.setattr("siftd.serve.auth.require_write", lambda _r: None)
+    monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda _p: SimpleNamespace(close=lambda: None))
+    out = _run(routes.tag_write_route.fn(req, tmp_path / "db.db"))
+    assert hasattr(out, "status_code") and out.status_code == 400
+    assert "old_name" in out.content["error"]
+
+
+def test_tag_write_delete_missing_tag_name_returns_400(monkeypatch, tmp_path):
+    import json as json_mod
+
+    req = SimpleNamespace(user=SimpleNamespace(sub="anonymous"))
+
+    async def _body():
+        return json_mod.dumps({"action": "delete"}).encode()
+    req.body = _body
+
+    monkeypatch.setattr("siftd.serve.auth.require_write", lambda _r: None)
+    monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda _p: SimpleNamespace(close=lambda: None))
+    out = _run(routes.tag_write_route.fn(req, tmp_path / "db.db"))
+    assert hasattr(out, "status_code") and out.status_code == 400
+    assert "tag_name" in out.content["error"]
+
+
+def test_tag_write_missing_entity_returns_400(monkeypatch, tmp_path):
+    import json as json_mod
+
+    req = SimpleNamespace(user=SimpleNamespace(sub="anonymous"))
+
+    async def _body():
+        return json_mod.dumps({"action": "apply", "tags": ["foo"]}).encode()
+    req.body = _body
+
+    monkeypatch.setattr("siftd.serve.auth.require_write", lambda _r: None)
+    monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda _p: SimpleNamespace(close=lambda: None))
+    out = _run(routes.tag_write_route.fn(req, tmp_path / "db.db"))
+    assert hasattr(out, "status_code") and out.status_code == 400
+    assert "entity_id or last" in out.content["error"]
+
+
+def test_tag_write_invalid_last_returns_400(monkeypatch, tmp_path):
+    import json as json_mod
+
+    req = SimpleNamespace(user=SimpleNamespace(sub="anonymous"))
+
+    async def _body():
+        return json_mod.dumps({"action": "apply", "tags": ["foo"], "last": "abc"}).encode()
+    req.body = _body
+
+    monkeypatch.setattr("siftd.serve.auth.require_write", lambda _r: None)
+    monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda _p: SimpleNamespace(close=lambda: None))
+    out = _run(routes.tag_write_route.fn(req, tmp_path / "db.db"))
+    assert hasattr(out, "status_code") and out.status_code == 400
+    assert "integer" in out.content["error"]
+
+
+def test_tag_write_no_matching_entities_returns_404(monkeypatch, tmp_path):
+    import json as json_mod
+
+    req = SimpleNamespace(user=SimpleNamespace(sub="anonymous"))
+
+    async def _body():
+        return json_mod.dumps({"action": "apply", "tags": ["foo"], "entity_id": "missing123"}).encode()
+    req.body = _body
+
+    monkeypatch.setattr("siftd.serve.auth.require_write", lambda _r: None)
+    monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda _p: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr("siftd.api.conversations.resolve_entity_id", lambda *a, **kw: None)
+    out = _run(routes.tag_write_route.fn(req, tmp_path / "db.db"))
+    assert hasattr(out, "status_code") and out.status_code == 404
+
+
 def test_sync_status_redacts_inbox_error(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "siftd.api.inbox.get_inbox_status",
