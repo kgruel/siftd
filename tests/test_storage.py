@@ -1097,6 +1097,16 @@ class TestPendingMigrationsDetection:
         assert "create content_blobs table" in pending
         assert "create tool_call_tags table" in pending
         assert "create FTS5 search index" in pending
+        assert "add file_mtime/file_size columns to ingested_files" in pending
+        assert "add branch column to conversations" in pending
+        assert "create session tables" in pending
+        assert "create prompt_tags table" in pending
+        assert "create git_remote index on workspaces" in pending
+        assert "create tag indexes on junction tables" in pending
+        assert "create response_attributes covering index" in pending
+        assert "create conversation_stats table" in pending
+        assert "create conversation_owners table" in pending
+        assert "create sync_inbox table" in pending
         conn.close()
 
 

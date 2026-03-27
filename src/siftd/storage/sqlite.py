@@ -1549,6 +1549,74 @@ def get_pending_schema_migrations(conn: sqlite3.Connection) -> list[str]:
     if not cur.fetchone():
         pending.append("create FTS5 search index")
 
+    # file_mtime/file_size columns on ingested_files (from _migrate_add_file_stat_columns)
+    cur = conn.execute("PRAGMA table_info(ingested_files)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "file_mtime" not in columns:
+        pending.append("add file_mtime/file_size columns to ingested_files")
+
+    # branch column on conversations (from _migrate_add_branch_column)
+    cur = conn.execute("PRAGMA table_info(conversations)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "branch" not in columns:
+        pending.append("add branch column to conversations")
+
+    # active_sessions table (from ensure_session_tables)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='active_sessions'"
+    )
+    if not cur.fetchone():
+        pending.append("create session tables")
+
+    # prompt_tags table (from ensure_prompt_tags_table)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='prompt_tags'"
+    )
+    if not cur.fetchone():
+        pending.append("create prompt_tags table")
+
+    # git_remote index (from _ensure_git_remote_index)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspaces_git_remote'"
+    )
+    if not cur.fetchone():
+        pending.append("create git_remote index on workspaces")
+
+    # tag indexes (from _ensure_tag_indexes)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_tags_tag'"
+    )
+    if not cur.fetchone():
+        pending.append("create tag indexes on junction tables")
+
+    # response_attributes covering index (from _ensure_response_attributes_key_index)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_response_attributes_key'"
+    )
+    if not cur.fetchone():
+        pending.append("create response_attributes covering index")
+
+    # conversation_stats table (from _ensure_conversation_stats_table)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
+    )
+    if not cur.fetchone():
+        pending.append("create conversation_stats table")
+
+    # conversation_owners table (from ensure_conversation_owners_table)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_owners'"
+    )
+    if not cur.fetchone():
+        pending.append("create conversation_owners table")
+
+    # sync_inbox table (from ensure_sync_inbox_table)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='sync_inbox'"
+    )
+    if not cur.fetchone():
+        pending.append("create sync_inbox table")
+
     return pending
 
 

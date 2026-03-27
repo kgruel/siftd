@@ -102,12 +102,16 @@ def get_fts_sync_status(conn: sqlite3.Connection) -> dict:
     missing_prompt_count = conn.execute("""
         SELECT COUNT(*) FROM prompt_content pc
         WHERE pc.block_type = 'text'
+          AND json_valid(pc.content)
+          AND json_extract(pc.content, '$.text') IS NOT NULL
           AND pc.id NOT IN (SELECT content_id FROM content_fts WHERE side = 'prompt')
     """).fetchone()[0]
 
     missing_response_count = conn.execute("""
         SELECT COUNT(*) FROM response_content rc
         WHERE rc.block_type = 'text'
+          AND json_valid(rc.content)
+          AND json_extract(rc.content, '$.text') IS NOT NULL
           AND rc.id NOT IN (SELECT content_id FROM content_fts WHERE side = 'response')
     """).fetchone()[0]
 

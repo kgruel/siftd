@@ -106,6 +106,7 @@ class DropInsValidCheck:
                     continue
 
                 sql_for_explain = re.sub(r"\$\w+", "NULL", content)
+                sql_for_explain = re.sub(r":\w+", "NULL", sql_for_explain)
                 conn = sqlite3.connect(":memory:")
                 try:
                     conn.execute(f"EXPLAIN {sql_for_explain}")
