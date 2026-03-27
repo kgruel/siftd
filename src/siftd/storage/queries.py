@@ -12,7 +12,11 @@ The API layer handles parameter validation and dataclass mapping.
 import sqlite3
 from dataclasses import dataclass
 
-from siftd.storage.sql_helpers import batched_in_query, has_conversation_owners_table
+from siftd.storage.sql_helpers import (
+    batched_in_query,
+    has_conversation_owners_table,
+    owner_predicate,
+)
 
 
 @dataclass
@@ -645,30 +649,23 @@ def fetch_tool_tags_by_prefix(
     """Fetch tool call tag usage counts filtered by prefix."""
     if owner and not has_conversation_owners_table(conn):
         return []
+    where = ["t.name LIKE ?"]
+    params: list[object] = [f"{prefix}%"]
     if owner:
-        return conn.execute(
-            """
-            SELECT t.name, COUNT(tct.id) as count
-            FROM tags t
-            JOIN tool_call_tags tct ON tct.tag_id = t.id
-            JOIN tool_calls tc ON tc.id = tct.tool_call_id
-            JOIN conversation_owners co ON co.conversation_id = tc.conversation_id
-            WHERE t.name LIKE ? AND co.user_id = ?
-            GROUP BY t.id
-            ORDER BY count DESC
-            """,
-            (f"{prefix}%", owner),
-        ).fetchall()
+        where.append(owner_predicate("tc.conversation_id"))
+        params.append(owner)
+
     return conn.execute(
-        """
+        f"""
         SELECT t.name, COUNT(tct.id) as count
         FROM tags t
         JOIN tool_call_tags tct ON tct.tag_id = t.id
-        WHERE t.name LIKE ?
+        JOIN tool_calls tc ON tc.id = tct.tool_call_id
+        WHERE {' AND '.join(where)}
         GROUP BY t.id
         ORDER BY count DESC
         """,
-        (f"{prefix}%",),
+        params,
     ).fetchall()
 
 
@@ -681,27 +678,14 @@ def fetch_tool_tags_by_workspace(
     """Fetch per-workspace tool tag usage counts."""
     if owner and not has_conversation_owners_table(conn):
         return []
+    where = ["t.name LIKE ?"]
+    params: list[object] = [f"{prefix}%"]
     if owner:
-        return conn.execute(
-            """
-            SELECT
-                COALESCE(w.path, '(no workspace)') as workspace,
-                t.name as tag,
-                COUNT(tct.id) as count
-            FROM tool_call_tags tct
-            JOIN tags t ON t.id = tct.tag_id
-            JOIN tool_calls tc ON tc.id = tct.tool_call_id
-            JOIN conversations c ON c.id = tc.conversation_id
-            JOIN conversation_owners co ON co.conversation_id = c.id
-            LEFT JOIN workspaces w ON w.id = c.workspace_id
-            WHERE t.name LIKE ? AND co.user_id = ?
-            GROUP BY w.id, t.id
-            ORDER BY workspace, count DESC
-            """,
-            (f"{prefix}%", owner),
-        ).fetchall()
+        where.append(owner_predicate("tc.conversation_id"))
+        params.append(owner)
+
     return conn.execute(
-        """
+        f"""
         SELECT
             COALESCE(w.path, '(no workspace)') as workspace,
             t.name as tag,
@@ -711,11 +695,11 @@ def fetch_tool_tags_by_workspace(
         JOIN tool_calls tc ON tc.id = tct.tool_call_id
         JOIN conversations c ON c.id = tc.conversation_id
         LEFT JOIN workspaces w ON w.id = c.workspace_id
-        WHERE t.name LIKE ?
+        WHERE {' AND '.join(where)}
         GROUP BY w.id, t.id
         ORDER BY workspace, count DESC
         """,
-        (f"{prefix}%",),
+        params,
     ).fetchall()
 
 
