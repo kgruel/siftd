@@ -278,16 +278,45 @@ class TestSyncPushBranches:
         async def _fake_push_ssh(remote, slice_path, *, staged=False):
             return False
 
+        async def _staged_preflight(*a):
+            from siftd.domain.sync import SyncStatus
+            return SyncStatus(capabilities=frozenset({"staged"}))
+
         monkeypatch.setattr(
             "siftd.api.slice.slice_database",
             lambda **kw: {"conversations": 1, "size_bytes": 7},
         )
         monkeypatch.setattr("siftd.api.sync._push_ssh", _fake_push_ssh)
-        async def _no_preflight(*a): return None
-        monkeypatch.setattr("siftd.api.sync._preflight_ssh", _no_preflight)
-        monkeypatch.setattr("siftd.config.update_last_push", lambda *_, **__: None)
+        monkeypatch.setattr("siftd.api.sync._preflight_ssh", _staged_preflight)
+        async def _fake_process(*a): pass
+        monkeypatch.setattr("siftd.api.sync._process_remote_ssh", _fake_process)
+        monkeypatch.setattr("siftd.config.update_last_sent", lambda *_, **__: None)
         result = sync_push(_db(tmp_path), _remote(path="/r.db", host="box"))
         assert result.remote_existed is False
+
+    def test_ssh_preflight_failure_raises(self, tmp_path, monkeypatch):
+        """Preflight returning None must raise, not silently fall back to blocking merge."""
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 7},
+        )
+        async def _no_preflight(*a): return None
+        monkeypatch.setattr("siftd.api.sync._preflight_ssh", _no_preflight)
+        with pytest.raises(SyncError, match="Could not negotiate sync capabilities"):
+            sync_push(_db(tmp_path), _remote(path="/r.db", host="box"))
+
+    def test_ssh_no_staged_capability_raises(self, tmp_path, monkeypatch):
+        """Remote without staged capability must raise, not fall back to blocking merge."""
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 7},
+        )
+        async def _old_preflight(*a):
+            from siftd.domain.sync import SyncStatus
+            return SyncStatus(capabilities=frozenset())
+        monkeypatch.setattr("siftd.api.sync._preflight_ssh", _old_preflight)
+        with pytest.raises(SyncError, match="does not support staged receive"):
+            sync_push(_db(tmp_path), _remote(path="/r.db", host="box"))
 
     def test_local_transport_branch(self, tmp_path, monkeypatch):
         monkeypatch.setattr(

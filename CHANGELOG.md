@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-03-28
+
+### Fixed
+
+- **Sync: silent fallback to blocking merge** — When preflight capability negotiation failed (remote too old, SSH hiccup, missing `sync-status` command), push silently fell back to a blocking `receive_database()` merge over SSH. With large payloads this hangs until the 600s command timeout. Push now requires staged receive for SSH remotes and surfaces a clear error on version mismatch
+- **Sync: zero-copy staging, race-safe inbox, HTTP staged mismatch** — `stage_payload` avoids unnecessary copy; inbox `processing` claim is atomic; HTTP push correctly routes through staged path when negotiated
+- **Sync: cursor advancement and inbox recovery** — `last_sent` cursor tracks filter signature so filter changes invalidate stale cursors; stale `processing` rows are reclaimed after timeout; `last_sent` preferred over `last_push` for incremental slicing
+- **Blob ref_count triggers and transaction atomicity** — `content_blobs` ref_count maintained by triggers; merge and ingest wrap related writes in explicit transactions
+- **Storage lifecycle** — WAL-aware backup, sidecar cleanup on restore, migration column preservation, merge schema validation, workspace path-fallback
+- **Ingest contract** — Explicit parse failures, race-safe multi-conversation rejection, session-dedup hash check, scoped adapter overrides
+- **Tag lifecycle** — Cache invalidation on rename/delete, pending tag propagation, duplicate collapse
+- **Search pipelines** — Retry, recency re-sort, candidate cap, and score writeback ported to API path; score propagation fix and render crash fix
+- **SQL correctness** — Query-layer hardening across owner-scoped paths, boundary sanitization
+- **Doctor** — False positive and negative fixes in health check modules
+
+### Changed
+
+- **Owner scoping unified** — SQL helpers for owner-scoped queries; htmx search, stats, tools, tags, and conversation routes all consistently scope by owner
+- **Serve auth hardened** — Loopback bypass removed, owner scoping enforced on all write paths, delegation tokens, OIDC error redaction, fail-closed writes
+- **Config permissions** — Config file permissions validated, cache TTL bounded
+
+### Added
+
+- **Architecture test** — CLI and serve must not import `siftd.search` directly (enforces API boundary)
+
 ## [0.6.3] - 2026-03-25
 
 ### Added

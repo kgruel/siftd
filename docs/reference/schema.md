@@ -292,6 +292,7 @@ Content blocks in responses (text, thinking, tool references)
 | `id` | TEXT | PRIMARY KEY |  |
 | `received_at` | TEXT | NOT NULL |  |
 | `processed_at` | TEXT |  |  |
+| `processing_started_at` | TEXT |  |  |
 | `status` | TEXT | NOT NULL DEFAULT 'staged' |  |
 | `error` | TEXT |  |  |
 | `source_host` | TEXT |  |  |

@@ -1070,6 +1070,9 @@ A registered sync remote.
 | `last_push` | `str \| None` |  |
 | `last_pull` | `str \| None` |  |
 | `last_sent` | `str \| None` |  |
+| `last_push_filters` | `str` |  |
+| `last_pull_filters` | `str` |  |
+| `last_sent_filters` | `str` |  |
 | `strategy` | `str` |  |
 | `filters` | `siftd.domain.sync.SyncFilters \| None` |  |
 
@@ -1243,7 +1246,7 @@ def rename_tag(old_name: str = ..., new_name: str = ..., *, conn: sqlite3.Connec
 Merge a source database (slice) into the target database.
 
 ```python
-def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..., dry_run: bool = ..., replace: bool = ...) -> dict
+def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..., dry_run: bool = ..., replace: bool = ..., before_commit: collections.abc.Callable[[sqlite3.Connection, dict], None] | None = ...) -> dict
 ```
 
 **Parameters:**
@@ -1252,6 +1255,7 @@ def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..
 - `source_path`: Path to the source database to merge in.
 - `rebuild_fts`: Whether to rebuild the FTS5 index after merge.
 - `dry_run`: If True, compute counts but roll back all changes.
+- `replace`: If True (default), replace stale conversations with newer versions from the source. If False, keep existing versions.
 
 **Returns:** Dict with counts of merged entities.
 

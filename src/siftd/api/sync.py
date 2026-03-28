@@ -130,10 +130,21 @@ def sync_push(
             remote_existed = _push_http(remote, slice_path)
         elif remote.host:
             status = asyncio.run(_preflight_ssh(remote))
-            if status and "staged" in status.capabilities:
-                use_staged = True
+            if status is None:
+                raise SyncError(
+                    f"Could not negotiate sync capabilities with {remote.host}. "
+                    f"Ensure siftd >= 0.6.3 is installed on the remote "
+                    f"(needs 'db sync-status' command)."
+                )
+            if "staged" not in status.capabilities:
+                caps = sorted(status.capabilities) if status.capabilities else []
+                raise SyncError(
+                    f"Remote {remote.host} does not support staged receive "
+                    f"(capabilities: {caps}). Upgrade the remote's siftd."
+                )
+            use_staged = True
             remote_existed = asyncio.run(
-                _push_ssh(remote, slice_path, staged=use_staged),
+                _push_ssh(remote, slice_path, staged=True),
             )
         else:
             remote_existed = _push_local(remote, slice_path, db_path)
