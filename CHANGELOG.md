@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tag mutation extracted to API** — Three focused API functions (`apply_tags`, `rename_tag_safe`, `delete_tag_safe`) replace duplicated orchestration in CLI and serve. API owns connection lifecycle and transaction boundaries. Cross-owner protection SQL moved from serve route to `storage.tags.tag_used_by_other_owners` helper
 - **Serve serializers made lossless** — Tags, tool search, and stats serializers now include all API dataclass fields. `dataclasses.asdict()` used as baseline in serialization layer. CLI rehydrate-with-defaults pattern replaced by strict API deserializers (`tag_info_from_dict`, `tool_search_payload_from_dict`, `dict_to_stats`)
 - **`ScoreBreakdown` relocated to `domain/search_types`** — Breaks `search ↔ storage.embeddings` cycle and `output → search → storage` transitive coupling
+- **`api → serialization` cycle broken** — `_stats_to_dict` inlined in `api.stats`, `serialization.stats.serialize_stats` delegates to it (correct one-way direction)
+- **Ingest/backfill extracted to API** — `api.ingest.run_ingest` and `api.backfill.run_backfill` wrap ingestion pipeline with `db_path` lifecycle ownership. CLI no longer imports `siftd.ingestion` or `siftd.backfill` directly
+- **Config `↔` paths cycle broken** — `paths.db_path()` reads config.toml via stdlib `tomllib` instead of importing `siftd.config`
+- **Sync config extracted** — 450 lines of sync-specific accessors (remotes, timeouts, SSH options, cursor mutations) moved to `config_sync.py`. `config.py` re-exports for backward compatibility
 
 ### Added
 
@@ -20,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local/delegated JSON parity test** — Tool search `--json` output is schema-identical whether executed locally or via serve delegation
 - **Tag mutation API tests** — Apply/remove/rename/delete with ownership protection, entity resolution, and edge cases
 - **Tag mutation serialization** — `serialization/tags.py` with typed payload dataclasses and anti-drift tests
+- **Ingest/backfill API tests and serializer drift tests** — Coverage for `IngestRunResult`, `BackfillRunResult` types
+- **Dependency direction arch tests** — `api/` must not import `serialization/`, `storage/` must not import `api/`, `domain/` must be pure. Known `api↔serialization` cycle tracked as strict xfail (now resolved)
 
 ## [0.6.4] - 2026-03-28
 

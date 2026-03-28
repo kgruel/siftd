@@ -1043,6 +1043,23 @@ Export conversations as a complete document.
 
 ### Data Types
 
+### BackfillRunResult
+
+Result metadata for a backfill API run.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `db_path` | `Path` |  |
+| `operation` | `Literal[response_attributes, shell_tags, derivative_tags, filter_binary]` |  |
+| `dry_run` | `bool` |  |
+| `inserted_attributes` | `int` |  |
+| `tagged_conversations` | `int` |  |
+| `shell_tag_counts` | `dict[str, int]` |  |
+| `filtered` | `int` |  |
+| `skipped` | `int` |  |
+| `errors` | `int` |  |
+| `elapsed_ms` | `int` |  |
+
 ### ApplyResult
 
 Batch apply/remove result with enough context for CLI messaging.
@@ -1088,6 +1105,20 @@ Tag with usage counts.
 | `tool_call_count` | `int` |  |
 | `prompt_count` | `int` |  |
 
+### IngestRunResult
+
+Result metadata for an ingest API run.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `db_path` | `Path` |  |
+| `db_created` | `bool` |  |
+| `mode` | `Literal[ingest, rebuild_fts]` |  |
+| `adapters` | `list[str]` |  |
+| `scan_paths` | `list[str]` |  |
+| `stats` | `siftd.ingestion.orchestration.IngestStats \| None` |  |
+| `elapsed_ms` | `int` |  |
+
 ### PushResult
 
 Result of a push operation.
@@ -1121,6 +1152,10 @@ A registered sync remote.
 
 ### Exceptions
 
+#### AdapterSelectionError
+
+Raised when requested adapter names match no discovered adapters.
+
 #### IndexCompatError
 
 Raised when index metadata is incompatible with current backend configuration.
@@ -1130,6 +1165,16 @@ Raised when index metadata is incompatible with current backend configuration.
 Raised when a sync operation fails.
 
 ### Functions
+
+### BackfillOperation
+
+### run_backfill
+
+Run a backfill operation with API-owned DB lifecycle.
+
+```python
+def run_backfill(*, db_path: Path, operation: Literal[response_attributes, shell_tags, derivative_tags, filter_binary] = ..., dry_run: bool = ...) -> BackfillRunResult
+```
 
 ### backup_database
 
@@ -1307,6 +1352,22 @@ def rename_tag(old_name: str = ..., new_name: str = ..., *, conn: sqlite3.Connec
 **Raises:**
 
 - `ValueError`: If new_name already exists.
+
+### run_ingest
+
+Run ingestion from discovered adapters.
+
+```python
+def run_ingest(*, db_path: Path, adapter_names: list[str] | None = ..., scan_paths: list[str] | None = ..., filter_binary: bool | None = ..., on_event: collections.abc.Callable[[siftd.ingestion.orchestration.IngestEvent], None] | None = ...) -> IngestRunResult
+```
+
+### run_rebuild_fts
+
+Rebuild FTS index only (no ingestion).
+
+```python
+def run_rebuild_fts(*, db_path: Path) -> IngestRunResult
+```
 
 ### merge_database
 
