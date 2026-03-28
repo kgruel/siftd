@@ -213,6 +213,14 @@ async def tag_write_route(request: Request, db_path: Path) -> dict | Response:
       old_name: str, new_name: str — for rename
       tag_name: str                — for delete
     """
+    from litestar.exceptions import PermissionDeniedException
+
+    from siftd.api.tags import apply_tags, delete_tag_safe, rename_tag_safe
+    from siftd.serialization.tags import (
+        serialize_apply_result,
+        serialize_delete_result,
+        serialize_rename_result,
+    )
     from siftd.serve.auth import require_write
 
     require_write(request)
@@ -220,164 +228,56 @@ async def tag_write_route(request: Request, db_path: Path) -> dict | Response:
 
     import json as json_mod
 
-    from siftd.api.conversations import (
-        get_recent_conversation_ids,
-        resolve_entity_id,
-    )
-    from siftd.api.tags import (
-        apply_tag,
-        delete_tag,
-        get_or_create_tag,
-        get_tag_id,
-        remove_tag,
-        rename_tag,
-    )
-    from siftd.storage.sql_helpers import has_conversation_owners_table
-    from siftd.storage.sqlite import open_database
-
     try:
         body = json_mod.loads(await request.body())
     except (json_mod.JSONDecodeError, ValueError):
         return Response(content={"error": "invalid JSON body"}, status_code=400)
     if not isinstance(body, dict):
         return Response(content={"error": "request body must be a JSON object"}, status_code=400)
+
     action = body.get("action", "apply")
-    conn = open_database(db_path)
-
     try:
-        def _tag_used_by_other_owners(tag_id: str) -> bool:
-            if not owner:
-                return False
-            if not has_conversation_owners_table(conn):
-                return False
-
-            # Conversation tags
-            row = conn.execute(
-                "SELECT 1 FROM conversation_tags ct "
-                "JOIN conversation_owners co ON co.conversation_id = ct.conversation_id "
-                "WHERE ct.tag_id = ? AND co.user_id != ? LIMIT 1",
-                (tag_id, owner),
-            ).fetchone()
-            if row:
-                return True
-
-            # Tool call tags
-            row = conn.execute(
-                "SELECT 1 FROM tool_call_tags tt "
-                "JOIN tool_calls tc ON tc.id = tt.tool_call_id "
-                "JOIN conversation_owners co ON co.conversation_id = tc.conversation_id "
-                "WHERE tt.tag_id = ? AND co.user_id != ? LIMIT 1",
-                (tag_id, owner),
-            ).fetchone()
-            if row:
-                return True
-
-            # Workspace tags (conservative: if a tagged workspace has any conversations owned by
-            # another user, treat it as cross-tenant and deny rename/delete).
-            row = conn.execute(
-                "SELECT 1 FROM workspace_tags wt "
-                "JOIN conversations c ON c.workspace_id = wt.workspace_id "
-                "JOIN conversation_owners co ON co.conversation_id = c.id "
-                "WHERE wt.tag_id = ? AND co.user_id != ? LIMIT 1",
-                (tag_id, owner),
-            ).fetchone()
-            if row:
-                return True
-
-            # prompt_tags may not exist
-            if conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags'"
-            ).fetchone():
-                row = conn.execute(
-                    "SELECT 1 FROM prompt_tags pt "
-                    "JOIN prompts p ON p.id = pt.prompt_id "
-                    "JOIN conversation_owners co ON co.conversation_id = p.conversation_id "
-                    "WHERE pt.tag_id = ? AND co.user_id != ? LIMIT 1",
-                    (tag_id, owner),
-                ).fetchone()
-                if row:
-                    return True
-
-            return False
-
         if action == "rename":
-            from litestar.exceptions import PermissionDeniedException
-
-            old_name = body.get("old_name")
-            new_name = body.get("new_name")
-            if not old_name or not new_name:
-                return Response(content={"error": "rename requires old_name and new_name"}, status_code=400)
-            tag_id = get_tag_id(conn, old_name) if owner else None
-            if tag_id and _tag_used_by_other_owners(tag_id):
-                raise PermissionDeniedException("tag is in use by another owner")
-            rename_tag(old_name, new_name, conn=conn, commit=True)
-            return {"status": "renamed", "old_name": old_name, "new_name": new_name}
-
-        if action == "delete":
-            from litestar.exceptions import PermissionDeniedException
-
-            tag_name = body.get("tag_name")
-            if not tag_name:
-                return Response(content={"error": "delete requires tag_name"}, status_code=400)
-            tag_id = get_tag_id(conn, tag_name) if owner else None
-            if tag_id and _tag_used_by_other_owners(tag_id):
-                raise PermissionDeniedException("tag is in use by another owner")
-            delete_tag(conn, tag_name, commit=True)
-            return {"status": "deleted", "tag_name": tag_name}
-
-        # apply or remove
-        tags = body.get("tags", [])
-        entity_type = body.get("entity_type", "conversation")
-        entity_id = body.get("entity_id")
-        last_n = body.get("last")
-
-        if owner and entity_type != "conversation":
-            from litestar.exceptions import PermissionDeniedException
-
-            raise PermissionDeniedException("tag mutation is only supported for conversations when auth is enabled")
-
-        if last_n:
-            try:
-                last_n_int = int(last_n)
-            except (TypeError, ValueError):
-                return Response(content={"error": "last must be an integer"}, status_code=400)
-            ids = get_recent_conversation_ids(conn, last_n_int, owner=owner)
-        elif entity_id:
-            resolved = resolve_entity_id(conn, entity_type, entity_id, owner=owner)
-            ids = [resolved] if resolved else []
+            result = rename_tag_safe(
+                db_path=db_path,
+                old_name=str(body.get("old_name") or ""),
+                new_name=str(body.get("new_name") or ""),
+                owner=owner,
+            )
+            payload = serialize_rename_result(result)
+        elif action == "delete":
+            result = delete_tag_safe(
+                db_path=db_path,
+                tag_name=str(body.get("tag_name") or ""),
+                owner=owner,
+            )
+            payload = serialize_delete_result(result)
         else:
-            return Response(content={"error": "entity_id or last required"}, status_code=400)
+            result = apply_tags(
+                db_path=db_path,
+                tags=[str(t) for t in body.get("tags", [])],
+                entity_type=str(body.get("entity_type", "conversation")),
+                entity_id=body.get("entity_id"),
+                last=body.get("last"),
+                owner=owner,
+                remove=action == "remove",
+            )
+            payload = serialize_apply_result(result)
+    except PermissionError as e:
+        raise PermissionDeniedException(str(e)) from e
+    except ValueError as e:
+        return Response(content={"error": str(e)}, status_code=400)
+    except FileNotFoundError as e:
+        return Response(content={"error": str(e)}, status_code=404)
 
-        if not ids:
-            return Response(content={"error": "no matching entities found"}, status_code=404)
+    # Refresh stats cache
+    try:
+        from siftd.api.stats import get_stats, write_stats_cache
 
-        results = []
-        for tag_name in tags:
-            if action == "remove":
-                tag_id = get_tag_id(conn, tag_name)
-                if not tag_id:
-                    results.append({"tag": tag_name, "status": "not_found"})
-                    continue
-                count = sum(1 for eid in ids if remove_tag(conn, entity_type, eid, tag_id, commit=False))
-                results.append({"tag": tag_name, "status": "removed", "count": count})
-            else:
-                tag_id = get_or_create_tag(conn, tag_name)
-                count = sum(1 for eid in ids if apply_tag(conn, entity_type, eid, tag_id, commit=False))
-                results.append({"tag": tag_name, "status": "applied", "count": count})
-
-        conn.commit()
-
-        # Refresh stats cache
-        try:
-            from siftd.api.stats import get_stats, write_stats_cache
-
-            write_stats_cache(get_stats(db_path=db_path))
-        except Exception:
-            pass
-
-        return {"action": action, "results": results}
-    finally:
-        conn.close()
+        write_stats_cache(get_stats(db_path=db_path))
+    except Exception:
+        pass
+    return payload
 
 
 @get("/api/v1/tool-search")

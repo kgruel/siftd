@@ -5,17 +5,12 @@ import sys
 from pathlib import Path
 
 from siftd.api import (
-    apply_tag,
+    apply_tags,
     create_database,
-    delete_tag,
-    get_or_create_tag,
-    get_recent_conversation_ids,
-    get_tag_id,
+    delete_tag_safe,
     list_tags,
     open_database,
-    remove_tag,
-    rename_tag,
-    resolve_entity_id,
+    rename_tag_safe,
 )
 from siftd.api.sessions import is_session_registered
 from siftd.api.sessions import queue_tag as queue_pending_tag
@@ -285,13 +280,13 @@ def _cmd_tag_rename(args, db: Path) -> int:
 
     from painted import Fidelity
 
-    from siftd.api.dispatch import Operation, execute
+    from siftd.api.dispatch import Operation
     from siftd.serve.delegation import try_serve
 
     op = Operation(
         path="/api/v1/tag",
         method="POST",
-        fn=rename_tag,
+        fn=rename_tag_safe,
         params={
             "action": "rename",
             "old_name": old_name,
@@ -309,22 +304,22 @@ def _cmd_tag_rename(args, db: Path) -> int:
         print(f"Renamed '{old_name}' \u2192 '{new_name}'")
         return 0
 
-    # Local execution
-    try:
-        success = execute(op)
-    except FileNotFoundError:
+    if not db.exists():
         print(f"Database not found: {db}")
         print("Run 'siftd ingest' to create it.")
+        return 1
+
+    # Local execution
+    try:
+        rename_tag_safe(db_path=db, old_name=old_name, new_name=new_name)
+    except FileNotFoundError:
+        print(f"Tag not found: {old_name}")
         return 1
     except ValueError as e:
         print(f"Error: {e}")
         return 1
 
-    if success:
-        print(f"Renamed '{old_name}' \u2192 '{new_name}'")
-    else:
-        print(f"Tag not found: {old_name}")
-        return 1
+    print(f"Renamed '{old_name}' \u2192 '{new_name}'")
     return 0
 
 
@@ -349,7 +344,7 @@ def _cmd_tag_delete(args, db: Path) -> int:
     op = Operation(
         path="/api/v1/tag",
         method="POST",
-        fn=delete_tag,
+        fn=delete_tag_safe,
         params={
             "action": "delete",
             "tag_name": tag_name,
@@ -406,7 +401,15 @@ def _cmd_tag_delete(args, db: Path) -> int:
         conn.close()
         return 1
 
-    delete_tag(conn, tag_name, commit=True)
+    conn.close()
+    try:
+        delete_tag_safe(db_path=db, tag_name=tag_name)
+    except FileNotFoundError:
+        print(f"Tag not found: {tag_name}")
+        return 1
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
     parts = []
     if tag_info.conversation_count:
         parts.append(f"{tag_info.conversation_count} conversations")
@@ -420,7 +423,6 @@ def _cmd_tag_delete(args, db: Path) -> int:
         print(f"Deleted tag '{tag_name}' (was applied to {', '.join(parts)})")
     else:
         print(f"Deleted tag '{tag_name}'")
-    conn.close()
     return 0
 
 
@@ -502,7 +504,7 @@ def cmd_tag(args) -> int:
         op = Operation(
             path="/api/v1/tag",
             method="POST",
-            fn=remove_tag if removing else apply_tag,
+            fn=apply_tags,
             params={**body, "db_path": db},
             render_method="raw",
             fidelity=Fidelity(),
@@ -522,8 +524,6 @@ def cmd_tag(args) -> int:
                     print(f"Removed tag '{tag}' from {count} conversation(s)")
             return 0
 
-    conn = open_database(db)
-
     # Handle --last mode
     if args.last is not None:
         # Resolve N: const=1 gives int, but nargs="?" may capture a string.
@@ -539,54 +539,50 @@ def cmd_tag(args) -> int:
 
         if not positional:
             print("Usage: siftd tag --last [N] <tag> [tag2 ...]")
-            conn.close()
             return 1
 
         tag_names: list[str] = [str(t) for t in positional]
         if n < 1:
             print("--last requires a positive number")
-            conn.close()
             return 1
 
-        # Get N most recent conversations
-        ids = get_recent_conversation_ids(conn, n)
-
-        if not ids:
+        try:
+            result_local = apply_tags(
+                db_path=db,
+                tags=tag_names,
+                last=n,
+                remove=removing,
+            )
+        except FileNotFoundError:
             print("No conversations found.")
-            conn.close()
+            return 1
+        except ValueError as e:
+            print(f"Error: {e}")
             return 1
 
         errors = 0
         if removing:
-            for tag_name in tag_names:
-                tag_id = get_tag_id(conn, tag_name)
-                if not tag_id:
+            for row in result_local.results:
+                tag_name = row.tag
+                status = row.status
+                count = row.count
+                if status == "not_found":
                     print(f"Tag '{tag_name}' not found")
                     errors += 1
-                    continue
-                removed = 0
-                for cid in ids:
-                    if remove_tag(conn, "conversation", cid, tag_id, commit=False):
-                        removed += 1
-                if removed:
-                    print(f"Removed tag '{tag_name}' from {removed} conversation(s)")
+                elif status == "removed":
+                    print(f"Removed tag '{tag_name}' from {count} conversation(s)")
                 else:
-                    print(f"Tag '{tag_name}' not applied to any of {len(ids)} conversation(s)")
-            conn.commit()
+                    print(f"Tag '{tag_name}' not applied to any of {result_local.target_count} conversation(s)")
         else:
-            for tag_name in tag_names:
-                tag_id = get_or_create_tag(conn, tag_name)
-                tagged = 0
-                for cid in ids:
-                    if apply_tag(conn, "conversation", cid, tag_id, commit=False):
-                        tagged += 1
-                if tagged:
-                    print(f"Applied tag '{tag_name}' to {tagged} conversation(s)")
+            for row in result_local.results:
+                tag_name = row.tag
+                status = row.status
+                count = row.count
+                if status == "applied":
+                    print(f"Applied tag '{tag_name}' to {count} conversation(s)")
                 else:
-                    print(f"Tag '{tag_name}' already applied to all {len(ids)} conversation(s)")
-            conn.commit()
+                    print(f"Tag '{tag_name}' already applied to all {result_local.target_count} conversation(s)")
 
-        conn.close()
         return 1 if errors == len(tag_names) else 0
 
     # Parse positional args
@@ -602,43 +598,45 @@ def cmd_tag(args) -> int:
         print("       siftd tag delete <name> [--force]")
         print("\nTip: Use --session to queue tags for live sessions before ingest.", file=sys.stderr)
         print("\nEntity types: conversation (default), workspace, tool_call")
-        conn.close()
         return 1
 
     entity_type, entity_id, tag_names = parsed
 
-    # Validate entity exists (support prefix match for conversations)
-    resolved_id = resolve_entity_id(conn, entity_type, entity_id)
-    if resolved_id is None:
+    try:
+        result_local = apply_tags(
+            db_path=db,
+            tags=tag_names,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            remove=removing,
+        )
+    except FileNotFoundError:
         print(f"{entity_type} not found: {entity_id}")
-        conn.close()
+        return 1
+    except ValueError as e:
+        print(f"Error: {e}")
         return 1
 
+    resolved_id = result_local.resolved_entity_id or entity_id
+
     if removing:
-        removed = 0
-        for tag_name in tag_names:
-            tag_id = get_tag_id(conn, tag_name)
-            if not tag_id:
+        for row in result_local.results:
+            tag_name = row.tag
+            status = row.status
+            if status == "not_found":
                 print(f"Tag '{tag_name}' not found")
-                continue
-            if remove_tag(conn, entity_type, resolved_id, tag_id, commit=False):
+            elif status == "removed":
                 print(f"Removed tag '{tag_name}' from {entity_type} {resolved_id[:12]}")
-                removed += 1
             else:
                 print(f"Tag '{tag_name}' not applied to {entity_type} {resolved_id[:12]}")
-        conn.commit()
     else:
-        applied = 0
-        for tag_name in tag_names:
-            tag_id = get_or_create_tag(conn, tag_name)
-            if apply_tag(conn, entity_type, resolved_id, tag_id, commit=False):
+        for row in result_local.results:
+            tag_name = row.tag
+            status = row.status
+            if status == "applied":
                 print(f"Applied tag '{tag_name}' to {entity_type} {resolved_id[:12]}")
-                applied += 1
             else:
                 print(f"Tag '{tag_name}' already applied to {entity_type} {resolved_id[:12]}")
-        conn.commit()
-
-    conn.close()
     return 0
 
 

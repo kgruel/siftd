@@ -6,7 +6,7 @@ Exposes tag CRUD operations to CLI without direct storage imports.
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from siftd.paths import db_path as _db_path
 from siftd.storage.sqlite import open_database as _open_database
@@ -32,15 +32,26 @@ from siftd.storage.tags import (
 from siftd.storage.tags import (
     rename_tag as _rename_tag,
 )
+from siftd.storage.tags import (
+    tag_used_by_other_owners as _tag_used_by_other_owners,
+)
 
 __all__ = [
     "DERIVATIVE_TAG",
+    "ApplyTagOutcome",
+    "ApplyResult",
+    "DeleteResult",
+    "RenameResult",
     "TagInfo",
+    "TagMutationResult",
+    "apply_tags",
     "apply_tag",
+    "delete_tag_safe",
     "delete_tag",
     "get_tag_id",
     "get_or_create_tag",
     "list_tags",
+    "rename_tag_safe",
     "remove_tag",
     "rename_tag",
     "tag_info_from_dict",
@@ -59,6 +70,46 @@ class TagInfo:
     workspace_count: int
     tool_call_count: int
     prompt_count: int
+
+
+TagMutationResult = Literal["applied", "removed", "not_found", "already_applied", "not_applied"]
+
+
+@dataclass
+class ApplyTagOutcome:
+    """Per-tag mutation outcome."""
+
+    tag: str
+    status: TagMutationResult
+    count: int
+
+
+@dataclass
+class ApplyResult:
+    """Batch apply/remove result with enough context for CLI messaging."""
+
+    action: Literal["apply", "remove"]
+    results: list[ApplyTagOutcome]
+    target_count: int
+    entity_type: str
+    resolved_entity_id: str | None = None
+
+
+@dataclass
+class RenameResult:
+    """Safe rename result payload."""
+
+    status: str
+    old_name: str
+    new_name: str
+
+
+@dataclass
+class DeleteResult:
+    """Safe delete result payload."""
+
+    status: str
+    tag_name: str
 
 
 def tag_info_from_dict(data: dict[str, Any]) -> TagInfo:
@@ -185,6 +236,136 @@ def remove_tag(
         True if removed, False if not applied.
     """
     return _remove_tag(conn, entity_type, entity_id, tag_id, commit=commit)
+
+
+def apply_tags(
+    *,
+    db_path: Path,
+    tags: list[str],
+    entity_type: str = "conversation",
+    entity_id: str | None = None,
+    last: int | None = None,
+    owner: str | None = None,
+    remove: bool = False,
+) -> ApplyResult:
+    """Apply or remove tags with shared orchestration.
+
+    This function owns DB lifecycle and transaction boundaries.
+    """
+    from siftd.api.conversations import get_recent_conversation_ids, resolve_entity_id
+
+    if entity_type not in {"conversation", "workspace", "tool_call"}:
+        raise ValueError(f"Unsupported entity_type: {entity_type}")
+
+    if owner and entity_type != "conversation":
+        raise PermissionError("tag mutation is only supported for conversations when auth is enabled")
+
+    conn = _open_database(db_path)
+    try:
+        if last is not None:
+            try:
+                last_n_int = int(last)
+            except (TypeError, ValueError) as e:
+                raise ValueError("last must be an integer") from e
+            ids = get_recent_conversation_ids(conn, last_n_int, owner=owner) if last_n_int > 0 else []
+            resolved_entity_id = None
+        elif entity_id:
+            resolved = resolve_entity_id(conn, entity_type, entity_id, owner=owner)
+            ids = [resolved] if resolved else []
+            resolved_entity_id = resolved
+        else:
+            raise ValueError("entity_id or last required")
+
+        if not ids:
+            raise FileNotFoundError("no matching entities found")
+
+        outcomes: list[ApplyTagOutcome] = []
+        for tag_name in tags:
+            if remove:
+                tag_id = _get_tag_id(conn, tag_name)
+                if not tag_id:
+                    outcomes.append(ApplyTagOutcome(tag=tag_name, status="not_found", count=0))
+                    continue
+
+                removed_count = sum(1 for eid in ids if _remove_tag(conn, entity_type, eid, tag_id, commit=False))
+                status: TagMutationResult = "removed" if removed_count else "not_applied"
+                outcomes.append(ApplyTagOutcome(tag=tag_name, status=status, count=removed_count))
+            else:
+                tag_id = _get_or_create_tag(conn, tag_name)
+                applied_count = sum(1 for eid in ids if _apply_tag(conn, entity_type, eid, tag_id, commit=False))
+                status = "applied" if applied_count else "already_applied"
+                outcomes.append(ApplyTagOutcome(tag=tag_name, status=status, count=applied_count))
+
+        conn.commit()
+        return ApplyResult(
+            action="remove" if remove else "apply",
+            results=outcomes,
+            target_count=len(ids),
+            entity_type=entity_type,
+            resolved_entity_id=resolved_entity_id,
+        )
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def rename_tag_safe(
+    *,
+    db_path: Path,
+    old_name: str,
+    new_name: str,
+    owner: str | None = None,
+) -> RenameResult:
+    """Rename a tag with owner-scope protections."""
+    if not old_name or not new_name:
+        raise ValueError("rename requires old_name and new_name")
+
+    conn = _open_database(db_path)
+    try:
+        tag_id = _get_tag_id(conn, old_name) if owner else None
+        if tag_id and _tag_used_by_other_owners(conn, tag_id, owner):
+            raise PermissionError("tag is in use by another owner")
+
+        renamed = _rename_tag(conn, old_name, new_name, commit=True)
+        if not renamed:
+            raise FileNotFoundError(f"Tag not found: {old_name}")
+
+        return RenameResult(status="renamed", old_name=old_name, new_name=new_name)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def delete_tag_safe(
+    *,
+    db_path: Path,
+    tag_name: str,
+    owner: str | None = None,
+) -> DeleteResult:
+    """Delete a tag with owner-scope protections."""
+    if not tag_name:
+        raise ValueError("delete requires tag_name")
+
+    conn = _open_database(db_path)
+    try:
+        tag_id = _get_tag_id(conn, tag_name) if owner else None
+        if tag_id and _tag_used_by_other_owners(conn, tag_id, owner):
+            raise PermissionError("tag is in use by another owner")
+
+        removed = _delete_tag(conn, tag_name, commit=True)
+        if removed < 0:
+            raise FileNotFoundError(f"Tag not found: {tag_name}")
+
+        return DeleteResult(status="deleted", tag_name=tag_name)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def modify_conversation_tag(

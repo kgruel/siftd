@@ -102,14 +102,20 @@ from siftd.api.sync import (
 )
 from siftd.api.tags import (
     DERIVATIVE_TAG,
+    ApplyResult,
+    DeleteResult,
+    RenameResult,
     TagInfo,
     apply_tag,
+    apply_tags,
     delete_tag,
+    delete_tag_safe,
     get_or_create_tag,
     get_tag_id,
     list_tags,
     remove_tag,
     rename_tag,
+    rename_tag_safe,
 )
 from siftd.api.tool_search import (
     ToolSearchGroup,
@@ -157,12 +163,18 @@ __all__ = [
     "open_database",
     # tags
     "DERIVATIVE_TAG",
+    "ApplyResult",
+    "DeleteResult",
+    "RenameResult",
     "TagInfo",
+    "apply_tags",
     "apply_tag",
+    "delete_tag_safe",
     "delete_tag",
     "get_tag_id",
     "get_or_create_tag",
     "list_tags",
+    "rename_tag_safe",
     "remove_tag",
     "rename_tag",
     # doctor

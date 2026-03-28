@@ -508,7 +508,7 @@ class TestTagsEdgeBranches:
         # delete: warning and deleted messaging include workspace/tool/prompt counts
         ti = SimpleNamespace(name="t", conversation_count=1, workspace_count=2, tool_call_count=3, prompt_count=4)
         monkeypatch.setattr("siftd.cli.tags.list_tags", lambda conn=None: [ti])
-        monkeypatch.setattr("siftd.cli.tags.delete_tag", lambda *a, **k: None)
+        monkeypatch.setattr("siftd.cli.tags.delete_tag_safe", lambda *a, **k: None)
         assert tags_cli._cmd_tag_delete(SimpleNamespace(positional=["delete", "t"], force=False), Path(test_db)) == 1
         assert tags_cli._cmd_tag_delete(SimpleNamespace(positional=["delete", "t"], force=True), Path(test_db)) == 0
 
@@ -518,13 +518,21 @@ class TestTagsEdgeBranches:
         monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
         assert main(["--db", str(test_db), "tag", "--last", "0", "x"]) == 1
 
-        monkeypatch.setattr("siftd.cli.tags.get_recent_conversation_ids", lambda conn, n: [])
+        monkeypatch.setattr(
+            "siftd.cli.tags.apply_tags",
+            lambda **k: (_ for _ in ()).throw(FileNotFoundError("no matching entities found")),
+        )
         assert main(["--db", str(test_db), "tag", "--last", "1", "x"]) == 1
 
         # remove-last not-applied branch (line 554)
-        monkeypatch.setattr("siftd.cli.tags.get_recent_conversation_ids", lambda conn, n: ["cid"])
-        monkeypatch.setattr("siftd.cli.tags.get_tag_id", lambda conn, tag: "tid")
-        monkeypatch.setattr("siftd.cli.tags.remove_tag", lambda *a, **k: False)
+        monkeypatch.setattr(
+            "siftd.cli.tags.apply_tags",
+            lambda **k: SimpleNamespace(
+                results=[SimpleNamespace(tag="x", status="not_applied", count=0)],
+                target_count=1,
+                resolved_entity_id="cid",
+            ),
+        )
         assert main(["--db", str(test_db), "tag", "--remove", "--last", "1", "x"]) == 0
 
         # create existing tag but not on target conversation for line 608

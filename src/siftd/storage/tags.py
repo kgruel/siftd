@@ -174,6 +174,67 @@ def delete_tag(conn: sqlite3.Connection, name: str, *, commit: bool = False) -> 
     return removed
 
 
+def tag_used_by_other_owners(
+    conn: sqlite3.Connection,
+    tag_id: str,
+    owner: str | None,
+) -> bool:
+    """Return True when a tag is associated with entities owned by other users."""
+    if not owner:
+        return False
+    if not has_conversation_owners_table(conn):
+        return False
+
+    # Conversation tags
+    row = conn.execute(
+        "SELECT 1 FROM conversation_tags ct "
+        "JOIN conversation_owners co ON co.conversation_id = ct.conversation_id "
+        "WHERE ct.tag_id = ? AND co.user_id != ? LIMIT 1",
+        (tag_id, owner),
+    ).fetchone()
+    if row:
+        return True
+
+    # Tool call tags
+    row = conn.execute(
+        "SELECT 1 FROM tool_call_tags tt "
+        "JOIN tool_calls tc ON tc.id = tt.tool_call_id "
+        "JOIN conversation_owners co ON co.conversation_id = tc.conversation_id "
+        "WHERE tt.tag_id = ? AND co.user_id != ? LIMIT 1",
+        (tag_id, owner),
+    ).fetchone()
+    if row:
+        return True
+
+    # Workspace tags (conservative: if tagged workspace includes any conversation
+    # owned by another user, treat it as cross-tenant).
+    row = conn.execute(
+        "SELECT 1 FROM workspace_tags wt "
+        "JOIN conversations c ON c.workspace_id = wt.workspace_id "
+        "JOIN conversation_owners co ON co.conversation_id = c.id "
+        "WHERE wt.tag_id = ? AND co.user_id != ? LIMIT 1",
+        (tag_id, owner),
+    ).fetchone()
+    if row:
+        return True
+
+    # prompt_tags may not exist on older databases.
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags'"
+    ).fetchone():
+        row = conn.execute(
+            "SELECT 1 FROM prompt_tags pt "
+            "JOIN prompts p ON p.id = pt.prompt_id "
+            "JOIN conversation_owners co ON co.conversation_id = p.conversation_id "
+            "WHERE pt.tag_id = ? AND co.user_id != ? LIMIT 1",
+            (tag_id, owner),
+        ).fetchone()
+        if row:
+            return True
+
+    return False
+
+
 def list_tags(
     conn: sqlite3.Connection,
     *,
