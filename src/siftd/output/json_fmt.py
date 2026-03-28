@@ -149,7 +149,7 @@ def render_tool_search(result: Any, fidelity: Fidelity, **context: Any) -> dict:
 
 def _json_chunk_list(results: list) -> list[dict]:
     """Build JSON-safe list of chunk dicts."""
-    from siftd.search import ScoreBreakdown
+    from siftd.domain.search_types import ScoreBreakdown
 
     out = []
     for r in results:

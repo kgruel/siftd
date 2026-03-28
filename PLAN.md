@@ -1,178 +1,173 @@
-# Extract Tag Mutation To API Layer
+# Unify Search Pipeline: Move Post-Processing to API
 
-## Objectives
+## Scope and constraints
 
-- Extract tag mutation orchestration from `serve/routes.py:tag_write_route()` and `cli/tags.py:cmd_tag()` into API-layer functions.
-- Keep behavior and contracts stable:
-  - no user-facing CLI behavior changes
-  - no `POST /api/v1/tag` JSON shape changes
-- Reduce tag-mutation-related `serve -> storage` coupling (direct SQL + direct DB lifecycle in route).
+- Keep CLI behavior identical (flags, warnings, output shapes, tip/privacy messages).
+- Keep `/api/v1/search` contract stable.
+- API is the boundary: CLI/serve consume API primitives; no domain SQL or search-domain helper logic in CLI.
+- Prefer moving existing logic over rewriting algorithms.
 
-## Current Flow Snapshot
+## Current state (verified)
 
-- `src/siftd/serve/routes.py:204` currently owns:
-  - action routing (`apply/remove/rename/delete`)
-  - DB open/commit/close
-  - cross-owner SQL guard (`_tag_used_by_other_owners`)
-  - entity resolution (`last` / `entity_id`) and mutation loops
-- `src/siftd/cli/tags.py:438` currently duplicates apply/remove orchestration for local fallback.
-- `src/siftd/api/tags.py` exposes primitives (`apply_tag`, `remove_tag`, `rename_tag`, `delete_tag`) but no orchestration contract.
+- CLI owns domain post-processing (`_fetch_search_metadata`, `_enrich_context`, threshold/first, aggregation, thread tiering, file-ref/exchange/context enrichment).
+- API retrieval returns `list[dict]`, but some API helpers expect object attributes.
+- `ScoreBreakdown` lives in `siftd.search`, creating storage/output coupling cycles.
+- `--fts` bypasses IR via a separate CLI path.
 
-## Proposed API Surface (Focused, Not Kitchen-Sink)
+## Design decisions
 
-Add three orchestration functions in `src/siftd/api/tags.py`.
+### 1) Unified result type: mutable dataclasses in a neutral module
+
+Use dataclasses as the canonical internal representation.
+
+Location:
+- `src/siftd/domain/search_types.py`
+
+Core types:
+- `ScoreBreakdown`
+- `SearchChunk`
+- `ConversationSearchSummary`
+
+`SearchChunk` requirements:
+- **Not frozen** (mutable).
+- Retrieval fields are required (id/score/text/chunk/source_ids/etc.).
+- Enrichment targets are optional and start as `None` (for example: `workspace_path`, `started_at`, `file_refs`, `exchanges`, `context_window`).
+- Enrichment functions mutate these optional fields in place.
+
+Compatibility:
+- Keep temporary adapters at boundaries that still expect dicts.
+- Keep compatibility aliases for old public names during migration window.
+
+### 2) API surface is primitives; no consumer-specific wrappers
+
+No `prepare_cli_*` API functions.
+
+Expose composable API primitives only:
 
 ```python
-def apply_tags(
-    *,
-    db_path: Path,
-    tags: list[str],
-    entity_type: Literal["conversation", "workspace", "tool_call"] = "conversation",
-    entity_id: str | None = None,
-    last: int | None = None,
-    owner: str | None = None,
-    remove: bool = False,
-) -> ApplyResult
+def search_chunks(..., mode: Literal["fts", "hybrid", "semantic"], ...) -> list[SearchChunk]
 
-def rename_tag_safe(
-    *,
-    db_path: Path,
-    old_name: str,
-    new_name: str,
-    owner: str | None = None,
-) -> RenameResult
+def filter_by_threshold(results: list[SearchChunk], *, threshold: float | None) -> list[SearchChunk]
 
-def delete_tag_safe(
-    *,
-    db_path: Path,
-    tag_name: str,
-    owner: str | None = None,
-) -> DeleteResult
+def first_mention(results: list[SearchChunk], *, threshold: float = 0.65, db_path: Path | None = None) -> SearchChunk | None
+
+def enrich_search_metadata(conn: sqlite3.Connection, results: list[SearchChunk]) -> None
+
+def enrich_file_refs(conn: sqlite3.Connection, results: list[SearchChunk]) -> None
+
+def enrich_exchanges(conn: sqlite3.Connection, results: list[SearchChunk]) -> None
+
+def enrich_context_window(conn: sqlite3.Connection, results: list[SearchChunk], n: int) -> None
+
+def sort_chunks_by_time(results: list[SearchChunk]) -> list[SearchChunk]
+
+def aggregate_by_conversation(results: list[SearchChunk], *, limit: int = 10) -> list[ConversationSearchSummary]
+
+def compute_thread_tiers(results: list[SearchChunk]) -> tuple[list[SearchChunk], list[SearchChunk]]
 ```
 
-### Result types
+### 3) Enrichment order dependency is explicit and documented
 
-Use explicit dataclasses for action results and a small serializer adapter in serve route to preserve existing JSON payload shape:
+Compose primitives in this order to avoid drift:
+1. Retrieval (`search_chunks`)
+2. Relevance gates (`filter_by_threshold`, `first_mention`)
+3. Metadata enrichment (`enrich_search_metadata`)
+4. File ref enrichment (`enrich_file_refs`)
+5. Optional content enrichment (`enrich_exchanges` or `enrich_context_window`)
+6. View shaping (`aggregate_by_conversation` or `compute_thread_tiers`)
+7. Optional ordering (`sort_chunks_by_time` for chunk view)
 
-- `ApplyResult` -> `{ "action": "apply"|"remove", "results": [...] }`
-- `RenameResult` -> `{ "status": "renamed", "old_name": ..., "new_name": ... }`
-- `DeleteResult` -> `{ "status": "deleted", "tag_name": ... }`
+No wrapper types per stage; enrichment is in-place mutation on `SearchChunk`.
 
-No flattened union kwargs; each function accepts only meaningful parameters.
+### 4) Break cycle by relocating `ScoreBreakdown`
 
-## Connection Lifecycle Ownership
+Move `ScoreBreakdown` source of truth to `domain/search_types.py`.
 
-These API orchestration functions accept `db_path` only and own connection lifecycle end-to-end:
+Update imports:
+- `storage/embeddings.py` -> `domain.search_types`
+- `search.py` -> `domain.search_types`
+- `output/json_fmt.py` -> `domain.search_types` (or structural `to_dict` protocol)
 
-- open connection
-- perform validation and mutation
-- commit/rollback as needed
-- close connection
+This removes `search <-> storage.embeddings` and `output -> search -> storage` coupling.
 
-Callers (CLI/serve) do not pass `conn` and do not manage transactions for these mutations.
+### 5) FTS-only path uses the same IR/API path
 
-## Ownership Validation Placement
+- Remove `_search_fts_only` execution path from CLI.
+- CLI always executes one `Operation`; pass `mode="fts"` to API retrieval.
+- Preserve current user-visible `--fts` behavior (ignored-flag warnings, JSON `mode: "fts5"`, delegation policy).
 
-Move cross-owner SQL logic out of serve route into API-owned data access:
+### 6) Serve route stays simple
 
-- Add storage helper (preferred):
-  - `storage.tags.tag_used_by_other_owners(conn, tag_id, owner) -> bool`
-- `rename_tag_safe` and `delete_tag_safe` call this helper before mutating when `owner` is provided.
+- Keep `/api/v1/search` response shape unchanged.
+- Keep `embeddings_only` query parameter behavior; map internally to `mode`.
+- Serve composes only what it needs (typically retrieval + serialization), not CLI-specific enrichment steps.
 
-This removes tag-mutation-specific direct storage SQL usage from serve route.
+### 7) Anti-drift principle for serialization
 
-## `--last` / Entity Resolution Responsibility
+Apply anti-drift tests for search dataclasses, same pattern as lossless-serializers work:
+- Any serializer for `SearchChunk` / `ConversationSearchSummary` must be tested against `dataclasses.fields(...)`.
+- Tests fail when dataclass fields change but serializer output mapping is not updated.
+- If a field is intentionally transformed/renamed, the test must include explicit mapping allowlists so drift is deliberate, not accidental.
 
-- CLI responsibility (caller-level):
-  - keep existing argparse normalization quirks exactly as-is (`--last` string/int coercion, `--current/--session` behavior)
-- API responsibility (orchestration-level):
-  - `apply_tags` resolves concrete target IDs from `last` or `entity_id`
-  - applies owner scoping via existing API resolution helpers
-  - performs batch apply/remove loops and status accounting
+This is a principle, not an optional testing add-on.
 
-This preserves CLI UX while centralizing mutation state machine logic.
+## Migration plan (incremental, ~5 phases)
 
-## Serve Route After Extraction
+### Phase 1: Types + cycle break
 
-`tag_write_route` becomes thin action-to-API delegation:
+1. Add `domain/search_types.py` with mutable dataclasses.
+2. Move `ScoreBreakdown` there and update imports across search/storage/output.
+3. Keep compatibility aliases/adapters.
 
-1. parse/validate JSON body shape
-2. resolve `owner = _effective_owner(...)`
-3. dispatch by action:
-   - `apply/remove` -> `apply_tags(..., remove=...)`
-   - `rename` -> `rename_tag_safe(...)`
-   - `delete` -> `delete_tag_safe(...)`
-4. serialize result dataclass to current endpoint JSON shape
-5. keep stats-cache refresh as route concern
+Validation:
+- `tests/test_search.py`, `tests/test_output_formats.py`, `tests/test_formatters.py`, architecture import checks.
 
-No direct tag-mutation SQL and no direct mutation transaction logic in route.
+### Phase 2: Move helpers to API primitives (1:1 moves)
 
-## CLI After Extraction
+1. Relocate CLI helper logic into API primitives listed above.
+2. Make `aggregate_by_conversation` consume dataclass results.
+3. Preserve behavior exactly (ordering, thresholds, warnings).
 
-`cmd_tag()` and subcommands keep argument parsing and user messaging, but local fallback mutation logic simplifies to API calls:
+Validation:
+- Add/adjust API tests for each primitive.
+- Keep existing CLI behavior tests passing.
 
-- apply/remove local path -> `apply_tags(...)`
-- rename local path -> `rename_tag_safe(...)`
-- delete local path (after existing `--force` UX guard) -> `delete_tag_safe(...)`
+### Phase 3: Rewire CLI to compose API primitives directly (includes FTS unification)
 
-This eliminates duplicated mutation loops/transaction control in CLI.
+1. Remove CLI direct SQL + helper implementations.
+2. Compose API primitives directly in `cmd_search` by output mode.
+3. Route `--fts` through Operation IR + `search_chunks(mode="fts")`.
+4. Preserve all current CLI-visible semantics.
 
-## Incremental Rollout
+Validation:
+- `tests/cli/test_search_noembed.py`
+- `tests/cli/test_cmd_search.py`
+- `tests/test_unified_search.py`
+- architecture boundary tests for CLI
 
-### Phase 1: Introduce apply/remove orchestration API
+### Phase 4: Align serve + html consumers
 
-- Add `ApplyResult` + `apply_tags(...)`.
-- Implement target resolution + loops + transaction ownership in API.
-- Add tests for apply/remove parity.
+1. Ensure serve route uses unified retrieval API path with unchanged contract.
+2. Update html consumer paths to use dataclass results cleanly.
+3. Keep serve composition minimal and consumer-appropriate.
 
-### Phase 2: Migrate CLI apply/remove fallback
+Validation:
+- serve route/format tests.
 
-- Replace local apply/remove orchestration in `cmd_tag()` with `apply_tags(...)`.
-- Preserve current print/exit behavior.
+### Phase 5: Cleanup + anti-drift hardening
 
-### Phase 3: Add safe rename/delete orchestration + ownership helper
+1. Remove dead compatibility glue no longer needed.
+2. Add/lock anti-drift serializer tests for search dataclasses.
+3. Document field-mapping policy for intentional serializer transforms.
 
-- Add `RenameResult`, `DeleteResult`, `rename_tag_safe`, `delete_tag_safe`.
-- Move cross-owner SQL into storage helper and call from API.
-- Migrate serve rename/delete branches and CLI rename/delete fallback to API calls.
+Validation:
+- full `./dev check`.
 
-### Phase 4: Serve route thinning + cleanup
+## Definition of done
 
-- Convert `tag_write_route` to action delegation + serialization only.
-- Remove dead route-side helper SQL and mutation loops.
-- Re-run architecture checks; tag-mutation-related serve->storage violations should drop.
-
-### Phase 5: Evaluate write-side IR (deferred)
-
-- Do **not** commit to write-IR migration in this task.
-- After phases 1-4 and after write patterns are established more broadly, evaluate whether `POST /api/v1/tag` should move to Operation IR.
-
-## Testing Strategy
-
-### Behavior parity tests
-
-- API tests for each orchestration function:
-  - success + validation failures
-  - owner-scoped safeguards for rename/delete
-  - `last`/`entity_id` resolution behavior
-- Serve tests for exact `/api/v1/tag` response JSON shapes and status behavior.
-- CLI tests to confirm same output + exit codes with delegation on/off.
-
-### Anti-drift serializer tests
-
-For any dataclass result serialized by serve, add anti-drift tests mirroring the serializer strategy used elsewhere:
-
-- compare serializer output keys against `dataclasses.fields()` for:
-  - `ApplyResult`
-  - `RenameResult`
-  - `DeleteResult`
-- if nested result item dataclasses exist, apply the same key parity assertion to nested serializers.
-
-This guards against field drift between API result types and serve JSON payloads.
-
-## Expected Architecture Impact
-
-- Tag mutation orchestration is API-owned.
-- Serve route no longer embeds tag mutation SQL/transaction logic.
-- CLI no longer duplicates batch mutation state machine.
-- `serve -> storage` violations tied to tag mutation are reduced, isolating any remaining non-tag serve-storage coupling as separate follow-up work.
+- CLI search has no direct SQL and no hidden domain helper logic.
+- One canonical dataclass search result model is used internally.
+- `--fts`, default, and `--semantic` run through the same IR/API execution path.
+- `ScoreBreakdown` no longer originates from `siftd.search`.
+- Serve contract remains unchanged.
+- Anti-drift tests protect search serializers from silent field drift.

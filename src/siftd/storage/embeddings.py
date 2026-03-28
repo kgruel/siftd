@@ -342,7 +342,7 @@ def search_similar(
         top_local = partitioned[np.argsort(-scores[partitioned])]
 
     # Build results only for top-k, skipping any masked (-inf) scores
-    from siftd.search import ScoreBreakdown
+    from siftd.domain.search_types import ScoreBreakdown
 
     results = []
     for local_idx in top_local:

@@ -1,10 +1,10 @@
 """Public search API for programmatic access by agent harnesses."""
 
 import sys
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from siftd.domain.search_types import ScoreBreakdown, SearchChunk
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.sql_helpers import batched_in_query, has_conversation_owners_table
 from siftd.storage.sqlite import open_database
@@ -12,50 +12,6 @@ from siftd.storage.sqlite import open_database
 # Hard cap on MMR candidates to prevent unbounded memory usage.
 # 1000 vectors * 1536 dims * 4 bytes = ~6MB — safe for all systems.
 MAX_MMR_CANDIDATES = 1000
-
-
-@dataclass
-class ScoreBreakdown:
-    """Detailed score components for explainability.
-
-    Tracks how the final score was computed through the scoring pipeline:
-    - embedding_sim: Raw cosine similarity [0-1]
-    - recency_boost: Multiplier applied (1.0 if recency disabled)
-    - pre_mmr_score: embedding_sim * recency_boost
-    - mmr_penalty: Diversity penalty applied (None if MMR disabled)
-    - mmr_rank: Position in MMR selection order (1-indexed, None if MMR disabled)
-    - final_score: Score after all adjustments
-    - fts5_matched: Was this conversation in FTS5 recall set?
-    - fts5_mode: FTS5 match mode ("and", "or", or None if no FTS5 match)
-    """
-
-    embedding_sim: float
-    recency_boost: float = 1.0
-    pre_mmr_score: float | None = None
-    mmr_penalty: float | None = None
-    mmr_rank: int | None = None
-    final_score: float | None = None
-    fts5_matched: bool = False
-    fts5_mode: str | None = None
-
-    def __post_init__(self):
-        if self.pre_mmr_score is None:
-            self.pre_mmr_score = self.embedding_sim * self.recency_boost
-        if self.final_score is None:
-            self.final_score = self.pre_mmr_score
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "embedding_sim": round(self.embedding_sim, 4),
-            "recency_boost": round(self.recency_boost, 4),
-            "pre_mmr_score": round(self.pre_mmr_score, 4) if self.pre_mmr_score is not None else None,
-            "mmr_penalty": round(self.mmr_penalty, 4) if self.mmr_penalty is not None else None,
-            "mmr_rank": self.mmr_rank,
-            "final_score": round(self.final_score, 4) if self.final_score is not None else None,
-            "fts5_matched": self.fts5_matched,
-            "fts5_mode": self.fts5_mode,
-        }
 
 
 def apply_temporal_weight(
@@ -131,20 +87,8 @@ def apply_temporal_weight(
 
     return weighted
 
-
-@dataclass
-class SearchResult:
-    """A single search result from hybrid_search."""
-
-    conversation_id: str
-    score: float
-    text: str
-    chunk_type: str
-    workspace_path: str | None
-    started_at: str | None
-    chunk_id: str | None = None
-    source_ids: list[str] | None = None
-    breakdown: dict | None = None
+# Backward-compatible alias for callers importing SearchResult from siftd.search.
+SearchResult = SearchChunk
 
 
 def annotate_fts5_breakdown(
@@ -561,7 +505,7 @@ def hybrid_search(
                             "text": snippet,
                             "chunk_type": "fts5",
                             "chunk_id": None,
-                            "source_ids": None,
+                            "source_ids": [],
                             "breakdown": ScoreBreakdown(
                                 embedding_sim=0.0,
                                 pre_mmr_score=score,
@@ -598,7 +542,7 @@ def hybrid_search(
                         workspace_path=m.get("workspace"),
                         started_at=m.get("started_at"),
                         chunk_id=None,
-                        source_ids=None,
+                        source_ids=[],
                         breakdown=breakdown_dict,
                     )
                 )
@@ -732,7 +676,7 @@ def hybrid_search(
             workspace_path=m.get("workspace"),
             started_at=m.get("started_at"),
             chunk_id=r.get("chunk_id"),
-            source_ids=r.get("source_ids"),
+            source_ids=r.get("source_ids") or [],
             breakdown=breakdown_dict,
         ))
 

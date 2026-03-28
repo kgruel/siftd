@@ -550,7 +550,7 @@ async def search_route(
 ) -> dict | Response:
     """Semantic + FTS search against team DB."""
     try:
-        from siftd.api.search import hybrid_search
+        from siftd.api.search import search_chunks
     except ImportError:
         return Response(
             content={"error": "search requires siftd[embed]"},
@@ -561,7 +561,7 @@ async def search_route(
     mode = "semantic" if embeddings_only else "hybrid"
     try:
         return _dispatch(
-            "/api/v1/search", "GET", hybrid_search,
+            "/api/v1/search", "GET", search_chunks,
             {"q": q, "db_path": db_path, "n": n, "recall": recall,
              "mode": mode, "workspace": workspace,
              "model": model, "since": since, "before": before,

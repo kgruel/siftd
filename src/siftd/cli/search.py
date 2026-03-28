@@ -9,7 +9,7 @@ Supports three modes:
 import argparse
 import sys
 from pathlib import Path
-from typing import cast
+from typing import Any
 
 from siftd.cli._common import resolve_db
 from siftd.cli._filters import extract_filter_args
@@ -46,127 +46,74 @@ def _can_delegate_to_serve(args, *, db: Path, embed_db: Path) -> bool:
 
     return True
 
+def _chunks_from_rows(rows) -> list[Any]:
+    from siftd.api.search import SearchChunk
+
+    chunks: list[Any] = []
+    for r in rows:
+        if hasattr(r, "conversation_id") and hasattr(r, "score") and hasattr(r, "to_render_dict"):
+            chunks.append(r)
+        else:
+            chunks.append(SearchChunk.from_mapping(r))
+    return chunks
+
+
+def _rows_from_chunks(chunks: list[Any]) -> list[dict]:
+    return [c.to_render_dict() for c in chunks]
 
 
 def _fetch_search_metadata(conn, results):
-    """Fetch conversation metadata and enrich results in-place."""
-    from siftd.output.common import fmt_workspace
+    """Fetch conversation metadata and enrich results in-place via API primitive."""
+    from siftd.api.search import enrich_search_metadata
 
-    conv_ids = list({r["conversation_id"] for r in results})
-    if not conv_ids:
-        return
-    placeholders = ",".join("?" * len(conv_ids))
-    rows = conn.execute(
-        f"""
-        SELECT c.id, c.started_at, w.path AS workspace
-        FROM conversations c
-        LEFT JOIN workspaces w ON w.id = c.workspace_id
-        WHERE c.id IN ({placeholders})
-    """,
-        conv_ids,
-    ).fetchall()
-    meta = {row["id"]: dict(row) for row in rows}
-    for r in results:
-        m = meta.get(r["conversation_id"], {})
-        r["_workspace"] = fmt_workspace(m.get("workspace"))
-        r["_started_at"] = (m.get("started_at") or "")[:10]
+    chunks = _chunks_from_rows(results)
+    enrich_search_metadata(conn, chunks)
+    if results and isinstance(results[0], dict):
+        rendered = _rows_from_chunks(chunks)
+        for i, row in enumerate(rendered):
+            results[i].update(row)
 
 
 def _aggregate_conversations(results, *, limit=10):
-    """Aggregate search results by conversation. Returns conversation-level summaries."""
-    from statistics import mean as _mean
+    """Aggregate search results by conversation via API primitive."""
+    from siftd.api.search import aggregate_by_conversation
 
-    by_conv: dict[str, list[dict]] = {}
-    for r in results:
-        by_conv.setdefault(r["conversation_id"], []).append(r)
-
-    conv_scores = []
-    for conv_id, chunks in by_conv.items():
-        max_score = max(c["score"] for c in chunks)
-        mean_score = _mean(c["score"] for c in chunks)
-        best_chunk = max(chunks, key=lambda c: c["score"])
-        conv_scores.append(
-            {
-                "conversation_id": conv_id,
-                "max_score": max_score,
-                "mean_score": mean_score,
-                "chunk_count": len(chunks),
-                "best_excerpt": best_chunk["text"],
-                "_workspace": best_chunk.get("_workspace", ""),
-                "_started_at": best_chunk.get("_started_at", ""),
-                "file_refs": best_chunk.get("file_refs", []),
-            }
-        )
-    conv_scores.sort(key=lambda x: x["max_score"], reverse=True)
-    return conv_scores[:limit]
+    chunks = _chunks_from_rows(results)
+    convs = aggregate_by_conversation(chunks, limit=limit)
+    return [c.to_render_dict() for c in convs]
 
 
 def _compute_thread_tiers(results):
-    """Split results into tier1 (expanded) and tier2 (compact) for thread mode."""
-    conv_scores: dict[str, float] = {}
-    conv_best: dict[str, dict] = {}
-    for r in results:
-        cid = r["conversation_id"]
-        if cid not in conv_scores or r["score"] > conv_scores[cid]:
-            conv_scores[cid] = r["score"]
-            conv_best[cid] = r
+    """Split results into thread tiers via API primitive."""
+    from siftd.api.search import compute_thread_tiers
 
-    scores = list(conv_scores.values())
-    mean_score = sum(scores) / len(scores) if scores else 0.0
-
-    tier1_ids = [cid for cid, s in conv_scores.items() if s > mean_score]
-    tier2_ids = [cid for cid in conv_scores if cid not in set(tier1_ids)]
-
-    # Sort tier1 chronologically, tier2 by score desc
-    tier1_ids.sort(key=lambda cid: conv_best[cid].get("_started_at", ""))
-    tier2_ids.sort(key=lambda cid: conv_scores[cid], reverse=True)
-
-    tier1 = [conv_best[cid] for cid in tier1_ids]
-    tier2 = [conv_best[cid] for cid in tier2_ids]
-    return tier1, tier2
+    chunks = _chunks_from_rows(results)
+    tier1, tier2 = compute_thread_tiers(chunks)
+    return _rows_from_chunks(tier1), _rows_from_chunks(tier2)
 
 
 def _enrich_exchanges(conn, results):
-    """Fetch full prompt+response texts for each result's source_ids."""
-    from siftd.api.search import fetch_prompt_response_texts
+    """Fetch full prompt+response texts via API primitive."""
+    from siftd.api.search import enrich_exchanges
 
-    for r in results:
-        source_ids = r.get("source_ids") or []
-        if source_ids:
-            r["_exchanges"] = fetch_prompt_response_texts(conn, source_ids)
+    chunks = _chunks_from_rows(results)
+    enrich_exchanges(conn, chunks)
+    if results and isinstance(results[0], dict):
+        rendered = _rows_from_chunks(chunks)
+        for i, row in enumerate(rendered):
+            results[i].update(row)
 
 
 def _enrich_context(conn, results, n):
-    """Fetch +/-N surrounding exchanges for each result."""
-    from siftd.api.search import fetch_prompt_response_texts
+    """Fetch +/-N surrounding exchanges via API primitive."""
+    from siftd.api.search import enrich_context_window
 
-    for r in results:
-        source_ids = r.get("source_ids") or []
-        conv_id = r["conversation_id"]
-        if not source_ids:
-            continue
-
-        all_prompts = conn.execute(
-            """
-            SELECT p.id FROM prompts p
-            WHERE p.conversation_id = ?
-            ORDER BY p.timestamp
-        """,
-            (conv_id,),
-        ).fetchall()
-
-        prompt_order = [row[0] for row in all_prompts]
-        source_set = set(source_ids)
-        source_indices = [i for i, pid in enumerate(prompt_order) if pid in source_set]
-        if not source_indices:
-            continue
-
-        start = max(0, min(source_indices) - n)
-        end = min(len(prompt_order), max(source_indices) + n + 1)
-        context_ids = prompt_order[start:end]
-
-        exchanges = fetch_prompt_response_texts(conn, context_ids)
-        r["_context"] = [(pid, pt, rt, pid in source_set) for pid, pt, rt in exchanges]
+    chunks = _chunks_from_rows(results)
+    enrich_context_window(conn, chunks, n)
+    if results and isinstance(results[0], dict):
+        rendered = _rows_from_chunks(chunks)
+        for i, row in enumerate(rendered):
+            results[i].update(row)
 
 
 def cmd_search(args) -> int:
@@ -264,7 +211,12 @@ def cmd_search(args) -> int:
         widened_limit = max(args.limit * 10, 100)
 
     from siftd.api.dispatch import Operation, execute
-    from siftd.api.search import hybrid_search
+    from siftd.api.search import (
+        enrich_file_refs,
+        filter_by_threshold,
+        search_chunks,
+        sort_chunks_by_time,
+    )
     from siftd.cli._common import fidelity_from_args
     from siftd.serve.delegation import try_serve
 
@@ -274,7 +226,7 @@ def cmd_search(args) -> int:
     op = Operation(
         path="/api/v1/search",
         method="GET",
-        fn=hybrid_search,
+        fn=search_chunks,
         params={
             "q": query,
             "db_path": db,
@@ -308,14 +260,14 @@ def cmd_search(args) -> int:
 
     # Try serve delegation (warm caches, embeddings loaded)
     # Skip for FTS mode (serve does hybrid/semantic) and custom --embed-db
-    results: list[dict] | None = None
+    raw_results: Any | None = None
     if search_mode != "fts" and _can_delegate_to_serve(args, db=db, embed_db=embed_db):
-        results = try_serve(op)
+        raw_results = try_serve(op)
 
     # Local execution
-    if results is None:
+    if raw_results is None:
         try:
-            results = execute(op)
+            raw_results = execute(op)
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
@@ -323,7 +275,14 @@ def cmd_search(args) -> int:
             print(f"Error: {e}", file=sys.stderr)
             return 1
 
-    if not results:
+    if isinstance(raw_results, dict):
+        chunks = _chunks_from_rows(raw_results.get("results", []))
+    elif isinstance(raw_results, list):
+        chunks = _chunks_from_rows(raw_results)
+    else:
+        chunks = []
+
+    if not chunks:
         if args.json:
             _print_empty_json_results(args, query, db)
         else:
@@ -332,8 +291,8 @@ def cmd_search(args) -> int:
 
     # Apply threshold filter if specified
     if args.threshold is not None:
-        results = [r for r in results if r["score"] >= args.threshold]
-        if not results:
+        chunks = filter_by_threshold(chunks, threshold=args.threshold)
+        if not chunks:
             if args.json:
                 _print_empty_json_results(args, query, db)
             else:
@@ -342,40 +301,33 @@ def cmd_search(args) -> int:
 
     # Post-processing: --first (earliest match above threshold)
     if args.first:
-        from siftd.api import first_mention
+        from siftd.api.search import first_mention
         effective_threshold = args.threshold if args.threshold is not None else 0.65
-        earliest = first_mention(results, threshold=effective_threshold, db_path=db)
+        earliest = first_mention(chunks, threshold=effective_threshold, db_path=db)
         if not earliest:
             if args.json:
                 _print_empty_json_results(args, query, db)
             else:
                 print(f"No results above relevance threshold for: {query}")
             return 0
-        results = [cast(dict, earliest)]
+        chunks = _chunks_from_rows([earliest])
 
     # Trim to requested limit after post-processing
     # Skip for modes that manage their own candidate pools:
     # - --conversations: aggregates per conversation, handles own limit
     # - --thread: widened pool for grouping, formatter handles presentation
     if not args.conversations and not args.thread:
-        results = results[:args.limit]
+        chunks = chunks[:args.limit]
+    results = _rows_from_chunks(chunks)
 
     # Enrich results with metadata from main DB
     main_conn = open_database(db, read_only=True)
 
     # Enrich results with file refs (skip for --conversations mode)
     if not args.conversations:
-        from siftd.api import fetch_file_refs
-        all_source_ids = []
-        for r in results:
-            all_source_ids.extend(r.get("source_ids") or [])
-        if all_source_ids:
-            refs_by_prompt = fetch_file_refs(main_conn, all_source_ids)
-            for r in results:
-                r_refs = []
-                for sid in (r.get("source_ids") or []):
-                    r_refs.extend(refs_by_prompt.get(sid, []))
-                r["file_refs"] = r_refs
+        file_ref_chunks = _chunks_from_rows(results)
+        enrich_file_refs(main_conn, file_ref_chunks)
+        results = _rows_from_chunks(file_ref_chunks)
 
     # Privacy warning for full content display
     if args.full or args.refs:
@@ -404,7 +356,7 @@ def cmd_search(args) -> int:
         mode = "thread"
 
     try:
-        # Metadata enrichment (moved from formatter classes)
+        # Metadata enrichment
         _fetch_search_metadata(main_conn, results)
 
         # Warn if --by-time is used with a mode that ignores it
@@ -413,32 +365,35 @@ def cmd_search(args) -> int:
 
         # Sort by time if requested
         if args.by_time and mode == "chunks":
-            results.sort(
-                key=lambda r: (r.get("_started_at", ""), r.get("chunk_id", ""))
-            )
+            results = _rows_from_chunks(sort_chunks_by_time(results))
 
         # Mode-specific data processing
         ctx_kwargs: dict = {"query": query, "mode": mode}
 
         if mode == "conversations":
-            results = _aggregate_conversations(results, limit=getattr(args, "limit", 10))
+            render_results = _aggregate_conversations(results, limit=getattr(args, "limit", 10))
         elif mode == "thread":
             # Enrich tier1 exchanges for thread display
             _enrich_exchanges(main_conn, results)
             tier1, tier2 = _compute_thread_tiers(results)
             ctx_kwargs["tier1"] = tier1
             ctx_kwargs["tier2"] = tier2
+            render_results = results
+        else:
+            render_results = results
 
         # Exchange enrichment for --full
         if args.full and mode == "chunks":
             _enrich_exchanges(main_conn, results)
+            render_results = results
 
         # Context enrichment for --context N
         context_n = getattr(args, "context", None)
         if context_n is not None and mode == "chunks":
             _enrich_context(main_conn, results, context_n)
+            render_results = results
 
-        output = fmt.render_search(results, op.fidelity, **ctx_kwargs)
+        output = fmt.render_search(render_results, op.fidelity, **ctx_kwargs)
         from siftd.output.painted_bridge import emit_output
 
         emit_output(output)
@@ -446,7 +401,7 @@ def cmd_search(args) -> int:
         # --refs content dump (post-processor, not part of formatter)
         if args.refs and not args.conversations:
             all_refs = []
-            for r in results:
+            for r in render_results:
                 all_refs.extend(r.get("file_refs") or [])
             filter_basenames = None
             if isinstance(args.refs, str):
@@ -454,8 +409,8 @@ def cmd_search(args) -> int:
             print_refs_content(all_refs, filter_basenames)
 
         # Tagging hint (skip for JSON output)
-        if not args.json and results:
-            first_id = results[0]["conversation_id"][:12]
+        if not args.json and render_results:
+            first_id = render_results[0]["conversation_id"][:12]
             print(f"Tip: Tag useful results for future retrieval: siftd tag {first_id} research:<topic>", file=sys.stderr)
     finally:
         main_conn.close()
@@ -464,15 +419,15 @@ def cmd_search(args) -> int:
 
 
 def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
-    """FTS5-only search mode — keyword search without embeddings.
-
-    No serve delegation: the /api/v1/search endpoint requires embeddings
-    (hybrid_search import), so FTS-only mode always runs locally.
-    """
+    """FTS5-only search mode — keyword search without embeddings."""
     import sqlite3
 
+    from painted import Fidelity
+
     from siftd.api import open_database
-    from siftd.api.search import fts5_search_content
+    from siftd.api.dispatch import Operation, execute
+    from siftd.api.search import search_chunks
+    from siftd.cli._common import fidelity_from_args
 
     # Warn about flags that are ignored in FTS5-only mode
     unsupported_flags = []
@@ -503,116 +458,107 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     if filters is None:
         filters = extract_filter_args(args)
 
-    from siftd.api.search import resolve_candidates
-
-    candidate_ids = resolve_candidates(
-        db,
-        workspace=filters.workspace,
-        model=filters.model,
-        since=filters.since,
-        before=filters.before,
-        tag=filters.tag,
-        all_tags=filters.all_tags,
-        no_tag=filters.no_tag,
-        owner=filters.owner,
-        exclude_active=not args.no_exclude_active,
-        include_derivative=args.include_derivative,
+    op = Operation(
+        path="/api/v1/search",
+        method="GET",
+        fn=search_chunks,
+        params={
+            "q": query,
+            "db_path": db,
+            "n": args.limit,
+            "mode": "fts",
+            "workspace": filters.workspace,
+            "model": filters.model,
+            "since": filters.since,
+            "before": filters.before,
+            "tag": filters.tag,
+            "all_tags": filters.all_tags,
+            "no_tag": filters.no_tag,
+            "owner": filters.owner,
+            "exclude_active": not args.no_exclude_active,
+            "include_derivative": args.include_derivative,
+            "embeddings_only": False,
+        },
+        render_method="search",
+        fidelity=fidelity_from_args(args),
+        db=db,
     )
 
-    # Run FTS5 search
-    conn = open_database(db, read_only=True)
     try:
-        try:
-            raw_results = fts5_search_content(conn, query, limit=args.limit * 5)  # Overfetch for filtering
-        except sqlite3.OperationalError as e:
-            err_msg = str(e).lower()
-            if "no such table" in err_msg and "fts" in err_msg:
-                print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
-            elif "fts5" in err_msg or "syntax" in err_msg:
-                print(f"Invalid search query: {e}", file=sys.stderr)
-                print("Tip: Check your search query for syntax errors.", file=sys.stderr)
-            else:
-                print(f"Database error: {e}", file=sys.stderr)
-            return 1
+        raw_results = execute(op)
+    except sqlite3.OperationalError as e:
+        err_msg = str(e).lower()
+        if "no such table" in err_msg and "fts" in err_msg:
+            print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
+        elif "fts5" in err_msg or "syntax" in err_msg:
+            print(f"Invalid search query: {e}", file=sys.stderr)
+            print("Tip: Check your search query for syntax errors.", file=sys.stderr)
+        else:
+            print(f"Database error: {e}", file=sys.stderr)
+        return 1
 
-        # Filter by candidate conversation IDs if filters were applied
-        if candidate_ids is not None:
-            raw_results = [r for r in raw_results if r["conversation_id"] in candidate_ids]
+    # Limit results
+    chunks = _chunks_from_rows(raw_results)[:args.limit]
+    results = _rows_from_chunks(chunks)
 
-        # Limit results
-        raw_results = raw_results[:args.limit]
+    if not results:
+        if args.json:
+            import json
 
-        if not raw_results:
-            if args.json:
-                import json
-
-                out = {
-                    "query": query,
-                    "mode": "fts5",
-                    "results": [],
-                }
-                if unsupported_flags:
-                    out["warnings"] = [
-                        f"{flag} ignored in FTS5 mode (requires embeddings)"
-                        for flag in unsupported_flags
-                    ]
-                print(json.dumps(out, indent=2))
-                return 0
-            print(f"No results for: {query}")
-            return 0
-
-        # Transform to common result format — normalize side → chunk_type
-        results = []
-        for r in raw_results:
-            results.append({
-                "conversation_id": r["conversation_id"],
-                "score": abs(r["rank"]),  # FTS5 rank is negative (lower = better)
-                "text": r["snippet"],
-                "chunk_type": r["side"],  # Normalized from FTS5 "side" field
-                # Minimal fields needed for display
-                "source_ids": [],
-                "file_refs": [],
-            })
-
-        # Enrich with metadata and render via unified formatter system
-        import json as json_mod
-
-        from painted import Fidelity
-
-        from siftd.output.format_registry import select_format
-
-        _fetch_search_metadata(conn, results)
-
-        fidelity = Fidelity()
-        fmt = select_format(
-            name=getattr(args, "format", None),
-            json_mode=args.json,
-            is_tty=sys.stdout.isatty(),
-        )
-
-        output = fmt.render_search(results, fidelity, query=query, mode="chunks")
-        if isinstance(output, dict):
-            # Preserve FTS5-specific fields for JSON
+            out = {
+                "query": query,
+                "mode": "fts5",
+                "results": [],
+            }
             if unsupported_flags:
-                output["warnings"] = [
+                out["warnings"] = [
                     f"{flag} ignored in FTS5 mode (requires embeddings)"
                     for flag in unsupported_flags
                 ]
-            output["mode"] = "fts5"
-            print(json_mod.dumps(output, indent=2, default=str))
+            print(json.dumps(out, indent=2))
         else:
-            from siftd.output.painted_bridge import emit_output
-
-            emit_output(output)
-
-        # Tagging hint (skip for JSON output)
-        if not args.json and results:
-            first_id = results[0]["conversation_id"][:12]
-            print(f"Tip: Tag useful results: siftd tag {first_id} research:<topic>", file=sys.stderr)
-
+            print(f"No results for: {query}")
         return 0
+
+    # Enrich with metadata and render via unified formatter system
+    import json as json_mod
+
+    from siftd.output.format_registry import select_format
+
+    conn = open_database(db, read_only=True)
+    try:
+        _fetch_search_metadata(conn, results)
     finally:
         conn.close()
+
+    fidelity = Fidelity()
+    fmt = select_format(
+        name=getattr(args, "format", None),
+        json_mode=args.json,
+        is_tty=sys.stdout.isatty(),
+    )
+
+    output = fmt.render_search(results, fidelity, query=query, mode="chunks")
+    if isinstance(output, dict):
+        # Preserve FTS5-specific fields for JSON
+        if unsupported_flags:
+            output["warnings"] = [
+                f"{flag} ignored in FTS5 mode (requires embeddings)"
+                for flag in unsupported_flags
+            ]
+        output["mode"] = "fts5"
+        print(json_mod.dumps(output, indent=2, default=str))
+    else:
+        from siftd.output.painted_bridge import emit_output
+
+        emit_output(output)
+
+    # Tagging hint (skip for JSON output)
+    if not args.json and results:
+        first_id = results[0]["conversation_id"][:12]
+        print(f"Tip: Tag useful results: siftd tag {first_id} research:<topic>", file=sys.stderr)
+
+    return 0
 
 
 def _search_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: str | None, verbose: bool) -> int:

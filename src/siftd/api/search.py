@@ -9,11 +9,11 @@ lazy-imported so that non-search CLI commands don't pull in numpy.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean as _mean
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
+from siftd.domain.search_types import ConversationSearchSummary, SearchChunk
 from siftd.storage.queries import (
     fetch_all_conversation_ids,
     fetch_conversation_timestamps,
@@ -22,7 +22,7 @@ from siftd.storage.queries import (
 )
 
 if TYPE_CHECKING:
-    from siftd.search import SearchResult, apply_temporal_weight
+    from siftd.search import apply_temporal_weight
     from siftd.storage.embeddings import IndexCompatError
 
 
@@ -55,9 +55,17 @@ def __getattr__(name: str):
 
 __all__ = [
     "SearchResult",
+    "search_chunks",
     "hybrid_search",
     "ConversationScore",
     "aggregate_by_conversation",
+    "compute_thread_tiers",
+    "filter_by_threshold",
+    "sort_chunks_by_time",
+    "enrich_search_metadata",
+    "enrich_file_refs",
+    "enrich_exchanges",
+    "enrich_context_window",
     "first_mention",
     "build_index",
     # Temporal weighting
@@ -254,21 +262,19 @@ def resolve_candidates(
     )
 
 
-@dataclass
-class ConversationScore:
-    """Aggregated conversation-level search result."""
+ConversationScore = ConversationSearchSummary
+SearchResult = SearchChunk
 
-    conversation_id: str
-    max_score: float
-    mean_score: float
-    chunk_count: int
-    best_excerpt: str
-    workspace_path: str | None
-    started_at: str | None
+
+def _as_chunk(r: SearchChunk | dict[str, Any]) -> SearchChunk:
+    """Normalize mixed search result inputs to SearchChunk."""
+    if isinstance(r, SearchChunk):
+        return r
+    return SearchChunk.from_mapping(r)
 
 
 def aggregate_by_conversation(
-    results: list[SearchResult],
+    results: list[SearchChunk] | list[dict[str, Any]],
     *,
     limit: int = 10,
 ) -> list[ConversationScore]:
@@ -287,9 +293,11 @@ def aggregate_by_conversation(
     if not results:
         return []
 
+    chunks = [_as_chunk(r) for r in results]
+
     # Group by conversation
-    by_conv: dict[str, list[SearchResult]] = {}
-    for r in results:
+    by_conv: dict[str, list[SearchChunk]] = {}
+    for r in chunks:
         by_conv.setdefault(r.conversation_id, []).append(r)
 
     # Score each conversation
@@ -306,6 +314,7 @@ def aggregate_by_conversation(
                 best_excerpt=best_chunk.text[:500],
                 workspace_path=best_chunk.workspace_path,
                 started_at=best_chunk.started_at,
+                file_refs=best_chunk.file_refs,
             )
         )
 
@@ -313,16 +322,149 @@ def aggregate_by_conversation(
     return conv_scores[:limit]
 
 
+def filter_by_threshold(
+    results: list[SearchChunk] | list[dict[str, Any]],
+    *,
+    threshold: float | None,
+) -> list[SearchChunk]:
+    """Filter chunk results by score threshold."""
+    chunks = [_as_chunk(r) for r in results]
+    if threshold is None:
+        return chunks
+    return [r for r in chunks if r.score >= threshold]
+
+
+def sort_chunks_by_time(
+    results: list[SearchChunk] | list[dict[str, Any]],
+) -> list[SearchChunk]:
+    """Sort chunks by date then chunk_id (legacy CLI behavior)."""
+    chunks = [_as_chunk(r) for r in results]
+    return sorted(chunks, key=lambda r: ((r.started_at or "")[:10], r.chunk_id or ""))
+
+
+def compute_thread_tiers(
+    results: list[SearchChunk] | list[dict[str, Any]],
+) -> tuple[list[SearchChunk], list[SearchChunk]]:
+    """Split chunks into tier1 (expanded) and tier2 (compact) for thread mode."""
+    chunks = [_as_chunk(r) for r in results]
+    conv_scores: dict[str, float] = {}
+    conv_best: dict[str, SearchChunk] = {}
+    for r in chunks:
+        cid = r.conversation_id
+        if cid not in conv_scores or r.score > conv_scores[cid]:
+            conv_scores[cid] = r.score
+            conv_best[cid] = r
+
+    scores = list(conv_scores.values())
+    mean_score = sum(scores) / len(scores) if scores else 0.0
+
+    tier1_ids = [cid for cid, s in conv_scores.items() if s > mean_score]
+    tier2_ids = [cid for cid in conv_scores if cid not in set(tier1_ids)]
+
+    tier1_ids.sort(key=lambda cid: (conv_best[cid].started_at or "")[:10])
+    tier2_ids.sort(key=lambda cid: conv_scores[cid], reverse=True)
+
+    return [conv_best[cid] for cid in tier1_ids], [conv_best[cid] for cid in tier2_ids]
+
+
+def _workspace_label(path: str | None) -> str:
+    """Mirror output.common.fmt_workspace without importing output layer."""
+    if path is None:
+        return ""
+    if path in {"", "/"}:
+        return "(root)"
+    return Path(path).name
+
+
+def enrich_search_metadata(conn: sqlite3.Connection, results: list[SearchChunk]) -> None:
+    """Enrich chunks with workspace and started_at metadata in-place."""
+    conv_ids = list({r.conversation_id for r in results})
+    if not conv_ids:
+        return
+
+    placeholders = ",".join("?" * len(conv_ids))
+    rows = conn.execute(
+        f"""
+        SELECT c.id, c.started_at, w.path AS workspace
+        FROM conversations c
+        LEFT JOIN workspaces w ON w.id = c.workspace_id
+        WHERE c.id IN ({placeholders})
+    """,
+        conv_ids,
+    ).fetchall()
+    meta = {row["id"]: dict(row) for row in rows}
+
+    for r in results:
+        m = meta.get(r.conversation_id, {})
+        r.workspace_path = _workspace_label(m.get("workspace"))
+        started = m.get("started_at")
+        r.started_at = (started or "")[:10] if started else None
+
+
+def enrich_file_refs(conn: sqlite3.Connection, results: list[SearchChunk]) -> None:
+    """Attach file references to each chunk in-place."""
+    from siftd.api import fetch_file_refs
+
+    all_source_ids: list[str] = []
+    for r in results:
+        all_source_ids.extend(r.source_ids or [])
+    if not all_source_ids:
+        return
+
+    refs_by_prompt = fetch_file_refs(conn, all_source_ids)
+    for r in results:
+        refs = []
+        for sid in (r.source_ids or []):
+            refs.extend(refs_by_prompt.get(sid, []))
+        r.file_refs = refs
+
+
+def enrich_exchanges(conn: sqlite3.Connection, results: list[SearchChunk]) -> None:
+    """Attach full prompt+response exchanges for each chunk in-place."""
+    for r in results:
+        source_ids = r.source_ids or []
+        if source_ids:
+            r.exchanges = fetch_prompt_response_texts(conn, source_ids)
+
+
+def enrich_context_window(conn: sqlite3.Connection, results: list[SearchChunk], n: int) -> None:
+    """Attach +/-N context exchanges around each chunk's source prompts."""
+    for r in results:
+        source_ids = r.source_ids or []
+        if not source_ids:
+            continue
+
+        all_prompts = conn.execute(
+            """
+            SELECT p.id FROM prompts p
+            WHERE p.conversation_id = ?
+            ORDER BY p.timestamp
+        """,
+            (r.conversation_id,),
+        ).fetchall()
+        prompt_order = [row[0] for row in all_prompts]
+        source_set = set(source_ids)
+        source_indices = [i for i, pid in enumerate(prompt_order) if pid in source_set]
+        if not source_indices:
+            continue
+
+        start = max(0, min(source_indices) - n)
+        end = min(len(prompt_order), max(source_indices) + n + 1)
+        context_ids = prompt_order[start:end]
+        exchanges = fetch_prompt_response_texts(conn, context_ids)
+        r.context_window = [(pid, pt, rt, pid in source_set) for pid, pt, rt in exchanges]
+
+
 def first_mention(
-    results: list[SearchResult] | list[dict],
+    results: list[SearchChunk] | list[dict[str, Any]],
     *,
     threshold: float = 0.65,
     db_path: Path | None = None,
-) -> SearchResult | dict | None:
+) -> SearchChunk | dict[str, Any] | None:
     """Find chronologically earliest result above relevance threshold.
 
     Args:
-        results: List of SearchResult or raw dicts from search.
+        results: List of SearchChunk or raw dicts from search.
             Dicts must have 'score', 'conversation_id', and 'source_ids'.
         threshold: Minimum score to consider relevant.
         db_path: Path to database (for timestamp lookup). Uses default if not specified.
@@ -332,9 +474,11 @@ def first_mention(
     """
     from siftd.paths import db_path as default_db_path
 
-    def _get(r, key):
+    def _get(r: SearchChunk | dict[str, Any], key: str):
         """Access attribute or dict key."""
-        return getattr(r, key, None) or r.get(key) if isinstance(r, dict) else getattr(r, key)
+        if isinstance(r, dict):
+            return r.get(key)
+        return getattr(r, key, None)
 
     # Filter to results above threshold
     above = [r for r in results if _get(r, "score") >= threshold]
@@ -421,6 +565,62 @@ def build_index(
     return {"chunks_added": stats.chunks_added, "total_chunks": stats.total_chunks}
 
 
+def search_chunks(
+    q: str,
+    *,
+    db_path: Path,
+    embed_db: Path | None = None,
+    n: int = 10,
+    mode: str = "hybrid",
+    workspace: str | None = None,
+    model: str | None = None,
+    since: str | None = None,
+    before: str | None = None,
+    tag: list[str] | None = None,
+    all_tags: list[str] | None = None,
+    no_tag: list[str] | None = None,
+    exclude_active: bool = True,
+    include_derivative: bool = False,
+    owner: str | None = None,
+    recall: int = 80,
+    rerank: str = "mmr",
+    lambda_: float = 0.7,
+    recency: bool = False,
+    recency_half_life: float = 30.0,
+    recency_max_boost: float = 1.15,
+    threshold: float = 0.0,
+    backend: str | None = None,
+    embed_backend: EmbeddingBackend | None = None,
+) -> list[SearchChunk]:
+    """Canonical entry point for retrieving search chunks."""
+    return hybrid_search(
+        q,
+        db_path=db_path,
+        embed_db=embed_db,
+        n=n,
+        mode=mode,
+        workspace=workspace,
+        model=model,
+        since=since,
+        before=before,
+        tag=tag,
+        all_tags=all_tags,
+        no_tag=no_tag,
+        exclude_active=exclude_active,
+        include_derivative=include_derivative,
+        owner=owner,
+        recall=recall,
+        rerank=rerank,
+        lambda_=lambda_,
+        recency=recency,
+        recency_half_life=recency_half_life,
+        recency_max_boost=recency_max_boost,
+        threshold=threshold,
+        backend=backend,
+        embed_backend=embed_backend,
+    )
+
+
 def hybrid_search(
     q: str,
     *,
@@ -453,7 +653,7 @@ def hybrid_search(
     # Backend
     backend: str | None = None,
     embed_backend: EmbeddingBackend | None = None,
-) -> list[dict]:
+) -> list[SearchChunk]:
     """Unified search pipeline — FTS5, semantic, or hybrid.
 
     Args:
@@ -469,8 +669,7 @@ def hybrid_search(
             and have .name, .model, .dimension attributes.
 
     Returns:
-        List of result dicts with: conversation_id, score, text, chunk_type,
-        source_ids, breakdown (ScoreBreakdown or None), file_refs.
+        List of SearchChunk results.
 
     Raises:
         FileNotFoundError: If database doesn't exist.
@@ -500,14 +699,14 @@ def hybrid_search(
                 raw = [r for r in raw if r["conversation_id"] in candidate_ids]
             raw = raw[:n]
             return [
-                {
-                    "conversation_id": r["conversation_id"],
-                    "score": abs(r["rank"]),
-                    "text": r["snippet"],
-                    "chunk_type": r["side"],
-                    "source_ids": [],
-                    "file_refs": [],
-                }
+                SearchChunk(
+                    conversation_id=r["conversation_id"],
+                    score=abs(r["rank"]),
+                    text=r["snippet"],
+                    chunk_type=r["side"],
+                    source_ids=[],
+                    file_refs=[],
+                )
                 for r in raw
             ]
         finally:
@@ -647,4 +846,4 @@ def hybrid_search(
     if threshold > 0:
         results = [r for r in results if r.get("score", 0) >= threshold]
 
-    return results
+    return [SearchChunk.from_mapping(r) for r in results]

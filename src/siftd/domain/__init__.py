@@ -9,6 +9,12 @@ from .models import (
     ToolCall,
     Usage,
 )
+from .search_types import (
+    ConversationSearchSummary,
+    ScoreBreakdown,
+    SearchChunk,
+    ThreadTiers,
+)
 from .source import Source
 from .sync import (
     PushResult,
@@ -26,6 +32,11 @@ __all__ = [
     "Usage",
     # Source
     "Source",
+    # Search
+    "ScoreBreakdown",
+    "SearchChunk",
+    "ConversationSearchSummary",
+    "ThreadTiers",
     # Sync
     "PushResult",
     "SyncRemote",

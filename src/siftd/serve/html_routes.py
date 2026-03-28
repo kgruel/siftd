@@ -452,12 +452,12 @@ async def ui_search(
 
     # Try semantic search if embeddings are available
     try:
-        from siftd.api.search import aggregate_by_conversation, hybrid_search
+        from siftd.api.search import aggregate_by_conversation, search_chunks
 
         op = Operation(
             path="/api/v1/search",
             method="GET",
-            fn=hybrid_search,
+            fn=search_chunks,
             params={"q": q, "db_path": db_path, "n": 30, "owner": owner},
             render_method="search",
             fidelity=_fidelity(),
