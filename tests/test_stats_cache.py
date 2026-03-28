@@ -122,6 +122,13 @@ class TestStatsRoundTrip:
             f.name for f in dataclass_fields(TokenCoverageByHarness)
         }
 
+    def test_api_and_serialization_serializers_match(self, tmp_path):
+        db_file = tmp_path / "siftd.db"
+        db_file.write_bytes(b"x" * 1024)
+        stats = _make_stats(db_file)
+
+        assert _stats_to_dict(stats) == serialize_stats(stats)
+
     def test_write_read_roundtrip(self, tmp_path, monkeypatch):
         db_file = tmp_path / "siftd.db"
         db_file.write_bytes(b"x" * 1024)

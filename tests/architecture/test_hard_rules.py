@@ -868,10 +868,6 @@ class TestDependencyDirection:
                 + "\n".join(violations)
             )
 
-    @pytest.mark.xfail(
-        reason="known cycle: api.stats imports serialization.stats.serialize_stats",
-        strict=True,
-    )
     def test_no_api_serialization_cycle(self, src_dir):
         """No import cycles between api/ and serialization/.
 
