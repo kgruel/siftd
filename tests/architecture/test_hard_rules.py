@@ -439,7 +439,7 @@ class TestServeRouteBoundary:
             )
 
     @pytest.mark.xfail(
-        reason="known violation: serve/routes.py imports siftd.storage.sqlite (3 call sites)",
+        reason="known violation: serve/routes.py imports siftd.storage.sqlite (health + push_log)",
         strict=True,
     )
     def test_serve_no_direct_storage_import(self, src_dir):
@@ -759,3 +759,137 @@ class TestSchemaStability:
                 violations.append(f"{table}: missing {sorted(missing)}")
         if violations:
             pytest.fail("Missing columns on critical tables:\n" + "\n".join(violations))
+
+
+# =============================================================================
+# 8. Dependency Direction Rules
+# =============================================================================
+
+
+def _extract_siftd_imports(file_path: Path) -> list[tuple[int, str]]:
+    """Extract (line_number, module_name) for all siftd imports in a file."""
+    source = file_path.read_text()
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    results = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("siftd."):
+            results.append((node.lineno, node.module))
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("siftd."):
+                    results.append((node.lineno, alias.name))
+    return results
+
+
+class TestDependencyDirection:
+    """Enforce that dependency arrows point in the right direction.
+
+    These tests catch architectural inversions that create cycles
+    or coupling between layers that should be independent.
+    """
+
+    def test_api_does_not_import_serialization(self, src_dir):
+        """API layer must not import from serialization.
+
+        Rationale: Serialization imports API types (correct direction).
+        API importing serialization creates a cycle. If API needs to
+        serialize, the caller should do it.
+
+        Suppress with ``# arch: allow-serialization`` on the import line.
+        """
+        api_dir = src_dir / "api"
+        violations = []
+
+        for py_file in api_dir.rglob("*.py"):
+            source_lines = py_file.read_text().splitlines()
+            for line_num, module in _extract_siftd_imports(py_file):
+                if module.startswith("siftd.serialization"):
+                    if 0 < line_num <= len(source_lines) and "arch: allow-serialization" in source_lines[line_num - 1]:
+                        continue
+                    rel = py_file.relative_to(src_dir.parent.parent)
+                    violations.append(f"{rel}:{line_num}: imports {module}")
+
+        if violations:
+            pytest.fail(
+                "API modules must not import from siftd.serialization "
+                "(serialization imports API, not the reverse):\n"
+                + "\n".join(violations)
+            )
+
+    def test_storage_does_not_import_api(self, src_dir):
+        """Storage layer must not import from API.
+
+        Rationale: API wraps storage, not the other way around.
+        Storage importing API would create a reverse dependency.
+        """
+        storage_dir = src_dir / "storage"
+        violations = []
+
+        for py_file in storage_dir.rglob("*.py"):
+            for line_num, module in _extract_siftd_imports(py_file):
+                if module.startswith("siftd.api"):
+                    rel = py_file.relative_to(src_dir.parent.parent)
+                    violations.append(f"{rel}:{line_num}: imports {module}")
+
+        if violations:
+            pytest.fail(
+                "Storage modules must not import from siftd.api "
+                "(API wraps storage, not the reverse):\n"
+                + "\n".join(violations)
+            )
+
+    def test_domain_is_pure(self, src_dir):
+        """Domain layer must not import from API, storage, CLI, or serve.
+
+        Rationale: Domain types are the foundation — they should have
+        no dependencies on higher layers. Only infrastructure (ids,
+        paths, safecall) and stdlib are allowed.
+        """
+        domain_dir = src_dir / "domain"
+        forbidden = {"siftd.api", "siftd.storage", "siftd.cli", "siftd.serve",
+                     "siftd.serialization", "siftd.output", "siftd.embeddings",
+                     "siftd.adapters", "siftd.doctor", "siftd.ingestion"}
+        violations = []
+
+        for py_file in domain_dir.rglob("*.py"):
+            for line_num, module in _extract_siftd_imports(py_file):
+                top = "siftd." + module.split(".")[1]
+                if any(module.startswith(f) for f in forbidden):
+                    rel = py_file.relative_to(src_dir.parent.parent)
+                    violations.append(f"{rel}:{line_num}: imports {module}")
+
+        if violations:
+            pytest.fail(
+                "Domain modules must be pure (no API/storage/CLI/serve deps):\n"
+                + "\n".join(violations)
+            )
+
+    @pytest.mark.xfail(
+        reason="known cycle: api.stats imports serialization.stats.serialize_stats",
+        strict=True,
+    )
+    def test_no_api_serialization_cycle(self, src_dir):
+        """No import cycles between api/ and serialization/.
+
+        This is a stricter version of test_api_does_not_import_serialization
+        without the suppress comment escape hatch. It will pass once the
+        cycle is broken.
+        """
+        api_dir = src_dir / "api"
+        violations = []
+
+        for py_file in api_dir.rglob("*.py"):
+            for line_num, module in _extract_siftd_imports(py_file):
+                if module.startswith("siftd.serialization"):
+                    rel = py_file.relative_to(src_dir.parent.parent)
+                    violations.append(f"{rel}:{line_num}: imports {module}")
+
+        if violations:
+            pytest.fail(
+                "API ↔ serialization cycle detected:\n"
+                + "\n".join(violations)
+            )

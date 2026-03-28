@@ -226,7 +226,7 @@ def _stats_to_dict(stats: DatabaseStats) -> dict:
     Delegates to serialization.stats.serialize_stats — the canonical
     serializer. This wrapper kept for backward compatibility.
     """
-    from siftd.serialization.stats import serialize_stats
+    from siftd.serialization.stats import serialize_stats  # arch: allow-serialization
 
     return serialize_stats(stats)
 
