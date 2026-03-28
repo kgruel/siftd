@@ -228,21 +228,10 @@ def _cmd_tag_list(args, db: Path) -> int:
     # Try serve delegation
     result = try_serve(op)
     if result is not None and isinstance(result, dict) and "tags" in result:
-        from siftd.api.tags import TagInfo
+        from siftd.api.tags import tag_info_list_from_dict
 
         conn.close()
-        tags = [
-            TagInfo(
-                name=t["name"],
-                description=t.get("description"),
-                created_at=t.get("created_at", ""),
-                conversation_count=t.get("conversation_count", 0),
-                workspace_count=t.get("workspace_count", 0),
-                tool_call_count=t.get("tool_call_count", 0),
-                prompt_count=t.get("prompt_count", 0),
-            )
-            for t in result["tags"]
-        ]
+        tags = tag_info_list_from_dict(result["tags"])
 
     if tags is None:
         conn.close()
@@ -753,4 +742,3 @@ live session tagging:
     p_tags.add_argument("--force", action="store_true", help=argparse.SUPPRESS)
     add_filter_args(p_tags, include_model=True)
     p_tags.set_defaults(func=_cmd_tags_deprecated)
-

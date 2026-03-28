@@ -6,6 +6,7 @@ Exposes tag CRUD operations to CLI without direct storage imports.
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from siftd.paths import db_path as _db_path
 from siftd.storage.sqlite import open_database as _open_database
@@ -42,6 +43,8 @@ __all__ = [
     "list_tags",
     "remove_tag",
     "rename_tag",
+    "tag_info_from_dict",
+    "tag_info_list_from_dict",
 ]
 
 
@@ -56,6 +59,16 @@ class TagInfo:
     workspace_count: int
     tool_call_count: int
     prompt_count: int
+
+
+def tag_info_from_dict(data: dict[str, Any]) -> TagInfo:
+    """Deserialize a JSON dict into TagInfo."""
+    return TagInfo(**data)
+
+
+def tag_info_list_from_dict(rows: list[dict[str, Any]]) -> list[TagInfo]:
+    """Deserialize a list of JSON dicts into TagInfo objects."""
+    return [tag_info_from_dict(row) for row in rows]
 
 
 def list_tags(

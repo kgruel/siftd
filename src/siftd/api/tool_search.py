@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 from siftd.api.database import open_database
 from siftd.storage.filters import tag_condition as _tag_condition
@@ -61,6 +62,32 @@ class ToolSearchGroup:
         data = asdict(self)
         data["results"] = [r.to_dict() for r in self.results]
         return data
+
+
+def tool_search_result_from_dict(data: dict[str, Any]) -> ToolSearchResult:
+    """Deserialize a JSON dict into ToolSearchResult."""
+    return ToolSearchResult(**data)
+
+
+def tool_query_from_dict(data: dict[str, Any]) -> ToolQuery:
+    """Deserialize a delegated payload dict into ToolQuery."""
+    return ToolQuery(
+        raw=data["query"],
+        terms=[],
+        fields={k: list(v) for k, v in data["fields"].items()},
+        bare_terms=list(data["bare_terms"]),
+        unknown_fields={k: list(v) for k, v in data["unknown_fields"].items()},
+    )
+
+
+def tool_search_payload_from_dict(data: dict[str, Any]) -> tuple[ToolQuery, list[ToolSearchResult]]:
+    """Deserialize delegated tool-search payload to query + results."""
+    parsed = tool_query_from_dict(data)
+    rows = data["results"]
+    if not isinstance(rows, list):
+        msg = "results must be a list"
+        raise ValueError(msg)
+    return parsed, [tool_search_result_from_dict(row) for row in rows]
 
 
 def search_tool_calls(

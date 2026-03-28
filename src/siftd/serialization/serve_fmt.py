@@ -9,6 +9,7 @@ Render methods match the format protocol interface: render_{name}(result, fideli
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -36,13 +37,7 @@ def render_tags(tags: list, fidelity: Fidelity) -> dict:
     """Serialize TagInfo list to JSON-safe dict."""
     return {
         "tags": [
-            {
-                "name": t.name,
-                "conversation_count": t.conversation_count,
-                "workspace_count": t.workspace_count,
-                "tool_call_count": t.tool_call_count,
-                "prompt_count": t.prompt_count,
-            }
+            t if isinstance(t, dict) else dataclasses.asdict(t)
             for t in tags
         ]
     }
@@ -51,27 +46,17 @@ def render_tags(tags: list, fidelity: Fidelity) -> dict:
 def render_tool_search(result: Any, fidelity: Fidelity) -> dict:
     """Serialize (ToolQuery, list[ToolSearchResult]) to JSON-safe dict."""
     parsed, results = result
+    serialized = [
+        r if isinstance(r, dict) else dataclasses.asdict(r)
+        for r in results
+    ]
     return {
         "query": parsed.raw,
-        "result_count": len(results),
-        "results": [
-            {
-                "tool_call_id": r.tool_call_id,
-                "conversation_id": r.conversation_id,
-                "timestamp": r.timestamp,
-                "tool_name": r.tool_name,
-                "tool_family": r.tool_family,
-                "status": r.status,
-                "path": r.path,
-                "basename": r.basename,
-                "command": r.command,
-                "command_verb": r.command_verb,
-                "result_snippet": r.result_snippet,
-                "workspace_path": r.workspace_path,
-                "rank": r.rank,
-            }
-            for r in results
-        ],
+        "fields": parsed.fields,
+        "bare_terms": parsed.bare_terms,
+        "unknown_fields": parsed.unknown_fields,
+        "result_count": len(serialized),
+        "results": serialized,
     }
 
 
@@ -103,8 +88,6 @@ def render_tools_by_workspace(results: list, fidelity: Fidelity) -> dict:
 
 def render_search(results: list, fidelity: Fidelity) -> dict:
     """Serialize SearchResult list to JSON-safe dict."""
-    import dataclasses
-
     serialized = [
         r if isinstance(r, dict) else dataclasses.asdict(r)
         for r in results

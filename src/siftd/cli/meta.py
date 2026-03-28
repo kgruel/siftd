@@ -14,7 +14,7 @@ def cmd_status(args) -> int:
     """Show database status and statistics."""
     from siftd.api import get_stats
     from siftd.api.dispatch import Operation, execute
-    from siftd.api.stats import _dict_to_stats, read_stats_cache
+    from siftd.api.stats import dict_to_stats, read_stats_cache
     from siftd.output import fmt_timestamp
     from siftd.serve.delegation import try_serve
 
@@ -40,7 +40,7 @@ def cmd_status(args) -> int:
     # Tier 1: delegate to running server (DB already warm)
     result = try_serve(op)
     if result is not None:
-        stats = _dict_to_stats(result)
+        stats = dict_to_stats(result)
 
     # Tier 2: read from cache (avoids 1.5s cold-open on large DBs)
     if stats is None:

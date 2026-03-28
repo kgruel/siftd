@@ -232,7 +232,7 @@ def _stats_to_dict(stats: DatabaseStats) -> dict:
 
 
 
-def _dict_to_stats(data: dict) -> DatabaseStats:
+def dict_to_stats(data: dict) -> DatabaseStats:
     """Deserialize a JSON dict back to DatabaseStats."""
     c = data["counts"]
     tc = data["token_coverage"]
@@ -269,6 +269,11 @@ def _dict_to_stats(data: dict) -> DatabaseStats:
         activity_window=(aw[0], aw[1]),
         last_ingest_at=data.get("last_ingest_at"),
     )
+
+
+def _dict_to_stats(data: dict) -> DatabaseStats:
+    """Backward-compatible alias for dict_to_stats()."""
+    return dict_to_stats(data)
 
 
 def write_stats_cache(stats: DatabaseStats) -> None:
@@ -317,7 +322,7 @@ def read_stats_cache(*, db_path: Path | None = None) -> DatabaseStats | None:
     if cached_db.resolve() != effective_db.resolve():
         return None
 
-    return _dict_to_stats(data)
+    return dict_to_stats(data)
 
 
 def get_stats(*, db_path: Path | None = None, owner: str | None = None) -> DatabaseStats:

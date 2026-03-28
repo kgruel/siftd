@@ -102,7 +102,8 @@ def test_json_fmt_stats(monkeypatch):
 
 def test_json_fmt_tool_search():
     from siftd.output.json_fmt import render_tool_search
-    assert render_tool_search((NS(raw="q"), []), Fidelity(depth=1))["query"] == "q"
+    parsed = NS(raw="q", fields={}, bare_terms=[], unknown_fields={})
+    assert render_tool_search((parsed, []), Fidelity(depth=1))["query"] == "q"
 
 
 # --- format_registry ---

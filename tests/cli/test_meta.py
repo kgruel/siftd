@@ -134,7 +134,7 @@ def test_status_and_workspaces_remaining_branches(monkeypatch, tmp_path, capsys)
     stats = _stats_obj(tmp_path)
     stats.activity_window = ("2024-01-01", None)
     monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: {"ok": 1})
-    monkeypatch.setattr("siftd.api.stats._dict_to_stats", lambda d: stats)
+    monkeypatch.setattr("siftd.api.stats.dict_to_stats", lambda d: stats)
     monkeypatch.setattr("siftd.api.stats.read_stats_cache", lambda **k: None)
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
     assert cmd_status(_args(json=False, db=str(tmp_path / "db.sqlite"))) == 0

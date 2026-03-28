@@ -7,7 +7,11 @@ import json
 import sys
 from pathlib import Path
 
-from siftd.api.tool_search import group_tool_search_results, search_tool_calls
+from siftd.api.tool_search import (
+    group_tool_search_results,
+    search_tool_calls,
+    tool_search_payload_from_dict,
+)
 from siftd.cli._filters import add_filter_args, extract_filter_args
 from siftd.output.common import fmt_timestamp, fmt_workspace, truncate_text
 
@@ -60,8 +64,21 @@ def cmd_tool_search(args) -> int:
     if args.json and not args.rebuild_index:
         result = try_serve(op)
         if result is not None and isinstance(result, dict):
-            print(json.dumps(result, indent=2))
-            return 0
+            try:
+                parsed, results = tool_search_payload_from_dict(result)
+            except (KeyError, TypeError, ValueError):
+                # Fallback to local execution if delegated payload is incomplete.
+                pass
+            else:
+                groups = group_tool_search_results(results)
+                payload = _build_tool_search_json_payload(
+                    parsed,
+                    results,
+                    groups=groups,
+                    grouped=args.grouped,
+                )
+                print(json.dumps(payload, indent=2))
+                return 0
 
     try:
         parsed, results = execute(op)
@@ -72,15 +89,12 @@ def cmd_tool_search(args) -> int:
     groups = group_tool_search_results(results)
 
     if args.json:
-        payload = {
-            "query": parsed.raw,
-            "fields": parsed.fields,
-            "bare_terms": parsed.bare_terms,
-            "unknown_fields": parsed.unknown_fields,
-            "results": [r.to_dict() for r in results],
-        }
-        if args.grouped:
-            payload["groups"] = [g.to_dict() for g in groups]
+        payload = _build_tool_search_json_payload(
+            parsed,
+            results,
+            groups=groups,
+            grouped=args.grouped,
+        )
         print(json.dumps(payload, indent=2))
         return 0
 
@@ -127,6 +141,19 @@ def cmd_tool_search(args) -> int:
         print()
 
     return 0
+
+
+def _build_tool_search_json_payload(parsed, results, *, groups, grouped: bool) -> dict:
+    payload = {
+        "query": parsed.raw,
+        "fields": parsed.fields,
+        "bare_terms": parsed.bare_terms,
+        "unknown_fields": parsed.unknown_fields,
+        "results": [r.to_dict() for r in results],
+    }
+    if grouped:
+        payload["groups"] = [g.to_dict() for g in groups]
+    return payload
 
 
 def _format_workspace_group(path: str | None) -> str:

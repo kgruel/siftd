@@ -1,6 +1,7 @@
 """Tests for stats cache (write at ingest, read in db stats)."""
 
 import json
+from dataclasses import fields as dataclass_fields
 from pathlib import Path
 
 import pytest
@@ -17,11 +18,13 @@ from siftd.api.stats import (
     ToolStats,
     WorkspaceStats,
     _dict_to_stats,
+    dict_to_stats,
     _stats_to_dict,
     read_stats_cache,
     stats_cache_path,
     write_stats_cache,
 )
+from siftd.serialization.stats import serialize_stats
 
 
 def _make_stats(db_path: Path) -> DatabaseStats:
@@ -82,7 +85,7 @@ class TestStatsRoundTrip:
         stats = _make_stats(db_file)
 
         d = _stats_to_dict(stats)
-        restored = _dict_to_stats(d)
+        restored = dict_to_stats(d)
 
         assert restored.counts == stats.counts
         assert restored.models == stats.models
@@ -97,6 +100,27 @@ class TestStatsRoundTrip:
         assert restored.activity_window == ("2024-01-01T00:00:00Z", "2024-06-01T10:00:00Z")
         assert restored.last_ingest_at == "2024-06-01T12:00:00Z"
         assert restored.harness_counts[0].conversation_count == 7
+
+    def test_private_alias_matches_public(self, tmp_path):
+        db_file = tmp_path / "siftd.db"
+        db_file.write_bytes(b"x" * 1024)
+        stats = _make_stats(db_file)
+
+        d = _stats_to_dict(stats)
+        assert _dict_to_stats(d) == dict_to_stats(d)
+
+    def test_serialize_stats_contract_matches_dataclasses(self, tmp_path):
+        db_file = tmp_path / "siftd.db"
+        db_file.write_bytes(b"x" * 1024)
+        stats = _make_stats(db_file)
+
+        payload = serialize_stats(stats)
+        assert set(payload) == {f.name for f in dataclass_fields(DatabaseStats)}
+        assert set(payload["counts"]) == {f.name for f in dataclass_fields(TableCounts)}
+        assert set(payload["token_coverage"]) == {f.name for f in dataclass_fields(TokenCoverage)}
+        assert set(payload["token_coverage"]["by_harness"][0]) == {
+            f.name for f in dataclass_fields(TokenCoverageByHarness)
+        }
 
     def test_write_read_roundtrip(self, tmp_path, monkeypatch):
         db_file = tmp_path / "siftd.db"

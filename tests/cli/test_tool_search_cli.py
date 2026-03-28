@@ -49,17 +49,32 @@ def _result(**kwargs):
         "timestamp": "2024-01-01",
         "tool_call_id": "tc1",
         "conversation_id": "c1",
+        "response_id": "r1",
         "workspace_path": "/work/repo",
         "path": None,
+        "ext": None,
         "command": None,
         "pattern": None,
         "result_snippet": None,
         "arg": None,
         "basename": None,
         "command_verb": None,
+        "tool_family": "shell",
+        "rank": None,
     }
     base.update(kwargs)
     return _R(**base)
+
+
+def _delegated_payload(parsed, results):
+    return {
+        "query": parsed.raw,
+        "fields": parsed.fields,
+        "bare_terms": parsed.bare_terms,
+        "unknown_fields": parsed.unknown_fields,
+        "result_count": len(results),
+        "results": [r.to_dict() for r in results],
+    }
 
 
 def test_cmd_tool_search_usage_and_error(monkeypatch, capsys):
@@ -70,7 +85,7 @@ def test_cmd_tool_search_usage_and_error(monkeypatch, capsys):
 
 
 def test_cmd_tool_search_json_and_grouped_text(monkeypatch, capsys):
-    parsed = SimpleNamespace(raw="x", fields={}, bare_terms=[], unknown_fields=[])
+    parsed = SimpleNamespace(raw="x", fields={}, bare_terms=[], unknown_fields={})
     r = _result()
 
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: (parsed, [r]))
@@ -88,10 +103,23 @@ def test_cmd_tool_search_json_and_grouped_text(monkeypatch, capsys):
 
 
 def test_cmd_tool_search_serve_json_and_ungrouped(monkeypatch, capsys):
-    monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: {"results": []})
+    monkeypatch.setattr(
+        "siftd.serve.delegation.try_serve",
+        lambda op: {
+            "query": "x",
+            "fields": {},
+            "bare_terms": [],
+            "unknown_fields": {},
+            "result_count": 0,
+            "results": [],
+        },
+    )
     assert cmd_tool_search(_args(query=["x"], json=True)) == 0
+    delegated = json.loads(capsys.readouterr().out)
+    assert delegated["query"] == "x"
+    assert delegated["groups"] == []
 
-    parsed = SimpleNamespace(raw="x", fields={}, bare_terms=[], unknown_fields=["bad"])
+    parsed = SimpleNamespace(raw="x", fields={}, bare_terms=[], unknown_fields={"bad": ["v"]})
     r = _result(command="git status", result_snippet="ok", path="/a/b/c.py", pattern="needle")
     monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: (parsed, [r]))
@@ -102,8 +130,26 @@ def test_cmd_tool_search_serve_json_and_ungrouped(monkeypatch, capsys):
     assert "unknown fields" in err
 
 
+def test_cmd_tool_search_json_parity_local_vs_delegated(monkeypatch, capsys):
+    parsed = SimpleNamespace(raw="x", fields={"tool": ["shell.execute"]}, bare_terms=["x"], unknown_fields={})
+    r = _result(command="git status")
+    groups = [SimpleNamespace(to_dict=lambda: {"conversation_id": "c1", "tool_call_count": 1})]
+
+    monkeypatch.setattr("siftd.api.tool_search.group_tool_search_results", lambda rows: groups)
+    monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: (parsed, [r]))
+    assert cmd_tool_search(_args(query=["x"], json=True)) == 0
+    local_payload = json.loads(capsys.readouterr().out)
+
+    monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: _delegated_payload(parsed, [r]))
+    assert cmd_tool_search(_args(query=["x"], json=True)) == 0
+    delegated_payload = json.loads(capsys.readouterr().out)
+
+    assert delegated_payload == local_payload
+
+
 def test_cmd_tool_search_no_results(monkeypatch, capsys):
-    parsed = SimpleNamespace(raw="x", fields={}, bare_terms=[], unknown_fields=[])
+    parsed = SimpleNamespace(raw="x", fields={}, bare_terms=[], unknown_fields={})
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: (parsed, []))
     monkeypatch.setattr("siftd.api.tool_search.group_tool_search_results", lambda rows: [])
     assert cmd_tool_search(_args(query=["x"])) == 0

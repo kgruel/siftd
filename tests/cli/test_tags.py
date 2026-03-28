@@ -480,7 +480,20 @@ class TestTagsEdgeBranches:
         assert tags_cli._cmd_tag_list(args, Path(test_db)) == 0
 
         # _cmd_tag_list serve tags conversion/printing with workspace/tool counts
-        monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: {"tags": [{"name": "t", "workspace_count": 1, "tool_call_count": 2, "conversation_count": 0}]})
+        monkeypatch.setattr(
+            "siftd.serve.delegation.try_serve",
+            lambda op: {
+                "tags": [{
+                    "name": "t",
+                    "description": None,
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "workspace_count": 1,
+                    "tool_call_count": 2,
+                    "conversation_count": 0,
+                    "prompt_count": 0,
+                }],
+            },
+        )
         args2 = SimpleNamespace(positional=["list"], since=None, before=None, prefix=None)
         assert tags_cli._cmd_tag_list(args2, Path(test_db)) == 0
 
