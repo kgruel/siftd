@@ -682,8 +682,8 @@ class TestListActiveSessions:
 
         path1 = session_dir / "older.jsonl"
         path2 = session_dir / "newer.jsonl"
-        _write_session(path1, [_make_user_record("older")])
-        _write_session(path2, [_make_user_record("newer")])
+        _write_session(path1, [_make_user_record("older", timestamp="2025-01-20T09:00:00Z")])
+        _write_session(path2, [_make_user_record("newer", timestamp="2025-01-20T10:00:00Z")])
 
         now = time.time()
         os.utime(path1, (now - 600, now - 600))  # 10 min ago
