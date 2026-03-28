@@ -575,7 +575,7 @@ def list_builtin_queries() -> list[str]
 
 ### SearchResult
 
-A single search result from hybrid_search.
+Canonical mutable search chunk result.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -586,12 +586,15 @@ A single search result from hybrid_search.
 | `workspace_path` | `str \| None` |  |
 | `started_at` | `str \| None` |  |
 | `chunk_id` | `str \| None` |  |
-| `source_ids` | `list[str] \| None` |  |
-| `breakdown` | `dict \| None` |  |
+| `source_ids` | `list[str]` |  |
+| `breakdown` | `siftd.domain.search_types.ScoreBreakdown \| None` |  |
+| `file_refs` | `list[Any] \| None` |  |
+| `exchanges` | `list[tuple[str, str, str]] \| None` |  |
+| `context_window` | `list[tuple[str, str, str, bool]] \| None` |  |
 
 ### ConversationScore
 
-Aggregated conversation-level search result.
+Conversation-level aggregate derived from chunk results.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -602,6 +605,7 @@ Aggregated conversation-level search result.
 | `best_excerpt` | `str` |  |
 | `workspace_path` | `str \| None` |  |
 | `started_at` | `str \| None` |  |
+| `file_refs` | `list[Any] \| None` |  |
 
 ### ToolSearchGroup
 
@@ -648,7 +652,7 @@ Single tool-call search result.
 Unified search pipeline — FTS5, semantic, or hybrid.
 
 ```python
-def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ...) -> list[dict]
+def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ...) -> list[SearchChunk]
 ```
 
 **Parameters:**
@@ -661,7 +665,7 @@ def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None
 - `rerank`: "mmr" for diversity reranking, "relevance" for pure score order.
 - `backend`: Preferred embedding backend name (ollama, fastembed).
 
-**Returns:** List of result dicts with: conversation_id, score, text, chunk_type, source_ids, breakdown (ScoreBreakdown or None), file_refs.
+**Returns:** List of SearchChunk results.
 
 **Raises:**
 
@@ -674,12 +678,12 @@ def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None
 Find chronologically earliest result above relevance threshold.
 
 ```python
-def first_mention(results: list[siftd.search.SearchResult] | list[dict], *, threshold: float = ..., db_path: pathlib._local.Path | None = ...) -> siftd.search.SearchResult | dict | None
+def first_mention(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]], *, threshold: float = ..., db_path: pathlib._local.Path | None = ...) -> siftd.domain.search_types.SearchChunk | dict[str, Any] | None
 ```
 
 **Parameters:**
 
-- `results`: List of SearchResult or raw dicts from search. Dicts must have 'score', 'conversation_id', and 'source_ids'.
+- `results`: List of SearchChunk or raw dicts from search. Dicts must have 'score', 'conversation_id', and 'source_ids'.
 - `threshold`: Minimum score to consider relevant.
 
 **Returns:** Earliest result above threshold (same type as input), or None if none qualify.
@@ -873,6 +877,14 @@ Get aggregate token/cost totals across all conversations.
 def get_usage_summary(*, db_path: pathlib._local.Path | None = ...) -> UsageSummary
 ```
 
+### dict_to_stats
+
+Deserialize a JSON dict back to DatabaseStats.
+
+```python
+def dict_to_stats(data: dict) -> DatabaseStats
+```
+
 ### list_workspaces
 
 List workspaces with conversation counts.
@@ -1031,6 +1043,37 @@ Export conversations as a complete document.
 
 ### Data Types
 
+### ApplyResult
+
+Batch apply/remove result with enough context for CLI messaging.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `action` | `Literal[apply, remove]` |  |
+| `results` | `list[ApplyTagOutcome]` |  |
+| `target_count` | `int` |  |
+| `entity_type` | `str` |  |
+| `resolved_entity_id` | `str \| None` |  |
+
+### DeleteResult
+
+Safe delete result payload.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | `str` |  |
+| `tag_name` | `str` |  |
+
+### RenameResult
+
+Safe rename result payload.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | `str` |  |
+| `old_name` | `str` |  |
+| `new_name` | `str` |  |
+
 ### TagInfo
 
 Tag with usage counts.
@@ -1132,6 +1175,14 @@ def open_database(db_path: pathlib._local.Path | None = ..., *, read_only: bool 
 
 - `FileNotFoundError`: If read_only=True and database doesn't exist.
 
+### apply_tags
+
+Apply or remove tags with shared orchestration.
+
+```python
+def apply_tags(*, db_path: Path, tags: list[str], entity_type: str = ..., entity_id: str | None = ..., last: int | None = ..., owner: str | None = ..., remove: bool = ...) -> ApplyResult
+```
+
 ### apply_tag
 
 Apply a tag to an entity.
@@ -1148,6 +1199,14 @@ def apply_tag(conn: Connection, entity_type: str, entity_id: str, tag_id: str, *
 - `tag_id`: The tag's ULID.
 
 **Returns:** Assignment ID if newly applied, None if already applied.
+
+### delete_tag_safe
+
+Delete a tag with owner-scope protections.
+
+```python
+def delete_tag_safe(*, db_path: Path, tag_name: str, owner: str | None = ...) -> DeleteResult
+```
 
 ### delete_tag
 
@@ -1202,6 +1261,14 @@ def list_tags(db_path: pathlib._local.Path | None = ..., conn: sqlite3.Connectio
 - `since`: Only count associations where conversation started after this ISO date.
 
 **Returns:** List of TagInfo objects sorted by name.
+
+### rename_tag_safe
+
+Rename a tag with owner-scope protections.
+
+```python
+def rename_tag_safe(*, db_path: Path, old_name: str, new_name: str, owner: str | None = ...) -> RenameResult
+```
 
 ### remove_tag
 
