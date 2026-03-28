@@ -484,7 +484,7 @@ def cmd_db_send(args) -> int:
 def cmd_db_pull(args) -> int:
     """Pull conversations from a sync remote."""
     from siftd.api.sync import SyncError, SyncRemote, sync_pull
-    from siftd.config import get_sync_remote
+    from siftd.config_sync import get_sync_remote
 
     remote_cfg = get_sync_remote(args.name)
     if remote_cfg is None:
@@ -536,7 +536,7 @@ def cmd_db_pull(args) -> int:
 
 def cmd_db_remote_add(args) -> int:
     """Register a sync remote."""
-    from siftd.config import set_sync_remote
+    from siftd.config_sync import set_sync_remote
 
     name = args.name
     target = args.target
@@ -563,7 +563,7 @@ def cmd_db_remote_add(args) -> int:
 
 def cmd_db_remote_list(args) -> int:
     """List sync remotes."""
-    from siftd.config import get_sync_remotes
+    from siftd.config_sync import get_sync_remotes
 
     remotes = get_sync_remotes()
     if not remotes:
@@ -583,7 +583,7 @@ def cmd_db_remote_list(args) -> int:
 
 def cmd_db_remote_remove(args) -> int:
     """Unregister a sync remote."""
-    from siftd.config import remove_sync_remote
+    from siftd.config_sync import remove_sync_remote
 
     if remove_sync_remote(args.name):
         print(f"Removed remote '{args.name}'.")
@@ -596,7 +596,7 @@ def cmd_db_remote_remove(args) -> int:
 def cmd_db_push(args) -> int:
     """Push conversations to a sync remote."""
     from siftd.api.sync import SyncError, SyncRemote, sync_push
-    from siftd.config import get_sync_remote
+    from siftd.config_sync import get_sync_remote
 
     remote_cfg = get_sync_remote(args.name)
     if remote_cfg is None:

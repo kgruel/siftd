@@ -9,6 +9,7 @@ Follows XDG Base Directory Specification:
 
 import hashlib
 import os
+import tomllib
 from pathlib import Path
 
 APP_NAME = "siftd"
@@ -74,12 +75,25 @@ def config_file() -> Path:
 
 
 def db_path() -> Path:
-    """Return the database path, checking config override first."""
-    from siftd.config import get_config  # lazy: config imports paths
+    """Return the database path, checking config override first.
 
-    override = get_config("db.path")
-    if override:
-        return Path(override).expanduser()
+    Reads ``[db].path`` directly from config.toml using stdlib ``tomllib`` so
+    this module stays independent from ``siftd.config``.
+    """
+    cfg = config_file()
+    if cfg.exists():
+        try:
+            doc = tomllib.loads(cfg.read_text())
+        except (OSError, tomllib.TOMLDecodeError):
+            doc = None
+        if isinstance(doc, dict):
+            db = doc.get("db")
+            if isinstance(db, dict) and "path" in db:
+                value = db.get("path")
+                if value is not None and not isinstance(value, (dict, list)):
+                    override = str(value)
+                    if override:
+                        return Path(override).expanduser()
     return data_dir() / "siftd.db"
 
 

@@ -165,14 +165,14 @@ def sync_push(
                     pass  # Data is staged; can be processed later
 
             if processing_confirmed:
-                from siftd.config import update_last_sent
+                from siftd.config_sync import update_last_sent
 
                 update_last_sent(remote.name, now,
                                  filter_signature=current_sig)
                 last_push_updated = True
         else:
             # Blocking: record last_push only after confirmed merge
-            from siftd.config import update_last_push
+            from siftd.config_sync import update_last_push
 
             update_last_push(remote.name, now,
                              filter_signature=current_sig)
@@ -289,7 +289,7 @@ async def _push_ssh(
 
     hostname, connect_opts = _build_ssh_options(remote)
 
-    from siftd.config import get_sync_timeouts
+    from siftd.config_sync import get_sync_timeouts
 
     connect_timeout, command_timeout = get_sync_timeouts(remote.name, "ssh")
 
@@ -355,7 +355,7 @@ def _build_ssh_options(remote: SyncRemote) -> tuple[str, dict[str, Any]]:
     Returns (hostname, connect_opts) so callers pass the bare hostname to
     ``asyncssh.connect()``.
     """
-    from siftd.config import get_ssh_connect_kwargs
+    from siftd.config_sync import get_ssh_connect_kwargs
 
     opts = get_ssh_connect_kwargs(remote.name)
 
@@ -377,7 +377,7 @@ async def _process_remote_ssh(remote: SyncRemote) -> None:
 
     hostname, connect_opts = _build_ssh_options(remote)
 
-    from siftd.config import get_sync_timeouts
+    from siftd.config_sync import get_sync_timeouts
 
     connect_timeout, command_timeout = get_sync_timeouts(remote.name, "ssh")
     if "connect_timeout" not in connect_opts:
@@ -442,7 +442,7 @@ async def _preflight_ssh(remote: SyncRemote) -> SyncStatus | None:
 
     hostname, connect_opts = _build_ssh_options(remote)
 
-    from siftd.config import get_sync_timeouts
+    from siftd.config_sync import get_sync_timeouts
 
     connect_timeout, _ = get_sync_timeouts(remote.name, "ssh")
     if "connect_timeout" not in connect_opts:
@@ -469,7 +469,7 @@ def _preflight_http(remote: SyncRemote) -> SyncStatus | None:
     import httpx
 
     from siftd.api.auth import AuthError, acquire_token
-    from siftd.config import get_sync_remote, get_sync_timeouts
+    from siftd.config_sync import get_sync_remote, get_sync_timeouts
 
     remote_cfg = get_sync_remote(remote.name)
     auth = remote_cfg.get("auth") if remote_cfg else None
@@ -526,7 +526,7 @@ def _push_http(remote: SyncRemote, slice_path: Path) -> bool:
     import httpx
 
     from siftd.api.auth import AuthError, acquire_token
-    from siftd.config import get_sync_remote
+    from siftd.config_sync import get_sync_remote
 
     remote_cfg = get_sync_remote(remote.name)
     auth = remote_cfg.get("auth") if remote_cfg else None
@@ -540,7 +540,7 @@ def _push_http(remote: SyncRemote, slice_path: Path) -> bool:
     url = remote.path.rstrip("/") + "/api/v1/push"
     data = slice_path.read_bytes()
 
-    from siftd.config import get_sync_timeouts
+    from siftd.config_sync import get_sync_timeouts
 
     connect_timeout, command_timeout = get_sync_timeouts(remote.name, "http")
 
@@ -636,7 +636,7 @@ def sync_pull(
 
     last_pull_updated = False
     if should_update_last_pull and not dry_run:
-        from siftd.config import update_last_pull
+        from siftd.config_sync import update_last_pull
 
         now = datetime.now(UTC).isoformat()
         update_last_pull(remote.name, now,
@@ -711,7 +711,7 @@ async def _pull_ssh(
 
     hostname, connect_opts = _build_ssh_options(remote)
 
-    from siftd.config import get_sync_timeouts
+    from siftd.config_sync import get_sync_timeouts
 
     connect_timeout, command_timeout = get_sync_timeouts(remote.name, "ssh")
 
@@ -839,7 +839,7 @@ def _pull_http(
     import httpx
 
     from siftd.api.auth import AuthError, acquire_token
-    from siftd.config import get_sync_remote
+    from siftd.config_sync import get_sync_remote
 
     remote_cfg = get_sync_remote(remote.name)
     auth = remote_cfg.get("auth") if remote_cfg else None
@@ -867,7 +867,7 @@ def _pull_http(
     if no_tag:
         params["no_tag"] = no_tag
 
-    from siftd.config import get_sync_timeouts
+    from siftd.config_sync import get_sync_timeouts
 
     connect_timeout, command_timeout = get_sync_timeouts(remote.name, "http")
 

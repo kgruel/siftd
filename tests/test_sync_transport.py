@@ -38,7 +38,7 @@ def _patch_connect(fake: FakeSSH):
 
 class TestPushSSHSuccess:
     def test_sends_data_and_parses_response(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
         monkeypatch.setattr("siftd.config.get_config", lambda k: None)
 
         fake = FakeSSH.push_success()
@@ -57,7 +57,7 @@ class TestPushSSHSuccess:
         assert fake.inputs_received[0] == SYNC_HEADER + slice_data
 
     def test_new_remote_returns_false(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
         monkeypatch.setattr("siftd.config.get_config", lambda k: None)
 
         fake = FakeSSH({"siftd": FakeSSHResult(stdout='{"status":"created"}')})
@@ -72,7 +72,7 @@ class TestPushSSHSuccess:
 
 class TestPushSSHConnectionError:
     def test_connection_refused(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
         monkeypatch.setattr("siftd.config.get_config", lambda k: None)
 
         slice_path = tmp_path / "slice.db"
@@ -85,7 +85,7 @@ class TestPushSSHConnectionError:
 
 class TestPushSSHCommandFailure:
     def test_nonzero_exit(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
         monkeypatch.setattr("siftd.config.get_config", lambda k: None)
 
         fake = FakeSSH({"siftd": FakeSSHResult(
@@ -102,7 +102,7 @@ class TestPushSSHCommandFailure:
 
 class TestPushSSHTimeout:
     def test_connect_timeout(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
         monkeypatch.setattr("siftd.config.get_config", lambda k: None)
 
         slice_path = tmp_path / "slice.db"
@@ -115,7 +115,7 @@ class TestPushSSHTimeout:
 
 class TestPullSSHSuccess:
     def test_receives_data(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
         monkeypatch.setattr("siftd.config.get_config", lambda k: None)
 
         pull_data = b"SQLite format 3\x00remote-data"
@@ -132,7 +132,7 @@ class TestPullSSHSuccess:
         assert "db send" in fake.commands_run[0]
 
     def test_since_and_workspace(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
         monkeypatch.setattr("siftd.config.get_config", lambda k: None)
 
         fake = FakeSSH.pull_success(b"data")
@@ -163,7 +163,7 @@ class TestPullSSHSuccess:
 
 class TestPullSSHEmpty:
     def test_zero_conversations(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
         monkeypatch.setattr("siftd.config.get_config", lambda k: None)
 
         def respond(cmd: str, **kwargs: Any) -> FakeSSHResult:
@@ -182,7 +182,7 @@ class TestPullSSHEmpty:
 
 class TestPullSSHConnectionError:
     def test_connection_refused(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
         monkeypatch.setattr("siftd.config.get_config", lambda k: None)
 
         with patch("siftd.api.sync.asyncssh.connect", side_effect=OSError("Connection refused")):
@@ -194,14 +194,14 @@ class TestPullSSHConnectionError:
 
 class TestBuildSSHOptions:
     def test_empty_config(self, monkeypatch):
-        monkeypatch.setattr("siftd.config.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
         hostname, opts = _build_ssh_options(_remote())
         assert hostname == "box"
         assert opts == {}
 
     def test_identity_file(self, monkeypatch):
         monkeypatch.setattr(
-            "siftd.config.get_ssh_connect_kwargs",
+            "siftd.config_sync.get_ssh_connect_kwargs",
             lambda n: {"client_keys": ["/home/user/.ssh/id_ed25519"]},
         )
         _, opts = _build_ssh_options(_remote())
@@ -209,7 +209,7 @@ class TestBuildSSHOptions:
 
     def test_username_and_port(self, monkeypatch):
         monkeypatch.setattr(
-            "siftd.config.get_ssh_connect_kwargs",
+            "siftd.config_sync.get_ssh_connect_kwargs",
             lambda n: {"username": "deploy", "port": 2222},
         )
         _, opts = _build_ssh_options(_remote())
@@ -218,7 +218,7 @@ class TestBuildSSHOptions:
 
     def test_known_hosts_disabled(self, monkeypatch):
         monkeypatch.setattr(
-            "siftd.config.get_ssh_connect_kwargs",
+            "siftd.config_sync.get_ssh_connect_kwargs",
             lambda n: {"known_hosts": None},
         )
         _, opts = _build_ssh_options(_remote())
@@ -226,7 +226,7 @@ class TestBuildSSHOptions:
 
     def test_connect_timeout(self, monkeypatch):
         monkeypatch.setattr(
-            "siftd.config.get_ssh_connect_kwargs",
+            "siftd.config_sync.get_ssh_connect_kwargs",
             lambda n: {"connect_timeout": 30},
         )
         _, opts = _build_ssh_options(_remote())

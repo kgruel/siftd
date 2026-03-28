@@ -75,6 +75,7 @@ MODULE_GROUPS: dict[str, str] = {
     "builtin_queries": "content",
     "backfill": "ingestion",
     "config": "utilities",
+    "config_sync": "utilities",
     "paths": "utilities",
     "ids": "utilities",
     "math": "utilities",

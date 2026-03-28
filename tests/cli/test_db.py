@@ -218,27 +218,27 @@ def _remote_cfg(path="/remote.db", host=None, name="r"):
 class TestDbRemoteSubcommands:
     def test_remote_add_host_path(self, monkeypatch, capsys):
         called = []
-        monkeypatch.setattr("siftd.config.set_sync_remote", lambda n, h, p: called.append((n, h, p)))
+        monkeypatch.setattr("siftd.config_sync.set_sync_remote", lambda n, h, p: called.append((n, h, p)))
         rc = main(["db", "remote", "add", "team", "host:/data/team.db"])
         assert rc == 0
         assert called == [("team", "host", "/data/team.db")]
 
     def test_remote_add_local_path(self, monkeypatch):
         called = []
-        monkeypatch.setattr("siftd.config.set_sync_remote", lambda n, h, p: called.append((n, h, p)))
+        monkeypatch.setattr("siftd.config_sync.set_sync_remote", lambda n, h, p: called.append((n, h, p)))
         rc = main(["db", "remote", "add", "nas", "/mnt/team.db"])
         assert rc == 0
         assert called == [("nas", None, "/mnt/team.db")]
 
     def test_remote_list_empty(self, monkeypatch, capsys):
-        monkeypatch.setattr("siftd.config.get_sync_remotes", lambda: [])
+        monkeypatch.setattr("siftd.config_sync.get_sync_remotes", lambda: [])
         rc = main(["db", "remote", "list"])
         assert rc == 0
         assert "No remotes configured" in capsys.readouterr().out
 
     def test_remote_list_with_entries(self, monkeypatch, capsys):
         monkeypatch.setattr(
-            "siftd.config.get_sync_remotes",
+            "siftd.config_sync.get_sync_remotes",
             lambda: [{
                 "name": "team",
                 "host": "box",
@@ -253,27 +253,27 @@ class TestDbRemoteSubcommands:
         assert "team" in out and "last push" in out and "last pull" in out
 
     def test_remote_remove(self, monkeypatch, capsys):
-        monkeypatch.setattr("siftd.config.remove_sync_remote", lambda n: True)
+        monkeypatch.setattr("siftd.config_sync.remove_sync_remote", lambda n: True)
         assert main(["db", "remote", "remove", "team"]) == 0
-        monkeypatch.setattr("siftd.config.remove_sync_remote", lambda n: False)
+        monkeypatch.setattr("siftd.config_sync.remove_sync_remote", lambda n: False)
         assert main(["db", "remote", "remove", "team"]) == 1
 
 
 class TestDbPushPull:
     def test_push_remote_missing(self, test_db, monkeypatch, capsys):
-        monkeypatch.setattr("siftd.config.get_sync_remote", lambda n: None)
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: None)
         rc = main(["--db", str(test_db), "db", "push", "missing"])
         assert rc == 1
         assert "not found" in capsys.readouterr().err
 
     def test_pull_remote_missing(self, test_db, monkeypatch, capsys):
-        monkeypatch.setattr("siftd.config.get_sync_remote", lambda n: None)
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: None)
         rc = main(["--db", str(test_db), "db", "pull", "missing"])
         assert rc == 1
         assert "not found" in capsys.readouterr().err
 
     def test_push_db_missing(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr("siftd.config.get_sync_remote", lambda n: _remote_cfg())
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: _remote_cfg())
         rc = main(["--db", str(tmp_path / "missing.db"), "db", "push", "r"])
         assert rc == 1
         assert "Database not found" in capsys.readouterr().out
@@ -281,14 +281,14 @@ class TestDbPushPull:
     def test_push_sync_error(self, test_db, monkeypatch, capsys):
         from siftd.api.sync import SyncError
 
-        monkeypatch.setattr("siftd.config.get_sync_remote", lambda n: _remote_cfg())
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: _remote_cfg())
         monkeypatch.setattr("siftd.api.sync.sync_push", lambda **kw: (_ for _ in ()).throw(SyncError("boom")))
         rc = main(["--db", str(test_db), "db", "push", "r"])
         assert rc == 1
         assert "Push failed" in capsys.readouterr().err
 
     def test_push_dry_run_and_success(self, test_db, monkeypatch, capsys):
-        monkeypatch.setattr("siftd.config.get_sync_remote", lambda n: _remote_cfg())
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: _remote_cfg())
         monkeypatch.setattr(
             "siftd.api.sync.sync_push",
             lambda **kw: SimpleNamespace(conversations=2, size_bytes=2048, dry_run=True, remote_existed=True),
@@ -308,7 +308,7 @@ class TestDbPushPull:
     def test_pull_sync_error_empty_dry_run_and_success(self, test_db, monkeypatch, capsys):
         from siftd.api.sync import SyncError
 
-        monkeypatch.setattr("siftd.config.get_sync_remote", lambda n: _remote_cfg())
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: _remote_cfg())
         monkeypatch.setattr("siftd.api.sync.sync_pull", lambda **kw: (_ for _ in ()).throw(SyncError("boom")))
         rc = main(["--db", str(test_db), "db", "pull", "r"])
         assert rc == 1
@@ -339,7 +339,7 @@ class TestDbPushPull:
         assert "Pulled 3 conversations" in capsys.readouterr().out
 
     def test_push_file_not_found_and_zero(self, test_db, monkeypatch, capsys):
-        monkeypatch.setattr("siftd.config.get_sync_remote", lambda n: _remote_cfg())
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: _remote_cfg())
         monkeypatch.setattr("siftd.api.sync.sync_push", lambda **kw: (_ for _ in ()).throw(FileNotFoundError("no db")))
         rc = main(["--db", str(test_db), "db", "push", "r"])
         assert rc == 1
