@@ -1,79 +1,147 @@
-# fix-serialization-cycle Plan
+# ingest-api-gap Plan: Extract Ingest/Backfill to API Boundary
 
-## Objective
+## Goal
+Move ingest and backfill write orchestration behind `siftd.api` so non-CLI consumers (serve/SDK/automation) can trigger the primary write path without importing ingestion/backfill/adapter internals.
 
-Break the `api.stats <-> serialization.stats` cycle by restoring one-way direction:
+## Non-goals
+- No behavioral changes to CLI output, flags, warnings, or exit codes.
+- No ingestion pipeline rewrite (`siftd.ingestion.orchestration` logic stays as-is).
+- No doctor UX redesign.
 
-- `serialization -> api` is allowed
-- `api -> serialization` is not allowed
+## Current Boundary Violations (verified)
+`src/siftd/cli/data.py` currently imports and orchestrates internals directly:
+- `siftd.adapters.registry` (`load_all_adapters`, `wrap_adapter_paths`)
+- `siftd.ingestion` / `siftd.ingestion.orchestration` (`ingest_all`)
+- `siftd.backfill` (`backfill_*` functions)
+- `siftd.doctor.fixes` / `siftd.doctor.view` (doctor support functions)
 
-Constraints honored:
-- no CLI/serve behavior changes
-- no stats-cache mechanism redesign
-- keep anti-drift serializer contract checks
+This makes CLI the only first-class writer for ingest/backfill orchestration and leaves no API primitive for secondary consumers.
 
-## Current state (verified)
+## Proposed API Surface
 
-- `src/siftd/api/stats.py` imports `siftd.serialization.stats.serialize_stats` inside `_stats_to_dict()` and uses it in `write_stats_cache()`.
-- `src/siftd/serialization/stats.py` type-check imports `DatabaseStats` from `siftd.api.stats`.
-- Cycle in dependency audit: `api.stats <-> serialization.stats`.
-- `src/siftd/serialization/conversations.py` type-check imports API conversation types; no reverse `api -> serialization` import there.
-- Repo scan found only one `api -> serialization` import today: `src/siftd/api/stats.py`.
+### 1) New ingest API module
+Create `src/siftd/api/ingest.py`.
 
-## Placement decision for `serialize_stats` / `_stats_to_dict`
+Public primitives:
+- `run_ingest(...) -> IngestRunResult`
+- `run_rebuild_fts(...) -> IngestRunResult`
 
-### Recommended (minimal + coherent)
+Proposed signature shape:
+- Writes own lifecycle: accepts `db_path: Path` (not `conn`).
+- Supports current orchestrator inputs:
+  - `adapter_names: list[str] | None`
+  - `scan_paths: list[str] | None`
+  - `filter_binary: bool | None`
+  - `on_event: Callable[[IngestEvent], None] | None`
 
-Make `api.stats` the owner of the stats cache payload mapping and make `serialization.stats.serialize_stats()` delegate to it.
+Proposed result dataclass:
+- `IngestRunResult`
+  - `db_path: Path`
+  - `db_created: bool`
+  - `mode: Literal["ingest", "rebuild_fts"]`
+  - `adapters: list[str]`
+  - `scan_paths: list[str]`
+  - `stats: IngestStats | None` (None for `rebuild_fts`)
+  - `elapsed_ms: int`
 
-Why:
-- `write_stats_cache()` already lives in `api.stats`; keeping its serializer local removes the inversion with minimal churn.
-- preserves one-way dependency (`serialization -> api`) and removes forbidden direction.
-- avoids dual implementations drifting.
+Errors:
+- Add explicit API exception for adapter selection mismatch (for example `AdapterSelectionError`) carrying requested/available names.
+- CLI catches this and preserves exact current message/exit code.
 
-### Option considered: move cache-write responsibility to callers
+### 2) New backfill API module
+Create `src/siftd/api/backfill.py`.
 
-Not recommended for this task.
+Public primitives:
+- `run_backfill(...) -> BackfillRunResult`
+- Optionally export narrow mode helpers too (`backfill_shell_tags_api`, etc.) if useful for tests, but `run_backfill` is the main write primitive.
 
-Why:
-- touches CLI + serve call sites and broadens scope.
-- effectively restructures cache-write flow, which is explicitly out of scope.
+Proposed operation enum:
+- `Literal["response_attributes", "shell_tags", "derivative_tags", "filter_binary"]`
 
-## Minimal change set
+Proposed result dataclass:
+- `BackfillRunResult`
+  - `operation: ...`
+  - `dry_run: bool`
+  - `inserted_attributes: int`
+  - `tagged_conversations: int`
+  - `shell_tag_counts: dict[str, int]`
+  - `filtered: int`
+  - `skipped: int`
+  - `errors: int`
+  - `elapsed_ms: int`
 
-1. `src/siftd/api/stats.py`
-- Replace `_stats_to_dict()` implementation so it no longer imports `siftd.serialization.stats`.
-- Keep output shape identical to current `serialize_stats` contract.
+Notes:
+- Wrapper only: internally delegates to existing `siftd.backfill.*` functions unchanged.
+- CLI keeps current branching/output logic; it only swaps direct backfill imports for API call(s).
 
-2. `src/siftd/serialization/stats.py`
-- Keep public `serialize_stats()` entry point.
-- Delegate to API-owned mapper (single source of truth), preserving existing import path for output/serve/tests.
-- Keep `DatabaseStats` typing contract in place.
+### 3) Adapter listing/discovery stance
+- Keep adapter listing in existing `siftd.api.adapters` (`list_adapters`, `list_builtin_adapters`).
+- Do not expose raw adapter modules as API return values.
+- Adapter resolution for ingest execution lives inside `api.ingest.run_ingest` as internal orchestration detail.
 
-3. Tests (anti-drift preserved)
-- Keep `tests/test_stats_cache.py::test_serialize_stats_contract_matches_dataclasses` as the contract guard.
-- Add/adjust a parity assertion that `serialize_stats(stats)` and `_stats_to_dict(stats)` are identical.
-- Keep existing cache round-trip tests unchanged (behavioral guard).
+## Domain Logic vs CLI UX Split
 
-4. Architecture guardrail
-- Add a hard-rule test in `tests/architecture/test_hard_rules.py` to forbid `siftd.serialization` imports from `src/siftd/api/**` (with existing suppression pattern if ever needed).
-- Optional follow-up ratchet: remove `"serialization"` from `ALLOWED_DEPS["api"]` in `tests/architecture/test_imports.py` once clean.
+Move to API (domain orchestration):
+- Adapter loading + selection + path overrides.
+- Ingest execution (`ingest_all`) and FTS rebuild execution.
+- Backfill operation dispatch and mutation execution.
+- Stats-cache refresh after ingest.
+- Timing/count result construction.
 
-## What to do about other `api -> serialization` imports
+Keep in CLI (presentation/UX):
+- Text/JSON renderers (`_IngestTextRenderer`, `_IngestJsonRenderer`).
+- User-facing warnings and prose strings (for example `--dry-run ignored without --filter-binary`).
+- Exit code mapping and TTY tips.
+- Doctor progress rendering and local cache messaging.
 
-- None found outside `api/stats.py`.
-- `serialization/conversations.py -> api.conversations` is acceptable one-way; no immediate action required.
+## Doctor Fixes Decision
+- Keep doctor command orchestration as CLI tooling for now.
+- Route mutation actions to API primitives where missing:
+  - `_fix_ingest` should call new `api.ingest.run_ingest`.
+- Keep `siftd.doctor.fixes` cache file handling CLI-side (stateful UX concern, not shared API need).
+- Defer a broader `api.doctor.apply_fixes` abstraction unless a second consumer appears.
 
-## Validation plan
+## Incremental Implementation Plan
 
-1. Focused tests:
-- `pytest tests/test_stats_cache.py tests/test_serve_fmt.py tests/test_narrative.py tests/architecture/test_hard_rules.py tests/architecture/test_imports.py`
+### Phase 1: Ingest API extraction (first, highest impact)
+1. Add `api/ingest.py` with `IngestRunResult`, exceptions, and `run_ingest`/`run_rebuild_fts` wrappers.
+2. Export new symbols from `api/__init__.py`.
+3. Rewire `cmd_ingest` to use API primitives while preserving existing renderers/output.
+4. Update CLI tests to monkeypatch API boundary instead of ingestion/registry internals.
+5. Remove `cli/data.py` direct imports from ingestion/registry for ingest path.
 
-2. Full gate:
-- `./dev check`
+### Phase 2: Backfill API extraction
+1. Add `api/backfill.py` with `BackfillRunResult` and `run_backfill`.
+2. Export new symbols from `api/__init__.py`.
+3. Rewire `cmd_backfill` to call API.
+4. Keep CLI output text identical.
+5. Update tests to patch API backfill functions instead of `siftd.backfill.*`.
 
-## Expected outcome
+### Phase 3: Doctor ingest fix boundary cleanup
+1. Update `_fix_ingest` in `cli/data.py` to call `api.ingest.run_ingest`.
+2. Leave doctor cache/view modules CLI-side.
+3. Verify no behavioral change in `doctor fix` output.
 
-- Cycle removed (`api.stats` no longer imports serialization).
-- Serialization contract stability remains enforced by dataclass anti-drift tests.
-- New architecture test prevents regressions of `api -> serialization` direction inversion.
+### Phase 4: Architecture/test ratchet and anti-drift hardening
+1. Update `tests/architecture/test_imports.py`:
+   - Remove known violations for `("cli/data.py", "adapters")` and `("cli/data.py", "ingestion")` once eliminated.
+   - Ratchet `max_allowed` down accordingly.
+2. Add API module tests:
+   - `tests/test_api_ingest.py`
+   - `tests/test_api_backfill.py`
+3. Add anti-drift serializer-contract tests for new result dataclasses:
+   - Verify serialized key set equals `dataclasses.fields(...)` for each new payload type.
+   - Follow pattern used in `tests/test_serialization_tags.py` and `tests/test_search_serializer_drift.py`.
+
+## Behavioral Compatibility Checklist
+- `siftd ingest` text mode unchanged.
+- `siftd ingest --json` event stream unchanged.
+- `siftd ingest --rebuild-fts` behavior unchanged.
+- `siftd backfill` mode-specific text unchanged.
+- `siftd doctor fix` still executes the same fix commands and summaries.
+
+## Done Criteria
+- CLI no longer imports `siftd.ingestion`, `siftd.backfill`, or `siftd.adapters.registry` in `cli/data.py` for ingest/backfill execution.
+- Ingest and backfill write paths are callable via `siftd.api` primitives with `db_path` lifecycle ownership.
+- New API result dataclasses have anti-drift tests.
+- Existing CLI behavior/output remains unchanged.

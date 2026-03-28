@@ -9,6 +9,11 @@ from siftd.api.adapters import (
     list_adapters,
     list_builtin_adapters,
 )
+from siftd.api.backfill import (
+    BackfillOperation,
+    BackfillRunResult,
+    run_backfill,
+)
 from siftd.api.conversations import (
     ConversationDetail,
     ConversationSummary,
@@ -47,6 +52,12 @@ from siftd.api.export import (
 from siftd.api.file_refs import (
     FileRef,
     fetch_file_refs,
+)
+from siftd.api.ingest import (
+    AdapterSelectionError,
+    IngestRunResult,
+    run_ingest,
+    run_rebuild_fts,
 )
 from siftd.api.merge import (
     merge_database,
@@ -157,6 +168,10 @@ __all__ = [
     "AdapterInfo",
     "list_adapters",
     "list_builtin_adapters",
+    # backfill
+    "BackfillOperation",
+    "BackfillRunResult",
+    "run_backfill",
     # database
     "backup_database",
     "create_database",
@@ -211,6 +226,11 @@ __all__ = [
     # file refs
     "FileRef",
     "fetch_file_refs",
+    # ingest
+    "AdapterSelectionError",
+    "IngestRunResult",
+    "run_ingest",
+    "run_rebuild_fts",
     # resources
     "CopyError",
     "copy_adapter",

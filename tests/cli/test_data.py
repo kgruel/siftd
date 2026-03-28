@@ -602,8 +602,12 @@ class TestDataDirectBranches:
         assert rc == 0
 
         # _fix helpers
-        monkeypatch.setattr("siftd.adapters.registry.load_all_adapters", lambda: [SimpleNamespace(module="m")])
-        monkeypatch.setattr("siftd.ingestion.orchestration.ingest_all", lambda conn, mods: SimpleNamespace(files_ingested=1, files_skipped=2))
+        monkeypatch.setattr(
+            "siftd.api.run_ingest",
+            lambda db_path: SimpleNamespace(
+                stats=SimpleNamespace(files_ingested=1, files_skipped=2)
+            ),
+        )
         assert "1 file" in data_cli._fix_ingest(object(), Path("/d"))
 
         monkeypatch.setattr("siftd.api.search.rebuild_fts_index", lambda conn: None)
@@ -686,22 +690,24 @@ class TestDataDirectBranches:
 
     def test_ingest_and_backfill_remaining_branches(self, test_db, monkeypatch, capsys):
         # cmd_ingest: unmatched adapter in json mode
-        monkeypatch.setattr("siftd.adapters.registry.load_all_adapters", lambda: [])
-        monkeypatch.setattr("siftd.api.create_database", lambda db: SimpleNamespace(close=lambda: None))
+        monkeypatch.setattr("siftd.api.ingest.load_all_adapters", lambda: [])
         monkeypatch.setattr("siftd.paths.ensure_dirs", lambda: None)
         rc = main(["--db", str(test_db), "ingest", "--json", "--adapter", "nope"])
         assert rc == 1
 
         # cmd_backfill: shell-tags, derivative-tags, and filter-binary error/notice prints
-        monkeypatch.setattr("siftd.backfill.backfill_shell_tags", lambda conn: {"git": 2})
+        monkeypatch.setattr("siftd.api.backfill.backfill_shell_tags", lambda conn: {"git": 2})
         rc = main(["--db", str(test_db), "backfill", "--shell-tags"])
         assert rc == 0
 
-        monkeypatch.setattr("siftd.backfill.backfill_derivative_tags", lambda conn: 1)
+        monkeypatch.setattr("siftd.api.backfill.backfill_derivative_tags", lambda conn: 1)
         rc = main(["--db", str(test_db), "backfill", "--derivative-tags"])
         assert rc == 0
 
-        monkeypatch.setattr("siftd.backfill.backfill_filter_binary", lambda conn, dry_run=False: {"filtered": 1, "skipped": 0, "errors": 2})
+        monkeypatch.setattr(
+            "siftd.api.backfill.backfill_filter_binary",
+            lambda conn, dry_run=False: {"filtered": 1, "skipped": 0, "errors": 2},
+        )
         rc = main(["--db", str(test_db), "backfill", "--filter-binary", "--dry-run"])
         assert rc == 0
         out = capsys.readouterr().out
@@ -755,9 +761,15 @@ class TestDataDirectBranches:
         tr.print_summary(FakeStats(conversations=1, prompts=1, responses=1, tool_calls=1))
 
         # ingest stats cache exception branch
-        monkeypatch.setattr("siftd.adapters.registry.load_all_adapters", lambda: [SimpleNamespace(name="ok", module="m")])
-        monkeypatch.setattr("siftd.adapters.registry.wrap_adapter_paths", lambda m, p: m)
-        monkeypatch.setattr("siftd.ingestion.ingest_all", lambda conn, adapters, on_event: FakeStats())
+        monkeypatch.setattr(
+            "siftd.api.ingest.load_all_adapters",
+            lambda: [SimpleNamespace(name="ok", module="m")],
+        )
+        monkeypatch.setattr("siftd.api.ingest.wrap_adapter_paths", lambda m, p: m)
+        monkeypatch.setattr(
+            "siftd.api.ingest.ingest_all",
+            lambda conn, adapters, on_event=None, filter_binary=None: FakeStats(),
+        )
         monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: {})
         monkeypatch.setattr("siftd.api.stats.write_stats_cache", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("x")))
         monkeypatch.setattr("siftd.paths.ensure_dirs", lambda: None)

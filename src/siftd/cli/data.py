@@ -8,8 +8,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from siftd.api import create_database, open_database
-from siftd.api.search import rebuild_fts_index
+from siftd.api import open_database
 from siftd.cli._common import resolve_db
 from siftd.output import fmt_model, fmt_workspace
 from siftd.paths import ensure_dirs
@@ -299,8 +298,7 @@ class _IngestJsonRenderer:
 
 def cmd_ingest(args) -> int:
     """Run ingestion from all adapters."""
-    from siftd.adapters.registry import load_all_adapters, wrap_adapter_paths
-    from siftd.ingestion import ingest_all
+    from siftd.api import AdapterSelectionError, run_ingest, run_rebuild_fts
 
     ensure_dirs()
 
@@ -321,75 +319,58 @@ def cmd_ingest(args) -> int:
             else:
                 print(f"Using database: {db}")
 
-    conn = create_database(db)
-
     # Handle --rebuild-fts flag
     if args.rebuild_fts:
         if json_mode:
             renderer._emit({"type": "fts_rebuild", "status": "start"})
-            rebuild_fts_index(conn)
+            run_rebuild_fts(db_path=db)
             renderer._emit({"type": "fts_rebuild", "status": "done"})
         else:
             print("Rebuilding FTS index...")
-            rebuild_fts_index(conn)
+            run_rebuild_fts(db_path=db)
             print("FTS index rebuilt.")
-        conn.close()
         return 0
 
-    plugins = load_all_adapters()
-    if args.adapter:
-        names = set(args.adapter)
-        plugins = [p for p in plugins if p.name in names]
-        if not plugins:
-            message = f"No adapters matched: {', '.join(args.adapter)}"
-            if json_mode:
-                renderer._emit({"type": "error", "message": message})
-            else:
-                print(message)
-            return 1
-
-    # Extract modules for ingestion (wrap with path overrides if needed)
     if args.path:
-        adapters = [wrap_adapter_paths(p.module, args.path) for p in plugins]
         if json_mode:
             renderer._emit({"type": "scan_paths", "paths": args.path})
         else:
             print(f"Scanning: {', '.join(args.path)}")
-    else:
-        adapters = [p.module for p in plugins]
 
     if not json_mode:
         if not quiet and not sys.stdout.isatty():
             print("Tip: use --json for newline-delimited JSON output.", file=sys.stderr)
         if not quiet:
             print("\nIngesting...")
-    stats = ingest_all(conn, adapters, on_event=renderer.handle_event)
+    try:
+        result = run_ingest(
+            db_path=db,
+            adapter_names=args.adapter,
+            scan_paths=args.path,
+            on_event=renderer.handle_event,
+        )
+    except AdapterSelectionError as exc:
+        message = str(exc)
+        if json_mode:
+            renderer._emit({"type": "error", "message": message})
+        else:
+            print(message)
+        return 1
 
+    stats = result.stats
+    if stats is None:
+        return 0
     if json_mode:
         renderer.handle_summary(stats)
     else:
         renderer.print_summary(stats)
-    conn.close()
-
-    # Write stats cache — OS page cache is still warm so get_stats is cheap.
-    try:
-        from siftd.api.stats import get_stats, write_stats_cache
-
-        write_stats_cache(get_stats(db_path=db))
-    except Exception:
-        pass  # Cache write failure is never fatal
 
     return 0
 
 
 def cmd_backfill(args) -> int:
     """Backfill derived data from existing records."""
-    from siftd.backfill import (
-        backfill_derivative_tags,
-        backfill_filter_binary,
-        backfill_response_attributes,
-        backfill_shell_tags,
-    )
+    from siftd.api import run_backfill
 
     db = resolve_db(args)
 
@@ -402,11 +383,10 @@ def cmd_backfill(args) -> int:
         print("Run 'siftd ingest' to create it.")
         return 1
 
-    conn = open_database(db)
-
     if args.shell_tags:
         print("Backfilling shell command tags...")
-        counts = backfill_shell_tags(conn)
+        result = run_backfill(db_path=db, operation="shell_tags")
+        counts = result.shell_tag_counts
         total = sum(counts.values())
         if counts:
             print(f"Tagged {total} tool calls:")
@@ -416,7 +396,8 @@ def cmd_backfill(args) -> int:
             print("No untagged shell commands found.")
     elif args.derivative_tags:
         print("Backfilling derivative conversation tags...")
-        count = backfill_derivative_tags(conn)
+        result = run_backfill(db_path=db, operation="derivative_tags")
+        count = result.tagged_conversations
         if count:
             print(f"Tagged {count} conversations as siftd:derivative.")
         else:
@@ -427,20 +408,20 @@ def cmd_backfill(args) -> int:
             print("Scanning for binary content (dry run)...")
         else:
             print("Filtering binary content from existing blobs...")
-        stats = backfill_filter_binary(conn, dry_run=dry_run)
-        print(f"  Filtered: {stats['filtered']}")
-        print(f"  Skipped (no change): {stats['skipped']}")
-        if stats['errors']:
-            print(f"  Errors: {stats['errors']}")
-        if dry_run and stats['filtered']:
+        result = run_backfill(db_path=db, operation="filter_binary", dry_run=dry_run)
+        print(f"  Filtered: {result.filtered}")
+        print(f"  Skipped (no change): {result.skipped}")
+        if result.errors:
+            print(f"  Errors: {result.errors}")
+        if dry_run and result.filtered:
             print("\nRun without --dry-run to apply changes.")
     else:
         # Default: backfill response attributes (original behavior)
         print("Backfilling response attributes (cache tokens)...")
-        count = backfill_response_attributes(conn)
+        result = run_backfill(db_path=db, operation="response_attributes")
+        count = result.inserted_attributes
         print(f"Done. Inserted {count} attributes.")
 
-    conn.close()
     return 0
 
 
@@ -758,11 +739,11 @@ def _doctor_fix(args) -> int:
 
 # Fix registry: maps fix_command → (label, callable(conn, db_path) → str)
 def _fix_ingest(conn, db_path):
-    from siftd.adapters.registry import load_all_adapters
-    from siftd.ingestion.orchestration import ingest_all
+    from siftd.api import run_ingest
 
-    adapters = load_all_adapters()
-    stats = ingest_all(conn, [a.module for a in adapters])
+    stats = run_ingest(db_path=db_path).stats
+    if stats is None:
+        return "0 file(s) ingested, 0 skipped"
     return f"{stats.files_ingested} file(s) ingested, {stats.files_skipped} skipped"
 
 
