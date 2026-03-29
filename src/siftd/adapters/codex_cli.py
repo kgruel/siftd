@@ -200,7 +200,9 @@ def parse(source: Source) -> Iterable[Conversation]:
             input_data = parse_json_args(arguments)
 
             # Create a response for the tool call if we don't have one yet
-            response = _get_or_create_response(current_prompt, timestamp, model)
+            response, current_prompt = _get_or_create_response(
+                current_prompt, conversation, timestamp, model
+            )
 
             # Add tool_use content block
             response.content.append(ContentBlock(
@@ -233,7 +235,9 @@ def parse(source: Source) -> Iterable[Conversation]:
             input_data = payload.get("input", "")
             call_id = payload.get("call_id")
 
-            response = _get_or_create_response(current_prompt, timestamp, model)
+            response, current_prompt = _get_or_create_response(
+                current_prompt, conversation, timestamp, model
+            )
 
             response.content.append(ContentBlock(
                 block_type="tool_use",
@@ -281,15 +285,25 @@ def _parse_block(block) -> ContentBlock:
 
 
 def _get_or_create_response(
-    current_prompt: Prompt | None, timestamp: str, model: str | None
-) -> Response:
-    """Get the latest response on the current prompt, or create one."""
-    if current_prompt is not None and current_prompt.responses:
-        return current_prompt.responses[-1]
+    current_prompt: Prompt | None,
+    conversation: Conversation,
+    timestamp: str,
+    model: str | None,
+) -> tuple[Response, Prompt]:
+    """Get the latest response on the current prompt, or create one.
+
+    If current_prompt is None (tool calls before any user message),
+    creates a synthetic prompt so the response is attached to the
+    conversation rather than silently dropped.
+    """
+    if current_prompt is None:
+        current_prompt = Prompt(timestamp=timestamp)
+        conversation.prompts.append(current_prompt)
+    if current_prompt.responses:
+        return current_prompt.responses[-1], current_prompt
     response = Response(timestamp=timestamp, model=model)
-    if current_prompt is not None:
-        current_prompt.responses.append(response)
-    return response
+    current_prompt.responses.append(response)
+    return response, current_prompt
 
 
 # =============================================================================

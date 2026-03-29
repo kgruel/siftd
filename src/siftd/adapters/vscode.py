@@ -206,6 +206,8 @@ def _replay_jsonl_strict(path: Path) -> dict:
 
 def _set_at_path(obj: dict | list, path: list, value) -> None:
     """Set a value at a nested key path."""
+    if not path:
+        return
     for key in path[:-1]:
         if isinstance(obj, list) and isinstance(key, int):
             if 0 <= key < len(obj):

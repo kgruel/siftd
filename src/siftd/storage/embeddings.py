@@ -49,8 +49,12 @@ def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> EmbeddingsC
     if not read_only:
         conn.execute("PRAGMA journal_mode=WAL")
 
-        _create_schema(conn)
-        _migrate(conn)
+        try:
+            _create_schema(conn)
+            _migrate(conn)
+        except Exception:
+            conn.close()
+            raise
 
     return conn
 

@@ -85,28 +85,32 @@ def open_database(
                     f"(expected {SCHEMA_VERSION}). Please upgrade siftd."
                 )
 
-        _migrate_labels_to_tags(conn)
-        _migrate_add_error_column(conn)
-        _migrate_add_file_stat_columns(conn)
-        _migrate_add_branch_column(conn)
-        _migrate_add_cascade_deletes(conn)
-        ensure_fts_table(conn)
-        ensure_pricing_table(conn)
-        ensure_canonical_tools(conn)
-        ensure_tool_call_tags_table(conn)
-        ensure_content_blobs_table(conn)
-        ensure_session_tables(conn)
-        ensure_prompt_tags_table(conn)
-        _ensure_git_remote_index(conn)
-        _ensure_tag_indexes(conn)
-        _ensure_response_attributes_key_index(conn)
-        _ensure_conversation_stats_table(conn)
-        ensure_conversation_owners_table(conn)
-        ensure_sync_inbox_table(conn)
+        try:
+            _migrate_labels_to_tags(conn)
+            _migrate_add_error_column(conn)
+            _migrate_add_file_stat_columns(conn)
+            _migrate_add_branch_column(conn)
+            _migrate_add_cascade_deletes(conn)
+            ensure_fts_table(conn)
+            ensure_pricing_table(conn)
+            ensure_canonical_tools(conn)
+            ensure_tool_call_tags_table(conn)
+            ensure_content_blobs_table(conn)
+            ensure_session_tables(conn)
+            ensure_prompt_tags_table(conn)
+            _ensure_git_remote_index(conn)
+            _ensure_tag_indexes(conn)
+            _ensure_response_attributes_key_index(conn)
+            _ensure_conversation_stats_table(conn)
+            ensure_conversation_owners_table(conn)
+            ensure_sync_inbox_table(conn)
 
-        # Stamp schema version after successful migrations
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        conn.commit()
+            # Stamp schema version after successful migrations
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            conn.commit()
+        except Exception:
+            conn.close()
+            raise
 
     return conn
 

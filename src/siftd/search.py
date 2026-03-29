@@ -51,6 +51,8 @@ def apply_temporal_weight(
     import math
 
     now = datetime.now(UTC)
+    if half_life_days <= 0:
+        return results
     decay_constant = math.log(2) / half_life_days
 
     weighted = []

@@ -12,12 +12,23 @@ from siftd.domain import ContentBlock
 
 
 def load_jsonl(path: Path) -> list[dict]:
-    """Load JSONL file, returning a list of parsed records."""
+    """Load JSONL file, returning a list of parsed dict records.
+
+    Skips malformed lines (truncated writes, non-JSON) and non-dict
+    records rather than crashing the entire file's ingest.
+    """
     records = []
     with path.open("r", encoding="utf-8") as f:
         for line in f:
-            if line.strip():
-                records.append(json.loads(line))
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                obj = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                records.append(obj)
     return records
 
 
