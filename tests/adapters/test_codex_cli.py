@@ -100,3 +100,17 @@ class TestCodexCliParseEdgeCases:
             {"type": "response_item", "timestamp": "2024-01-01T00:00:02Z", "payload": {"type": "message", "role": "assistant", "content": [{"type": "other_type", "data": 1}]}}]
         conv = list(codex_cli.parse(Source(kind="file", location=write_jsonl(tmp_path, records, "ts.jsonl"))))[0]
         assert "00:01" in conv.started_at and conv.prompts[0].content[0].content["text"] == "plain text"
+
+    def test_orphan_tool_call_before_user_message(self, tmp_path):
+        """Tool calls before any user message create a synthetic prompt."""
+        records = [
+            {"type": "session_meta", "timestamp": "T0", "payload": {"id": "s1", "cwd": "/p"}},
+            {"type": "response_item", "timestamp": "T1", "payload": {
+                "type": "function_call", "name": "shell", "call_id": "c1", "arguments": "{}"}},
+            {"type": "response_item", "timestamp": "T2", "payload": {
+                "type": "function_call_output", "call_id": "c1", "output": "done"}},
+        ]
+        conv = list(codex_cli.parse(Source(kind="file", location=write_jsonl(tmp_path, records, "orphan.jsonl"))))[0]
+        assert len(conv.prompts) == 1, "synthetic prompt should be created"
+        assert len(conv.prompts[0].responses) == 1
+        assert conv.prompts[0].responses[0].tool_calls[0].tool_name == "shell"

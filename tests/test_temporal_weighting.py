@@ -45,6 +45,17 @@ class TestApplyTemporalWeightBasics:
         out = apply_temporal_weight(results, timestamps, max_boost=0.9)
         assert out[0]["score"] == 0.8
 
+    def test_zero_half_life_returns_unchanged(self):
+        """half_life_days <= 0 returns results unchanged (no ZeroDivisionError)."""
+        results = [_result("c1", 0.8)]
+        timestamps = {"c1": _iso_timestamp(0)}
+
+        out = apply_temporal_weight(results, timestamps, half_life_days=0)
+        assert out[0]["score"] == 0.8
+
+        out = apply_temporal_weight(results, timestamps, half_life_days=-1.0)
+        assert out[0]["score"] == 0.8
+
     def test_does_not_modify_original(self):
         """Original results list is not modified."""
         results = [_result("c1", 0.8)]

@@ -91,6 +91,10 @@ class TestVscode:
         vscode._append_at_path({"a": None}, ["a", "b"], [1])
         vscode._append_at_path({"a": "str"}, ["a", "b"], [1])
         vscode._append_at_path([[]], [5], [1])
+        # Empty path guards
+        obj3 = {"x": 1}
+        vscode._set_at_path(obj3, [], "v")
+        assert obj3 == {"x": 1}, "empty path should be a no-op"
 
     def test_peek_normalizer_discover(self, tmp_path):
         cs = tmp_path / "ws" / "chatSessions"

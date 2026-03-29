@@ -69,23 +69,22 @@ def open_database(
     # to prevent stale IDs from a previous connection
     clear_vocabulary_caches()
 
-    if is_new:
-        schema = SCHEMA_PATH.read_text()
-        conn.executescript(schema)
-        conn.commit()
+    try:
+        if is_new:
+            schema = SCHEMA_PATH.read_text()
+            conn.executescript(schema)
+            conn.commit()
 
-    if not read_only:
-        # Check schema version on existing databases
-        if not is_new:
-            version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version > SCHEMA_VERSION:
-                conn.close()
-                raise RuntimeError(
-                    f"Database schema version {version} is from a newer version of siftd "
-                    f"(expected {SCHEMA_VERSION}). Please upgrade siftd."
-                )
+        if not read_only:
+            # Check schema version on existing databases
+            if not is_new:
+                version = conn.execute("PRAGMA user_version").fetchone()[0]
+                if version > SCHEMA_VERSION:
+                    raise RuntimeError(
+                        f"Database schema version {version} is from a newer version of siftd "
+                        f"(expected {SCHEMA_VERSION}). Please upgrade siftd."
+                    )
 
-        try:
             _migrate_labels_to_tags(conn)
             _migrate_add_error_column(conn)
             _migrate_add_file_stat_columns(conn)
@@ -108,9 +107,9 @@ def open_database(
             # Stamp schema version after successful migrations
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             conn.commit()
-        except Exception:
-            conn.close()
-            raise
+    except Exception:
+        conn.close()
+        raise
 
     return conn
 
