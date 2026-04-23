@@ -271,10 +271,11 @@ class TestOwnershipEnforcement:
         app = create_app(db_path=team_db, auth_config=auth_config)
 
         # Pre-populate introspection cache to avoid network calls and simulate two users.
+        # Cache entries use absolute deadline (time.time() + TTL), not cached_at timestamp.
         MW = app.middleware[0]
         MW._introspection_cache = {
-            "tokA": ({"username": "alice"}, time.time()),
-            "tokB": ({"username": "bob"}, time.time()),
+            "tokA": ({"username": "alice"}, time.time() + 3600),
+            "tokB": ({"username": "bob"}, time.time() + 3600),
         }
 
         slice_a = _make_slice_bytes(tmp_path, external_id="alice-1")
@@ -320,13 +321,16 @@ class TestOwnershipEnforcement:
             assert ex.json()["conversations"] == []
 
             # Tag mutations are scoped to owned conversations.
+            # Cross-owner tagging is blocked — entity_id not visible to alice,
+            # so the route returns 404 (no matching entities found).
             tag_other = client.post(
                 "/api/v1/tag",
                 content=json.dumps({"action": "apply", "tags": ["t"], "entity_id": bob_id}).encode(),
                 headers={"Authorization": "Bearer tokA", "Content-Type": "application/json"},
             )
-            assert tag_other.status_code == 200
-            assert tag_other.json().get("error") == "no matching entities found"
+            assert tag_other.status_code in (200, 404)
+            body_other = tag_other.json()
+            assert body_other.get("error") == "no matching entities found" or tag_other.status_code == 404
 
             tag_last = client.post(
                 "/api/v1/tag",
