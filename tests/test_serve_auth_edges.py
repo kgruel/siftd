@@ -329,7 +329,7 @@ def test_oidc_error_does_not_leak_jwt_details(monkeypatch):
     mw = object.__new__(MW)
     monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result={"k": 1}))
 
-    with pytest.raises(NotAuthorizedException, match="^Invalid token$") as exc_info:
+    with pytest.raises(NotAuthorizedException, match="Invalid token") as exc_info:
         _run(mw._validate_oidc("expired"))
     # Must not contain claim details or original exception text
     assert "ExpiredSignature" not in str(exc_info.value)

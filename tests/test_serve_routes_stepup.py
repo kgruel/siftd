@@ -9,7 +9,19 @@ pytest.importorskip("litestar")
 
 pytestmark = pytest.mark.serve
 
+from litestar.response import Response
+
 from siftd.serve import routes
+
+
+def _unwrap(out):
+    """Unwrap a route return value: dicts pass through, Response content is returned."""
+    if isinstance(out, Response):
+        content = out.content
+        if isinstance(content, (bytes, bytearray)):
+            return json.loads(content)
+        return content
+    return out
 
 
 def _run(coro):
@@ -68,13 +80,13 @@ def test_tag_write_route_error_paths(monkeypatch, tmp_path):
 
     # Missing entity_id/last
     req = _Req(json.dumps({"action": "apply", "tags": ["t"]}).encode())
-    out = _run(routes.tag_write_route.fn(req, tmp_path / "db.db"))
+    out = _unwrap(_run(routes.tag_write_route.fn(req, tmp_path / "db.db")))
     assert out["error"] == "entity_id or last required"
 
     # No matching entities
     monkeypatch.setattr("siftd.api.conversations.resolve_entity_id", lambda *a, **k: None)
     req2 = _Req(json.dumps({"action": "apply", "tags": ["t"], "entity_id": "x"}).encode())
-    out2 = _run(routes.tag_write_route.fn(req2, tmp_path / "db.db"))
+    out2 = _unwrap(_run(routes.tag_write_route.fn(req2, tmp_path / "db.db")))
     assert out2["error"] == "no matching entities found"
 
 
@@ -148,38 +160,52 @@ def test_health_existing_db_and_pull_nonempty(monkeypatch, tmp_path):
 
 
 def test_tag_write_rename_delete_remove_apply_paths(monkeypatch, tmp_path):
-    events = {"commits": 0}
+    from siftd.api.tags import ApplyResult, ApplyTagOutcome, DeleteResult, RenameResult
 
-    class _Conn:
-        def commit(self):
-            events["commits"] += 1
+    # rename and delete — patch the new safe wrappers called by tag_write_route
+    monkeypatch.setattr(
+        "siftd.api.tags.rename_tag_safe",
+        lambda *, db_path, old_name, new_name, owner=None: RenameResult(status="renamed", old_name=old_name, new_name=new_name),
+    )
+    monkeypatch.setattr(
+        "siftd.api.tags.delete_tag_safe",
+        lambda *, db_path, tag_name, owner=None: DeleteResult(status="deleted", tag_name=tag_name),
+    )
+    monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: (_ for _ in ()).throw(RuntimeError("cache")))
 
-        def close(self):
-            events["closed"] = True
-
-    monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda _p: _Conn())
-
-    # rename and delete
-    called = {}
-    monkeypatch.setattr("siftd.api.tags.rename_tag", lambda o, n, conn=None, commit=True: called.setdefault("renamed", (o, n, commit)))
-    monkeypatch.setattr("siftd.api.tags.delete_tag", lambda c, t, commit=True: called.setdefault("deleted", (t, commit)))
     assert _run(routes.tag_write_route.fn(_Req(json.dumps({"action": "rename", "old_name": "a", "new_name": "b"}).encode()), tmp_path / "db.db"))["status"] == "renamed"
     assert _run(routes.tag_write_route.fn(_Req(json.dumps({"action": "delete", "tag_name": "x"}).encode()), tmp_path / "db.db"))["status"] == "deleted"
 
-    # remove path with not_found + removed
-    monkeypatch.setattr("siftd.api.conversations.resolve_entity_id", lambda *a, **k: "cid")
-    monkeypatch.setattr("siftd.api.tags.get_tag_id", lambda _c, t: None if t == "t1" else "tid")
-    monkeypatch.setattr("siftd.api.tags.remove_tag", lambda *a, **k: True)
-    monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: (_ for _ in ()).throw(RuntimeError("cache")))
+    # remove path — patch apply_tags directly (owns DB lifecycle + all remove logic)
+    monkeypatch.setattr(
+        "siftd.api.tags.apply_tags",
+        lambda *, db_path, tags, entity_type, entity_id=None, last=None, owner=None, remove=False: ApplyResult(
+            action="remove",
+            results=[
+                ApplyTagOutcome(tag="t1", status="not_found", count=0),
+                ApplyTagOutcome(tag="t2", status="removed", count=1),
+            ],
+            target_count=1,
+            entity_type=entity_type,
+            resolved_entity_id=entity_id,
+        ),
+    )
     out_r = _run(routes.tag_write_route.fn(_Req(json.dumps({"action": "remove", "tags": ["t1", "t2"], "entity_id": "cid"}).encode()), tmp_path / "db.db"))
     assert out_r["action"] == "remove" and len(out_r["results"]) == 2
 
-    # apply path via last_n
-    monkeypatch.setattr("siftd.api.conversations.get_recent_conversation_ids", lambda _c, _n, owner=None: ["a", "b"])
-    monkeypatch.setattr("siftd.api.tags.get_or_create_tag", lambda _c, _t: "tid")
-    monkeypatch.setattr("siftd.api.tags.apply_tag", lambda c, et, eid, tid, commit=False: eid == "a")
+    # apply path via last_n — patch apply_tags for apply action
+    monkeypatch.setattr(
+        "siftd.api.tags.apply_tags",
+        lambda *, db_path, tags, entity_type, entity_id=None, last=None, owner=None, remove=False: ApplyResult(
+            action="apply",
+            results=[ApplyTagOutcome(tag="t", status="applied", count=1)],
+            target_count=2,
+            entity_type=entity_type,
+            resolved_entity_id=None,
+        ),
+    )
     out_a = _run(routes.tag_write_route.fn(_Req(json.dumps({"action": "apply", "tags": ["t"], "last": 2}).encode()), tmp_path / "db.db"))
-    assert out_a["results"][0]["count"] == 1 and events["commits"] >= 2
+    assert out_a["results"][0]["count"] == 1
 
 
 def test_search_success_and_identity_exception_paths(monkeypatch, tmp_path):
