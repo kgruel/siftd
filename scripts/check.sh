@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # check.sh
-# DESC: Run lint + test + diff-coverage (CI equivalent, quiet by default)
-# Usage: ./dev check [-v]
+# DESC: Run lint + test + optional lanes (CI equivalent, quiet by default)
+# Usage: ./dev check [-v] [--serve] [--embed] [--all]
 # Dependencies: uv, ty, ruff, pytest, diff-cover
 # Idempotent: Yes
 source "$(dirname "$0")/lib/dev.sh"
 
 usage() {
     cli_usage <<EOF
-Usage: ./dev check [-v]
+Usage: ./dev check [-v] [--serve] [--embed] [--all]
 
-Run lint, test, and diff-coverage (CI equivalent).
+Run lint, test, optional test lanes, and diff-coverage (CI equivalent).
 
 Options:
   -v, --verbose  Show verbose output
+  --serve        Also run serve-marked tests with serve dependencies
+  --embed        Also run embeddings-marked tests with embedding dependencies
+  --all          Also run serve and embeddings test lanes
   --help         Show this message
 EOF
 }
@@ -29,10 +32,15 @@ has_python_changes() {
 
 main() {
     local verbose=0
+    local run_serve=0
+    local run_embed=0
 
     for arg in "$@"; do
         case "$arg" in
             -v|--verbose) verbose=1 ;;
+            --serve) run_serve=1 ;;
+            --embed) run_embed=1 ;;
+            --all) run_serve=1; run_embed=1 ;;
             --help|-h) usage; exit 0 ;;
             *) cli_unknown_flag "$arg"; exit 1 ;;
         esac
@@ -50,6 +58,16 @@ main() {
         echo -e "${BOLD}=== Test ===${NC}"
         uv run pytest tests/ -v --tb=short -m "not embeddings and not serve and not slow" --ignore=tests/architecture/ \
             --cov=siftd --cov-report=xml:coverage.xml --cov-report=
+        if [ $run_serve -eq 1 ]; then
+            echo ""
+            echo -e "${BOLD}=== Serve Tests ===${NC}"
+            ./dev test-serve -v
+        fi
+        if [ $run_embed -eq 1 ]; then
+            echo ""
+            echo -e "${BOLD}=== Embedding Tests ===${NC}"
+            ./dev test-embed -v
+        fi
         # NOTE: diff-coverage disabled during autoresearch loop — re-enable after 0.6.0 coverage push
         # echo ""
         # echo -e "${BOLD}=== Diff coverage ===${NC}"
@@ -68,6 +86,14 @@ main() {
         uv run pytest tests/ -q --tb=line -m "not embeddings and not serve and not slow" --ignore=tests/architecture/ \
             --cov=siftd --cov-report=xml:coverage.xml --cov-report= > /dev/null 2>&1 \
             && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; uv run pytest tests/ -q --tb=short -m "not embeddings and not serve and not slow" --ignore=tests/architecture/; exit 1; }
+        if [ $run_serve -eq 1 ]; then
+            printf "Serve tests... "
+            ./dev test-serve > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; ./dev test-serve; exit 1; }
+        fi
+        if [ $run_embed -eq 1 ]; then
+            printf "Embedding tests... "
+            ./dev test-embed > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; ./dev test-embed; exit 1; }
+        fi
         # NOTE: diff-coverage disabled during autoresearch loop — re-enable after 0.6.0 coverage push
         # printf "Diff coverage... "
         # if has_python_changes; then

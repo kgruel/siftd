@@ -604,6 +604,31 @@ class TestServeRoutesSerialization:
                 "use json_fmt.render_* instead:\n" + "\n".join(lines)
             )
 
+    def test_serve_dispatch_maps_missing_embeddings_to_501(self, src_dir):
+        """Serve must expose missing optional embeddings as 501, not generic 500."""
+        routes_file = src_dir / "serve" / "routes.py"
+        if not routes_file.exists():
+            pytest.skip("serve/routes.py not found")
+
+        source = routes_file.read_text()
+        tree = ast.parse(source)
+        dispatch = next(
+            (
+                node for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == "_dispatch"
+            ),
+            None,
+        )
+        if dispatch is None:
+            pytest.fail("serve/routes.py must define _dispatch")
+
+        dispatch_source = ast.get_source_segment(source, dispatch) or ""
+        if "EmbeddingsNotAvailable" not in dispatch_source or "status_code=501" not in dispatch_source:
+            pytest.fail(
+                "serve/routes.py:_dispatch must map EmbeddingsNotAvailable "
+                "to HTTP 501 before the generic 500 handler"
+            )
+
 
 def test_no_raw_sql_in_cli_modules(src_dir):
     """CLI modules should not execute raw SQL directly."""

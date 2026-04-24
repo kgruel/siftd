@@ -1,29 +1,32 @@
 #!/usr/bin/env bash
 # setup.sh
-# DESC: Setup worktree (venv, deps, optional embeddings)
-# Usage: ./dev setup [--embed]
+# DESC: Setup worktree (venv, deps, optional extras)
+# Usage: ./dev setup [--embed] [--serve]
 # Dependencies: uv, python3
 # Idempotent: Yes
 source "$(dirname "$0")/lib/dev.sh"
 
 usage() {
     cli_usage <<EOF
-Usage: ./dev setup [--embed]
+Usage: ./dev setup [--embed] [--serve]
 
 Setup the development environment.
 
 Options:
   --embed    Also install embeddings dependencies and warm cache
+  --serve    Also install serve dependencies
   --help     Show this message
 EOF
 }
 
 main() {
     local with_embed=0
+    local with_serve=0
 
     for arg in "$@"; do
         case "$arg" in
             --embed) with_embed=1 ;;
+            --serve) with_serve=1 ;;
             --help|-h) usage; exit 0 ;;
             *) cli_unknown_flag "$arg"; exit 1 ;;
         esac
@@ -55,6 +58,11 @@ main() {
         uv run siftd ingest || {
             log_warn "Ingest had issues (may be first run)"
         }
+    fi
+
+    if [ $with_serve -eq 1 ]; then
+        log_info "Installing serve dependencies..."
+        uv sync --extra dev --extra serve --quiet
     fi
 
     log_success "Worktree ready. Run ./dev check to verify."

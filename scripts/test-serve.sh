@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# test-all.sh
-# DESC: Run all tests including optional extras
-# Usage: ./dev test-all [-v]
-# Dependencies: uv, pytest, fastembed
+# test-serve.sh
+# DESC: Run serve tests
+# Usage: ./dev test-serve [-v]
+# Dependencies: uv, pytest, litestar
 # Idempotent: Yes
 source "$(dirname "$0")/lib/dev.sh"
 
 usage() {
     cli_usage <<EOF
-Usage: ./dev test-all [-v]
+Usage: ./dev test-serve [-v]
 
-Run all pytest tests including embedding and serve tests.
+Run pytest tests marked serve with serve dependencies installed.
 
 Options:
   -v, --verbose  Show verbose test output
@@ -32,15 +32,15 @@ main() {
     ensure_venv
     cd "$DEV_ROOT"
 
-    log_info "Installing optional test dependencies..."
-    uv sync --extra dev --extra embed --extra serve --quiet
+    log_info "Installing serve dependencies..."
+    uv sync --extra dev --extra serve --quiet
 
     if [ $verbose -eq 1 ]; then
-        uv run pytest tests/ -v --tb=short
+        uv run pytest tests/ -v --tb=short -m serve
     else
-        log_info "Running all tests..."
+        log_info "Running serve tests..."
         set +e
-        output=$(uv run pytest tests/ -q --tb=line 2>&1)
+        output=$(uv run pytest tests/ -q --tb=line -m serve 2>&1)
         status=$?
         set -e
         if [ $status -ne 0 ]; then

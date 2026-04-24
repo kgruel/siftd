@@ -728,7 +728,13 @@ def hybrid_search(
             # [embed] extra to be installed.
             SCHEMA_VERSION = 1
     else:
-        from siftd.embeddings import SCHEMA_VERSION, get_backend
+        try:
+            from siftd.embeddings import SCHEMA_VERSION, get_backend
+        except ImportError:
+            from siftd.embeddings import require_embeddings
+
+            require_embeddings("Semantic search")
+            raise
         try:
             from siftd.embeddings import invalidate_backend_cache
         except ImportError:  # pragma: no cover

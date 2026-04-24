@@ -59,11 +59,19 @@ def _dispatch(
         if render_method == "detail" and result is None:
             return Response(content={"error": "conversation not found"}, status_code=404)
         return render(result, op, fmt=serve_fmt)
+    except ImportError as e:
+        if "siftd.embeddings" in str(e) or "fastembed" in str(e):
+            return Response(content={"error": str(e)}, status_code=501)
+        logging.getLogger("siftd.serve").exception("dispatch import error on %s %s", method, path)
+        return Response(content={"error": f"{path} failed"}, status_code=500)
     except FileNotFoundError as e:
         return Response(content={"error": str(e)}, status_code=404)
     except (ValueError, KeyError, QueryError) as e:
         return Response(content={"error": str(e)}, status_code=400)
-    except Exception:
+    except Exception as e:
+        if e.__class__.__name__ == "EmbeddingsNotAvailable":
+            return Response(content={"error": str(e)}, status_code=501)
+
         logging.getLogger("siftd.serve").exception("dispatch error on %s %s", method, path)
         return Response(
             content={"error": f"{path} failed"},
