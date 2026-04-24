@@ -553,7 +553,7 @@ def build_index(
 
     require_embeddings("Building embeddings index")
 
-    from siftd.embeddings import build_embeddings_index
+    from siftd.embeddings.indexer import build_embeddings_index
 
     stats = build_embeddings_index(
         db_path=db_path,
@@ -722,21 +722,22 @@ def hybrid_search(
         _backend = embed_backend
         # Caller injected a backend — still need SCHEMA_VERSION for compat check
         try:
-            from siftd.embeddings import SCHEMA_VERSION
+            from siftd.embeddings.indexer import SCHEMA_VERSION
         except ImportError:  # pragma: no cover
             # Allows unit tests to inject a backend without requiring the optional
             # [embed] extra to be installed.
             SCHEMA_VERSION = 1
     else:
         try:
-            from siftd.embeddings import SCHEMA_VERSION, get_backend
+            from siftd.embeddings.base import get_backend
+            from siftd.embeddings.indexer import SCHEMA_VERSION
         except ImportError:
             from siftd.embeddings import require_embeddings
 
             require_embeddings("Semantic search")
             raise
         try:
-            from siftd.embeddings import invalidate_backend_cache
+            from siftd.embeddings.base import invalidate_backend_cache
         except ImportError:  # pragma: no cover
             def invalidate_backend_cache() -> None:
                 return None

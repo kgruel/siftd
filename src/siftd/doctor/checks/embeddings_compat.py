@@ -20,7 +20,8 @@ class EmbeddingsCompatCheck:
         if not ctx.embed_db_path.exists():
             return []
 
-        from siftd.embeddings import SCHEMA_VERSION, get_backend
+        from siftd.embeddings.base import get_backend
+        from siftd.embeddings.indexer import SCHEMA_VERSION
         from siftd.storage.embeddings import get_meta
 
         embed_conn = ctx.get_embed_conn()

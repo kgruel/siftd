@@ -400,7 +400,8 @@ def hybrid_search(
 
     require_embeddings("Semantic search")
 
-    from siftd.embeddings import SCHEMA_VERSION, get_backend
+    from siftd.embeddings.base import get_backend
+    from siftd.embeddings.indexer import SCHEMA_VERSION
     from siftd.paths import db_path as default_db_path
     from siftd.paths import embeddings_db_path as default_embed_path
     from siftd.storage.embeddings import (
@@ -559,7 +560,7 @@ def hybrid_search(
     except (RuntimeError, ConnectionError, OSError):
         # Cached backend may have become unavailable (e.g., ollama stopped).
         # Invalidate and retry with fallback chain.
-        from siftd.embeddings import invalidate_backend_cache
+        from siftd.embeddings.base import invalidate_backend_cache
 
         invalidate_backend_cache()
         embed_backend = get_backend(preferred=backend, verbose=False)

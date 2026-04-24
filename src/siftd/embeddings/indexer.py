@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from siftd.embeddings import get_backend
+from siftd.embeddings.base import get_backend
 from siftd.embeddings.chunker import extract_exchange_window_chunks, extract_tool_summary_chunks
 from siftd.paths import db_path as default_db_path
 from siftd.paths import embeddings_db_path as default_embed_path

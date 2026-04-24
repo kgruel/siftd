@@ -630,6 +630,58 @@ class TestServeRoutesSerialization:
             )
 
 
+class TestOptionalExtraBoundaries:
+    """Optional extras must fail through stable availability gates."""
+
+    CONDITIONAL_EMBEDDINGS_EXPORTS = {
+        "EmbeddingBackend",
+        "get_backend",
+        "invalidate_backend_cache",
+        "IndexStats",
+        "build_embeddings_index",
+        "SCHEMA_VERSION",
+    }
+
+    def test_internal_code_does_not_import_conditional_embeddings_exports(self, src_dir):
+        """Internal code must not import heavy conditional exports from siftd.embeddings.
+
+        Rationale: siftd.embeddings always exports availability helpers, but
+        backend/index symbols only exist when [embed] dependencies are importable.
+        Importing those symbols from the package root makes optional absence show
+        up as raw ImportError instead of EmbeddingsNotAvailable. Use
+        require_embeddings()/embeddings_available() first, then import concrete
+        submodules such as siftd.embeddings.base or siftd.embeddings.indexer.
+        """
+        violations = []
+        allowed_files = {src_dir / "embeddings" / "__init__.py"}
+
+        for py_file in src_dir.rglob("*.py"):
+            if py_file in allowed_files:
+                continue
+            source = py_file.read_text()
+            try:
+                tree = ast.parse(source)
+            except SyntaxError:
+                continue
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == "siftd.embeddings":
+                    bad_names = sorted(
+                        alias.name for alias in node.names
+                        if alias.name in self.CONDITIONAL_EMBEDDINGS_EXPORTS
+                    )
+                    if bad_names:
+                        rel_path = py_file.relative_to(src_dir.parent.parent)
+                        violations.append(f"{rel_path}:{node.lineno}: {', '.join(bad_names)}")
+
+        if violations:
+            pytest.fail(
+                "Do not import conditional [embed] exports from siftd.embeddings package root. "
+                "Use availability helpers plus concrete submodules instead:\n"
+                + "\n".join(violations)
+            )
+
+
 def test_no_raw_sql_in_cli_modules(src_dir):
     """CLI modules should not execute raw SQL directly."""
     violations = []

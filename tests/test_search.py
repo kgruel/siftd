@@ -312,12 +312,13 @@ class TestAPIHybridSearchBranches:
                     raise RuntimeError("down")
                 return [1.0, 0.0]
 
-        import siftd.embeddings as emb
+        import siftd.embeddings.base as emb_base
+        import siftd.embeddings.indexer as emb_indexer
 
-        monkeypatch.setattr(emb, "SCHEMA_VERSION", 1, raising=False)
-        monkeypatch.setattr(emb, "get_backend", lambda **_k: _Backend(), raising=False)
+        monkeypatch.setattr(emb_indexer, "SCHEMA_VERSION", 1, raising=False)
+        monkeypatch.setattr(emb_base, "get_backend", lambda **_k: _Backend(), raising=False)
         monkeypatch.setattr(
-            emb,
+            emb_base,
             "invalidate_backend_cache",
             lambda: calls.__setitem__("invalidate", calls["invalidate"] + 1),
             raising=False,
