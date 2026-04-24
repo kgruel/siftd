@@ -29,6 +29,8 @@ class TestVscode:
     def test_can_handle(self):
         assert vscode.can_handle(S(kind="file", location=Path("/m/chatSessions/t.json")))
         assert vscode.can_handle(S(kind="file", location=Path("/m/chatSessions/t.jsonl")))
+        assert vscode.can_handle(S(kind="file", location=Path("/m/emptyWindowChatSessions/t.json")))
+        assert vscode.can_handle(S(kind="file", location=Path("/m/emptyWindowChatSessions/t.jsonl")))
         assert not vscode.can_handle(S(kind="file", location=Path("/m/chatSessions/t.txt")))
         assert not vscode.can_handle(S(kind="file", location=FIXTURES_DIR / "vscode_minimal.json"))
         assert not vscode.can_handle(S(kind="directory", location=Path("/m/chatSessions")))
@@ -115,6 +117,25 @@ class TestVscode:
         assert nr.kind == "assistant" and len(nr.content_blocks) == 2
         assert n({"_kind": "unknown"}) is None
         assert list(vscode.discover(locations=[str(tmp_path)]))
+
+    def test_empty_window_chat_sessions(self, tmp_path):
+        # Sessions without a workspace live directly under
+        # globalStorage/emptyWindowChatSessions/ -- no surrounding hash dir
+        # or workspace.json, so workspace_path must resolve to None.
+        gs = tmp_path / "globalStorage" / "emptyWindowChatSessions"
+        gs.mkdir(parents=True)
+        shutil.copy(FIXTURES_DIR / "vscode_minimal.json", gs / "ew.json")
+        shutil.copy(FIXTURES_DIR / "vscode_minimal.jsonl", gs / "ew.jsonl")
+
+        conv_json = list(vscode.parse(S(kind="file", location=gs / "ew.json")))[0]
+        conv_jsonl = list(vscode.parse(S(kind="file", location=gs / "ew.jsonl")))[0]
+        assert conv_json.workspace_path is None and conv_jsonl.workspace_path is None
+        assert conv_json.harness.name == "vscode" and len(conv_json.prompts) == 2
+
+        # discover() should pick up empty-window files when the parent
+        # (analogue of .../User/globalStorage) is passed as a location.
+        sources = list(vscode.discover(locations=[str(tmp_path / "globalStorage")]))
+        assert {Path(s.location).name for s in sources} == {"ew.json", "ew.jsonl"}
 
     def test_replay_and_parse_errors(self, tmp_path):
         cs = tmp_path / "chatSessions"

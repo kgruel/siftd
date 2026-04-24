@@ -43,6 +43,7 @@ HARNESS_LOG_FORMAT = "json"
 HARNESS_DISPLAY_NAME = "VSCode"
 
 DEFAULT_LOCATIONS = [
+    # workspaceStorage: per-workspace chat sessions.
     # macOS
     "~/Library/Application Support/Code/User/workspaceStorage",
     "~/Library/Application Support/Code - Insiders/User/workspaceStorage",
@@ -58,16 +59,37 @@ DEFAULT_LOCATIONS = [
     "~/AppData/Roaming/Code - Insiders/User/workspaceStorage",
     "~/AppData/Roaming/Cursor/User/workspaceStorage",
     "~/AppData/Roaming/Windsurf/User/workspaceStorage",
+    # globalStorage: no-workspace ("empty window") chat sessions.
+    # macOS
+    "~/Library/Application Support/Code/User/globalStorage",
+    "~/Library/Application Support/Code - Insiders/User/globalStorage",
+    "~/Library/Application Support/Cursor/User/globalStorage",
+    "~/Library/Application Support/Windsurf/User/globalStorage",
+    # Linux
+    "~/.config/Code/User/globalStorage",
+    "~/.config/Code - Insiders/User/globalStorage",
+    "~/.config/Cursor/User/globalStorage",
+    "~/.config/Windsurf/User/globalStorage",
+    # Windows
+    "~/AppData/Roaming/Code/User/globalStorage",
+    "~/AppData/Roaming/Code - Insiders/User/globalStorage",
+    "~/AppData/Roaming/Cursor/User/globalStorage",
+    "~/AppData/Roaming/Windsurf/User/globalStorage",
+]
+
+# Shared glob patterns cover both workspaceStorage (per-workspace) and
+# globalStorage/emptyWindowChatSessions (no-workspace) layouts.
+_GLOB_PATTERNS = [
+    "*/chatSessions/*.json",
+    "*/chatSessions/*.jsonl",
+    "emptyWindowChatSessions/*.json",
+    "emptyWindowChatSessions/*.jsonl",
 ]
 
 
 def discover(locations=None) -> Iterable[Source]:
     """Yield Source objects for all VSCode chat session files."""
-    yield from discover_files(
-        locations,
-        DEFAULT_LOCATIONS,
-        ["*/chatSessions/*.json", "*/chatSessions/*.jsonl"],
-    )
+    yield from discover_files(locations, DEFAULT_LOCATIONS, _GLOB_PATTERNS)
 
 
 def can_handle(source: Source) -> bool:
@@ -77,7 +99,8 @@ def can_handle(source: Source) -> bool:
     path = Path(source.location)
     if path.suffix not in (".json", ".jsonl"):
         return False
-    return "chatSessions" in path.parts
+    parts = path.parts
+    return "chatSessions" in parts or "emptyWindowChatSessions" in parts
 
 
 def parse(source: Source) -> Iterable[Conversation]:
@@ -449,7 +472,7 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
     return None
 
 
-PEEK_GLOB_PATTERNS = ["*/chatSessions/*.json", "*/chatSessions/*.jsonl"]
+PEEK_GLOB_PATTERNS = _GLOB_PATTERNS
 
 # Peek hooks — derived from normalizer with custom JSON iterator
 peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
