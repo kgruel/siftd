@@ -2,7 +2,7 @@
 # test-all.sh
 # DESC: Run all tests including optional extras
 # Usage: ./dev test-all [-v]
-# Dependencies: uv, pytest, fastembed
+# Dependencies: uv, pytest, fastembed, litestar
 # Idempotent: Yes
 source "$(dirname "$0")/lib/dev.sh"
 

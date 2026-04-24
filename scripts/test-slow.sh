@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# test.sh
-# DESC: Run base tests
-# Usage: ./dev test [-v]
+# test-slow.sh
+# DESC: Run slow tests
+# Usage: ./dev test-slow [-v]
 # Dependencies: uv, pytest
 # Idempotent: Yes
 source "$(dirname "$0")/lib/dev.sh"
 
 usage() {
     cli_usage <<EOF
-Usage: ./dev test [-v]
+Usage: ./dev test-slow [-v]
 
-Run base pytest tests, excluding optional-extra and slow lanes.
+Run pytest tests marked slow.
 
 Options:
   -v, --verbose  Show verbose test output
@@ -33,19 +33,17 @@ main() {
     cd "$DEV_ROOT"
 
     if [ $verbose -eq 1 ]; then
-        uv run pytest tests/ -v --tb=short -m "not embeddings and not serve and not slow"
+        uv run pytest tests/ -v --tb=short -m slow
     else
-        # Quiet mode: minimal output, details only on failure
-        log_info "Running base tests..."
+        log_info "Running slow tests..."
         set +e
-        output=$(uv run pytest tests/ -q --tb=line -m "not embeddings and not serve and not slow" 2>&1)
+        output=$(uv run pytest tests/ -q --tb=line -m slow 2>&1)
         status=$?
         set -e
         if [ $status -ne 0 ]; then
             echo "$output"
             exit 1
         fi
-        # Show just the summary line
         echo "$output" | tail -1
     fi
 }

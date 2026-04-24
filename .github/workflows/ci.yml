@@ -8,6 +8,7 @@ on:
   workflow_call:
 
 jobs:
+  # Local equivalent: ./dev check
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -40,8 +41,9 @@ jobs:
         run: uv run ruff check src/
 
       - name: Run tests
-        run: uv run pytest tests/ -v --tb=short --ignore=tests/test_embeddings.py -m "not embeddings and not serve"
+        run: uv run pytest tests/ -v --tb=short -m "not embeddings and not serve and not slow"
 
+  # Local equivalent: ./dev test-embed
   test-with-embeddings:
     runs-on: ubuntu-latest
     steps:
@@ -67,6 +69,7 @@ jobs:
       - name: Run embedding tests
         run: uv run pytest tests/ -v --tb=short -m embeddings
 
+  # Local equivalent: ./dev test-serve
   test-with-serve:
     runs-on: ubuntu-latest
     steps:
@@ -85,3 +88,30 @@ jobs:
 
       - name: Run serve tests
         run: uv run pytest tests/ -v --tb=short -m serve
+
+  # Local equivalent: ./dev test-slow
+  # Publish invokes this reusable workflow; keep slow tests out of PR CI.
+  test-slow:
+    if: github.event_name == 'workflow_call'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Configure git for tests
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+
+      - name: Run slow tests
+        run: uv run pytest tests/ -v --tb=short -m slow
