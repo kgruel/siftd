@@ -342,10 +342,10 @@ class TestFTS:
         assert fts.fts5_best_hit_for_conversation(conn, "xyznonexistent", conversation_id=cid) is None
         # OR fallback
         assert fts.fts5_recall_details(conn, "Python function", min_and_hits=999).mode in ("or", "none")
-        # Short tokens → _fts5_or_rewrite returns None → mode="none"
+        # Short tokens are preserved; "ab cd" won't match test data → mode="none"
         r_short = fts.fts5_recall_conversations(conn, "ab cd")
         assert r_short[1] == "none"
-        # Malformed FTS → exception in AND phase → falls through to OR
+        # "NOT AND OR" is sanitized to quoted tokens — no match in test data → mode="none"
         r_bad = fts.fts5_recall_conversations(conn, "NOT AND OR")
         assert r_bad[1] in ("or", "none")
 

@@ -1,7 +1,60 @@
 """FTS5 full-text search operations for siftd storage."""
 
+import logging
 import sqlite3
 from dataclasses import dataclass
+from typing import Literal
+
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SanitizedFts5Query:
+    """Result of sanitizing a user-supplied FTS5 query."""
+
+    fts_query: str | None
+    tokens: list[str]
+    raw: bool = False
+
+
+def sanitize_fts5_query(
+    query: str,
+    *,
+    raw: bool = False,
+    operator: Literal["and", "or"] = "and",
+) -> SanitizedFts5Query:
+    """Tokenize and quote a user query for safe FTS5 MATCH use.
+
+    Default (raw=False): extract word tokens, quote each, join with implicit AND
+    or OR. FTS5 control operators (NOT/AND/OR) become quoted terms. Short tokens
+    (one or two letters) are preserved.
+
+    Raw mode (raw=True): return the query unchanged. Phase-2 OR fallback is
+    the caller's responsibility to skip.
+
+    Returns SanitizedFts5Query with fts_query=None for empty or punctuation-only
+    input (no word tokens found).
+    """
+    import re
+
+    if raw:
+        stripped = query.strip()
+        return SanitizedFts5Query(
+            fts_query=stripped if stripped else None,
+            tokens=[],
+            raw=True,
+        )
+
+    tokens = re.findall(r"\w+", query)
+    if not tokens:
+        return SanitizedFts5Query(fts_query=None, tokens=[], raw=False)
+
+    quoted = [f'"{t}"' for t in tokens]
+    if operator == "or":
+        fts_query = " OR ".join(quoted)
+    else:
+        fts_query = " ".join(quoted)
+    return SanitizedFts5Query(fts_query=fts_query, tokens=tokens, raw=False)
 
 
 def ensure_fts_table(conn: sqlite3.Connection) -> None:
@@ -140,11 +193,16 @@ def search_content(
     conn: sqlite3.Connection,
     query: str,
     limit: int = 20,
+    *,
+    raw_fts: bool = False,
 ) -> list[dict]:
     """Search text content using FTS5 MATCH.
 
     Returns list of dicts with: conversation_id, side, snippet, rank.
     """
+    sanitized = sanitize_fts5_query(query, raw=raw_fts, operator="and")
+    if sanitized.fts_query is None:
+        return []
     cur = conn.execute(
         """
         SELECT
@@ -157,7 +215,7 @@ def search_content(
         ORDER BY rank
         LIMIT ?
         """,
-        (query, limit),
+        (sanitized.fts_query, limit),
     )
     return [
         {
@@ -168,16 +226,6 @@ def search_content(
         }
         for row in cur.fetchall()
     ]
-
-
-def _fts5_or_rewrite(query: str) -> str | None:
-    """Split query into tokens, filter short ones, join with OR for broad recall."""
-    import re
-    tokens = re.findall(r"\w+", query)
-    tokens = [t for t in tokens if len(t) >= 3]
-    if not tokens:
-        return None
-    return " OR ".join(f'"{t}"' for t in tokens)
 
 
 def _fts5_conversation_ids_ordered(
@@ -207,7 +255,11 @@ class Fts5Recall:
 
 
 def fts5_recall_conversations(
-    conn: sqlite3.Connection, query: str, limit: int = 80
+    conn: sqlite3.Connection,
+    query: str,
+    limit: int = 80,
+    *,
+    raw_fts: bool = False,
 ) -> tuple[set[str], str]:
     """FTS5 recall: try AND semantics first, fall back to OR for broader recall.
 
@@ -215,12 +267,14 @@ def fts5_recall_conversations(
         conn: Database connection.
         query: Search query string.
         limit: Maximum conversation IDs to return.
+        raw_fts: If True, pass query directly to FTS5 without sanitization and
+            skip OR fallback.
 
     Returns:
         Tuple of (conversation_id set, mode string).
         Mode is "and", "or", or "none".
     """
-    recall = fts5_recall_details(conn, query, limit=limit)
+    recall = fts5_recall_details(conn, query, limit=limit, raw_fts=raw_fts)
     return set(recall.conversation_ids), recall.mode
 
 
@@ -230,41 +284,49 @@ def fts5_recall_details(
     *,
     limit: int = 80,
     min_and_hits: int = 10,
+    raw_fts: bool = False,
 ) -> Fts5Recall:
     """FTS5 recall with detail about the chosen query form.
 
-    Uses implicit AND (raw query) when it yields enough conversations, otherwise
-    rewrites the query into an OR expression for broader recall.
+    Default (raw_fts=False): sanitizes user input (quoted tokens, operators
+    stripped from control position), then falls back to OR if AND yields fewer
+    than min_and_hits results. Short tokens (one/two letters) are preserved.
+
+    Raw mode (raw_fts=True): passes query directly to FTS5 without sanitization
+    and skips the OR fallback entirely.
 
     Args:
         conn: Database connection.
-        query: Search query string (FTS5 MATCH syntax).
+        query: Search query string.
         limit: Maximum conversation IDs to return.
-        min_and_hits: Minimum number of conversations required to keep AND mode.
-            If fewer matches are found, OR rewrite is attempted. Set to 1 for
-            strict AND-first behavior; set to >=limit to strongly prefer OR.
+        min_and_hits: Minimum conversations to keep AND mode (default: 10).
+        raw_fts: If True, use raw FTS5 syntax; skip sanitization and OR fallback.
 
     Returns:
         Fts5Recall with ordered conversation IDs, mode string, and the concrete
         FTS5 MATCH expression used (fts_query).
     """
-    # Phase 1: implicit AND (raw query)
-    try:
-        ids = _fts5_conversation_ids_ordered(conn, query, limit)
-        if len(ids) >= min_and_hits:
-            return Fts5Recall(conversation_ids=ids, mode="and", fts_query=query)
-    except Exception:  # pragma: no cover — malformed FTS query
-        pass
+    sanitized = sanitize_fts5_query(query, raw=raw_fts, operator="and")
+    if sanitized.fts_query is None:
+        return Fts5Recall(conversation_ids=[], mode="none", fts_query=None)
 
-    # Phase 2: OR rewrite for broader recall
-    or_query = _fts5_or_rewrite(query)
-    if or_query:
+    # Phase 1: AND (or raw query)
+    try:
+        ids = _fts5_conversation_ids_ordered(conn, sanitized.fts_query, limit)
+        if len(ids) >= min_and_hits:
+            return Fts5Recall(conversation_ids=ids, mode="and", fts_query=sanitized.fts_query)
+    except sqlite3.OperationalError as e:
+        log.warning("fts5 phase 1 failed for query %r: %s", query, e)
+
+    # Phase 2: OR rewrite for broader recall (skipped in raw mode)
+    if not raw_fts and sanitized.tokens:
+        or_query = " OR ".join(f'"{t}"' for t in sanitized.tokens)
         try:
             ids = _fts5_conversation_ids_ordered(conn, or_query, limit)
             if ids:
                 return Fts5Recall(conversation_ids=ids, mode="or", fts_query=or_query)
-        except Exception:  # pragma: no cover — OR queries are self-constructed
-            pass
+        except sqlite3.OperationalError as e:
+            log.warning("fts5 phase 2 or-rewrite failed: %s", e)
 
     return Fts5Recall(conversation_ids=[], mode="none", fts_query=None)
 

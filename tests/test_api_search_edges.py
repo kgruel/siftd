@@ -25,7 +25,7 @@ def test_wrapper_delegation(monkeypatch):
         search_similar=lambda *a, **k: [{"ok": 1}],
         validate_index_compat=lambda *a, **k: None,
     )
-    fake_fts = SimpleNamespace(fts5_recall_conversations=lambda conn, q, limit=80: ({"c1"}, "and"))
+    fake_fts = SimpleNamespace(fts5_recall_conversations=lambda conn, q, limit=80, raw_fts=False: ({"c1"}, "and"))
     monkeypatch.setitem(sys.modules, "siftd.storage.embeddings", fake_embeddings)
     monkeypatch.setitem(sys.modules, "siftd.storage.fts", fake_fts)
 
@@ -57,7 +57,7 @@ def test_list_ids_build_index_and_fts_mode(monkeypatch, tmp_path):
     )
     monkeypatch.setitem(sys.modules, "siftd.search", fake_search)
     monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *a, **k: _Conn())
-    monkeypatch.setattr(api_search, "fts5_search_content", lambda conn, q, limit=10: [{"conversation_id": "drop", "rank": -2.0, "snippet": "x", "side": "prompt"}, {"conversation_id": "keep", "rank": -1.0, "snippet": "y", "side": "response"}])
+    monkeypatch.setattr(api_search, "fts5_search_content", lambda conn, q, limit=10, raw_fts=False: [{"conversation_id": "drop", "rank": -2.0, "snippet": "x", "side": "prompt"}, {"conversation_id": "keep", "rank": -1.0, "snippet": "y", "side": "response"}])
 
     out = api_search.hybrid_search("q", db_path=tmp_path / "db.sqlite", mode="fts", n=2)
     assert len(out) == 1 and out[0]["conversation_id"] == "keep" and out[0]["score"] == 1.0
@@ -73,7 +73,7 @@ def test_hybrid_mode_candidate_empty_and_no_results(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "siftd.search", fake_search)
     monkeypatch.setitem(sys.modules, "siftd.embeddings.indexer", SimpleNamespace(SCHEMA_VERSION=1))
     monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *a, **k: _Conn())
-    monkeypatch.setattr(api_search, "fts5_recall_conversations", lambda conn, q, limit=80: ({"x"}, "and"))
+    monkeypatch.setattr(api_search, "fts5_recall_conversations", lambda conn, q, limit=80, raw_fts=False: ({"x"}, "and"))
     monkeypatch.setattr(api_search, "open_embeddings_db", lambda *_a, **_k: _Conn())
     monkeypatch.setattr(api_search, "validate_index_compat", lambda *a, **k: None)
     monkeypatch.setattr(api_search, "search_similar", lambda *a, **k: [])
@@ -97,7 +97,7 @@ def test_hybrid_mode_recency_and_mmr(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "siftd.search", fake_search)
     monkeypatch.setitem(sys.modules, "siftd.embeddings.indexer", SimpleNamespace(SCHEMA_VERSION=1))
     monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *a, **k: _Conn())
-    monkeypatch.setattr(api_search, "fts5_recall_conversations", lambda conn, q, limit=80: ({"c1"}, "and"))
+    monkeypatch.setattr(api_search, "fts5_recall_conversations", lambda conn, q, limit=80, raw_fts=False: ({"c1"}, "and"))
     monkeypatch.setattr(api_search, "open_embeddings_db", lambda *_a, **_k: _Conn())
     monkeypatch.setattr(api_search, "validate_index_compat", lambda *a, **k: None)
     monkeypatch.setattr(api_search, "fetch_conversation_timestamps", lambda conn, ids: {"c1": "2024-01-01"})
@@ -122,7 +122,7 @@ def test_hybrid_uses_default_backend_and_fts_ids_when_candidates_none(monkeypatc
     monkeypatch.setitem(sys.modules, "siftd.embeddings.base", SimpleNamespace(get_backend=lambda preferred=None, verbose=False: calls.setdefault("backend", backend)))
     monkeypatch.setitem(sys.modules, "siftd.embeddings.indexer", SimpleNamespace(SCHEMA_VERSION=1))
     monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *a, **k: _Conn())
-    monkeypatch.setattr(api_search, "fts5_recall_conversations", lambda conn, q, limit=80: ({"c1"}, "and"))
+    monkeypatch.setattr(api_search, "fts5_recall_conversations", lambda conn, q, limit=80, raw_fts=False: ({"c1"}, "and"))
     monkeypatch.setattr(api_search, "open_embeddings_db", lambda *_a, **_k: _Conn())
     monkeypatch.setattr(api_search, "validate_index_compat", lambda *a, **k: None)
     monkeypatch.setattr(api_search, "search_similar", lambda conn, emb, limit=10, conversation_ids=None, include_embeddings=False: [{"conversation_id": next(iter(conversation_ids)), "score": 0.9, "source_ids": [], "chunk_id": "x"}])

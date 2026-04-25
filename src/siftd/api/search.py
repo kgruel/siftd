@@ -191,6 +191,7 @@ def fts5_recall_conversations(
     query: str,
     *,
     limit: int = 80,
+    raw_fts: bool = False,
 ) -> tuple[set[str], str]:
     """FTS5 recall to narrow candidate conversations for embedding search.
 
@@ -198,6 +199,7 @@ def fts5_recall_conversations(
         conn: Connection to main database.
         query: The search query string.
         limit: Maximum conversation IDs to return.
+        raw_fts: If True, pass query directly to FTS5 without sanitization.
 
     Returns:
         Tuple of (conversation_id set, mode string).
@@ -205,7 +207,7 @@ def fts5_recall_conversations(
     """
     from siftd.storage.fts import fts5_recall_conversations as _fts5_recall
 
-    return _fts5_recall(conn, query, limit=limit)
+    return _fts5_recall(conn, query, limit=limit, raw_fts=raw_fts)
 
 
 def rebuild_fts_index(conn: sqlite3.Connection) -> None:
@@ -220,6 +222,7 @@ def fts5_search_content(
     query: str,
     *,
     limit: int = 20,
+    raw_fts: bool = False,
 ) -> list[dict]:
     """FTS5 keyword search over content.
 
@@ -227,13 +230,14 @@ def fts5_search_content(
         conn: Connection to main database.
         query: The search query string.
         limit: Maximum results to return.
+        raw_fts: If True, pass query directly to FTS5 without sanitization.
 
     Returns:
         List of dicts with: conversation_id, side, snippet, rank.
     """
     from siftd.storage.fts import search_content as _search_content
 
-    return _search_content(conn, query, limit=limit)
+    return _search_content(conn, query, limit=limit, raw_fts=raw_fts)
 
 
 def list_conversation_ids(conn: sqlite3.Connection) -> set[str]:
@@ -606,6 +610,7 @@ def search_chunks(
     threshold: float = 0.0,
     backend: str | None = None,
     embed_backend: EmbeddingBackend | None = None,
+    raw_fts: bool = False,
 ) -> list[SearchChunk]:
     """Canonical entry point for retrieving search chunks."""
     return hybrid_search(
@@ -633,6 +638,7 @@ def search_chunks(
         threshold=threshold,
         backend=backend,
         embed_backend=embed_backend,
+        raw_fts=raw_fts,
     )
 
 
@@ -656,6 +662,7 @@ def hybrid_search(
     owner: str | None = None,
     # FTS5 tuning
     recall: int = 80,
+    raw_fts: bool = False,
     # Reranking
     rerank: str = "mmr",
     lambda_: float = 0.7,
@@ -709,7 +716,7 @@ def hybrid_search(
         )
         conn = open_database(db_path, read_only=True)
         try:
-            raw = fts5_search_content(conn, q, limit=n * 5)
+            raw = fts5_search_content(conn, q, limit=n * 5, raw_fts=raw_fts)
             if candidate_ids is not None:
                 raw = [r for r in raw if r["conversation_id"] in candidate_ids]
             raw = raw[:n]
@@ -778,7 +785,7 @@ def hybrid_search(
     if not embeddings_only:
         conn = open_database(db_path, read_only=True)
         try:
-            fts5_ids, fts5_mode = fts5_recall_conversations(conn, q, limit=recall)
+            fts5_ids, fts5_mode = fts5_recall_conversations(conn, q, limit=recall, raw_fts=raw_fts)
         finally:
             conn.close()
 

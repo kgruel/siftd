@@ -251,6 +251,7 @@ def cmd_search(args) -> int:
             "backend": args.backend,
             # Serve-only: route uses embeddings_only instead of mode
             "embeddings_only": search_mode == "semantic",
+            "raw_fts": getattr(args, "raw_fts", False),
         },
         render_method="search",
         fidelity=fidelity,
@@ -477,6 +478,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             "exclude_active": not args.no_exclude_active,
             "include_derivative": args.include_derivative,
             "embeddings_only": False,
+            "raw_fts": getattr(args, "raw_fts", False),
         },
         render_method="search",
         fidelity=fidelity_from_args(args),
@@ -679,6 +681,7 @@ examples:
     tuning_group.add_argument("--embeddings-only", action="store_true", help="Skip FTS5 recall, use pure embeddings")
     tuning_group.add_argument("--recall", type=int, default=80, metavar="N", help="FTS5 conversation recall limit (default: 80)")
     tuning_group.add_argument("--threshold", type=float, metavar="SCORE", help="Filter results below this score (e.g., 0.7)")
+    tuning_group.add_argument("--raw-fts", action="store_true", help="Pass query directly to FTS5 without tokenization (advanced: skips OR fallback)")
 
     # Diversity (MMR reranking)
     diversity_group = p_search.add_argument_group("diversity")
