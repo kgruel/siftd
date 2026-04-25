@@ -4,8 +4,13 @@ Exercises every migration function in sqlite.py and sessions.py by constructing
 legacy database schemas (pre-migration state) and verifying migrations work.
 """
 
+import logging
+import os
 import re
 import sqlite3
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -50,6 +55,32 @@ class TestSchemaVersion:
         conn.close()
         with pytest.raises(RuntimeError, match="newer version"):
             open_database(path)
+
+    def test_future_version_read_only_warns(self, tmp_path, caplog):
+        path = tmp_path / "future_ro.db"
+        conn = sqlite3.connect(path)
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+        conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+        with caplog.at_level(logging.WARNING, logger="siftd.storage.sqlite"):
+            conn = open_database(path, read_only=True)
+        conn.close()
+        assert any("read-only" in r.message for r in caplog.records)
+
+    def test_future_version_read_only_write_fails(self, tmp_path):
+        path = tmp_path / "future_ro_write.db"
+        conn = sqlite3.connect(path)
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+        conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+        conn = open_database(path, read_only=True)
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                conn.execute("INSERT INTO conversations VALUES ('test')")
+        finally:
+            conn.close()
 
 
 class TestMigrateLabelsToTags:
@@ -234,3 +265,64 @@ class TestOpenDatabaseMigrations:
         assert "error" in _cols(conn, "ingested_files")
         assert "ON DELETE CASCADE" in _ddl(conn, "prompts")
         conn.close()
+
+
+class TestMigrationRunner:
+    def test_new_db_stamps_schema_version(self, tmp_path):
+        path = tmp_path / "new.db"
+        conn = open_database(path)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        conn.close()
+        assert version == SCHEMA_VERSION
+
+    def test_legacy_db_stamps_schema_version(self, tmp_path):
+        # Simulate a pre-S0 existing DB (user_version = 0, missing columns)
+        path = tmp_path / "legacy.db"
+        lines = _NO_CASCADE.split("\n")
+        filtered = [ln for ln in lines if not re.search(
+            r"^\s*(branch\s+TEXT|error\s+TEXT|file_mtime\s+REAL|file_size\s+INTEGER)", ln)]
+        schema = re.sub(r",(\s*\n\s*\))", r"\1", "\n".join(filtered))
+        conn = sqlite3.connect(path)
+        conn.executescript(schema)
+        conn.commit()
+        conn.close()
+
+        conn = open_database(path)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        conn.close()
+        assert version == SCHEMA_VERSION
+
+
+class TestMigrationConcurrency:
+    def test_concurrent_open_raises_locked_after_timeout(self, tmp_path):
+        """Second open_database call with a low busy_timeout raises 'database is locked'."""
+        path = tmp_path / "race.db"
+        conn = open_database(path)
+        conn.close()
+
+        # Hold a write lock to block migration dispatch in the subprocess
+        holder = sqlite3.connect(str(path))
+        holder.execute("PRAGMA journal_mode = WAL")
+        holder.execute("BEGIN IMMEDIATE")
+
+        src_dir = str(Path(__file__).parent.parent / "src")
+        script = (
+            "import sys; "
+            f"sys.path.insert(0, {src_dir!r}); "
+            "from pathlib import Path; "
+            "from siftd.storage.sqlite import open_database; "
+            f"conn = open_database(Path({str(path)!r})); "
+            "conn.close()"
+        )
+        env = {**os.environ, "SIFTD_MIGRATION_BUSY_TIMEOUT_MS": "200"}
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=env,
+        )
+        holder.close()
+
+        assert result.returncode != 0
+        assert "locked" in (result.stderr + result.stdout).lower()

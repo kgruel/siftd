@@ -10,7 +10,10 @@ Backfill operations: see siftd/backfill.py
 
 import hashlib
 import json
+import logging
+import os
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 from siftd.domain import Conversation
@@ -22,6 +25,17 @@ from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 SCHEMA_VERSION = 1
+
+# Registry of versioned migrations: version -> migration function.
+# Each function migrates the DB from version-1 to version.
+# S1 will add MIGRATIONS[2] = ...; SCHEMA_VERSION bumps with it.
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {}
+
+# Timeout for BEGIN IMMEDIATE during migration dispatch. Overridable via env
+# for tests that need a short timeout to exercise the locked-DB path.
+MIGRATION_BUSY_TIMEOUT_MS = int(os.environ.get("SIFTD_MIGRATION_BUSY_TIMEOUT_MS", "5000"))
+
+_logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -76,14 +90,17 @@ def open_database(
             conn.commit()
 
         if not read_only:
-            # Check schema version on existing databases
-            if not is_new:
-                version = conn.execute("PRAGMA user_version").fetchone()[0]
-                if version > SCHEMA_VERSION:
-                    raise RuntimeError(
-                        f"Database schema version {version} is from a newer version of siftd "
-                        f"(expected {SCHEMA_VERSION}). Please upgrade siftd."
-                    )
+            # Serialize concurrent migration startups: acquire write lock before
+            # reading user_version or any migration metadata (R2 dispatch race).
+            conn.execute(f"PRAGMA busy_timeout = {MIGRATION_BUSY_TIMEOUT_MS}")
+            conn.execute("BEGIN IMMEDIATE")
+
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version > SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"Database schema version {version} is from a newer version of siftd "
+                    f"(expected {SCHEMA_VERSION}). Please upgrade siftd."
+                )
 
             _migrate_labels_to_tags(conn)
             _migrate_add_error_column(conn)
@@ -107,7 +124,26 @@ def open_database(
             # Stamp schema version after successful migrations
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             conn.commit()
+        else:
+            # read_only: on future-version DB, warn and open (write-mode raises)
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version > SCHEMA_VERSION:
+                _logger.warning(
+                    "DB stamped v%d; current install supports only v%d, opening read-only. "
+                    "Upgrade siftd.",
+                    version,
+                    SCHEMA_VERSION,
+                )
     except Exception:
+        if not read_only:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            try:
+                conn.execute("PRAGMA foreign_keys = ON")
+            except Exception:
+                pass
         conn.close()
         raise
 
