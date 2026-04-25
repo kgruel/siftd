@@ -313,7 +313,7 @@ def fts5_recall_details(
     # Phase 1: AND (or raw query)
     try:
         ids = _fts5_conversation_ids_ordered(conn, sanitized.fts_query, limit)
-        if len(ids) >= min_and_hits:
+        if (raw_fts and ids) or (not raw_fts and len(ids) >= min_and_hits):
             return Fts5Recall(conversation_ids=ids, mode="and", fts_query=sanitized.fts_query)
     except sqlite3.OperationalError as e:
         log.warning("fts5 phase 1 failed for query %r: %s", query, e)

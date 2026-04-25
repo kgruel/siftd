@@ -147,6 +147,12 @@ class TestFts5RecallDetails:
         recall = fts5_recall_details(fts_conn, "Python", raw_fts=True, min_and_hits=1)
         assert recall.fts_query == "Python"
 
+    def test_raw_mode_returns_below_threshold_hits(self, fts_conn):
+        # raw_fts=True with default min_and_hits=10; only 1 match exists — must not be dropped
+        recall = fts5_recall_details(fts_conn, "Python", raw_fts=True)
+        assert recall.mode == "and"
+        assert "conv1" in recall.conversation_ids
+
     def test_h28_operational_error_caught_returns_none_mode(self, fts_conn):
         with patch("siftd.storage.fts._fts5_conversation_ids_ordered") as mock_ids:
             mock_ids.side_effect = sqlite3.OperationalError("fts5: syntax error near ...")
