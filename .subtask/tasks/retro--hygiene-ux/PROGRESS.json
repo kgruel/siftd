@@ -1,0 +1,6 @@
+[
+  {"step": "Read task context and repo guidance", "done": true},
+  {"step": "Verify current code touch points for scoped backlog items", "done": true},
+  {"step": "Draft PLAN.md with triage, bundling, design decisions, sequencing, and out-of-scope notes", "done": true},
+  {"step": "Run validation for plan-only changes and commit", "done": true}
+]
