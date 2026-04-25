@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-24
+
 ### Changed
 
 - **Search pipeline unified** — All search post-processing (metadata enrichment, file refs, context windows, conversation aggregation, thread tiering) moved from CLI to composable API primitives. CLI no longer contains direct SQL. `SearchChunk` and `ConversationSearchSummary` dataclasses in `domain/search_types.py` replace ad-hoc dicts as canonical result types. `--fts` path unified through same Operation IR as hybrid/semantic
@@ -642,7 +644,8 @@ Initial public release.
 
 ---
 
-[Unreleased]: https://github.com/kgruel/siftd/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/kgruel/siftd/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/kgruel/siftd/compare/v0.6.4...v0.7.0
 [0.5.5]: https://github.com/kgruel/siftd/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/kgruel/siftd/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/kgruel/siftd/compare/v0.5.2...v0.5.3
