@@ -10,11 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Search pipeline unified** — All search post-processing (metadata enrichment, file refs, context windows, conversation aggregation, thread tiering) moved from CLI to composable API primitives. CLI no longer contains direct SQL. `SearchChunk` and `ConversationSearchSummary` dataclasses in `domain/search_types.py` replace ad-hoc dicts as canonical result types. `--fts` path unified through same Operation IR as hybrid/semantic
+- **Search API surface formalized** — Canonical search types and primitives (`SearchChunk`, `ConversationSearchSummary`, `search_chunks`, enrichment helpers, filtering, sorting, aggregation, and thread tiering) are exported through `siftd.api` and `siftd` while preserving lazy imports for optional embedding dependencies
 - **Tag mutation extracted to API** — Three focused API functions (`apply_tags`, `rename_tag_safe`, `delete_tag_safe`) replace duplicated orchestration in CLI and serve. API owns connection lifecycle and transaction boundaries. Cross-owner protection SQL moved from serve route to `storage.tags.tag_used_by_other_owners` helper
 - **Serve serializers made lossless** — Tags, tool search, and stats serializers now include all API dataclass fields. `dataclasses.asdict()` used as baseline in serialization layer. CLI rehydrate-with-defaults pattern replaced by strict API deserializers (`tag_info_from_dict`, `tool_search_payload_from_dict`, `dict_to_stats`)
 - **`ScoreBreakdown` relocated to `domain/search_types`** — Breaks `search ↔ storage.embeddings` cycle and `output → search → storage` transitive coupling
 - **`api → serialization` cycle broken** — `_stats_to_dict` inlined in `api.stats`, `serialization.stats.serialize_stats` delegates to it (correct one-way direction)
 - **Ingest/backfill extracted to API** — `api.ingest.run_ingest` and `api.backfill.run_backfill` wrap ingestion pipeline with `db_path` lifecycle ownership. CLI no longer imports `siftd.ingestion` or `siftd.backfill` directly
+- **Serve health and push logging moved behind API** — Remaining serve direct-storage access now goes through `api.serve_status`, closing the serve-layer storage boundary exception
+- **Embedding availability moved behind API** — CLI status/search paths now use `siftd.api.embeddings_available` and API-exported index compatibility exceptions instead of importing optional embedding internals directly
 - **Config `↔` paths cycle broken** — `paths.db_path()` reads config.toml via stdlib `tomllib` instead of importing `siftd.config`
 - **Sync config extracted** — 450 lines of sync-specific accessors (remotes, timeouts, SSH options, cursor mutations) moved to `config_sync.py`. `config.py` re-exports for backward compatibility
 
@@ -26,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tag mutation serialization** — `serialization/tags.py` with typed payload dataclasses and anti-drift tests
 - **Ingest/backfill API tests and serializer drift tests** — Coverage for `IngestRunResult`, `BackfillRunResult` types
 - **Dependency direction arch tests** — `api/` must not import `serialization/`, `storage/` must not import `api/`, `domain/` must be pure. Known `api↔serialization` cycle tracked as strict xfail (now resolved)
+- **Boundary xfail cleanup** — Serve direct-storage and CLI direct-embeddings architecture tests now run as normal passing tests
+
+### Fixed
+
+- **VSCode empty-window sessions** — VSCode/Cursor/Windsurf chat discovery now includes `globalStorage/emptyWindowChatSessions`, so no-workspace chats are ingested instead of ignored
+- **Codex tool-call preservation** — Codex CLI logs with tool calls before the first user prompt now get a synthetic prompt so those tool calls are attached to the conversation instead of dropped
+- **Malformed JSONL tolerance** — Shared JSONL adapter loading skips malformed or non-object lines, which makes live/truncated logs from JSONL-backed adapters non-fatal during ingest
+- **Optional embeddings imports** — Search and embedding helpers avoid importing optional embedding modules from broad package re-exports where possible, improving graceful behavior without the `[embed]` extra
 
 ## [0.6.4] - 2026-03-28
 

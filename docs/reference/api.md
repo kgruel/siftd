@@ -573,6 +573,25 @@ def list_builtin_queries() -> list[str]
 
 ### Data Types
 
+### SearchChunk
+
+Canonical mutable search chunk result.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `conversation_id` | `str` |  |
+| `score` | `float` |  |
+| `text` | `str` |  |
+| `chunk_type` | `str` |  |
+| `workspace_path` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
+| `chunk_id` | `str \| None` |  |
+| `source_ids` | `list[str]` |  |
+| `breakdown` | `siftd.domain.search_types.ScoreBreakdown \| None` |  |
+| `file_refs` | `list[Any] \| None` |  |
+| `exchanges` | `list[tuple[str, str, str]] \| None` |  |
+| `context_window` | `list[tuple[str, str, str, bool]] \| None` |  |
+
 ### SearchResult
 
 Canonical mutable search chunk result.
@@ -591,6 +610,36 @@ Canonical mutable search chunk result.
 | `file_refs` | `list[Any] \| None` |  |
 | `exchanges` | `list[tuple[str, str, str]] \| None` |  |
 | `context_window` | `list[tuple[str, str, str, bool]] \| None` |  |
+
+### ScoreBreakdown
+
+Detailed score components for explainability.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `embedding_sim` | `float` |  |
+| `recency_boost` | `float` |  |
+| `pre_mmr_score` | `float \| None` |  |
+| `mmr_penalty` | `float \| None` |  |
+| `mmr_rank` | `int \| None` |  |
+| `final_score` | `float \| None` |  |
+| `fts5_matched` | `bool` |  |
+| `fts5_mode` | `str \| None` |  |
+
+### ConversationSearchSummary
+
+Conversation-level aggregate derived from chunk results.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `conversation_id` | `str` |  |
+| `max_score` | `float` |  |
+| `mean_score` | `float` |  |
+| `chunk_count` | `int` |  |
+| `best_excerpt` | `str` |  |
+| `workspace_path` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
+| `file_refs` | `list[Any] \| None` |  |
 
 ### ConversationScore
 
@@ -647,6 +696,14 @@ Single tool-call search result.
 
 ### Functions
 
+### search_chunks
+
+Canonical entry point for retrieving search chunks.
+
+```python
+def search_chunks(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ...) -> list[SearchChunk]
+```
+
 ### hybrid_search
 
 Unified search pipeline — FTS5, semantic, or hybrid.
@@ -672,6 +729,84 @@ def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None
 - `FileNotFoundError`: If database doesn't exist.
 - `ValueError`: If query is empty or search fails.
 - `RuntimeError`: If embedding backend unavailable.
+
+### aggregate_by_conversation
+
+Aggregate chunk results to conversation-level scores.
+
+```python
+def aggregate_by_conversation(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]], *, limit: int = ...) -> list[ConversationSearchSummary]
+```
+
+**Parameters:**
+
+- `results`: List of SearchResult from hybrid_search.
+
+**Returns:** List of ConversationScore, sorted by max_score descending.
+
+### compute_thread_tiers
+
+Split chunks into tier1 (expanded) and tier2 (compact) for thread mode.
+
+```python
+def compute_thread_tiers(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]]) -> tuple[list[SearchChunk], list[SearchChunk]]
+```
+
+### filter_by_threshold
+
+Filter chunk results by score threshold.
+
+```python
+def filter_by_threshold(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]], *, threshold: float | None) -> list[SearchChunk]
+```
+
+### sort_chunks_by_time
+
+Sort chunks by date then chunk_id (legacy CLI behavior).
+
+```python
+def sort_chunks_by_time(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]]) -> list[SearchChunk]
+```
+
+### enrich_search_metadata
+
+Enrich chunks with workspace and started_at metadata in-place.
+
+```python
+def enrich_search_metadata(conn: Connection, results: list[SearchChunk]) -> None
+```
+
+### enrich_file_refs
+
+Attach file references to each chunk in-place.
+
+```python
+def enrich_file_refs(conn: Connection, results: list[SearchChunk]) -> None
+```
+
+### enrich_exchanges
+
+Attach full prompt+response exchanges for each chunk in-place.
+
+```python
+def enrich_exchanges(conn: Connection, results: list[SearchChunk]) -> None
+```
+
+### enrich_context_window
+
+Attach +/-N context exchanges around each chunk's source prompts.
+
+```python
+def enrich_context_window(conn: Connection, results: list[SearchChunk], n: int) -> None
+```
+
+### embeddings_available
+
+Return whether optional embedding dependencies are installed.
+
+```python
+def embeddings_available() -> bool
+```
 
 ### first_mention
 
@@ -1119,6 +1254,18 @@ Result metadata for an ingest API run.
 | `stats` | `siftd.ingestion.orchestration.IngestStats \| None` |  |
 | `elapsed_ms` | `int` |  |
 
+### HealthStatus
+
+Serve health payload.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `service` | `str` |  |
+| `status` | `str` |  |
+| `db_id` | `str` |  |
+| `db_size_bytes` | `int` |  |
+| `conversations` | `int` |  |
+
 ### PushResult
 
 Result of a push operation.
@@ -1367,6 +1514,22 @@ Rebuild FTS index only (no ingestion).
 
 ```python
 def run_rebuild_fts(*, db_path: Path) -> IngestRunResult
+```
+
+### get_health_status
+
+Return database-backed health status for serve.
+
+```python
+def get_health_status(db_path: Path) -> HealthStatus
+```
+
+### record_push_log
+
+Record a push event in the push_log table.
+
+```python
+def record_push_log(*, db_path: Path, identity: str, conversations: int, size_bytes: int, source_ip: str | None, push_id: str | None = ...) -> None
 ```
 
 ### merge_database

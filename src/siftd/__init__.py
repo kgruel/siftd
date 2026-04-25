@@ -25,11 +25,23 @@ from siftd.storage.tags import apply_tag, get_or_create_tag, list_tags
 # Search-related symbols are lazy to avoid pulling numpy into non-search commands.
 _LAZY_SEARCH_NAMES = {
     "ConversationScore",
+    "ConversationSearchSummary",
+    "ScoreBreakdown",
+    "SearchChunk",
     "SearchResult",
     "aggregate_by_conversation",
     "build_index",
+    "compute_thread_tiers",
+    "enrich_context_window",
+    "enrich_exchanges",
+    "enrich_file_refs",
+    "enrich_search_metadata",
+    "embeddings_available",
+    "filter_by_threshold",
     "first_mention",
     "hybrid_search",
+    "search_chunks",
+    "sort_chunks_by_time",
 }
 
 
@@ -54,10 +66,22 @@ __all__ = [
     "list_conversations",
     "get_conversation",
     # search
+    "SearchChunk",
     "SearchResult",
+    "ScoreBreakdown",
+    "ConversationSearchSummary",
     "ConversationScore",
+    "search_chunks",
     "hybrid_search",
     "aggregate_by_conversation",
+    "compute_thread_tiers",
+    "filter_by_threshold",
+    "sort_chunks_by_time",
+    "enrich_search_metadata",
+    "enrich_file_refs",
+    "enrich_exchanges",
+    "enrich_context_window",
+    "embeddings_available",
     "first_mention",
     "build_index",
     # stats

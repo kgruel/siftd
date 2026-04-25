@@ -118,8 +118,7 @@ def _enrich_context(conn, results, n):
 
 def cmd_search(args) -> int:
     """Unified search over conversations — auto-selects FTS5 or semantic based on availability."""
-    from siftd.api import open_database
-    from siftd.embeddings import embeddings_available
+    from siftd.api import embeddings_available, open_database
 
     db = resolve_db(args)
     embed_db = Path(args.embed_db).expanduser() if args.embed_db else embeddings_db_path()
@@ -563,8 +562,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
 
 def _search_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: str | None, verbose: bool) -> int:
     """Build or incrementally update the embeddings index."""
-    from siftd.api import build_index
-    from siftd.embeddings.indexer import IncrementalCompatError
+    from siftd.api import IncrementalCompatError, build_index
 
     try:
         result = build_index(

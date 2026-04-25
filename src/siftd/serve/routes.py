@@ -106,29 +106,11 @@ async def index() -> dict:
 @get("/api/v1/health", opt={"no_auth": True})
 async def health(db_path: Path) -> dict:
     """Health check — returns DB status."""
-    import hashlib
+    from dataclasses import asdict
 
-    from siftd.storage.sqlite import open_database
+    from siftd.api import get_health_status
 
-    db_path_str = str(db_path.resolve())
-    db_id = hashlib.sha256(db_path_str.encode("utf-8")).hexdigest()
-    size_bytes = db_path.stat().st_size if db_path.exists() else 0
-    conversations = 0
-    if db_path.exists():
-        conn = open_database(db_path, read_only=True)
-        try:
-            row = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()
-            conversations = row[0]
-        finally:
-            conn.close()
-
-    return {
-        "service": "siftd",
-        "status": "ok",
-        "db_id": db_id,
-        "db_size_bytes": size_bytes,
-        "conversations": conversations,
-    }
+    return asdict(get_health_status(db_path))
 
 
 @get("/api/v1/stats")
@@ -618,26 +600,13 @@ def _record_push_log(
     *, push_id: str | None = None,
 ) -> None:
     """Record a push event in the push_log table."""
-    from datetime import UTC, datetime
+    from siftd.api import record_push_log
 
-    from siftd.ids import ulid
-    from siftd.storage.sqlite import ensure_push_log_table, open_database
-
-    conn = open_database(db_path)
-    try:
-        ensure_push_log_table(conn)
-        conn.execute(
-            "INSERT INTO push_log (push_id, user_identity, pushed_at, conversations, size_bytes, source_ip) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                push_id or ulid(),
-                identity,
-                datetime.now(UTC).isoformat(),
-                conversations,
-                size_bytes,
-                request.client.host if request.client else None,
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    record_push_log(
+        db_path=db_path,
+        identity=identity,
+        conversations=conversations,
+        size_bytes=size_bytes,
+        source_ip=request.client.host if request.client else None,
+        push_id=push_id,
+    )

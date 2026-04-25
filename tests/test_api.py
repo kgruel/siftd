@@ -35,6 +35,41 @@ from siftd.search import SearchResult
 from siftd.storage.sqlite import open_database
 
 
+def test_package_level_search_api_exports_are_lazy_and_complete():
+    from siftd import SearchChunk as TopSearchChunk
+    from siftd import aggregate_by_conversation as top_aggregate_by_conversation
+    from siftd import search_chunks as top_search_chunks
+    from siftd.api import (
+        ConversationSearchSummary,
+        ScoreBreakdown,
+        SearchChunk,
+        aggregate_by_conversation,
+        compute_thread_tiers,
+        enrich_context_window,
+        enrich_exchanges,
+        enrich_file_refs,
+        enrich_search_metadata,
+        filter_by_threshold,
+        search_chunks,
+        sort_chunks_by_time,
+    )
+
+    assert TopSearchChunk is SearchChunk
+    assert top_search_chunks is search_chunks
+    assert top_aggregate_by_conversation is aggregate_by_conversation
+    assert ConversationSearchSummary.__name__ == "ConversationSearchSummary"
+    assert ScoreBreakdown.__name__ == "ScoreBreakdown"
+    assert callable(search_chunks)
+    assert callable(aggregate_by_conversation)
+    assert callable(compute_thread_tiers)
+    assert callable(filter_by_threshold)
+    assert callable(sort_chunks_by_time)
+    assert callable(enrich_search_metadata)
+    assert callable(enrich_file_refs)
+    assert callable(enrich_exchanges)
+    assert callable(enrich_context_window)
+
+
 class TestGetStats:
     def test_returns_database_stats(self, test_db):
         stats = get_stats(db_path=test_db)

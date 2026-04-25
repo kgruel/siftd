@@ -438,10 +438,6 @@ class TestServeRouteBoundary:
                 + "\n".join(violations)
             )
 
-    @pytest.mark.xfail(
-        reason="known violation: serve/routes.py imports siftd.storage.sqlite (health + push_log)",
-        strict=True,
-    )
     def test_serve_no_direct_storage_import(self, src_dir):
         """Serve routes must not import siftd.storage directly.
 
@@ -465,10 +461,6 @@ class TestServeRouteBoundary:
                 + "\n".join(violations)
             )
 
-    @pytest.mark.xfail(
-        reason="known violation: cli/search.py and cli/meta.py import siftd.embeddings (4 call sites)",
-        strict=True,
-    )
     def test_cli_no_direct_embeddings_import(self, src_dir):
         """CLI modules must not import siftd.embeddings directly.
 

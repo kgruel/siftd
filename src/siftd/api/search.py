@@ -13,7 +13,7 @@ from pathlib import Path
 from statistics import mean as _mean
 from typing import TYPE_CHECKING, Any, Protocol
 
-from siftd.domain.search_types import ConversationSearchSummary, SearchChunk
+from siftd.domain.search_types import ConversationSearchSummary, ScoreBreakdown, SearchChunk
 from siftd.storage.queries import (
     fetch_all_conversation_ids,
     fetch_conversation_timestamps,
@@ -22,6 +22,7 @@ from siftd.storage.queries import (
 )
 
 if TYPE_CHECKING:
+    from siftd.embeddings.indexer import IncrementalCompatError
     from siftd.search import apply_temporal_weight
     from siftd.storage.embeddings import IndexCompatError
 
@@ -40,6 +41,7 @@ _LAZY_IMPORTS = {
     "SearchResult": "siftd.search",
     "apply_temporal_weight": "siftd.search",
     "IndexCompatError": "siftd.storage.embeddings",
+    "IncrementalCompatError": "siftd.embeddings.indexer",
 }
 
 
@@ -53,8 +55,21 @@ def __getattr__(name: str):
         return val
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
+def embeddings_available() -> bool:
+    """Return whether optional embedding dependencies are installed."""
+    from siftd.embeddings import embeddings_available as _embeddings_available
+
+    return _embeddings_available()
+
+
 __all__ = [
+    "SearchChunk",
     "SearchResult",
+    "ScoreBreakdown",
+    "ConversationSearchSummary",
+    "IncrementalCompatError",
+    "embeddings_available",
     "search_chunks",
     "hybrid_search",
     "ConversationScore",

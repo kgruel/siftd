@@ -57,7 +57,7 @@ def cmd_status(args) -> int:
 
     # JSON output
     if args.json:
-        from siftd.embeddings import embeddings_available
+        from siftd.api import embeddings_available
 
         out = {
             "db_path": str(stats.db_path),
@@ -191,7 +191,7 @@ def cmd_status(args) -> int:
         print(f"  Last ingest: {fmt_timestamp(stats.last_ingest_at)}")
 
     # Features status
-    from siftd.embeddings import embeddings_available
+    from siftd.api import embeddings_available
 
     print("\n--- Features ---")
     if embeddings_available():

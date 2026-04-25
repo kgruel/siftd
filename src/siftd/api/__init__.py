@@ -82,6 +82,11 @@ from siftd.api.resources import (
     list_builtin_formatters,
     list_builtin_queries,
 )
+from siftd.api.serve_status import (
+    HealthStatus,
+    get_health_status,
+    record_push_log,
+)
 from siftd.api.slice import (
     slice_database,
 )
@@ -145,11 +150,25 @@ from siftd.api.tools import (
 # Access via siftd.api.SearchResult etc. triggers __getattr__ below.
 _LAZY_SEARCH_NAMES = {
     "ConversationScore",
+    "ConversationSearchSummary",
+    "IncrementalCompatError",
     "IndexCompatError",
+    "ScoreBreakdown",
+    "SearchChunk",
     "SearchResult",
+    "aggregate_by_conversation",
     "build_index",
+    "compute_thread_tiers",
+    "enrich_context_window",
+    "enrich_exchanges",
+    "enrich_file_refs",
+    "enrich_search_metadata",
+    "embeddings_available",
+    "filter_by_threshold",
     "first_mention",
     "hybrid_search",
+    "search_chunks",
+    "sort_chunks_by_time",
 }
 
 
@@ -239,13 +258,27 @@ __all__ = [
     "list_builtin_formatters",
     "list_builtin_queries",
     # search
+    "SearchChunk",
     "SearchResult",
+    "ScoreBreakdown",
+    "ConversationSearchSummary",
     "ConversationScore",
     "IndexCompatError",
+    "search_chunks",
     "hybrid_search",
+    "aggregate_by_conversation",
+    "compute_thread_tiers",
+    "filter_by_threshold",
+    "sort_chunks_by_time",
+    "enrich_search_metadata",
+    "enrich_file_refs",
+    "enrich_exchanges",
+    "enrich_context_window",
+    "embeddings_available",
     "first_mention",
     "build_index",
     # stats
+    "HealthStatus",
     "CostCoverage",
     "DatabaseStats",
     "GroupUsage",
@@ -264,6 +297,8 @@ __all__ = [
     "stats_cache_path",
     "write_stats_cache",
     "read_stats_cache",
+    "get_health_status",
+    "record_push_log",
     # merge
     "merge_database",
     # receive
