@@ -6,10 +6,13 @@ It uses serve/client.py for HTTP transport (stdlib-only).
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+log = logging.getLogger(__name__)
 
 
 def _parse_bool_like(value: str | None) -> bool | None:
@@ -247,6 +250,6 @@ def try_serve(op: Any) -> Any | None:
         elif op.method == "POST":
             # POST bodies use API conventions (tags, entity_id) — no remapping
             return try_delegate_post(op.path, raw, db=op.db)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("try_serve unexpected error for %s %s: %s", op.method, op.path, e)
     return None

@@ -460,7 +460,7 @@ usage: siftd search [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                     [--by-time] [--json] [--format NAME] [--conversations]
                     [--first] [--refs [FILES]] [--fts] [--semantic]
                     [--embeddings-only] [--recall N] [--threshold SCORE]
-                    [--no-diversity] [--lambda FLOAT] [--recency]
+                    [--raw-fts] [--no-diversity] [--lambda FLOAT] [--recency]
                     [--recency-half-life DAYS] [--recency-max-boost MULT]
                     [--no-exclude-active] [--include-derivative] [--index]
                     [--rebuild] [--backend NAME] [--embed-db PATH]
@@ -513,6 +513,8 @@ search tuning:
   --embeddings-only     Skip FTS5 recall, use pure embeddings
   --recall N            FTS5 conversation recall limit (default: 80)
   --threshold SCORE     Filter results below this score (e.g., 0.7)
+  --raw-fts             Pass query directly to FTS5 without tokenization
+                        (advanced: skips OR fallback)
 
 diversity:
   --no-diversity        Disable MMR reranking for deterministic pure relevance
