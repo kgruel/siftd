@@ -262,7 +262,7 @@ class TestSyncPushBranches:
         result = sync_push(_db(tmp_path), _remote(path=str(tmp_path / "r.db")), dry_run=True)
         assert result.dry_run and result.conversations == 2 and result.size_bytes == 42
 
-    def test_http_branch_updates_last_push(self, tmp_path, monkeypatch):
+    def test_http_branch_updates_last_push(self, tmp_path, monkeypatch, caplog):
         called = []
         monkeypatch.setattr(
             "siftd.api.slice.slice_database",
@@ -271,8 +271,45 @@ class TestSyncPushBranches:
         monkeypatch.setattr("siftd.api.sync._push_http", lambda r, p: True)
         monkeypatch.setattr("siftd.api.sync._preflight_http", lambda *a: None)
         monkeypatch.setattr("siftd.config_sync.update_last_push", lambda n, ts, **kw: called.append((n, ts)))
-        result = sync_push(_db(tmp_path), _remote(path="http://srv"))
+        import logging
+        with caplog.at_level(logging.WARNING, logger="siftd.api.sync"):
+            result = sync_push(_db(tmp_path), _remote(path="http://srv"))
         assert result.remote_existed and result.last_push_updated and called
+        assert any("preflight unavailable" in r.message for r in caplog.records)
+
+    def test_http_preflight_protocol_mismatch_aborts(self, tmp_path, monkeypatch):
+        from siftd.domain.sync import SyncStatus
+        push_called = []
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 10},
+        )
+        monkeypatch.setattr("siftd.api.sync._push_http", lambda r, p: push_called.append(True) or True)
+        monkeypatch.setattr(
+            "siftd.api.sync._preflight_http",
+            lambda *a: SyncStatus(
+                capabilities=frozenset(), protocol_version=SYNC_PROTOCOL_VERSION + 1
+            ),
+        )
+        with pytest.raises(SyncError, match="newer than local"):
+            sync_push(_db(tmp_path), _remote(path="http://srv"))
+        assert not push_called
+
+    def test_http_preflight_no_staged_cap_still_pushes(self, tmp_path, monkeypatch):
+        from siftd.domain.sync import SyncStatus
+        called = []
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 10},
+        )
+        monkeypatch.setattr("siftd.api.sync._push_http", lambda r, p: True)
+        monkeypatch.setattr(
+            "siftd.api.sync._preflight_http",
+            lambda *a: SyncStatus(capabilities=frozenset(), protocol_version=SYNC_PROTOCOL_VERSION),
+        )
+        monkeypatch.setattr("siftd.config_sync.update_last_push", lambda n, ts, **kw: called.append((n, ts)))
+        result = sync_push(_db(tmp_path), _remote(path="http://srv"))
+        assert result.last_push_updated and called
 
     def test_ssh_branch(self, tmp_path, monkeypatch):
         async def _fake_push_ssh(remote, slice_path, *, staged=False):

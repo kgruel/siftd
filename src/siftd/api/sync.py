@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import shlex
 import shutil
@@ -33,6 +34,8 @@ from siftd.domain.sync import (
     parse_sync_header,
 )
 from siftd.safecall import parse_json
+
+logger = logging.getLogger(__name__)
 
 
 class SyncError(Exception):
@@ -127,6 +130,18 @@ def sync_push(
         # Negotiate capabilities with the remote
         use_staged = False
         if _is_http_remote(remote):
+            http_status = _preflight_http(remote)
+            if http_status is None:
+                logger.warning(
+                    "HTTP sync preflight unavailable for %s; falling back to legacy push",
+                    remote.name,
+                )
+            elif http_status.protocol_version > SYNC_PROTOCOL_VERSION:
+                raise SyncError(
+                    f"Remote sync protocol is newer than local "
+                    f"(remote: {http_status.protocol_version}, local: {SYNC_PROTOCOL_VERSION}); "
+                    "upgrade local siftd."
+                )
             remote_existed = _push_http(remote, slice_path)
         elif remote.host:
             status = asyncio.run(_preflight_ssh(remote))
