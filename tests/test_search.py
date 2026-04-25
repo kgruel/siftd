@@ -298,6 +298,7 @@ class TestResolveCandidates:
 
 
 class TestAPIHybridSearchBranches:
+    @pytest.mark.embeddings
     def test_retry_embed_one_then_propagate_index_compat_error(self, monkeypatch, tmp_path):
         calls = {"n": 0, "invalidate": 0}
 

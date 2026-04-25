@@ -146,7 +146,7 @@ def test_health_existing_db_and_pull_nonempty(monkeypatch, tmp_path):
         def close(self):
             return None
 
-    monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *_a, **_k: _Conn())
+    monkeypatch.setattr("siftd.api.serve_status.open_database", lambda *_a, **_k: _Conn())
     h = _run(routes.health.fn(db))
     assert h["conversations"] == 3 and h["db_size_bytes"] > 0
 

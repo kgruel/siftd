@@ -74,8 +74,8 @@ def test_record_push_log_handles_missing_client(monkeypatch, tmp_path):
         def close(self):
             calls["close"] = True
 
-    monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda _p: _Conn())
-    monkeypatch.setattr("siftd.storage.sqlite.ensure_push_log_table", lambda _c: calls.setdefault("ensure", True))
+    monkeypatch.setattr("siftd.api.serve_status.open_database", lambda _p: _Conn())
+    monkeypatch.setattr("siftd.api.serve_status.ensure_push_log_table", lambda _c: calls.setdefault("ensure", True))
     routes._record_push_log(tmp_path / "db.db", "anon", 2, 10, SimpleNamespace(client=None), push_id="p1")
     assert calls["commit"] and calls["close"] and calls["params"][0] == "p1" and calls["params"][-1] is None
 
