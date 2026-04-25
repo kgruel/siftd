@@ -485,6 +485,44 @@ class TestServeRouteBoundary:
                 + "\n".join(violations)
             )
 
+    def test_package_root_no_direct_storage_import(self, src_dir):
+        """src/siftd/__init__.py must not import siftd.storage directly.
+
+        Rationale: The package root is the public surface (``import siftd``).
+        External consumers doing ``from siftd import X`` should always go
+        through the API layer, not reach into storage. This mirrors the
+        CLI/serve boundary and keeps lifecycle ownership in one place.
+
+        Suppress with ``# arch: allow-storage`` on the import line.
+        """
+        root_init = src_dir / "__init__.py"
+        if not root_init.exists():
+            pytest.skip("src/siftd/__init__.py not found")
+
+        source = root_init.read_text()
+        lines = source.splitlines()
+        tree = ast.parse(source)
+        violations = []
+        for node in ast.walk(tree):
+            module = None
+            if isinstance(node, ast.ImportFrom) and node.module:
+                module = node.module
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith("siftd.storage"):
+                        module = alias.name
+            if module and (module == "siftd.storage" or module.startswith("siftd.storage.")):
+                line = node.lineno
+                if 0 < line <= len(lines) and "arch: allow-storage" in lines[line - 1]:
+                    continue
+                violations.append(f"__init__.py:{line}: imports {module}")
+        if violations:
+            pytest.fail(
+                "src/siftd/__init__.py must re-export from siftd.api, "
+                "not siftd.storage directly:\n"
+                + "\n".join(violations)
+            )
+
 
 # =============================================================================
 # 6. Raw SQL in CLI Modules
@@ -553,7 +591,7 @@ def find_sql_execute_calls(file_path: Path) -> list[tuple[int, str]]:
 
 
 def _find_dataclasses_asdict_calls(file_path: Path) -> list[int]:
-    """Find lines with dataclasses.asdict() calls."""
+    """Find lines with asdict() calls — both dataclasses.asdict(x) and bare asdict(x)."""
     source = file_path.read_text()
     try:
         tree = ast.parse(source)
@@ -563,12 +601,19 @@ def _find_dataclasses_asdict_calls(file_path: Path) -> list[int]:
     lines = source.splitlines()
     results = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr == "asdict":
-                line = node.lineno
-                if 0 < line <= len(lines) and "arch: allow-asdict" in lines[line - 1]:
-                    continue
-                results.append(line)
+        if not isinstance(node, ast.Call):
+            continue
+        matched = False
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "asdict":
+            matched = True
+        elif isinstance(node.func, ast.Name) and node.func.id == "asdict":
+            matched = True
+        if not matched:
+            continue
+        line = node.lineno
+        if 0 < line <= len(lines) and "arch: allow-asdict" in lines[line - 1]:
+            continue
+        results.append(line)
     return results
 
 
@@ -595,6 +640,19 @@ class TestServeRoutesSerialization:
                 "serve/routes.py uses dataclasses.asdict() — "
                 "use json_fmt.render_* instead:\n" + "\n".join(lines)
             )
+
+    def test_asdict_matcher_catches_both_call_forms(self, tmp_path):
+        """Regression: matcher must catch bare asdict(x) as well as dataclasses.asdict(x)."""
+        sample = tmp_path / "sample.py"
+        sample.write_text(
+            "import dataclasses\n"
+            "from dataclasses import asdict\n"
+            "def a(x): return dataclasses.asdict(x)\n"  # attr form
+            "def b(x): return asdict(x)\n"  # bare form
+            "def c(x): return asdict(x)  # arch: allow-asdict\n"  # bare, suppressed
+        )
+        violations = _find_dataclasses_asdict_calls(sample)
+        assert violations == [3, 4], violations
 
     def test_serve_dispatch_maps_missing_embeddings_to_501(self, src_dir):
         """Serve must expose missing optional embeddings as 501, not generic 500."""

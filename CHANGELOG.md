@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ScoreBreakdown` relocated to `domain/search_types`** — Breaks `search ↔ storage.embeddings` cycle and `output → search → storage` transitive coupling
 - **`api → serialization` cycle broken** — `_stats_to_dict` inlined in `api.stats`, `serialization.stats.serialize_stats` delegates to it (correct one-way direction)
 - **Ingest/backfill extracted to API** — `api.ingest.run_ingest` and `api.backfill.run_backfill` wrap ingestion pipeline with `db_path` lifecycle ownership. CLI no longer imports `siftd.ingestion` or `siftd.backfill` directly
-- **Serve health and push logging moved behind API** — Remaining serve direct-storage access now goes through `api.serve_status`, closing the serve-layer storage boundary exception
+- **Serve health and push logging moved behind API** — Health endpoint and push-log writer now go through `api.serve_status`. Health response shaped by `serialization.serialize_health_status` like every other route
 - **Embedding availability moved behind API** — CLI status/search paths now use `siftd.api.embeddings_available` and API-exported index compatibility exceptions instead of importing optional embedding internals directly
+- **Package root re-exports through API** — `siftd.apply_tag`, `siftd.list_tags`, `siftd.get_or_create_tag` now resolve via `siftd.api.tags` instead of `siftd.storage.tags`, plus new `apply_tags`, `rename_tag_safe`, `delete_tag_safe`. External `import siftd` consumers get connection-lifecycle-managed entry points
 - **Config `↔` paths cycle broken** — `paths.db_path()` reads config.toml via stdlib `tomllib` instead of importing `siftd.config`
 - **Sync config extracted** — 450 lines of sync-specific accessors (remotes, timeouts, SSH options, cursor mutations) moved to `config_sync.py`. `config.py` re-exports for backward compatibility
 
@@ -32,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Ingest/backfill API tests and serializer drift tests** — Coverage for `IngestRunResult`, `BackfillRunResult` types
 - **Dependency direction arch tests** — `api/` must not import `serialization/`, `storage/` must not import `api/`, `domain/` must be pure. Known `api↔serialization` cycle tracked as strict xfail (now resolved)
 - **Boundary xfail cleanup** — Serve direct-storage and CLI direct-embeddings architecture tests now run as normal passing tests
+- **Package-root storage-boundary arch test** — `siftd/__init__.py` is now scanned for direct `siftd.storage.*` imports, with `# arch: allow-storage` waiver
+- **`asdict` matcher tightened** — `_find_dataclasses_asdict_calls` now catches both `dataclasses.asdict(x)` and bare `asdict(x)` (after `from dataclasses import asdict`); regression test pins both forms
 
 ### Fixed
 

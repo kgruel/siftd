@@ -12,6 +12,7 @@ from siftd.serialization.conversations import (
     serialize_conversation_list,
     serialize_conversation_summary,
 )
+from siftd.serialization.health import serialize_health_status
 from siftd.serialization.narrative import (
     JsonEmitter,
     NarrativeEmitter,
@@ -24,5 +25,6 @@ __all__ = [
     "serialize_conversation_detail",
     "serialize_conversation_list",
     "serialize_conversation_summary",
+    "serialize_health_status",
     "walk_narrative",
 ]

@@ -16,11 +16,16 @@ from siftd.api import (
     ToolStats,
     Turn,
     WorkspaceStats,
+    apply_tag,
+    apply_tags,
+    delete_tag_safe,
     get_conversation,
+    get_or_create_tag,
     get_stats,
     list_conversations,
+    list_tags,
+    rename_tag_safe,
 )
-from siftd.storage.tags import apply_tag, get_or_create_tag, list_tags
 
 # Search-related symbols are lazy to avoid pulling numpy into non-search commands.
 _LAZY_SEARCH_NAMES = {
@@ -94,5 +99,8 @@ __all__ = [
     # tags
     "list_tags",
     "apply_tag",
+    "apply_tags",
     "get_or_create_tag",
+    "rename_tag_safe",
+    "delete_tag_safe",
 ]

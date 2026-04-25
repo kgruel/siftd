@@ -106,11 +106,10 @@ async def index() -> dict:
 @get("/api/v1/health", opt={"no_auth": True})
 async def health(db_path: Path) -> dict:
     """Health check — returns DB status."""
-    from dataclasses import asdict
-
     from siftd.api import get_health_status
+    from siftd.serialization import serialize_health_status
 
-    return asdict(get_health_status(db_path))
+    return serialize_health_status(get_health_status(db_path))
 
 
 @get("/api/v1/stats")
