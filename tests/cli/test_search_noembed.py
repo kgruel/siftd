@@ -61,6 +61,7 @@ def make_args(**kwargs):
         "owner": None,
         "fts": False,
         "semantic": False,
+        "debug_ids": False,
     }
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)

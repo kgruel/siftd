@@ -125,18 +125,19 @@ class SearchChunk:
             context_window=data.get("context_window") or data.get("_context"),
         )
 
-    def to_render_dict(self) -> dict[str, Any]:
+    def to_render_dict(self, debug_ids: bool = False) -> dict[str, Any]:
         """Convert to the legacy dict shape expected by current formatters."""
         out: dict[str, Any] = {
-            "chunk_id": self.chunk_id,
             "conversation_id": self.conversation_id,
             "score": self.score,
             "chunk_type": self.chunk_type,
             "text": self.text,
-            "source_ids": self.source_ids,
             "_workspace": self.workspace_path or "",
             "_started_at": (self.started_at or "")[:10] if self.started_at else "",
         }
+        if debug_ids:
+            out["chunk_id"] = self.chunk_id
+            out["source_ids"] = self.source_ids
         if self.breakdown is not None:
             out["breakdown"] = self.breakdown
         if self.file_refs is not None:
