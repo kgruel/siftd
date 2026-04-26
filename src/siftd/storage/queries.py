@@ -510,6 +510,18 @@ def fetch_tags_for_conversations(
 # Stats queries
 # =============================================================================
 
+_COUNTABLE_TABLES = frozenset({
+    "conversations",
+    "prompts",
+    "responses",
+    "tool_calls",
+    "harnesses",
+    "workspaces",
+    "tools",
+    "models",
+    "ingested_files",
+})
+
 
 def fetch_table_count(
     conn: sqlite3.Connection,
@@ -522,6 +534,10 @@ def fetch_table_count(
     When owner is provided, counts are computed in a tenant-safe way (e.g. distinct
     vocabulary "in use" vs total rows) to avoid leaking cross-tenant metadata.
     """
+    if table_name not in _COUNTABLE_TABLES:
+        raise ValueError(
+            f"unknown table: {table_name!r}; allowed: {sorted(_COUNTABLE_TABLES)}"
+        )
     if owner and not has_conversation_owners_table(conn):
         return 0
     if not owner:
@@ -577,7 +593,7 @@ def fetch_table_count(
             (owner,),
         ).fetchone()[0]
 
-    raise ValueError(f"Unsupported owner-scoped count table: {table_name}")
+    raise ValueError(f"no owner-scoped branch for table: {table_name!r}")  # pragma: no cover
 
 
 def fetch_harnesses(conn: sqlite3.Connection, *, owner: str | None = None) -> list[sqlite3.Row]:
