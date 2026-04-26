@@ -24,11 +24,10 @@ from siftd.storage.sessions import ensure_prompt_tags_table, ensure_session_tabl
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Registry of versioned migrations: version -> migration function.
 # Each function migrates the DB from version-1 to version.
-# S1 will add MIGRATIONS[2] = ...; SCHEMA_VERSION bumps with it.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {}
 
 # Timeout for BEGIN IMMEDIATE during migration dispatch. Overridable via env
@@ -106,7 +105,6 @@ def open_database(
             _migrate_add_error_column(conn)
             _migrate_add_file_stat_columns(conn)
             _migrate_add_branch_column(conn)
-            _migrate_add_cascade_deletes(conn)
             ensure_fts_table(conn)
             ensure_pricing_table(conn)
             ensure_canonical_tools(conn)
@@ -120,6 +118,12 @@ def open_database(
             _ensure_conversation_stats_table(conn)
             ensure_conversation_owners_table(conn)
             ensure_sync_inbox_table(conn)
+
+            # Versioned migration dispatch: run each un-applied version in order.
+            # MIGRATIONS[v] runs only when the DB is below version v.
+            for _v in range(version + 1, SCHEMA_VERSION + 1):
+                if _v in MIGRATIONS:
+                    MIGRATIONS[_v](conn)
 
             # Stamp schema version after successful migrations
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -235,7 +239,15 @@ def _migrate_add_error_column(conn: sqlite3.Connection) -> None:
     cur = conn.execute("PRAGMA table_info(ingested_files)")
     columns = {row[1] for row in cur.fetchall()}
     if "error" not in columns:
-        conn.execute("ALTER TABLE ingested_files ADD COLUMN error TEXT")
+        try:
+            conn.execute("ALTER TABLE ingested_files ADD COLUMN error TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+            # Race: another process added the column; verify it's actually there
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(ingested_files)").fetchall()}
+            if "error" not in columns:
+                raise
         conn.commit()
 
 
@@ -244,8 +256,18 @@ def _migrate_add_file_stat_columns(conn: sqlite3.Connection) -> None:
     cur = conn.execute("PRAGMA table_info(ingested_files)")
     columns = {row[1] for row in cur.fetchall()}
     if "file_mtime" not in columns:
-        conn.execute("ALTER TABLE ingested_files ADD COLUMN file_mtime REAL")
-        conn.execute("ALTER TABLE ingested_files ADD COLUMN file_size INTEGER")
+        for col_ddl, col_name in [
+            ("ALTER TABLE ingested_files ADD COLUMN file_mtime REAL", "file_mtime"),
+            ("ALTER TABLE ingested_files ADD COLUMN file_size INTEGER", "file_size"),
+        ]:
+            try:
+                conn.execute(col_ddl)
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(ingested_files)").fetchall()}
+                if col_name not in cols:
+                    raise
         conn.commit()
 
 
@@ -254,7 +276,14 @@ def _migrate_add_branch_column(conn: sqlite3.Connection) -> None:
     cur = conn.execute("PRAGMA table_info(conversations)")
     columns = {row[1] for row in cur.fetchall()}
     if "branch" not in columns:
-        conn.execute("ALTER TABLE conversations ADD COLUMN branch TEXT")
+        try:
+            conn.execute("ALTER TABLE conversations ADD COLUMN branch TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+            if "branch" not in cols:
+                raise
         conn.commit()
 
 
@@ -465,6 +494,523 @@ def _migrate_add_cascade_deletes(conn: sqlite3.Connection) -> None:
     conn.commit()
     # Re-enable FK enforcement
     conn.execute("PRAGMA foreign_keys = ON")
+
+
+# =============================================================================
+# Version-2 migration: cascade delete contract enforcement
+# =============================================================================
+
+# FK contract: (from_col, to_table, on_delete) triples that each table must satisfy.
+_CASCADE_CONTRACT: dict[str, list[tuple[str, str, str]]] = {
+    "tool_aliases": [
+        ("harness_id", "harnesses", "CASCADE"),
+        ("tool_id", "tools", "CASCADE"),
+    ],
+    "pricing": [
+        ("model_id", "models", "CASCADE"),
+        ("provider_id", "providers", "CASCADE"),
+    ],
+    "conversations": [
+        ("harness_id", "harnesses", "CASCADE"),
+        ("workspace_id", "workspaces", "SET NULL"),
+    ],
+    "prompts": [("conversation_id", "conversations", "CASCADE")],
+    "responses": [
+        ("conversation_id", "conversations", "CASCADE"),
+        ("prompt_id", "prompts", "CASCADE"),
+        ("model_id", "models", "SET NULL"),
+        ("provider_id", "providers", "SET NULL"),
+    ],
+    "tool_calls": [
+        ("response_id", "responses", "CASCADE"),
+        ("conversation_id", "conversations", "CASCADE"),
+        ("tool_id", "tools", "SET NULL"),
+    ],
+    "prompt_content": [("prompt_id", "prompts", "CASCADE")],
+    "response_content": [("response_id", "responses", "CASCADE")],
+    "conversation_attributes": [("conversation_id", "conversations", "CASCADE")],
+    "prompt_attributes": [("prompt_id", "prompts", "CASCADE")],
+    "response_attributes": [("response_id", "responses", "CASCADE")],
+    "tool_call_attributes": [("tool_call_id", "tool_calls", "CASCADE")],
+    "workspace_tags": [
+        ("workspace_id", "workspaces", "CASCADE"),
+        ("tag_id", "tags", "CASCADE"),
+    ],
+    "conversation_tags": [
+        ("conversation_id", "conversations", "CASCADE"),
+        ("tag_id", "tags", "CASCADE"),
+    ],
+    "tool_call_tags": [
+        ("tool_call_id", "tool_calls", "CASCADE"),
+        ("tag_id", "tags", "CASCADE"),
+    ],
+    "ingested_files": [
+        ("harness_id", "harnesses", "CASCADE"),
+        ("conversation_id", "conversations", "CASCADE"),
+    ],
+    "prompt_tags": [
+        ("prompt_id", "prompts", "CASCADE"),
+        ("tag_id", "tags", "CASCADE"),
+    ],
+    "conversation_owners": [("conversation_id", "conversations", "CASCADE")],
+    "conversation_stats": [("conversation_id", "conversations", "CASCADE")],
+    "tool_search": [
+        ("tool_call_id", "tool_calls", "CASCADE"),
+        ("conversation_id", "conversations", "CASCADE"),
+        ("response_id", "responses", "CASCADE"),
+    ],
+}
+
+
+def _table_needs_cascade(
+    conn: sqlite3.Connection,
+    table: str,
+    required_fks: list[tuple[str, str, str]],
+) -> bool:
+    """Return True if any required FK is absent or has the wrong on_delete action."""
+    rows = conn.execute(f"PRAGMA foreign_key_list({table})").fetchall()
+    # PRAGMA foreign_key_list columns: id, seq, table, from, to, on_update, on_delete, match
+    actual: dict[tuple[str, str], str] = {(r[3], r[2]): r[6] for r in rows}
+    return any(actual.get((col, tbl)) != action for col, tbl, action in required_fks)
+
+
+def _recreate_table_with_fks(
+    conn: sqlite3.Connection,
+    table_name: str,
+    new_ddl: str,
+    columns: str,
+    indexes: list[str],
+) -> None:
+    """Replace a table's DDL to update FK constraints, preserving all rows.
+
+    Caller must hold PRAGMA foreign_keys = OFF and an active SAVEPOINT.
+    Exposed as a named function so tests can monkeypatch it to exercise the
+    ROLLBACK TO path without touching real data.
+    """
+    conn.execute(new_ddl)
+    conn.execute(f"INSERT INTO {table_name}_new ({columns}) SELECT {columns} FROM {table_name}")
+    conn.execute(f"DROP TABLE {table_name}")
+    conn.execute(f"ALTER TABLE {table_name}_new RENAME TO {table_name}")
+    for idx_sql in indexes:
+        conn.execute(idx_sql)
+
+
+def _migrate_cascade_v2(conn: sqlite3.Connection) -> None:
+    """Version-2 migration: enforce ON DELETE CASCADE/SET NULL on all FK tables.
+
+    Replaces the legacy prompts-only early-exit with per-table FK validation so
+    partial-cascade states are always repaired. Uses SAVEPOINT for transactional
+    rollback and try/finally to restore FK enforcement even on failure.
+    """
+    # Detect optional columns added by the legacy chain before this migration runs.
+    tc_cols = {r[1] for r in conn.execute("PRAGMA table_info(tool_calls)").fetchall()}
+    inf_cols = {r[1] for r in conn.execute("PRAGMA table_info(ingested_files)").fetchall()}
+    conv_cols = {r[1] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+
+    result_hash_ddl = (
+        "\n                result_hash     TEXT REFERENCES content_blobs(hash),"
+        if "result_hash" in tc_cols else ""
+    )
+    result_hash_col = ", result_hash" if "result_hash" in tc_cols else ""
+
+    file_stat_ddl = (
+        ",\n                file_mtime      REAL,\n                file_size       INTEGER"
+        if "file_mtime" in inf_cols else ""
+    )
+    file_stat_col = ", file_mtime, file_size" if "file_mtime" in inf_cols else ""
+
+    branch_ddl = "\n                branch          TEXT," if "branch" in conv_cols else ""
+    branch_col = ", branch" if "branch" in conv_cols else ""
+
+    # (table_name, new_ddl, columns_csv, indexes)
+    _TABLE_SPECS: list[tuple[str, str, str, list[str]]] = [
+        (
+            "tool_aliases",
+            """
+            CREATE TABLE tool_aliases_new (
+                id              TEXT PRIMARY KEY,
+                raw_name        TEXT NOT NULL,
+                harness_id      TEXT NOT NULL REFERENCES harnesses(id) ON DELETE CASCADE,
+                tool_id         TEXT NOT NULL REFERENCES tools(id) ON DELETE CASCADE,
+                UNIQUE (raw_name, harness_id)
+            )
+            """,
+            "id, raw_name, harness_id, tool_id",
+            [
+                "CREATE INDEX IF NOT EXISTS idx_tool_aliases_tool ON tool_aliases(tool_id)",
+                "CREATE INDEX IF NOT EXISTS idx_tool_aliases_harness ON tool_aliases(harness_id)",
+            ],
+        ),
+        (
+            "pricing",
+            """
+            CREATE TABLE pricing_new (
+                id              TEXT PRIMARY KEY,
+                model_id        TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
+                provider_id     TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+                input_per_mtok  REAL,
+                output_per_mtok REAL,
+                UNIQUE (model_id, provider_id)
+            )
+            """,
+            "id, model_id, provider_id, input_per_mtok, output_per_mtok",
+            [],
+        ),
+        (
+            "conversations",
+            f"""
+            CREATE TABLE conversations_new (
+                id              TEXT PRIMARY KEY,
+                external_id     TEXT NOT NULL,
+                harness_id      TEXT NOT NULL REFERENCES harnesses(id) ON DELETE CASCADE,
+                workspace_id    TEXT REFERENCES workspaces(id) ON DELETE SET NULL,{branch_ddl}
+                started_at      TEXT NOT NULL,
+                ended_at        TEXT,
+                UNIQUE (harness_id, external_id)
+            )
+            """,
+            f"id, external_id, harness_id, workspace_id{branch_col}, started_at, ended_at",
+            [
+                "CREATE INDEX IF NOT EXISTS idx_conversations_harness ON conversations(harness_id)",
+                "CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id)",
+                "CREATE INDEX IF NOT EXISTS idx_conversations_started ON conversations(started_at)",
+                "CREATE INDEX IF NOT EXISTS idx_conversations_ended ON conversations(ended_at)",
+            ],
+        ),
+        (
+            "prompts",
+            """
+            CREATE TABLE prompts_new (
+                id              TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                external_id     TEXT,
+                timestamp       TEXT NOT NULL,
+                UNIQUE (conversation_id, external_id)
+            )
+            """,
+            "id, conversation_id, external_id, timestamp",
+            [
+                "CREATE INDEX IF NOT EXISTS idx_prompts_conversation ON prompts(conversation_id)",
+                "CREATE INDEX IF NOT EXISTS idx_prompts_timestamp ON prompts(timestamp)",
+            ],
+        ),
+        (
+            "responses",
+            """
+            CREATE TABLE responses_new (
+                id              TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                prompt_id       TEXT REFERENCES prompts(id) ON DELETE CASCADE,
+                model_id        TEXT REFERENCES models(id) ON DELETE SET NULL,
+                provider_id     TEXT REFERENCES providers(id) ON DELETE SET NULL,
+                external_id     TEXT,
+                timestamp       TEXT NOT NULL,
+                input_tokens    INTEGER,
+                output_tokens   INTEGER,
+                UNIQUE (conversation_id, external_id)
+            )
+            """,
+            "id, conversation_id, prompt_id, model_id, provider_id, external_id, timestamp, input_tokens, output_tokens",
+            [
+                "CREATE INDEX IF NOT EXISTS idx_responses_conversation ON responses(conversation_id)",
+                "CREATE INDEX IF NOT EXISTS idx_responses_prompt ON responses(prompt_id)",
+                "CREATE INDEX IF NOT EXISTS idx_responses_model ON responses(model_id)",
+                "CREATE INDEX IF NOT EXISTS idx_responses_timestamp ON responses(timestamp)",
+            ],
+        ),
+        (
+            "tool_calls",
+            f"""
+            CREATE TABLE tool_calls_new (
+                id              TEXT PRIMARY KEY,
+                response_id     TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                tool_id         TEXT REFERENCES tools(id) ON DELETE SET NULL,
+                external_id     TEXT,
+                input           TEXT,
+                result          TEXT,{result_hash_ddl}
+                status          TEXT,
+                timestamp       TEXT
+            )
+            """,
+            f"id, response_id, conversation_id, tool_id, external_id, input, result{result_hash_col}, status, timestamp",
+            [
+                "CREATE INDEX IF NOT EXISTS idx_tool_calls_response ON tool_calls(response_id)",
+                "CREATE INDEX IF NOT EXISTS idx_tool_calls_conversation ON tool_calls(conversation_id)",
+                "CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool_id)",
+                "CREATE INDEX IF NOT EXISTS idx_tool_calls_status ON tool_calls(status)",
+            ],
+        ),
+        (
+            "prompt_content",
+            """
+            CREATE TABLE prompt_content_new (
+                id              TEXT PRIMARY KEY,
+                prompt_id       TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
+                block_index     INTEGER NOT NULL,
+                block_type      TEXT NOT NULL,
+                content         TEXT NOT NULL,
+                UNIQUE (prompt_id, block_index)
+            )
+            """,
+            "id, prompt_id, block_index, block_type, content",
+            ["CREATE INDEX IF NOT EXISTS idx_prompt_content_prompt ON prompt_content(prompt_id)"],
+        ),
+        (
+            "response_content",
+            """
+            CREATE TABLE response_content_new (
+                id              TEXT PRIMARY KEY,
+                response_id     TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+                block_index     INTEGER NOT NULL,
+                block_type      TEXT NOT NULL,
+                content         TEXT NOT NULL,
+                UNIQUE (response_id, block_index)
+            )
+            """,
+            "id, response_id, block_index, block_type, content",
+            ["CREATE INDEX IF NOT EXISTS idx_response_content_response ON response_content(response_id)"],
+        ),
+        (
+            "conversation_attributes",
+            """
+            CREATE TABLE conversation_attributes_new (
+                id              TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                key             TEXT NOT NULL,
+                value           TEXT NOT NULL,
+                scope           TEXT,
+                UNIQUE (conversation_id, key, scope)
+            )
+            """,
+            "id, conversation_id, key, value, scope",
+            [],
+        ),
+        (
+            "prompt_attributes",
+            """
+            CREATE TABLE prompt_attributes_new (
+                id              TEXT PRIMARY KEY,
+                prompt_id       TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
+                key             TEXT NOT NULL,
+                value           TEXT NOT NULL,
+                scope           TEXT,
+                UNIQUE (prompt_id, key, scope)
+            )
+            """,
+            "id, prompt_id, key, value, scope",
+            [],
+        ),
+        (
+            "response_attributes",
+            """
+            CREATE TABLE response_attributes_new (
+                id              TEXT PRIMARY KEY,
+                response_id     TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+                key             TEXT NOT NULL,
+                value           TEXT NOT NULL,
+                scope           TEXT,
+                UNIQUE (response_id, key, scope)
+            )
+            """,
+            "id, response_id, key, value, scope",
+            [
+                "CREATE INDEX IF NOT EXISTS idx_response_attributes_key"
+                " ON response_attributes(key, response_id, value)"
+            ],
+        ),
+        (
+            "tool_call_attributes",
+            """
+            CREATE TABLE tool_call_attributes_new (
+                id              TEXT PRIMARY KEY,
+                tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
+                key             TEXT NOT NULL,
+                value           TEXT NOT NULL,
+                scope           TEXT,
+                UNIQUE (tool_call_id, key, scope)
+            )
+            """,
+            "id, tool_call_id, key, value, scope",
+            [],
+        ),
+        (
+            "workspace_tags",
+            """
+            CREATE TABLE workspace_tags_new (
+                id              TEXT PRIMARY KEY,
+                workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                tag_id          TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                applied_at      TEXT NOT NULL,
+                UNIQUE (workspace_id, tag_id)
+            )
+            """,
+            "id, workspace_id, tag_id, applied_at",
+            ["CREATE INDEX IF NOT EXISTS idx_workspace_tags_tag ON workspace_tags(tag_id)"],
+        ),
+        (
+            "conversation_tags",
+            """
+            CREATE TABLE conversation_tags_new (
+                id              TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                tag_id          TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                applied_at      TEXT NOT NULL,
+                UNIQUE (conversation_id, tag_id)
+            )
+            """,
+            "id, conversation_id, tag_id, applied_at",
+            ["CREATE INDEX IF NOT EXISTS idx_conversation_tags_tag ON conversation_tags(tag_id)"],
+        ),
+        (
+            "tool_call_tags",
+            """
+            CREATE TABLE tool_call_tags_new (
+                id              TEXT PRIMARY KEY,
+                tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
+                tag_id          TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                applied_at      TEXT NOT NULL,
+                UNIQUE (tool_call_id, tag_id)
+            )
+            """,
+            "id, tool_call_id, tag_id, applied_at",
+            ["CREATE INDEX IF NOT EXISTS idx_tool_call_tags_tag ON tool_call_tags(tag_id)"],
+        ),
+        (
+            "ingested_files",
+            f"""
+            CREATE TABLE ingested_files_new (
+                id              TEXT PRIMARY KEY,
+                path            TEXT NOT NULL UNIQUE,
+                file_hash       TEXT NOT NULL,
+                harness_id      TEXT NOT NULL REFERENCES harnesses(id) ON DELETE CASCADE,
+                conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+                ingested_at     TEXT NOT NULL,
+                error           TEXT{file_stat_ddl}
+            )
+            """,
+            f"id, path, file_hash, harness_id, conversation_id, ingested_at, error{file_stat_col}",
+            [],
+        ),
+        (
+            "prompt_tags",
+            """
+            CREATE TABLE prompt_tags_new (
+                id TEXT PRIMARY KEY,
+                prompt_id TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
+                tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                applied_at TEXT NOT NULL,
+                UNIQUE (prompt_id, tag_id)
+            )
+            """,
+            "id, prompt_id, tag_id, applied_at",
+            [],
+        ),
+        (
+            "conversation_owners",
+            """
+            CREATE TABLE conversation_owners_new (
+                conversation_id TEXT NOT NULL
+                    REFERENCES conversations(id) ON DELETE CASCADE,
+                user_id         TEXT NOT NULL,
+                push_id         TEXT,
+                assigned_at     TEXT NOT NULL,
+                PRIMARY KEY (conversation_id)
+            )
+            """,
+            "conversation_id, user_id, push_id, assigned_at",
+            [
+                "CREATE INDEX IF NOT EXISTS idx_conversation_owners_user"
+                " ON conversation_owners(user_id)"
+            ],
+        ),
+        (
+            "conversation_stats",
+            """
+            CREATE TABLE conversation_stats_new (
+                conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+                prompt_count    INTEGER NOT NULL DEFAULT 0,
+                response_count  INTEGER NOT NULL DEFAULT 0,
+                total_tokens    INTEGER NOT NULL DEFAULT 0,
+                model_name      TEXT,
+                cost            REAL
+            )
+            """,
+            "conversation_id, prompt_count, response_count, total_tokens, model_name, cost",
+            [],
+        ),
+        (
+            "tool_search",
+            """
+            CREATE TABLE tool_search_new (
+                tool_call_id TEXT PRIMARY KEY REFERENCES tool_calls(id) ON DELETE CASCADE,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                response_id TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+                timestamp TEXT,
+                tool_name TEXT,
+                tool_family TEXT,
+                tool_description TEXT,
+                status TEXT,
+                path TEXT,
+                basename TEXT,
+                ext TEXT,
+                command TEXT,
+                command_verb TEXT,
+                pattern TEXT,
+                arg TEXT,
+                result_snippet TEXT,
+                workspace_path TEXT,
+                search_text TEXT NOT NULL
+            )
+            """,
+            (
+                "tool_call_id, conversation_id, response_id, timestamp, tool_name, tool_family,"
+                " tool_description, status, path, basename, ext, command, command_verb, pattern,"
+                " arg, result_snippet, workspace_path, search_text"
+            ),
+            [
+                "CREATE INDEX IF NOT EXISTS idx_tool_search_conversation ON tool_search(conversation_id)"
+            ],
+        ),
+    ]
+
+    # Identify tables that exist and need their FK spec repaired.
+    tables_to_fix = []
+    for table_name, new_ddl, columns, indexes in _TABLE_SPECS:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
+        ).fetchone()
+        if not exists:
+            continue
+        contract = _CASCADE_CONTRACT.get(table_name, [])
+        if contract and _table_needs_cascade(conn, table_name, contract):
+            tables_to_fix.append((table_name, new_ddl, columns, indexes))
+
+    if not tables_to_fix:
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("SAVEPOINT cascade_delete_migration")
+        try:
+            for table_name, new_ddl, columns, indexes in tables_to_fix:
+                _recreate_table_with_fks(conn, table_name, new_ddl, columns, indexes)
+            conn.execute("RELEASE cascade_delete_migration")
+        except Exception:
+            conn.execute("ROLLBACK TO cascade_delete_migration")
+            conn.execute("RELEASE cascade_delete_migration")
+            raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(
+            f"FK violations after cascade migration: {list(violations[:5])}"
+        )
+
+
+MIGRATIONS[2] = _migrate_cascade_v2
 
 
 # Known model prices (input_per_mtok, output_per_mtok) in USD per million tokens.
