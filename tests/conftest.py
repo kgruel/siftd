@@ -16,6 +16,7 @@ See: test_peek_follow.py test_follow_session_json_output for the canonical
 example of converting from monkeypatch-stdout to callback collection.
 """
 
+import dataclasses
 import json
 import random
 import string
@@ -50,6 +51,61 @@ from siftd.storage.sqlite import (
 from siftd.storage.tags import apply_tag, get_or_create_tag
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+# CWD-relative path so workspace_path and path-hash fields in adapter output
+# are stable across machines (some adapters derive IDs from str(path)).
+GOLDEN_DIR = Path("tests/fixtures/adapters")
+
+
+def _golden_cases() -> list[tuple[str, str]]:
+    """Discover all (adapter, case) pairs that have an expected.json."""
+    if not GOLDEN_DIR.exists():
+        return []
+    return sorted(
+        (case_dir.parent.name, case_dir.name)
+        for case_dir in GOLDEN_DIR.glob("*/*")
+        if case_dir.is_dir() and (case_dir / "expected.json").exists()
+    )
+
+
+def load_golden_input(adapter: str, case: str):
+    """Return a Source pointing at the input fixture for (adapter, case).
+
+    Discovers any file in the case directory that is not expected.json.
+    Hidden files (e.g. .aider.chat.history.md) are included.
+    Uses a CWD-relative path so adapters that derive IDs from the path
+    produce the same output on every machine.
+    """
+    from siftd.domain.source import Source
+
+    case_dir = GOLDEN_DIR / adapter / case
+    candidates = [
+        f for f in case_dir.iterdir()
+        if f.is_file() and f.name != "expected.json"
+    ]
+    if not candidates:
+        raise FileNotFoundError(f"No input fixture for {adapter}/{case}")
+    return Source(kind="file", location=candidates[0])
+
+
+def load_golden_expected(adapter: str, case: str) -> list[dict]:
+    """Return the expected Conversation list for (adapter, case)."""
+    path = GOLDEN_DIR / adapter / case / "expected.json"
+    return json.loads(path.read_text())
+
+
+def assert_golden(adapter_module, adapter: str, case: str) -> None:
+    """Run adapter.parse() on the golden input and compare to expected.json.
+
+    Comparison is sort_keys=True so dict insertion order never causes diffs.
+    """
+    source = load_golden_input(adapter, case)
+    actual = [dataclasses.asdict(c) for c in adapter_module.parse(source)]
+    expected = load_golden_expected(adapter, case)
+    assert (
+        json.loads(json.dumps(actual, sort_keys=True))
+        == json.loads(json.dumps(expected, sort_keys=True))
+    )
 
 
 def fixture_source(tmp_path, fixture, subdir, dest_name=None):

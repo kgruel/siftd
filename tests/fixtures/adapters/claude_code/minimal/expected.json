@@ -1,0 +1,100 @@
+[
+  {
+    "branch": null,
+    "ended_at": "2024-01-15T10:00:03Z",
+    "external_id": "claude_code::test-session-1",
+    "harness": {
+      "display_name": "Claude Code",
+      "log_format": "jsonl",
+      "name": "claude_code",
+      "source": "anthropic"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Hello, read the README",
+              "type": "text"
+            }
+          }
+        ],
+        "external_id": "claude_code::msg-001",
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "10"
+            },
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "I'll read the README for you.",
+                  "type": "text"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "tool-001",
+                  "input": {
+                    "file_path": "/test/workspace/README.md"
+                  },
+                  "name": "Read",
+                  "type": "tool_use"
+                }
+              }
+            ],
+            "external_id": "claude_code::msg-002",
+            "model": "claude-3-opus-20240229",
+            "provider": null,
+            "timestamp": "2024-01-15T10:00:01Z",
+            "tool_calls": [
+              {
+                "external_id": "tool-001",
+                "input": {
+                  "file_path": "/test/workspace/README.md"
+                },
+                "result": {
+                  "content": "# Test Project\n\nThis is a test."
+                },
+                "status": "success",
+                "timestamp": "2024-01-15T10:00:02Z",
+                "tool_name": "Read"
+              }
+            ],
+            "usage": {
+              "input_tokens": 100,
+              "output_tokens": 50
+            }
+          },
+          {
+            "attributes": {},
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "The README contains a simple test project description.",
+                  "type": "text"
+                }
+              }
+            ],
+            "external_id": "claude_code::msg-004",
+            "model": "claude-3-opus-20240229",
+            "provider": null,
+            "timestamp": "2024-01-15T10:00:03Z",
+            "tool_calls": [],
+            "usage": {
+              "input_tokens": 150,
+              "output_tokens": 20
+            }
+          }
+        ],
+        "timestamp": "2024-01-15T10:00:00Z"
+      }
+    ],
+    "started_at": "2024-01-15T10:00:00Z",
+    "workspace_path": "/test/workspace"
+  }
+]

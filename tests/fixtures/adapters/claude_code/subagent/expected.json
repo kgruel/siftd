@@ -1,0 +1,98 @@
+[
+  {
+    "branch": null,
+    "ended_at": "2024-01-15T10:00:03Z",
+    "external_id": "claude_code::parent-session-1::agent::sub-agent-1",
+    "harness": {
+      "display_name": "Claude Code",
+      "log_format": "jsonl",
+      "name": "claude_code",
+      "source": "anthropic"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Run the test suite",
+              "type": "text"
+            }
+          }
+        ],
+        "external_id": "claude_code::msg-001",
+        "responses": [
+          {
+            "attributes": {},
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "I'll run the tests for you.",
+                  "type": "text"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "tool-001",
+                  "input": {
+                    "command": "pytest tests/"
+                  },
+                  "name": "Bash",
+                  "type": "tool_use"
+                }
+              }
+            ],
+            "external_id": "claude_code::msg-002",
+            "model": "claude-3-opus-20240229",
+            "provider": null,
+            "timestamp": "2024-01-15T10:00:01Z",
+            "tool_calls": [
+              {
+                "external_id": "tool-001",
+                "input": {
+                  "command": "pytest tests/"
+                },
+                "result": {
+                  "content": "5 passed in 0.42s"
+                },
+                "status": "success",
+                "timestamp": "2024-01-15T10:00:02Z",
+                "tool_name": "Bash"
+              }
+            ],
+            "usage": {
+              "input_tokens": 80,
+              "output_tokens": 40
+            }
+          },
+          {
+            "attributes": {},
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "All 5 tests passed.",
+                  "type": "text"
+                }
+              }
+            ],
+            "external_id": "claude_code::msg-004",
+            "model": "claude-3-opus-20240229",
+            "provider": null,
+            "timestamp": "2024-01-15T10:00:03Z",
+            "tool_calls": [],
+            "usage": {
+              "input_tokens": 120,
+              "output_tokens": 15
+            }
+          }
+        ],
+        "timestamp": "2024-01-15T10:00:00Z"
+      }
+    ],
+    "started_at": "2024-01-15T10:00:00Z",
+    "workspace_path": "/test/workspace"
+  }
+]
