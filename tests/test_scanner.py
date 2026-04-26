@@ -8,6 +8,7 @@ from siftd.peek.scanner import (
     DiscoveredFile,
     _disambiguate_workspace_names,
     _disambiguated_name,
+    _discover_files,
     _get_glob_patterns,
     _matches_branch,
     _matches_workspace,
@@ -175,3 +176,46 @@ class TestScanSessionFile:
         ))
         r = _scan_session_file(_discovered(path=p, mtime=999.0, mod=m))
         assert r is not None and r.last_activity == 999.0
+
+
+class TestDiscoverFilesContainment:
+    """Scanner must not discover files that escape the adapter's DEFAULT_LOCATIONS via symlinks."""
+
+    def _make_adapter(self, location: Path) -> object:
+        from siftd.plugin_discovery import PluginInfo
+
+        m = _mod("peek_adapter", normalize_record=lambda r: None)
+        m.DEFAULT_LOCATIONS = [str(location)]
+        m.PEEK_GLOB_PATTERNS = ["*.jsonl"]
+        return PluginInfo(name="fake", origin="builtin", module=m)
+
+    def test_symlink_escaping_location_is_not_discovered(self, monkeypatch, tmp_path):
+        base = tmp_path / "sessions"
+        base.mkdir()
+        outside = tmp_path / "outside" / "secret.jsonl"
+        outside.parent.mkdir()
+        outside.write_text("{}")
+        link = base / "escape.jsonl"
+        link.symlink_to(outside)
+
+        monkeypatch.setattr(
+            "siftd.peek.scanner.load_all_adapters",
+            lambda: [self._make_adapter(base)],
+        )
+        found = _discover_files(threshold_seconds=9999, include_inactive=True)
+        assert not any("escape" in str(f.path) for f in found)
+
+    def test_symlink_inside_location_is_discovered(self, monkeypatch, tmp_path):
+        base = tmp_path / "sessions"
+        base.mkdir()
+        real = base / "real.jsonl"
+        real.write_text("{}")
+        link = base / "linked.jsonl"
+        link.symlink_to(real)
+
+        monkeypatch.setattr(
+            "siftd.peek.scanner.load_all_adapters",
+            lambda: [self._make_adapter(base)],
+        )
+        found = _discover_files(threshold_seconds=9999, include_inactive=True)
+        assert any("linked" in str(f.path) for f in found)

@@ -70,10 +70,17 @@ def discover_files(
         base = Path(location).expanduser()
         if not base.exists():
             continue
+        base_resolved = base.resolve()
         for pattern in glob_patterns:
             for match in base.glob(pattern):
-                if match.is_file():
-                    yield Source(kind="file", location=match)
+                if not match.is_file():
+                    continue
+                try:
+                    if not match.resolve(strict=False).is_relative_to(base_resolved):
+                        continue
+                except (OSError, ValueError):
+                    continue
+                yield Source(kind="file", location=match)
 
 
 def build_harness(
