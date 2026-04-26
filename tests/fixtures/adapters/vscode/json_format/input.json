@@ -1,0 +1,20 @@
+{
+  "version": 3,
+  "sessionId": "golden-vscode-001",
+  "creationDate": 1708012345678,
+  "requests": [
+    {
+      "requestId": "req-g01",
+      "message": "How do I read a file in Python?",
+      "timestamp": 1708012345678,
+      "modelId": "gpt-4o",
+      "response": [
+        {
+          "kind": "markdownContent",
+          "content": {"value": "Use the built-in `open()` function."}
+        }
+      ],
+      "responseId": "resp-g01"
+    }
+  ]
+}

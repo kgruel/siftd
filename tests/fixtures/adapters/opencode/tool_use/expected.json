@@ -1,0 +1,76 @@
+[
+  {
+    "branch": null,
+    "ended_at": "2024-03-10T14:01:00+00:00",
+    "external_id": "opencode::ses_golden_001",
+    "harness": {
+      "display_name": "OpenCode",
+      "log_format": "sqlite",
+      "name": "opencode",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Run the tests please"
+            }
+          }
+        ],
+        "external_id": null,
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "10",
+              "cache_read_input_tokens": "50",
+              "cost": "0.025",
+              "reasoning_output_tokens": "60"
+            },
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "I will run the tests for you."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "c1",
+                  "name": "bash"
+                }
+              }
+            ],
+            "external_id": null,
+            "model": "claude-3-opus-20240229",
+            "provider": null,
+            "timestamp": "2024-03-10T14:00:20+00:00",
+            "tool_calls": [
+              {
+                "external_id": "c1",
+                "input": {
+                  "command": "pytest"
+                },
+                "result": {
+                  "output": "5 passed, 0 failed"
+                },
+                "status": "success",
+                "timestamp": "2024-03-10T14:00:28+00:00",
+                "tool_name": "bash"
+              }
+            ],
+            "usage": {
+              "input_tokens": 500,
+              "output_tokens": 120
+            }
+          }
+        ],
+        "timestamp": "2024-03-10T14:00:10+00:00"
+      }
+    ],
+    "started_at": "2024-03-10T14:00:00+00:00",
+    "workspace_path": "/test/workspace"
+  }
+]

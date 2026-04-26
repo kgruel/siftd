@@ -68,17 +68,35 @@ def _golden_cases() -> list[tuple[str, str]]:
     )
 
 
-def load_golden_input(adapter: str, case: str):
+def load_golden_input(adapter: str, case: str, tmp_path=None):
     """Return a Source pointing at the input fixture for (adapter, case).
 
-    Discovers any file in the case directory that is not expected.json.
+    If the case directory contains setup.sql, materializes a temporary SQLite
+    DB from it and returns Source(kind="sqlite", ...). tmp_path is required for
+    the SQL path; raises ValueError if absent.
+
+    Otherwise discovers any file in the case directory that is not expected.json.
     Hidden files (e.g. .aider.chat.history.md) are included.
     Uses a CWD-relative path so adapters that derive IDs from the path
     produce the same output on every machine.
     """
+    import sqlite3
+
     from siftd.domain.source import Source
 
     case_dir = GOLDEN_DIR / adapter / case
+    setup_sql = case_dir / "setup.sql"
+    if setup_sql.exists():
+        if tmp_path is None:
+            raise ValueError(
+                f"tmp_path is required to materialize SQL fixture for {adapter}/{case}"
+            )
+        tmp_db = tmp_path / f"{adapter}_{case}.db"
+        conn = sqlite3.connect(str(tmp_db))
+        conn.executescript(setup_sql.read_text())
+        conn.close()
+        return Source(kind="sqlite", location=tmp_db)
+
     candidates = [
         f for f in case_dir.iterdir()
         if f.is_file() and f.name != "expected.json"
@@ -94,12 +112,13 @@ def load_golden_expected(adapter: str, case: str) -> list[dict]:
     return json.loads(path.read_text())
 
 
-def assert_golden(adapter_module, adapter: str, case: str) -> None:
+def assert_golden(adapter_module, adapter: str, case: str, tmp_path=None) -> None:
     """Run adapter.parse() on the golden input and compare to expected.json.
 
     Comparison is sort_keys=True so dict insertion order never causes diffs.
+    tmp_path is required for SQL-backed fixtures (cases with setup.sql).
     """
-    source = load_golden_input(adapter, case)
+    source = load_golden_input(adapter, case, tmp_path)
     actual = [dataclasses.asdict(c) for c in adapter_module.parse(source)]
     expected = load_golden_expected(adapter, case)
     assert (

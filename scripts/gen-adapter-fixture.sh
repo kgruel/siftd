@@ -35,25 +35,32 @@ main() {
 
     # Python script: run adapter, serialize, idempotence-check, write output
     uv run python - "$adapter" "$case_name" "$out" << 'PYEOF'
-import dataclasses, json, sys
+import dataclasses, importlib, json, sqlite3, sys, tempfile
 from pathlib import Path
+
+from siftd.domain.source import Source
 
 adapter_name, case_name, out_path_str = sys.argv[1], sys.argv[2], sys.argv[3]
 out_path = Path(out_path_str)
 # CWD-relative path so workspace_path and path hashes are stable
 case_dir = Path("tests/fixtures/adapters") / adapter_name / case_name
 
-candidates = [f for f in case_dir.iterdir() if f.is_file() and f.name != "expected.json"]
-if not candidates:
-    print(f"ERROR: No input fixture in {case_dir}", file=sys.stderr)
-    sys.exit(1)
-input_path = candidates[0]
-
-import importlib
-from siftd.domain.source import Source
+setup_sql = case_dir / "setup.sql"
+if setup_sql.exists():
+    # SQL-backed fixture: materialize a temp DB once and reuse across both runs
+    tmp_db = Path(tempfile.mkdtemp()) / f"{adapter_name}_{case_name}.db"
+    conn = sqlite3.connect(str(tmp_db))
+    conn.executescript(setup_sql.read_text())
+    conn.close()
+    source = Source(kind="sqlite", location=tmp_db)
+else:
+    candidates = [f for f in case_dir.iterdir() if f.is_file() and f.name != "expected.json"]
+    if not candidates:
+        print(f"ERROR: No input fixture in {case_dir}", file=sys.stderr)
+        sys.exit(1)
+    source = Source(kind="file", location=candidates[0])
 
 adapter = importlib.import_module(f"siftd.adapters.{adapter_name}")
-source = Source(kind="file", location=input_path)
 
 def run():
     convs = list(adapter.parse(source))
