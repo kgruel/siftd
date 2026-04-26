@@ -308,7 +308,7 @@ def _find_adapter_for_file(path: Path) -> object | None:
             try:
                 base = Path(location).expanduser().resolve()
                 file_resolved = path.resolve()
-                if str(file_resolved).startswith(str(base)):
+                if file_resolved.is_relative_to(base):
                     return module
             except (OSError, ValueError):
                 continue
