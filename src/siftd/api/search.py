@@ -214,7 +214,7 @@ def rebuild_fts_index(conn: sqlite3.Connection) -> None:
     """Rebuild the FTS5 index for the main database."""
     from siftd.storage.fts import rebuild_fts_index as _rebuild_fts_index
 
-    _rebuild_fts_index(conn)
+    _rebuild_fts_index(conn, commit=True)
 
 
 def fts5_search_content(

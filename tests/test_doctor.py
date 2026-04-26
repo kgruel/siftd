@@ -863,7 +863,7 @@ class TestFtsStaleCheck:
         write_conn = sqlite3.connect(check_context.db_path)
         write_conn.row_factory = sqlite3.Row
         ensure_fts_table(write_conn)
-        rebuild_fts_index(write_conn)
+        rebuild_fts_index(write_conn, commit=True)
         write_conn.close()
 
         # Close and reopen to see changes
@@ -962,7 +962,7 @@ class TestFtsIntegrityCheck:
         write_conn = sqlite3.connect(check_context.db_path)
         write_conn.row_factory = sqlite3.Row
         ensure_fts_table(write_conn)
-        rebuild_fts_index(write_conn)
+        rebuild_fts_index(write_conn, commit=True)
         write_conn.close()
 
         check_context.close()

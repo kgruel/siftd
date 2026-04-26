@@ -92,7 +92,7 @@ def slice_database(
         try:
             from siftd.storage.fts import rebuild_fts_index
 
-            rebuild_fts_index(target_conn)
+            rebuild_fts_index(target_conn, commit=True)
         finally:
             target_conn.close()
 
