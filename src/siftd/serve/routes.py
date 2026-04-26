@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from litestar import Request, get, post
+from litestar.background_tasks import BackgroundTask
 from litestar.params import Parameter
-from litestar.response import Response
+from litestar.response import File, Response
+
+log = logging.getLogger(__name__)
 
 
 def _effective_owner(request: Request, owner: str | None) -> str | None:
@@ -332,17 +337,20 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
 
     require_write(request)
 
-    body = await request.body()
-    if len(body) < 16:
-        return Response(content={"error": "empty or invalid slice"}, status_code=400)
-
-    with tempfile.NamedTemporaryFile(
-        prefix="siftd-serve-push-", suffix=".db", delete=False,
-    ) as tmp:
-        tmp_path = Path(tmp.name)
-
+    tmp_path: Path | None = None
     try:
-        tmp_path.write_bytes(body)
+        with tempfile.NamedTemporaryFile(
+            prefix="siftd-serve-push-", suffix=".db", delete=False,
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+            size_bytes = 0
+            async for chunk in request.stream():
+                tmp.write(chunk)
+                size_bytes += len(chunk)
+
+        if size_bytes < 16:
+            return Response(content={"error": "empty or invalid slice"}, status_code=400)
+
         from siftd.api.receive import receive_database
         from siftd.ids import ulid
 
@@ -359,7 +367,7 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
 
         # Attribution: record push in push_log
         _record_push_log(
-            db_path, identity, result["conversations"], len(body), request,
+            db_path, identity, result["conversations"], size_bytes, request,
             push_id=push_id,
         )
 
@@ -380,7 +388,7 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
             status_code=status_code,
         )
     finally:
-        if tmp_path.exists():
+        if tmp_path and tmp_path.exists():
             tmp_path.unlink()
 
 
@@ -395,12 +403,52 @@ async def pull(
     tag: list[str] | None = Parameter(query="tag", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
     owner: str | None = Parameter(query="owner", default=None),
-) -> Response:
+    dry_run: int = Parameter(query="dry_run", default=0),
+) -> Response | File:
     """Slice and stream the team DB based on filters."""
-    from siftd.api.slice import slice_database
+    from siftd.api.sync import SYNC_HTTP_CHUNK_SIZE
 
     owner = _effective_owner(request, owner)
-    with tempfile.TemporaryDirectory(prefix="siftd-serve-pull-") as tmp_dir:
+
+    if dry_run:
+        # Count-only path — never creates a slice file.
+        from siftd.api.conversations import list_conversations
+
+        convs = list_conversations(
+            db_path=db_path,
+            workspace=workspace,
+            model=model,
+            since=since,
+            before=before,
+            tag=tag,
+            no_tag=no_tag,
+            n=0,
+            owner=owner,
+        )
+        conversations = len(convs)
+
+        estimated_size = 0
+        try:
+            estimated_size = db_path.stat().st_size
+        except Exception:
+            pass
+
+        return Response(
+            content=b"",
+            status_code=200,
+            media_type="application/octet-stream",
+            headers={
+                "X-Siftd-Conversations": str(conversations),
+                "X-Siftd-Size": "0",
+                "X-Siftd-Estimated-Size": str(estimated_size),
+                "Content-Length": "0",
+            },
+        )
+
+    from siftd.api.slice import slice_database
+
+    tmp_dir = tempfile.mkdtemp(prefix="siftd-serve-pull-")
+    try:
         slice_path = Path(tmp_dir) / "pull-slice.db"
         result = slice_database(
             source_db=db_path,
@@ -417,6 +465,7 @@ async def pull(
 
         conversations = result["conversations"]
         if conversations == 0:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
             return Response(
                 content=b"",
                 status_code=200,
@@ -427,16 +476,27 @@ async def pull(
                 },
             )
 
-        data = slice_path.read_bytes()
-        return Response(
-            content=data,
-            status_code=200,
+        size_bytes = slice_path.stat().st_size
+
+        def _cleanup() -> None:
+            try:
+                shutil.rmtree(tmp_dir)
+            except Exception:
+                log.warning("Failed to clean up pull temp dir %s", tmp_dir)
+
+        return File(
+            path=slice_path,
+            chunk_size=SYNC_HTTP_CHUNK_SIZE,
             media_type="application/octet-stream",
             headers={
                 "X-Siftd-Conversations": str(conversations),
-                "X-Siftd-Size": str(len(data)),
+                "X-Siftd-Size": str(size_bytes),
             },
+            background=BackgroundTask(_cleanup),
         )
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
 
 
 @get("/api/v1/sync/status", opt={"no_auth": True})
