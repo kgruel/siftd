@@ -563,6 +563,84 @@ class TestDbErrorPaths:
         assert "Saved:" in capsys.readouterr().out
 
 
+class TestDbSchemaVersion:
+    def test_up_to_date(self, test_db, capsys):
+        """Fresh DB at current version reports up to date with all migrations applied."""
+        from siftd.storage.sqlite import SCHEMA_VERSION
+
+        rc = main(["--db", str(test_db), "db", "schema-version"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert f"Current version:  {SCHEMA_VERSION}" in out
+        assert f"Target version:   {SCHEMA_VERSION}" in out
+        assert "up to date" in out
+        assert "(applied)" in out
+        assert "(pending)" not in out
+
+    def test_pending(self, tmp_path, capsys):
+        """DB rolled back one version reports pending migration."""
+        from siftd.storage.sqlite import MIGRATIONS, SCHEMA_VERSION, open_database
+
+        db = tmp_path / "behind.db"
+        open_database(db).close()
+
+        prev = SCHEMA_VERSION - 1
+        conn = sqlite3.connect(str(db))
+        conn.execute(f"PRAGMA user_version = {prev}")
+        conn.commit()
+        conn.close()
+
+        rc = main(["--db", str(db), "db", "schema-version"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert f"Current version:  {prev}" in out
+        assert f"Target version:   {SCHEMA_VERSION}" in out
+        assert "migration pending" in out
+        assert f"v{SCHEMA_VERSION} (pending)" in out
+        assert "siftd ingest" in out
+
+    def test_json(self, test_db, capsys):
+        """--json outputs valid JSON with expected keys and values."""
+        import json as _json
+
+        from siftd.storage.sqlite import MIGRATIONS, SCHEMA_VERSION
+
+        rc = main(["--db", str(test_db), "db", "schema-version", "--json"])
+        assert rc == 0
+        data = _json.loads(capsys.readouterr().out)
+        assert data["current_version"] == SCHEMA_VERSION
+        assert data["target_version"] == SCHEMA_VERSION
+        assert data["pending"] == []
+        assert sorted(data["applied"]) == sorted(MIGRATIONS.keys())
+        assert sorted(data["all_migrations"]) == sorted(MIGRATIONS.keys())
+
+    def test_future_version(self, tmp_path, capsys):
+        """DB stamped newer than SCHEMA_VERSION returns 1 with error message."""
+        from siftd.storage.sqlite import SCHEMA_VERSION, open_database
+
+        db = tmp_path / "future.db"
+        open_database(db).close()
+
+        future = SCHEMA_VERSION + 1
+        conn = sqlite3.connect(str(db))
+        conn.execute(f"PRAGMA user_version = {future}")
+        conn.commit()
+        conn.close()
+
+        rc = main(["--db", str(db), "db", "schema-version"])
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert f"Current version:  {future}" in out
+        assert "ERROR" in out
+
+    def test_missing_db(self, tmp_path, capsys):
+        """Non-existent DB returns 1 with a helpful message."""
+        rc = main(["--db", str(tmp_path / "missing.db"), "db", "schema-version"])
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "Database not found" in out
+
+
 class TestPullMergeErrorCli:
     """H27: merge exceptions are wrapped and reach CLI as Pull failed, not raw tracebacks."""
 

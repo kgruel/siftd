@@ -16,8 +16,9 @@ positional arguments:
     session-id          Print the session ID for the current workspace
     config              View or modify config settings
     adapters            List discovered adapters
-    db                  Database operations (info, backup, restore, vacuum,
-                        slice, merge, send, receive, remote, push, pull)
+    db                  Database operations (info, schema-version, backup,
+                        restore, vacuum, slice, merge, send, receive, remote,
+                        push, pull)
     tag                 Manage tags: apply, remove, list, rename, delete
     tools               Summarize tool usage by category
     query               List and filter conversations by metadata
@@ -111,11 +112,13 @@ options:
 
 ```
 usage: siftd db [-h]
-                {info,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull} ...
+                {info,schema-version,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull} ...
 
 positional arguments:
-  {info,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull}
+  {info,schema-version,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull}
     info                Show database file metadata and schema info
+    schema-version      Show migration triage info: current version, target,
+                        pending migrations
     stats               Show database statistics
     workspaces          List workspaces with conversation counts
     path                Show XDG paths
@@ -142,6 +145,7 @@ Container-level operations on the siftd database.
 
 examples:
   siftd db info                          # database file metadata
+  siftd db schema-version                # migration triage info
   siftd db stats                         # full statistics
   siftd db workspaces                    # list workspaces
   siftd db path                          # show XDG paths

@@ -12,8 +12,9 @@
       session-id          Print the session ID for the current workspace
       config              View or modify config settings
       adapters            List discovered adapters
-      db                  Database operations (info, backup, restore, vacuum,
-                          slice, merge, send, receive, remote, push, pull)
+      db                  Database operations (info, schema-version, backup,
+                          restore, vacuum, slice, merge, send, receive, remote,
+                          push, pull)
       tag                 Manage tags: apply, remove, list, rename, delete
       tools               Summarize tool usage by category
       query               List and filter conversations by metadata
