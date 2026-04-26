@@ -105,6 +105,18 @@ class TestListQueryFiles:
 
         assert list_query_files() == []
 
+    def test_skips_unreadable_file(self, tmp_path, monkeypatch):
+        """Unreadable (invalid UTF-8) query files are skipped, others still returned."""
+        queries = tmp_path / "queries"
+        queries.mkdir()
+        (queries / "good.sql").write_text("SELECT 1")
+        (queries / "bad.sql").write_bytes(b"\xff\xfe not valid utf-8 \x80")
+        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+
+        result = list_query_files()
+        assert len(result) == 1
+        assert result[0].name == "good"
+
 
 class TestRunQueryFile:
     """Tests for run_query_file execution."""
@@ -188,13 +200,45 @@ class TestRunQueryFile:
             run_query_file("needs", {}, db_path=test_db)
 
     def test_file_not_found(self, test_db, tmp_path, monkeypatch):
-        """Missing query file raises FileNotFoundError."""
+        """Missing query file raises QueryError (not raw FileNotFoundError)."""
         queries = tmp_path / "queries"
         queries.mkdir()
         monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
 
-        with pytest.raises(FileNotFoundError, match="Query file not found"):
+        with pytest.raises(QueryError, match="Query file not found"):
             run_query_file("nope", {}, db_path=test_db)
+
+    def test_permission_error_raises_query_error(self, test_db, tmp_path, monkeypatch):
+        """PermissionError reading query file surfaces as QueryError with path."""
+        import os
+        if os.getuid() == 0:
+            pytest.skip("chmod has no effect when running as root")
+
+        queries = tmp_path / "queries"
+        queries.mkdir()
+        sql_file = queries / "perm.sql"
+        sql_file.write_text("SELECT 1")
+        sql_file.chmod(0o000)
+        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+
+        try:
+            with pytest.raises(QueryError) as exc_info:
+                run_query_file("perm", {}, db_path=test_db)
+            assert str(sql_file) in str(exc_info.value)
+        finally:
+            sql_file.chmod(0o644)
+
+    def test_unicode_error_raises_query_error(self, test_db, tmp_path, monkeypatch):
+        """UnicodeDecodeError reading query file surfaces as QueryError with path."""
+        queries = tmp_path / "queries"
+        queries.mkdir()
+        sql_file = queries / "bad_enc.sql"
+        sql_file.write_bytes(b"\xff\xfe invalid utf-8 \x80")
+        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+
+        with pytest.raises(QueryError) as exc_info:
+            run_query_file("bad_enc", {}, db_path=test_db)
+        assert str(sql_file) in str(exc_info.value)
 
     def test_db_not_found(self, tmp_path, monkeypatch):
         """Missing database raises FileNotFoundError."""

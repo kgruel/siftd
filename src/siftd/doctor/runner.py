@@ -1,5 +1,6 @@
 """Doctor runner: orchestrates health checks."""
 
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from siftd.doctor.checks import (
     CheckInfo,
     Finding,
 )
+
+log = logging.getLogger(__name__)
 
 
 def list_checks() -> list[CheckInfo]:
@@ -113,7 +116,10 @@ def run_checks(
                 results = future.result()
                 findings.extend(results)
                 if on_check_done is not None:
-                    on_check_done(check.name, results)
+                    try:
+                        on_check_done(check.name, results)
+                    except Exception as e:
+                        log.warning("on_check_done callback raised for %r: %s", check.name, e)
         return findings
     finally:
         ctx.close()

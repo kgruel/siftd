@@ -7,6 +7,7 @@ from pathlib import Path
 
 from siftd.paths import db_path as default_db_path
 from siftd.safecall import parse_json
+from siftd.safecall import read_text as _safe_read_text
 from siftd.storage.conversation_stats import has_conversation_stats_table
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.filters import tag_condition as _tag_condition
@@ -898,7 +899,9 @@ def list_query_files() -> list[QueryFile]:
     result = []
 
     for f in sorted(qdir.glob("*.sql")):
-        sql = f.read_text()
+        sql = _safe_read_text(f, context="list_query_files")
+        if sql is None:
+            continue
         template_matches = template_pattern.findall(sql)
         template_vars = sorted(set(m[0] or m[1] for m in template_matches))
 
@@ -970,9 +973,12 @@ def run_query_file(
     qdir = queries_dir()
     sql_file = qdir / f"{name}.sql"
     if not sql_file.exists():
-        raise FileNotFoundError(f"Query file not found: {sql_file}")
+        raise QueryError(f"Query file not found: {sql_file}")
 
-    sql = sql_file.read_text()
+    try:
+        sql = sql_file.read_text()
+    except (OSError, UnicodeDecodeError) as e:
+        raise QueryError(f"Cannot read query file {sql_file}: {e}") from e
     variables = variables or {}
 
     # 1. Extract :param names before $var substitution
