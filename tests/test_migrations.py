@@ -889,3 +889,114 @@ class TestTransactionOwnershipS3:
         # so the column would survive the rollback. After S3 it must be rolled back too.
         assert "error" not in cols, "error column was pre-committed by a helper (S3 regression)"
         assert "file_mtime" not in cols, "file_mtime was pre-committed by a helper (S3 regression)"
+
+
+# ---------------------------------------------------------------------------
+# bug_018 + bug_011 — blob refcount triggers survive v2→v3 cascade migration
+# ---------------------------------------------------------------------------
+
+
+class TestBlobRefcountTriggerMigration:
+    """Both blob refcount triggers must exist and be correct after open_database."""
+
+    def _open_legacy(self, tmp_path) -> "sqlite3.Connection":
+        """Create a v0 DB from the no-cascade schema, close it, return the path."""
+        path = tmp_path / "legacy.db"
+        conn = sqlite3.connect(path)
+        conn.executescript(_NO_CASCADE)
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_triggers_survive_cascade_migration(self, tmp_path):
+        """Both blob refcount triggers exist after the v2→v3 migration chain.
+
+        MIGRATIONS[2] drops tool_calls (CASCADE rewrite), which implicitly drops
+        both triggers. MIGRATIONS[3] must unconditionally recreate them.
+        """
+        path = self._open_legacy(tmp_path)
+        conn = open_database(path)
+        triggers = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger'"
+                " AND name LIKE 'tr_tool_calls_%_release_blob'"
+            ).fetchall()
+        }
+        conn.close()
+        assert "tr_tool_calls_delete_release_blob" in triggers
+        assert "tr_tool_calls_update_release_blob" in triggers
+
+    def test_delete_trigger_fires_after_legacy_migration(self, tmp_path):
+        """After v0→v3 migration, DELETE from tool_calls decrements blob ref_count."""
+        from siftd.storage import get_ref_count
+        from siftd.storage.sqlite import (
+            get_or_create_harness,
+            get_or_create_workspace,
+            insert_conversation,
+            insert_prompt,
+            insert_response,
+            insert_tool_call,
+        )
+
+        path = self._open_legacy(tmp_path)
+        conn = open_database(path)
+        h = get_or_create_harness(conn, "test", source="test")
+        w = get_or_create_workspace(conn, "/test", "2024-01-01T00:00:00Z")
+        c = insert_conversation(conn, "c1", h, w, "2024-01-01T00:00:00Z")
+        p = insert_prompt(conn, c, "p1", "2024-01-01T00:00:00Z")
+        r = insert_response(conn, c, p, None, None, "r1", "2024-01-01T00:00:01Z")
+        insert_tool_call(conn, r, c, None, "tc1", "{}", '{"out":1}', "success", "2024-01-01T00:00:02Z")
+        conn.commit()
+
+        row = conn.execute("SELECT result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
+        blob_hash = row[0]
+        assert blob_hash is not None
+        assert get_ref_count(conn, blob_hash) == 1
+
+        conn.execute("DELETE FROM tool_calls WHERE external_id='tc1'")
+        conn.commit()
+
+        assert get_ref_count(conn, blob_hash) == 0
+        conn.close()
+
+    def test_update_trigger_clamps_refcount_to_zero(self, tmp_path):
+        """UPDATE trigger uses MAX(ref_count - 1, 0) — negative ref_count would violate CHECK."""
+        from siftd.storage.sqlite import (
+            get_or_create_harness,
+            get_or_create_workspace,
+            insert_conversation,
+            insert_prompt,
+            insert_response,
+            insert_tool_call,
+        )
+
+        conn = open_database(tmp_path / "fresh.db")
+        h = get_or_create_harness(conn, "test", source="test")
+        w = get_or_create_workspace(conn, "/test", "2024-01-01T00:00:00Z")
+        c = insert_conversation(conn, "c1", h, w, "2024-01-01T00:00:00Z")
+        p = insert_prompt(conn, c, "p1", "2024-01-01T00:00:00Z")
+        r = insert_response(conn, c, p, None, None, "r1", "2024-01-01T00:00:01Z")
+        insert_tool_call(conn, r, c, None, "tc1", "{}", '{"out":1}', "success", "2024-01-01T00:00:02Z")
+        conn.commit()
+
+        row = conn.execute("SELECT result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
+        blob_hash = row[0]
+
+        # Artificially set ref_count=0 to simulate drift from a prior bug
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("UPDATE content_blobs SET ref_count = 0 WHERE hash = ?", (blob_hash,))
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.commit()
+
+        # Nulling out result_hash fires the UPDATE trigger.
+        # Without MAX clamp this would decrement ref_count to -1, violating CHECK(ref_count >= 0).
+        conn.execute("UPDATE tool_calls SET result_hash = NULL WHERE external_id = 'tc1'")
+        conn.commit()  # Must not raise IntegrityError
+
+        ref = conn.execute(
+            "SELECT ref_count FROM content_blobs WHERE hash = ?", (blob_hash,)
+        ).fetchone()
+        # Row is GC'd when ref_count <= 0, or clamped to 0 — either way non-negative
+        assert ref is None or ref[0] >= 0
+        conn.close()

@@ -1081,22 +1081,38 @@ def _migrate_blob_integrity_v3(conn: sqlite3.Connection) -> None:
                 f"FK violations after blob integrity migration: {list(violations[:5])}"
             )
 
-    # Fix the delete trigger if it still uses `ref_count = 0` (pre-v3 version).
-    trigger_row = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='tr_tool_calls_delete_release_blob'"
-    ).fetchone()
-    if trigger_row and "ref_count = 0" in (trigger_row[0] or "") and "ref_count <= 0" not in (trigger_row[0] or ""):
-        conn.execute("DROP TRIGGER tr_tool_calls_delete_release_blob")
-        conn.execute("""
-            CREATE TRIGGER tr_tool_calls_delete_release_blob
-            AFTER DELETE ON tool_calls
-            FOR EACH ROW
-            WHEN OLD.result_hash IS NOT NULL
-            BEGIN
-                UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
-                DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
-            END
-        """)
+    # Unconditionally drop+recreate both blob refcount triggers with the current
+    # clamped form. This covers three failure modes:
+    # - cascade migration (v2) drops triggers via DROP TABLE tool_calls, so they
+    #   may not exist at all when this migration runs
+    # - pre-v3 delete trigger using `ref_count = 0` instead of `ref_count <= 0`
+    # - pre-fix update trigger using unclamped `ref_count - 1` instead of MAX(...)
+    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
+    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_update_release_blob")
+    conn.execute("""
+        CREATE TRIGGER tr_tool_calls_delete_release_blob
+        AFTER DELETE ON tool_calls
+        FOR EACH ROW
+        WHEN OLD.result_hash IS NOT NULL
+        BEGIN
+            UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
+            DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
+        END
+    """)
+    conn.execute("""
+        CREATE TRIGGER tr_tool_calls_update_release_blob
+        AFTER UPDATE OF result_hash ON tool_calls
+        FOR EACH ROW
+        WHEN OLD.result_hash IS NOT NEW.result_hash
+        BEGIN
+            UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0)
+                WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
+            DELETE FROM content_blobs
+                WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
+            UPDATE content_blobs SET ref_count = ref_count + 1
+                WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
+        END
+    """)
 
 
 MIGRATIONS[3] = _migrate_blob_integrity_v3
@@ -1212,7 +1228,7 @@ def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
             FOR EACH ROW
             WHEN OLD.result_hash IS NOT NEW.result_hash
             BEGIN
-                UPDATE content_blobs SET ref_count = ref_count - 1
+                UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0)
                     WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
                 DELETE FROM content_blobs
                     WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
@@ -1370,6 +1386,7 @@ def clear_vocabulary_caches() -> None:
 _HARNESS_COLS = frozenset({"version", "display_name", "source", "log_format"})
 _PROVIDER_COLS = frozenset({"display_name", "billing_model"})
 _TOOL_COLS = frozenset({"category", "description"})
+_MODEL_COLS = frozenset({"name", "creator", "family", "version", "variant", "released"})
 
 
 def get_or_create_harness(conn: sqlite3.Connection, name: str, **kwargs) -> str:
@@ -1450,6 +1467,11 @@ def get_or_create_model(conn: sqlite3.Connection, raw_name: str, **kwargs) -> st
     family, version, variant, released) using parse_model_name().
     Explicit kwargs override parsed values.
     """
+    unknown = set(kwargs) - _MODEL_COLS
+    if unknown:
+        raise ValueError(
+            f"unknown column(s) for models: {sorted(unknown)}; allowed: {sorted(_MODEL_COLS)}"
+        )
     if raw_name in _model_cache:
         return _model_cache[raw_name]
 
