@@ -1,6 +1,7 @@
 """Storage backends for siftd."""
 
 from .blobs import (
+    BlobCollisionError,
     compute_content_hash,
     get_content,
     get_ref_count,
@@ -48,6 +49,7 @@ __all__ = [
     "get_harness_id_by_name",
     "delete_conversation",
     # Blob storage
+    "BlobCollisionError",
     "store_content",
     "get_content",
     "release_content",

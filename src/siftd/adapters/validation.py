@@ -70,4 +70,11 @@ def validate_adapter(module: ModuleType, origin: str = "adapter") -> str | None:
     if "locations" not in sig.parameters:
         return f"{origin}: discover() must accept 'locations' keyword argument"
 
+    # Validate can_handle(source) and parse(source) signatures
+    for func_name in ("can_handle", "parse"):
+        func = getattr(module, func_name)
+        sig = inspect.signature(func)
+        if "source" not in sig.parameters:
+            return f"{origin}: {func_name}() must accept a 'source' positional argument"
+
     return None

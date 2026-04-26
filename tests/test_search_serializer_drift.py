@@ -7,8 +7,8 @@ from siftd.domain.search_types import ConversationSearchSummary, ScoreBreakdown,
 from siftd.serialization.serve_fmt import render_search
 
 
-def test_serve_search_chunk_serialization_covers_all_dataclass_fields():
-    """render_search() should serialize every SearchChunk field."""
+def test_serve_search_chunk_serialization_default_omits_internal_ids():
+    """render_search() default mode omits chunk_id and source_ids."""
     chunk = SearchChunk(
         conversation_id="c1",
         score=0.9,
@@ -26,6 +26,31 @@ def test_serve_search_chunk_serialization_covers_all_dataclass_fields():
     out = render_search([chunk], NS(depth=1))
     result = out["results"][0]
 
+    assert "chunk_id" not in result
+    assert "source_ids" not in result
+    assert "conversation_id" in result
+
+
+def test_serve_search_chunk_serialization_debug_ids_includes_all_fields():
+    """render_search(debug_ids=True) includes chunk_id and source_ids (all field names present)."""
+    chunk = SearchChunk(
+        conversation_id="c1",
+        score=0.9,
+        text="hello",
+        chunk_type="exchange",
+        workspace_path="/repo",
+        started_at="2024-01-01T00:00:00Z",
+        chunk_id="k1",
+        source_ids=["p1"],
+        breakdown=ScoreBreakdown(embedding_sim=0.9),
+        file_refs=[],
+        exchanges=[("p1", "q", "a")],
+        context_window=[("p1", "q", "a", True)],
+    )
+    out = render_search([chunk], NS(depth=1), debug_ids=True)
+    result = out["results"][0]
+
+    # dataclasses.asdict() preserves exact field names; debug_ids=True retains all
     expected_keys = {f.name for f in fields(SearchChunk)}
     assert set(result.keys()) == expected_keys
 

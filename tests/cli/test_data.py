@@ -623,9 +623,6 @@ class TestDataDirectBranches:
         monkeypatch.setattr("siftd.api.migrations.backfill_git_remotes", lambda conn: {"updated": 5})
         assert "5 workspace" in data_cli._fix_backfill_git_remote(object(), Path("/d"))
 
-        monkeypatch.setattr("siftd.api.migrations.merge_duplicate_workspaces", lambda conn: {"workspaces_merged": 6})
-        assert "6 workspace" in data_cli._fix_merge_workspaces(object(), Path("/d"))
-
         monkeypatch.setattr("siftd.api.sessions.cleanup_stale_sessions", lambda *_a, **_k: (7, 8))
         assert "7 session" in data_cli._fix_pending_tags(object(), Path("/d"))
 

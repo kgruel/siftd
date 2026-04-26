@@ -12,7 +12,7 @@ import siftd.storage.sqlite as sq
 import siftd.storage.tags as tags
 import siftd.storage.tool_search as ts
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall, Usage
-from siftd.storage import compute_content_hash, get_content, get_ref_count, release_content, store_content
+from siftd.storage import BlobCollisionError, compute_content_hash, get_content, get_ref_count, release_content, store_content
 from siftd.storage.filters import WhereBuilder, tag_condition
 from siftd.storage.sql_helpers import (
     batched_execute,
@@ -113,6 +113,69 @@ class TestBlobStorage:
         release_content(db, h, commit=True)
         assert get_content(db, h) is None
         assert get_ref_count(db, "nope") == 0
+
+    def test_store_content_concurrent_same_hash(self, tmp_path):
+        """Two connections storing the same content both succeed; ref_count == 2.
+
+        bug_003: old SELECT-then-INSERT TOCTOU window caused IntegrityError for the
+        second writer. INSERT ON CONFLICT DO UPDATE is atomic — no race window.
+        Each thread creates its own connection (Python sqlite3 is not thread-safe for
+        shared connections).
+        """
+        import sqlite3 as _sqlite3
+        import threading
+
+        db_path = tmp_path / "concurrent.db"
+        # Create schema in main thread
+        setup = open_database(db_path)
+        setup.close()
+
+        errors = []
+        barrier = threading.Barrier(2)
+
+        def write():
+            conn = _sqlite3.connect(str(db_path))
+            conn.row_factory = _sqlite3.Row
+            try:
+                barrier.wait()
+                store_content(conn, "same_concurrent_content", commit=True)
+            except Exception as e:
+                errors.append(e)
+            finally:
+                conn.close()
+
+        t1 = threading.Thread(target=write)
+        t2 = threading.Thread(target=write)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert not errors, f"Unexpected errors from concurrent store_content: {errors}"
+        check = open_database(db_path)
+        h = compute_content_hash("same_concurrent_content")
+        assert get_ref_count(check, h) == 2
+        check.close()
+
+    def test_store_content_collision_detection_still_raises(self, db):
+        """BlobCollisionError is still raised for genuinely different content on same hash.
+
+        Verifies the ON CONFLICT RETURNING form preserves fail-closed behavior.
+        """
+        from unittest.mock import patch
+
+        content_a = "content_a"
+        content_b = "content_b_different"
+        fake_hash = "deadbeef" * 8  # 64-char fake SHA256
+
+        with patch("siftd.storage.blobs._sha256") as mock_sha:
+            mock_sha.return_value.hexdigest.return_value = fake_hash
+            store_content(db, content_a, commit=True)
+
+        with patch("siftd.storage.blobs._sha256") as mock_sha:
+            mock_sha.return_value.hexdigest.return_value = fake_hash
+            with pytest.raises(BlobCollisionError, match="collision"):
+                store_content(db, content_b, commit=True)
 
 
 class TestToolCallBlobs:
@@ -342,10 +405,10 @@ class TestFTS:
         assert fts.fts5_best_hit_for_conversation(conn, "xyznonexistent", conversation_id=cid) is None
         # OR fallback
         assert fts.fts5_recall_details(conn, "Python function", min_and_hits=999).mode in ("or", "none")
-        # Short tokens → _fts5_or_rewrite returns None → mode="none"
+        # Short tokens are preserved; "ab cd" won't match test data → mode="none"
         r_short = fts.fts5_recall_conversations(conn, "ab cd")
         assert r_short[1] == "none"
-        # Malformed FTS → exception in AND phase → falls through to OR
+        # "NOT AND OR" is sanitized to quoted tokens — no match in test data → mode="none"
         r_bad = fts.fts5_recall_conversations(conn, "NOT AND OR")
         assert r_bad[1] in ("or", "none")
 
@@ -877,6 +940,31 @@ class TestDiagnostics:
         errors = sq.get_ingest_errors(db)
         assert errors[0]["harness_name"] == "h_unknown"  # fallback to ID
 
+    def test_get_ingest_errors_no_n_plus_1(self, db):
+        db.execute("INSERT INTO harnesses (id, name) VALUES ('h1', 'test_harness')")
+        for i in range(10):
+            self._insert_error_file(db, f"/file{i}", "h1", f"err{i}")
+        db.commit()
+
+        class CountingConn:
+            def __init__(self, conn):
+                self._conn = conn
+                self.calls = 0
+
+            def execute(self, *args, **kwargs):
+                self.calls += 1
+                return self._conn.execute(*args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._conn, name)
+
+        counting = CountingConn(db)
+        errors = sq.get_ingest_errors(counting)
+
+        assert len(errors) == 10
+        # Exactly 2 queries regardless of row count: PRAGMA table_info + one JOIN SELECT
+        assert counting.calls == 2
+
     def test_get_models_without_pricing(self, db):
         assert sq.get_models_without_pricing(db) == []
         # Insert model + provider + conversation chain + response
@@ -1151,3 +1239,245 @@ class TestMigrateBlobs:
         stats = migrate_existing_results(db, on_progress=lambda done, total: progress.append((done, total)))
         assert stats["migrated"] == 1
         assert len(progress) > 0  # on_progress was called
+
+
+# === Blob integrity (S2: R14, H17, H18) ===
+
+
+class TestBlobIntegrityR14:
+    """R14: ref_count negative guard — release_content clamps and deletes."""
+
+    def test_release_count_1_deletes(self, db):
+        h = store_content(db, "hello", commit=True)
+        assert get_ref_count(db, h) == 1
+        release_content(db, h, commit=True)
+        assert get_content(db, h) is None
+
+    def test_release_count_0_corrupted_deletes(self, db):
+        h = store_content(db, "hello", commit=True)
+        # ref_count=0 is valid under CHECK(>= 0); force it to simulate corruption
+        db.execute("UPDATE content_blobs SET ref_count = 0 WHERE hash = ?", (h,))
+        db.commit()
+        release_content(db, h, commit=True)
+        assert get_content(db, h) is None
+        assert db.execute("SELECT COUNT(*) FROM content_blobs WHERE ref_count < 0").fetchone()[0] == 0
+
+    def test_release_count_neg1_corrupted_clamps_and_deletes(self, tmp_path):
+        # Need raw connection without CHECK to insert ref_count = -1
+        conn = sqlite3.connect(str(tmp_path / "raw.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute("""CREATE TABLE content_blobs (
+            hash TEXT PRIMARY KEY,
+            content TEXT NOT NULL,
+            ref_count INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL
+        )""")
+        h = "a" * 64
+        conn.execute("INSERT INTO content_blobs VALUES (?, 'x', -1, '2024-01-01')", (h,))
+        conn.commit()
+        release_content(conn, h, commit=True)
+        # MAX(-1 - 1, 0) = 0 → deleted by <= 0 check
+        assert get_content(conn, h) is None
+        assert conn.execute("SELECT COUNT(*) FROM content_blobs WHERE ref_count < 0").fetchone()[0] == 0
+        conn.close()
+
+
+class TestBlobIntegrityR14Migration:
+    """R14: version-3 migration cleans up ref_count <= 0 rows before adding CHECK."""
+
+    def _make_v2_conn(self, tmp_path, name="v2.db"):
+        """Raw connection with v2-style content_blobs (no NOT NULL, no CHECK)."""
+        conn = sqlite3.connect(str(tmp_path / name))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("""CREATE TABLE content_blobs (
+            hash TEXT PRIMARY KEY,
+            content TEXT NOT NULL,
+            ref_count INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL
+        )""")
+        conn.execute("""CREATE TABLE tool_calls (
+            id TEXT PRIMARY KEY,
+            result TEXT,
+            result_hash TEXT REFERENCES content_blobs(hash)
+        )""")
+        return conn
+
+    def test_migration_removes_nonpositive_rows(self, tmp_path):
+        from siftd.storage.sqlite import _migrate_blob_integrity_v3
+        conn = self._make_v2_conn(tmp_path)
+        conn.execute("INSERT INTO content_blobs VALUES ('h0', 'zero', 0, '2024-01-01')")
+        conn.execute("INSERT INTO content_blobs VALUES ('hn', 'neg', -1, '2024-01-01')")
+        conn.execute("INSERT INTO content_blobs VALUES ('hg', 'good', 3, '2024-01-01')")
+        conn.commit()
+
+        _migrate_blob_integrity_v3(conn)
+        conn.commit()
+
+        hashes = {r[0] for r in conn.execute("SELECT hash FROM content_blobs").fetchall()}
+        assert 'h0' not in hashes
+        assert 'hn' not in hashes
+        assert 'hg' in hashes
+
+        # CHECK constraint now enforced on the recreated table
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("INSERT INTO content_blobs VALUES ('hbad', 'bad', -1, '2024-01-01')")
+        conn.close()
+
+    def test_migration_nulls_dangling_tool_call_refs(self, tmp_path):
+        from siftd.storage.sqlite import _migrate_blob_integrity_v3
+        conn = self._make_v2_conn(tmp_path)
+        conn.execute("INSERT INTO content_blobs VALUES ('hzero', 'x', 0, '2024-01-01')")
+        conn.execute("INSERT INTO tool_calls VALUES ('tc1', NULL, 'hzero')")
+        conn.commit()
+
+        _migrate_blob_integrity_v3(conn)
+        conn.commit()
+
+        row = conn.execute("SELECT result_hash FROM tool_calls WHERE id='tc1'").fetchone()
+        assert row[0] is None
+        assert conn.execute("SELECT COUNT(*) FROM content_blobs WHERE hash='hzero'").fetchone()[0] == 0
+        conn.close()
+
+    def test_migration_idempotent_on_fresh_db(self, db):
+        from siftd.storage.sqlite import _migrate_blob_integrity_v3
+        store_content(db, "x", commit=True)
+        _migrate_blob_integrity_v3(db)
+        assert get_content(db, compute_content_hash("x")) == "x"
+
+    def test_migration_succeeds_with_preexisting_blob_triggers(self, tmp_path):
+        """Real-world DBs have blob ref_count triggers from ensure_content_blobs_table.
+        Modern SQLite parses all trigger bodies during ALTER TABLE RENAME, so leaving
+        stale references to the dropped content_blobs aborts the migration."""
+        from siftd.storage.sqlite import _migrate_blob_integrity_v3
+        conn = self._make_v2_conn(tmp_path, name="v2_with_triggers.db")
+        conn.execute("""
+            CREATE TRIGGER tr_tool_calls_delete_release_blob
+            AFTER DELETE ON tool_calls
+            FOR EACH ROW
+            WHEN OLD.result_hash IS NOT NULL
+            BEGIN
+                UPDATE content_blobs SET ref_count = ref_count - 1 WHERE hash = OLD.result_hash;
+                DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count = 0;
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER tr_tool_calls_update_release_blob
+            AFTER UPDATE OF result_hash ON tool_calls
+            FOR EACH ROW
+            WHEN OLD.result_hash IS NOT NEW.result_hash
+            BEGIN
+                UPDATE content_blobs SET ref_count = ref_count - 1
+                    WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
+                DELETE FROM content_blobs
+                    WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count = 0;
+                UPDATE content_blobs SET ref_count = ref_count + 1
+                    WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
+            END
+        """)
+        conn.execute("INSERT INTO content_blobs VALUES ('hg', 'good', 3, '2024-01-01')")
+        conn.commit()
+
+        _migrate_blob_integrity_v3(conn)
+        conn.commit()
+
+        # Migration completed: CHECK constraint enforced and triggers in clamped form.
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("INSERT INTO content_blobs VALUES ('hbad', 'bad', -1, '2024-01-01')")
+        triggers = {
+            r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'tr_tool_calls_%_release_blob'"
+            ).fetchall()
+        }
+        assert triggers == {
+            "tr_tool_calls_delete_release_blob",
+            "tr_tool_calls_update_release_blob",
+        }
+        conn.close()
+
+
+class TestBlobIntegrityH17:
+    """H17: hash-collision detection is fail-closed."""
+
+    def _fake_sha256(self, digest):
+        return lambda _: type("H", (), {"hexdigest": lambda self: digest})()
+
+    def test_store_content_collision_raises(self, db, monkeypatch):
+        from siftd.storage.blobs import BlobCollisionError
+        monkeypatch.setattr("siftd.storage.blobs._sha256", self._fake_sha256("a" * 64))
+        store_content(db, "content_A", commit=True)
+        with pytest.raises(BlobCollisionError):
+            store_content(db, "content_B", commit=True)
+        assert get_content(db, "a" * 64) == "content_A"
+        assert get_ref_count(db, "a" * 64) == 1
+
+    def test_store_content_same_bytes_increments(self, db, monkeypatch):
+        monkeypatch.setattr("siftd.storage.blobs._sha256", self._fake_sha256("b" * 64))
+        store_content(db, "same", commit=True)
+        store_content(db, "same", commit=True)
+        assert get_ref_count(db, "b" * 64) == 2
+
+    def test_migrate_collision_raises(self, db, monkeypatch):
+        from siftd.storage.blobs import BlobCollisionError
+        from siftd.storage.migrate_blobs import migrate_existing_results
+        db.execute("INSERT INTO harnesses (id, name) VALUES ('mh1', 'test')")
+        db.execute("INSERT INTO conversations (id, external_id, harness_id, started_at) VALUES ('mc1', 'me1', 'mh1', '2024-01-01')")
+        db.execute("INSERT INTO prompts (id, conversation_id, timestamp) VALUES ('mp1', 'mc1', '2024-01-01')")
+        db.execute("INSERT INTO responses (id, conversation_id, prompt_id, timestamp) VALUES ('mr1', 'mc1', 'mp1', '2024-01-01')")
+        db.execute("INSERT INTO tool_calls (id, response_id, conversation_id, input) VALUES ('mtc1', 'mr1', 'mc1', '{}')")
+        db.execute("INSERT INTO tool_calls (id, response_id, conversation_id, input) VALUES ('mtc2', 'mr1', 'mc1', '{}')")
+        db.execute("UPDATE tool_calls SET result = 'content_A' WHERE id = 'mtc1'")
+        db.execute("UPDATE tool_calls SET result = 'content_B' WHERE id = 'mtc2'")
+        db.commit()
+        monkeypatch.setattr("siftd.storage.blobs._sha256", self._fake_sha256("c" * 64))
+        with pytest.raises(BlobCollisionError):
+            migrate_existing_results(db)
+
+
+class TestBlobIntegrityH18:
+    """H18: verify_migration reports ref_count_mismatches and negative_ref_counts."""
+
+    def test_ref_count_mismatches(self, db):
+        from siftd.storage.migrate_blobs import verify_migration
+        c, r = _scaffold(db)
+        # Insert blobs with deliberate mismatches
+        db.execute("INSERT INTO content_blobs (hash, content, ref_count, created_at) VALUES ('h_over', 'over', 2, '2024-01-01')")
+        db.execute("INSERT INTO content_blobs (hash, content, ref_count, created_at) VALUES ('h_under', 'under', 0, '2024-01-01')")
+        db.execute("INSERT INTO content_blobs (hash, content, ref_count, created_at) VALUES ('h_match', 'match', 3, '2024-01-01')")
+        # 1 ref for h_over (stored=2 → over-count)
+        db.execute(f"INSERT INTO tool_calls (id, response_id, conversation_id, input, result_hash) VALUES ('tc_o1', '{r}', '{c}', '{{}}', 'h_over')")
+        # 2 refs for h_under (stored=0 → under-count)
+        db.execute(f"INSERT INTO tool_calls (id, response_id, conversation_id, input, result_hash) VALUES ('tc_u1', '{r}', '{c}', '{{}}', 'h_under')")
+        db.execute(f"INSERT INTO tool_calls (id, response_id, conversation_id, input, result_hash) VALUES ('tc_u2', '{r}', '{c}', '{{}}', 'h_under')")
+        # 3 refs for h_match (stored=3 → match)
+        db.execute(f"INSERT INTO tool_calls (id, response_id, conversation_id, input, result_hash) VALUES ('tc_m1', '{r}', '{c}', '{{}}', 'h_match')")
+        db.execute(f"INSERT INTO tool_calls (id, response_id, conversation_id, input, result_hash) VALUES ('tc_m2', '{r}', '{c}', '{{}}', 'h_match')")
+        db.execute(f"INSERT INTO tool_calls (id, response_id, conversation_id, input, result_hash) VALUES ('tc_m3', '{r}', '{c}', '{{}}', 'h_match')")
+        db.commit()
+
+        result = verify_migration(db)
+        assert result["ref_count_mismatches"] == 2  # h_over and h_under
+        assert result["orphaned_blobs"] == 1         # h_under (ref_count=0)
+        assert result["negative_ref_counts"] == 0
+
+    def test_negative_ref_counts_reported(self, tmp_path):
+        from siftd.storage.migrate_blobs import verify_migration
+        conn = sqlite3.connect(str(tmp_path / "raw.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute("""CREATE TABLE content_blobs (
+            hash TEXT PRIMARY KEY,
+            content TEXT NOT NULL,
+            ref_count INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL
+        )""")
+        conn.execute("""CREATE TABLE tool_calls (
+            id TEXT PRIMARY KEY,
+            result TEXT,
+            result_hash TEXT REFERENCES content_blobs(hash)
+        )""")
+        conn.execute("INSERT INTO content_blobs VALUES ('hn', 'neg', -1, '2024-01-01')")
+        conn.execute("INSERT INTO content_blobs VALUES ('hp', 'pos', 2, '2024-01-01')")
+        conn.commit()
+        result = verify_migration(conn)
+        assert result["negative_ref_counts"] == 1
+        conn.close()

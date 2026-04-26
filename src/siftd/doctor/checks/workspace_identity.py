@@ -34,9 +34,11 @@ class WorkspaceIdentityCheck:
                 Finding(
                     check=self.name,
                     severity="warning",
-                    message=f"{info['duplicate_groups']} workspace group(s) may be duplicates (same git remote)",
-                    fix_available=True,
-                    fix_command="siftd migrate merge-workspaces",
+                    message=(
+                        f"{info['duplicate_groups']} workspace group(s) may be duplicates (same git remote); "
+                        "merge manually with: siftd migrate --merge-workspaces"
+                    ),
+                    fix_available=False,
                     context=info,
                 )
             )

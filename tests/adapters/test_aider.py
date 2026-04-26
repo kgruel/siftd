@@ -52,13 +52,21 @@ class TestAiderAdapter:
         assert list(aider.discover(locations=[str(tmp_path)]))
         assert list(aider.discover(locations=[str(tmp_path / "nope")])) == []
 
-    def test_analytics_and_tool_before_response(self, tmp_path):
-        assert aider.can_handle(Source(kind="file", location=Path("/home/.aider/analytics.jsonl")))
-        assert not aider.can_handle(Source(kind="file", location=Path("/random/analytics.jsonl")))
+    def test_analytics_not_discovered(self, tmp_path):
+        """Regression: analytics.jsonl must not appear in discover output (deferred until schema documented)."""
         d = tmp_path / ".aider"
         d.mkdir()
         (d / "analytics.jsonl").write_text('{"event": "test"}\n')
-        assert list(aider.discover(locations=[str(d)]))
+        (d / ".aider.chat.history.md").write_text("# aider chat started at 2025-01-01 00:00:00\n\n#### q\n\nA\n")
+        sources = list(aider.discover(locations=[str(d)]))
+        locs = [str(s.location) for s in sources]
+        assert not any("analytics.jsonl" in loc for loc in locs)
+        assert any(".aider.chat.history.md" in loc for loc in locs)
+        assert not aider.can_handle(Source(kind="file", location=Path("/home/.aider/analytics.jsonl")))
+        assert not aider.can_handle(Source(kind="file", location=Path("/random/analytics.jsonl")))
+
+    def test_tool_before_response(self, tmp_path):
+        """Tool output appearing before any assistant response creates a response with tool_output block."""
         md = "# aider chat started at 2025-01-01 00:00:00\n\n#### do it\n\n> Applied edit to main.py\n\nDone\n"
         (tmp_path / ".aider.chat.history.md").write_text(md)
         conv = list(aider.parse(Source(kind="file", location=tmp_path / ".aider.chat.history.md")))[0]

@@ -280,7 +280,7 @@ Content blocks in responses (text, thinking, tool references)
 |--------|------|-------------|-------|
 | `hash` | TEXT | PRIMARY KEY | SHA256 of content (natural key) |
 | `content` | TEXT | NOT NULL |  |
-| `ref_count` | INTEGER | DEFAULT 1 |  |
+| `ref_count` | INTEGER | NOT NULL DEFAULT 1 CHECK (ref_count >= 0) |  |
 | `created_at` | TEXT | NOT NULL | ISO timestamp |
 
 ## SYNC INBOX

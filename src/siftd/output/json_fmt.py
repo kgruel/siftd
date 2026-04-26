@@ -106,16 +106,18 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
         ]
         return output
 
+    debug_ids = context.get("debug_ids", False)
+
     if mode == "thread":
         tier1 = context.get("tier1", [])
         tier2 = context.get("tier2", [])
         output["result_count"] = len(tier1) + len(tier2)
-        output["tier1"] = _json_chunk_list(tier1)
-        output["tier2"] = _json_chunk_list(tier2)
+        output["tier1"] = _json_chunk_list(tier1, debug_ids=debug_ids)
+        output["tier2"] = _json_chunk_list(tier2, debug_ids=debug_ids)
         return output
 
     # Chunks mode
-    output["results"] = _json_chunk_list(results)
+    output["results"] = _json_chunk_list(results, debug_ids=debug_ids)
     return output
 
 
@@ -147,24 +149,25 @@ def render_tool_search(result: Any, fidelity: Fidelity, **context: Any) -> dict:
     return _impl(result, fidelity)
 
 
-def _json_chunk_list(results: list) -> list[dict]:
+def _json_chunk_list(results: list, debug_ids: bool = False) -> list[dict]:
     """Build JSON-safe list of chunk dicts."""
     from siftd.domain.search_types import ScoreBreakdown
 
     out = []
     for r in results:
         chunk: dict[str, Any] = {
-            "chunk_id": r.get("chunk_id"),
             "conversation_id": r.get("conversation_id"),
             "score": round(r.get("score", 0.0), 4),
             "chunk_type": r.get("chunk_type", ""),
             "text": r.get("text", ""),
-            "source_ids": r.get("source_ids", []),
             "conversation": {
                 "started_at": r.get("_started_at"),
                 "workspace": r.get("_workspace"),
             },
         }
+        if debug_ids:
+            chunk["chunk_id"] = r.get("chunk_id")
+            chunk["source_ids"] = r.get("source_ids", [])
 
         breakdown = r.get("breakdown")
         if breakdown and isinstance(breakdown, ScoreBreakdown):

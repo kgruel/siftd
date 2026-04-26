@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Schema v3: `content_blobs.ref_count` integrity** — Column now carries `NOT NULL DEFAULT 1 CHECK (ref_count >= 0)`. `release_content()` clamps via `MAX(ref_count - 1, 0)` and the delete trigger uses `<= 0` consistently. Migration garbage-collects any legacy `ref_count <= 0` rows (nulling dangling `tool_calls.result_hash` references first) before recreating the table with the new constraint; also patches the old delete trigger in-place for existing databases. Schema version bumped to 3.
+- **Hash-collision detection (fail-closed)** — `store_content()` and `migrate_existing_results()` now verify existing blob content before reusing a hash. If two distinct content values produce the same SHA256 digest, a `BlobCollisionError` is raised instead of silently corrupting the stored blob.
+- **`verify_migration` integrity report** — Two new keys: `ref_count_mismatches` (blobs where stored `ref_count` diverges from actual `tool_calls` reference count) and `negative_ref_counts` (pre-migration legacy corruption diagnostic; reports 0 on fully migrated databases).
+
+### Changed
+
+- **`siftd doctor fix` no longer auto-merges duplicate workspaces** — The duplicate-workspace finding is now informational-only. To merge, run `siftd migrate --merge-workspaces` manually.
+- **Search-chunk JSON output omits `chunk_id` and `source_ids` by default** — These are storage-internal identifiers that were leaking through search results. Use `--debug-ids` (CLI) or `?debug_ids=1` (serve) to restore them. Conversation summaries/details are unchanged — `conversation_id` remains visible as the public addressable handle.
+
+### Removed
+
+- **Aider `analytics.jsonl` no longer discovered for ingest** — The file was yielded by discovery but produced zero conversations (parse was a no-op). Removed to eliminate a misleading no-op: the file appears in discovery output but nothing is ingested. Analytics ingestion is deferred until Aider publishes a stable schema for the file.
+
 ## [0.7.0] - 2026-04-24
 
 ### Changed

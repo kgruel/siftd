@@ -2,7 +2,9 @@
 
 import asyncio
 import json
+import sqlite3
 import sys
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import asyncssh
@@ -205,6 +207,20 @@ class _Resp:
     def json(self):
         return self._body
 
+    def iter_bytes(self, *, chunk_size=None):
+        data = self.content
+        if not data:
+            return
+        size = chunk_size or len(data)
+        for i in range(0, len(data), size):
+            yield data[i:i + size]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
 
 class _Client:
     def __init__(self, *, post_resp=None, get_resp=None, post_exc=None, get_exc=None):
@@ -221,16 +237,20 @@ class _Client:
         return False
 
     def post(self, url, *, content, headers):
+        # Consume generator so callers can inspect bytes
+        if hasattr(content, "__iter__") and not isinstance(content, (bytes, bytearray)):
+            content = b"".join(content)
         self.calls.append(("post", url, content, headers))
         if self.post_exc:
             raise self.post_exc
         return self.post_resp
 
-    def get(self, url, *, params, headers):
-        self.calls.append(("get", url, params, headers))
+    @contextmanager
+    def stream(self, method, url, *, params=None, headers=None):
+        self.calls.append((method.lower(), url, params, headers))
         if self.get_exc:
             raise self.get_exc
-        return self.get_resp
+        yield self.get_resp
 
 
 class _Timeout:
@@ -262,7 +282,7 @@ class TestSyncPushBranches:
         result = sync_push(_db(tmp_path), _remote(path=str(tmp_path / "r.db")), dry_run=True)
         assert result.dry_run and result.conversations == 2 and result.size_bytes == 42
 
-    def test_http_branch_updates_last_push(self, tmp_path, monkeypatch):
+    def test_http_branch_updates_last_push(self, tmp_path, monkeypatch, caplog):
         called = []
         monkeypatch.setattr(
             "siftd.api.slice.slice_database",
@@ -271,8 +291,45 @@ class TestSyncPushBranches:
         monkeypatch.setattr("siftd.api.sync._push_http", lambda r, p: True)
         monkeypatch.setattr("siftd.api.sync._preflight_http", lambda *a: None)
         monkeypatch.setattr("siftd.config_sync.update_last_push", lambda n, ts, **kw: called.append((n, ts)))
-        result = sync_push(_db(tmp_path), _remote(path="http://srv"))
+        import logging
+        with caplog.at_level(logging.WARNING, logger="siftd.api.sync"):
+            result = sync_push(_db(tmp_path), _remote(path="http://srv"))
         assert result.remote_existed and result.last_push_updated and called
+        assert any("preflight unavailable" in r.message for r in caplog.records)
+
+    def test_http_preflight_protocol_mismatch_aborts(self, tmp_path, monkeypatch):
+        from siftd.domain.sync import SyncStatus
+        push_called = []
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 10},
+        )
+        monkeypatch.setattr("siftd.api.sync._push_http", lambda r, p: push_called.append(True) or True)
+        monkeypatch.setattr(
+            "siftd.api.sync._preflight_http",
+            lambda *a: SyncStatus(
+                capabilities=frozenset(), protocol_version=SYNC_PROTOCOL_VERSION + 1
+            ),
+        )
+        with pytest.raises(SyncError, match="newer than local"):
+            sync_push(_db(tmp_path), _remote(path="http://srv"))
+        assert not push_called
+
+    def test_http_preflight_no_staged_cap_still_pushes(self, tmp_path, monkeypatch):
+        from siftd.domain.sync import SyncStatus
+        called = []
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 10},
+        )
+        monkeypatch.setattr("siftd.api.sync._push_http", lambda r, p: True)
+        monkeypatch.setattr(
+            "siftd.api.sync._preflight_http",
+            lambda *a: SyncStatus(capabilities=frozenset(), protocol_version=SYNC_PROTOCOL_VERSION),
+        )
+        monkeypatch.setattr("siftd.config_sync.update_last_push", lambda n, ts, **kw: called.append((n, ts)))
+        result = sync_push(_db(tmp_path), _remote(path="http://srv"))
+        assert result.last_push_updated and called
 
     def test_ssh_branch(self, tmp_path, monkeypatch):
         async def _fake_push_ssh(remote, slice_path, *, staged=False):
@@ -406,15 +463,22 @@ class TestPullLocalAndHttp:
         assert got
 
     def test_pull_http_dry_run(self, tmp_path, monkeypatch):
-        resp = _Resp(body={}, content=b"sqlite-bytes", headers={"X-Siftd-Conversations": "2"})
+        # dry_run sends ?dry_run=1 and reads X-Siftd-Estimated-Size from headers
+        resp = _Resp(body={}, content=b"", headers={
+            "X-Siftd-Conversations": "2",
+            "X-Siftd-Estimated-Size": "99",
+        })
         client = _Client(get_resp=resp)
         _patch_httpx_module(monkeypatch, lambda timeout=None: client)
         monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: None)
         monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: (_ for _ in ()).throw(AuthError("no-auth")))
         conv, size = _pull_http(_remote(path="http://srv"), _db(tmp_path), "2024-01", {"workspace": "proj"}, True)
-        assert conv == 2 and size == len(b"sqlite-bytes")
+        assert conv == 2 and size == 99
         _, url, params, _headers = client.calls[0]
-        assert url.endswith("/api/v1/pull") and params == {"since": "2024-01", "workspace": "proj"}
+        assert url.endswith("/api/v1/pull")
+        assert params["dry_run"] == "1"
+        assert params["since"] == "2024-01"
+        assert params["workspace"] == "proj"
 
     def test_pull_http_full_filters(self, tmp_path, monkeypatch):
         resp = _Resp(body={}, content=b"sqlite-bytes", headers={"X-Siftd-Conversations": "1"})
@@ -853,3 +917,92 @@ class TestStagedCursorAdvancement:
         result = sync_push(_db(tmp_path), _remote(path="/r.db", host="box"))
         assert not result.last_push_updated
         assert "sent" not in called
+
+
+_MERGE_EXCS = [
+    pytest.param(sqlite3.OperationalError("database is locked"), id="op-error"),
+    pytest.param(sqlite3.IntegrityError("constraint failed"), id="integrity-error"),
+    pytest.param(ValueError("invalid payload"), id="value-error"),
+    pytest.param(RuntimeError("schema mismatch"), id="runtime-error"),
+    pytest.param(FileNotFoundError("temp gone"), id="file-not-found"),
+    pytest.param(PermissionError("no write"), id="permission-error"),
+]
+
+
+class TestPullMergeErrorWrapping:
+    """H27: _receive_or_sync_error wraps storage exceptions at all pull merge sites."""
+
+    @pytest.mark.parametrize("exc", _MERGE_EXCS)
+    def test_pull_local_wraps(self, tmp_path, monkeypatch, exc):
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 10},
+        )
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, **kw: (_ for _ in ()).throw(exc))
+        with pytest.raises(SyncError) as info:
+            _pull_local(_remote(path=str(_db(tmp_path, "r.db"))), _db(tmp_path, "l.db"), None, {}, False)
+        assert info.value.__cause__ is exc
+
+    def test_pull_local_sync_error_passthrough(self, tmp_path, monkeypatch):
+        orig = SyncError("foo")
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 10},
+        )
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, **kw: (_ for _ in ()).throw(orig))
+        with pytest.raises(SyncError) as info:
+            _pull_local(_remote(path=str(_db(tmp_path, "r.db"))), _db(tmp_path, "l.db"), None, {}, False)
+        assert str(info.value) == "foo"
+        assert info.value.__cause__ is None
+
+    @pytest.mark.parametrize("exc", _MERGE_EXCS)
+    def test_pull_ssh_wraps(self, tmp_path, monkeypatch, exc):
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+        monkeypatch.setattr(
+            "siftd.api.sync.asyncssh.connect",
+            lambda *_a, **_kw: _Conn(SimpleNamespace(returncode=0, stdout=b"abc", stderr='{"conversations":1}')),
+        )
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, **kw: (_ for _ in ()).throw(exc))
+        with pytest.raises(SyncError) as info:
+            asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, {}, False))
+        assert info.value.__cause__ is exc
+
+    def test_pull_ssh_sync_error_passthrough(self, tmp_path, monkeypatch):
+        orig = SyncError("foo")
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+        monkeypatch.setattr(
+            "siftd.api.sync.asyncssh.connect",
+            lambda *_a, **_kw: _Conn(SimpleNamespace(returncode=0, stdout=b"abc", stderr='{"conversations":1}')),
+        )
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, **kw: (_ for _ in ()).throw(orig))
+        with pytest.raises(SyncError) as info:
+            asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, {}, False))
+        assert str(info.value) == "foo"
+        assert info.value.__cause__ is None
+
+    @pytest.mark.parametrize("exc", _MERGE_EXCS)
+    def test_pull_http_wraps(self, tmp_path, monkeypatch, exc):
+        resp = _Resp(body={}, content=b"sqlite-bytes", headers={"X-Siftd-Conversations": "1"})
+        client = _Client(get_resp=resp)
+        _patch_httpx_module(monkeypatch, lambda timeout=None: client)
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: None)
+        monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: (_ for _ in ()).throw(AuthError("no-auth")))
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, **kw: (_ for _ in ()).throw(exc))
+        with pytest.raises(SyncError) as info:
+            _pull_http(_remote(path="http://srv"), _db(tmp_path), None, {}, False)
+        assert info.value.__cause__ is exc
+
+    def test_pull_http_sync_error_passthrough(self, tmp_path, monkeypatch):
+        orig = SyncError("foo")
+        resp = _Resp(body={}, content=b"sqlite-bytes", headers={"X-Siftd-Conversations": "1"})
+        client = _Client(get_resp=resp)
+        _patch_httpx_module(monkeypatch, lambda timeout=None: client)
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: None)
+        monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: (_ for _ in ()).throw(AuthError("no-auth")))
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, **kw: (_ for _ in ()).throw(orig))
+        with pytest.raises(SyncError) as info:
+            _pull_http(_remote(path="http://srv"), _db(tmp_path), None, {}, False)
+        assert str(info.value) == "foo"
+        assert info.value.__cause__ is None

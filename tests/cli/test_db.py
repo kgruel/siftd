@@ -561,3 +561,30 @@ class TestDbErrorPaths:
         rc = main(["db", "vacuum"])
         assert rc == 0
         assert "Saved:" in capsys.readouterr().out
+
+
+class TestPullMergeErrorCli:
+    """H27: merge exceptions are wrapped and reach CLI as Pull failed, not raw tracebacks."""
+
+    def test_merge_failure_shows_pull_failed_no_raw_exception(self, test_db, tmp_path, monkeypatch, capsys):
+        from siftd.storage.sqlite import open_database
+
+        remote_db = tmp_path / "remote.db"
+        open_database(remote_db).close()
+
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: _remote_cfg(path=str(remote_db)))
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 10},
+        )
+        monkeypatch.setattr(
+            "siftd.api.receive.receive_database",
+            lambda s, d, **kw: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")),
+        )
+
+        rc = main(["--db", str(test_db), "db", "pull", "r"])
+        out = capsys.readouterr()
+        assert rc == 1
+        assert "Pull failed:" in out.err
+        assert "sqlite3" not in out.err
+        assert "sqlite3" not in out.out

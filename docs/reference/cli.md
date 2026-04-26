@@ -457,13 +457,14 @@ exit codes:
 usage: siftd search [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                     [-l NAME] [--all-tags NAME] [--no-tag NAME] [--owner USER]
                     [-n LIMIT] [-v] [--full] [--context N] [--thread]
-                    [--by-time] [--json] [--format NAME] [--conversations]
-                    [--first] [--refs [FILES]] [--fts] [--semantic]
-                    [--embeddings-only] [--recall N] [--threshold SCORE]
-                    [--no-diversity] [--lambda FLOAT] [--recency]
-                    [--recency-half-life DAYS] [--recency-max-boost MULT]
-                    [--no-exclude-active] [--include-derivative] [--index]
-                    [--rebuild] [--backend NAME] [--embed-db PATH]
+                    [--by-time] [--json] [--debug-ids] [--format NAME]
+                    [--conversations] [--first] [--refs [FILES]] [--fts]
+                    [--semantic] [--embeddings-only] [--recall N]
+                    [--threshold SCORE] [--raw-fts] [--no-diversity]
+                    [--lambda FLOAT] [--recency] [--recency-half-life DAYS]
+                    [--recency-max-boost MULT] [--no-exclude-active]
+                    [--include-derivative] [--index] [--rebuild]
+                    [--backend NAME] [--embed-db PATH]
                     [query ...]
 
 positional arguments:
@@ -496,6 +497,8 @@ output:
                         shortlist
   --by-time             Sort results by time instead of score
   --json                Output as structured JSON
+  --debug-ids           Include internal chunk_id and source_ids in JSON
+                        output (default: omitted)
   --format NAME         Use named formatter (built-in or drop-in plugin)
 
 result modes:
@@ -513,6 +516,8 @@ search tuning:
   --embeddings-only     Skip FTS5 recall, use pure embeddings
   --recall N            FTS5 conversation recall limit (default: 80)
   --threshold SCORE     Filter results below this score (e.g., 0.7)
+  --raw-fts             Pass query directly to FTS5 without tokenization
+                        (advanced: skips OR fallback)
 
 diversity:
   --no-diversity        Disable MMR reranking for deterministic pure relevance

@@ -12,6 +12,14 @@ from siftd.adapters.sdk import AdapterParseError
 from siftd.domain.source import Source
 
 
+@pytest.fixture(autouse=True)
+def clear_hash_cache():
+    """Ensure the workspace-hash LRU cache starts clean for each test."""
+    gemini_cli._resolve_workspace_from_hash.cache_clear()
+    yield
+    gemini_cli._resolve_workspace_from_hash.cache_clear()
+
+
 class TestGeminiCliAdapter:
 
     def test_can_handle(self):
@@ -118,3 +126,56 @@ class TestGeminiCliParseEdgeCases:
 
         monkeypatch.setattr(gemini_cli.Path, "iterdir", fake_iterdir)
         assert gemini_cli._resolve_workspace_from_hash("does-not-exist") is None
+
+
+class TestGeminiHashMemoization:
+    """_resolve_workspace_from_hash is memoized for the duration of one process."""
+
+    def test_walk_called_once_per_hash(self, tmp_path, monkeypatch):
+        """Repeated calls with the same hash trigger only one directory walk."""
+        call_count = {"n": 0}
+
+        def counting_iterdir(path_self):
+            call_count["n"] += 1
+            return iter([])
+
+        monkeypatch.setattr(gemini_cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(gemini_cli.Path, "iterdir", counting_iterdir)
+
+        gemini_cli._resolve_workspace_from_hash("deadbeef")
+        after_first = call_count["n"]
+        assert after_first > 0  # walk happened
+
+        gemini_cli._resolve_workspace_from_hash("deadbeef")
+        assert call_count["n"] == after_first  # no additional walk; result came from cache
+
+    def test_different_hashes_each_walk(self, tmp_path, monkeypatch):
+        """Each distinct hash triggers its own walk."""
+        call_count = {"n": 0}
+
+        def counting_iterdir(path_self):
+            call_count["n"] += 1
+            return iter([])
+
+        monkeypatch.setattr(gemini_cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(gemini_cli.Path, "iterdir", counting_iterdir)
+
+        gemini_cli._resolve_workspace_from_hash("hash-a")
+        after_first = call_count["n"]
+        gemini_cli._resolve_workspace_from_hash("hash-b")
+        assert call_count["n"] > after_first  # second hash caused a fresh walk
+
+    def test_cache_cleared_between_tests(self, tmp_path, monkeypatch):
+        """autouse clear_hash_cache fixture ensures no stale state leaks across tests."""
+        call_count = {"n": 0}
+
+        def counting_iterdir(path_self):
+            call_count["n"] += 1
+            return iter([])
+
+        monkeypatch.setattr(gemini_cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(gemini_cli.Path, "iterdir", counting_iterdir)
+
+        # If the cache were polluted from a prior test, iterdir would not be called at all.
+        gemini_cli._resolve_workspace_from_hash("deadbeef")
+        assert call_count["n"] > 0  # fresh cache → walk occurred

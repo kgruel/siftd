@@ -22,7 +22,7 @@ class PendingTag:
     exchange_index: int | None  # None for conversation, 0-based for exchange
 
 
-def ensure_session_tables(conn: sqlite3.Connection) -> None:
+def ensure_session_tables(conn: sqlite3.Connection, *, commit: bool = False) -> None:
     """Create active_sessions and pending_tags tables. Idempotent."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS active_sessions (
@@ -59,10 +59,11 @@ def ensure_session_tables(conn: sqlite3.Connection) -> None:
         ON pending_tags(harness_session_id)
     """)
 
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
-def ensure_prompt_tags_table(conn: sqlite3.Connection) -> None:
+def ensure_prompt_tags_table(conn: sqlite3.Connection, *, commit: bool = False) -> None:
     """Create prompt_tags table for exchange-level tagging. Idempotent."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS prompt_tags (
@@ -74,7 +75,8 @@ def ensure_prompt_tags_table(conn: sqlite3.Connection) -> None:
         )
     """)
 
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def register_session(

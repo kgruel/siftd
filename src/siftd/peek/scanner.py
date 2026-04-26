@@ -107,9 +107,13 @@ def _discover_files(
                 if not base.exists():
                     continue
 
+                base_resolved = base.resolve()
                 for pattern in glob_patterns:
                     for session_file in base.glob(pattern):
                         try:
+                            if not session_file.resolve(strict=False).is_relative_to(base_resolved):
+                                continue
+
                             stat = session_file.stat()
                             age = now - stat.st_mtime
 

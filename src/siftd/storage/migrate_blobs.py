@@ -18,7 +18,7 @@ import sqlite3
 from collections.abc import Callable
 from datetime import datetime
 
-from siftd.storage.blobs import compute_content_hash
+from siftd.storage.blobs import BlobCollisionError, compute_content_hash
 
 
 def count_pending_migrations(conn: sqlite3.Connection) -> dict:
@@ -74,10 +74,11 @@ def migrate_existing_results(
 ) -> dict:
     """Migrate existing tool_calls.result to content_blobs.
 
-    Blobs are inserted with ref_count=0 and ON CONFLICT DO NOTHING.
-    The AFTER UPDATE trigger on tool_calls.result_hash handles ref_count
-    bookkeeping, ensuring exactly-once increment even under concurrent
-    execution.
+    Blobs are inserted with ref_count=0. The AFTER UPDATE trigger on
+    tool_calls.result_hash handles ref_count bookkeeping, ensuring
+    exactly-once increment even under concurrent execution.
+
+    Raises BlobCollisionError if two distinct content values share a hash.
 
     Args:
         conn: Database connection
@@ -110,10 +111,6 @@ def migrate_existing_results(
     if total == 0:
         return stats
 
-    # Track which hashes existed before migration
-    cur = conn.execute("SELECT hash FROM content_blobs")
-    existing_hashes = {row[0] for row in cur.fetchall()}
-
     now = datetime.now().isoformat()
 
     while True:
@@ -136,22 +133,24 @@ def migrate_existing_results(
 
             result_hash = compute_content_hash(result)
 
-            # Insert blob with ref_count=0; trigger handles increment.
-            # ON CONFLICT DO NOTHING — blob may already exist from a
-            # prior batch or concurrent migrator.
-            conn.execute(
-                "INSERT INTO content_blobs (hash, content, ref_count, created_at) "
-                "VALUES (?, ?, 0, ?) "
-                "ON CONFLICT(hash) DO NOTHING",
-                (result_hash, result, now),
-            )
-
-            # Track new vs reused blobs
-            if result_hash not in existing_hashes:
-                stats["blobs_created"] += 1
-                existing_hashes.add(result_hash)
-            else:
+            # Verify content matches if blob already exists, then insert or reuse.
+            existing_row = conn.execute(
+                "SELECT content FROM content_blobs WHERE hash = ?",
+                (result_hash,),
+            ).fetchone()
+            if existing_row is not None:
+                if existing_row[0] != result:
+                    raise BlobCollisionError(
+                        f"SHA256 collision during migration: hash {result_hash!r} exists with different content"
+                    )
                 stats["blobs_reused"] += 1
+            else:
+                conn.execute(
+                    "INSERT INTO content_blobs (hash, content, ref_count, created_at) "
+                    "VALUES (?, ?, 0, ?)",
+                    (result_hash, result, now),
+                )
+                stats["blobs_created"] += 1
 
             # Update tool_call — the AFTER UPDATE trigger on result_hash
             # increments the blob's ref_count exactly once.
@@ -183,7 +182,9 @@ def verify_migration(conn: sqlite3.Connection) -> dict:
         dict with:
             - pending: number of rows still needing migration
             - migrated: number of rows using blob storage
-            - orphaned_blobs: blobs with ref_count=0 (should be 0)
+            - orphaned_blobs: blobs with ref_count=0 and no tool_call references
+            - ref_count_mismatches: blobs where stored ref_count != actual tool_call reference count
+            - negative_ref_counts: blobs with ref_count < 0 (legacy corruption; 0 after migration)
     """
     cur = conn.execute("""
         SELECT
@@ -196,8 +197,24 @@ def verify_migration(conn: sqlite3.Connection) -> dict:
     cur = conn.execute("SELECT COUNT(*) FROM content_blobs WHERE ref_count = 0")
     orphaned = cur.fetchone()[0]
 
+    cur = conn.execute("""
+        SELECT COUNT(*) FROM (
+            SELECT cb.hash
+            FROM content_blobs cb
+            LEFT JOIN tool_calls tc ON tc.result_hash = cb.hash
+            GROUP BY cb.hash
+            HAVING cb.ref_count != COUNT(tc.result_hash)
+        )
+    """)
+    ref_count_mismatches = cur.fetchone()[0]
+
+    cur = conn.execute("SELECT COUNT(*) FROM content_blobs WHERE ref_count < 0")
+    negative_ref_counts = cur.fetchone()[0]
+
     return {
         "pending": row[0] or 0,
         "migrated": row[1] or 0,
         "orphaned_blobs": orphaned,
+        "ref_count_mismatches": ref_count_mismatches,
+        "negative_ref_counts": negative_ref_counts,
     }

@@ -59,7 +59,7 @@ def _chunks_from_rows(rows) -> list[Any]:
 
 
 def _rows_from_chunks(chunks: list[Any]) -> list[dict]:
-    return [c.to_render_dict() for c in chunks]
+    return [c.to_render_dict(debug_ids=True) for c in chunks]
 
 
 def _fetch_search_metadata(conn, results):
@@ -251,6 +251,8 @@ def cmd_search(args) -> int:
             "backend": args.backend,
             # Serve-only: route uses embeddings_only instead of mode
             "embeddings_only": search_mode == "semantic",
+            "raw_fts": getattr(args, "raw_fts", False),
+            "debug_ids": getattr(args, "debug_ids", False),
         },
         render_method="search",
         fidelity=fidelity,
@@ -367,7 +369,7 @@ def cmd_search(args) -> int:
             results = _rows_from_chunks(sort_chunks_by_time(results))
 
         # Mode-specific data processing
-        ctx_kwargs: dict = {"query": query, "mode": mode}
+        ctx_kwargs: dict = {"query": query, "mode": mode, "debug_ids": getattr(args, "debug_ids", False)}
 
         if mode == "conversations":
             render_results = _aggregate_conversations(results, limit=getattr(args, "limit", 10))
@@ -477,6 +479,8 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             "exclude_active": not args.no_exclude_active,
             "include_derivative": args.include_derivative,
             "embeddings_only": False,
+            "raw_fts": getattr(args, "raw_fts", False),
+            "debug_ids": getattr(args, "debug_ids", False),
         },
         render_method="search",
         fidelity=fidelity_from_args(args),
@@ -537,7 +541,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         is_tty=sys.stdout.isatty(),
     )
 
-    output = fmt.render_search(results, fidelity, query=query, mode="chunks")
+    output = fmt.render_search(results, fidelity, query=query, mode="chunks", debug_ids=getattr(args, "debug_ids", False))
     if isinstance(output, dict):
         # Preserve FTS5-specific fields for JSON
         if unsupported_flags:
@@ -661,6 +665,7 @@ examples:
     output_group.add_argument("--thread", action="store_true", help="Narrative thread: top conversations expanded, rest as shortlist")
     output_group.add_argument("--by-time", action="store_true", help="Sort results by time instead of score")
     output_group.add_argument("--json", action="store_true", help="Output as structured JSON")
+    output_group.add_argument("--debug-ids", action="store_true", dest="debug_ids", help="Include internal chunk_id and source_ids in JSON output (default: omitted)")
     output_group.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
 
     # Result modes
@@ -679,6 +684,7 @@ examples:
     tuning_group.add_argument("--embeddings-only", action="store_true", help="Skip FTS5 recall, use pure embeddings")
     tuning_group.add_argument("--recall", type=int, default=80, metavar="N", help="FTS5 conversation recall limit (default: 80)")
     tuning_group.add_argument("--threshold", type=float, metavar="SCORE", help="Filter results below this score (e.g., 0.7)")
+    tuning_group.add_argument("--raw-fts", action="store_true", help="Pass query directly to FTS5 without tokenization (advanced: skips OR fallback)")
 
     # Diversity (MMR reranking)
     diversity_group = p_search.add_argument_group("diversity")
