@@ -198,6 +198,32 @@ class TestRunChecks:
         with pytest.raises(FileNotFoundError):
             run_checks(checks=["ingest-pending"], db_path=nonexistent)
 
+    def test_callback_exception_does_not_abort_run(self, test_db, caplog):
+        """A failing on_check_done callback doesn't abort the doctor run."""
+        import logging
+
+        calls = []
+
+        def bad_callback(name, results):
+            calls.append(name)
+            raise RuntimeError("renderer crashed")
+
+        with caplog.at_level(logging.WARNING, logger="siftd.doctor.runner"):
+            findings = run_checks(
+                checks=["drop-ins-valid", "config-valid"],
+                db_path=test_db,
+                on_check_done=bad_callback,
+            )
+
+        assert isinstance(findings, list)
+        assert len(calls) == 2
+        assert any("on_check_done" in r.message for r in caplog.records)
+
+    def test_callback_none_does_not_raise(self, test_db):
+        """on_check_done=None runs without error."""
+        findings = run_checks(checks=["drop-ins-valid"], db_path=test_db, on_check_done=None)
+        assert isinstance(findings, list)
+
 
 class TestIngestPendingCheck:
     """Tests for the ingest-pending check."""
@@ -1069,7 +1095,7 @@ class TestWorkspaceIdentityCheck:
         assert findings[0].fix_command == "siftd backfill git-remote"
 
     def test_duplicates(self, check_context, monkeypatch):
-        """Reports warning finding for duplicate workspace groups."""
+        """Reports manual-only warning for duplicate workspace groups."""
         monkeypatch.setattr(
             "siftd.storage.migrate_workspaces.verify_workspace_identity",
             lambda conn: {
@@ -1085,7 +1111,8 @@ class TestWorkspaceIdentityCheck:
         assert len(findings) == 1
         assert findings[0].severity == "warning"
         assert "2 workspace group" in findings[0].message
-        assert findings[0].fix_command == "siftd migrate merge-workspaces"
+        assert findings[0].fix_available is False
+        assert "siftd migrate --merge-workspaces" in findings[0].message
 
     def test_finding_structure(self):
         """Check has correct attributes."""

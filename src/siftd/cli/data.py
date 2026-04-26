@@ -782,13 +782,6 @@ def _fix_backfill_git_remote(conn, db_path):
     return f"{result['updated']} workspace(s) updated"
 
 
-def _fix_merge_workspaces(conn, db_path):
-    from siftd.api.migrations import merge_duplicate_workspaces
-
-    result = merge_duplicate_workspaces(conn)
-    return f"{result['workspaces_merged']} workspace(s) merged"
-
-
 def _fix_pending_tags(conn, db_path):
     from siftd.api.sessions import cleanup_stale_sessions
 
@@ -803,7 +796,6 @@ _FIX_REGISTRY = {
     "siftd search --rebuild": ("Rebuilding embeddings index", _fix_search_rebuild),
     "siftd migrate blobs": ("Migrating tool results to blobs", _fix_migrate_blobs),
     "siftd backfill git-remote": ("Backfilling git remote URLs", _fix_backfill_git_remote),
-    "siftd migrate merge-workspaces": ("Merging duplicate workspaces", _fix_merge_workspaces),
     "siftd doctor fix --pending-tags": ("Cleaning up stale sessions", _fix_pending_tags),
 }
 
