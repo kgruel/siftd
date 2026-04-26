@@ -2,11 +2,13 @@
 
 import argparse
 import sys
+import types
 from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from siftd.cli.serve import build_serve_parser, cmd_serve
+from siftd.serve import require_serve
 
 
 class TestBuildServeParser:
@@ -123,3 +125,33 @@ class TestCmdServe:
         # State file should be cleaned up in finally block
         state_dir = tmp_path / "state"
         assert not (state_dir / "serve.json").exists()
+
+    def test_uvicorn_missing_returns_1(self, monkeypatch, capsys):
+        """When uvicorn is absent, cmd_serve prints an install hint and returns 1."""
+        monkeypatch.setitem(sys.modules, "litestar", types.ModuleType("litestar"))
+        monkeypatch.setitem(sys.modules, "uvicorn", None)
+
+        args = SimpleNamespace(no_auth=True, host=None, port=None, db=None)
+        rc = cmd_serve(args)
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "serve" in err.lower()
+        assert "ModuleNotFoundError" not in err
+
+
+class TestRequireServe:
+    def test_litestar_missing_raises(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "litestar", None)
+        with pytest.raises(ImportError, match=r"\[serve\]"):
+            require_serve()
+
+    def test_uvicorn_missing_raises(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "litestar", types.ModuleType("litestar"))
+        monkeypatch.setitem(sys.modules, "uvicorn", None)
+        with pytest.raises(ImportError, match=r"\[serve\]"):
+            require_serve()
+
+    def test_both_present_returns_none(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "litestar", types.ModuleType("litestar"))
+        monkeypatch.setitem(sys.modules, "uvicorn", types.ModuleType("uvicorn"))
+        assert require_serve() is None

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 def require_serve(feature: str = "siftd[serve]") -> None:
     """Raise if serve dependencies are not installed."""
-    try:
-        import litestar  # noqa: F401
-    except ImportError:
-        raise ImportError(
-            f"{feature} requires the [serve] extra."
-        ) from None
+    for dep in ("litestar", "uvicorn"):
+        try:
+            __import__(dep)
+        except ImportError:
+            raise ImportError(
+                f"{feature} requires the [serve] extra."
+            ) from None
