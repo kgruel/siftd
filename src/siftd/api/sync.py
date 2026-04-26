@@ -38,6 +38,8 @@ from siftd.safecall import parse_json
 
 logger = logging.getLogger(__name__)
 
+SYNC_HTTP_CHUNK_SIZE = 1024 * 1024  # 1 MiB
+
 
 class SyncError(Exception):
     """Raised when a sync operation fails."""
@@ -577,7 +579,15 @@ def _push_http(remote: SyncRemote, slice_path: Path) -> bool:
         pass  # --no-auth server
 
     url = remote.path.rstrip("/") + "/api/v1/push"
-    data = slice_path.read_bytes()
+    file_size = slice_path.stat().st_size
+
+    def _body_iter():
+        with slice_path.open("rb") as f:
+            while True:
+                chunk = f.read(SYNC_HTTP_CHUNK_SIZE)
+                if not chunk:
+                    break
+                yield chunk
 
     from siftd.config_sync import get_sync_timeouts
 
@@ -593,8 +603,12 @@ def _push_http(remote: SyncRemote, slice_path: Path) -> bool:
             ),
         ) as client:
             resp = client.post(
-                url, content=data,
-                headers={**headers, "Content-Type": "application/octet-stream"},
+                url, content=_body_iter(),
+                headers={
+                    **headers,
+                    "Content-Type": "application/octet-stream",
+                    "Content-Length": str(file_size),
+                },
             )
             resp.raise_for_status()
     except httpx.HTTPStatusError as e:
@@ -887,6 +901,8 @@ def _pull_http(
 
     url = remote.path.rstrip("/") + "/api/v1/pull"
     params: dict[str, Any] = {}
+    if dry_run:
+        params["dry_run"] = "1"
     if since is not None:
         params["since"] = since
     workspace = filters.get("workspace")
@@ -915,34 +931,36 @@ def _pull_http(
                 pool=connect_timeout,
             ),
         ) as client:
-            resp = client.get(url, params=params, headers=headers)
-            resp.raise_for_status()
+            with client.stream("GET", url, params=params, headers=headers) as resp:
+                resp.raise_for_status()
+                conversations = int(resp.headers.get("X-Siftd-Conversations", 0))
+                if conversations == 0:
+                    return 0, 0
+
+                if dry_run:
+                    estimated_size = int(resp.headers.get("X-Siftd-Estimated-Size", 0))
+                    return conversations, estimated_size
+
+                tmp_path: Path | None = None
+                try:
+                    with tempfile.NamedTemporaryFile(
+                        prefix="siftd-pull-http-", suffix=".db", delete=False,
+                    ) as tmp:
+                        tmp_path = Path(tmp.name)
+                        size_bytes = 0
+                        for chunk in resp.iter_bytes(chunk_size=SYNC_HTTP_CHUNK_SIZE):
+                            tmp.write(chunk)
+                            size_bytes += len(chunk)
+
+                    _receive_or_sync_error(tmp_path, local_db)
+                    return conversations, size_bytes
+                finally:
+                    if tmp_path and tmp_path.exists():
+                        tmp_path.unlink()
     except httpx.HTTPStatusError as e:
         raise SyncError(f"Pull from {remote.path} failed: HTTP {e.response.status_code}") from e
     except httpx.ConnectError as e:
         raise SyncError(f"Cannot connect to {remote.path}: {e}") from e
-
-    conversations = int(resp.headers.get("X-Siftd-Conversations", 0))
-    if conversations == 0:
-        return 0, 0
-
-    size_bytes = len(resp.content)
-
-    if dry_run:
-        return conversations, size_bytes
-
-    with tempfile.NamedTemporaryFile(
-        prefix="siftd-pull-http-", suffix=".db", delete=False,
-    ) as tmp:
-        tmp_path = Path(tmp.name)
-
-    try:
-        tmp_path.write_bytes(resp.content)
-        _receive_or_sync_error(tmp_path, local_db)
-        return conversations, size_bytes
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
 
 
 def _parse_send_metadata(stderr_text: str) -> dict:

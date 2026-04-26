@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 import sys
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import asyncssh
@@ -206,6 +207,20 @@ class _Resp:
     def json(self):
         return self._body
 
+    def iter_bytes(self, *, chunk_size=None):
+        data = self.content
+        if not data:
+            return
+        size = chunk_size or len(data)
+        for i in range(0, len(data), size):
+            yield data[i:i + size]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
 
 class _Client:
     def __init__(self, *, post_resp=None, get_resp=None, post_exc=None, get_exc=None):
@@ -222,16 +237,20 @@ class _Client:
         return False
 
     def post(self, url, *, content, headers):
+        # Consume generator so callers can inspect bytes
+        if hasattr(content, "__iter__") and not isinstance(content, (bytes, bytearray)):
+            content = b"".join(content)
         self.calls.append(("post", url, content, headers))
         if self.post_exc:
             raise self.post_exc
         return self.post_resp
 
-    def get(self, url, *, params, headers):
-        self.calls.append(("get", url, params, headers))
+    @contextmanager
+    def stream(self, method, url, *, params=None, headers=None):
+        self.calls.append((method.lower(), url, params, headers))
         if self.get_exc:
             raise self.get_exc
-        return self.get_resp
+        yield self.get_resp
 
 
 class _Timeout:
@@ -444,15 +463,22 @@ class TestPullLocalAndHttp:
         assert got
 
     def test_pull_http_dry_run(self, tmp_path, monkeypatch):
-        resp = _Resp(body={}, content=b"sqlite-bytes", headers={"X-Siftd-Conversations": "2"})
+        # dry_run sends ?dry_run=1 and reads X-Siftd-Estimated-Size from headers
+        resp = _Resp(body={}, content=b"", headers={
+            "X-Siftd-Conversations": "2",
+            "X-Siftd-Estimated-Size": "99",
+        })
         client = _Client(get_resp=resp)
         _patch_httpx_module(monkeypatch, lambda timeout=None: client)
         monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: None)
         monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: (_ for _ in ()).throw(AuthError("no-auth")))
         conv, size = _pull_http(_remote(path="http://srv"), _db(tmp_path), "2024-01", {"workspace": "proj"}, True)
-        assert conv == 2 and size == len(b"sqlite-bytes")
+        assert conv == 2 and size == 99
         _, url, params, _headers = client.calls[0]
-        assert url.endswith("/api/v1/pull") and params == {"since": "2024-01", "workspace": "proj"}
+        assert url.endswith("/api/v1/pull")
+        assert params["dry_run"] == "1"
+        assert params["since"] == "2024-01"
+        assert params["workspace"] == "proj"
 
     def test_pull_http_full_filters(self, tmp_path, monkeypatch):
         resp = _Resp(body={}, content=b"sqlite-bytes", headers={"X-Siftd-Conversations": "1"})
