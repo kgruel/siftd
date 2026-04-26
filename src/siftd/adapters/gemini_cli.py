@@ -4,6 +4,7 @@ Pure parser: reads session JSON files and yields Conversation domain objects.
 No storage coupling.
 """
 
+import functools
 import hashlib
 import json
 from collections.abc import Iterable, Iterator
@@ -263,6 +264,7 @@ def _load_json_strict(path: Path) -> dict:
     return data
 
 
+@functools.cache
 def _resolve_workspace_from_hash(project_hash: str) -> str | None:
     """Try to resolve workspace path from project hash.
 

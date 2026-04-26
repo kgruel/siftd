@@ -4,9 +4,9 @@ Pure parser: reads .aider.chat.history.md files and yields Conversation
 domain objects. Each session (delimited by ``# aider chat started at``)
 becomes a separate Conversation.
 
-Discovery is opt-in via ``--path``. DEFAULT_LOCATIONS only covers
-``~/.aider`` (analytics JSONL). Chat history files are scattered across
-project directories; the user supplies scan roots explicitly.
+Discovery is opt-in via ``--path``. DEFAULT_LOCATIONS covers ``~/.aider``.
+Chat history files are scattered across project directories; the user
+supplies scan roots explicitly.
 """
 
 import hashlib
@@ -58,15 +58,7 @@ def discover(locations=None) -> Iterable[Source]:
         base = Path(location).expanduser()
         if not base.exists():
             continue
-        # Check for analytics.jsonl
-        analytics = base / "analytics.jsonl"
-        if analytics.is_file():
-            yield Source(
-                kind="file",
-                location=analytics,
-                metadata={"aider_type": "analytics"},
-            )
-        # Also glob for any chat history files placed directly in ~/.aider
+        # analytics.jsonl skipped — ingestion deferred until schema is documented upstream
         for md_file in base.glob("**/.aider.chat.history.md"):
             yield Source(kind="file", location=md_file)
 
@@ -75,22 +67,7 @@ def can_handle(source: Source) -> bool:
     """Return True if this adapter can parse the given source."""
     if source.kind != "file":
         return False
-    path = Path(source.location)
-    # Aider chat history files have a specific name pattern
-    if path.name == ".aider.chat.history.md":
-        return True
-    # Analytics JSONL must be under aider's default locations or have "aider" in path
-    if path.name == "analytics.jsonl":
-        path_str = str(path).lower()
-        # Check actual location
-        for loc in DEFAULT_LOCATIONS:
-            loc_expanded = str(Path(loc).expanduser())
-            if loc_expanded in path_str:
-                return True
-        # Also accept if "aider" appears in the path (for tests)
-        if "aider" in path_str:
-            return True
-    return False
+    return Path(source.location).name == ".aider.chat.history.md"
 
 
 def parse(source: Source) -> Iterable[Conversation]:
@@ -99,7 +76,6 @@ def parse(source: Source) -> Iterable[Conversation]:
 
     if path.name == ".aider.chat.history.md":
         yield from _parse_chat_history(path)
-    # Analytics JSONL support deferred — parse chat history only for now
 
 
 def _parse_chat_history(path: Path) -> Iterable[Conversation]:
