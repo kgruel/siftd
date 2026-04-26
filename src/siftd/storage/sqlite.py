@@ -24,7 +24,7 @@ from siftd.storage.sessions import ensure_prompt_tags_table, ensure_session_tabl
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Registry of versioned migrations: version -> migration function.
 # Each function migrates the DB from version-1 to version.
@@ -1013,6 +1013,93 @@ def _migrate_cascade_v2(conn: sqlite3.Connection) -> None:
 MIGRATIONS[2] = _migrate_cascade_v2
 
 
+def _migrate_blob_integrity_v3(conn: sqlite3.Connection) -> None:
+    """Version-3 migration: add ref_count NOT NULL CHECK(ref_count >= 0) to content_blobs.
+
+    Garbage-collects rows with ref_count <= 0 before recreating the table, since
+    SQLite requires table recreation to add CHECK constraints and existing violating
+    rows would prevent insertion under the new schema.
+
+    Also fixes the delete trigger from `ref_count = 0` to `ref_count <= 0` for
+    existing databases that have the old trigger from before this migration.
+    """
+    # Check whether content_blobs exists and already has the CHECK constraint
+    # (fresh DBs created from the updated schema.sql have it already).
+    ddl_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='content_blobs'"
+    ).fetchone()
+    if ddl_row is None:
+        return
+
+    needs_recreate = "CHECK" not in (ddl_row[0] or "")
+
+    if needs_recreate:
+        # PRAGMA foreign_keys must be set before any DML to avoid Python's
+        # sqlite3 implicit-BEGIN making it a no-op.  All cleanup (UPDATE/DELETE)
+        # and table recreation happen inside one SAVEPOINT with FK off.
+        conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            conn.execute("SAVEPOINT blob_integrity_v3")
+            try:
+                # Null out result_hash refs to blobs we're about to delete,
+                # then remove the garbage rows before adding the CHECK constraint.
+                conn.execute("""
+                    UPDATE tool_calls SET result_hash = NULL
+                    WHERE result_hash IN (SELECT hash FROM content_blobs WHERE ref_count <= 0)
+                """)
+                conn.execute("DELETE FROM content_blobs WHERE ref_count <= 0")
+                conn.execute("""
+                    CREATE TABLE content_blobs_new (
+                        hash TEXT PRIMARY KEY,
+                        content TEXT NOT NULL,
+                        ref_count INTEGER NOT NULL DEFAULT 1 CHECK (ref_count >= 0),
+                        created_at TEXT NOT NULL
+                    )
+                """)
+                conn.execute("""
+                    INSERT INTO content_blobs_new (hash, content, ref_count, created_at)
+                    SELECT hash, content, ref_count, created_at FROM content_blobs
+                """)
+                conn.execute("DROP TABLE content_blobs")
+                conn.execute("ALTER TABLE content_blobs_new RENAME TO content_blobs")
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_content_blobs_ref_count ON content_blobs(ref_count)"
+                )
+                conn.execute("RELEASE SAVEPOINT blob_integrity_v3")
+            except Exception:
+                conn.execute("ROLLBACK TO SAVEPOINT blob_integrity_v3")
+                conn.execute("RELEASE SAVEPOINT blob_integrity_v3")
+                raise
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
+
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"FK violations after blob integrity migration: {list(violations[:5])}"
+            )
+
+    # Fix the delete trigger if it still uses `ref_count = 0` (pre-v3 version).
+    trigger_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='tr_tool_calls_delete_release_blob'"
+    ).fetchone()
+    if trigger_row and "ref_count = 0" in (trigger_row[0] or "") and "ref_count <= 0" not in (trigger_row[0] or ""):
+        conn.execute("DROP TRIGGER tr_tool_calls_delete_release_blob")
+        conn.execute("""
+            CREATE TRIGGER tr_tool_calls_delete_release_blob
+            AFTER DELETE ON tool_calls
+            FOR EACH ROW
+            WHEN OLD.result_hash IS NOT NULL
+            BEGIN
+                UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
+                DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
+            END
+        """)
+
+
+MIGRATIONS[3] = _migrate_blob_integrity_v3
+
+
 # Known model prices (input_per_mtok, output_per_mtok) in USD per million tokens.
 # Prices are seeded at DB open time when the matching model+provider already exist.
 # Sourced from published API pricing pages.
@@ -1073,12 +1160,14 @@ def ensure_tool_call_tags_table(conn: sqlite3.Connection) -> None:
 
 def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
     """Create content_blobs table and result_hash column if they don't exist. Idempotent."""
-    # Create content_blobs table
+    # Create content_blobs table (with NOT NULL + CHECK added in schema v3).
+    # CREATE TABLE IF NOT EXISTS won't apply new constraints to existing tables;
+    # the v3 migration (_migrate_blob_integrity_v3) handles that for existing DBs.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS content_blobs (
             hash TEXT PRIMARY KEY,
             content TEXT NOT NULL,
-            ref_count INTEGER DEFAULT 1,
+            ref_count INTEGER NOT NULL DEFAULT 1 CHECK (ref_count >= 0),
             created_at TEXT NOT NULL
         )
     """)
@@ -1095,7 +1184,6 @@ def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
         )
 
     # Create trigger for ref_count cleanup on delete
-    # Check if trigger already exists
     cur = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='tr_tool_calls_delete_release_blob'"
     )
@@ -1106,8 +1194,8 @@ def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
             FOR EACH ROW
             WHEN OLD.result_hash IS NOT NULL
             BEGIN
-                UPDATE content_blobs SET ref_count = ref_count - 1 WHERE hash = OLD.result_hash;
-                DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count = 0;
+                UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
+                DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
             END
         """)
 

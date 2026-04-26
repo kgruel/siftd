@@ -291,7 +291,7 @@ CREATE INDEX idx_response_attributes_key ON response_attributes(key, response_id
 CREATE TABLE content_blobs (
     hash TEXT PRIMARY KEY,              -- SHA256 of content (natural key)
     content TEXT NOT NULL,
-    ref_count INTEGER DEFAULT 1,
+    ref_count INTEGER NOT NULL DEFAULT 1 CHECK (ref_count >= 0),
     created_at TEXT NOT NULL            -- ISO timestamp
 );
 
@@ -303,8 +303,8 @@ AFTER DELETE ON tool_calls
 FOR EACH ROW
 WHEN OLD.result_hash IS NOT NULL
 BEGIN
-    UPDATE content_blobs SET ref_count = ref_count - 1 WHERE hash = OLD.result_hash;
-    DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count = 0;
+    UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
+    DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
 END;
 
 -- Trigger to adjust ref_count when result_hash changes (e.g. blob migration)
