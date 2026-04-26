@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sqlite3
 import sys
 from types import SimpleNamespace
 
@@ -890,3 +891,92 @@ class TestStagedCursorAdvancement:
         result = sync_push(_db(tmp_path), _remote(path="/r.db", host="box"))
         assert not result.last_push_updated
         assert "sent" not in called
+
+
+_MERGE_EXCS = [
+    pytest.param(sqlite3.OperationalError("database is locked"), id="op-error"),
+    pytest.param(sqlite3.IntegrityError("constraint failed"), id="integrity-error"),
+    pytest.param(ValueError("invalid payload"), id="value-error"),
+    pytest.param(RuntimeError("schema mismatch"), id="runtime-error"),
+    pytest.param(FileNotFoundError("temp gone"), id="file-not-found"),
+    pytest.param(PermissionError("no write"), id="permission-error"),
+]
+
+
+class TestPullMergeErrorWrapping:
+    """H27: _receive_or_sync_error wraps storage exceptions at all pull merge sites."""
+
+    @pytest.mark.parametrize("exc", _MERGE_EXCS)
+    def test_pull_local_wraps(self, tmp_path, monkeypatch, exc):
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 10},
+        )
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, **kw: (_ for _ in ()).throw(exc))
+        with pytest.raises(SyncError) as info:
+            _pull_local(_remote(path=str(_db(tmp_path, "r.db"))), _db(tmp_path, "l.db"), None, {}, False)
+        assert info.value.__cause__ is exc
+
+    def test_pull_local_sync_error_passthrough(self, tmp_path, monkeypatch):
+        orig = SyncError("foo")
+        monkeypatch.setattr(
+            "siftd.api.slice.slice_database",
+            lambda **kw: {"conversations": 1, "size_bytes": 10},
+        )
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, **kw: (_ for _ in ()).throw(orig))
+        with pytest.raises(SyncError) as info:
+            _pull_local(_remote(path=str(_db(tmp_path, "r.db"))), _db(tmp_path, "l.db"), None, {}, False)
+        assert str(info.value) == "foo"
+        assert info.value.__cause__ is None
+
+    @pytest.mark.parametrize("exc", _MERGE_EXCS)
+    def test_pull_ssh_wraps(self, tmp_path, monkeypatch, exc):
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+        monkeypatch.setattr(
+            "siftd.api.sync.asyncssh.connect",
+            lambda *_a, **_kw: _Conn(SimpleNamespace(returncode=0, stdout=b"abc", stderr='{"conversations":1}')),
+        )
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, **kw: (_ for _ in ()).throw(exc))
+        with pytest.raises(SyncError) as info:
+            asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, {}, False))
+        assert info.value.__cause__ is exc
+
+    def test_pull_ssh_sync_error_passthrough(self, tmp_path, monkeypatch):
+        orig = SyncError("foo")
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+        monkeypatch.setattr(
+            "siftd.api.sync.asyncssh.connect",
+            lambda *_a, **_kw: _Conn(SimpleNamespace(returncode=0, stdout=b"abc", stderr='{"conversations":1}')),
+        )
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, **kw: (_ for _ in ()).throw(orig))
+        with pytest.raises(SyncError) as info:
+            asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, {}, False))
+        assert str(info.value) == "foo"
+        assert info.value.__cause__ is None
+
+    @pytest.mark.parametrize("exc", _MERGE_EXCS)
+    def test_pull_http_wraps(self, tmp_path, monkeypatch, exc):
+        resp = _Resp(body={}, content=b"sqlite-bytes", headers={"X-Siftd-Conversations": "1"})
+        client = _Client(get_resp=resp)
+        _patch_httpx_module(monkeypatch, lambda timeout=None: client)
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: None)
+        monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: (_ for _ in ()).throw(AuthError("no-auth")))
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, **kw: (_ for _ in ()).throw(exc))
+        with pytest.raises(SyncError) as info:
+            _pull_http(_remote(path="http://srv"), _db(tmp_path), None, {}, False)
+        assert info.value.__cause__ is exc
+
+    def test_pull_http_sync_error_passthrough(self, tmp_path, monkeypatch):
+        orig = SyncError("foo")
+        resp = _Resp(body={}, content=b"sqlite-bytes", headers={"X-Siftd-Conversations": "1"})
+        client = _Client(get_resp=resp)
+        _patch_httpx_module(monkeypatch, lambda timeout=None: client)
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: None)
+        monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: (_ for _ in ()).throw(AuthError("no-auth")))
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, **kw: (_ for _ in ()).throw(orig))
+        with pytest.raises(SyncError) as info:
+            _pull_http(_remote(path="http://srv"), _db(tmp_path), None, {}, False)
+        assert str(info.value) == "foo"
+        assert info.value.__cause__ is None

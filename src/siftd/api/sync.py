@@ -16,6 +16,7 @@ import logging
 import re
 import shlex
 import shutil
+import sqlite3
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -45,6 +46,29 @@ class SyncError(Exception):
 def _is_http_remote(remote: SyncRemote) -> bool:
     """Check if remote uses HTTP transport (URL-based detection)."""
     return remote.path.startswith(("http://", "https://"))
+
+
+def _receive_or_sync_error(
+    source: Path,
+    target: Path,
+    *,
+    rebuild_fts: bool = True,
+    context: str = "Pull merge failed",
+) -> None:
+    """Call receive_database and convert known storage exceptions to SyncError.
+
+    Re-raises SyncError unchanged. Wraps sqlite3.Error, ValueError,
+    RuntimeError, and OSError (including FileNotFoundError, PermissionError)
+    with context-specific messages, preserving exception chaining.
+    """
+    from siftd.api.receive import receive_database
+
+    try:
+        receive_database(source, target, rebuild_fts=rebuild_fts)
+    except ValueError as e:
+        raise SyncError(f"Pulled database is invalid: {e}") from e
+    except (sqlite3.Error, RuntimeError, OSError) as e:
+        raise SyncError(f"{context}: {e}") from e
 
 
 def sync_push(
@@ -792,9 +816,7 @@ async def _pull_ssh(
 
     try:
         tmp_path.write_bytes(raw_bytes)
-        from siftd.api.receive import receive_database
-
-        receive_database(tmp_path, local_db, rebuild_fts=True)
+        _receive_or_sync_error(tmp_path, local_db)
         return conversations, size_bytes
     finally:
         if tmp_path.exists():
@@ -834,9 +856,7 @@ def _pull_local(
         if dry_run:
             return conversations, size_bytes
 
-        from siftd.api.receive import receive_database
-
-        receive_database(slice_path, local_db, rebuild_fts=True)
+        _receive_or_sync_error(slice_path, local_db)
         return conversations, size_bytes
 
 
@@ -918,9 +938,7 @@ def _pull_http(
 
     try:
         tmp_path.write_bytes(resp.content)
-        from siftd.api.receive import receive_database
-
-        receive_database(tmp_path, local_db, rebuild_fts=True)
+        _receive_or_sync_error(tmp_path, local_db)
         return conversations, size_bytes
     finally:
         if tmp_path.exists():
