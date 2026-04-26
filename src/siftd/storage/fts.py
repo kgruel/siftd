@@ -93,7 +93,7 @@ def ensure_fts_table(conn: sqlite3.Connection) -> None:
     rebuild_fts_index(conn)
 
 
-def rebuild_fts_index(conn: sqlite3.Connection) -> None:
+def rebuild_fts_index(conn: sqlite3.Connection, *, commit: bool = False) -> None:
     """Drop and rebuild the FTS index from all text content blocks.
 
     Reads prompt_content and response_content where block_type='text',
@@ -131,7 +131,8 @@ def rebuild_fts_index(conn: sqlite3.Connection) -> None:
           AND json_extract(rc.content, '$.text') IS NOT NULL
     """)
 
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def get_fts_sync_status(conn: sqlite3.Connection) -> dict:

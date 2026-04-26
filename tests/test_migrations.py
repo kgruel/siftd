@@ -743,3 +743,149 @@ class TestColumnMigrationsR2:
         with pytest.raises(_sqlite3.OperationalError, match="duplicate column name"):
             _migrate_add_error_column(wrapper)
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# TestTransactionOwnershipS3 — R3: helpers must not commit inside the runner
+# ---------------------------------------------------------------------------
+
+
+class TestTransactionOwnershipS3:
+    """S3: ensure/migration helpers do not commit inside the migration runner transaction."""
+
+    def _make_commit_counter(self):
+        """Return (connect_fn, calls) where calls[0] increments on each commit()."""
+        import sqlite3 as _sqlite3
+
+        calls = [0]
+
+        class _TrackingConn(_sqlite3.Connection):
+            def commit(self):
+                calls[0] += 1
+                super().commit()
+
+        def _connect(*args, **kwargs):
+            return _TrackingConn(*args, **kwargs)
+
+        return _connect, calls
+
+    def test_no_helper_commits_fresh_db(self, tmp_path, monkeypatch):
+        """Fresh DB: exactly 2 commits — schema init + the runner's final commit."""
+        import sqlite3 as _sqlite3
+
+        path = tmp_path / "fresh.db"
+        connect_fn, calls = self._make_commit_counter()
+        monkeypatch.setattr(_sqlite3, "connect", connect_fn)
+
+        conn = open_database(path)
+        conn.close()
+
+        # commit #1: explicit conn.commit() after executescript (new-DB path, line 89)
+        # commit #2: migration runner's final conn.commit() (line 130)
+        assert calls[0] == 2, f"Expected 2 commits on fresh DB, got {calls[0]}"
+
+    def test_no_helper_commits_legacy_db(self, tmp_path, monkeypatch):
+        """Legacy DB (all column + cascade + blob migrations needed): exactly 1 commit."""
+        import sqlite3 as _sqlite3
+
+        # Build a fully-legacy schema: no CASCADE, no optional columns
+        lines = _NO_CASCADE.split("\n")
+        filtered = [ln for ln in lines if not re.search(
+            r"^\s*(branch\s+TEXT|error\s+TEXT|file_mtime\s+REAL|file_size\s+INTEGER)", ln)]
+        schema = re.sub(r",(\s*\n\s*\))", r"\1", "\n".join(filtered))
+        path = tmp_path / "legacy.db"
+        raw = _sqlite3.connect(str(path))
+        raw.executescript(schema)
+        raw.commit()
+        raw.close()
+
+        connect_fn, calls = self._make_commit_counter()
+        monkeypatch.setattr(_sqlite3, "connect", connect_fn)
+
+        conn = open_database(path)
+        conn.close()
+
+        # Only the runner's final conn.commit() should have fired; every helper
+        # that previously committed internally has been cleaned up by S3.
+        assert calls[0] == 1, f"Expected 1 commit on legacy DB, got {calls[0]}"
+
+    def test_commit_true_standalone_persists(self, tmp_path):
+        """Helpers called with commit=True outside open_database() persist their changes."""
+        from siftd.storage.fts import rebuild_fts_index
+        from siftd.storage.sessions import ensure_session_tables
+
+        # ensure_session_tables: empty raw DB, commit=True, survives reconnect
+        path_s = tmp_path / "sessions.db"
+        raw = sqlite3.connect(str(path_s))
+        ensure_session_tables(raw, commit=True)
+        raw.close()
+
+        reopen = sqlite3.connect(str(path_s))
+        tables = {r[0] for r in reopen.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        reopen.close()
+        assert "active_sessions" in tables
+        assert "pending_tags" in tables
+
+        # rebuild_fts_index: insert minimal content, commit=True, FTS rows survive reconnect
+        path_f = tmp_path / "fts.db"
+        fconn = open_database(path_f)
+        fconn.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
+        fconn.execute("INSERT INTO workspaces VALUES ('w1','/p',NULL,'2024-01-01T00:00:00Z')")
+        fconn.execute(
+            "INSERT INTO conversations VALUES ('c1','e1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)"
+        )
+        fconn.execute("INSERT INTO prompts VALUES ('p1','c1',NULL,'2024-01-01T00:00:00Z')")
+        fconn.execute(
+            """INSERT INTO prompt_content VALUES ('pc1','p1',0,'text','{"text":"hello world"}')"""
+        )
+        fconn.commit()
+        rebuild_fts_index(fconn, commit=True)
+        fconn.close()
+
+        fconn2 = open_database(path_f)
+        count = fconn2.execute("SELECT COUNT(*) FROM content_fts").fetchone()[0]
+        fconn2.close()
+        assert count > 0
+
+    def test_migration_failure_rolls_back_all_helpers(self, tmp_path, monkeypatch):
+        """open_database failure mid-migration rolls back ALL helper DDL — no pre-committed partial state."""
+        import siftd.storage.sqlite as sqlite_mod
+
+        # Legacy schema: no CASCADE, no optional columns — triggers all migration helpers
+        lines = _NO_CASCADE.split("\n")
+        filtered = [ln for ln in lines if not re.search(
+            r"^\s*(branch\s+TEXT|error\s+TEXT|file_mtime\s+REAL|file_size\s+INTEGER)", ln)]
+        schema = re.sub(r",(\s*\n\s*\))", r"\1", "\n".join(filtered))
+        path = tmp_path / "legacy.db"
+        raw = sqlite3.connect(str(path))
+        raw.executescript(schema)
+        raw.commit()
+        raw.close()
+
+        original_fn = sqlite_mod._recreate_table_with_fks
+        call_count = [0]
+
+        def failing_recreate(conn, table_name, new_ddl, columns, indexes):
+            call_count[0] += 1
+            if call_count[0] > 1:
+                raise RuntimeError("injected mid-migration failure")
+            original_fn(conn, table_name, new_ddl, columns, indexes)
+
+        monkeypatch.setattr(sqlite_mod, "_recreate_table_with_fks", failing_recreate)
+
+        with pytest.raises(RuntimeError, match="injected mid-migration failure"):
+            open_database(path)
+
+        # Open the DB file directly (bypassing open_database) to check the raw state
+        check = sqlite3.connect(str(path))
+        version = check.execute("PRAGMA user_version").fetchone()[0]
+        cols = {r[1] for r in check.execute("PRAGMA table_info(ingested_files)").fetchall()}
+        check.close()
+
+        assert version == 0, "user_version was stamped despite rollback"
+        # Before S3, _migrate_add_error_column committed its DDL before the failure,
+        # so the column would survive the rollback. After S3 it must be rolled back too.
+        assert "error" not in cols, "error column was pre-committed by a helper (S3 regression)"
+        assert "file_mtime" not in cols, "file_mtime was pre-committed by a helper (S3 regression)"

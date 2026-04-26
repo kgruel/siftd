@@ -113,7 +113,7 @@ def merge_database(
         try:
             from siftd.storage.fts import rebuild_fts_index
 
-            rebuild_fts_index(fts_conn)
+            rebuild_fts_index(fts_conn, commit=True)
         finally:
             fts_conn.close()
 

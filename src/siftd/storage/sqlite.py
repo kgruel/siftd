@@ -92,6 +92,12 @@ def open_database(
             # Serialize concurrent migration startups: acquire write lock before
             # reading user_version or any migration metadata (R2 dispatch race).
             conn.execute(f"PRAGMA busy_timeout = {MIGRATION_BUSY_TIMEOUT_MS}")
+            # PRAGMA foreign_keys cannot be changed inside an active transaction
+            # (SQLite silently ignores it). Migrations need FK OFF so that
+            # DROP TABLE in _recreate_table_with_fks does not trigger ON DELETE
+            # CASCADE on child tables. Set it before BEGIN IMMEDIATE so it takes
+            # effect, then restore ON after commit.
+            conn.execute("PRAGMA foreign_keys = OFF")
             conn.execute("BEGIN IMMEDIATE")
 
             version = conn.execute("PRAGMA user_version").fetchone()[0]
@@ -128,6 +134,7 @@ def open_database(
             # Stamp schema version after successful migrations
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             conn.commit()
+            conn.execute("PRAGMA foreign_keys = ON")
         else:
             # read_only: on future-version DB, warn and open (write-mode raises)
             version = conn.execute("PRAGMA user_version").fetchone()[0]
@@ -231,8 +238,6 @@ def _migrate_labels_to_tags(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE conversation_tags RENAME COLUMN label_id TO tag_id")
     conn.execute("ALTER TABLE workspace_tags RENAME COLUMN label_id TO tag_id")
 
-    conn.commit()
-
 
 def _migrate_add_error_column(conn: sqlite3.Connection) -> None:
     """Add error column to ingested_files if it doesn't exist."""
@@ -248,7 +253,6 @@ def _migrate_add_error_column(conn: sqlite3.Connection) -> None:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(ingested_files)").fetchall()}
             if "error" not in columns:
                 raise
-        conn.commit()
 
 
 def _migrate_add_file_stat_columns(conn: sqlite3.Connection) -> None:
@@ -268,7 +272,6 @@ def _migrate_add_file_stat_columns(conn: sqlite3.Connection) -> None:
                 cols = {r[1] for r in conn.execute("PRAGMA table_info(ingested_files)").fetchall()}
                 if col_name not in cols:
                     raise
-        conn.commit()
 
 
 def _migrate_add_branch_column(conn: sqlite3.Connection) -> None:
@@ -284,7 +287,6 @@ def _migrate_add_branch_column(conn: sqlite3.Connection) -> None:
             cols = {r[1] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
             if "branch" not in cols:
                 raise
-        conn.commit()
 
 
 def _migrate_add_cascade_deletes(conn: sqlite3.Connection) -> None:
@@ -1219,15 +1221,12 @@ def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
             END
         """)
 
-    conn.commit()
-
 
 def _ensure_git_remote_index(conn: sqlite3.Connection) -> None:
     """Create index on workspaces.git_remote if it doesn't exist. Idempotent."""
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_workspaces_git_remote ON workspaces(git_remote)"
     )
-    conn.commit()
 
 
 def _ensure_tag_indexes(conn: sqlite3.Connection) -> None:
@@ -1244,7 +1243,6 @@ def _ensure_tag_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_tool_call_tags_tag ON tool_call_tags(tag_id)"
     )
-    conn.commit()
 
 
 def _ensure_response_attributes_key_index(conn: sqlite3.Connection) -> None:
@@ -1257,7 +1255,6 @@ def _ensure_response_attributes_key_index(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_response_attributes_key"
         " ON response_attributes(key, response_id, value)"
     )
-    conn.commit()
 
 
 def _ensure_conversation_stats_table(conn: sqlite3.Connection) -> None:
@@ -1570,14 +1567,15 @@ CANONICAL_TOOLS: list[dict[str, str]] = [
 ]
 
 
-def ensure_canonical_tools(conn: sqlite3.Connection) -> None:
+def ensure_canonical_tools(conn: sqlite3.Connection, *, commit: bool = False) -> None:
     """Insert all canonical tools if not already present. Idempotent."""
     for tool in CANONICAL_TOOLS:
         conn.execute(
             "INSERT OR IGNORE INTO tools (id, name, category, description) VALUES (?, ?, ?, ?)",
             (_ulid(), tool["name"], tool["category"], tool["description"]),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def ensure_tool_aliases(conn: sqlite3.Connection, harness_id: str, aliases: dict[str, str]) -> None:
