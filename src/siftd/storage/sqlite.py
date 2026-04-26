@@ -1043,6 +1043,13 @@ def _migrate_blob_integrity_v3(conn: sqlite3.Connection) -> None:
         try:
             conn.execute("SAVEPOINT blob_integrity_v3")
             try:
+                # Drop blob ref_count triggers up-front: modern SQLite parses
+                # all trigger bodies during ALTER TABLE RENAME to rewrite name
+                # references, and stale references to the dropped content_blobs
+                # would abort the rename. They are recreated below in their
+                # current clamped form.
+                conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
+                conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_update_release_blob")
                 # Null out result_hash refs to blobs we're about to delete,
                 # then remove the garbage rows before adding the CHECK constraint.
                 conn.execute("""

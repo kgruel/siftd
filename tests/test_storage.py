@@ -1345,6 +1345,56 @@ class TestBlobIntegrityR14Migration:
         _migrate_blob_integrity_v3(db)
         assert get_content(db, compute_content_hash("x")) == "x"
 
+    def test_migration_succeeds_with_preexisting_blob_triggers(self, tmp_path):
+        """Real-world DBs have blob ref_count triggers from ensure_content_blobs_table.
+        Modern SQLite parses all trigger bodies during ALTER TABLE RENAME, so leaving
+        stale references to the dropped content_blobs aborts the migration."""
+        from siftd.storage.sqlite import _migrate_blob_integrity_v3
+        conn = self._make_v2_conn(tmp_path, name="v2_with_triggers.db")
+        conn.execute("""
+            CREATE TRIGGER tr_tool_calls_delete_release_blob
+            AFTER DELETE ON tool_calls
+            FOR EACH ROW
+            WHEN OLD.result_hash IS NOT NULL
+            BEGIN
+                UPDATE content_blobs SET ref_count = ref_count - 1 WHERE hash = OLD.result_hash;
+                DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count = 0;
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER tr_tool_calls_update_release_blob
+            AFTER UPDATE OF result_hash ON tool_calls
+            FOR EACH ROW
+            WHEN OLD.result_hash IS NOT NEW.result_hash
+            BEGIN
+                UPDATE content_blobs SET ref_count = ref_count - 1
+                    WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
+                DELETE FROM content_blobs
+                    WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count = 0;
+                UPDATE content_blobs SET ref_count = ref_count + 1
+                    WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
+            END
+        """)
+        conn.execute("INSERT INTO content_blobs VALUES ('hg', 'good', 3, '2024-01-01')")
+        conn.commit()
+
+        _migrate_blob_integrity_v3(conn)
+        conn.commit()
+
+        # Migration completed: CHECK constraint enforced and triggers in clamped form.
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("INSERT INTO content_blobs VALUES ('hbad', 'bad', -1, '2024-01-01')")
+        triggers = {
+            r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'tr_tool_calls_%_release_blob'"
+            ).fetchall()
+        }
+        assert triggers == {
+            "tr_tool_calls_delete_release_blob",
+            "tr_tool_calls_update_release_blob",
+        }
+        conn.close()
+
 
 class TestBlobIntegrityH17:
     """H17: hash-collision detection is fail-closed."""
