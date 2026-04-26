@@ -877,6 +877,31 @@ class TestDiagnostics:
         errors = sq.get_ingest_errors(db)
         assert errors[0]["harness_name"] == "h_unknown"  # fallback to ID
 
+    def test_get_ingest_errors_no_n_plus_1(self, db):
+        db.execute("INSERT INTO harnesses (id, name) VALUES ('h1', 'test_harness')")
+        for i in range(10):
+            self._insert_error_file(db, f"/file{i}", "h1", f"err{i}")
+        db.commit()
+
+        class CountingConn:
+            def __init__(self, conn):
+                self._conn = conn
+                self.calls = 0
+
+            def execute(self, *args, **kwargs):
+                self.calls += 1
+                return self._conn.execute(*args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._conn, name)
+
+        counting = CountingConn(db)
+        errors = sq.get_ingest_errors(counting)
+
+        assert len(errors) == 10
+        # Exactly 2 queries regardless of row count: PRAGMA table_info + one JOIN SELECT
+        assert counting.calls == 2
+
     def test_get_models_without_pricing(self, db):
         assert sq.get_models_without_pricing(db) == []
         # Insert model + provider + conversation chain + response

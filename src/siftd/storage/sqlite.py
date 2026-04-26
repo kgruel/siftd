@@ -2142,22 +2142,13 @@ def get_ingest_errors(conn: sqlite3.Connection) -> list[dict]:
     if "error" not in columns:
         return []
 
-    cur = conn.execute(
-        "SELECT path, error, harness_id FROM ingested_files WHERE error IS NOT NULL"
-    )
-    rows = cur.fetchall()
-
-    results = []
-    for row in rows:
-        h_row = conn.execute(
-            "SELECT name FROM harnesses WHERE id = ?", (row["harness_id"],)
-        ).fetchone()
-        results.append({
-            "path": row["path"],
-            "error": row["error"],
-            "harness_name": h_row["name"] if h_row else row["harness_id"],
-        })
-    return results
+    cur = conn.execute("""
+        SELECT f.path, f.error, COALESCE(h.name, f.harness_id) AS harness_name
+        FROM ingested_files f
+        LEFT JOIN harnesses h ON h.id = f.harness_id
+        WHERE f.error IS NOT NULL
+    """)
+    return [{"path": row["path"], "error": row["error"], "harness_name": row["harness_name"]} for row in cur.fetchall()]
 
 
 def get_models_without_pricing(conn: sqlite3.Connection) -> list[dict]:
