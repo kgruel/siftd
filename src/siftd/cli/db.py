@@ -324,6 +324,7 @@ def cmd_db_merge(args) -> int:
             rebuild_fts=rebuild_fts,
             dry_run=dry_run,
             replace=replace,
+            preflight=not args.no_preflight,
         )
     except RuntimeError as e:
         print(f"Merge failed: {e}", file=sys.stderr)
@@ -413,7 +414,9 @@ def cmd_db_receive(args) -> int:
         from siftd.api.receive import receive_database
 
         rebuild_fts = not args.no_fts
-        result = receive_database(tmp_path, db, rebuild_fts=rebuild_fts)
+        result = receive_database(
+            tmp_path, db, rebuild_fts=rebuild_fts, preflight=not args.no_preflight
+        )
         print(json.dumps(result))
         return 0
 
@@ -826,6 +829,8 @@ examples:
     p_merge.add_argument("--no-fts", action="store_true", help="Skip FTS5 index rebuild")
     p_merge.add_argument("--no-replace", action="store_true",
                          help="Keep existing conversations instead of replacing with newer versions")
+    p_merge.add_argument("--no-preflight", action="store_true",
+                         help="Skip structural integrity checks on source database")
     p_merge.set_defaults(func=cmd_db_merge)
 
     # receive
@@ -843,6 +848,8 @@ examples:
     p_receive.add_argument("--no-fts", action="store_true", help="Skip FTS5 index rebuild")
     p_receive.add_argument("--stage", action="store_true",
                            help="Stage payload in inbox for deferred merge (fast ACK)")
+    p_receive.add_argument("--no-preflight", action="store_true",
+                           help="Skip structural integrity checks on source database")
     p_receive.set_defaults(func=cmd_db_receive)
 
     # process

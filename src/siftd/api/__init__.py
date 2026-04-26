@@ -33,9 +33,12 @@ from siftd.api.conversations import (
     run_query_file,
 )
 from siftd.api.database import (
+    PreflightError,
+    audit_db_integrity,
     backup_database,
     create_database,
     open_database,
+    run_preflight,
 )
 from siftd.api.doctor import (
     CheckInfo,
@@ -192,9 +195,12 @@ __all__ = [
     "BackfillRunResult",
     "run_backfill",
     # database
+    "PreflightError",
+    "audit_db_integrity",
     "backup_database",
     "create_database",
     "open_database",
+    "run_preflight",
     # tags
     "DERIVATIVE_TAG",
     "ApplyResult",

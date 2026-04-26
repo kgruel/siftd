@@ -28,6 +28,6 @@ def test_merge_database_foreign_key_violation_branch(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.merge._merge_attached", lambda conn, replace=True: {"ok": 1})
 
     with pytest.raises(RuntimeError, match="Foreign key violations after merge"):
-        api_merge.merge_database(target, source, dry_run=False)
+        api_merge.merge_database(target, source, dry_run=False, preflight=False)
 
     assert calls["rollback"] and calls["closed"]
