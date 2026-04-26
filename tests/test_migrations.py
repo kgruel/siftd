@@ -619,7 +619,7 @@ class TestMigrateCascadeV2:
         conn.close()
 
     def test_open_database_on_legacy_gets_cascade_v2(self, tmp_path):
-        """open_database on a legacy no-cascade DB stamps version 2 and adds CASCADE."""
+        """open_database on a legacy no-cascade DB stamps current SCHEMA_VERSION and adds CASCADE."""
         lines = _NO_CASCADE.split("\n")
         filtered = [ln for ln in lines if not re.search(
             r"^\s*(branch\s+TEXT|error\s+TEXT|file_mtime\s+REAL|file_size\s+INTEGER)", ln)]
@@ -632,7 +632,7 @@ class TestMigrateCascadeV2:
 
         conn = open_database(path)
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == SCHEMA_VERSION == 2
+        assert version == SCHEMA_VERSION
         assert "ON DELETE CASCADE" in _ddl(conn, "prompts")
         assert "ON DELETE CASCADE" in _ddl(conn, "responses")
         conn.close()
