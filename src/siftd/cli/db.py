@@ -407,6 +407,12 @@ def cmd_db_receive(args) -> int:
         if getattr(args, "stage", False):
             from siftd.api.inbox import stage_payload
 
+            if getattr(args, "no_preflight", False):
+                print(
+                    "Note: --no-preflight is ignored when staging; "
+                    "preflight runs at process time.",
+                    file=sys.stderr,
+                )
             result = stage_payload(tmp_path, db)
             print(json.dumps(result))
             return 0

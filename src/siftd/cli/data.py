@@ -816,6 +816,9 @@ def _fix_blob_refcount(conn, db_path):
         SET ref_count = COALESCE(
             (SELECT COUNT(*) FROM tool_calls WHERE result_hash = content_blobs.hash), 0
         )
+        WHERE ref_count != COALESCE(
+            (SELECT COUNT(*) FROM tool_calls WHERE result_hash = content_blobs.hash), 0
+        )
     """)
     updated = cur.rowcount
     cur2 = conn.execute("DELETE FROM content_blobs WHERE ref_count = 0")
@@ -1023,9 +1026,18 @@ def cmd_doctor(args) -> int:
     subcommand_args = args.subcommand or []
     action = subcommand_args[0] if subcommand_args else None
 
-    # Warn about --pending-tags without fix subcommand
-    if getattr(args, "pending_tags", False) and action != "fix":
-        print("Note: --pending-tags ignored without 'fix' subcommand", file=sys.stderr)
+    # Warn about fix-only flags being used outside the 'fix' subcommand.
+    if action != "fix":
+        for flag, name in (
+            ("pending_tags", "--pending-tags"),
+            ("blob_refcount", "--blob-refcount"),
+            ("triggers", "--triggers"),
+        ):
+            if getattr(args, flag, False):
+                print(
+                    f"Note: {name} ignored without 'fix' subcommand",
+                    file=sys.stderr,
+                )
 
     # New subcommands: list, run, fix
     if action == "list":

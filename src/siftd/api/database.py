@@ -25,7 +25,11 @@ class PreflightError(RuntimeError):
 def audit_db_integrity(path: Path) -> list:
     """Run structural integrity checks on a database file.
 
-    Returns a list of Finding objects. Does not raise.
+    Returns a list of Finding objects.
+
+    Raises:
+        FileNotFoundError: If ``path`` does not exist. Propagated from the
+            doctor runner, which requires the DB for the structural checks.
 
     Note: embed_db_path defaults to the user's local embed DB, which is
     irrelevant for source preflight. Any future deep check that reads

@@ -11,7 +11,7 @@ main() {
     ensure_venv
 
     local version
-    version=$(grep -m1 '^SCHEMA_VERSION = ' src/siftd/storage/sqlite.py | grep -o '[0-9]*')
+    version=$(grep -m1 '^SCHEMA_VERSION = ' src/siftd/storage/sqlite.py | grep -oE '[0-9]+')
     local out="tests/fixtures/schemas/v${version}.sql"
 
     local tmpdb="/tmp/siftd-fixture-$$.db"

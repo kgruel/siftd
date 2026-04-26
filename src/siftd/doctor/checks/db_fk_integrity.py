@@ -17,6 +17,20 @@ class DbFkIntegrityCheck:
         if not rows:
             return []
 
+        if len(rows) > 50:
+            return [
+                Finding(
+                    check=self.name,
+                    severity="error",
+                    message=(
+                        "More than 50 FK violations detected; database may be severely "
+                        "corrupt. Run `PRAGMA foreign_key_check` directly for the full list."
+                    ),
+                    fix_available=False,
+                    context={"total_ge": 51},
+                )
+            ]
+
         total = len(rows)
         capped = rows[:5]
         shown = [

@@ -64,7 +64,7 @@ Metadata about an available check.
 | `has_fix` | `bool` |  |
 | `requires_db` | `bool` |  |
 | `requires_embed_db` | `bool` |  |
-| `cost` | `Literal[fast, slow]` |  |
+| `cost` | `Literal[fast, slow, deep]` |  |
 
 ### Finding
 
@@ -94,13 +94,14 @@ def list_checks() -> list[CheckInfo]
 Run health checks and return findings.
 
 ```python
-def run_checks(*, checks: list[str] | None = ..., db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., on_check_done: object | None = ...) -> list[Finding]
+def run_checks(*, checks: list[str] | None = ..., db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., deep: bool = ..., on_check_done: object | None = ...) -> list[Finding]
 ```
 
 **Parameters:**
 
 - `checks`: Specific check names to run, or None for all.
 - `db_path`: Main database path. Uses default if not specified.
+- `embed_db_path`: Embeddings database path. Uses default if not specified.
 
 **Returns:** List of Finding objects from all checks.
 
@@ -1299,6 +1300,10 @@ A registered sync remote.
 
 ### Exceptions
 
+#### PreflightError
+
+Raised when a source database fails integrity pre-flight checks.
+
 #### AdapterSelectionError
 
 Raised when requested adapter names match no discovered adapters.
@@ -1322,6 +1327,19 @@ Run a backfill operation with API-owned DB lifecycle.
 ```python
 def run_backfill(*, db_path: Path, operation: Literal[response_attributes, shell_tags, derivative_tags, filter_binary] = ..., dry_run: bool = ...) -> BackfillRunResult
 ```
+
+### audit_db_integrity
+
+Run structural integrity checks on a database file.
+
+```python
+def audit_db_integrity(path: Path) -> list
+```
+
+**Raises:**
+
+- `FileNotFoundError`: If ``path`` does not exist. Propagated from the doctor runner, which requires the DB for the structural checks.
+- `Note`: embed_db_path defaults to the user's local embed DB, which is irrelevant for source preflight. Any future deep check that reads embed_db_path would need to be excluded from _PREFLIGHT_CHECKS or receive an alternate embed path here.
 
 ### backup_database
 
@@ -1366,6 +1384,14 @@ def open_database(db_path: pathlib._local.Path | None = ..., *, read_only: bool 
 **Raises:**
 
 - `FileNotFoundError`: If read_only=True and database doesn't exist.
+
+### run_preflight
+
+Audit a database and raise PreflightError on error-severity findings.
+
+```python
+def run_preflight(path: Path, label: str = ...) -> None
+```
 
 ### apply_tags
 
@@ -1537,7 +1563,7 @@ def record_push_log(*, db_path: Path, identity: str, conversations: int, size_by
 Merge a source database (slice) into the target database.
 
 ```python
-def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..., dry_run: bool = ..., replace: bool = ..., before_commit: collections.abc.Callable[[sqlite3.Connection, dict], None] | None = ...) -> dict
+def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..., dry_run: bool = ..., replace: bool = ..., before_commit: collections.abc.Callable[[sqlite3.Connection, dict], None] | None = ..., preflight: bool = ...) -> dict
 ```
 
 **Parameters:**
@@ -1547,19 +1573,21 @@ def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..
 - `rebuild_fts`: Whether to rebuild the FTS5 index after merge.
 - `dry_run`: If True, compute counts but roll back all changes.
 - `replace`: If True (default), replace stale conversations with newer versions from the source. If False, keep existing versions.
+- `before_commit`: Optional callback(conn, stats) invoked after merge but before commit.  Runs in the same transaction as the merge, so any writes are atomic with the merge itself.
 
 **Returns:** Dict with counts of merged entities.
 
 **Raises:**
 
 - `FileNotFoundError`: If either database does not exist.
+- `PreflightError`: If preflight=True and source fails integrity checks.
 
 ### receive_database
 
 Create or merge a source database into the target.
 
 ```python
-def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = ..., user_id: str | None = ..., push_id: str | None = ...) -> dict
+def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = ..., user_id: str | None = ..., push_id: str | None = ..., preflight: bool = ...) -> dict
 ```
 
 **Parameters:**
@@ -1568,6 +1596,7 @@ def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = 
 - `target_db`: Path to the target siftd database.
 - `rebuild_fts`: Whether to rebuild the FTS5 index after merge.
 - `user_id`: Authenticated user identity to stamp as conversation owner.
+- `push_id`: Push log ID for provenance linking.
 
 **Returns:** Dict with ``status`` ("created" or "merged") and merge stats.
 
@@ -1575,6 +1604,7 @@ def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = 
 
 - `ValueError`: If source is not a valid SQLite database.
 - `FileNotFoundError`: If source does not exist.
+- `PreflightError`: If preflight=True and source fails integrity checks.
 
 ### slice_database
 

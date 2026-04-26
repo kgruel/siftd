@@ -1239,6 +1239,29 @@ class TestDbFkIntegrityCheck:
         assert check.requires_db is True
         assert check.cost == "deep"
 
+    def test_severe_corruption_emits_overflow_summary(self, tmp_path):
+        """>50 FK violations emit a single 'severely corrupt' summary, not a misleading capped count."""
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.execute("PRAGMA foreign_keys = OFF")
+        for i in range(60):
+            conn.execute(
+                "INSERT INTO conversations (id, external_id, harness_id, started_at) "
+                "VALUES (?, ?, 'nonexistent-harness', '2024-01-01T00:00:00Z')",
+                (f"fake-{i:03d}", f"ext-{i:03d}"),
+            )
+        conn.commit()
+        conn.close()
+
+        ctx = _ctx_for(db_path, tmp_path)
+        check = DbFkIntegrityCheck()
+        findings = check.run(ctx)
+        ctx.close()
+
+        assert len(findings) == 1
+        assert findings[0].severity == "error"
+        assert "More than 50" in findings[0].message
+        assert findings[0].context == {"total_ge": 51}
+
 
 class TestDbBlobRefcountDriftCheck:
     """Tests for the db-blob-refcount-drift check."""
@@ -1430,6 +1453,35 @@ class TestFixFunctions:
         check_conn.close()
         assert row is None
         assert "repaired" in result
+
+    def test_fix_blob_refcount_count_matches_drifted_rows_only(self, tmp_path):
+        """Reported 'repaired' count reflects drifted rows, not the full table size."""
+        from siftd.cli.data import _fix_blob_refcount
+
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.execute("PRAGMA foreign_keys = OFF")
+        # 5 healthy blobs (ref_count = 0 with no references — orphans, will be deleted by sweep)
+        for i in range(5):
+            conn.execute(
+                "INSERT INTO content_blobs (hash, content, ref_count, created_at) "
+                "VALUES (?, 'data', 0, '2024-01-01T00:00:00Z')",
+                (f"healthy{i:02d}",),
+            )
+        # 1 drifted blob (ref_count = 99 but no references)
+        conn.execute(
+            "INSERT INTO content_blobs (hash, content, ref_count, created_at) "
+            "VALUES ('drifted01', 'data', 99, '2024-01-01T00:00:00Z')"
+        )
+        conn.commit()
+
+        result = _fix_blob_refcount(conn, db_path)
+        conn.close()
+
+        # Only the drifted row should be reported as 'repaired' (UPDATE only matched it).
+        # The 5 healthy orphans had ref_count = 0 and stayed at 0, so the UPDATE skipped them.
+        assert result.startswith("1 blob(s) repaired"), (
+            f"Expected count to reflect drifted rows only, got: {result}"
+        )
 
     def test_fix_blob_refcount_removes_orphan(self, tmp_path):
         """_fix_blob_refcount deletes a blob with ref_count=0 (no references)."""
