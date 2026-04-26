@@ -398,6 +398,95 @@ class TestAttribution:
         assert row["user_identity"] == "alice"
 
 
+class TestPullDryRun:
+    """bug_008: dry_run estimated_size must be proportional, not the full DB size."""
+
+    def test_dry_run_proportional_estimated_size(self, tmp_path):
+        """Filtered dry_run returns a size proportional to filtered conv count."""
+        team_db = _make_team_db(
+            tmp_path / "team.db",
+            conversations=[
+                {"external_id": "c1", "started_at": "2024-01-15T10:00:00Z"},
+                {"external_id": "c2", "started_at": "2024-02-15T10:00:00Z"},
+                {"external_id": "c3", "started_at": "2024-03-15T10:00:00Z"},
+            ],
+        )
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            full_resp = client.get("/api/v1/pull", params={"dry_run": 1})
+            filtered_resp = client.get(
+                "/api/v1/pull",
+                params={"dry_run": 1, "since": "2024-03-01T00:00:00Z"},
+            )
+        assert full_resp.status_code == 200
+        assert filtered_resp.status_code == 200
+
+        full_size = int(full_resp.headers["X-Siftd-Estimated-Size"])
+        filtered_size = int(filtered_resp.headers["X-Siftd-Estimated-Size"])
+        filtered_count = int(filtered_resp.headers["X-Siftd-Conversations"])
+
+        assert filtered_count == 1
+        # Proportional: 1/3 of total, so filtered_size < full_size
+        assert filtered_size < full_size, (
+            f"Filtered size {filtered_size} should be less than full size {full_size}"
+        )
+
+    def test_dry_run_zero_conversations_returns_zero_size(self, tmp_path):
+        """Empty DB: proportional estimate is 0 with no division error."""
+        team_db = tmp_path / "team.db"
+        create_database(team_db)
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/api/v1/pull", params={"dry_run": 1})
+        assert resp.status_code == 200
+        assert int(resp.headers["X-Siftd-Estimated-Size"]) == 0
+        assert int(resp.headers["X-Siftd-Conversations"]) == 0
+
+    def test_dry_run_does_not_call_slice_database(self, tmp_path, monkeypatch):
+        """Y3 contract: dry_run never calls slice_database."""
+        team_db = _make_team_db(
+            tmp_path / "team.db",
+            conversations=[{"external_id": "c1"}],
+        )
+        called = []
+
+        def fake_slice(*args, **kwargs):
+            called.append(True)
+
+        monkeypatch.setattr("siftd.api.slice.slice_database", fake_slice)
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/api/v1/pull", params={"dry_run": 1})
+        assert resp.status_code == 200
+        assert not called, "dry_run must not call slice_database"
+
+
+class TestSearchParams:
+    """merged_bug_006: raw_fts and debug_ids must be accepted by the search route."""
+
+    def test_search_accepts_raw_fts_param(self, tmp_path):
+        """search_route accepts raw_fts without 422 Unprocessable Entity."""
+        team_db = _make_team_db(
+            tmp_path / "team.db",
+            conversations=[{"external_id": "c1"}],
+        )
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/api/v1/search", params={"q": "hello", "raw_fts": "true"})
+        assert resp.status_code != 422, "raw_fts param should not be rejected by Litestar"
+
+    def test_search_accepts_debug_ids_param(self, tmp_path):
+        """search_route accepts debug_ids without 422 Unprocessable Entity."""
+        team_db = _make_team_db(
+            tmp_path / "team.db",
+            conversations=[{"external_id": "c1"}],
+        )
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/api/v1/search", params={"q": "hello", "debug_ids": "true"})
+        assert resp.status_code != 422, "debug_ids param should not be rejected by Litestar"
+
+
 class TestCLI:
     def test_serve_help(self):
         """siftd serve --help exits cleanly."""

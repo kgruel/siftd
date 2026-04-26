@@ -46,9 +46,10 @@ class Operation:
     render_context: dict[str, Any] = field(default_factory=dict)
 
 
-# Keys that are serve routing, not fn kwargs.
+# Keys that are serve routing or render-only, not fn kwargs.
 # Filtered by execute() so the params dict can serve both contexts.
-_SERVE_ONLY_KEYS = frozenset({"action", "embeddings_only"})
+# debug_ids: serve route passes it to render_context; CLI local path uses op.render_context directly.
+_SERVE_ONLY_KEYS = frozenset({"action", "embeddings_only", "debug_ids"})
 
 
 def execute(op: Operation) -> Any:

@@ -431,7 +431,10 @@ async def pull(
 
         estimated_size = 0
         try:
-            estimated_size = db_path.stat().st_size
+            db_size = db_path.stat().st_size
+            total_count = len(list_conversations(db_path=db_path, n=0))
+            if total_count > 0:
+                estimated_size = (db_size * conversations) // total_count
         except Exception:
             pass
 
@@ -599,6 +602,7 @@ async def search_route(
     include_derivative: bool = Parameter(query="include_derivative", default=False),
     owner: str | None = Parameter(query="owner", default=None),
     debug_ids: bool = Parameter(query="debug_ids", default=False),
+    raw_fts: bool = Parameter(query="raw_fts", default=False),
 ) -> dict | Response:
     """Semantic + FTS search against team DB."""
     try:
@@ -623,7 +627,7 @@ async def search_route(
              "recency_max_boost": recency_max_boost,
              "threshold": threshold, "tag": tag, "all_tags": all_tags,
              "no_tag": no_tag, "include_derivative": include_derivative,
-             "owner": owner},
+             "owner": owner, "raw_fts": raw_fts},
             "search", db_path,
             render_context={"debug_ids": debug_ids},
         )
