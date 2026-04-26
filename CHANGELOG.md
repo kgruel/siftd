@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`siftd doctor fix` no longer auto-merges duplicate workspaces** — The duplicate-workspace finding is now informational-only. To merge, run `siftd migrate --merge-workspaces` manually.
 - **Search-chunk JSON output omits `chunk_id` and `source_ids` by default** — These are storage-internal identifiers that were leaking through search results. Use `--debug-ids` (CLI) or `?debug_ids=1` (serve) to restore them. Conversation summaries/details are unchanged — `conversation_id` remains visible as the public addressable handle.
 
+### Removed
+
+- **Aider `analytics.jsonl` no longer discovered for ingest** — The file was yielded by discovery but produced zero conversations (parse was a no-op). Removed to eliminate a misleading no-op: the file appears in discovery output but nothing is ingested. Analytics ingestion is deferred until Aider publishes a stable schema for the file.
+
 ## [0.7.0] - 2026-04-24
 
 ### Changed
