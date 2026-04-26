@@ -12,7 +12,7 @@ import siftd.storage.sqlite as sq
 import siftd.storage.tags as tags
 import siftd.storage.tool_search as ts
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall, Usage
-from siftd.storage import compute_content_hash, get_content, get_ref_count, release_content, store_content
+from siftd.storage import BlobCollisionError, compute_content_hash, get_content, get_ref_count, release_content, store_content
 from siftd.storage.filters import WhereBuilder, tag_condition
 from siftd.storage.sql_helpers import (
     batched_execute,
@@ -113,6 +113,69 @@ class TestBlobStorage:
         release_content(db, h, commit=True)
         assert get_content(db, h) is None
         assert get_ref_count(db, "nope") == 0
+
+    def test_store_content_concurrent_same_hash(self, tmp_path):
+        """Two connections storing the same content both succeed; ref_count == 2.
+
+        bug_003: old SELECT-then-INSERT TOCTOU window caused IntegrityError for the
+        second writer. INSERT ON CONFLICT DO UPDATE is atomic — no race window.
+        Each thread creates its own connection (Python sqlite3 is not thread-safe for
+        shared connections).
+        """
+        import sqlite3 as _sqlite3
+        import threading
+
+        db_path = tmp_path / "concurrent.db"
+        # Create schema in main thread
+        setup = open_database(db_path)
+        setup.close()
+
+        errors = []
+        barrier = threading.Barrier(2)
+
+        def write():
+            conn = _sqlite3.connect(str(db_path))
+            conn.row_factory = _sqlite3.Row
+            try:
+                barrier.wait()
+                store_content(conn, "same_concurrent_content", commit=True)
+            except Exception as e:
+                errors.append(e)
+            finally:
+                conn.close()
+
+        t1 = threading.Thread(target=write)
+        t2 = threading.Thread(target=write)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert not errors, f"Unexpected errors from concurrent store_content: {errors}"
+        check = open_database(db_path)
+        h = compute_content_hash("same_concurrent_content")
+        assert get_ref_count(check, h) == 2
+        check.close()
+
+    def test_store_content_collision_detection_still_raises(self, db):
+        """BlobCollisionError is still raised for genuinely different content on same hash.
+
+        Verifies the ON CONFLICT RETURNING form preserves fail-closed behavior.
+        """
+        from unittest.mock import patch
+
+        content_a = "content_a"
+        content_b = "content_b_different"
+        fake_hash = "deadbeef" * 8  # 64-char fake SHA256
+
+        with patch("siftd.storage.blobs._sha256") as mock_sha:
+            mock_sha.return_value.hexdigest.return_value = fake_hash
+            store_content(db, content_a, commit=True)
+
+        with patch("siftd.storage.blobs._sha256") as mock_sha:
+            mock_sha.return_value.hexdigest.return_value = fake_hash
+            with pytest.raises(BlobCollisionError, match="collision"):
+                store_content(db, content_b, commit=True)
 
 
 class TestToolCallBlobs:

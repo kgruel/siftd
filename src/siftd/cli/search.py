@@ -252,6 +252,7 @@ def cmd_search(args) -> int:
             # Serve-only: route uses embeddings_only instead of mode
             "embeddings_only": search_mode == "semantic",
             "raw_fts": getattr(args, "raw_fts", False),
+            "debug_ids": getattr(args, "debug_ids", False),
         },
         render_method="search",
         fidelity=fidelity,
@@ -479,6 +480,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             "include_derivative": args.include_derivative,
             "embeddings_only": False,
             "raw_fts": getattr(args, "raw_fts", False),
+            "debug_ids": getattr(args, "debug_ids", False),
         },
         render_method="search",
         fidelity=fidelity_from_args(args),

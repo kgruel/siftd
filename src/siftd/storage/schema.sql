@@ -314,7 +314,7 @@ FOR EACH ROW
 WHEN OLD.result_hash IS NOT NEW.result_hash
 BEGIN
     -- Decrement old blob (if any)
-    UPDATE content_blobs SET ref_count = ref_count - 1
+    UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0)
         WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
     DELETE FROM content_blobs
         WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;

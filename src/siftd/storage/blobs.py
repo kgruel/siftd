@@ -49,25 +49,25 @@ def store_content(
     if _batch_timestamp is None:
         _batch_timestamp = datetime.now().isoformat()
 
-    cur = conn.execute(
-        "SELECT content FROM content_blobs WHERE hash = ?",
-        (content_hash,),
-    )
-    existing = cur.fetchone()
-    if existing is not None:
-        if existing[0] != content:
-            raise BlobCollisionError(
-                f"SHA256 collision: hash {content_hash!r} already stored with different content"
-            )
-        conn.execute(
-            "UPDATE content_blobs SET ref_count = ref_count + 1 WHERE hash = ?",
-            (content_hash,),
+    # SAVEPOINT wraps the upsert so a collision rolls back the ref_count increment
+    # before raising, preserving the fail-closed invariant from H17.
+    conn.execute("SAVEPOINT _store_content")
+    row = conn.execute(
+        """
+        INSERT INTO content_blobs (hash, content, ref_count, created_at)
+        VALUES (?, ?, 1, ?)
+        ON CONFLICT(hash) DO UPDATE SET ref_count = ref_count + 1
+        RETURNING content
+        """,
+        (content_hash, content, _batch_timestamp),
+    ).fetchone()
+    if row[0] != content:
+        conn.execute("ROLLBACK TO SAVEPOINT _store_content")
+        conn.execute("RELEASE SAVEPOINT _store_content")
+        raise BlobCollisionError(
+            f"SHA256 collision: hash {content_hash!r} already stored with different content"
         )
-    else:
-        conn.execute(
-            "INSERT INTO content_blobs (hash, content, ref_count, created_at) VALUES (?, ?, 1, ?)",
-            (content_hash, content, _batch_timestamp),
-        )
+    conn.execute("RELEASE SAVEPOINT _store_content")
 
     if commit:
         conn.commit()
