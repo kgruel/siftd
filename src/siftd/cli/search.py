@@ -59,7 +59,7 @@ def _chunks_from_rows(rows) -> list[Any]:
 
 
 def _rows_from_chunks(chunks: list[Any]) -> list[dict]:
-    return [c.to_render_dict() for c in chunks]
+    return [c.to_render_dict(debug_ids=True) for c in chunks]
 
 
 def _fetch_search_metadata(conn, results):
@@ -368,7 +368,7 @@ def cmd_search(args) -> int:
             results = _rows_from_chunks(sort_chunks_by_time(results))
 
         # Mode-specific data processing
-        ctx_kwargs: dict = {"query": query, "mode": mode}
+        ctx_kwargs: dict = {"query": query, "mode": mode, "debug_ids": getattr(args, "debug_ids", False)}
 
         if mode == "conversations":
             render_results = _aggregate_conversations(results, limit=getattr(args, "limit", 10))
@@ -539,7 +539,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         is_tty=sys.stdout.isatty(),
     )
 
-    output = fmt.render_search(results, fidelity, query=query, mode="chunks")
+    output = fmt.render_search(results, fidelity, query=query, mode="chunks", debug_ids=getattr(args, "debug_ids", False))
     if isinstance(output, dict):
         # Preserve FTS5-specific fields for JSON
         if unsupported_flags:
@@ -663,6 +663,7 @@ examples:
     output_group.add_argument("--thread", action="store_true", help="Narrative thread: top conversations expanded, rest as shortlist")
     output_group.add_argument("--by-time", action="store_true", help="Sort results by time instead of score")
     output_group.add_argument("--json", action="store_true", help="Output as structured JSON")
+    output_group.add_argument("--debug-ids", action="store_true", dest="debug_ids", help="Include internal chunk_id and source_ids in JSON output (default: omitted)")
     output_group.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
 
     # Result modes

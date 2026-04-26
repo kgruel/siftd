@@ -37,6 +37,7 @@ def _effective_owner(request: Request, owner: str | None) -> str | None:
 def _dispatch(
     path: str, method: str, fn: Callable, params: dict[str, Any],
     render_method: str, db: Path,
+    render_context: dict | None = None,
 ) -> Any:
     """Build an Operation and dispatch it through the format protocol.
 
@@ -59,6 +60,7 @@ def _dispatch(
         op = Operation(
             path=path, method=method, fn=fn, params=params,
             render_method=render_method, fidelity=Fidelity(), db=db,
+            render_context=render_context or {},
         )
         result = execute(op)
         if render_method == "detail" and result is None:
@@ -596,6 +598,7 @@ async def search_route(
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
     include_derivative: bool = Parameter(query="include_derivative", default=False),
     owner: str | None = Parameter(query="owner", default=None),
+    debug_ids: bool = Parameter(query="debug_ids", default=False),
 ) -> dict | Response:
     """Semantic + FTS search against team DB."""
     try:
@@ -622,6 +625,7 @@ async def search_route(
              "no_tag": no_tag, "include_derivative": include_derivative,
              "owner": owner},
             "search", db_path,
+            render_context={"debug_ids": debug_ids},
         )
     except Exception:
         import logging

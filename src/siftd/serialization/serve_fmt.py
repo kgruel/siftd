@@ -86,12 +86,18 @@ def render_tools_by_workspace(results: list, fidelity: Fidelity) -> dict:
     }
 
 
-def render_search(results: list, fidelity: Fidelity) -> dict:
+def render_search(results: list, fidelity: Fidelity, debug_ids: bool = False) -> dict:
     """Serialize SearchResult list to JSON-safe dict."""
-    serialized = [
-        r if isinstance(r, dict) else dataclasses.asdict(r)
-        for r in results
-    ]
+    serialized = []
+    for r in results:
+        if isinstance(r, dict):
+            serialized.append(r)
+        else:
+            d = dataclasses.asdict(r)
+            if not debug_ids:
+                d.pop("chunk_id", None)
+                d.pop("source_ids", None)
+            serialized.append(d)
     return {
         "result_count": len(serialized),
         "results": serialized,
