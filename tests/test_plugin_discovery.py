@@ -107,6 +107,44 @@ class TestLoadDropinModules:
         (tmp_path / "err.py").write_text("raise RuntimeError('boom')")
         assert load_dropin_modules(tmp_path, "p_", _ok) == []
 
+    def test_symlink_escaping_dir_skipped_with_warning(self, tmp_path, caplog):
+        """Symlink pointing outside the plugin dir is skipped and a WARNING is logged."""
+        import logging
+
+        target = tmp_path / "outside" / "real.py"
+        target.parent.mkdir()
+        target.write_text("V=1")
+        link = tmp_path / "plugins" / "escape.py"
+        link.parent.mkdir()
+        link.symlink_to(target)
+
+        with caplog.at_level(logging.WARNING, logger="siftd.plugin_discovery"):
+            result = load_dropin_modules(link.parent, "p_", _ok)
+
+        assert result == []
+        assert any(
+            "escape.py" in r.message and r.levelname == "WARNING"
+            for r in caplog.records
+        )
+
+    def test_symlink_inside_dir_still_skipped(self, tmp_path):
+        """Symlink that resolves within the plugin dir is still rejected (symlinks not trusted)."""
+        real = tmp_path / "real.py"
+        real.write_text("V=1")
+        link = tmp_path / "linked.py"
+        link.symlink_to(real)
+
+        result = load_dropin_modules(tmp_path, "p_", _ok)
+        # real.py is loaded, linked.py (the symlink) is skipped
+        names = [p.name for p in result]
+        assert "linked" not in names
+        assert "real" in names
+
+    def test_real_file_loads_normally(self, tmp_path):
+        (tmp_path / "good.py").write_text("V=42")
+        result = load_dropin_modules(tmp_path, "p_", _ok)
+        assert len(result) == 1 and result[0].name == "good"
+
 
 # --- validate_dropin_module ---
 

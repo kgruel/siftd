@@ -2,12 +2,15 @@
 
 import ast
 import importlib.util
+import logging
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 # Type alias for validator functions
 Validator = Callable[[ModuleType, str], str | None]
@@ -95,8 +98,16 @@ def load_dropin_modules(
 
     plugins: list[PluginInfo] = []
 
+    plugin_dir_resolved = path.resolve()
+
     for py_file in sorted(path.glob("*.py")):
         if py_file.name.startswith("_"):
+            continue
+
+        if py_file.is_symlink():
+            resolved = py_file.resolve(strict=False)
+            if not resolved.is_relative_to(plugin_dir_resolved):
+                logger.warning("Skipping symlink %s: resolves outside plugin directory", py_file)
             continue
 
         module_name = f"{module_name_prefix}{py_file.stem}"
