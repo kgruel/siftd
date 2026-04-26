@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
 
-# Cost classification for --fast mode filtering
-CheckCost = Literal["fast", "slow"]
+# Cost classification for check filtering
+CheckCost = Literal["fast", "slow", "deep"]
 
 
 @dataclass
@@ -115,6 +115,10 @@ class Check(Protocol):
 from siftd.doctor.checks.blob_migration import BlobMigrationCheck  # noqa: E402
 from siftd.doctor.checks.config_valid import ConfigValidCheck  # noqa: E402
 from siftd.doctor.checks.cost_coverage import CostCoverageCheck  # noqa: E402
+from siftd.doctor.checks.db_blob_orphans import DbBlobOrphansCheck  # noqa: E402
+from siftd.doctor.checks.db_blob_refcount_drift import DbBlobRefcountDriftCheck  # noqa: E402
+from siftd.doctor.checks.db_fk_integrity import DbFkIntegrityCheck  # noqa: E402
+from siftd.doctor.checks.db_trigger_presence import DbTriggerPresenceCheck  # noqa: E402
 from siftd.doctor.checks.drop_ins_valid import DropInsValidCheck  # noqa: E402
 from siftd.doctor.checks.embeddings_available import EmbeddingsAvailableCheck  # noqa: E402
 from siftd.doctor.checks.embeddings_compat import EmbeddingsCompatCheck  # noqa: E402
@@ -149,4 +153,8 @@ BUILTIN_CHECKS: list[Check] = [
     ConfigValidCheck(),
     WorkspaceIdentityCheck(),
     BlobMigrationCheck(),
+    DbFkIntegrityCheck(),
+    DbBlobRefcountDriftCheck(),
+    DbBlobOrphansCheck(),
+    DbTriggerPresenceCheck(),
 ]

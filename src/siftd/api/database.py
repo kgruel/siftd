@@ -43,6 +43,15 @@ def backup_database(source_path: Path, target_path: Path) -> None:
     _backup(path, target_path)
 
 
+def recreate_blob_triggers(conn: sqlite3.Connection) -> None:
+    """Drop and recreate blob ref-count triggers in their current clamped form."""
+    from siftd.storage.sqlite import ensure_content_blobs_table
+
+    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
+    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_update_release_blob")
+    ensure_content_blobs_table(conn)
+
+
 def create_database(db_path: Path | None = None) -> sqlite3.Connection:
     """Create or open a database, running migrations.
 

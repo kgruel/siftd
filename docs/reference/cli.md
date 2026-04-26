@@ -418,17 +418,23 @@ examples:
 ## siftd doctor
 
 ```
-usage: siftd doctor [-h] [--json] [--strict] [--pending-tags] [subcommand ...]
+usage: siftd doctor [-h] [--json] [--strict] [--pending-tags] [--deep]
+                    [--blob-refcount] [--triggers]
+                    [subcommand ...]
 
 positional arguments:
-  subcommand      list | run [checks...] | fix | <check-name>
+  subcommand       list | run [checks...] | fix | <check-name>
 
 options:
-  -h, --help      show this help message and exit
-  --json          Output as JSON
-  --strict        Exit 1 on warnings (not just errors). Useful for CI.
-  --pending-tags  Clean up stale sessions and orphaned pending tags (use with
-                  'fix')
+  -h, --help       show this help message and exit
+  --json           Output as JSON
+  --strict         Exit 1 on warnings (not just errors). Useful for CI.
+  --pending-tags   Clean up stale sessions and orphaned pending tags (use with
+                   'fix')
+  --deep           Include deep integrity checks (slower).
+  --blob-refcount  Re-derive blob ref counts and sweep orphans (use with
+                   'fix').
+  --triggers       Recreate blob ref-count triggers (use with 'fix').
 
 examples:
   siftd doctor                          # run all checks
