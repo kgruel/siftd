@@ -1370,8 +1370,18 @@ def clear_vocabulary_caches() -> None:
         pass
 
 
+_HARNESS_COLS = frozenset({"version", "display_name", "source", "log_format"})
+_PROVIDER_COLS = frozenset({"display_name", "billing_model"})
+_TOOL_COLS = frozenset({"category", "description"})
+
+
 def get_or_create_harness(conn: sqlite3.Connection, name: str, **kwargs) -> str:
     """Get or create harness, return id (ULID)."""
+    unknown = set(kwargs) - _HARNESS_COLS
+    if unknown:
+        raise ValueError(
+            f"unknown column(s) for harnesses: {sorted(unknown)}; allowed: {sorted(_HARNESS_COLS)}"
+        )
     if name in _harness_cache:
         return _harness_cache[name]
 
@@ -1469,6 +1479,11 @@ def get_or_create_model(conn: sqlite3.Connection, raw_name: str, **kwargs) -> st
 
 def get_or_create_provider(conn: sqlite3.Connection, name: str, **kwargs) -> str:
     """Get or create provider, return id (ULID)."""
+    unknown = set(kwargs) - _PROVIDER_COLS
+    if unknown:
+        raise ValueError(
+            f"unknown column(s) for providers: {sorted(unknown)}; allowed: {sorted(_PROVIDER_COLS)}"
+        )
     if name in _provider_cache:
         return _provider_cache[name]
 
@@ -1490,6 +1505,11 @@ def get_or_create_provider(conn: sqlite3.Connection, name: str, **kwargs) -> str
 
 def get_or_create_tool(conn: sqlite3.Connection, name: str, **kwargs) -> str:
     """Get or create tool, return id (ULID)."""
+    unknown = set(kwargs) - _TOOL_COLS
+    if unknown:
+        raise ValueError(
+            f"unknown column(s) for tools: {sorted(unknown)}; allowed: {sorted(_TOOL_COLS)}"
+        )
     cur = conn.execute("SELECT id FROM tools WHERE name = ?", (name,))
     row = cur.fetchone()
     if row:
