@@ -1,0 +1,85 @@
+[
+  {
+    "branch": null,
+    "ended_at": "2024-01-15T10:00:05Z",
+    "external_id": "gemini_cli::gemini-session-1",
+    "harness": {
+      "display_name": "Gemini CLI",
+      "log_format": "json",
+      "name": "gemini_cli",
+      "source": "google"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "List the files in this directory"
+            }
+          }
+        ],
+        "external_id": "gemini_cli::msg-001",
+        "responses": [
+          {
+            "attributes": {},
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "description": "User wants to see directory contents",
+                  "subject": "Planning",
+                  "timestamp": "2024-01-15T10:00:01Z"
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "I'll list the files for you."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "tool-001",
+                  "input": {
+                    "path": "."
+                  },
+                  "name": "list_files"
+                }
+              }
+            ],
+            "external_id": "gemini_cli::msg-002",
+            "model": "gemini-2.0-flash",
+            "provider": null,
+            "timestamp": "2024-01-15T10:00:02Z",
+            "tool_calls": [
+              {
+                "external_id": "tool-001",
+                "input": {
+                  "path": "."
+                },
+                "result": {
+                  "files": [
+                    "README.md",
+                    "src/"
+                  ]
+                },
+                "status": "success",
+                "timestamp": "2024-01-15T10:00:02Z",
+                "tool_name": "list_files"
+              }
+            ],
+            "usage": {
+              "input_tokens": 50,
+              "output_tokens": 30
+            }
+          }
+        ],
+        "timestamp": "2024-01-15T10:00:00Z"
+      }
+    ],
+    "started_at": "2024-01-15T10:00:00Z",
+    "workspace_path": null
+  }
+]

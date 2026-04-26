@@ -1,0 +1,108 @@
+[
+  {
+    "branch": null,
+    "ended_at": "2024-03-10T14:00:05Z",
+    "external_id": "pi_agent::pi-session-001",
+    "harness": {
+      "display_name": "Pi Coding Agent",
+      "log_format": "jsonl",
+      "name": "pi_agent",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Read the README file"
+            }
+          }
+        ],
+        "external_id": null,
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "10",
+              "cache_read_input_tokens": "50",
+              "cost": "0.0111"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "I should read the README file to understand the project."
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "I'll read the README for you."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "tc-001",
+                  "input": {
+                    "file_path": "/test/workspace/README.md"
+                  },
+                  "name": "Read"
+                }
+              }
+            ],
+            "external_id": null,
+            "model": "claude-opus-4-6",
+            "provider": null,
+            "timestamp": "2024-03-10T14:00:03Z",
+            "tool_calls": [
+              {
+                "external_id": "tc-001",
+                "input": {
+                  "file_path": "/test/workspace/README.md"
+                },
+                "result": {
+                  "output": "# Test Project\n\nA sample project for testing."
+                },
+                "status": "success",
+                "timestamp": "2024-03-10T14:00:04Z",
+                "tool_name": "Read"
+              }
+            ],
+            "usage": {
+              "input_tokens": 500,
+              "output_tokens": 120
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "100",
+              "cost": "0.0114"
+            },
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "The README describes a sample project for testing."
+                }
+              }
+            ],
+            "external_id": null,
+            "model": "claude-opus-4-6",
+            "provider": null,
+            "timestamp": "2024-03-10T14:00:05Z",
+            "tool_calls": [],
+            "usage": {
+              "input_tokens": 700,
+              "output_tokens": 30
+            }
+          }
+        ],
+        "timestamp": "2024-03-10T14:00:02Z"
+      }
+    ],
+    "started_at": "2024-03-10T14:00:00Z",
+    "workspace_path": "/test/workspace"
+  }
+]
