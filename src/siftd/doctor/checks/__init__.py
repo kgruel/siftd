@@ -1,6 +1,7 @@
 """Health check types and built-in check registry."""
 
 import sqlite3
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
@@ -56,23 +57,26 @@ class CheckContext:
     # Lazy-loaded connections (populated on first access)
     _db_conn: sqlite3.Connection | None = field(default=None, repr=False)
     _embed_conn: sqlite3.Connection | None = field(default=None, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def get_db_conn(self):
         """Get main database connection (lazy-loaded, thread-safe for reads)."""
-        if self._db_conn is None:
-            uri = f"file:{self.db_path.as_posix()}?mode=ro&immutable=1"
-            self._db_conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-            self._db_conn.row_factory = sqlite3.Row
-            self._db_conn.execute("PRAGMA foreign_keys = ON")
-        return self._db_conn
+        with self._lock:
+            if self._db_conn is None:
+                uri = f"file:{self.db_path.as_posix()}?mode=ro&immutable=1"
+                self._db_conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+                self._db_conn.row_factory = sqlite3.Row
+                self._db_conn.execute("PRAGMA foreign_keys = ON")
+            return self._db_conn
 
     def get_embed_conn(self):
         """Get embeddings database connection (lazy-loaded, thread-safe for reads)."""
-        if self._embed_conn is None:
-            uri = f"file:{self.embed_db_path.as_posix()}?mode=ro&immutable=1"
-            self._embed_conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-            self._embed_conn.row_factory = sqlite3.Row
-        return self._embed_conn
+        with self._lock:
+            if self._embed_conn is None:
+                uri = f"file:{self.embed_db_path.as_posix()}?mode=ro&immutable=1"
+                self._embed_conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+                self._embed_conn.row_factory = sqlite3.Row
+            return self._embed_conn
 
     def close(self):
         """Close any open connections."""
