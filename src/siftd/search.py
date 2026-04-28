@@ -67,7 +67,7 @@ def apply_temporal_weight(
                 # Parse ISO timestamp (with or without timezone)
                 ts_str_clean = ts_str.replace("Z", "+00:00")
                 if "+" not in ts_str_clean and ts_str_clean.count("-") <= 2:
-                    # No timezone, assume UTC
+                    # No timezone, assume UTC (handles legacy data from pre-fix versions)
                     ts = datetime.fromisoformat(ts_str_clean).replace(tzinfo=UTC)
                 else:
                     ts = datetime.fromisoformat(ts_str_clean)

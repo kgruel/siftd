@@ -14,7 +14,7 @@ Usage:
 
 import sqlite3
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from siftd.git import get_git_remote_url
@@ -243,7 +243,7 @@ def merge_duplicate_workspaces(
 
                 # Migrate workspace_tags to keeper (ignore duplicates)
                 # Must provide id and applied_at for each row
-                now = datetime.now().isoformat()
+                now = datetime.now(UTC).isoformat()
                 cur = conn.execute(
                     "SELECT tag_id FROM workspace_tags WHERE workspace_id = ?",
                     (other_id,)

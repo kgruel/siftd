@@ -2088,7 +2088,7 @@ def record_ingested_file(
     Derives harness_id from the conversation record.
     Caller controls commit (default: no commit).
     """
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     # Look up harness_id from conversation
     row = conn.execute(
@@ -2099,7 +2099,7 @@ def record_ingested_file(
     harness_id = row[0]
 
     ulid = _ulid()
-    ingested_at = datetime.now().isoformat()
+    ingested_at = datetime.now(UTC).isoformat()
     conn.execute(
         """INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at, file_mtime, file_size)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -2126,10 +2126,10 @@ def record_empty_file(
     Stores with conversation_id=NULL so they're tracked but can be re-ingested
     if content appears later.
     """
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     ulid = _ulid()
-    ingested_at = datetime.now().isoformat()
+    ingested_at = datetime.now(UTC).isoformat()
     conn.execute(
         """INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at, file_mtime, file_size)
            VALUES (?, ?, ?, ?, NULL, ?, ?, ?)""",
@@ -2156,10 +2156,10 @@ def record_failed_file(
     Stores with conversation_id=NULL and error message so the file is tracked
     and won't retry unless its hash changes.
     """
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     ulid = _ulid()
-    ingested_at = datetime.now().isoformat()
+    ingested_at = datetime.now(UTC).isoformat()
     conn.execute(
         """INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at, error, file_mtime, file_size)
            VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)""",
