@@ -75,124 +75,123 @@ def build_embeddings_index(
 
     backend = get_backend(preferred=backend_name, verbose=verbose)
     embed_conn = open_embeddings_db(embed_db)
+    try:
+        if rebuild:
+            if verbose:
+                print("Clearing existing index...")
+            clear_all(embed_conn)
+        else:
+            # For incremental indexing, validate compatibility with existing index
+            _validate_incremental_compat(embed_conn, backend)
 
-    if rebuild:
+        # Determine which conversations need indexing
+        already_indexed = get_indexed_conversation_ids(embed_conn)
+        tool_summaries_indexed = {
+            row["conversation_id"]
+            for row in embed_conn.execute(
+                "SELECT DISTINCT conversation_id FROM chunks WHERE chunk_type = ?",
+                ("tool_summary",),
+            ).fetchall()
+        }
+        missing_tool_summaries = already_indexed - tool_summaries_indexed
+
+        # Get exchange-window chunks from main DB
+        main_conn = open_database(db, read_only=True)
+        try:
+            tokenizer = _get_tokenizer()
+            target_tokens = 256
+            max_tokens = 512
+            overlap_tokens = 25
+
+            chunks = extract_exchange_window_chunks(
+                main_conn,
+                tokenizer,
+                target_tokens=target_tokens,
+                max_tokens=max_tokens,
+                overlap_tokens=overlap_tokens,
+                exclude_conversation_ids=already_indexed,
+            )
+            new_conv_ids = {c["conversation_id"] for c in chunks}
+
+            # Also include conversations that have tool calls but produced no exchange
+            # chunks (e.g. tool-only sessions with no prompt/response text).
+            all_with_tool_calls = _all_conversation_ids_with_tool_calls(main_conn)
+            tool_only_unindexed = all_with_tool_calls - already_indexed - new_conv_ids
+
+            tool_summary_targets = new_conv_ids | missing_tool_summaries | tool_only_unindexed
+            tool_summary_targets = _filter_conversations_with_tool_calls(main_conn, tool_summary_targets)
+            tool_chunks: list[dict] = []
+            if tool_summary_targets:
+                tool_chunks = extract_tool_summary_chunks(main_conn, conversation_ids=tool_summary_targets)
+                for c in tool_chunks:
+                    c["token_count"] = _count_tokens(tokenizer, c["text"])
+        finally:
+            main_conn.close()
+
+        chunks.extend(tool_chunks)
+
+        if not chunks:
+            total = chunk_count(embed_conn)
+            return IndexStats(
+                chunks_added=0,
+                total_chunks=total,
+                backend_name=backend.name,
+                dimension=backend.dimension,
+            )
+
         if verbose:
-            print("Clearing existing index...")
-        clear_all(embed_conn)
-    else:
-        # For incremental indexing, validate compatibility with existing index
-        _validate_incremental_compat(embed_conn, backend)
+            print(f"Embedding {len(chunks)} new chunks...")
 
-    # Determine which conversations need indexing
-    already_indexed = get_indexed_conversation_ids(embed_conn)
-    tool_summaries_indexed = {
-        row["conversation_id"]
-        for row in embed_conn.execute(
-            "SELECT DISTINCT conversation_id FROM chunks WHERE chunk_type = ?",
-            ("tool_summary",),
-        ).fetchall()
-    }
-    missing_tool_summaries = already_indexed - tool_summaries_indexed
+        # Batch embed
+        texts = [c["text"] for c in chunks]
+        batch_size = 64
+        all_embeddings = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            all_embeddings.extend(backend.embed(batch))
+            if verbose and len(texts) > batch_size:
+                done = min(i + batch_size, len(texts))
+                print(f"  {done}/{len(texts)}")
 
-    # Get exchange-window chunks from main DB
-    main_conn = open_database(db, read_only=True)
+        # Store with real token counts
+        for chunk, embedding in zip(chunks, all_embeddings):
+            store_chunk(
+                embed_conn,
+                conversation_id=chunk["conversation_id"],
+                chunk_type=chunk["chunk_type"],
+                text=chunk["text"],
+                embedding=embedding,
+                token_count=chunk["token_count"],
+                source_ids=chunk.get("source_ids"),
+            )
+        embed_conn.commit()
 
-    tokenizer = _get_tokenizer()
-    target_tokens = 256
-    max_tokens = 512
-    overlap_tokens = 25
+        # Record strategy metadata
+        set_meta(embed_conn, "schema_version", str(SCHEMA_VERSION))
+        set_meta(embed_conn, "backend", backend.name)
+        set_meta(embed_conn, "model", backend.model)
+        set_meta(embed_conn, "dimension", str(backend.dimension))
+        set_meta(embed_conn, "strategy", "exchange-window")
+        set_meta(embed_conn, "include_tool_summaries", "1")
+        set_meta(embed_conn, "target_tokens", str(target_tokens))
+        set_meta(embed_conn, "max_tokens", str(max_tokens))
+        set_meta(embed_conn, "overlap_tokens", str(overlap_tokens))
+        set_meta(embed_conn, "built_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
 
-    chunks = extract_exchange_window_chunks(
-        main_conn,
-        tokenizer,
-        target_tokens=target_tokens,
-        max_tokens=max_tokens,
-        overlap_tokens=overlap_tokens,
-        exclude_conversation_ids=already_indexed,
-    )
-    new_conv_ids = {c["conversation_id"] for c in chunks}
-
-    # Also include conversations that have tool calls but produced no exchange
-    # chunks (e.g. tool-only sessions with no prompt/response text).
-    all_with_tool_calls = _all_conversation_ids_with_tool_calls(main_conn)
-    tool_only_unindexed = all_with_tool_calls - already_indexed - new_conv_ids
-
-    tool_summary_targets = new_conv_ids | missing_tool_summaries | tool_only_unindexed
-    tool_summary_targets = _filter_conversations_with_tool_calls(main_conn, tool_summary_targets)
-    tool_chunks: list[dict] = []
-    if tool_summary_targets:
-        tool_chunks = extract_tool_summary_chunks(main_conn, conversation_ids=tool_summary_targets)
-        for c in tool_chunks:
-            c["token_count"] = _count_tokens(tokenizer, c["text"])
-
-    main_conn.close()
-
-    chunks.extend(tool_chunks)
-
-    if not chunks:
         total = chunk_count(embed_conn)
-        embed_conn.close()
+        chunks_added = len(chunks)
+
+        if verbose:
+            print(f"Done. Index has {total} chunks ({backend.name}, dim={backend.dimension}).")
+
         return IndexStats(
-            chunks_added=0,
+            chunks_added=chunks_added,
             total_chunks=total,
             backend_name=backend.name,
             dimension=backend.dimension,
         )
-
-    if verbose:
-        print(f"Embedding {len(chunks)} new chunks...")
-
-    # Batch embed
-    texts = [c["text"] for c in chunks]
-    batch_size = 64
-    all_embeddings = []
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i : i + batch_size]
-        all_embeddings.extend(backend.embed(batch))
-        if verbose and len(texts) > batch_size:
-            done = min(i + batch_size, len(texts))
-            print(f"  {done}/{len(texts)}")
-
-    # Store with real token counts
-    for chunk, embedding in zip(chunks, all_embeddings):
-        store_chunk(
-            embed_conn,
-            conversation_id=chunk["conversation_id"],
-            chunk_type=chunk["chunk_type"],
-            text=chunk["text"],
-            embedding=embedding,
-            token_count=chunk["token_count"],
-            source_ids=chunk.get("source_ids"),
-        )
-    embed_conn.commit()
-
-    # Record strategy metadata
-    set_meta(embed_conn, "schema_version", str(SCHEMA_VERSION))
-    set_meta(embed_conn, "backend", backend.name)
-    set_meta(embed_conn, "model", backend.model)
-    set_meta(embed_conn, "dimension", str(backend.dimension))
-    set_meta(embed_conn, "strategy", "exchange-window")
-    set_meta(embed_conn, "include_tool_summaries", "1")
-    set_meta(embed_conn, "target_tokens", str(target_tokens))
-    set_meta(embed_conn, "max_tokens", str(max_tokens))
-    set_meta(embed_conn, "overlap_tokens", str(overlap_tokens))
-    set_meta(embed_conn, "built_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-
-    total = chunk_count(embed_conn)
-    chunks_added = len(chunks)
-
-    if verbose:
-        print(f"Done. Index has {total} chunks ({backend.name}, dim={backend.dimension}).")
-
-    embed_conn.close()
-
-    return IndexStats(
-        chunks_added=chunks_added,
-        total_chunks=total,
-        backend_name=backend.name,
-        dimension=backend.dimension,
-    )
+    finally:
+        embed_conn.close()
 
 
 def _get_tokenizer():
