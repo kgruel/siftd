@@ -5,6 +5,7 @@ coverage.xml
 .subtask/
 .agents/
 bench/runs/
+debug/
 .pytest_cache/
 .ruff_cache/
 .obsidian/
@@ -19,4 +20,3 @@ ROADMAP.md
 BACKLOG.md
 PLAN.md
 PROGRESS.json
-docs/research/autoresearch.jsonl
