@@ -1,7 +1,5 @@
 """Tests for workspace identity via git remote."""
 
-import sqlite3
-
 import pytest
 
 from siftd.storage.migrate_workspaces import (
@@ -43,7 +41,20 @@ def db_with_workspaces(tmp_path):
     """)
     conn.commit()
 
-    return {"db_path": db_path, "conn": conn, "harness_id": harness_id}
+    try:
+        yield {"db_path": db_path, "conn": conn, "harness_id": harness_id}
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def fresh_conn(tmp_path):
+    """Fresh DB connection for tests that create their own isolated database."""
+    conn = create_database(tmp_path / "test.db")
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 class TestCountWorkspacesWithoutRemote:
@@ -161,10 +172,9 @@ class TestVerifyWorkspaceIdentity:
 class TestGetOrCreateWorkspaceWithGitRemote:
     """Tests for get_or_create_workspace() with git remote lookup."""
 
-    def test_creates_workspace_without_git_remote(self, tmp_path):
+    def test_creates_workspace_without_git_remote(self, fresh_conn, tmp_path):
         """Creates workspace when path has no git remote."""
-        db_path = tmp_path / "test.db"
-        conn = create_database(db_path)
+        conn = fresh_conn
 
         # Create a directory without git
         project_dir = tmp_path / "project"
@@ -180,12 +190,11 @@ class TestGetOrCreateWorkspaceWithGitRemote:
         assert row["path"] == str(project_dir)
         assert row["git_remote"] is None
 
-    def test_creates_workspace_with_git_remote(self, tmp_path):
+    def test_creates_workspace_with_git_remote(self, fresh_conn, tmp_path):
         """Creates workspace with git_remote when available."""
         import subprocess
 
-        db_path = tmp_path / "test.db"
-        conn = create_database(db_path)
+        conn = fresh_conn
 
         # Create a git repo with remote
         project_dir = tmp_path / "project"
@@ -206,12 +215,11 @@ class TestGetOrCreateWorkspaceWithGitRemote:
         assert row["path"] == str(project_dir)
         assert row["git_remote"] == "github.com/user/project"
 
-    def test_returns_existing_workspace_by_git_remote(self, tmp_path):
+    def test_returns_existing_workspace_by_git_remote(self, fresh_conn, tmp_path):
         """Returns existing workspace when git_remote matches."""
         import subprocess
 
-        db_path = tmp_path / "test.db"
-        conn = create_database(db_path)
+        conn = fresh_conn
 
         # Create two directories for the "same" repo
         project_dir1 = tmp_path / "project1"
@@ -239,12 +247,11 @@ class TestGetOrCreateWorkspaceWithGitRemote:
         cur = conn.execute("SELECT COUNT(*) FROM workspaces")
         assert cur.fetchone()[0] == 1
 
-    def test_updates_existing_workspace_git_remote(self, tmp_path):
+    def test_updates_existing_workspace_git_remote(self, fresh_conn, tmp_path):
         """Updates git_remote for existing workspace when discovered."""
         import subprocess
 
-        db_path = tmp_path / "test.db"
-        conn = create_database(db_path)
+        conn = fresh_conn
 
         project_dir = tmp_path / "project"
         project_dir.mkdir()
@@ -276,12 +283,11 @@ class TestGetOrCreateWorkspaceWithGitRemote:
 class TestWorkspaceFilter:
     """Tests for WhereBuilder.workspace() searching both columns."""
 
-    def test_filters_by_path(self, tmp_path):
+    def test_filters_by_path(self, fresh_conn):
         """Can filter workspaces by path substring."""
         from siftd.storage.filters import WhereBuilder
 
-        db_path = tmp_path / "test.db"
-        conn = create_database(db_path)
+        conn = fresh_conn
 
         # Manually insert workspace
         conn.execute("""
@@ -300,12 +306,11 @@ class TestWorkspaceFilter:
         assert len(rows) == 1
         assert rows[0]["id"] == "ws1"
 
-    def test_filters_by_git_remote(self, tmp_path):
+    def test_filters_by_git_remote(self, fresh_conn):
         """Can filter workspaces by git_remote substring."""
         from siftd.storage.filters import WhereBuilder
 
-        db_path = tmp_path / "test.db"
-        conn = create_database(db_path)
+        conn = fresh_conn
 
         conn.execute("""
             INSERT INTO workspaces (id, path, git_remote, discovered_at)

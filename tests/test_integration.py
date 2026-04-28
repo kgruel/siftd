@@ -106,18 +106,21 @@ class TestIngestEdgeCases:
         )
 
         conn = open_database(tmp_path / "test.db")
-        stats = ingest_all(conn, [adapter])
+        try:
+            stats = ingest_all(conn, [adapter])
 
-        info = get_ingested_file_info(conn, str(src))
-        errors = get_ingest_errors(conn)
+            info = get_ingested_file_info(conn, str(src))
+            errors = get_ingest_errors(conn)
 
-        assert stats.files_errored == 1
-        assert stats.files_ingested == 0
-        assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
-        assert info is not None
-        assert info["conversation_id"] is None
-        assert "yielded 2 conversations" in info["error"]
-        assert errors[0]["path"] == str(src)
+            assert stats.files_errored == 1
+            assert stats.files_ingested == 0
+            assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+            assert info is not None
+            assert info["conversation_id"] is None
+            assert "yielded 2 conversations" in info["error"]
+            assert errors[0]["path"] == str(src)
+        finally:
+            conn.close()
 
     def test_records_adapter_parse_failures_as_failed_files(self, tmp_path):
         chats = tmp_path / "hash" / "chats"
@@ -143,16 +146,19 @@ class TestIngestEdgeCases:
                 yield Source(kind="file", location=bad)
 
         conn = open_database(tmp_path / "test.db")
-        stats = ingest_all(conn, [_GeminiAdapter])
+        try:
+            stats = ingest_all(conn, [_GeminiAdapter])
 
-        info = get_ingested_file_info(conn, str(bad))
+            info = get_ingested_file_info(conn, str(bad))
 
-        assert stats.files_errored == 1
-        assert stats.files_ingested == 0
-        assert info is not None
-        assert info["conversation_id"] is None
-        assert "missing a messages array" in info["error"]
-        assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+            assert stats.files_errored == 1
+            assert stats.files_ingested == 0
+            assert info is not None
+            assert info["conversation_id"] is None
+            assert "missing a messages array" in info["error"]
+            assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+        finally:
+            conn.close()
 
     def test_session_dedup_replaces_when_timestamp_advances(self, tmp_path):
         """Hash change + timestamp advance triggers replacement."""

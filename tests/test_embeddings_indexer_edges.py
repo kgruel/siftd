@@ -112,10 +112,12 @@ def test_filter_and_tool_call_helpers_cover_batching(monkeypatch, tmp_path):
     conn.execute("CREATE TABLE tool_calls (conversation_id TEXT)")
     conn.executemany("INSERT INTO tool_calls (conversation_id) VALUES (?)", [(f"c{i}",) for i in range(1005)])
     conn.commit()
-
-    all_ids = indexer._all_conversation_ids_with_tool_calls(conn)
-    keep = indexer._filter_conversations_with_tool_calls(conn, {f"c{i}" for i in range(1200)})
-    assert "c0" in all_ids and len(keep) == 1005 and indexer._filter_conversations_with_tool_calls(conn, set()) == set()
+    try:
+        all_ids = indexer._all_conversation_ids_with_tool_calls(conn)
+        keep = indexer._filter_conversations_with_tool_calls(conn, {f"c{i}" for i in range(1200)})
+        assert "c0" in all_ids and len(keep) == 1005 and indexer._filter_conversations_with_tool_calls(conn, set()) == set()
+    finally:
+        conn.close()
 
 
 def test_validate_incremental_compat_mismatch_paths(monkeypatch):

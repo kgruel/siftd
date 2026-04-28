@@ -28,7 +28,10 @@ def db(tmp_path):
     """Create a test database with session tables."""
     db_path = tmp_path / "test.db"
     conn = create_database(db_path)
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 class TestRegisterSession:
