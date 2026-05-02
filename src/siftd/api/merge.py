@@ -286,6 +286,49 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
     """)
     tc_after = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
 
+    # --- Step 2b: Polymorphic event tables (v4 schema, present in all DBs opened since slice 1) ---
+
+    if conn.execute(
+        "SELECT 1 FROM src.sqlite_master WHERE type='table' AND name='events'"
+    ).fetchone():
+        # events — explicit columns; filter by conversations already in target
+        conn.execute("""
+            INSERT OR IGNORE INTO events
+                (id, kind, conversation_id, parent_id, external_id, timestamp)
+            SELECT se.id, se.kind, se.conversation_id, se.parent_id, se.external_id, se.timestamp
+            FROM src.events se
+            WHERE se.conversation_id IN (SELECT id FROM main.conversations)
+        """)
+        # event_response — remap model_id, provider_id; filter to events that landed in main
+        conn.execute("""
+            INSERT OR IGNORE INTO event_response
+                (event_id, model_id, provider_id, input_tokens, output_tokens)
+            SELECT
+                ser.event_id,
+                COALESCE(mm.target_id, ser.model_id),
+                COALESCE(pm.target_id, ser.provider_id),
+                ser.input_tokens,
+                ser.output_tokens
+            FROM src.event_response ser
+            LEFT JOIN _id_map mm ON mm.table_name = 'models' AND mm.source_id = ser.model_id
+            LEFT JOIN _id_map pm ON pm.table_name = 'providers' AND pm.source_id = ser.provider_id
+            WHERE ser.event_id IN (SELECT id FROM main.events)
+        """)
+        # event_tool_call — remap tool_id; filter to events that landed in main
+        conn.execute("""
+            INSERT OR IGNORE INTO event_tool_call
+                (event_id, tool_id, input, result_hash, status)
+            SELECT
+                setc.event_id,
+                COALESCE(tm.target_id, setc.tool_id),
+                setc.input,
+                setc.result_hash,
+                setc.status
+            FROM src.event_tool_call setc
+            LEFT JOIN _id_map tm ON tm.table_name = 'tools' AND tm.source_id = setc.tool_id
+            WHERE setc.event_id IN (SELECT id FROM main.events)
+        """)
+
     # --- Step 3: Content + Attribute tables ---
 
     conn.execute("""
@@ -299,6 +342,17 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
         SELECT src.* FROM src.response_content src
         WHERE src.response_id IN (SELECT id FROM main.responses)
     """)
+
+    if conn.execute(
+        "SELECT 1 FROM src.sqlite_master WHERE type='table' AND name='event_content'"
+    ).fetchone():
+        conn.execute("""
+            INSERT OR IGNORE INTO event_content
+                (id, event_id, block_index, block_type, content)
+            SELECT sec.id, sec.event_id, sec.block_index, sec.block_type, sec.content
+            FROM src.event_content sec
+            WHERE sec.event_id IN (SELECT id FROM main.events)
+        """)
 
     conn.execute("""
         INSERT OR IGNORE INTO conversation_attributes
@@ -403,7 +457,7 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
 
     conn.execute("""
         UPDATE content_blobs SET ref_count = (
-            SELECT COUNT(*) FROM tool_calls WHERE result_hash = content_blobs.hash
+            SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash
         ) WHERE hash IN (SELECT hash FROM src.content_blobs)
     """)
 
@@ -525,6 +579,20 @@ def _replace_stale_conversations(conn) -> tuple[int, list[str]]:
     conn.execute("DELETE FROM prompts WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     conn.execute("DELETE FROM responses WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     conn.execute("DELETE FROM tool_calls WHERE conversation_id IN (SELECT id FROM _stale_convs)")
+    # foreign_keys=OFF disables cascade, so delete extension rows explicitly before events
+    conn.execute("""
+        DELETE FROM event_content
+        WHERE event_id IN (SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs))
+    """)
+    conn.execute("""
+        DELETE FROM event_response
+        WHERE event_id IN (SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs))
+    """)
+    conn.execute("""
+        DELETE FROM event_tool_call
+        WHERE event_id IN (SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs))
+    """)
+    conn.execute("DELETE FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     conn.execute("DELETE FROM conversation_attributes WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     conn.execute("DELETE FROM conversation_tags WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     conn.execute("DELETE FROM ingested_files WHERE conversation_id IN (SELECT id FROM _stale_convs)")

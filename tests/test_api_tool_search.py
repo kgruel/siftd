@@ -561,12 +561,23 @@ class TestApiToolSearch:
         _, results_before = search_tool_calls("tool:shell.execute", db_path=db_path)
         count_before = len(results_before)
 
-        # Simulate a new ingest adding a tool call directly to tool_calls
+        # Simulate a new ingest adding a tool call (events is authoritative; tool_calls dual-write for tool_search FK)
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()[0]
         resp_id = conn.execute("SELECT id FROM responses LIMIT 1").fetchone()[0]
         tool_id = conn.execute("SELECT id FROM tools WHERE name = 'shell.execute' LIMIT 1").fetchone()[0]
+        conn.execute(
+            "INSERT INTO events (id, kind, conversation_id, parent_id, external_id, timestamp)"
+            " VALUES ('new_tc_001', 'tool_call', ?, ?, NULL, '2024-06-15T12:00:00Z')",
+            (conv_id, resp_id),
+        )
+        conn.execute(
+            "INSERT INTO event_tool_call (event_id, tool_id, input, result_hash, status)"
+            " VALUES ('new_tc_001', ?, '{\"command\": \"echo hello\"}', NULL, 'success')",
+            (tool_id,),
+        )
+        # Legacy dual-write: tool_search.tool_call_id still FKs to tool_calls until slice 8
         conn.execute(
             "INSERT INTO tool_calls (id, conversation_id, response_id, tool_id, timestamp, status, input)"
             " VALUES ('new_tc_001', ?, ?, ?, '2024-06-15T12:00:00Z', 'success', '{\"command\": \"echo hello\"}')",

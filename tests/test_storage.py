@@ -181,30 +181,29 @@ class TestBlobStorage:
 class TestToolCallBlobs:
     def test_dedupe_and_cascade(self, db):
         c, r = _scaffold(db)
-        sq.insert_tool_call(db, r, c, None, "tc1", '{}', '{"c":"f"}', "success", "2024-01-01T10:00:01Z")
+        tc_id = sq.insert_tool_call(db, r, c, None, "tc1", '{}', '{"c":"f"}', "success", "2024-01-01T10:00:01Z")
         db.commit()
-        row = db.execute("SELECT result, result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
-        assert row["result"] is None and row["result_hash"] is not None
+        row = db.execute("SELECT result_hash FROM event_tool_call WHERE event_id=?", (tc_id,)).fetchone()
+        assert row["result_hash"] is not None
         # Delete cascades and releases blob
         sq.delete_conversation(db, c)
         db.commit()
         assert get_ref_count(db, row["result_hash"]) == 0
 
-    def test_dedupe_disabled_and_null(self, db):
+    def test_null_result_stored(self, db):
         c, r = _scaffold(db)
-        sq.insert_tool_call(db, r, c, None, "tc1", '{}', '{"i":1}', "s", "2024-01-01T10:00:01Z", dedupe_result=False)
-        sq.insert_tool_call(db, r, c, None, "tc2", '{}', None, "s", "2024-01-01T10:00:02Z")
-        # Non-JSON result with filter_binary=True → hits except path
-        sq.insert_tool_call(db, r, c, None, "tc3", '{}', 'not-json', "s", "2024-01-01T10:00:03Z")
-        # Large base64 in result → filter_binary modifies data, hits json.dumps path
+        tc_id = sq.insert_tool_call(db, r, c, None, "tc1", '{}', None, "s", "2024-01-01T10:00:02Z")
+        # Non-JSON result with filter_binary=True → hits except path, still stored in blobs
+        tc2_id = sq.insert_tool_call(db, r, c, None, "tc3", '{}', 'not-json', "s", "2024-01-01T10:00:03Z")
+        # Large base64 in result → filter_binary modifies data
         import base64
         big_b64 = base64.b64encode(b"x" * 10000).decode()
-        sq.insert_tool_call(db, r, c, None, "tc4", '{}', f'{{"content": "{big_b64}"}}', "s", "2024-01-01T10:00:04Z")
+        tc3_id = sq.insert_tool_call(db, r, c, None, "tc4", '{}', f'{{"content": "{big_b64}"}}', "s", "2024-01-01T10:00:04Z")
         db.commit()
-        row = db.execute("SELECT result, result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
-        assert row["result"] == '{"i":1}' and row["result_hash"] is None
-        # Non-JSON was still stored (filter_binary exception path leaves it as-is)
-        assert db.execute("SELECT result_hash FROM tool_calls WHERE external_id='tc3'").fetchone()["result_hash"] is not None
+        row = db.execute("SELECT result_hash FROM event_tool_call WHERE event_id=?", (tc_id,)).fetchone()
+        assert row["result_hash"] is None  # no result → no blob
+        # Non-JSON was still stored in blobs (filter_binary exception path leaves it as-is)
+        assert db.execute("SELECT result_hash FROM event_tool_call WHERE event_id=?", (tc2_id,)).fetchone()["result_hash"] is not None
 
     def test_shared_blob_cascade(self, db):
         h = sq.get_or_create_harness(db, "test", source="test")
@@ -224,13 +223,32 @@ class TestToolCallBlobs:
         assert get_ref_count(db, compute_content_hash(result)) == 1
 
 
+def _insert_legacy_tool_calls(db, conv_id: str, pairs: list[tuple[str, str | None]]) -> None:
+    """Insert legacy inline tool_calls rows directly (bypasses event writers) for migrate_blobs tests."""
+    from siftd.ids import ulid as _ulid
+    # We need a responses row since tool_calls.response_id FK references responses
+    db.execute("PRAGMA foreign_keys = OFF")
+    r_id = _ulid()
+    db.execute(
+        "INSERT INTO responses (id, conversation_id, external_id, timestamp) VALUES (?, ?, 'r-legacy', '2024-01-01T00:00:00Z')",
+        (r_id, conv_id),
+    )
+    for ext, val in pairs:
+        db.execute(
+            "INSERT INTO tool_calls (id, response_id, conversation_id, external_id, input, result, status) VALUES (?, ?, ?, ?, '{}', ?, 's')",
+            (_ulid(), r_id, conv_id, ext, val),
+        )
+    db.execute("PRAGMA foreign_keys = ON")
+
+
 class TestBlobMigration:
     def test_migrate_lifecycle(self, db):
         from siftd.storage.migrate_blobs import count_pending_migrations, migrate_existing_results, verify_migration
         assert migrate_existing_results(db)["migrated"] == 0  # empty
-        c, r = _scaffold(db)
-        for ext, val in [("tc1", '{"a":1}'), ("tc2", '{"a":1}'), ("tc3", '{"b":2}')]:
-            sq.insert_tool_call(db, r, c, None, ext, '{}', val, "s", None, dedupe_result=False)
+        h = sq.get_or_create_harness(db, "test", source="test")
+        ws = sq.get_or_create_workspace(db, "/test", "2024-01-01T10:00:00Z")
+        c = sq.insert_conversation(db, "c1", h, ws, "2024-01-01T10:00:00Z")
+        _insert_legacy_tool_calls(db, c, [("tc1", '{"a":1}'), ("tc2", '{"a":1}'), ("tc3", '{"b":2}')])
         db.commit()
         assert count_pending_migrations(db)["total"] == 3
         s = migrate_existing_results(db)
@@ -239,9 +257,13 @@ class TestBlobMigration:
 
     def test_migrate_preserves(self, db):
         from siftd.storage.migrate_blobs import migrate_existing_results
-        c, r = _scaffold(db)
-        sq.insert_tool_call(db, r, c, None, "new", '{}', '{"s":1}', "s", None, dedupe_result=True)
-        sq.insert_tool_call(db, r, c, None, "old", '{}', '{"s":1}', "s", None, dedupe_result=False)
+        from siftd.storage.blobs import store_content
+        h = sq.get_or_create_harness(db, "test", source="test")
+        ws = sq.get_or_create_workspace(db, "/test", "2024-01-01T10:00:00Z")
+        c = sq.insert_conversation(db, "c1", h, ws, "2024-01-01T10:00:00Z")
+        # Pre-create the blob (simulates a row already migrated)
+        store_content(db, '{"s":1}')
+        _insert_legacy_tool_calls(db, c, [("old", '{"s":1}')])
         db.commit()
         assert migrate_existing_results(db)["blobs_reused"] == 1
 
@@ -252,9 +274,9 @@ class TestStoreConversation:
     def test_stores_full_conversation(self, populated_db):
         conn, cid = populated_db
         assert conn.execute("SELECT external_id FROM conversations WHERE id=?", (cid,)).fetchone()[0] == "conv-1"
-        assert conn.execute("SELECT COUNT(*) FROM prompts WHERE conversation_id=?", (cid,)).fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM responses WHERE conversation_id=?", (cid,)).fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM tool_calls WHERE conversation_id=?", (cid,)).fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE conversation_id=? AND kind='prompt'", (cid,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE conversation_id=? AND kind='response'", (cid,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE conversation_id=? AND kind='tool_call'", (cid,)).fetchone()[0] == 2
         # FTS indexed
         assert len(conn.execute("SELECT * FROM content_fts WHERE content_fts MATCH 'Python'").fetchall()) >= 1
         # Response attributes

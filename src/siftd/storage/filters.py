@@ -64,9 +64,10 @@ class WhereBuilder:
     def model(self, value: str | None) -> None:
         if value:
             self.add(
-                "EXISTS (SELECT 1 FROM responses r_m"
-                " JOIN models m ON m.id = r_m.model_id"
-                " WHERE r_m.conversation_id = c.id"
+                "EXISTS (SELECT 1 FROM events e_m"
+                " JOIN event_response er_m ON er_m.event_id = e_m.id"
+                " JOIN models m ON m.id = er_m.model_id"
+                " WHERE e_m.conversation_id = c.id AND e_m.kind = 'response'"
                 " AND (m.raw_name LIKE ? OR m.name LIKE ?))",
                 f"%{value}%",
                 f"%{value}%",

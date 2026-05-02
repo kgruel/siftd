@@ -22,7 +22,7 @@ def _legacy_merge_schema(*, include_content_blobs: bool, include_result_hash: bo
             schema,
         )
         schema = re.sub(
-            r"\nCREATE TRIGGER tr_tool_calls_delete_release_blob\n.*?\nEND;\n",
+            r"\nCREATE TRIGGER tr_event_tool_call_[^\n]+\n.*?\nEND;\n",
             "\n",
             schema,
             flags=re.S,
@@ -35,7 +35,7 @@ def _legacy_merge_schema(*, include_content_blobs: bool, include_result_hash: bo
             flags=re.M,
         )
         schema = re.sub(
-            r"\nCREATE TRIGGER tr_tool_calls_delete_release_blob\n.*?\nEND;\n",
+            r"\nCREATE TRIGGER tr_event_tool_call_[^\n]+\n.*?\nEND;\n",
             "\n",
             schema,
             flags=re.S,
@@ -245,10 +245,10 @@ def test_content_blobs_dedup_and_ref_count(tmp_path):
     tool_calls = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
     assert tool_calls == 2
 
-    # Verify ref_counts are correct
+    # Verify ref_counts are correct (event_tool_call is authoritative; tool_calls.result_hash is NULL for new data)
     for row in conn.execute("SELECT hash, ref_count FROM content_blobs").fetchall():
         actual_refs = conn.execute(
-            "SELECT COUNT(*) FROM tool_calls WHERE result_hash = ?", (row["hash"],)
+            "SELECT COUNT(*) FROM event_tool_call WHERE result_hash = ?", (row["hash"],)
         ).fetchone()[0]
         assert row["ref_count"] == actual_refs, f"hash {row['hash']}: ref_count={row['ref_count']} but actual={actual_refs}"
     conn.close()
@@ -934,8 +934,8 @@ def _make_no_triggers_source(tmp_path):
     p = tmp_path / "notriggers-source.db"
     create_empty_database(p)
     conn = sqlite3.connect(str(p))
-    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
-    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_update_release_blob")
+    conn.execute("DROP TRIGGER IF EXISTS tr_event_tool_call_delete_release_blob")
+    conn.execute("DROP TRIGGER IF EXISTS tr_event_tool_call_update_release_blob")
     conn.commit()
     conn.close()
     return p

@@ -722,11 +722,11 @@ class TestFetchFileRefs:
         )
         conn.commit()
 
-        # Verify result is in blob, not inline
-        cur = conn.execute("SELECT result, result_hash FROM tool_calls WHERE external_id = 'tc1'")
-        row = cur.fetchone()
-        assert row["result"] is None, "Expected result to be stored in blob, not inline"
-        assert row["result_hash"] is not None, "Expected result_hash to reference blob"
+        # Verify result is in event_tool_call blob (event_tool_call is authoritative; legacy tool_calls.result_hash is NULL)
+        tc_event_id = conn.execute("SELECT id FROM events WHERE kind = 'tool_call' AND external_id = 'tc1'").fetchone()[0]
+        etc_row = conn.execute("SELECT result_hash FROM event_tool_call WHERE event_id = ?", (tc_event_id,)).fetchone()
+        assert etc_row is not None
+        assert etc_row["result_hash"] is not None, "Expected result_hash to reference blob"
 
         # Now test fetch_file_refs retrieves content correctly
         refs = fetch_file_refs(conn, [prompt_id])

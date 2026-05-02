@@ -4,7 +4,7 @@ _DRIFT_SQL = """
 SELECT cb.hash, cb.ref_count, COALESCE(actual.cnt, 0) AS actual
 FROM content_blobs cb
 LEFT JOIN (
-    SELECT result_hash, COUNT(*) cnt FROM tool_calls
+    SELECT result_hash, COUNT(*) cnt FROM event_tool_call
     WHERE result_hash IS NOT NULL GROUP BY result_hash
 ) actual ON actual.result_hash = cb.hash
 WHERE cb.ref_count != COALESCE(actual.cnt, 0)
@@ -12,10 +12,10 @@ WHERE cb.ref_count != COALESCE(actual.cnt, 0)
 
 
 class DbBlobRefcountDriftCheck:
-    """Detects content_blobs where ref_count diverges from actual tool_calls fan-in."""
+    """Detects content_blobs where ref_count diverges from actual event_tool_call fan-in."""
 
     name = "db-blob-refcount-drift"
-    description = "content_blobs ref_count out of sync with tool_calls references"
+    description = "content_blobs ref_count out of sync with event_tool_call references"
     has_fix = True
     requires_db = True
     requires_embed_db = False

@@ -48,6 +48,11 @@ def slice_database(
     if not source_db.exists():
         raise FileNotFoundError(f"Database not found: {source_db}")
 
+    # Ensure source DB is on the current schema before any read-only access.
+    # open_database in write mode runs pending migrations (e.g. v4 backfill).
+    _ensure_conn = open_database(source_db)
+    _ensure_conn.close()
+
     # Step 1: Resolve conversation IDs using existing filter infrastructure
     conversations = list_conversations(
         db_path=source_db,
@@ -222,13 +227,17 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
                                   WHERE r.conversation_id IN (SELECT id FROM _slice_conv_ids))
     """)
 
-    # Content blobs referenced by tool_calls (must precede tool_calls for FK)
+    # Content blobs referenced by event_tool_call (must precede tool_calls for FK).
+    # event_tool_call is authoritative: new writes store result_hash only there.
     conn.execute("""
         INSERT OR IGNORE INTO slice.content_blobs
         SELECT cb.* FROM content_blobs cb
-        WHERE cb.hash IN (SELECT tc.result_hash FROM tool_calls tc
-                          WHERE tc.conversation_id IN (SELECT id FROM _slice_conv_ids)
-                          AND tc.result_hash IS NOT NULL)
+        WHERE cb.hash IN (
+            SELECT etc.result_hash FROM event_tool_call etc
+            JOIN events e ON e.id = etc.event_id
+            WHERE e.conversation_id IN (SELECT id FROM _slice_conv_ids)
+            AND etc.result_hash IS NOT NULL
+        )
     """)
 
     # Explicit columns: source DBs that went through ensure_content_blobs_table
@@ -243,6 +252,37 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
                input, result, result_hash, status, timestamp
         FROM tool_calls
         WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
+    """)
+
+    # --- Polymorphic event tables ---
+
+    conn.execute("""
+        INSERT OR IGNORE INTO slice.events
+            (id, kind, conversation_id, parent_id, external_id, timestamp)
+        SELECT id, kind, conversation_id, parent_id, external_id, timestamp
+        FROM events
+        WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO slice.event_response
+            (event_id, model_id, provider_id, input_tokens, output_tokens)
+        SELECT er.event_id, er.model_id, er.provider_id, er.input_tokens, er.output_tokens
+        FROM event_response er
+        WHERE er.event_id IN (SELECT id FROM slice.events)
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO slice.event_tool_call
+            (event_id, tool_id, input, result_hash, status)
+        SELECT etc.event_id, etc.tool_id, etc.input, etc.result_hash, etc.status
+        FROM event_tool_call etc
+        WHERE etc.event_id IN (SELECT id FROM slice.events)
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO slice.event_content
+            (id, event_id, block_index, block_type, content)
+        SELECT ec.id, ec.event_id, ec.block_index, ec.block_type, ec.content
+        FROM event_content ec
+        WHERE ec.event_id IN (SELECT id FROM slice.events)
     """)
 
     # --- Attribute tables ---

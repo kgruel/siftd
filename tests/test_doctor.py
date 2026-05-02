@@ -1433,7 +1433,7 @@ class TestDbTriggerPresenceCheck:
 
     def test_missing_trigger_detected(self, tmp_path):
         conn, db_path = _make_deep_ctx(tmp_path)
-        conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
+        conn.execute("DROP TRIGGER IF EXISTS tr_event_tool_call_delete_release_blob")
         conn.commit()
         conn.close()
 
@@ -1444,7 +1444,7 @@ class TestDbTriggerPresenceCheck:
 
         assert len(findings) == 1
         assert findings[0].severity == "error"
-        assert "tr_tool_calls_delete_release_blob" in findings[0].context["missing"]
+        assert "tr_event_tool_call_delete_release_blob" in findings[0].context["missing"]
         assert findings[0].fix_command == "siftd doctor fix --triggers"
 
     def test_check_attributes(self):
@@ -1588,7 +1588,7 @@ class TestFixFunctions:
         from siftd.cli.data import _fix_blob_triggers
 
         conn, db_path = _make_deep_ctx(tmp_path)
-        conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
+        conn.execute("DROP TRIGGER IF EXISTS tr_event_tool_call_delete_release_blob")
         conn.commit()
 
         _fix_blob_triggers(conn, db_path)
@@ -1603,5 +1603,5 @@ class TestFixFunctions:
             ).fetchall()
         }
         check_conn.close()
-        assert "tr_tool_calls_delete_release_blob" in triggers
-        assert "tr_tool_calls_update_release_blob" in triggers
+        assert "tr_event_tool_call_delete_release_blob" in triggers
+        assert "tr_event_tool_call_update_release_blob" in triggers

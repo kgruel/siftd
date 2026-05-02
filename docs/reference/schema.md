@@ -351,7 +351,33 @@ Sparse extension: only present for kind='tool_call'
 
 ### event_content
 
-Unified content blocks (replaces prompt_content + response_content)
+Trigger to decrement ref_count and garbage collect when event_tool_call rows are deleted
+CREATE TRIGGER tr_event_tool_call_delete_release_blob
+AFTER DELETE ON event_tool_call
+FOR EACH ROW
+WHEN OLD.result_hash IS NOT NULL
+BEGIN
+    UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
+    DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
+END;
+
+-- Trigger to adjust ref_count when result_hash changes on event_tool_call
+CREATE TRIGGER tr_event_tool_call_update_release_blob
+AFTER UPDATE OF result_hash ON event_tool_call
+FOR EACH ROW
+WHEN OLD.result_hash IS NOT NEW.result_hash
+BEGIN
+    -- Decrement old blob (if any)
+    UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0)
+        WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
+    DELETE FROM content_blobs
+        WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
+    -- Increment new blob (if any)
+    UPDATE content_blobs SET ref_count = ref_count + 1
+        WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
+END;
+
+-- Unified content blocks (replaces prompt_content + response_content)
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|

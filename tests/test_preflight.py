@@ -40,8 +40,8 @@ def _make_no_triggers_db(tmp_path, name="notriggers.db"):
     p = tmp_path / name
     create_empty_database(p)
     conn = sqlite3.connect(str(p))
-    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
-    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_update_release_blob")
+    conn.execute("DROP TRIGGER IF EXISTS tr_event_tool_call_delete_release_blob")
+    conn.execute("DROP TRIGGER IF EXISTS tr_event_tool_call_update_release_blob")
     conn.commit()
     conn.close()
     return p

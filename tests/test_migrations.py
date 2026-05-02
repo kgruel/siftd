@@ -920,15 +920,15 @@ class TestBlobRefcountTriggerMigration:
             r[0]
             for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='trigger'"
-                " AND name LIKE 'tr_tool_calls_%_release_blob'"
+                " AND name LIKE 'tr_event_tool_call_%_release_blob'"
             ).fetchall()
         }
         conn.close()
-        assert "tr_tool_calls_delete_release_blob" in triggers
-        assert "tr_tool_calls_update_release_blob" in triggers
+        assert "tr_event_tool_call_delete_release_blob" in triggers
+        assert "tr_event_tool_call_update_release_blob" in triggers
 
     def test_delete_trigger_fires_after_legacy_migration(self, tmp_path):
-        """After v0→v3 migration, DELETE from tool_calls decrements blob ref_count."""
+        """After migration, DELETE from event_tool_call decrements blob ref_count."""
         from siftd.storage import get_ref_count
         from siftd.storage.sqlite import (
             get_or_create_harness,
@@ -946,15 +946,15 @@ class TestBlobRefcountTriggerMigration:
         c = insert_conversation(conn, "c1", h, w, "2024-01-01T00:00:00Z")
         p = insert_prompt(conn, c, "p1", "2024-01-01T00:00:00Z")
         r = insert_response(conn, c, p, None, None, "r1", "2024-01-01T00:00:01Z")
-        insert_tool_call(conn, r, c, None, "tc1", "{}", '{"out":1}', "success", "2024-01-01T00:00:02Z")
+        tc_id = insert_tool_call(conn, r, c, None, "tc1", "{}", '{"out":1}', "success", "2024-01-01T00:00:02Z")
         conn.commit()
 
-        row = conn.execute("SELECT result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
+        row = conn.execute("SELECT result_hash FROM event_tool_call WHERE event_id=?", (tc_id,)).fetchone()
         blob_hash = row[0]
         assert blob_hash is not None
         assert get_ref_count(conn, blob_hash) == 1
 
-        conn.execute("DELETE FROM tool_calls WHERE external_id='tc1'")
+        conn.execute("DELETE FROM event_tool_call WHERE event_id=?", (tc_id,))
         conn.commit()
 
         assert get_ref_count(conn, blob_hash) == 0
@@ -977,10 +977,10 @@ class TestBlobRefcountTriggerMigration:
         c = insert_conversation(conn, "c1", h, w, "2024-01-01T00:00:00Z")
         p = insert_prompt(conn, c, "p1", "2024-01-01T00:00:00Z")
         r = insert_response(conn, c, p, None, None, "r1", "2024-01-01T00:00:01Z")
-        insert_tool_call(conn, r, c, None, "tc1", "{}", '{"out":1}', "success", "2024-01-01T00:00:02Z")
+        tc_id = insert_tool_call(conn, r, c, None, "tc1", "{}", '{"out":1}', "success", "2024-01-01T00:00:02Z")
         conn.commit()
 
-        row = conn.execute("SELECT result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
+        row = conn.execute("SELECT result_hash FROM event_tool_call WHERE event_id=?", (tc_id,)).fetchone()
         blob_hash = row[0]
 
         # Artificially set ref_count=0 to simulate drift from a prior bug
@@ -991,7 +991,7 @@ class TestBlobRefcountTriggerMigration:
 
         # Nulling out result_hash fires the UPDATE trigger.
         # Without MAX clamp this would decrement ref_count to -1, violating CHECK(ref_count >= 0).
-        conn.execute("UPDATE tool_calls SET result_hash = NULL WHERE external_id = 'tc1'")
+        conn.execute("UPDATE event_tool_call SET result_hash = NULL WHERE event_id = ?", (tc_id,))
         conn.commit()  # Must not raise IntegrityError
 
         ref = conn.execute(

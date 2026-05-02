@@ -100,10 +100,12 @@ def backfill_shell_tags(conn: sqlite3.Connection) -> dict[str, int]:
 
     # Find all shell.execute calls that don't already have a shell:* tag
     cur = conn.execute("""
-        SELECT tc.id, tc.input
-        FROM tool_calls tc
-        WHERE tc.tool_id = ?
-        AND tc.id NOT IN (
+        SELECT e.id, etc.input
+        FROM events e
+        JOIN event_tool_call etc ON etc.event_id = e.id
+        WHERE e.kind = 'tool_call'
+        AND etc.tool_id = ?
+        AND e.id NOT IN (
             SELECT tct.tool_call_id
             FROM tool_call_tags tct
             JOIN tags t ON t.id = tct.tag_id
@@ -197,7 +199,7 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
             # Find the response in DB
             response_external_id = f"claude_code::{external_msg_id}"
             row = conn.execute(
-                "SELECT id FROM responses WHERE conversation_id = ? AND external_id = ?",
+                "SELECT id FROM events WHERE kind = 'response' AND conversation_id = ? AND external_id = ?",
                 (conversation_id, response_external_id)
             ).fetchone()
             if not row:
@@ -254,10 +256,12 @@ def backfill_derivative_tags(conn: sqlite3.Connection) -> int:
     placeholders = ",".join("?" * len(tool_ids))
     tool_id_list = list(tool_ids.values())
     cur = conn.execute(f"""
-        SELECT tc.conversation_id, tc.input, t.name AS tool_name
-        FROM tool_calls tc
-        JOIN tools t ON t.id = tc.tool_id
-        WHERE tc.tool_id IN ({placeholders})
+        SELECT e.conversation_id, etc.input, t.name AS tool_name
+        FROM events e
+        JOIN event_tool_call etc ON etc.event_id = e.id
+        JOIN tools t ON t.id = etc.tool_id
+        WHERE e.kind = 'tool_call'
+        AND etc.tool_id IN ({placeholders})
     """, tool_id_list)
 
     # Collect conversation IDs that need tagging
@@ -290,7 +294,7 @@ def backfill_filter_binary(conn: sqlite3.Connection, *, dry_run: bool = False) -
 
     Scans content_blobs for binary content (images, base64 data) and replaces
     with filtered versions. Since content_blobs uses content-addressable storage,
-    this creates new filtered blobs and updates tool_calls.result_hash to point
+    this creates new filtered blobs and updates event_tool_call.result_hash to point
     to them.
 
     Args:
@@ -343,7 +347,7 @@ def backfill_filter_binary(conn: sqlite3.Connection, *, dry_run: bool = False) -
 
         if not dry_run:
             # Insert blob with ref_count=0; the AFTER UPDATE trigger on
-            # tool_calls.result_hash handles all ref_count bookkeeping.
+            # event_tool_call.result_hash handles all ref_count bookkeeping.
             from datetime import UTC, datetime
 
             conn.execute(
@@ -356,13 +360,13 @@ def backfill_filter_binary(conn: sqlite3.Connection, *, dry_run: bool = False) -
 
         stats["filtered"] += 1
 
-    # Update tool_calls to point to new hashes — the AFTER UPDATE trigger
+    # Update event_tool_call to point to new hashes — the AFTER UPDATE trigger
     # decrements old blob ref_count and increments new blob ref_count for
     # each row, then garbage-collects blobs that reach ref_count <= 0.
     if not dry_run and hash_mapping:
         for old_hash, new_hash in hash_mapping.items():
             conn.execute(
-                "UPDATE tool_calls SET result_hash = ? WHERE result_hash = ?",
+                "UPDATE event_tool_call SET result_hash = ? WHERE result_hash = ?",
                 (new_hash, old_hash),
             )
 

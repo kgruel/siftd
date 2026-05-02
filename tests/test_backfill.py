@@ -30,6 +30,9 @@ def _chain(c, *, hid="h1", wid="w1", cid="c1", mid="m1", rid="r1", ext_id=None):
     c.execute("INSERT OR IGNORE INTO conversations (id, external_id, harness_id, workspace_id, started_at) VALUES (?, ?, ?, ?, '2024-01-01')", (cid, f"e_{cid}", hid, wid))
     c.execute("INSERT OR IGNORE INTO models (id, raw_name, name) VALUES (?, 'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-20241022')", (mid,))
     c.execute("INSERT OR IGNORE INTO responses (id, conversation_id, model_id, external_id, timestamp) VALUES (?, ?, ?, ?, '2024-01-01')", (rid, cid, mid, ext_id or f"e_{rid}"))
+    # Dual-write: events tables are the source of truth post-slice-2.
+    c.execute("INSERT OR IGNORE INTO events (id, kind, conversation_id, external_id, timestamp) VALUES (?, 'response', ?, ?, '2024-01-01')", (rid, cid, ext_id or f"e_{rid}"))
+    c.execute("INSERT OR IGNORE INTO event_response (event_id, model_id) VALUES (?, ?)", (rid, mid))
 
 
 def _tid(c, name="shell.execute"):
@@ -40,6 +43,9 @@ def _tid(c, name="shell.execute"):
 def _tc(c, tcid, rid, cid, tid, inp=""):
     s = json.dumps(inp) if isinstance(inp, dict) else inp
     c.execute("INSERT OR IGNORE INTO tool_calls (id, response_id, conversation_id, tool_id, input) VALUES (?, ?, ?, ?, ?)", (tcid, rid, cid, tid, s))
+    # Dual-write: events tables are the source of truth post-slice-2.
+    c.execute("INSERT OR IGNORE INTO events (id, kind, conversation_id, parent_id, timestamp) VALUES (?, 'tool_call', ?, ?, '2024-01-01')", (tcid, cid, rid))
+    c.execute("INSERT OR IGNORE INTO event_tool_call (event_id, tool_id, input) VALUES (?, ?, ?)", (tcid, tid, s))
 
 
 def _bare_db(tmp_path, name="bare.db"):
@@ -193,6 +199,8 @@ class TestBackfillDerivativeTags:
     def test_null_input(self, db):
         _chain(db)
         db.execute("INSERT INTO tool_calls (id, response_id, conversation_id, tool_id, input) VALUES ('tc1', 'r1', 'c1', ?, NULL)", (_tid(db),))
+        db.execute("INSERT INTO events (id, kind, conversation_id, parent_id, timestamp) VALUES ('tc1', 'tool_call', 'c1', 'r1', '2024-01-01')")
+        db.execute("INSERT INTO event_tool_call (event_id, tool_id, input) VALUES ('tc1', ?, NULL)", (_tid(db),))
         db.commit()
         assert backfill_derivative_tags(db) == 0
 

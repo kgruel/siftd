@@ -839,8 +839,8 @@ def _get_prompt_by_index(
 
     cur = conn.execute(
         """
-        SELECT id FROM prompts
-        WHERE conversation_id = ?
+        SELECT id FROM events
+        WHERE kind = 'prompt' AND conversation_id = ?
         ORDER BY timestamp
         LIMIT 1 OFFSET ?
         """,

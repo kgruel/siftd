@@ -31,7 +31,7 @@ class EmbeddingsStaleCheck:
         conn = ctx.get_db_conn()
         embed_conn = ctx.get_embed_conn()
 
-        cur = conn.execute("SELECT DISTINCT conversation_id FROM prompts")
+        cur = conn.execute("SELECT DISTINCT conversation_id FROM events WHERE kind = 'prompt'")
         main_ids = {row[0] for row in cur.fetchall()}
 
         from siftd.storage.embeddings import get_indexed_conversation_ids

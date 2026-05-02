@@ -455,9 +455,9 @@ def enrich_context_window(conn: sqlite3.Connection, results: list[SearchChunk], 
 
         all_prompts = conn.execute(
             """
-            SELECT p.id FROM prompts p
-            WHERE p.conversation_id = ?
-            ORDER BY p.timestamp
+            SELECT e.id FROM events e
+            WHERE e.conversation_id = ? AND e.kind = 'prompt'
+            ORDER BY e.timestamp
         """,
             (r.conversation_id,),
         ).fetchall()

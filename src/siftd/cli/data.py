@@ -814,10 +814,10 @@ def _fix_blob_refcount(conn, db_path):
     cur = conn.execute("""
         UPDATE content_blobs
         SET ref_count = COALESCE(
-            (SELECT COUNT(*) FROM tool_calls WHERE result_hash = content_blobs.hash), 0
+            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
         )
         WHERE ref_count != COALESCE(
-            (SELECT COUNT(*) FROM tool_calls WHERE result_hash = content_blobs.hash), 0
+            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
         )
     """)
     updated = cur.rowcount

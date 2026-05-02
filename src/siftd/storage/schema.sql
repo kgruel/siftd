@@ -297,32 +297,6 @@ CREATE TABLE content_blobs (
 
 CREATE INDEX idx_content_blobs_ref_count ON content_blobs(ref_count);
 
--- Trigger to decrement ref_count and garbage collect when tool_calls are deleted
-CREATE TRIGGER tr_tool_calls_delete_release_blob
-AFTER DELETE ON tool_calls
-FOR EACH ROW
-WHEN OLD.result_hash IS NOT NULL
-BEGIN
-    UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
-    DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
-END;
-
--- Trigger to adjust ref_count when result_hash changes (e.g. blob migration)
-CREATE TRIGGER tr_tool_calls_update_release_blob
-AFTER UPDATE OF result_hash ON tool_calls
-FOR EACH ROW
-WHEN OLD.result_hash IS NOT NEW.result_hash
-BEGIN
-    -- Decrement old blob (if any)
-    UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0)
-        WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
-    DELETE FROM content_blobs
-        WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
-    -- Increment new blob (if any)
-    UPDATE content_blobs SET ref_count = ref_count + 1
-        WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
-END;
-
 --------------------------------------------------------------------------------
 -- SYNC INBOX
 -- Tracks staged payloads from push operations pending merge
@@ -388,6 +362,32 @@ CREATE TABLE event_tool_call (
     result_hash     TEXT REFERENCES content_blobs(hash),
     status          TEXT                        -- success | error | pending
 );
+
+-- Trigger to decrement ref_count and garbage collect when event_tool_call rows are deleted
+CREATE TRIGGER tr_event_tool_call_delete_release_blob
+AFTER DELETE ON event_tool_call
+FOR EACH ROW
+WHEN OLD.result_hash IS NOT NULL
+BEGIN
+    UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
+    DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
+END;
+
+-- Trigger to adjust ref_count when result_hash changes on event_tool_call
+CREATE TRIGGER tr_event_tool_call_update_release_blob
+AFTER UPDATE OF result_hash ON event_tool_call
+FOR EACH ROW
+WHEN OLD.result_hash IS NOT NEW.result_hash
+BEGIN
+    -- Decrement old blob (if any)
+    UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0)
+        WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
+    DELETE FROM content_blobs
+        WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
+    -- Increment new blob (if any)
+    UPDATE content_blobs SET ref_count = ref_count + 1
+        WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
+END;
 
 -- Unified content blocks (replaces prompt_content + response_content)
 CREATE TABLE event_content (

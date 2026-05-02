@@ -19,6 +19,13 @@ from pathlib import Path
 from siftd.domain import Conversation
 from siftd.ids import ulid as _ulid
 from siftd.model_names import parse_model_name
+from siftd.storage.events import (
+    ensure_event_tool_call_triggers,
+    insert_event,
+    insert_event_content,
+    insert_event_response,
+    insert_event_tool_call,
+)
 from siftd.storage.fts import ensure_fts_table, insert_fts_content
 from siftd.storage.sessions import ensure_prompt_tags_table, ensure_session_tables
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
@@ -141,6 +148,10 @@ def open_database(
             for _v in range(version + 1, SCHEMA_VERSION + 1):
                 if _v in MIGRATIONS:
                     MIGRATIONS[_v](conn)
+
+            # Replace tr_tool_calls_* triggers with tr_event_tool_call_* on every
+            # write open so old DBs upgraded in-place get the new trigger names.
+            ensure_event_tool_call_triggers(conn)
 
             # Stamp schema version after successful migrations
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -1495,42 +1506,6 @@ def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
             "ALTER TABLE tool_calls ADD COLUMN result_hash TEXT REFERENCES content_blobs(hash)"
         )
 
-    # Create trigger for ref_count cleanup on delete
-    cur = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='tr_tool_calls_delete_release_blob'"
-    )
-    if not cur.fetchone():
-        conn.execute("""
-            CREATE TRIGGER tr_tool_calls_delete_release_blob
-            AFTER DELETE ON tool_calls
-            FOR EACH ROW
-            WHEN OLD.result_hash IS NOT NULL
-            BEGIN
-                UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
-                DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
-            END
-        """)
-
-    # Create trigger for ref_count adjustment when result_hash changes
-    cur = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='tr_tool_calls_update_release_blob'"
-    )
-    if not cur.fetchone():
-        conn.execute("""
-            CREATE TRIGGER tr_tool_calls_update_release_blob
-            AFTER UPDATE OF result_hash ON tool_calls
-            FOR EACH ROW
-            WHEN OLD.result_hash IS NOT NEW.result_hash
-            BEGIN
-                UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0)
-                    WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
-                DELETE FROM content_blobs
-                    WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
-                UPDATE content_blobs SET ref_count = ref_count + 1
-                    WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
-            END
-        """)
-
 
 def _ensure_git_remote_index(conn: sqlite3.Connection) -> None:
     """Create index on workspaces.git_remote if it doesn't exist. Idempotent."""
@@ -1956,75 +1931,6 @@ def insert_conversation(
     return ulid
 
 
-def insert_prompt(
-    conn: sqlite3.Connection,
-    conversation_id: str,
-    external_id: str | None,
-    timestamp: str,
-) -> str:
-    """Insert prompt, return id (ULID)."""
-    ulid = _ulid()
-    conn.execute(
-        "INSERT INTO prompts (id, conversation_id, external_id, timestamp) VALUES (?, ?, ?, ?)",
-        (ulid, conversation_id, external_id, timestamp)
-    )
-    return ulid
-
-
-def insert_response(
-    conn: sqlite3.Connection,
-    conversation_id: str,
-    prompt_id: str | None,
-    model_id: str | None,
-    provider_id: str | None,
-    external_id: str | None,
-    timestamp: str,
-    input_tokens: int | None = None,
-    output_tokens: int | None = None,
-) -> str:
-    """Insert response, return id (ULID)."""
-    ulid = _ulid()
-    conn.execute(
-        """INSERT INTO responses
-           (id, conversation_id, prompt_id, model_id, provider_id, external_id, timestamp, input_tokens, output_tokens)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (ulid, conversation_id, prompt_id, model_id, provider_id, external_id, timestamp, input_tokens, output_tokens)
-    )
-    return ulid
-
-
-def insert_prompt_content(
-    conn: sqlite3.Connection,
-    prompt_id: str,
-    block_index: int,
-    block_type: str,
-    content: str,
-) -> str:
-    """Insert prompt content block, return id (ULID)."""
-    ulid = _ulid()
-    conn.execute(
-        "INSERT INTO prompt_content (id, prompt_id, block_index, block_type, content) VALUES (?, ?, ?, ?, ?)",
-        (ulid, prompt_id, block_index, block_type, content)
-    )
-    return ulid
-
-
-def insert_response_content(
-    conn: sqlite3.Connection,
-    response_id: str,
-    block_index: int,
-    block_type: str,
-    content: str,
-) -> str:
-    """Insert response content block, return id (ULID)."""
-    ulid = _ulid()
-    conn.execute(
-        "INSERT INTO response_content (id, response_id, block_index, block_type, content) VALUES (?, ?, ?, ?, ?)",
-        (ulid, response_id, block_index, block_type, content)
-    )
-    return ulid
-
-
 def insert_response_attribute(
     conn: sqlite3.Connection,
     response_id: str,
@@ -2043,6 +1949,85 @@ def insert_response_attribute(
     return ulid
 
 
+# =============================================================================
+# Compatibility shims (slice 2–3 transition; remove in slice 8)
+# These preserve old call-sites while data is now stored in events tables.
+# =============================================================================
+
+def insert_prompt(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    external_id: str | None,
+    timestamp: str,
+) -> str:
+    uid = _ulid()
+    insert_event(conn, uid, "prompt", conversation_id, timestamp, external_id=external_id)
+    # Dual-write: old table needed for response_attributes/prompt_attributes FK chain. Remove slice 8.
+    conn.execute(
+        "INSERT INTO prompts (id, conversation_id, external_id, timestamp) VALUES (?, ?, ?, ?)",
+        (uid, conversation_id, external_id, timestamp),
+    )
+    return uid
+
+
+def insert_response(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    prompt_id: str | None,
+    model_id: str | None,
+    provider_id: str | None,
+    external_id: str | None,
+    timestamp: str,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+) -> str:
+    uid = _ulid()
+    insert_event(conn, uid, "response", conversation_id, timestamp, parent_id=prompt_id, external_id=external_id)
+    insert_event_response(conn, uid, model_id=model_id, provider_id=provider_id, input_tokens=input_tokens, output_tokens=output_tokens)
+    # Dual-write: old table needed for response_attributes FK. Remove slice 8.
+    conn.execute(
+        """INSERT INTO responses
+           (id, conversation_id, prompt_id, model_id, provider_id, external_id, timestamp, input_tokens, output_tokens)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (uid, conversation_id, prompt_id, model_id, provider_id, external_id, timestamp, input_tokens, output_tokens),
+    )
+    return uid
+
+
+def insert_prompt_content(
+    conn: sqlite3.Connection,
+    prompt_id: str,
+    block_index: int,
+    block_type: str,
+    content: str,
+) -> str:
+    uid = _ulid()
+    insert_event_content(conn, content_id=uid, event_id=prompt_id, block_index=block_index, block_type=block_type, content=content)
+    # Dual-write: old table needed for merge FK compat. Remove slice 8.
+    conn.execute(
+        "INSERT OR IGNORE INTO prompt_content (id, prompt_id, block_index, block_type, content) VALUES (?, ?, ?, ?, ?)",
+        (uid, prompt_id, block_index, block_type, content),
+    )
+    return uid
+
+
+def insert_response_content(
+    conn: sqlite3.Connection,
+    response_id: str,
+    block_index: int,
+    block_type: str,
+    content: str,
+) -> str:
+    uid = _ulid()
+    insert_event_content(conn, content_id=uid, event_id=response_id, block_index=block_index, block_type=block_type, content=content)
+    # Dual-write: old table needed for merge FK compat. Remove slice 8.
+    conn.execute(
+        "INSERT OR IGNORE INTO response_content (id, response_id, block_index, block_type, content) VALUES (?, ?, ?, ?, ?)",
+        (uid, response_id, block_index, block_type, content),
+    )
+    return uid
+
+
 def insert_tool_call(
     conn: sqlite3.Connection,
     response_id: str,
@@ -2057,49 +2042,17 @@ def insert_tool_call(
     dedupe_result: bool = True,
     filter_binary: bool = True,
 ) -> str:
-    """Insert tool call, return id (ULID).
-
-    Args:
-        dedupe_result: If True (default), stores result in content_blobs for
-            deduplication. If False, stores inline in result column.
-        filter_binary: If True (default), filter binary content (images, base64)
-            from the result before storage.
-    """
-    from siftd.content.filters import filter_tool_result_binary
-    from siftd.storage.blobs import store_content
-
-    ulid = _ulid()
-    result_hash = None
-
-    # Apply binary filtering if enabled
-    if result_json is not None and filter_binary:
-        try:
-            result_data = json.loads(result_json)
-            filtered_data = filter_tool_result_binary(result_data)
-            if filtered_data is not result_data:
-                result_json = json.dumps(filtered_data)
-        except (ValueError, TypeError):
-            # Not valid JSON, leave as-is
-            pass
-
-    if result_json is not None and dedupe_result:
-        # Store in content_blobs and reference by hash
-        result_hash = store_content(conn, result_json)
-        conn.execute(
-            """INSERT INTO tool_calls
-               (id, response_id, conversation_id, tool_id, external_id, input, result_hash, status, timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (ulid, response_id, conversation_id, tool_id, external_id, input_json, result_hash, status, timestamp)
-        )
-    else:
-        # Store inline (legacy behavior or dedupe disabled)
-        conn.execute(
-            """INSERT INTO tool_calls
-               (id, response_id, conversation_id, tool_id, external_id, input, result, status, timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (ulid, response_id, conversation_id, tool_id, external_id, input_json, result_json, status, timestamp)
-        )
-    return ulid
+    uid = _ulid()
+    insert_event(conn, uid, "tool_call", conversation_id, timestamp or "", parent_id=response_id, external_id=external_id)
+    insert_event_tool_call(conn, uid, tool_id=tool_id, input_json=input_json, result_json=result_json, status=status, filter_binary=filter_binary)
+    # Dual-write: old table needed for tool_call_tags FK. Remove slice 8.
+    conn.execute(
+        """INSERT INTO tool_calls
+           (id, response_id, conversation_id, tool_id, external_id, input, status, timestamp)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (uid, response_id, conversation_id, tool_id, external_id, input_json, status, timestamp),
+    )
+    return uid
 
 
 # =============================================================================
@@ -2178,29 +2131,20 @@ def store_conversation(
 
     # Process prompts
     for prompt in conversation.prompts:
-        prompt_id = insert_prompt(
-            conn,
-            conversation_id=conversation_id,
-            external_id=prompt.external_id,
-            timestamp=prompt.timestamp,
-        )
+        prompt_id = insert_prompt(conn, conversation_id, prompt.external_id, prompt.timestamp)
 
         # Insert prompt content blocks
         for idx, block in enumerate(prompt.content):
-            content_id = insert_prompt_content(
-                conn, prompt_id, idx, block.block_type, json.dumps(block.content)
-            )
+            content_id = insert_prompt_content(conn, prompt_id, idx, block.block_type, json.dumps(block.content))
             if block.block_type == "text" and block.content.get("text"):
                 insert_fts_content(conn, content_id, "prompt", conversation_id, block.content["text"])
 
         # Process responses for this prompt
         for response in prompt.responses:
-            # Get or create model if specified
             model_id = None
             if response.model:
                 model_id = get_or_create_model(conn, response.model)
 
-            # Extract usage
             input_tokens = None
             output_tokens = None
             if response.usage:
@@ -2221,13 +2165,11 @@ def store_conversation(
 
             # Insert response content blocks
             for idx, block in enumerate(response.content):
-                content_id = insert_response_content(
-                    conn, response_id, idx, block.block_type, json.dumps(block.content)
-                )
+                content_id = insert_response_content(conn, response_id, idx, block.block_type, json.dumps(block.content))
                 if block.block_type == "text" and block.content.get("text"):
                     insert_fts_content(conn, content_id, "response", conversation_id, block.content["text"])
 
-            # Insert response attributes
+            # Insert response attributes (response_attributes table — slice 4 owns migration)
             for attr_key, attr_value in response.attributes.items():
                 insert_response_attribute(
                     conn, response_id, attr_key, attr_value, scope="provider"
@@ -2238,7 +2180,6 @@ def store_conversation(
                 tool_id = get_or_create_tool_by_alias(
                     conn, tool_call.tool_name, harness_id
                 )
-                # Cache tool canonical name to avoid per-call SELECT
                 if tool_id not in _tool_name_cache:
                     _tool_name_cache[tool_id] = conn.execute(
                         "SELECT name FROM tools WHERE id = ?", (tool_id,)
@@ -2254,14 +2195,11 @@ def store_conversation(
                     input_json=json.dumps(tool_call.input),
                     result_json=json.dumps(tool_call.result) if tool_call.result else None,
                     status=tool_call.status,
-                    timestamp=tool_call.timestamp,
+                    timestamp=tool_call.timestamp or response.timestamp,
                     filter_binary=filter_binary,
                 )
 
-                # Auto-tag shell commands at ingest time
                 tag_shell_command(conn, tool_call_id, canonical_name, tool_call.input)
-
-                # Auto-tag derivative conversations (contain siftd search/query)
                 tag_derivative_conversation(
                     conn, conversation_id, canonical_name, tool_call.input
                 )
