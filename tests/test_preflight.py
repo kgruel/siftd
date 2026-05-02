@@ -16,7 +16,7 @@ def _make_clean_db(tmp_path, name="test.db"):
 
 
 def _make_fk_corrupt_db(tmp_path, name="corrupt.db"):
-    """Create a DB with a FK violation (prompt with non-existent conversation_id).
+    """Create a DB with a FK violation (event with non-existent conversation_id).
 
     Requires PRAGMA foreign_keys = OFF to insert the dangling row; otherwise
     SQLite rejects the INSERT before foreign_key_check can detect it.
@@ -26,8 +26,8 @@ def _make_fk_corrupt_db(tmp_path, name="corrupt.db"):
     conn = sqlite3.connect(str(p))
     conn.execute("PRAGMA foreign_keys = OFF")
     conn.execute(
-        "INSERT INTO prompts (id, conversation_id, external_id, timestamp) "
-        "VALUES (?, 'nonexistent-conv', 'ext-p-1', '2024-01-01T00:00:00Z')",
+        "INSERT INTO events (id, kind, conversation_id, external_id, timestamp) "
+        "VALUES (?, 'prompt', 'nonexistent-conv', 'ext-p-1', '2024-01-01T00:00:00Z')",
         (ulid(),),
     )
     conn.commit()

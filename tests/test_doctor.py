@@ -10,7 +10,6 @@ from siftd.api import (
     run_checks,
 )
 from siftd.doctor.checks import (
-    BlobMigrationCheck,
     CheckContext,
     ConfigValidCheck,
     CostCoverageCheck,
@@ -81,7 +80,6 @@ class TestListChecks:
         # embeddings-compat is from main (replaces embeddings-dimension-mismatch)
         assert "embeddings-compat" in names
         assert "workspace-identity" in names
-        assert "blob-migration" in names
         # Deep checks
         assert "db-fk-integrity" in names
         assert "db-blob-refcount-drift" in names
@@ -1207,42 +1205,6 @@ class TestWorkspaceIdentityCheck:
         """Check has correct attributes."""
         check = WorkspaceIdentityCheck()
         assert check.name == "workspace-identity"
-        assert check.has_fix is True
-        assert check.requires_db is True
-        assert check.cost == "fast"
-
-
-class TestBlobMigrationCheck:
-    """Tests for the blob-migration check."""
-
-    def test_no_pending(self, check_context, monkeypatch):
-        """Returns no findings when no migrations pending."""
-        monkeypatch.setattr(
-            "siftd.storage.migrate_blobs.count_pending_migrations",
-            lambda conn: {"total": 0, "unique": 0, "size_bytes": 0},
-        )
-        check = BlobMigrationCheck()
-        findings = check.run(check_context)
-        assert findings == []
-
-    def test_pending_migrations(self, check_context, monkeypatch):
-        """Reports info finding for pending blob migrations."""
-        monkeypatch.setattr(
-            "siftd.storage.migrate_blobs.count_pending_migrations",
-            lambda conn: {"total": 500, "unique": 200, "size_bytes": 5_242_880},
-        )
-        check = BlobMigrationCheck()
-        findings = check.run(check_context)
-        assert len(findings) == 1
-        assert findings[0].severity == "info"
-        assert "500 tool call" in findings[0].message
-        assert "5.0MB" in findings[0].message
-        assert findings[0].fix_command == "siftd migrate blobs"
-
-    def test_finding_structure(self):
-        """Check has correct attributes."""
-        check = BlobMigrationCheck()
-        assert check.name == "blob-migration"
         assert check.has_fix is True
         assert check.requires_db is True
         assert check.cost == "fast"

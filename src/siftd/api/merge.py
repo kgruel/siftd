@@ -180,8 +180,6 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
     # Snapshot existing conversation IDs for diff after INSERT
     conn.execute("CREATE TEMP TABLE _pre_merge_conv_ids AS SELECT id FROM conversations")
 
-    prompt_before = conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0]
-
     # conversations — remap harness_id, workspace_id
     conn.execute("""
         INSERT OR IGNORE INTO conversations
@@ -224,37 +222,6 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
     src_conv_count = conn.execute("SELECT COUNT(*) FROM src.conversations").fetchone()[0]
     skipped_conversations = src_conv_count - new_conversations
 
-    # prompts — no FK remapping needed, filter by conversation existence
-    conn.execute("""
-        INSERT OR IGNORE INTO prompts
-        SELECT sp.* FROM src.prompts sp
-        WHERE sp.conversation_id IN (SELECT id FROM main.conversations)
-    """)
-    prompt_after = conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0]
-
-    # responses — remap model_id, provider_id
-    resp_before = conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0]
-    conn.execute("""
-        INSERT OR IGNORE INTO responses
-            (id, conversation_id, prompt_id, model_id, provider_id,
-             external_id, timestamp, input_tokens, output_tokens)
-        SELECT
-            sr.id,
-            sr.conversation_id,
-            sr.prompt_id,
-            COALESCE(mm.target_id, sr.model_id),
-            COALESCE(pm.target_id, sr.provider_id),
-            sr.external_id,
-            sr.timestamp,
-            sr.input_tokens,
-            sr.output_tokens
-        FROM src.responses sr
-        LEFT JOIN _id_map mm ON mm.table_name = 'models' AND mm.source_id = sr.model_id
-        LEFT JOIN _id_map pm ON pm.table_name = 'providers' AND pm.source_id = sr.provider_id
-        WHERE sr.conversation_id IN (SELECT id FROM main.conversations)
-    """)
-    resp_after = conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0]
-
     # content_blobs — SHA256 PK, INSERT OR IGNORE handles dedup
     blob_before = conn.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0]
     conn.execute("""
@@ -262,29 +229,6 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
         SELECT * FROM src.content_blobs
     """)
     blob_after = conn.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0]
-
-    # tool_calls — remap tool_id, explicit column list for ALTER TABLE ordering
-    tc_before = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
-    conn.execute("""
-        INSERT OR IGNORE INTO tool_calls
-            (id, response_id, conversation_id, tool_id, external_id,
-             input, result, result_hash, status, timestamp)
-        SELECT
-            stc.id,
-            stc.response_id,
-            stc.conversation_id,
-            COALESCE(tm.target_id, stc.tool_id),
-            stc.external_id,
-            stc.input,
-            stc.result,
-            stc.result_hash,
-            stc.status,
-            stc.timestamp
-        FROM src.tool_calls stc
-        LEFT JOIN _id_map tm ON tm.table_name = 'tools' AND tm.source_id = stc.tool_id
-        WHERE stc.conversation_id IN (SELECT id FROM main.conversations)
-    """)
-    tc_after = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
 
     # --- Step 2b: Polymorphic event tables (v4 schema, present in all DBs opened since slice 1) ---
 
@@ -331,18 +275,6 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
 
     # --- Step 3: Content + Attribute tables ---
 
-    conn.execute("""
-        INSERT OR IGNORE INTO prompt_content
-        SELECT spc.* FROM src.prompt_content spc
-        WHERE spc.prompt_id IN (SELECT id FROM main.prompts)
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO response_content
-        SELECT src.* FROM src.response_content src
-        WHERE src.response_id IN (SELECT id FROM main.responses)
-    """)
-
     if conn.execute(
         "SELECT 1 FROM src.sqlite_master WHERE type='table' AND name='event_content'"
     ).fetchone():
@@ -353,30 +285,6 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
             FROM src.event_content sec
             WHERE sec.event_id IN (SELECT id FROM main.events)
         """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO conversation_attributes
-        SELECT * FROM src.conversation_attributes
-        WHERE conversation_id IN (SELECT id FROM main.conversations)
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO prompt_attributes
-        SELECT spa.* FROM src.prompt_attributes spa
-        WHERE spa.prompt_id IN (SELECT id FROM main.prompts)
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO response_attributes
-        SELECT sra.* FROM src.response_attributes sra
-        WHERE sra.response_id IN (SELECT id FROM main.responses)
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO tool_call_attributes
-        SELECT stca.* FROM src.tool_call_attributes stca
-        WHERE stca.tool_call_id IN (SELECT id FROM main.tool_calls)
-    """)
 
     conn.execute("""
         INSERT OR IGNORE INTO attributes
@@ -393,72 +301,6 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
         SELECT COUNT(*) FROM _id_map
         WHERE table_name = 'tags' AND source_id = target_id
     """).fetchone()[0]
-
-    conn.execute("""
-        INSERT OR IGNORE INTO conversation_tags
-            (id, conversation_id, tag_id, applied_at)
-        SELECT
-            sct.id,
-            sct.conversation_id,
-            COALESCE(tm.target_id, sct.tag_id),
-            sct.applied_at
-        FROM src.conversation_tags sct
-        LEFT JOIN _id_map tm ON tm.table_name = 'tags' AND tm.source_id = sct.tag_id
-        WHERE sct.conversation_id IN (SELECT id FROM main.conversations)
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO workspace_tags
-            (id, workspace_id, tag_id, applied_at)
-        SELECT
-            swt.id,
-            COALESCE(wm.target_id, swt.workspace_id),
-            COALESCE(tm.target_id, swt.tag_id),
-            swt.applied_at
-        FROM src.workspace_tags swt
-        LEFT JOIN _id_map wm ON wm.table_name = 'workspaces' AND wm.source_id = swt.workspace_id
-        LEFT JOIN _id_map tm ON tm.table_name = 'tags' AND tm.source_id = swt.tag_id
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO tool_call_tags
-            (id, tool_call_id, tag_id, applied_at)
-        SELECT
-            stct.id,
-            stct.tool_call_id,
-            COALESCE(tm.target_id, stct.tag_id),
-            stct.applied_at
-        FROM src.tool_call_tags stct
-        LEFT JOIN _id_map tm ON tm.table_name = 'tags' AND tm.source_id = stct.tag_id
-        WHERE stct.tool_call_id IN (SELECT id FROM main.tool_calls)
-    """)
-
-    # prompt_tags — conditional (may not exist in source)
-    _has_src_prompt_tags = conn.execute(
-        "SELECT 1 FROM src.sqlite_master WHERE type='table' AND name='prompt_tags'"
-    ).fetchone()
-    if _has_src_prompt_tags:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS prompt_tags (
-                id TEXT PRIMARY KEY,
-                prompt_id TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
-                tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-                applied_at TEXT NOT NULL,
-                UNIQUE (prompt_id, tag_id)
-            )
-        """)
-        conn.execute("""
-            INSERT OR IGNORE INTO prompt_tags
-                (id, prompt_id, tag_id, applied_at)
-            SELECT
-                spt.id,
-                spt.prompt_id,
-                COALESCE(tm.target_id, spt.tag_id),
-                spt.applied_at
-            FROM src.prompt_tags spt
-            LEFT JOIN _id_map tm ON tm.table_name = 'tags' AND tm.source_id = spt.tag_id
-            WHERE spt.prompt_id IN (SELECT id FROM main.prompts)
-        """)
 
     # --- tag_assignments (polymorphic, added slice 5) ---
     # Workspace target_ids are remapped via _id_map; conversation/event IDs are preserved.
@@ -508,9 +350,6 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
         "skipped_conversations": skipped_conversations,
         "new_conversation_ids": new_conversation_ids,
         "replaced_conversation_ids": replaced_conversation_ids,
-        "prompts": prompt_after - prompt_before,
-        "responses": resp_after - resp_before,
-        "tool_calls": tc_after - tc_before,
         "content_blobs": blob_after - blob_before,
         "tags": new_tags,
         "workspaces_matched": workspaces_matched,
@@ -579,44 +418,6 @@ def _replace_stale_conversations(conn) -> tuple[int, list[str]]:
     conn.execute("CREATE TEMP TABLE _stale_convs (id TEXT PRIMARY KEY)")
     conn.executemany("INSERT INTO _stale_convs VALUES (?)", [(cid,) for cid in stale_ids])
 
-    # Delete grandchildren first (tables referencing prompts/responses/tool_calls)
-    conn.execute("""
-        DELETE FROM prompt_content
-        WHERE prompt_id IN (SELECT id FROM prompts WHERE conversation_id IN (SELECT id FROM _stale_convs))
-    """)
-    conn.execute("""
-        DELETE FROM prompt_attributes
-        WHERE prompt_id IN (SELECT id FROM prompts WHERE conversation_id IN (SELECT id FROM _stale_convs))
-    """)
-    # prompt_tags may not exist
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags'").fetchone():
-        conn.execute("""
-            DELETE FROM prompt_tags
-            WHERE prompt_id IN (SELECT id FROM prompts WHERE conversation_id IN (SELECT id FROM _stale_convs))
-        """)
-
-    conn.execute("""
-        DELETE FROM response_content
-        WHERE response_id IN (SELECT id FROM responses WHERE conversation_id IN (SELECT id FROM _stale_convs))
-    """)
-    conn.execute("""
-        DELETE FROM response_attributes
-        WHERE response_id IN (SELECT id FROM responses WHERE conversation_id IN (SELECT id FROM _stale_convs))
-    """)
-
-    conn.execute("""
-        DELETE FROM tool_call_attributes
-        WHERE tool_call_id IN (SELECT id FROM tool_calls WHERE conversation_id IN (SELECT id FROM _stale_convs))
-    """)
-    conn.execute("""
-        DELETE FROM tool_call_tags
-        WHERE tool_call_id IN (SELECT id FROM tool_calls WHERE conversation_id IN (SELECT id FROM _stale_convs))
-    """)
-
-    # Delete children
-    conn.execute("DELETE FROM prompts WHERE conversation_id IN (SELECT id FROM _stale_convs)")
-    conn.execute("DELETE FROM responses WHERE conversation_id IN (SELECT id FROM _stale_convs)")
-    conn.execute("DELETE FROM tool_calls WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     # foreign_keys=OFF disables cascade, so delete extension rows explicitly before events
     conn.execute("""
         DELETE FROM event_content
@@ -645,8 +446,6 @@ def _replace_stale_conversations(conn) -> tuple[int, list[str]]:
                ))
     """)
     conn.execute("DELETE FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs)")
-    conn.execute("DELETE FROM conversation_attributes WHERE conversation_id IN (SELECT id FROM _stale_convs)")
-    conn.execute("DELETE FROM conversation_tags WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     conn.execute("DELETE FROM ingested_files WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     # conversation_owners — table may not exist on pre-migration DBs
     if has_conversation_owners_table(conn):
@@ -762,12 +561,13 @@ def _missing_merge_runtime_schema(conn, schema_name: str) -> list[str]:
     if not content_blobs:
         missing.append("content_blobs table")
 
-    tool_call_columns = {
-        row[1]
-        for row in conn.execute(f"PRAGMA {schema_name}.table_info(tool_calls)").fetchall()
-    }
-    if "result_hash" not in tool_call_columns:
-        missing.append("tool_calls.result_hash column")
+    for table in ("events", "event_response", "event_tool_call", "event_content"):
+        exists = conn.execute(
+            f"SELECT 1 FROM {schema_name}.sqlite_master "
+            f"WHERE type='table' AND name='{table}'"
+        ).fetchone()
+        if not exists:
+            missing.append(f"{table} table")
 
     return missing
 

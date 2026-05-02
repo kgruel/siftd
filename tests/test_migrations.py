@@ -35,6 +35,11 @@ def _strip_cascade(sql: str) -> str:
     return re.sub(r"\s+ON DELETE (?:CASCADE|SET NULL)", "", sql)
 
 
+def _strip_user_version(sql: str) -> str:
+    """Remove PRAGMA user_version lines from a schema SQL string."""
+    return re.sub(r"\s*PRAGMA\s+user_version\s*=\s*\d+\s*;", "", sql)
+
+
 def _tables(conn): return {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
 def _cols(conn, t): return {r[1] for r in conn.execute(f"PRAGMA table_info({t})").fetchall()}
 def _ddl(conn, t):
@@ -43,6 +48,12 @@ def _ddl(conn, t):
 
 
 _NO_CASCADE = _strip_cascade(SCHEMA_PATH.read_text())
+# Legacy schema (v5) still has prompts/responses/tool_calls — used for tests
+# that simulate old DBs being migrated forward through all versions including v6.
+_V5_SCHEMA_PATH = Path(__file__).parent / "fixtures" / "schemas" / "v5.sql"
+# _LEGACY_V5_NO_CASCADE: legacy tables intact, CASCADE stripped, user_version stripped
+# so tests start at user_version=0 and can assert stamp behavior.
+_LEGACY_V5_NO_CASCADE = _strip_user_version(_strip_cascade(_V5_SCHEMA_PATH.read_text()))
 
 
 class TestSchemaVersion:
@@ -142,7 +153,7 @@ class TestColumnMigrations:
 class TestMigrateAddCascadeDeletes:
     def test_adds_cascade_and_preserves_data(self, tmp_path):
         from siftd.storage.sqlite import _migrate_add_cascade_deletes
-        conn = _legacy_db(tmp_path, schema_sql=_NO_CASCADE)
+        conn = _legacy_db(tmp_path, schema_sql=_LEGACY_V5_NO_CASCADE)
         assert "ON DELETE CASCADE" not in _ddl(conn, "prompts")
         conn.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
         conn.execute("INSERT INTO workspaces VALUES ('w1','/test',NULL,'2024-01-01T00:00:00Z')")
@@ -169,7 +180,7 @@ class TestMigrateAddCascadeDeletes:
     def test_preserves_runtime_columns_and_data(self, tmp_path):
         from siftd.storage.sqlite import _migrate_add_cascade_deletes
 
-        conn = _legacy_db(tmp_path, schema_sql=_NO_CASCADE)
+        conn = _legacy_db(tmp_path, schema_sql=_LEGACY_V5_NO_CASCADE)
         conn.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
         conn.execute("INSERT INTO workspaces VALUES ('w1','/test',NULL,'2024-01-01T00:00:00Z')")
         conn.execute("INSERT INTO conversations VALUES ('c1','ext1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)")
@@ -207,7 +218,7 @@ class TestMigrateAddCascadeDeletes:
 
     def test_skips_missing_tables(self, tmp_path):
         from siftd.storage.sqlite import _migrate_add_cascade_deletes
-        conn = _legacy_db(tmp_path, schema_sql=_NO_CASCADE)
+        conn = _legacy_db(tmp_path, schema_sql=_LEGACY_V5_NO_CASCADE)
         conn.execute("DROP TABLE IF EXISTS tool_call_attributes")
         conn.execute("DROP TABLE IF EXISTS prompt_attributes")
         conn.commit()
@@ -220,7 +231,8 @@ class TestMigrateAddCascadeDeletes:
         from siftd.storage.sqlite import _migrate_add_cascade_deletes
         conn = open_database(tmp_path / "fresh.db")
         _migrate_add_cascade_deletes(conn)
-        assert "ON DELETE CASCADE" in _ddl(conn, "prompts")
+        # prompts table is dropped in v6; check a table that still has CASCADE
+        assert "ON DELETE CASCADE" in _ddl(conn, "ingested_files")
         conn.close()
 
     def test_noop_no_prompts(self, tmp_path):
@@ -252,7 +264,8 @@ class TestOpenDatabaseMigrations:
     def test_full_migration_path(self, tmp_path):
         """open_database on a legacy DB runs all migrations."""
         path = tmp_path / "legacy_full.db"
-        lines = _NO_CASCADE.split("\n")
+        # Use v5 legacy schema (has prompts/responses/tool_calls) without optional columns
+        lines = _LEGACY_V5_NO_CASCADE.split("\n")
         filtered = [ln for ln in lines if not re.search(
             r"^\s*(branch\s+TEXT|error\s+TEXT|file_mtime\s+REAL|file_size\s+INTEGER)", ln)]
         schema = re.sub(r",(\s*\n\s*\))", r"\1", "\n".join(filtered))
@@ -263,7 +276,9 @@ class TestOpenDatabaseMigrations:
         conn = open_database(path)
         assert "branch" in _cols(conn, "conversations")
         assert "error" in _cols(conn, "ingested_files")
-        assert "ON DELETE CASCADE" in _ddl(conn, "prompts")
+        # v6 drops prompts — after full migration path it should not exist
+        assert "prompts" not in _tables(conn)
+        assert "events" in _tables(conn)
         conn.close()
 
 
@@ -278,7 +293,8 @@ class TestMigrationRunner:
     def test_legacy_db_stamps_schema_version(self, tmp_path):
         # Simulate a pre-S0 existing DB (user_version = 0, missing columns)
         path = tmp_path / "legacy.db"
-        lines = _NO_CASCADE.split("\n")
+        # Use v5 legacy schema (has prompts/responses/tool_calls) without optional columns
+        lines = _LEGACY_V5_NO_CASCADE.split("\n")
         filtered = [ln for ln in lines if not re.search(
             r"^\s*(branch\s+TEXT|error\s+TEXT|file_mtime\s+REAL|file_size\s+INTEGER)", ln)]
         schema = re.sub(r",(\s*\n\s*\))", r"\1", "\n".join(filtered))
@@ -422,7 +438,7 @@ class TestMigrateCascadeV2:
         """Legacy no-cascade DB ends with every contract FK satisfied."""
         from siftd.storage.sqlite import _CASCADE_CONTRACT, _migrate_cascade_v2, _table_needs_cascade
 
-        conn = _legacy_db(tmp_path, schema_sql=_NO_CASCADE)
+        conn = _legacy_db(tmp_path, schema_sql=_LEGACY_V5_NO_CASCADE)
         # Sanity: at least prompts has no CASCADE before migration
         assert "ON DELETE CASCADE" not in _ddl(conn, "prompts")
 
@@ -493,7 +509,7 @@ class TestMigrateCascadeV2:
         import siftd.storage.sqlite as sqlite_mod
         from siftd.storage.sqlite import _migrate_cascade_v2
 
-        conn = _legacy_db(tmp_path, schema_sql=_NO_CASCADE)
+        conn = _legacy_db(tmp_path, schema_sql=_LEGACY_V5_NO_CASCADE)
         conn.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
         conn.execute("INSERT INTO conversations VALUES ('c1','ext1','h1',NULL,NULL,'2024-01-01T00:00:00Z',NULL)")
         conn.execute("INSERT INTO prompts VALUES ('p1','c1','ep1','2024-01-01T00:00:00Z')")
@@ -529,7 +545,7 @@ class TestMigrateCascadeV2:
         from siftd.storage.sqlite import _migrate_cascade_v2
 
         # Create DB with no CASCADE — FK enforcement is off so we can insert orphans
-        conn = _legacy_db(tmp_path, schema_sql=_NO_CASCADE)
+        conn = _legacy_db(tmp_path, schema_sql=_LEGACY_V5_NO_CASCADE)
         conn.execute("PRAGMA foreign_keys = OFF")
         # Insert a prompt referencing a non-existent conversation
         conn.execute("INSERT INTO prompts VALUES ('p1','orphan-conv','ep1','2024-01-01T00:00:00Z')")
@@ -619,8 +635,9 @@ class TestMigrateCascadeV2:
         conn.close()
 
     def test_open_database_on_legacy_gets_cascade_v2(self, tmp_path):
-        """open_database on a legacy no-cascade DB stamps current SCHEMA_VERSION and adds CASCADE."""
-        lines = _NO_CASCADE.split("\n")
+        """open_database on a legacy no-cascade DB stamps current SCHEMA_VERSION."""
+        # Use v5 legacy schema (has prompts/responses/tool_calls) without optional columns
+        lines = _LEGACY_V5_NO_CASCADE.split("\n")
         filtered = [ln for ln in lines if not re.search(
             r"^\s*(branch\s+TEXT|error\s+TEXT|file_mtime\s+REAL|file_size\s+INTEGER)", ln)]
         schema = re.sub(r",(\s*\n\s*\))", r"\1", "\n".join(filtered))
@@ -633,8 +650,9 @@ class TestMigrateCascadeV2:
         conn = open_database(path)
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         assert version == SCHEMA_VERSION
-        assert "ON DELETE CASCADE" in _ddl(conn, "prompts")
-        assert "ON DELETE CASCADE" in _ddl(conn, "responses")
+        # v6 drops prompts and responses; check events table exists instead
+        assert "prompts" not in _tables(conn)
+        assert "events" in _tables(conn)
         conn.close()
 
 
@@ -788,8 +806,8 @@ class TestTransactionOwnershipS3:
         """Legacy DB (all column + cascade + blob migrations needed): exactly 1 commit."""
         import sqlite3 as _sqlite3
 
-        # Build a fully-legacy schema: no CASCADE, no optional columns
-        lines = _NO_CASCADE.split("\n")
+        # Build a fully-legacy schema: use v5 (has prompts/responses/tool_calls), no CASCADE, no optional columns
+        lines = _LEGACY_V5_NO_CASCADE.split("\n")
         filtered = [ln for ln in lines if not re.search(
             r"^\s*(branch\s+TEXT|error\s+TEXT|file_mtime\s+REAL|file_size\s+INTEGER)", ln)]
         schema = re.sub(r",(\s*\n\s*\))", r"\1", "\n".join(filtered))
@@ -853,8 +871,8 @@ class TestTransactionOwnershipS3:
         """open_database failure mid-migration rolls back ALL helper DDL — no pre-committed partial state."""
         import siftd.storage.sqlite as sqlite_mod
 
-        # Legacy schema: no CASCADE, no optional columns — triggers all migration helpers
-        lines = _NO_CASCADE.split("\n")
+        # Legacy schema: v5 (has prompts/responses/tool_calls), no CASCADE, no optional columns
+        lines = _LEGACY_V5_NO_CASCADE.split("\n")
         filtered = [ln for ln in lines if not re.search(
             r"^\s*(branch\s+TEXT|error\s+TEXT|file_mtime\s+REAL|file_size\s+INTEGER)", ln)]
         schema = re.sub(r",(\s*\n\s*\))", r"\1", "\n".join(filtered))
@@ -900,10 +918,10 @@ class TestBlobRefcountTriggerMigration:
     """Both blob refcount triggers must exist and be correct after open_database."""
 
     def _open_legacy(self, tmp_path) -> "sqlite3.Connection":
-        """Create a v0 DB from the no-cascade schema, close it, return the path."""
+        """Create a v0 DB from the v5 legacy schema, close it, return the path."""
         path = tmp_path / "legacy.db"
         conn = sqlite3.connect(path)
-        conn.executescript(_NO_CASCADE)
+        conn.executescript(_LEGACY_V5_NO_CASCADE)
         conn.commit()
         conn.close()
         return path
@@ -1388,3 +1406,240 @@ class TestMigrateV5FtsSimplification:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         conn.close()
         assert version == SCHEMA_VERSION
+
+
+# ---------------------------------------------------------------------------
+# TestMigrationsV6 — drop legacy tables + ref_count heal
+# ---------------------------------------------------------------------------
+
+_OLD_TABLES = {
+    "prompts", "responses", "tool_calls",
+    "prompt_content", "response_content",
+    "conversation_attributes", "prompt_attributes", "response_attributes", "tool_call_attributes",
+    "workspace_tags", "conversation_tags", "tool_call_tags", "prompt_tags",
+}
+
+_EVENTS_TABLES = {
+    "events", "event_content", "event_response", "event_tool_call",
+    "attributes", "tag_assignments", "content_blobs",
+}
+
+
+def _make_v5_db(tmp_path: Path, name: str = "v5test.db") -> Path:
+    """Create a DB at schema version 5 (has all 13 old tables + events tier)."""
+    path = tmp_path / name
+    conn = sqlite3.connect(str(path))
+    conn.executescript(_LEGACY_V5_NO_CASCADE)
+    conn.execute("PRAGMA user_version = 5")
+    conn.commit()
+    conn.close()
+    return path
+
+
+class TestMigrationsV6:
+    def test_drops_all_thirteen_old_tables(self, tmp_path, monkeypatch):
+        """v5 → v6: all 13 legacy tables are removed."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v5_db(tmp_path)
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
+        raw.execute("INSERT INTO workspaces VALUES ('w1','/p',NULL,'2024-01-01')")
+        raw.execute("INSERT INTO conversations VALUES ('c1','e1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)")
+        raw.execute("INSERT INTO prompts VALUES ('p1','c1','ep1','2024-01-01T00:00:00Z')")
+        raw.execute("INSERT INTO responses VALUES ('r1','c1','p1',NULL,NULL,'er1','2024-01-01T00:00:01Z',10,20)")
+        raw.execute("INSERT INTO tool_calls VALUES ('tc1','r1','c1',NULL,NULL,'{}',NULL,NULL,'success','2024-01-01T00:00:02Z')")
+        raw.execute("INSERT INTO prompt_content VALUES ('pc1','p1',0,'text','hello')")
+        raw.execute("INSERT INTO response_content VALUES ('rc1','r1',0,'text','hi')")
+        raw.execute("INSERT INTO conversation_attributes VALUES ('ca1','c1','k','v',NULL)")
+        raw.execute("INSERT INTO prompt_attributes VALUES ('pa1','p1','k','v',NULL)")
+        raw.execute("INSERT INTO response_attributes VALUES ('ra1','r1','k','v',NULL)")
+        raw.execute("INSERT INTO tool_call_attributes VALUES ('ta1','tc1','k','v',NULL)")
+        raw.execute("INSERT INTO tags VALUES ('tg1','t1',NULL,'2024-01-01')")
+        raw.execute("INSERT INTO workspace_tags VALUES ('wt1','w1','tg1','2024-01-01')")
+        raw.execute("INSERT INTO conversation_tags VALUES ('ct1','c1','tg1','2024-01-01')")
+        raw.execute("INSERT INTO tool_call_tags VALUES ('tct1','tc1','tg1','2024-01-01')")
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+        try:
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            assert not (tables & _OLD_TABLES), f"Old tables still present: {tables & _OLD_TABLES}"
+        finally:
+            conn.close()
+
+    def test_events_tables_preserved(self, tmp_path, monkeypatch):
+        """v5 → v6: events-tier tables survive the migration."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v5_db(tmp_path)
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
+        raw.execute("INSERT INTO workspaces VALUES ('w1','/p',NULL,'2024-01-01')")
+        raw.execute("INSERT INTO conversations VALUES ('c1','e1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)")
+        raw.execute("INSERT INTO events VALUES ('ev1','prompt','c1',NULL,NULL,'2024-01-01T00:00:00Z')")
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+        try:
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            assert _EVENTS_TABLES.issubset(tables), f"Missing events tables: {_EVENTS_TABLES - tables}"
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            assert version == SCHEMA_VERSION
+        finally:
+            conn.close()
+
+    def test_ref_count_heal_undercounted(self, tmp_path, monkeypatch):
+        """ref_count < actual references → healed to correct count."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v5_db(tmp_path)
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
+        raw.execute("INSERT INTO workspaces VALUES ('w1','/p',NULL,'2024-01-01')")
+        raw.execute("INSERT INTO conversations VALUES ('c1','e1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)")
+        raw.execute("INSERT INTO events VALUES ('ev1','response','c1',NULL,NULL,'2024-01-01T00:00:00Z')")
+        raw.execute("INSERT INTO events VALUES ('ev2','response','c1',NULL,NULL,'2024-01-01T00:00:01Z')")
+        # blob with ref_count=1 but actually referenced twice
+        raw.execute("INSERT INTO content_blobs VALUES ('blobA','content A',1,'2024-01-01')")
+        raw.execute("INSERT INTO event_tool_call VALUES ('etc1','ev1',NULL,'blobA','success')")
+        raw.execute("INSERT INTO event_tool_call VALUES ('etc2','ev2',NULL,'blobA','success')")
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+        try:
+            ref = conn.execute("SELECT ref_count FROM content_blobs WHERE hash='blobA'").fetchone()[0]
+            assert ref == 2
+        finally:
+            conn.close()
+
+    def test_ref_count_heal_overcounted(self, tmp_path, monkeypatch):
+        """ref_count > actual references → healed down to correct count."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v5_db(tmp_path)
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
+        raw.execute("INSERT INTO workspaces VALUES ('w1','/p',NULL,'2024-01-01')")
+        raw.execute("INSERT INTO conversations VALUES ('c1','e1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)")
+        raw.execute("INSERT INTO events VALUES ('ev1','response','c1',NULL,NULL,'2024-01-01T00:00:00Z')")
+        # blob with ref_count=5 but only 1 event_tool_call references it
+        raw.execute("INSERT INTO content_blobs VALUES ('blobB','content B',5,'2024-01-01')")
+        raw.execute("INSERT INTO event_tool_call VALUES ('etc1','ev1',NULL,'blobB','success')")
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+        try:
+            ref = conn.execute("SELECT ref_count FROM content_blobs WHERE hash='blobB'").fetchone()[0]
+            assert ref == 1
+        finally:
+            conn.close()
+
+    def test_ref_count_zero_blob_deleted(self, tmp_path, monkeypatch):
+        """blob with ref_count after heal = 0 → deleted from content_blobs."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v5_db(tmp_path)
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        # blob with ref_count=1 but no event_tool_call references it → should be deleted
+        raw.execute("INSERT INTO content_blobs VALUES ('blobC','orphaned content',1,'2024-01-01')")
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+        try:
+            row = conn.execute("SELECT 1 FROM content_blobs WHERE hash='blobC'").fetchone()
+            assert row is None, "Orphaned blob should have been deleted"
+        finally:
+            conn.close()
+
+    def test_prompt_tags_absent_no_error(self, tmp_path, monkeypatch):
+        """Migration succeeds even when prompt_tags table doesn't exist (IF EXISTS guard)."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        # Build a v5 DB then manually drop prompt_tags before migrating
+        path = _make_v5_db(tmp_path)
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute("DROP TABLE IF EXISTS prompt_tags")
+        raw.commit()
+        raw.close()
+
+        # Should not raise
+        conn = open_database(path)
+        try:
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            assert "prompt_tags" not in tables
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
+# TestFreshDBInitialization — Resolution #10
+# ---------------------------------------------------------------------------
+
+
+class TestFreshDBInitialization:
+    def test_fresh_db_opens_without_error(self, tmp_path):
+        path = tmp_path / "fresh.db"
+        assert not path.exists()
+        conn = open_database(path)
+        conn.close()
+        assert path.exists()
+
+    def test_fresh_db_user_version_equals_schema_version(self, tmp_path):
+        path = tmp_path / "fresh.db"
+        conn = open_database(path)
+        try:
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            assert version == SCHEMA_VERSION
+        finally:
+            conn.close()
+
+    def test_fresh_db_events_tables_exist(self, tmp_path):
+        path = tmp_path / "fresh.db"
+        conn = open_database(path)
+        try:
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            for t in _EVENTS_TABLES:
+                assert t in tables, f"Expected table {t!r} missing from fresh DB"
+        finally:
+            conn.close()
+
+    def test_fresh_db_old_tables_absent(self, tmp_path):
+        path = tmp_path / "fresh.db"
+        conn = open_database(path)
+        try:
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            for t in _OLD_TABLES:
+                assert t not in tables, f"Old table {t!r} should not exist in fresh DB"
+        finally:
+            conn.close()
+
+    def test_fresh_db_second_open_is_noop(self, tmp_path):
+        """Opening the same DB a second time runs no migrations (already at SCHEMA_VERSION)."""
+        path = tmp_path / "fresh.db"
+        conn = open_database(path)
+        conn.close()
+        # second open should succeed and still be at SCHEMA_VERSION
+        conn = open_database(path)
+        try:
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            assert version == SCHEMA_VERSION
+        finally:
+            conn.close()

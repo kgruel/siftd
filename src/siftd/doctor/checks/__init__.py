@@ -116,7 +116,6 @@ class Check(Protocol):
 
 
 # Import all built-in check classes — must come after type definitions above
-from siftd.doctor.checks.blob_migration import BlobMigrationCheck  # noqa: E402
 from siftd.doctor.checks.config_valid import ConfigValidCheck  # noqa: E402
 from siftd.doctor.checks.cost_coverage import CostCoverageCheck  # noqa: E402
 from siftd.doctor.checks.db_blob_orphans import DbBlobOrphansCheck  # noqa: E402
@@ -156,7 +155,6 @@ BUILTIN_CHECKS: list[Check] = [
     FtsIntegrityCheck(),
     ConfigValidCheck(),
     WorkspaceIdentityCheck(),
-    BlobMigrationCheck(),
     DbFkIntegrityCheck(),
     DbBlobRefcountDriftCheck(),
     DbBlobOrphansCheck(),

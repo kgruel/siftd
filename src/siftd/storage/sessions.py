@@ -63,22 +63,6 @@ def ensure_session_tables(conn: sqlite3.Connection, *, commit: bool = False) -> 
         conn.commit()
 
 
-def ensure_prompt_tags_table(conn: sqlite3.Connection, *, commit: bool = False) -> None:
-    """Create prompt_tags table for exchange-level tagging. Idempotent."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS prompt_tags (
-            id TEXT PRIMARY KEY,
-            prompt_id TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
-            tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-            applied_at TEXT NOT NULL,
-            UNIQUE (prompt_id, tag_id)
-        )
-    """)
-
-    if commit:
-        conn.commit()
-
-
 def register_session(
     conn: sqlite3.Connection,
     harness_session_id: str,

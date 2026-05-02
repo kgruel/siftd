@@ -763,12 +763,11 @@ def _filter_conversations_conn(
 
     joins = wb.joins_sql()
     joins_clause = f"\n        {joins}" if joins else ""
-    group_by = "\n        GROUP BY c.id" if wb.needs_group_by else ""
 
     sql = f"""
         SELECT c.id
         FROM conversations c{joins_clause}
-        {wb.where_sql()}{group_by}
+        {wb.where_sql()}
     """
 
     rows = conn.execute(sql, wb.params).fetchall()

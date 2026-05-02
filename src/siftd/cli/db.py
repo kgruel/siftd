@@ -337,9 +337,6 @@ def cmd_db_merge(args) -> int:
         conv_parts.append(f"{result['replaced_conversations']} replaced")
     conv_parts.append(f"{result['skipped_conversations']} skipped")
     print(f"  Conversations: {', '.join(conv_parts)}")
-    print(f"  Prompts:       {result['prompts']}")
-    print(f"  Responses:     {result['responses']}")
-    print(f"  Tool calls:    {result['tool_calls']}")
     print(f"  Content blobs: {result['content_blobs']}")
     if result["tags"]:
         print(f"  Tags:          {result['tags']} new")

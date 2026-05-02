@@ -30,18 +30,6 @@ def merge_duplicate_workspaces(
     return _merge_duplicate_workspaces(conn, on_progress=on_progress, dry_run=dry_run)
 
 
-def migrate_blobs(
-    conn: sqlite3.Connection,
-    *,
-    batch_size: int = 1000,
-    on_progress: Callable[[int, int], None] | None = None,
-) -> dict:
-    """Migrate inline tool call results to deduplicated blob storage."""
-    from siftd.storage.migrate_blobs import migrate_existing_results
-
-    return migrate_existing_results(conn, batch_size=batch_size, on_progress=on_progress)
-
-
 def verify_workspace_identity(conn: sqlite3.Connection) -> dict:
     """Verify workspace identity migration status."""
     from siftd.storage.migrate_workspaces import verify_workspace_identity as _verify_workspace_identity

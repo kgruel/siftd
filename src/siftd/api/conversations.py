@@ -275,13 +275,11 @@ def _list_conversations_impl(
     # WhereBuilder tracks which JOINs its filters actually need, so we only
     # join responses/models when a filter (e.g. --model) requires them.
     phase1_joins = wb.joins_sql()
-    group_by = "GROUP BY c.id" if wb.needs_group_by else ""
     id_sql = f"""
         SELECT c.id
         FROM conversations c
         {phase1_joins}
         {where}
-        {group_by}
         ORDER BY c.started_at {order}
         {limit_clause}
     """
@@ -330,12 +328,17 @@ def _list_conversations_impl(
     else:
         # Fallback: compute from source tables (before first ingest rebuilds
         # the stats table, or if the table was dropped).
+        # r2 alias: expose event_id as id so cost_expr_sql's {r}.id works against
+        # the polymorphic attributes table (target_id = event_id for responses).
         cost_subquery = (
             f"""(SELECT ROUND(SUM({cost_expr_sql('r2', 'pr', coalesce_pricing=True)}) / 1000000.0, 4)
-            FROM responses r2
+            FROM events e2
+            JOIN (SELECT er2.event_id AS id, er2.model_id, er2.provider_id,
+                         er2.input_tokens, er2.output_tokens
+                  FROM event_response er2) r2 ON r2.id = e2.id
             LEFT JOIN pricing pr ON pr.model_id = r2.model_id
                                  AND pr.provider_id = r2.provider_id
-            WHERE r2.conversation_id = c.id)"""
+            WHERE e2.kind = 'response' AND e2.conversation_id = c.id)"""
             if has_pricing
             else "NULL"
         )

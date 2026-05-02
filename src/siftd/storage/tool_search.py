@@ -15,9 +15,9 @@ def ensure_tool_search_tables(conn: sqlite3.Connection, *, commit: bool = False)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS tool_search (
-            tool_call_id TEXT PRIMARY KEY REFERENCES tool_calls(id) ON DELETE CASCADE,
+            tool_call_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
             conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-            response_id TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+            response_id TEXT,
             timestamp TEXT,
             tool_name TEXT,
             tool_family TEXT,

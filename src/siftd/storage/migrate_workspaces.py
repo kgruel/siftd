@@ -14,7 +14,6 @@ Usage:
 
 import sqlite3
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
 
 from siftd.git import get_git_remote_url
@@ -240,19 +239,6 @@ def merge_duplicate_workspaces(
                     "UPDATE conversations SET workspace_id = ? WHERE workspace_id = ?",
                     (keeper_id, other_id)
                 )
-
-                # Migrate workspace_tags to keeper (ignore duplicates)
-                # Must provide id and applied_at for each row
-                now = datetime.now(UTC).isoformat()
-                cur = conn.execute(
-                    "SELECT tag_id FROM workspace_tags WHERE workspace_id = ?",
-                    (other_id,)
-                )
-                for tag_row in cur.fetchall():
-                    conn.execute("""
-                        INSERT OR IGNORE INTO workspace_tags (id, workspace_id, tag_id, applied_at)
-                        VALUES (?, ?, ?, ?)
-                    """, (_ulid(), keeper_id, tag_row["tag_id"], now))
 
                 # Migrate tag_assignments (polymorphic) — no FK cascade to workspaces, must re-point explicitly
                 cur2 = conn.execute(

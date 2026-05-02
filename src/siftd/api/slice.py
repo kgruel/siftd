@@ -147,27 +147,30 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
     conn.execute("""
         INSERT OR IGNORE INTO slice.models
         SELECT m.* FROM models m
-        WHERE m.id IN (SELECT DISTINCT r.model_id FROM responses r
-                        WHERE r.conversation_id IN (SELECT id FROM _slice_conv_ids)
-                        AND r.model_id IS NOT NULL)
+        WHERE m.id IN (SELECT DISTINCT er.model_id FROM event_response er
+                        JOIN events e ON e.id = er.event_id
+                        WHERE e.conversation_id IN (SELECT id FROM _slice_conv_ids)
+                        AND er.model_id IS NOT NULL)
     """)
 
     # Providers referenced by responses
     conn.execute("""
         INSERT OR IGNORE INTO slice.providers
         SELECT p.* FROM providers p
-        WHERE p.id IN (SELECT DISTINCT r.provider_id FROM responses r
-                        WHERE r.conversation_id IN (SELECT id FROM _slice_conv_ids)
-                        AND r.provider_id IS NOT NULL)
+        WHERE p.id IN (SELECT DISTINCT er.provider_id FROM event_response er
+                        JOIN events e ON e.id = er.event_id
+                        WHERE e.conversation_id IN (SELECT id FROM _slice_conv_ids)
+                        AND er.provider_id IS NOT NULL)
     """)
 
     # Tools referenced by tool_calls
     conn.execute("""
         INSERT OR IGNORE INTO slice.tools
         SELECT t.* FROM tools t
-        WHERE t.id IN (SELECT DISTINCT tc.tool_id FROM tool_calls tc
-                        WHERE tc.conversation_id IN (SELECT id FROM _slice_conv_ids)
-                        AND tc.tool_id IS NOT NULL)
+        WHERE t.id IN (SELECT DISTINCT etc.tool_id FROM event_tool_call etc
+                        JOIN events e ON e.id = etc.event_id
+                        WHERE e.conversation_id IN (SELECT id FROM _slice_conv_ids)
+                        AND etc.tool_id IS NOT NULL)
     """)
 
     # Tool aliases for copied tools and harnesses
@@ -199,35 +202,7 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
         WHERE id IN (SELECT id FROM _slice_conv_ids)
     """)
 
-    conn.execute("""
-        INSERT OR IGNORE INTO slice.prompts
-        SELECT * FROM prompts
-        WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO slice.responses
-        SELECT * FROM responses
-        WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
-    """)
-
-    # --- Content tables ---
-
-    conn.execute("""
-        INSERT OR IGNORE INTO slice.prompt_content
-        SELECT pc.* FROM prompt_content pc
-        WHERE pc.prompt_id IN (SELECT p.id FROM prompts p
-                                WHERE p.conversation_id IN (SELECT id FROM _slice_conv_ids))
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO slice.response_content
-        SELECT rc.* FROM response_content rc
-        WHERE rc.response_id IN (SELECT r.id FROM responses r
-                                  WHERE r.conversation_id IN (SELECT id FROM _slice_conv_ids))
-    """)
-
-    # Content blobs referenced by event_tool_call (must precede tool_calls for FK).
+    # Content blobs referenced by event_tool_call (must precede event_tool_call for FK).
     # event_tool_call is authoritative: new writes store result_hash only there.
     conn.execute("""
         INSERT OR IGNORE INTO slice.content_blobs
@@ -238,20 +213,6 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
             WHERE e.conversation_id IN (SELECT id FROM _slice_conv_ids)
             AND etc.result_hash IS NOT NULL
         )
-    """)
-
-    # Explicit columns: source DBs that went through ensure_content_blobs_table
-    # have 'result_hash' as the last column (ALTER TABLE), but schema.sql has it
-    # at position 8. SELECT * would put 'status' into result_hash, triggering
-    # FK violation against content_blobs.
-    conn.execute("""
-        INSERT OR IGNORE INTO slice.tool_calls
-            (id, response_id, conversation_id, tool_id, external_id,
-             input, result, result_hash, status, timestamp)
-        SELECT id, response_id, conversation_id, tool_id, external_id,
-               input, result, result_hash, status, timestamp
-        FROM tool_calls
-        WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
     """)
 
     # --- Polymorphic event tables ---
@@ -288,33 +249,6 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
     # --- Attribute tables ---
 
     conn.execute("""
-        INSERT OR IGNORE INTO slice.conversation_attributes
-        SELECT * FROM conversation_attributes
-        WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO slice.prompt_attributes
-        SELECT pa.* FROM prompt_attributes pa
-        WHERE pa.prompt_id IN (SELECT p.id FROM prompts p
-                                WHERE p.conversation_id IN (SELECT id FROM _slice_conv_ids))
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO slice.response_attributes
-        SELECT ra.* FROM response_attributes ra
-        WHERE ra.response_id IN (SELECT r.id FROM responses r
-                                  WHERE r.conversation_id IN (SELECT id FROM _slice_conv_ids))
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO slice.tool_call_attributes
-        SELECT tca.* FROM tool_call_attributes tca
-        WHERE tca.tool_call_id IN (SELECT tc.id FROM tool_calls tc
-                                    WHERE tc.conversation_id IN (SELECT id FROM _slice_conv_ids))
-    """)
-
-    conn.execute("""
         INSERT OR IGNORE INTO slice.attributes
         SELECT a.* FROM attributes a
         WHERE a.target_id IN (SELECT id FROM slice.events)
@@ -323,21 +257,11 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
 
     # --- Tag tables ---
 
-    # Tags referenced by any junction table we'll copy
+    # Tags referenced by tag_assignments
     conn.execute("""
         INSERT OR IGNORE INTO slice.tags
         SELECT t.* FROM tags t
         WHERE t.id IN (
-            SELECT ct.tag_id FROM conversation_tags ct
-            WHERE ct.conversation_id IN (SELECT id FROM _slice_conv_ids)
-            UNION
-            SELECT wt.tag_id FROM workspace_tags wt
-            WHERE wt.workspace_id IN (SELECT w.id FROM slice.workspaces w)
-            UNION
-            SELECT tct.tag_id FROM tool_call_tags tct
-            WHERE tct.tool_call_id IN (SELECT tc.id FROM tool_calls tc
-                                        WHERE tc.conversation_id IN (SELECT id FROM _slice_conv_ids))
-            UNION
             SELECT ta.tag_id FROM tag_assignments ta
             WHERE (ta.target_kind = 'conversation' AND ta.target_id IN (SELECT id FROM _slice_conv_ids))
                OR (ta.target_kind = 'workspace' AND ta.target_id IN (SELECT id FROM slice.workspaces))
@@ -347,54 +271,6 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
                    ))
         )
     """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO slice.conversation_tags
-        SELECT * FROM conversation_tags
-        WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO slice.workspace_tags
-        SELECT * FROM workspace_tags
-        WHERE workspace_id IN (SELECT id FROM slice.workspaces)
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO slice.tool_call_tags
-        SELECT * FROM tool_call_tags
-        WHERE tool_call_id IN (SELECT tc.id FROM tool_calls tc
-                                WHERE tc.conversation_id IN (SELECT id FROM _slice_conv_ids))
-    """)
-
-    # prompt_tags if it exists in source
-    has_prompt_tags = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags'"
-    ).fetchone()
-    if has_prompt_tags:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS slice.prompt_tags (
-                id TEXT PRIMARY KEY,
-                prompt_id TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
-                tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-                applied_at TEXT NOT NULL,
-                UNIQUE (prompt_id, tag_id)
-            )
-        """)
-        # Copy tags referenced by prompt_tags before inserting junction rows (FK)
-        conn.execute("""
-            INSERT OR IGNORE INTO slice.tags
-            SELECT t.* FROM tags t
-            WHERE t.id IN (SELECT pt.tag_id FROM prompt_tags pt
-                            WHERE pt.prompt_id IN (SELECT p.id FROM prompts p
-                                WHERE p.conversation_id IN (SELECT id FROM _slice_conv_ids)))
-        """)
-        conn.execute("""
-            INSERT OR IGNORE INTO slice.prompt_tags
-            SELECT pt.* FROM prompt_tags pt
-            WHERE pt.prompt_id IN (SELECT p.id FROM prompts p
-                                    WHERE p.conversation_id IN (SELECT id FROM _slice_conv_ids))
-        """)
 
     # tag_assignments (polymorphic, added slice 5)
     conn.execute("""

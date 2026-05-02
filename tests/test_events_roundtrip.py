@@ -210,10 +210,6 @@ class TestDualWrite:
         assert prompts_in_events == 1
         assert responses_in_events == 1
 
-        # Legacy tables still populated (for FK compat until slice 8)
-        assert conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0] == 1
-
         # event_response has token data
         row = conn.execute("SELECT input_tokens, output_tokens FROM event_response").fetchone()
         assert row["input_tokens"] == 10

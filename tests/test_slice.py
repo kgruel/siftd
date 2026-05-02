@@ -184,12 +184,13 @@ def test_slice_with_content_blobs_fk(test_db_with_tool_tags, tmp_path):
 
 
 def test_slice_migrated_column_order(tmp_path):
-    """Slice handles source DBs where ALTER TABLE put columns in different order than schema.sql.
+    """Slice handles source DBs with pre-migration column order (ALTER TABLE appended columns).
 
-    Reproduces the real-world bug: migrated DBs have tool_calls.result_hash as
-    the last column (added via ALTER TABLE), but schema.sql has it at position 8.
-    SELECT * would put 'status' into the result_hash column, triggering FK
-    violation against content_blobs. Same issue with conversations.branch.
+    Tests that a legacy v1 DB (conversations.branch and tool_calls.result_hash as
+    last columns due to ALTER TABLE) migrates cleanly to v6 and the slice target
+    has correct data in event_tool_call. The original tool_calls column-order
+    corruption bug is now impossible (v4 migration uses explicit column names and
+    v6 drops tool_calls), but conversations.branch ordering is still exercised.
     """
     from siftd.storage.sqlite import _ulid
 
@@ -396,7 +397,12 @@ def test_slice_migrated_column_order(tmp_path):
     assert conv["branch"] == "main"
     assert conv["started_at"] == "2024-01-15T10:00:00Z"
 
-    tc = tgt.execute("SELECT * FROM tool_calls").fetchone()
+    # After migration, tool_call data lives in event_tool_call (not tool_calls)
+    tc = tgt.execute(
+        "SELECT etc.status, etc.result_hash FROM event_tool_call etc"
+        " JOIN events e ON e.id = etc.event_id WHERE e.kind='tool_call'"
+    ).fetchone()
+    assert tc is not None
     assert tc["status"] == "success"
     assert tc["result_hash"] == blob_hash
 

@@ -617,9 +617,6 @@ class TestDataDirectBranches:
         assert "3 chunk" in data_cli._fix_search_index(object(), Path("/d"))
         assert "3 chunk" in data_cli._fix_search_rebuild(object(), Path("/d"))
 
-        monkeypatch.setattr("siftd.api.migrations.migrate_blobs", lambda conn: {"migrated": 2, "blobs_created": 4})
-        assert "2 result" in data_cli._fix_migrate_blobs(object(), Path("/d"))
-
         monkeypatch.setattr("siftd.api.migrations.backfill_git_remotes", lambda conn: {"updated": 5})
         assert "5 workspace" in data_cli._fix_backfill_git_remote(object(), Path("/d"))
 

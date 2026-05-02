@@ -9,9 +9,9 @@ SELECT
     t.name AS tag,
     COUNT(*) AS count,
     ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 1) AS pct
-FROM tool_call_tags tct
+FROM tag_assignments tct
 JOIN tags t ON t.id = tct.tag_id
-WHERE t.name LIKE 'shell:%'
+WHERE tct.target_kind = 'tool_call' AND t.name LIKE 'shell:%'
 GROUP BY t.name
 ORDER BY count DESC;
 
@@ -27,7 +27,7 @@ SELECT
     ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 1) AS pct
 FROM events e
 JOIN event_tool_call etc ON etc.event_id = e.id
-JOIN tool_call_tags tct ON tct.tool_call_id = e.id
+JOIN tag_assignments tct ON tct.target_id = e.id AND tct.target_kind = 'tool_call'
 JOIN tags t ON t.id = tct.tag_id
 WHERE e.kind = 'tool_call' AND t.name = 'shell:vcs'
 GROUP BY tool
@@ -55,7 +55,7 @@ SELECT
     ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 1) AS pct
 FROM events e
 JOIN event_tool_call etc ON etc.event_id = e.id
-JOIN tool_call_tags tct ON tct.tool_call_id = e.id
+JOIN tag_assignments tct ON tct.target_id = e.id AND tct.target_kind = 'tool_call'
 JOIN tags t ON t.id = tct.tag_id
 WHERE e.kind = 'tool_call' AND t.name = 'shell:vcs'
   AND (etc.input LIKE '%git %' OR etc.input LIKE '%git\n%')
@@ -83,7 +83,7 @@ SELECT
     ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 1) AS pct
 FROM events e
 JOIN event_tool_call etc ON etc.event_id = e.id
-JOIN tool_call_tags tct ON tct.tool_call_id = e.id
+JOIN tag_assignments tct ON tct.target_id = e.id AND tct.target_kind = 'tool_call'
 JOIN tags t ON t.id = tct.tag_id
 WHERE e.kind = 'tool_call' AND t.name = 'shell:vcs'
   AND (etc.input LIKE '%git %' OR etc.input LIKE '%git\n%')
@@ -100,7 +100,7 @@ SELECT
     COUNT(*) AS count
 FROM events e
 JOIN event_tool_call etc ON etc.event_id = e.id
-JOIN tool_call_tags tct ON tct.tool_call_id = e.id
+JOIN tag_assignments tct ON tct.target_id = e.id AND tct.target_kind = 'tool_call'
 JOIN tags t ON t.id = tct.tag_id
 WHERE e.kind = 'tool_call' AND t.name = 'shell:test'
 GROUP BY tool

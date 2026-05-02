@@ -15,14 +15,10 @@ def tag_condition(tag_value: str) -> tuple[str, str]:
 # Phase-1 ID queries include only the joins their filters actually need.
 JOINS: dict[str, str] = {
     "w": "LEFT JOIN workspaces w ON w.id = c.workspace_id",
-    "r": "LEFT JOIN responses r ON r.conversation_id = c.id",
-    "m": "LEFT JOIN models m ON m.id = r.model_id",
 }
 
-# Dependency edges: requesting 'm' also requires 'r'.
-_JOIN_DEPS: dict[str, list[str]] = {
-    "m": ["r"],
-}
+# Dependency edges (none remaining after responses join removal).
+_JOIN_DEPS: dict[str, list[str]] = {}
 
 
 class WhereBuilder:
@@ -136,14 +132,8 @@ class WhereBuilder:
 
     def joins_sql(self) -> str:
         """Return JOIN clauses for all required tables, in dependency order."""
-        # Stable order: w, r, m (respects FK dependencies)
-        ordered = [alias for alias in ("w", "r", "m") if alias in self._joins]
+        ordered = [alias for alias in ("w",) if alias in self._joins]
         return "\n        ".join(JOINS[a] for a in ordered)
-
-    @property
-    def needs_group_by(self) -> bool:
-        """True when JOINs introduce duplicates that require GROUP BY c.id."""
-        return "r" in self._joins
 
     def where_sql(self) -> str:
         """Return 'WHERE ...' string, or empty string if no conditions."""

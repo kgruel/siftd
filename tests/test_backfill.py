@@ -29,8 +29,6 @@ def _chain(c, *, hid="h1", wid="w1", cid="c1", mid="m1", rid="r1", ext_id=None):
     c.execute("INSERT OR IGNORE INTO workspaces (id, path, discovered_at) VALUES (?, '/p', '2024-01-01')", (wid,))
     c.execute("INSERT OR IGNORE INTO conversations (id, external_id, harness_id, workspace_id, started_at) VALUES (?, ?, ?, ?, '2024-01-01')", (cid, f"e_{cid}", hid, wid))
     c.execute("INSERT OR IGNORE INTO models (id, raw_name, name) VALUES (?, 'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-20241022')", (mid,))
-    c.execute("INSERT OR IGNORE INTO responses (id, conversation_id, model_id, external_id, timestamp) VALUES (?, ?, ?, ?, '2024-01-01')", (rid, cid, mid, ext_id or f"e_{rid}"))
-    # Dual-write: events tables are the source of truth post-slice-2.
     c.execute("INSERT OR IGNORE INTO events (id, kind, conversation_id, external_id, timestamp) VALUES (?, 'response', ?, ?, '2024-01-01')", (rid, cid, ext_id or f"e_{rid}"))
     c.execute("INSERT OR IGNORE INTO event_response (event_id, model_id) VALUES (?, ?)", (rid, mid))
 
@@ -42,8 +40,6 @@ def _tid(c, name="shell.execute"):
 
 def _tc(c, tcid, rid, cid, tid, inp=""):
     s = json.dumps(inp) if isinstance(inp, dict) else inp
-    c.execute("INSERT OR IGNORE INTO tool_calls (id, response_id, conversation_id, tool_id, input) VALUES (?, ?, ?, ?, ?)", (tcid, rid, cid, tid, s))
-    # Dual-write: events tables are the source of truth post-slice-2.
     c.execute("INSERT OR IGNORE INTO events (id, kind, conversation_id, parent_id, timestamp) VALUES (?, 'tool_call', ?, ?, '2024-01-01')", (tcid, cid, rid))
     c.execute("INSERT OR IGNORE INTO event_tool_call (event_id, tool_id, input) VALUES (?, ?, ?)", (tcid, tid, s))
 
@@ -100,12 +96,12 @@ class TestBackfillProviders:
         _chain(db)
         db.commit()
         assert backfill_providers(db) == 1
-        assert db.execute("SELECT provider_id FROM responses WHERE id='r1'").fetchone()["provider_id"] is not None
+        assert db.execute("SELECT provider_id FROM event_response WHERE event_id='r1'").fetchone()["provider_id"] is not None
 
     def test_skips_set(self, db):
         _chain(db)
         db.execute("INSERT INTO providers (id, name) VALUES ('p1', 'anthropic')")
-        db.execute("UPDATE responses SET provider_id='p1' WHERE id='r1'")
+        db.execute("UPDATE event_response SET provider_id='p1' WHERE event_id='r1'")
         db.commit()
         assert backfill_providers(db) == 0
 
@@ -198,7 +194,6 @@ class TestBackfillDerivativeTags:
 
     def test_null_input(self, db):
         _chain(db)
-        db.execute("INSERT INTO tool_calls (id, response_id, conversation_id, tool_id, input) VALUES ('tc1', 'r1', 'c1', ?, NULL)", (_tid(db),))
         db.execute("INSERT INTO events (id, kind, conversation_id, parent_id, timestamp) VALUES ('tc1', 'tool_call', 'c1', 'r1', '2024-01-01')")
         db.execute("INSERT INTO event_tool_call (event_id, tool_id, input) VALUES ('tc1', ?, NULL)", (_tid(db),))
         db.commit()
@@ -231,7 +226,8 @@ class TestBackfillFilterBinary:
         h = compute_content_hash(content)
         db.execute("INSERT INTO content_blobs (hash, content, ref_count, created_at) VALUES (?, ?, 1, '2024-01-01')", (h, content))
         _chain(db)
-        db.execute("INSERT INTO tool_calls (id, response_id, conversation_id, tool_id, result_hash) VALUES ('tc1', 'r1', 'c1', ?, ?)", (_tid(db), h))
+        db.execute("INSERT INTO events (id, kind, conversation_id, parent_id, timestamp) VALUES ('tc1', 'tool_call', 'c1', 'r1', '2024-01-01')")
+        db.execute("INSERT INTO event_tool_call (event_id, tool_id, result_hash) VALUES ('tc1', ?, ?)", (_tid(db), h))
         db.commit()
         assert backfill_filter_binary(db)["filtered"] == 1
 

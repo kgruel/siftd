@@ -70,12 +70,14 @@ def backfill_providers(conn: sqlite3.Connection) -> int:
         source = harness_row["source"]
         provider_id = get_or_create_provider(conn, source)
 
-        # Update responses that belong to conversations from this harness
+        # Update event_response rows that belong to conversations from this harness
         cur = conn.execute("""
-            UPDATE responses SET provider_id = ?
+            UPDATE event_response SET provider_id = ?
             WHERE provider_id IS NULL
-              AND conversation_id IN (
-                  SELECT id FROM conversations WHERE harness_id = ?
+              AND event_id IN (
+                  SELECT e.id FROM events e
+                  JOIN conversations c ON c.id = e.conversation_id
+                  WHERE c.harness_id = ?
               )
         """, (provider_id, harness_id))
         updated += cur.rowcount
@@ -107,10 +109,10 @@ def backfill_shell_tags(conn: sqlite3.Connection) -> dict[str, int]:
         WHERE e.kind = 'tool_call'
         AND etc.tool_id = ?
         AND e.id NOT IN (
-            SELECT tct.tool_call_id
-            FROM tool_call_tags tct
-            JOIN tags t ON t.id = tct.tag_id
-            WHERE t.name LIKE 'shell:%'
+            SELECT ta.target_id
+            FROM tag_assignments ta
+            JOIN tags t ON t.id = ta.tag_id
+            WHERE ta.target_kind = 'tool_call' AND t.name LIKE 'shell:%'
         )
     """, (shell_tool_id,))
 
