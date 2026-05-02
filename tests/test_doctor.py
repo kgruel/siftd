@@ -583,6 +583,82 @@ class TestCheckContext:
         )
         ctx.close()
 
+    def test_thread_safe_db_conn_initialization(self, test_db, tmp_path):
+        """Concurrent get_db_conn() calls from multiple threads return the same connection."""
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+
+        ctx = CheckContext(
+            db_path=test_db,
+            embed_db_path=tmp_path / "embed.db",
+            adapters_dir=tmp_path / "adapters",
+            formatters_dir=tmp_path / "formatters",
+            queries_dir=tmp_path / "queries",
+        )
+
+        results = []
+        lock = threading.Lock()
+
+        def get_conn():
+            conn = ctx.get_db_conn()
+            with lock:
+                results.append(conn)
+
+        # Spawn 8 threads, each calling get_db_conn()
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(get_conn) for _ in range(8)]
+            for future in futures:
+                future.result()
+
+        # All should be the same object (identity check)
+        assert len(results) == 8
+        first_conn = results[0]
+        for conn in results[1:]:
+            assert conn is first_conn, "Concurrent calls should return the same connection object"
+
+        ctx.close()
+
+    def test_thread_safe_embed_conn_initialization(self, test_db, tmp_path):
+        """Concurrent get_embed_conn() calls from multiple threads return the same connection."""
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+        import sqlite3
+
+        # Create the embeddings DB first (get_embed_conn opens in read-only mode)
+        embed_db = tmp_path / "embed.db"
+        conn = sqlite3.connect(embed_db)
+        conn.close()
+
+        ctx = CheckContext(
+            db_path=test_db,
+            embed_db_path=embed_db,
+            adapters_dir=tmp_path / "adapters",
+            formatters_dir=tmp_path / "formatters",
+            queries_dir=tmp_path / "queries",
+        )
+
+        results = []
+        lock = threading.Lock()
+
+        def get_conn():
+            conn = ctx.get_embed_conn()
+            with lock:
+                results.append(conn)
+
+        # Spawn 8 threads, each calling get_embed_conn()
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(get_conn) for _ in range(8)]
+            for future in futures:
+                future.result()
+
+        # All should be the same object (identity check)
+        assert len(results) == 8
+        first_conn = results[0]
+        for conn in results[1:]:
+            assert conn is first_conn, "Concurrent calls should return the same connection object"
+
+        ctx.close()
+
 
 @pytest.mark.embeddings
 class TestOrphanedChunksCheck:

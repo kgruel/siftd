@@ -344,13 +344,13 @@ def backfill_filter_binary(conn: sqlite3.Connection, *, dry_run: bool = False) -
         if not dry_run:
             # Insert blob with ref_count=0; the AFTER UPDATE trigger on
             # tool_calls.result_hash handles all ref_count bookkeeping.
-            from datetime import datetime
+            from datetime import UTC, datetime
 
             conn.execute(
                 "INSERT INTO content_blobs (hash, content, ref_count, created_at) "
                 "VALUES (?, ?, 0, ?) "
                 "ON CONFLICT(hash) DO NOTHING",
-                (new_hash, filtered_json, datetime.now().isoformat()),
+                (new_hash, filtered_json, datetime.now(UTC).isoformat()),
             )
             hash_mapping[old_hash] = new_hash
 

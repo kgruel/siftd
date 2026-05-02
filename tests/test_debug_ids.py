@@ -173,7 +173,7 @@ def test_search_route_plumbs_debug_ids_false(monkeypatch, tmp_path):
         return {"result_count": 0, "results": []}
 
     monkeypatch.setattr(routes, "_dispatch", fake_dispatch)
-    asyncio.run(routes.search_route.fn(SimpleNamespace(), tmp_path / "db.db", q="hi"))
+    asyncio.run(routes.search_route.fn(SimpleNamespace(), tmp_path / "db.db", q="hi", debug_ids=False))
     assert seen_rc[0].get("debug_ids") is False
 
 

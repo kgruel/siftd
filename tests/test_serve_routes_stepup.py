@@ -73,6 +73,9 @@ class _Req:
     async def body(self):
         return self._body
 
+    async def stream(self):
+        yield self._body
+
 
 def test_tag_write_route_error_paths(monkeypatch, tmp_path):
     conn = SimpleNamespace(commit=lambda: None, close=lambda: None)
@@ -110,7 +113,7 @@ def test_push_and_pull_light_paths(monkeypatch, tmp_path):
 
     # pull empty slice path
     monkeypatch.setattr("siftd.api.slice.slice_database", lambda **k: {"conversations": 0})
-    pull = _run(routes.pull.fn(SimpleNamespace(), db))
+    pull = _run(routes.pull.fn(SimpleNamespace(), db, dry_run=0))
     assert pull.status_code == 200
     assert pull.headers["X-Siftd-Conversations"] == "0"
 
@@ -155,8 +158,9 @@ def test_health_existing_db_and_pull_nonempty(monkeypatch, tmp_path):
         return {"conversations": 2}
 
     monkeypatch.setattr("siftd.api.slice.slice_database", fake_slice)
-    resp = _run(routes.pull.fn(SimpleNamespace(), db))
-    assert resp.status_code == 200 and resp.headers["X-Siftd-Conversations"] == "2"
+    resp = _run(routes.pull.fn(SimpleNamespace(), db, dry_run=0))
+    # File response: status_code is None until ASGI dispatch; check the header
+    assert resp.headers["X-Siftd-Conversations"] == "2"
 
 
 def test_tag_write_rename_delete_remove_apply_paths(monkeypatch, tmp_path):

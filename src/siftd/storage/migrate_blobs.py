@@ -16,7 +16,7 @@ Usage:
 
 import sqlite3
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 
 from siftd.storage.blobs import BlobCollisionError, compute_content_hash
 
@@ -111,7 +111,7 @@ def migrate_existing_results(
     if total == 0:
         return stats
 
-    now = datetime.now().isoformat()
+    now = datetime.now(UTC).isoformat()
 
     while True:
         # Fetch batch

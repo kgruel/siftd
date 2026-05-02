@@ -1,7 +1,7 @@
 """Tag CRUD operations for siftd storage."""
 
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 
 from siftd.ids import ulid as _ulid
 from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
@@ -31,7 +31,7 @@ def get_or_create_tag(conn: sqlite3.Connection, name: str, description: str | No
     ulid = _ulid()
     conn.execute(
         "INSERT INTO tags (id, name, description, created_at) VALUES (?, ?, ?, ?)",
-        (ulid, name, description, datetime.now().isoformat())
+        (ulid, name, description, datetime.now(UTC).isoformat())
     )
     _tag_cache[name] = ulid
     return ulid
@@ -75,7 +75,7 @@ def apply_tag(
     ulid = _ulid()
     cur = conn.execute(
         f"INSERT OR IGNORE INTO {table} (id, {fk_col}, tag_id, applied_at) VALUES (?, ?, ?, ?)",
-        (ulid, entity_id, tag_id, datetime.now().isoformat())
+        (ulid, entity_id, tag_id, datetime.now(UTC).isoformat())
     )
     if cur.rowcount == 0:
         return None  # Already applied

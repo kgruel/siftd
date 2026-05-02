@@ -131,7 +131,11 @@ def test_extract_exchange_window_chunks_with_stubbed_loader(monkeypatch):
         "_load_exchanges",
         lambda *_a, **_k: {"c1": [{"text": "hello world", "prompt_id": "p1"}]},
     )
-    out = ch.extract_exchange_window_chunks(sqlite3.connect(":memory:"), tok)
+    conn = sqlite3.connect(":memory:")
+    try:
+        out = ch.extract_exchange_window_chunks(conn, tok)
+    finally:
+        conn.close()
     assert out[0]["conversation_id"] == "c1" and out[0]["chunk_type"] == "exchange"
 
 
@@ -142,7 +146,10 @@ def test_load_exchanges_forwards_to_storage_query(monkeypatch):
         "fetch_conversation_exchanges",
         lambda _c, **k: {"x": [{"text": "t", "prompt_id": "p"}], "args": [k["conversation_id"], k["exclude_conversation_ids"]]},
     )
-    out = ch._load_exchanges(conn, {"c2"}, "c1")
+    try:
+        out = ch._load_exchanges(conn, {"c2"}, "c1")
+    finally:
+        conn.close()
     assert out["x"][0]["prompt_id"] == "p" and out["args"] == ["c1", {"c2"}]
 
 

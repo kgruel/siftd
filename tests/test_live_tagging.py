@@ -80,7 +80,10 @@ def live_db(tmp_path):
     """Create a test database."""
     db_path = tmp_path / "live_test.db"
     conn = create_database(db_path)
-    return {"path": db_path, "conn": conn}
+    try:
+        yield {"path": db_path, "conn": conn}
+    finally:
+        conn.close()
 
 
 class TestLiveTaggingFlow:

@@ -98,7 +98,10 @@ def fts_conn():
     ]
     conn.executemany("INSERT INTO content_fts VALUES (?, ?, ?, ?)", rows)
     conn.commit()
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 class TestFts5RecallDetails:

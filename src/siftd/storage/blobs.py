@@ -6,7 +6,7 @@ Reference counting enables garbage collection when content is no longer needed.
 
 import hashlib
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 
 _sha256 = hashlib.sha256
 
@@ -47,7 +47,7 @@ def store_content(
     global _batch_timestamp
     content_hash = _sha256(content.encode("utf-8")).hexdigest()
     if _batch_timestamp is None:
-        _batch_timestamp = datetime.now().isoformat()
+        _batch_timestamp = datetime.now(UTC).isoformat()
 
     # SAVEPOINT wraps the upsert so a collision rolls back the ref_count increment
     # before raising, preserving the fail-closed invariant from H17.

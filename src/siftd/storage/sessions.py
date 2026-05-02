@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from siftd.ids import ulid as _ulid
 
@@ -92,7 +92,7 @@ def register_session(
     On insert: sets both started_at and last_seen_at to now.
     On update: refreshes last_seen_at (keeps original started_at).
     """
-    now = datetime.now().isoformat()
+    now = datetime.now(UTC).isoformat()
 
     conn.execute(
         """
@@ -162,7 +162,7 @@ def queue_tag(
         return None  # Duplicate
 
     ulid = _ulid()
-    now = datetime.now().isoformat()
+    now = datetime.now(UTC).isoformat()
 
     conn.execute(
         """
@@ -358,7 +358,7 @@ def cleanup_stale_sessions(
 
     Returns (sessions_deleted, tags_deleted).
     """
-    cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(hours=max_age_hours)).isoformat()
     sessions_deleted = 0
     tags_deleted = 0
 
@@ -421,7 +421,7 @@ def get_stale_sessions_count(
 
     Uses last_seen_at (not started_at) to determine staleness.
     """
-    cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(hours=max_age_hours)).isoformat()
     cur = conn.execute(
         "SELECT COUNT(*) FROM active_sessions WHERE COALESCE(last_seen_at, started_at) < ?",
         (cutoff,),
