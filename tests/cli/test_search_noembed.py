@@ -251,7 +251,7 @@ def test_search_fts_only_branches(monkeypatch, tmp_path, capsys):
     # non-empty path
     monkeypatch.setattr(
         "siftd.api.search.fts5_search_content",
-        lambda *a, **k: [{"conversation_id": "c1", "rank": -0.3, "snippet": "x", "side": "prompt"}],
+        lambda *a, **k: [{"conversation_id": "c1", "rank": -0.3, "snippet": "x", "kind": "prompt"}],
     )
     monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: SimpleNamespace(render_search=lambda *a, **k2: {"results": [1]}))
     monkeypatch.setattr("siftd.cli.search._fetch_search_metadata", lambda conn, results: None)
@@ -430,7 +430,7 @@ def test_search_fts_only_additional_error_and_warning_branches(monkeypatch, tmp_
     args = make_args(query=["q"], db=str(db), json=True, thread=True)
     monkeypatch.setattr(
         "siftd.api.search.fts5_search_content",
-        lambda *a, **k: [{"conversation_id": "c1", "rank": -0.3, "snippet": "x", "side": "prompt"}],
+        lambda *a, **k: [{"conversation_id": "c1", "rank": -0.3, "snippet": "x", "kind": "prompt"}],
     )
     monkeypatch.setattr("siftd.cli.search._fetch_search_metadata", lambda conn, results: None)
     monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: SimpleNamespace(render_search=lambda *a, **k2: {"results": []}))

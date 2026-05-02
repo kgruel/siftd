@@ -308,9 +308,10 @@ _Virtual table using fts5._
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
 | `text_content` | TEXT |  |  |
-| `content_id` | TEXT | UNINDEXED |  |
-| `side` | TEXT | UNINDEXED |  |
+| `event_content_id` | TEXT | UNINDEXED |  |
+| `event_id` | TEXT | UNINDEXED |  |
 | `conversation_id` | TEXT | UNINDEXED |  |
+| `tokenize` | TEXT |  |  |
 
 ## POLYMORPHIC EVENT TABLES (schema v4)
 

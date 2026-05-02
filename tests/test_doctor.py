@@ -972,10 +972,10 @@ class TestFtsStaleCheck:
         write_conn.row_factory = sqlite3.Row
         ensure_fts_table(write_conn)
 
-        # Insert orphaned FTS entry (content_id doesn't exist)
+        # Insert orphaned FTS entry (event_content_id doesn't exist)
         write_conn.execute("""
-            INSERT INTO content_fts (text_content, content_id, side, conversation_id)
-            VALUES ('orphan text', 'nonexistent-id', 'prompt', 'some-conv')
+            INSERT INTO content_fts (text_content, event_content_id, event_id, conversation_id)
+            VALUES ('orphan text', 'nonexistent-ec-id', 'nonexistent-e-id', 'some-conv')
         """)
         write_conn.commit()
         write_conn.close()
@@ -1012,8 +1012,7 @@ class TestFtsStaleCheck:
         assert len(findings) == 1
         assert findings[0].check == "fts-stale"
         assert "missing" in findings[0].message
-        assert findings[0].context["missing_prompt_count"] > 0 or \
-               findings[0].context["missing_response_count"] > 0
+        assert findings[0].context["missing_count"] > 0
 
 
 class TestFtsIntegrityCheck:

@@ -15,16 +15,15 @@ class FtsStaleCheck:
         from siftd.storage.fts import get_fts_sync_status
 
         status = get_fts_sync_status(ctx.get_db_conn())
-        total = status["orphaned_count"] + status["missing_prompt_count"] + status["missing_response_count"]
+        total = status["orphaned_count"] + status["missing_count"]
         if total == 0:
             return []
 
         parts = []
         if status["orphaned_count"] > 0:
             parts.append(f"{status['orphaned_count']} orphaned")
-        missing = status["missing_prompt_count"] + status["missing_response_count"]
-        if missing > 0:
-            parts.append(f"{missing} missing")
+        if status["missing_count"] > 0:
+            parts.append(f"{status['missing_count']} missing")
 
         return [
             Finding(

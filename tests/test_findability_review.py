@@ -6,18 +6,15 @@ import pytest
 def _create_minimal_content_tables(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
-        CREATE TABLE prompts (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL);
-        CREATE TABLE prompt_content (
+        CREATE TABLE events (
             id TEXT PRIMARY KEY,
-            prompt_id TEXT NOT NULL,
-            block_type TEXT NOT NULL,
-            content TEXT NOT NULL
+            kind TEXT NOT NULL,
+            conversation_id TEXT NOT NULL
         );
-
-        CREATE TABLE responses (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL);
-        CREATE TABLE response_content (
+        CREATE TABLE event_content (
             id TEXT PRIMARY KEY,
-            response_id TEXT NOT NULL,
+            event_id TEXT NOT NULL,
+            block_index INTEGER NOT NULL,
             block_type TEXT NOT NULL,
             content TEXT NOT NULL
         );
@@ -38,17 +35,17 @@ def test_ensure_fts_table_upgrades_to_porter_and_rebuilds():
             """
             CREATE VIRTUAL TABLE content_fts USING fts5(
                 text_content,
-                content_id UNINDEXED,
-                side UNINDEXED,
+                event_content_id UNINDEXED,
+                event_id UNINDEXED,
                 conversation_id UNINDEXED
             )
             """
         )
 
-        conn.execute("INSERT INTO prompts (id, conversation_id) VALUES (?, ?)", ("p1", "c1"))
+        conn.execute("INSERT INTO events (id, kind, conversation_id) VALUES (?, ?, ?)", ("ev1", "prompt", "c1"))
         conn.execute(
-            "INSERT INTO prompt_content (id, prompt_id, block_type, content) VALUES (?, ?, ?, ?)",
-            ("pc1", "p1", "text", '{"text":"writing new files"}'),
+            "INSERT INTO event_content (id, event_id, block_index, block_type, content) VALUES (?, ?, ?, ?, ?)",
+            ("ec1", "ev1", 0, "text", '{"text":"writing new files"}'),
         )
         conn.commit()
 
@@ -81,11 +78,11 @@ def test_fts5_recall_conversations_falls_back_to_or_when_and_too_small():
         ensure_fts_table(conn)
 
         # 1 conversation matches AND; many match only one term.
-        insert_fts_content(conn, "id_and", "prompt", "c_and", "token refresh")
+        insert_fts_content(conn, "ec_and", "ev_and", "c_and", "token refresh")
         for i in range(6):
-            insert_fts_content(conn, f"id_t_{i}", "prompt", f"c_token_{i}", "token")
+            insert_fts_content(conn, f"ec_t_{i}", f"ev_t_{i}", f"c_token_{i}", "token")
         for i in range(6):
-            insert_fts_content(conn, f"id_r_{i}", "prompt", f"c_refresh_{i}", "refresh")
+            insert_fts_content(conn, f"ec_r_{i}", f"ev_r_{i}", f"c_refresh_{i}", "refresh")
         conn.commit()
 
         ids, mode = fts5_recall_conversations(conn, "token refresh", limit=80)
@@ -105,7 +102,7 @@ def test_fts5_recall_conversations_keeps_and_when_enough_hits():
         ensure_fts_table(conn)
 
         for i in range(10):
-            insert_fts_content(conn, f"id_{i}", "prompt", f"c_{i}", "token refresh")
+            insert_fts_content(conn, f"ec_{i}", f"ev_{i}", f"c_{i}", "token refresh")
         conn.commit()
 
         ids, mode = fts5_recall_conversations(conn, "token refresh", limit=80)
@@ -239,7 +236,7 @@ def test_hybrid_search_fts5_passthrough_is_opt_in(tmp_path):
     conn = open_database(db_path, read_only=False)
     try:
         for i in range(3):
-            insert_fts_content(conn, f"id_{i}", "prompt", f"c_{i}", "needle haystack")
+            insert_fts_content(conn, f"ec_{i}", f"ev_{i}", f"c_{i}", "needle haystack")
         conn.commit()
     finally:
         conn.close()

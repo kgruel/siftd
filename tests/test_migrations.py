@@ -828,7 +828,7 @@ class TestTransactionOwnershipS3:
         assert "active_sessions" in tables
         assert "pending_tags" in tables
 
-        # rebuild_fts_index: insert minimal content, commit=True, FTS rows survive reconnect
+        # rebuild_fts_index: insert minimal content via event_content, commit=True, FTS rows survive reconnect
         path_f = tmp_path / "fts.db"
         fconn = open_database(path_f)
         fconn.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
@@ -836,9 +836,9 @@ class TestTransactionOwnershipS3:
         fconn.execute(
             "INSERT INTO conversations VALUES ('c1','e1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)"
         )
-        fconn.execute("INSERT INTO prompts VALUES ('p1','c1',NULL,'2024-01-01T00:00:00Z')")
+        fconn.execute("INSERT INTO events VALUES ('ev1','prompt','c1',NULL,NULL,'2024-01-01T00:00:00Z')")
         fconn.execute(
-            """INSERT INTO prompt_content VALUES ('pc1','p1',0,'text','{"text":"hello world"}')"""
+            """INSERT INTO event_content VALUES ('ec1','ev1',0,'text','{"text":"hello world"}')"""
         )
         fconn.commit()
         rebuild_fts_index(fconn, commit=True)
@@ -1299,12 +1299,92 @@ class TestMigrateV4PolymorphicSchema:
         assert backup_calls == [], "backup_database should not be called for a new DB"
 
     def test_schema_version_stamped(self, tmp_path, monkeypatch):
-        """After successful migration, user_version == SCHEMA_VERSION (4)."""
+        """After successful migration, user_version == SCHEMA_VERSION."""
         import siftd.storage.sqlite as sqlite_mod
         monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
 
         path = _make_v3_db(tmp_path)
         conn = open_database(path)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        conn.close()
+        assert version == SCHEMA_VERSION
+
+
+# ---------------------------------------------------------------------------
+# TestMigrateV5FtsSimplification — slice-6 acceptance criteria
+# ---------------------------------------------------------------------------
+
+_V4_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "schemas" / "v4.sql"
+
+
+def _make_v4_db(tmp_path: Path, name: str = "v4test.db") -> Path:
+    """Create a DB at schema version 4 using the v4.sql fixture."""
+    path = tmp_path / name
+    conn = sqlite3.connect(str(path))
+    conn.executescript(_V4_FIXTURE_PATH.read_text())
+    conn.close()
+    return path
+
+
+class TestMigrateV5FtsSimplification:
+    def test_v4_to_v5_migration_roundtrip(self, tmp_path, monkeypatch):
+        """v4 DB migrates to v5: content_fts drops side, repopulates from event_content."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v4_db(tmp_path)
+
+        # Seed event_content (event_content exists in v4 schema)
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
+        raw.execute("INSERT INTO workspaces VALUES ('w1','/p',NULL,'2024-01-01T00:00:00Z')")
+        raw.execute(
+            "INSERT INTO conversations VALUES ('c1','ext1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)"
+        )
+        raw.execute("INSERT INTO events VALUES ('ev1','prompt','c1',NULL,NULL,'2024-01-01T00:00:00Z')")
+        raw.execute("INSERT INTO events VALUES ('ev2','response','c1','ev1',NULL,'2024-01-01T00:00:01Z')")
+        raw.execute(
+            """INSERT INTO event_content VALUES ('ec1','ev1',0,'text','{"text":"hello migration"}')"""
+        )
+        raw.execute(
+            """INSERT INTO event_content VALUES ('ec2','ev2',0,'text','{"text":"migration response"}')"""
+        )
+        raw.execute(
+            """INSERT INTO event_content VALUES ('ec3','ev2',1,'thinking','{"text":"thinking block content"}')"""
+        )
+        raw.execute(
+            """INSERT INTO event_content VALUES ('ec4','ev2',2,'tool_use','{"name":"read_file"}')"""
+        )
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+
+        # FTS schema no longer has side column
+        fts_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='content_fts'"
+        ).fetchone()[0].lower()
+        assert "side" not in fts_sql
+        assert "event_content_id" in fts_sql
+        assert "event_id" in fts_sql
+
+        # FTS row count matches indexable event_content rows (ec1, ec2, ec3 have $.text; ec4 does not)
+        fts_count = conn.execute("SELECT COUNT(*) FROM content_fts").fetchone()[0]
+        assert fts_count == 3
+
+        # FTS search works — text blocks
+        results = conn.execute(
+            "SELECT conversation_id FROM content_fts WHERE content_fts MATCH 'hello'"
+        ).fetchall()
+        assert len(results) == 1 and results[0][0] == "c1"
+
+        # FTS search works — thinking blocks are indexed
+        results = conn.execute(
+            "SELECT conversation_id FROM content_fts WHERE content_fts MATCH 'thinking'"
+        ).fetchall()
+        assert len(results) == 1 and results[0][0] == "c1"
+
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         conn.close()
         assert version == SCHEMA_VERSION

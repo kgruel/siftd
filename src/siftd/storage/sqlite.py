@@ -32,7 +32,7 @@ from siftd.storage.sessions import ensure_prompt_tags_table, ensure_session_tabl
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Registry of versioned migrations: version -> migration function.
 # Each function migrates the DB from version-1 to version.
@@ -1424,6 +1424,45 @@ def _migrate_v4_polymorphic_schema(conn: sqlite3.Connection) -> None:
 MIGRATIONS[4] = _migrate_v4_polymorphic_schema
 
 
+def _migrate_v5_fts_simplification(conn: sqlite3.Connection) -> None:
+    """Drop content_fts with old side column, recreate from event_content."""
+    conn.execute("DROP TABLE IF EXISTS content_fts")
+    conn.execute("""
+        CREATE VIRTUAL TABLE content_fts USING fts5(
+            text_content,
+            event_content_id UNINDEXED,
+            event_id         UNINDEXED,
+            conversation_id  UNINDEXED,
+            tokenize='porter unicode61 remove_diacritics 1'
+        )
+    """)
+    conn.execute("""
+        INSERT INTO content_fts (text_content, event_content_id, event_id, conversation_id)
+        SELECT
+            json_extract(ec.content, '$.text'),
+            ec.id,
+            ec.event_id,
+            e.conversation_id
+        FROM event_content ec
+        JOIN events e ON e.id = ec.event_id
+        WHERE json_valid(ec.content)
+          AND json_extract(ec.content, '$.text') IS NOT NULL
+    """)
+    fts_count = conn.execute("SELECT COUNT(*) FROM content_fts").fetchone()[0]
+    ec_count = conn.execute("""
+        SELECT COUNT(*) FROM event_content
+        WHERE json_valid(content)
+          AND json_extract(content, '$.text') IS NOT NULL
+    """).fetchone()[0]
+    if fts_count != ec_count:
+        raise RuntimeError(
+            f"FTS5 repopulation mismatch: {fts_count} FTS rows vs {ec_count} event_content rows"
+        )
+
+
+MIGRATIONS[5] = _migrate_v5_fts_simplification
+
+
 # Known model prices (input_per_mtok, output_per_mtok) in USD per million tokens.
 # Prices are seeded at DB open time when the matching model+provider already exist.
 # Sourced from published API pricing pages.
@@ -2120,8 +2159,8 @@ def store_conversation(
         # Insert prompt content blocks
         for idx, block in enumerate(prompt.content):
             content_id = insert_prompt_content(conn, prompt_id, idx, block.block_type, json.dumps(block.content))
-            if block.block_type == "text" and block.content.get("text"):
-                insert_fts_content(conn, content_id, "prompt", conversation_id, block.content["text"])
+            if text := block.content.get("text"):
+                insert_fts_content(conn, content_id, prompt_id, conversation_id, text)
 
         # Process responses for this prompt
         for response in prompt.responses:
@@ -2150,8 +2189,8 @@ def store_conversation(
             # Insert response content blocks
             for idx, block in enumerate(response.content):
                 content_id = insert_response_content(conn, response_id, idx, block.block_type, json.dumps(block.content))
-                if block.block_type == "text" and block.content.get("text"):
-                    insert_fts_content(conn, content_id, "response", conversation_id, block.content["text"])
+                if text := block.content.get("text"):
+                    insert_fts_content(conn, content_id, response_id, conversation_id, text)
 
             for attr_key, attr_value in response.attributes.items():
                 set_attribute(conn, "response", response_id, attr_key, attr_value, scope="provider")

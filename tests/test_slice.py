@@ -334,8 +334,8 @@ def test_slice_migrated_column_order(tmp_path):
             ingested_at TEXT NOT NULL, error TEXT
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
-            text_content, content_id UNINDEXED,
-            side UNINDEXED, conversation_id UNINDEXED
+            text_content, event_content_id UNINDEXED,
+            event_id UNINDEXED, conversation_id UNINDEXED
         );
     """)
 

@@ -453,7 +453,7 @@ class TestFTS:
         # Recreate without porter
         conn = open_database(tmp_path / "t.db")
         conn.execute("DROP TABLE IF EXISTS content_fts")
-        conn.execute("CREATE VIRTUAL TABLE content_fts USING fts5(text_content, content_id UNINDEXED, side UNINDEXED, conversation_id UNINDEXED)")
+        conn.execute("CREATE VIRTUAL TABLE content_fts USING fts5(text_content, event_content_id UNINDEXED, event_id UNINDEXED, conversation_id UNINDEXED)")
         conn.commit()
         fts.ensure_fts_table(conn)
         assert "porter" in (conn.execute("SELECT sql FROM sqlite_master WHERE name='content_fts'").fetchone()[0] or "").lower()
@@ -1027,8 +1027,7 @@ class TestFTSSync:
     def test_get_fts_sync_status(self, db):
         result = fts.get_fts_sync_status(db)
         assert result["orphaned_count"] == 0
-        assert result["missing_prompt_count"] == 0
-        assert result["missing_response_count"] == 0
+        assert result["missing_count"] == 0
 
 
 class TestMigrateWorkspaces:
@@ -1226,7 +1225,7 @@ class TestFTSSyncNoTable:
         conn = sqlite3.connect(str(tmp_path / "bare.db"))
         conn.row_factory = sqlite3.Row
         result = fts.get_fts_sync_status(conn)
-        assert result == {"orphaned_count": 0, "missing_prompt_count": 0, "missing_response_count": 0}
+        assert result == {"orphaned_count": 0, "missing_count": 0}
         conn.close()
 
 

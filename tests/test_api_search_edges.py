@@ -57,7 +57,7 @@ def test_list_ids_build_index_and_fts_mode(monkeypatch, tmp_path):
     )
     monkeypatch.setitem(sys.modules, "siftd.search", fake_search)
     monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *a, **k: _Conn())
-    monkeypatch.setattr(api_search, "fts5_search_content", lambda conn, q, limit=10, raw_fts=False: [{"conversation_id": "drop", "rank": -2.0, "snippet": "x", "side": "prompt"}, {"conversation_id": "keep", "rank": -1.0, "snippet": "y", "side": "response"}])
+    monkeypatch.setattr(api_search, "fts5_search_content", lambda conn, q, limit=10, raw_fts=False: [{"conversation_id": "drop", "rank": -2.0, "snippet": "x", "kind": "prompt"}, {"conversation_id": "keep", "rank": -1.0, "snippet": "y", "kind": "response"}])
 
     out = api_search.hybrid_search("q", db_path=tmp_path / "db.sqlite", mode="fts", n=2)
     assert len(out) == 1 and out[0]["conversation_id"] == "keep" and out[0]["score"] == 1.0
