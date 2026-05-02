@@ -831,6 +831,13 @@ class TestSchemaStability:
         "sync_inbox",
         # FTS5 virtual table (shows as type='table' in sqlite_master)
         "content_fts",
+        # Polymorphic event tables (schema v4)
+        "events",
+        "event_response",
+        "event_tool_call",
+        "event_content",
+        "attributes",
+        "tag_assignments",
     }
 
     def test_expected_tables_exist(self, db):

@@ -1,14 +1,3 @@
--- siftd Schema
--- Minimal Core + Vocabulary Entities + Schemaless Attributes
--- Based on "a simple datastore" principles
--- All primary keys are ULIDs (TEXT, 26 chars, sortable by creation time)
-
---------------------------------------------------------------------------------
--- VOCABULARY TABLES
--- Referenced by many, auto-discovered or predefined
---------------------------------------------------------------------------------
-
--- The CLI/tool that wraps model interactions
 CREATE TABLE harnesses (
     id              TEXT PRIMARY KEY,           -- ULID
     name            TEXT NOT NULL UNIQUE,       -- claude_code, gemini_cli, codex_cli, opencode
@@ -17,8 +6,6 @@ CREATE TABLE harnesses (
     source          TEXT,                       -- anthropic, openai, google, community
     log_format      TEXT                        -- jsonl, json_array, event_stream
 );
-
--- The actual model weights being invoked
 CREATE TABLE models (
     id              TEXT PRIMARY KEY,           -- ULID
     raw_name        TEXT NOT NULL UNIQUE,       -- claude-3-opus-20240229, gpt-4o-2024-05-13
@@ -29,27 +16,20 @@ CREATE TABLE models (
     variant         TEXT,                       -- opus, sonnet, haiku, flash, pro
     released        TEXT                        -- date string or snapshot identifier
 );
-
 CREATE INDEX idx_models_name ON models(name);
 CREATE INDEX idx_models_family ON models(family);
-
--- Who serves the model, takes your money
 CREATE TABLE providers (
     id              TEXT PRIMARY KEY,           -- ULID
     name            TEXT NOT NULL UNIQUE,       -- anthropic, openai, google, openrouter, local
     display_name    TEXT,                       -- "Anthropic API", "OpenRouter"
     billing_model   TEXT                        -- token, subscription, local, proxy
 );
-
--- Tools available to models
 CREATE TABLE tools (
     id              TEXT PRIMARY KEY,           -- ULID
     name            TEXT NOT NULL UNIQUE,       -- canonical: file.read, shell.execute, search.grep
     category        TEXT,                       -- file, shell, search, web, edit
     description     TEXT
 );
-
--- Raw tool names map to canonical tools (per harness)
 CREATE TABLE tool_aliases (
     id              TEXT PRIMARY KEY,           -- ULID
     raw_name        TEXT NOT NULL,              -- Read, read_file, Bash, run_shell_command
@@ -57,11 +37,8 @@ CREATE TABLE tool_aliases (
     tool_id         TEXT NOT NULL REFERENCES tools(id) ON DELETE CASCADE,
     UNIQUE (raw_name, harness_id)
 );
-
 CREATE INDEX idx_tool_aliases_tool ON tool_aliases(tool_id);
 CREATE INDEX idx_tool_aliases_harness ON tool_aliases(harness_id);
-
--- Flat pricing lookup for approximate cost computation
 CREATE TABLE pricing (
     id              TEXT PRIMARY KEY,           -- ULID
     model_id        TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
@@ -70,21 +47,12 @@ CREATE TABLE pricing (
     output_per_mtok REAL,                       -- $ per million output tokens
     UNIQUE (model_id, provider_id)
 );
-
--- Physical paths where work happens
 CREATE TABLE workspaces (
     id              TEXT PRIMARY KEY,           -- ULID
     path            TEXT NOT NULL UNIQUE,       -- /Users/kaygee/Code/tbd
     git_remote      TEXT,                       -- git@github.com:user/repo.git
     discovered_at   TEXT NOT NULL               -- ISO timestamp
 );
-
---------------------------------------------------------------------------------
--- CORE TABLES
--- What we ingest from logs
---------------------------------------------------------------------------------
-
--- A single interaction through one harness
 CREATE TABLE conversations (
     id              TEXT PRIMARY KEY,           -- ULID
     external_id     TEXT NOT NULL,              -- harness's identifier
@@ -95,8 +63,6 @@ CREATE TABLE conversations (
     ended_at        TEXT,                       -- ISO timestamp, NULL if unknown/abandoned
     UNIQUE (harness_id, external_id)
 );
-
--- User's input
 CREATE TABLE prompts (
     id              TEXT PRIMARY KEY,           -- ULID
     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -104,8 +70,6 @@ CREATE TABLE prompts (
     timestamp       TEXT NOT NULL,
     UNIQUE (conversation_id, external_id)
 );
-
--- Model's output
 CREATE TABLE responses (
     id              TEXT PRIMARY KEY,           -- ULID
     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -118,8 +82,6 @@ CREATE TABLE responses (
     output_tokens   INTEGER,                    -- universal
     UNIQUE (conversation_id, external_id)
 );
-
--- Tool invocations during response generation
 CREATE TABLE tool_calls (
     id              TEXT PRIMARY KEY,           -- ULID
     response_id     TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
@@ -132,13 +94,6 @@ CREATE TABLE tool_calls (
     status          TEXT,                       -- success, error, pending
     timestamp       TEXT
 );
-
---------------------------------------------------------------------------------
--- CONTENT TABLES
--- Ordered blocks belonging to prompts/responses
---------------------------------------------------------------------------------
-
--- Content blocks in prompts (usually just text, but could be attachments)
 CREATE TABLE prompt_content (
     id              TEXT PRIMARY KEY,           -- ULID
     prompt_id       TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
@@ -147,8 +102,6 @@ CREATE TABLE prompt_content (
     content         TEXT NOT NULL,              -- the actual content or reference
     UNIQUE (prompt_id, block_index)
 );
-
--- Content blocks in responses (text, thinking, tool references)
 CREATE TABLE response_content (
     id              TEXT PRIMARY KEY,           -- ULID
     response_id     TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
@@ -157,12 +110,6 @@ CREATE TABLE response_content (
     content         TEXT NOT NULL,
     UNIQUE (response_id, block_index)
 );
-
---------------------------------------------------------------------------------
--- ATTRIBUTE TABLES
--- Schemaless key-value for everything else
---------------------------------------------------------------------------------
-
 CREATE TABLE conversation_attributes (
     id              TEXT PRIMARY KEY,           -- ULID
     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -171,7 +118,6 @@ CREATE TABLE conversation_attributes (
     scope           TEXT,                       -- NULL=user, 'provider', 'analyzer', etc.
     UNIQUE (conversation_id, key, scope)
 );
-
 CREATE TABLE prompt_attributes (
     id              TEXT PRIMARY KEY,           -- ULID
     prompt_id       TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
@@ -180,7 +126,6 @@ CREATE TABLE prompt_attributes (
     scope           TEXT,
     UNIQUE (prompt_id, key, scope)
 );
-
 CREATE TABLE response_attributes (
     id              TEXT PRIMARY KEY,           -- ULID
     response_id     TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
@@ -189,7 +134,6 @@ CREATE TABLE response_attributes (
     scope           TEXT,
     UNIQUE (response_id, key, scope)
 );
-
 CREATE TABLE tool_call_attributes (
     id              TEXT PRIMARY KEY,           -- ULID
     tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
@@ -198,19 +142,12 @@ CREATE TABLE tool_call_attributes (
     scope           TEXT,
     UNIQUE (tool_call_id, key, scope)
 );
-
---------------------------------------------------------------------------------
--- TAG TABLES
--- User-defined categorization
---------------------------------------------------------------------------------
-
 CREATE TABLE tags (
     id              TEXT PRIMARY KEY,           -- ULID
     name            TEXT NOT NULL UNIQUE,
     description     TEXT,
     created_at      TEXT NOT NULL
 );
-
 CREATE TABLE workspace_tags (
     id              TEXT PRIMARY KEY,           -- ULID
     workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -218,7 +155,6 @@ CREATE TABLE workspace_tags (
     applied_at      TEXT NOT NULL,
     UNIQUE (workspace_id, tag_id)
 );
-
 CREATE TABLE conversation_tags (
     id              TEXT PRIMARY KEY,           -- ULID
     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -226,7 +162,6 @@ CREATE TABLE conversation_tags (
     applied_at      TEXT NOT NULL,
     UNIQUE (conversation_id, tag_id)
 );
-
 CREATE TABLE tool_call_tags (
     id              TEXT PRIMARY KEY,           -- ULID
     tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
@@ -234,12 +169,6 @@ CREATE TABLE tool_call_tags (
     applied_at      TEXT NOT NULL,
     UNIQUE (tool_call_id, tag_id)
 );
-
---------------------------------------------------------------------------------
--- OPERATIONAL TABLES
--- Ingestion tracking
---------------------------------------------------------------------------------
-
 CREATE TABLE ingested_files (
     id              TEXT PRIMARY KEY,           -- ULID
     path            TEXT NOT NULL UNIQUE,
@@ -251,84 +180,32 @@ CREATE TABLE ingested_files (
     file_mtime      REAL,                       -- st_mtime from os.stat()
     file_size       INTEGER                     -- st_size from os.stat()
 );
-
---------------------------------------------------------------------------------
--- INDEXES
--- Single-table query optimization
---------------------------------------------------------------------------------
-
 CREATE INDEX idx_conversations_harness ON conversations(harness_id);
 CREATE INDEX idx_conversations_workspace ON conversations(workspace_id);
 CREATE INDEX idx_conversations_started ON conversations(started_at);
 CREATE INDEX idx_conversations_ended ON conversations(ended_at);
-
 CREATE INDEX idx_workspaces_git_remote ON workspaces(git_remote);
-
 CREATE INDEX idx_prompts_conversation ON prompts(conversation_id);
 CREATE INDEX idx_prompts_timestamp ON prompts(timestamp);
-
 CREATE INDEX idx_responses_conversation ON responses(conversation_id);
 CREATE INDEX idx_responses_prompt ON responses(prompt_id);
 CREATE INDEX idx_responses_model ON responses(model_id);
 CREATE INDEX idx_responses_timestamp ON responses(timestamp);
-
 CREATE INDEX idx_tool_calls_response ON tool_calls(response_id);
 CREATE INDEX idx_tool_calls_conversation ON tool_calls(conversation_id);
 CREATE INDEX idx_tool_calls_tool ON tool_calls(tool_id);
 CREATE INDEX idx_tool_calls_status ON tool_calls(status);
-
 CREATE INDEX idx_prompt_content_prompt ON prompt_content(prompt_id);
 CREATE INDEX idx_response_content_response ON response_content(response_id);
-
--- Covers the cache_read_input_tokens lookup used in list_conversations cost calc
 CREATE INDEX idx_response_attributes_key ON response_attributes(key, response_id, value);
-
---------------------------------------------------------------------------------
--- CONTENT-ADDRESSABLE STORAGE
--- Deduplicated blob storage for large content (tool_calls.result)
---------------------------------------------------------------------------------
-
 CREATE TABLE content_blobs (
     hash TEXT PRIMARY KEY,              -- SHA256 of content (natural key)
     content TEXT NOT NULL,
     ref_count INTEGER NOT NULL DEFAULT 1 CHECK (ref_count >= 0),
     created_at TEXT NOT NULL            -- ISO timestamp
 );
-
 CREATE INDEX idx_content_blobs_ref_count ON content_blobs(ref_count);
-
--- Trigger to decrement ref_count and garbage collect when tool_calls are deleted
-CREATE TRIGGER tr_tool_calls_delete_release_blob
-AFTER DELETE ON tool_calls
-FOR EACH ROW
-WHEN OLD.result_hash IS NOT NULL
-BEGIN
-    UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
-    DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
-END;
-
--- Trigger to adjust ref_count when result_hash changes (e.g. blob migration)
-CREATE TRIGGER tr_tool_calls_update_release_blob
-AFTER UPDATE OF result_hash ON tool_calls
-FOR EACH ROW
-WHEN OLD.result_hash IS NOT NEW.result_hash
-BEGIN
-    -- Decrement old blob (if any)
-    UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0)
-        WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
-    DELETE FROM content_blobs
-        WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
-    -- Increment new blob (if any)
-    UPDATE content_blobs SET ref_count = ref_count + 1
-        WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
-END;
-
---------------------------------------------------------------------------------
--- SYNC INBOX
--- Tracks staged payloads from push operations pending merge
---------------------------------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS sync_inbox (
+CREATE TABLE sync_inbox (
     id                  TEXT PRIMARY KEY,
     received_at         TEXT NOT NULL,
     processed_at        TEXT,
@@ -339,25 +216,6 @@ CREATE TABLE IF NOT EXISTS sync_inbox (
     size_bytes          INTEGER,
     conversations       INTEGER
 );
-
---------------------------------------------------------------------------------
--- FTS5 FULL-TEXT SEARCH INDEX
--- Indexes text content from prompt_content and response_content
---------------------------------------------------------------------------------
-
-CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
-    text_content,
-    content_id UNINDEXED,
-    side UNINDEXED,
-    conversation_id UNINDEXED
-);
-
---------------------------------------------------------------------------------
--- POLYMORPHIC EVENT TABLES (schema v4)
--- Populated by migration; storage writers move here in slices 2-5.
--- Old tables (prompts/responses/tool_calls etc.) stay until slice 8 cleanup.
---------------------------------------------------------------------------------
-
 CREATE TABLE events (
     id              TEXT PRIMARY KEY,           -- ULID (preserved from prompts/responses/tool_calls)
     kind            TEXT NOT NULL,              -- 'prompt' | 'response' | 'tool_call'
@@ -367,11 +225,8 @@ CREATE TABLE events (
     timestamp       TEXT NOT NULL,
     UNIQUE (conversation_id, kind, external_id)
 );
-
 CREATE INDEX idx_events_conversation_kind ON events(conversation_id, kind);
 CREATE INDEX idx_events_parent ON events(parent_id);
-
--- Sparse extension: only present for kind='response'
 CREATE TABLE event_response (
     event_id        TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
     model_id        TEXT REFERENCES models(id) ON DELETE SET NULL,
@@ -379,8 +234,6 @@ CREATE TABLE event_response (
     input_tokens    INTEGER,
     output_tokens   INTEGER
 );
-
--- Sparse extension: only present for kind='tool_call'
 CREATE TABLE event_tool_call (
     event_id        TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
     tool_id         TEXT REFERENCES tools(id) ON DELETE SET NULL,
@@ -388,8 +241,6 @@ CREATE TABLE event_tool_call (
     result_hash     TEXT REFERENCES content_blobs(hash),
     status          TEXT                        -- success | error | pending
 );
-
--- Unified content blocks (replaces prompt_content + response_content)
 CREATE TABLE event_content (
     id              TEXT PRIMARY KEY,           -- ULID (preserved from prompt_content/response_content)
     event_id        TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -398,10 +249,7 @@ CREATE TABLE event_content (
     content         TEXT NOT NULL,
     UNIQUE (event_id, block_index)
 );
-
 CREATE INDEX idx_event_content_event ON event_content(event_id);
-
--- Polymorphic schemaless key-value (replaces *_attributes tables)
 CREATE TABLE attributes (
     id              TEXT PRIMARY KEY,           -- ULID
     target_kind     TEXT NOT NULL,              -- 'conversation' | 'prompt' | 'response' | 'tool_call'
@@ -411,11 +259,8 @@ CREATE TABLE attributes (
     scope           TEXT,                       -- NULL=user, 'provider', 'analyzer', etc.
     UNIQUE (target_kind, target_id, key, scope)
 );
-
 CREATE INDEX idx_attributes_target ON attributes(target_kind, target_id);
 CREATE INDEX idx_attributes_key ON attributes(key, target_kind, target_id, value);
-
--- Polymorphic tag assignments (replaces workspace_tags/conversation_tags/tool_call_tags/prompt_tags)
 CREATE TABLE tag_assignments (
     id              TEXT PRIMARY KEY,           -- ULID
     target_kind     TEXT NOT NULL,              -- 'conversation' | 'workspace' | 'prompt' | 'response' | 'tool_call' | 'exchange'
@@ -424,6 +269,87 @@ CREATE TABLE tag_assignments (
     applied_at      TEXT NOT NULL,
     UNIQUE (target_kind, target_id, tag_id)
 );
-
 CREATE INDEX idx_tag_assignments_target ON tag_assignments(target_kind, target_id);
 CREATE INDEX idx_tag_assignments_tag ON tag_assignments(tag_id);
+CREATE VIRTUAL TABLE content_fts USING fts5(
+            text_content,
+            content_id UNINDEXED,
+            side UNINDEXED,
+            conversation_id UNINDEXED,
+            tokenize='porter unicode61 remove_diacritics 1'
+        )
+/* content_fts(text_content,content_id,side,conversation_id) */;
+CREATE TABLE IF NOT EXISTS 'content_fts_data'(id INTEGER PRIMARY KEY, block BLOB);
+CREATE TABLE IF NOT EXISTS 'content_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS 'content_fts_content'(id INTEGER PRIMARY KEY, c0, c1, c2, c3);
+CREATE TABLE IF NOT EXISTS 'content_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB);
+CREATE TABLE IF NOT EXISTS 'content_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID;
+CREATE TABLE active_sessions (
+            harness_session_id TEXT PRIMARY KEY,
+            adapter_name TEXT NOT NULL,
+            workspace_path TEXT,
+            started_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL
+        );
+CREATE TABLE pending_tags (
+            id TEXT PRIMARY KEY,
+            harness_session_id TEXT NOT NULL,
+            tag_name TEXT NOT NULL,
+            entity_type TEXT NOT NULL DEFAULT 'conversation',
+            exchange_index INTEGER,
+            created_at TEXT NOT NULL,
+            UNIQUE (harness_session_id, tag_name, entity_type, exchange_index)
+        );
+CREATE INDEX idx_pending_tags_session
+        ON pending_tags(harness_session_id)
+    ;
+CREATE TABLE prompt_tags (
+            id TEXT PRIMARY KEY,
+            prompt_id TEXT NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
+            tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            applied_at TEXT NOT NULL,
+            UNIQUE (prompt_id, tag_id)
+        );
+CREATE INDEX idx_workspace_tags_tag ON workspace_tags(tag_id);
+CREATE INDEX idx_conversation_tags_tag ON conversation_tags(tag_id);
+CREATE INDEX idx_tool_call_tags_tag ON tool_call_tags(tag_id);
+CREATE TABLE conversation_stats (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    prompt_count    INTEGER NOT NULL DEFAULT 0,
+    response_count  INTEGER NOT NULL DEFAULT 0,
+    total_tokens    INTEGER NOT NULL DEFAULT 0,
+    model_name      TEXT,
+    cost            REAL
+);
+CREATE TABLE conversation_owners (
+            conversation_id TEXT NOT NULL
+                REFERENCES conversations(id) ON DELETE CASCADE,
+            user_id         TEXT NOT NULL,
+            push_id         TEXT,
+            assigned_at     TEXT NOT NULL,
+            PRIMARY KEY (conversation_id)
+        );
+CREATE INDEX idx_conversation_owners_user
+        ON conversation_owners(user_id)
+    ;
+CREATE TRIGGER tr_tool_calls_delete_release_blob
+        AFTER DELETE ON tool_calls
+        FOR EACH ROW
+        WHEN OLD.result_hash IS NOT NULL
+        BEGIN
+            UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
+            DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
+        END;
+CREATE TRIGGER tr_tool_calls_update_release_blob
+        AFTER UPDATE OF result_hash ON tool_calls
+        FOR EACH ROW
+        WHEN OLD.result_hash IS NOT NEW.result_hash
+        BEGIN
+            UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0)
+                WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
+            DELETE FROM content_blobs
+                WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
+            UPDATE content_blobs SET ref_count = ref_count + 1
+                WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
+        END;
+PRAGMA user_version = 4;

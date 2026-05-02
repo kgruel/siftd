@@ -1000,3 +1000,311 @@ class TestBlobRefcountTriggerMigration:
         # Row is GC'd when ref_count <= 0, or clamped to 0 — either way non-negative
         assert ref is None or ref[0] >= 0
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# TestMigrateV4PolymorphicSchema — slice-1 acceptance criteria
+# ---------------------------------------------------------------------------
+
+_V3_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "schemas" / "v3.sql"
+
+
+def _make_v3_db(tmp_path: Path, name: str = "test.db") -> Path:
+    """Create a DB at schema version 3 using the v3.sql fixture."""
+    path = tmp_path / name
+    conn = sqlite3.connect(str(path))
+    conn.executescript(_V3_FIXTURE_PATH.read_text())
+    conn.close()
+    return path
+
+
+def _populate_v3_db(path: Path) -> dict[str, int]:
+    """Insert a small representative dataset into a v3 DB.
+
+    Returns expected counts keyed by table name for assertion in caller.
+    """
+    conn = sqlite3.connect(str(path))
+    conn.execute("PRAGMA foreign_keys = OFF")  # v3 fixture, pre-migration schema
+
+    conn.execute("INSERT INTO harnesses VALUES ('h1','claude_code',NULL,NULL,NULL,NULL)")
+    conn.execute("INSERT INTO workspaces VALUES ('w1','/code',NULL,'2024-01-01T00:00:00Z')")
+    conn.execute("INSERT INTO tags VALUES ('tg1','important',NULL,'2024-01-01T00:00:00Z')")
+    conn.execute(
+        "INSERT INTO conversations VALUES ('c1','ext-c1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)"
+    )
+
+    # 2 prompts
+    conn.execute("INSERT INTO prompts VALUES ('p1','c1','ep1','2024-01-01T00:01:00Z')")
+    conn.execute("INSERT INTO prompts VALUES ('p2','c1','ep2','2024-01-01T00:02:00Z')")
+
+    # 2 responses
+    conn.execute(
+        "INSERT INTO responses VALUES ('r1','c1','p1',NULL,NULL,'er1','2024-01-01T00:01:01Z',100,200)"
+    )
+    conn.execute(
+        "INSERT INTO responses VALUES ('r2','c1','p2',NULL,NULL,'er2','2024-01-01T00:02:01Z',150,250)"
+    )
+
+    # 2 tool_calls (NULL external_id so the events UNIQUE constraint is never violated)
+    conn.execute(
+        "INSERT INTO tool_calls VALUES ('tc1','r1','c1',NULL,NULL,'{}',NULL,NULL,'success','2024-01-01T00:01:02Z')"
+    )
+    conn.execute(
+        "INSERT INTO tool_calls VALUES ('tc2','r2','c1',NULL,NULL,'{}',NULL,NULL,'success','2024-01-01T00:02:02Z')"
+    )
+
+    # prompt_content: 2 blocks (one per prompt)
+    conn.execute("INSERT INTO prompt_content VALUES ('pc1','p1',0,'text','hello')")
+    conn.execute("INSERT INTO prompt_content VALUES ('pc2','p2',0,'text','world')")
+
+    # response_content: 2 blocks (one per response)
+    conn.execute("INSERT INTO response_content VALUES ('rc1','r1',0,'text','reply1')")
+    conn.execute("INSERT INTO response_content VALUES ('rc2','r2',0,'text','reply2')")
+
+    # response_attributes: 2 rows
+    conn.execute(
+        "INSERT INTO response_attributes VALUES ('ra1','r1','cache_read_input_tokens','50',NULL)"
+    )
+    conn.execute(
+        "INSERT INTO response_attributes VALUES ('ra2','r2','cache_read_input_tokens','75',NULL)"
+    )
+
+    # conversation_attributes: 1 row
+    conn.execute(
+        "INSERT INTO conversation_attributes VALUES ('ca1','c1','summary','test session',NULL)"
+    )
+
+    # conversation_tags: 1 row
+    conn.execute("INSERT INTO conversation_tags VALUES ('ct1','c1','tg1','2024-01-01T00:00:00Z')")
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "prompts": 2,
+        "responses": 2,
+        "tool_calls": 2,
+        "prompt_content": 2,
+        "response_content": 2,
+        "response_attributes": 2,
+        "conversation_attributes": 1,
+        "conversation_tags": 1,
+        "workspace_tags": 0,
+        "tool_call_tags": 0,
+    }
+
+
+class TestMigrateV4PolymorphicSchema:
+    def test_roundtrip_with_data(self, tmp_path, monkeypatch):
+        """v3 DB with data → open_database → new tables populated with correct row counts."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v3_db(tmp_path)
+        counts = _populate_v3_db(path)
+
+        conn = open_database(path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='prompt'").fetchone()[0] == counts["prompts"]
+            assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='response'").fetchone()[0] == counts["responses"]
+            assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='tool_call'").fetchone()[0] == counts["tool_calls"]
+            assert conn.execute("SELECT COUNT(*) FROM event_response").fetchone()[0] == counts["responses"]
+            assert conn.execute("SELECT COUNT(*) FROM event_tool_call").fetchone()[0] == counts["tool_calls"]
+            assert conn.execute("SELECT COUNT(*) FROM event_content").fetchone()[0] == (
+                counts["prompt_content"] + counts["response_content"]
+            )
+            assert conn.execute("SELECT COUNT(*) FROM attributes").fetchone()[0] == (
+                counts["response_attributes"] + counts["conversation_attributes"]
+            )
+            assert conn.execute("SELECT COUNT(*) FROM tag_assignments").fetchone()[0] == counts["conversation_tags"]
+        finally:
+            conn.close()
+
+    def test_roundtrip_id_preservation(self, tmp_path, monkeypatch):
+        """IDs from prompts/responses/tool_calls are preserved as events.id."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v3_db(tmp_path)
+        _populate_v3_db(path)
+
+        conn = open_database(path)
+        try:
+            prompt_ids = {r[0] for r in conn.execute("SELECT id FROM events WHERE kind='prompt'").fetchall()}
+            response_ids = {r[0] for r in conn.execute("SELECT id FROM events WHERE kind='response'").fetchall()}
+            tool_call_ids = {r[0] for r in conn.execute("SELECT id FROM events WHERE kind='tool_call'").fetchall()}
+
+            assert prompt_ids == {"p1", "p2"}
+            assert response_ids == {"r1", "r2"}
+            assert tool_call_ids == {"tc1", "tc2"}
+
+            # event_content IDs also preserved
+            content_ids = {r[0] for r in conn.execute("SELECT id FROM event_content").fetchall()}
+            assert content_ids == {"pc1", "pc2", "rc1", "rc2"}
+        finally:
+            conn.close()
+
+    def test_empty_db(self, tmp_path, monkeypatch):
+        """v3 DB with no data rows → migration succeeds; all new tables have 0 rows."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v3_db(tmp_path)
+        conn = open_database(path)
+        try:
+            for table in ("events", "event_response", "event_tool_call", "event_content",
+                          "attributes", "tag_assignments"):
+                count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                assert count == 0, f"{table} expected 0, got {count}"
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        finally:
+            conn.close()
+
+    def test_prompt_tags_present(self, tmp_path, monkeypatch):
+        """prompt_tags rows are backfilled into tag_assignments when the table exists."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v3_db(tmp_path)
+        counts = _populate_v3_db(path)
+
+        # Add a prompt_tags row (v3.sql already creates the prompt_tags table)
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute("INSERT INTO prompt_tags VALUES ('pt1','p1','tg1','2024-01-01T00:00:00Z')")
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+        try:
+            # conversation_tags + prompt_tags = 2 tag_assignments
+            total = conn.execute("SELECT COUNT(*) FROM tag_assignments").fetchone()[0]
+            assert total == counts["conversation_tags"] + 1
+            row = conn.execute(
+                "SELECT target_kind, target_id, tag_id FROM tag_assignments WHERE id='pt1'"
+            ).fetchone()
+            assert row is not None
+            assert row[0] == "prompt"
+            assert row[1] == "p1"
+        finally:
+            conn.close()
+
+    def test_prompt_tags_absent(self, tmp_path, monkeypatch):
+        """Migration succeeds when prompt_tags table does not exist."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v3_db(tmp_path)
+        # Remove prompt_tags table to simulate older DBs
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute("DROP TABLE IF EXISTS prompt_tags")
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+        try:
+            # No error; tag_assignments exists with 0 rows
+            assert conn.execute("SELECT COUNT(*) FROM tag_assignments").fetchone()[0] == 0
+        finally:
+            conn.close()
+
+    def test_assertion_failure_rolls_back(self, tmp_path, monkeypatch):
+        """Assertion mismatch via open_database rolls back; user_version stays at prior value."""
+        import siftd.storage.sqlite as sqlite_mod
+        from siftd.storage.sqlite import MigrationAssertionError
+
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v3_db(tmp_path)
+
+        # Pre-create events table with a phantom 'prompt' row that has no corresponding
+        # row in prompts.  This makes COUNT(events WHERE kind='prompt') != COUNT(prompts)
+        # and triggers MigrationAssertionError during the migration.
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute("""
+            CREATE TABLE events (
+                id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+                conversation_id TEXT NOT NULL, parent_id TEXT,
+                external_id TEXT, timestamp TEXT NOT NULL
+            )
+        """)
+        raw.execute(
+            "INSERT INTO events VALUES ('phantom','prompt','c-nonexistent',NULL,NULL,'2024-01-01T00:00:00Z')"
+        )
+        raw.commit()
+        raw.close()
+
+        with pytest.raises(MigrationAssertionError, match="events\\[prompt\\]"):
+            open_database(path)
+
+        # Verify the runner's ROLLBACK kept user_version at the pre-migration value
+        check = sqlite3.connect(str(path))
+        version = check.execute("PRAGMA user_version").fetchone()[0]
+        check.close()
+        assert version == 3, f"user_version should still be 3 after rollback, got {version}"
+
+    def test_idempotent_via_version_gate(self, tmp_path, monkeypatch):
+        """Second open_database on an already-migrated DB is a no-op."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v3_db(tmp_path)
+        conn = open_database(path)
+        conn.close()
+
+        # Second open must not raise or duplicate rows
+        conn2 = open_database(path)
+        try:
+            assert conn2.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+            # Tables still exist with same row counts (0 for empty fixture)
+            assert conn2.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
+        finally:
+            conn2.close()
+
+    def test_backup_called_before_migration(self, tmp_path, monkeypatch):
+        """backup_database is called exactly once with the expected source and target paths."""
+        import siftd.storage.sqlite as sqlite_mod
+        from datetime import date
+
+        backup_calls: list[tuple] = []
+
+        def _record_backup(source, target):
+            backup_calls.append((source, target))
+
+        monkeypatch.setattr(sqlite_mod, "backup_database", _record_backup)
+
+        path = _make_v3_db(tmp_path, name="data.db")
+        conn = open_database(path)
+        conn.close()
+
+        assert len(backup_calls) == 1
+        src, dst = backup_calls[0]
+        assert src == path
+        today = date.today().strftime("%Y%m%d")
+        assert dst == path.parent / f"data.bak.{today}.db"
+
+    def test_no_backup_on_fresh_db(self, tmp_path, monkeypatch):
+        """backup_database is NOT called when opening a brand-new DB."""
+        import siftd.storage.sqlite as sqlite_mod
+
+        backup_calls: list = []
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: backup_calls.append((s, t)))
+
+        path = tmp_path / "fresh.db"
+        conn = open_database(path)
+        conn.close()
+
+        assert backup_calls == [], "backup_database should not be called for a new DB"
+
+    def test_schema_version_stamped(self, tmp_path, monkeypatch):
+        """After successful migration, user_version == SCHEMA_VERSION (4)."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v3_db(tmp_path)
+        conn = open_database(path)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        conn.close()
+        assert version == SCHEMA_VERSION

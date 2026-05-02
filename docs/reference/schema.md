@@ -311,3 +311,77 @@ _Virtual table using fts5._
 | `content_id` | TEXT | UNINDEXED |  |
 | `side` | TEXT | UNINDEXED |  |
 | `conversation_id` | TEXT | UNINDEXED |  |
+
+## POLYMORPHIC EVENT TABLES (schema v4)
+
+### events
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | TEXT | PRIMARY KEY | ULID (preserved from prompts/responses/tool_calls) |
+| `kind` | TEXT | NOT NULL | 'prompt' \| 'response' \| 'tool_call' |
+| `conversation_id` | TEXT | NOT NULL REFERENCES conversations(id) ON DELETE CASCADE |  |
+| `parent_id` | TEXT | REFERENCES events(id) ON DELETE CASCADE |  |
+| `external_id` | TEXT |  | harness's identifier (NULL for synthetic) |
+| `timestamp` | TEXT | NOT NULL |  |
+
+### event_response
+
+Sparse extension: only present for kind='response'
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `event_id` | TEXT | PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE |  |
+| `model_id` | TEXT | REFERENCES models(id) ON DELETE SET NULL |  |
+| `provider_id` | TEXT | REFERENCES providers(id) ON DELETE SET NULL |  |
+| `input_tokens` | INTEGER |  |  |
+| `output_tokens` | INTEGER |  |  |
+
+### event_tool_call
+
+Sparse extension: only present for kind='tool_call'
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `event_id` | TEXT | PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE |  |
+| `tool_id` | TEXT | REFERENCES tools(id) ON DELETE SET NULL |  |
+| `input` | TEXT |  | JSON arguments |
+| `result_hash` | TEXT | REFERENCES content_blobs(hash) |  |
+| `status` | TEXT |  | success \| error \| pending |
+
+### event_content
+
+Unified content blocks (replaces prompt_content + response_content)
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | TEXT | PRIMARY KEY | ULID (preserved from prompt_content/response_content) |
+| `event_id` | TEXT | NOT NULL REFERENCES events(id) ON DELETE CASCADE |  |
+| `block_index` | INTEGER | NOT NULL |  |
+| `block_type` | TEXT | NOT NULL | text \| thinking \| tool_use \| tool_result \| image \| ... |
+| `content` | TEXT | NOT NULL |  |
+
+### attributes
+
+Polymorphic schemaless key-value (replaces *_attributes tables)
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | TEXT | PRIMARY KEY | ULID |
+| `target_kind` | TEXT | NOT NULL | 'conversation' \| 'prompt' \| 'response' \| 'tool_call' |
+| `target_id` | TEXT | NOT NULL | references conversations.id OR events.id |
+| `key` | TEXT | NOT NULL |  |
+| `value` | TEXT | NOT NULL |  |
+| `scope` | TEXT |  | NULL=user, 'provider', 'analyzer', etc. |
+
+### tag_assignments
+
+Polymorphic tag assignments (replaces workspace_tags/conversation_tags/tool_call_tags/prompt_tags)
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | TEXT | PRIMARY KEY | ULID |
+| `target_kind` | TEXT | NOT NULL | 'conversation' \| 'workspace' \| 'prompt' \| 'response' \| 'tool_call' \| 'exchange' |
+| `target_id` | TEXT | NOT NULL |  |
+| `tag_id` | TEXT | NOT NULL REFERENCES tags(id) ON DELETE CASCADE |  |
+| `applied_at` | TEXT | NOT NULL |  |

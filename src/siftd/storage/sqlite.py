@@ -24,7 +24,7 @@ from siftd.storage.sessions import ensure_prompt_tags_table, ensure_session_tabl
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Registry of versioned migrations: version -> migration function.
 # Each function migrates the DB from version-1 to version.
@@ -92,6 +92,17 @@ def open_database(
             # Serialize concurrent migration startups: acquire write lock before
             # reading user_version or any migration metadata (R2 dispatch race).
             conn.execute(f"PRAGMA busy_timeout = {MIGRATION_BUSY_TIMEOUT_MS}")
+
+            # Peek user_version outside the write lock to determine whether a
+            # pre-migration backup is needed.  backup_database() opens its own
+            # source connection so it cannot run while BEGIN IMMEDIATE holds an
+            # exclusive lock on the same file.
+            _version_peek = conn.execute("PRAGMA user_version").fetchone()[0]
+            if not is_new and _version_peek < SCHEMA_VERSION:
+                from datetime import date as _date
+                _bak_name = f"{db_path.stem}.bak.{_date.today():%Y%m%d}.db"
+                backup_database(db_path, db_path.parent / _bak_name)
+
             # PRAGMA foreign_keys cannot be changed inside an active transaction
             # (SQLite silently ignores it). Migrations need FK OFF so that
             # DROP TABLE in _recreate_table_with_fks does not trigger ON DELETE
@@ -1123,6 +1134,282 @@ def _migrate_blob_integrity_v3(conn: sqlite3.Connection) -> None:
 
 
 MIGRATIONS[3] = _migrate_blob_integrity_v3
+
+
+# =============================================================================
+# Version-4 migration: polymorphic events schema
+# =============================================================================
+
+
+class MigrationAssertionError(RuntimeError):
+    """Raised when a post-backfill row-count assertion fails.
+
+    Propagates out of the migration function, through the runner, into
+    open_database()'s outer except block, which issues ROLLBACK.
+    """
+
+
+def _migrate_v4_polymorphic_schema(conn: sqlite3.Connection) -> None:
+    """Version-4 migration: create polymorphic events tables and backfill from old forks.
+
+    Creates events, event_response, event_tool_call, event_content, attributes,
+    and tag_assignments tables, then backfills data from the existing
+    prompts/responses/tool_calls/prompt_content/response_content/*_attributes/*_tags tables.
+
+    Old tables are NOT dropped here (slice 8 cleanup). Storage writers continue
+    writing to old tables until slices 2-5 move them.
+
+    Caller (open_database runner) owns the transaction — this function must not
+    call conn.commit(), conn.rollback(), or conn.execute("BEGIN").
+    """
+    # 1. Create new tables (IF NOT EXISTS — fresh DBs created from the updated
+    #    schema.sql already have them; existing DBs don't yet).
+    #    Use individual execute() calls — executescript() issues an implicit COMMIT
+    #    which would break the runner's outer BEGIN IMMEDIATE transaction.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS events (
+            id              TEXT PRIMARY KEY,
+            kind            TEXT NOT NULL,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            parent_id       TEXT REFERENCES events(id) ON DELETE CASCADE,
+            external_id     TEXT,
+            timestamp       TEXT NOT NULL,
+            UNIQUE (conversation_id, kind, external_id)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_events_conversation_kind ON events(conversation_id, kind)"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_parent ON events(parent_id)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS event_response (
+            event_id        TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+            model_id        TEXT REFERENCES models(id) ON DELETE SET NULL,
+            provider_id     TEXT REFERENCES providers(id) ON DELETE SET NULL,
+            input_tokens    INTEGER,
+            output_tokens   INTEGER
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS event_tool_call (
+            event_id        TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+            tool_id         TEXT REFERENCES tools(id) ON DELETE SET NULL,
+            input           TEXT,
+            result_hash     TEXT REFERENCES content_blobs(hash),
+            status          TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS event_content (
+            id              TEXT PRIMARY KEY,
+            event_id        TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+            block_index     INTEGER NOT NULL,
+            block_type      TEXT NOT NULL,
+            content         TEXT NOT NULL,
+            UNIQUE (event_id, block_index)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_event_content_event ON event_content(event_id)"
+    )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS attributes (
+            id              TEXT PRIMARY KEY,
+            target_kind     TEXT NOT NULL,
+            target_id       TEXT NOT NULL,
+            key             TEXT NOT NULL,
+            value           TEXT NOT NULL,
+            scope           TEXT,
+            UNIQUE (target_kind, target_id, key, scope)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_attributes_target ON attributes(target_kind, target_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_attributes_key"
+        " ON attributes(key, target_kind, target_id, value)"
+    )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tag_assignments (
+            id              TEXT PRIMARY KEY,
+            target_kind     TEXT NOT NULL,
+            target_id       TEXT NOT NULL,
+            tag_id          TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            applied_at      TEXT NOT NULL,
+            UNIQUE (target_kind, target_id, tag_id)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tag_assignments_target"
+        " ON tag_assignments(target_kind, target_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tag_assignments_tag ON tag_assignments(tag_id)"
+    )
+
+    # 2. Backfill events from prompts (kind='prompt', parent_id=NULL)
+    conn.execute("""
+        INSERT OR IGNORE INTO events (id, kind, conversation_id, parent_id, external_id, timestamp)
+        SELECT id, 'prompt', conversation_id, NULL, external_id, timestamp
+        FROM prompts
+    """)
+
+    # 3. Backfill events from responses (kind='response', parent_id=prompt_id)
+    conn.execute("""
+        INSERT OR IGNORE INTO events (id, kind, conversation_id, parent_id, external_id, timestamp)
+        SELECT id, 'response', conversation_id, prompt_id, external_id, timestamp
+        FROM responses
+    """)
+
+    # 4. Backfill events from tool_calls (kind='tool_call', parent_id=response_id)
+    #    tool_calls.timestamp is nullable; use empty string as sentinel for NOT NULL.
+    conn.execute("""
+        INSERT OR IGNORE INTO events (id, kind, conversation_id, parent_id, external_id, timestamp)
+        SELECT id, 'tool_call', conversation_id, response_id, external_id,
+               COALESCE(timestamp, '')
+        FROM tool_calls
+    """)
+
+    # 5. Backfill sparse extensions
+    conn.execute("""
+        INSERT OR IGNORE INTO event_response (event_id, model_id, provider_id, input_tokens, output_tokens)
+        SELECT id, model_id, provider_id, input_tokens, output_tokens
+        FROM responses
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO event_tool_call (event_id, tool_id, input, result_hash, status)
+        SELECT id, tool_id, input, result_hash, status
+        FROM tool_calls
+    """)
+
+    # 6. Backfill content (IDs preserved from prompt_content / response_content)
+    conn.execute("""
+        INSERT OR IGNORE INTO event_content (id, event_id, block_index, block_type, content)
+        SELECT id, prompt_id, block_index, block_type, content
+        FROM prompt_content
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO event_content (id, event_id, block_index, block_type, content)
+        SELECT id, response_id, block_index, block_type, content
+        FROM response_content
+    """)
+
+    # 7. Backfill attributes from all four old tables
+    conn.execute("""
+        INSERT OR IGNORE INTO attributes (id, target_kind, target_id, key, value, scope)
+        SELECT id, 'conversation', conversation_id, key, value, scope
+        FROM conversation_attributes
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO attributes (id, target_kind, target_id, key, value, scope)
+        SELECT id, 'prompt', prompt_id, key, value, scope
+        FROM prompt_attributes
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO attributes (id, target_kind, target_id, key, value, scope)
+        SELECT id, 'response', response_id, key, value, scope
+        FROM response_attributes
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO attributes (id, target_kind, target_id, key, value, scope)
+        SELECT id, 'tool_call', tool_call_id, key, value, scope
+        FROM tool_call_attributes
+    """)
+
+    # 8. Backfill tag_assignments from old junction tables
+    conn.execute("""
+        INSERT OR IGNORE INTO tag_assignments (id, target_kind, target_id, tag_id, applied_at)
+        SELECT id, 'workspace', workspace_id, tag_id, applied_at
+        FROM workspace_tags
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO tag_assignments (id, target_kind, target_id, tag_id, applied_at)
+        SELECT id, 'conversation', conversation_id, tag_id, applied_at
+        FROM conversation_tags
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO tag_assignments (id, target_kind, target_id, tag_id, applied_at)
+        SELECT id, 'tool_call', tool_call_id, tag_id, applied_at
+        FROM tool_call_tags
+    """)
+
+    # prompt_tags is half-wired: present on any DB opened with current code, but
+    # the API never writes to it.  Guard against DBs that predate ensure_prompt_tags_table().
+    has_prompt_tags = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags'"
+    ).fetchone() is not None
+    if has_prompt_tags:
+        conn.execute("""
+            INSERT OR IGNORE INTO tag_assignments (id, target_kind, target_id, tag_id, applied_at)
+            SELECT id, 'prompt', prompt_id, tag_id, applied_at
+            FROM prompt_tags
+        """)
+
+    # 9. Row-count assertions: mismatch raises MigrationAssertionError → caller rolls back.
+    def _count(q: str) -> int:
+        return conn.execute(q).fetchone()[0]
+
+    def _assert_eq(label: str, actual_q: str, expected: int) -> None:
+        actual = _count(actual_q)
+        if actual != expected:
+            raise MigrationAssertionError(
+                f"Migration v4 assertion failed — {label}: expected {expected}, got {actual}"
+            )
+
+    _assert_eq(
+        "events[prompt]",
+        "SELECT COUNT(*) FROM events WHERE kind='prompt'",
+        _count("SELECT COUNT(*) FROM prompts"),
+    )
+    _assert_eq(
+        "events[response]",
+        "SELECT COUNT(*) FROM events WHERE kind='response'",
+        _count("SELECT COUNT(*) FROM responses"),
+    )
+    _assert_eq(
+        "events[tool_call]",
+        "SELECT COUNT(*) FROM events WHERE kind='tool_call'",
+        _count("SELECT COUNT(*) FROM tool_calls"),
+    )
+    _assert_eq(
+        "event_response",
+        "SELECT COUNT(*) FROM event_response",
+        _count("SELECT COUNT(*) FROM responses"),
+    )
+    _assert_eq(
+        "event_tool_call",
+        "SELECT COUNT(*) FROM event_tool_call",
+        _count("SELECT COUNT(*) FROM tool_calls"),
+    )
+    _assert_eq(
+        "event_content",
+        "SELECT COUNT(*) FROM event_content",
+        _count("SELECT COUNT(*) FROM prompt_content") +
+        _count("SELECT COUNT(*) FROM response_content"),
+    )
+    _assert_eq(
+        "attributes",
+        "SELECT COUNT(*) FROM attributes",
+        _count("SELECT COUNT(*) FROM conversation_attributes") +
+        _count("SELECT COUNT(*) FROM prompt_attributes") +
+        _count("SELECT COUNT(*) FROM response_attributes") +
+        _count("SELECT COUNT(*) FROM tool_call_attributes"),
+    )
+    expected_tag_assignments = (
+        _count("SELECT COUNT(*) FROM workspace_tags") +
+        _count("SELECT COUNT(*) FROM conversation_tags") +
+        _count("SELECT COUNT(*) FROM tool_call_tags") +
+        (_count("SELECT COUNT(*) FROM prompt_tags") if has_prompt_tags else 0)
+    )
+    _assert_eq(
+        "tag_assignments",
+        "SELECT COUNT(*) FROM tag_assignments",
+        expected_tag_assignments,
+    )
+
+
+MIGRATIONS[4] = _migrate_v4_polymorphic_schema
 
 
 # Known model prices (input_per_mtok, output_per_mtok) in USD per million tokens.
