@@ -24,7 +24,18 @@ from siftd.storage.embeddings import (
     open_embeddings_db,
     search_similar,
 )
-from siftd.storage.sqlite import create_database
+from siftd.storage.sqlite import (
+    create_database,
+    get_or_create_harness,
+    get_or_create_model,
+    get_or_create_tool,
+    get_or_create_workspace,
+    insert_conversation,
+    insert_prompt,
+    insert_prompt_content,
+    insert_response,
+    insert_tool_call,
+)
 
 # Uses semantic_search_db fixture from conftest.py
 
@@ -42,6 +53,38 @@ def tokenizer():
 def main_db_with_conversations(semantic_search_db):
     """Alias to shared semantic_search_db fixture for embeddings tests."""
     return semantic_search_db
+
+
+@pytest.fixture
+def main_db_with_tool_calls(tmp_path):
+    """Database with a conversation that includes a tool_call event."""
+    db_path = tmp_path / "main_tool.db"
+    conn = create_database(db_path)
+
+    harness_id = get_or_create_harness(conn, "test_harness", source="test", log_format="jsonl")
+    model_id = get_or_create_model(conn, "test-model")
+    ws_id = get_or_create_workspace(conn, "/projects/test-tool", "2024-01-01T10:00:00Z")
+    tool_id = get_or_create_tool(conn, "bash")
+
+    conv_id = insert_conversation(
+        conn, external_id="conv-tool", harness_id=harness_id,
+        workspace_id=ws_id, started_at="2024-01-15T10:00:00Z",
+    )
+    p_id = insert_prompt(conn, conv_id, "p-tool", "2024-01-15T10:00:00Z")
+    insert_prompt_content(conn, p_id, 0, "text", '{"text": "Run the tests for me."}')
+    r_id = insert_response(
+        conn, conv_id, p_id, model_id, None, "r-tool", "2024-01-15T10:00:01Z",
+        input_tokens=10, output_tokens=50,
+    )
+    insert_tool_call(
+        conn, r_id, conv_id, tool_id, "tc-tool-1",
+        '{"command": "pytest tests/"}', '{"output": "All tests passed."}',
+        "success", "2024-01-15T10:00:02Z",
+    )
+
+    conn.commit()
+    conn.close()
+    return {"db_path": db_path, "conv_id": conv_id}
 
 
 class TestExtractExchangeWindowChunks:
@@ -229,6 +272,27 @@ class TestBuildEmbeddingsIndex:
         top_result = results[0]
         assert "Python" in top_result["text"] or "programming" in top_result["text"]
         assert top_result["score"] > 0
+
+    def test_tool_summary_chunk_indexed(self, main_db_with_tool_calls, tmp_path):
+        """build_embeddings_index produces tool_summary chunks from tool_call events."""
+        db_path = main_db_with_tool_calls["db_path"]
+        embed_db_path = tmp_path / "embeddings.db"
+
+        stats = build_embeddings_index(
+            db_path=db_path,
+            embed_db_path=embed_db_path,
+            verbose=False,
+        )
+
+        assert stats.chunks_added > 0
+
+        embed_conn = open_embeddings_db(embed_db_path, read_only=True)
+        tool_chunk_count = embed_conn.execute(
+            "SELECT COUNT(*) FROM chunks WHERE chunk_type = 'tool_summary'"
+        ).fetchone()[0]
+        embed_conn.close()
+
+        assert tool_chunk_count > 0
 
 
 class TestEmbeddingBackend:

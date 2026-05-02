@@ -109,8 +109,13 @@ def test_build_embeddings_index_rebuild_verbose_and_batch_progress(monkeypatch, 
 def test_filter_and_tool_call_helpers_cover_batching(monkeypatch, tmp_path):
     indexer = _load_indexer(monkeypatch)
     conn = sqlite3.connect(tmp_path / "main.db")
-    conn.execute("CREATE TABLE tool_calls (conversation_id TEXT)")
-    conn.executemany("INSERT INTO tool_calls (conversation_id) VALUES (?)", [(f"c{i}",) for i in range(1005)])
+    conn.execute(
+        "CREATE TABLE events (id TEXT PRIMARY KEY, kind TEXT NOT NULL, conversation_id TEXT NOT NULL)"
+    )
+    conn.executemany(
+        "INSERT INTO events (id, kind, conversation_id) VALUES (?, 'tool_call', ?)",
+        [(f"e{i}", f"c{i}") for i in range(1005)],
+    )
     conn.commit()
     try:
         all_ids = indexer._all_conversation_ids_with_tool_calls(conn)

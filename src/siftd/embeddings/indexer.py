@@ -210,7 +210,9 @@ def _count_tokens(tokenizer, text: str) -> int:
 
 def _all_conversation_ids_with_tool_calls(conn) -> set[str]:
     """Return all conversation_ids that have at least one tool_call row."""
-    rows = conn.execute("SELECT DISTINCT conversation_id FROM tool_calls").fetchall()
+    rows = conn.execute(
+        "SELECT DISTINCT conversation_id FROM events WHERE kind = 'tool_call'"
+    ).fetchall()
     return {r[0] for r in rows}
 
 
@@ -226,7 +228,8 @@ def _filter_conversations_with_tool_calls(conn, conversation_ids: set[str]) -> s
         batch = ids[i : i + batch_size]
         ph = ",".join("?" * len(batch))
         rows = conn.execute(
-            f"SELECT DISTINCT conversation_id FROM tool_calls WHERE conversation_id IN ({ph})",
+            f"SELECT DISTINCT conversation_id FROM events"
+            f" WHERE kind = 'tool_call' AND conversation_id IN ({ph})",
             batch,
         ).fetchall()
         keep.update(r[0] for r in rows)

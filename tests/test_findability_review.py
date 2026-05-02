@@ -121,12 +121,20 @@ def test_extract_tool_summary_chunks_smoke():
         conn.executescript(
             """
             CREATE TABLE tools (id TEXT PRIMARY KEY, name TEXT, category TEXT);
-            CREATE TABLE tool_calls (
+            CREATE TABLE events (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
                 conversation_id TEXT NOT NULL,
+                parent_id TEXT,
+                external_id TEXT,
+                timestamp TEXT
+            );
+            CREATE TABLE event_tool_call (
+                event_id TEXT PRIMARY KEY,
                 tool_id TEXT,
                 input TEXT,
-                status TEXT,
-                timestamp INTEGER
+                result_hash TEXT,
+                status TEXT
             );
             """
         )
@@ -139,12 +147,16 @@ def test_extract_tool_summary_chunks_smoke():
             ],
         )
         conn.executemany(
-            "INSERT INTO tool_calls (conversation_id, tool_id, input, status, timestamp) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO events (id, kind, conversation_id, timestamp) VALUES (?, 'tool_call', ?, ?)",
+            [("e1", "c1", "1"), ("e2", "c1", "2"), ("e3", "c1", "3"), ("e4", "c1", "4")],
+        )
+        conn.executemany(
+            "INSERT INTO event_tool_call (event_id, tool_id, input, status) VALUES (?, ?, ?, ?)",
             [
-                ("c1", "t_read", '{"file_path":"/repo/pyproject.toml"}', "success", 1),
-                ("c1", "t_shell", '{"command":"git status","description":"Check working tree"}', "success", 2),
-                ("c1", "t_grep", '{"pattern":"TODO"}', "success", 3),
-                ("c1", "t_shell", '{"command":"git diff"}', "error", 4),
+                ("e1", "t_read", '{"file_path":"/repo/pyproject.toml"}', "success"),
+                ("e2", "t_shell", '{"command":"git status","description":"Check working tree"}', "success"),
+                ("e3", "t_grep", '{"pattern":"TODO"}', "success"),
+                ("e4", "t_shell", '{"command":"git diff"}', "error"),
             ],
         )
         conn.commit()
@@ -178,12 +190,20 @@ def test_extract_tool_summary_chunks_raw_names_use_category():
         conn.executescript(
             """
             CREATE TABLE tools (id TEXT PRIMARY KEY, name TEXT, category TEXT);
-            CREATE TABLE tool_calls (
+            CREATE TABLE events (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
                 conversation_id TEXT NOT NULL,
+                parent_id TEXT,
+                external_id TEXT,
+                timestamp TEXT
+            );
+            CREATE TABLE event_tool_call (
+                event_id TEXT PRIMARY KEY,
                 tool_id TEXT,
                 input TEXT,
-                status TEXT,
-                timestamp INTEGER
+                result_hash TEXT,
+                status TEXT
             );
             """
         )
@@ -197,11 +217,15 @@ def test_extract_tool_summary_chunks_raw_names_use_category():
             ],
         )
         conn.executemany(
-            "INSERT INTO tool_calls (conversation_id, tool_id, input, status, timestamp) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO events (id, kind, conversation_id, timestamp) VALUES (?, 'tool_call', ?, ?)",
+            [("e1", "c1", "1"), ("e2", "c1", "2"), ("e3", "c1", "3")],
+        )
+        conn.executemany(
+            "INSERT INTO event_tool_call (event_id, tool_id, input, status) VALUES (?, ?, ?, ?)",
             [
-                ("c1", "t_read", '{"file_path":"/repo/pyproject.toml"}', "success", 1),
-                ("c1", "t_bash", '{"command":"git status","description":"Check tree"}', "success", 2),
-                ("c1", "t_grep", '{"pattern":"TODO"}', "success", 3),
+                ("e1", "t_read", '{"file_path":"/repo/pyproject.toml"}', "success"),
+                ("e2", "t_bash", '{"command":"git status","description":"Check tree"}', "success"),
+                ("e3", "t_grep", '{"pattern":"TODO"}', "success"),
             ],
         )
         conn.commit()

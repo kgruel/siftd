@@ -157,33 +157,38 @@ def test_extract_tool_summary_chunks_branches_and_filters():
     conn = sqlite3.connect(":memory:")
     conn.execute("CREATE TABLE tools (id TEXT PRIMARY KEY, name TEXT, category TEXT)")
     conn.execute(
-        "CREATE TABLE tool_calls (conversation_id TEXT, tool_id TEXT, input TEXT, status TEXT, timestamp TEXT)"
+        "CREATE TABLE events"
+        " (id TEXT PRIMARY KEY, kind TEXT NOT NULL, conversation_id TEXT NOT NULL,"
+        " parent_id TEXT, external_id TEXT, timestamp TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE event_tool_call"
+        " (event_id TEXT PRIMARY KEY, tool_id TEXT, input TEXT, result_hash TEXT, status TEXT)"
     )
     conn.execute("INSERT INTO tools (id, name, category) VALUES ('t1', 'file.read', 'file')")
     conn.execute("INSERT INTO tools (id, name, category) VALUES ('t2', 'shell.execute', 'shell')")
     conn.execute("INSERT INTO tools (id, name, category) VALUES ('t3', 'search.grep', 'search')")
-    conn.execute(
-        "INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)",
-        ("c1", "t1", json.dumps({"file_path": "/tmp/pyproject.toml"}), "success", "1"),
-    )
-    conn.execute(
-        "INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)",
-        ("c1", "t2", json.dumps({"command": "pytest -q", "description": "run tests"}), "error", "2"),
-    )
-    conn.execute(
-        "INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)",
-        ("c1", "t3", json.dumps({"pattern": "TODO"}), "success", "3"),
-    )
-    conn.execute("INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)", ("c2", None, "{bad", "success", "4"))
-    # Explicit malformed JSON by category to cover parser-exception branches
-    conn.execute("INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)", ("c3", "t1", "{bad", "success", "5"))
-    conn.execute("INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)", ("c3", "t2", "{bad", "success", "6"))
-    conn.execute("INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)", ("c3", "t3", "{bad", "success", "7"))
-    for i in range(25):
+
+    def _ins(eid, conv, tool_id, input_json, status, ts):
         conn.execute(
-            "INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)",
-            ("c4", "t1", json.dumps({"file_path": f"/tmp/path_{i}.txt"}), "success", f"f{i}"),
+            "INSERT INTO events (id, kind, conversation_id, timestamp) VALUES (?, 'tool_call', ?, ?)",
+            (eid, conv, ts),
         )
+        conn.execute(
+            "INSERT INTO event_tool_call (event_id, tool_id, input, status) VALUES (?, ?, ?, ?)",
+            (eid, tool_id, input_json, status),
+        )
+
+    _ins("e1", "c1", "t1", json.dumps({"file_path": "/tmp/pyproject.toml"}), "success", "1")
+    _ins("e2", "c1", "t2", json.dumps({"command": "pytest -q", "description": "run tests"}), "error", "2")
+    _ins("e3", "c1", "t3", json.dumps({"pattern": "TODO"}), "success", "3")
+    _ins("e4", "c2", None, "{bad", "success", "4")
+    # Explicit malformed JSON by category to cover parser-exception branches
+    _ins("e5", "c3", "t1", "{bad", "success", "5")
+    _ins("e6", "c3", "t2", "{bad", "success", "6")
+    _ins("e7", "c3", "t3", "{bad", "success", "7")
+    for i in range(25):
+        _ins(f"e-c4-{i}", "c4", "t1", json.dumps({"file_path": f"/tmp/path_{i}.txt"}), "success", f"f{i}")
     conn.commit()
 
     all_chunks = ch.extract_tool_summary_chunks(conn)
