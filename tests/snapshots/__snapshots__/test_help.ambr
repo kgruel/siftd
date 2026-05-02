@@ -12,8 +12,9 @@
       session-id          Print the session ID for the current workspace
       config              View or modify config settings
       adapters            List discovered adapters
-      db                  Database operations (info, backup, restore, vacuum,
-                          slice, merge, send, receive, remote, push, pull)
+      db                  Database operations (info, schema-version, backup,
+                          restore, vacuum, slice, merge, send, receive, remote,
+                          push, pull)
       tag                 Manage tags: apply, remove, list, rename, delete
       tools               Summarize tool usage by category
       query               List and filter conversations by metadata
@@ -120,17 +121,23 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[doctor]
   '''
-  usage: siftd doctor [-h] [--json] [--strict] [--pending-tags] [subcommand ...]
+  usage: siftd doctor [-h] [--json] [--strict] [--pending-tags] [--deep]
+                      [--blob-refcount] [--triggers]
+                      [subcommand ...]
   
   positional arguments:
-    subcommand      list | run [checks...] | fix | <check-name>
+    subcommand       list | run [checks...] | fix | <check-name>
   
   options:
-    -h, --help      show this help message and exit
-    --json          Output as JSON
-    --strict        Exit 1 on warnings (not just errors). Useful for CI.
-    --pending-tags  Clean up stale sessions and orphaned pending tags (use with
-                    'fix')
+    -h, --help       show this help message and exit
+    --json           Output as JSON
+    --strict         Exit 1 on warnings (not just errors). Useful for CI.
+    --pending-tags   Clean up stale sessions and orphaned pending tags (use with
+                     'fix')
+    --deep           Include deep integrity checks (slower).
+    --blob-refcount  Re-derive blob ref counts and sweep orphans (use with
+                     'fix').
+    --triggers       Recreate blob ref-count triggers (use with 'fix').
   
   examples:
     siftd doctor                          # run all checks

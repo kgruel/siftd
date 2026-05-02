@@ -14,6 +14,10 @@ from siftd.doctor.checks import (
     CheckContext,
     ConfigValidCheck,
     CostCoverageCheck,
+    DbBlobOrphansCheck,
+    DbBlobRefcountDriftCheck,
+    DbFkIntegrityCheck,
+    DbTriggerPresenceCheck,
     DropInsValidCheck,
     EmbeddingsStaleCheck,
     FreelistCheck,
@@ -78,6 +82,11 @@ class TestListChecks:
         assert "embeddings-compat" in names
         assert "workspace-identity" in names
         assert "blob-migration" in names
+        # Deep checks
+        assert "db-fk-integrity" in names
+        assert "db-blob-refcount-drift" in names
+        assert "db-blob-orphans" in names
+        assert "db-trigger-presence" in names
 
     def test_has_fix_matches_class_attribute(self):
         """has_fix in CheckInfo matches the class attribute on each check."""
@@ -105,7 +114,7 @@ class TestListChecks:
             assert isinstance(check.has_fix, bool)
             assert isinstance(check.requires_db, bool)
             assert isinstance(check.requires_embed_db, bool)
-            assert check.cost in ("fast", "slow")
+            assert check.cost in ("fast", "slow", "deep")
 
     def test_requires_db_attribute(self):
         """requires_db in CheckInfo matches expected values."""
@@ -154,6 +163,11 @@ class TestListChecks:
         assert by_name["embeddings-available"] == "fast"
         assert by_name["freelist"] == "fast"
         assert by_name["schema-current"] == "fast"
+        # Deep checks
+        assert by_name["db-fk-integrity"] == "deep"
+        assert by_name["db-blob-refcount-drift"] == "deep"
+        assert by_name["db-blob-orphans"] == "deep"
+        assert by_name["db-trigger-presence"] == "deep"
 
 
 class TestRunChecks:
@@ -1233,3 +1247,361 @@ class TestBlobMigrationCheck:
         assert check.has_fix is True
         assert check.requires_db is True
         assert check.cost == "fast"
+
+
+# ---------------------------------------------------------------------------
+# Helpers for deep-check tests
+# ---------------------------------------------------------------------------
+
+def _make_deep_ctx(tmp_path):
+    """Create a writable DB and a matching read-only CheckContext."""
+    from siftd.storage.sqlite import open_database
+
+    db_path = tmp_path / "deep_test.db"
+    conn = open_database(db_path)
+    return conn, db_path
+
+
+def _ctx_for(db_path, tmp_path):
+    ctx = CheckContext(
+        db_path=db_path,
+        embed_db_path=tmp_path / "embeddings.db",
+        adapters_dir=tmp_path / "adapters",
+        formatters_dir=tmp_path / "formatters",
+        queries_dir=tmp_path / "queries",
+    )
+    for d in [tmp_path / "adapters", tmp_path / "formatters", tmp_path / "queries"]:
+        d.mkdir(exist_ok=True)
+    return ctx
+
+
+class TestDbFkIntegrityCheck:
+    """Tests for the db-fk-integrity check."""
+
+    def test_healthy_db_empty_findings(self, tmp_path):
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.close()
+        ctx = _ctx_for(db_path, tmp_path)
+        check = DbFkIntegrityCheck()
+        findings = check.run(ctx)
+        ctx.close()
+        assert findings == []
+
+    def test_fk_violation_detected(self, tmp_path):
+        conn, db_path = _make_deep_ctx(tmp_path)
+        # Insert a conversation referencing a non-existent harness_id with FK off
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("""
+            INSERT INTO conversations (id, external_id, harness_id, started_at)
+            VALUES ('fake-conv-001', 'ext-001', 'nonexistent-harness', '2024-01-01T00:00:00Z')
+        """)
+        conn.commit()
+        conn.close()
+
+        ctx = _ctx_for(db_path, tmp_path)
+        check = DbFkIntegrityCheck()
+        findings = check.run(ctx)
+        ctx.close()
+
+        assert len(findings) == 1
+        assert findings[0].severity == "error"
+        assert findings[0].fix_available is False
+        assert findings[0].context["total"] >= 1
+
+    def test_check_attributes(self):
+        check = DbFkIntegrityCheck()
+        assert check.name == "db-fk-integrity"
+        assert check.has_fix is False
+        assert check.requires_db is True
+        assert check.cost == "deep"
+
+    def test_severe_corruption_emits_overflow_summary(self, tmp_path):
+        """>50 FK violations emit a single 'severely corrupt' summary, not a misleading capped count."""
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.execute("PRAGMA foreign_keys = OFF")
+        for i in range(60):
+            conn.execute(
+                "INSERT INTO conversations (id, external_id, harness_id, started_at) "
+                "VALUES (?, ?, 'nonexistent-harness', '2024-01-01T00:00:00Z')",
+                (f"fake-{i:03d}", f"ext-{i:03d}"),
+            )
+        conn.commit()
+        conn.close()
+
+        ctx = _ctx_for(db_path, tmp_path)
+        check = DbFkIntegrityCheck()
+        findings = check.run(ctx)
+        ctx.close()
+
+        assert len(findings) == 1
+        assert findings[0].severity == "error"
+        assert "More than 50" in findings[0].message
+        assert findings[0].context == {"total_ge": 51}
+
+
+class TestDbBlobRefcountDriftCheck:
+    """Tests for the db-blob-refcount-drift check."""
+
+    def test_healthy_db_empty_findings(self, tmp_path):
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.close()
+        ctx = _ctx_for(db_path, tmp_path)
+        check = DbBlobRefcountDriftCheck()
+        findings = check.run(ctx)
+        ctx.close()
+        assert findings == []
+
+    def test_drifted_refcount_detected(self, tmp_path):
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("""
+            INSERT INTO content_blobs (hash, content, ref_count, created_at)
+            VALUES ('abc123', 'data', 99, '2024-01-01T00:00:00Z')
+        """)
+        conn.commit()
+        conn.close()
+
+        ctx = _ctx_for(db_path, tmp_path)
+        check = DbBlobRefcountDriftCheck()
+        findings = check.run(ctx)
+        ctx.close()
+
+        assert len(findings) >= 1
+        assert findings[0].severity == "warning"
+        assert findings[0].fix_command == "siftd doctor fix --blob-refcount"
+
+    def test_check_attributes(self):
+        check = DbBlobRefcountDriftCheck()
+        assert check.name == "db-blob-refcount-drift"
+        assert check.has_fix is True
+        assert check.requires_db is True
+        assert check.cost == "deep"
+
+
+class TestDbBlobOrphansCheck:
+    """Tests for the db-blob-orphans check."""
+
+    def test_healthy_db_empty_findings(self, tmp_path):
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.close()
+        ctx = _ctx_for(db_path, tmp_path)
+        check = DbBlobOrphansCheck()
+        findings = check.run(ctx)
+        ctx.close()
+        assert findings == []
+
+    def test_zero_refcount_blob_detected(self, tmp_path):
+        conn, db_path = _make_deep_ctx(tmp_path)
+        # The CHECK constraint prevents ref_count < 0 but allows 0
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("""
+            INSERT INTO content_blobs (hash, content, ref_count, created_at)
+            VALUES ('orphan123', 'orphan data', 0, '2024-01-01T00:00:00Z')
+        """)
+        conn.commit()
+        conn.close()
+
+        ctx = _ctx_for(db_path, tmp_path)
+        check = DbBlobOrphansCheck()
+        findings = check.run(ctx)
+        ctx.close()
+
+        assert len(findings) == 1
+        assert findings[0].severity == "info"
+        assert findings[0].context["count"] == 1
+        assert findings[0].fix_command == "siftd doctor fix --blob-refcount"
+
+    def test_check_attributes(self):
+        check = DbBlobOrphansCheck()
+        assert check.name == "db-blob-orphans"
+        assert check.has_fix is True
+        assert check.requires_db is True
+        assert check.cost == "deep"
+
+
+class TestDbTriggerPresenceCheck:
+    """Tests for the db-trigger-presence check."""
+
+    def test_healthy_db_empty_findings(self, tmp_path):
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.close()
+        ctx = _ctx_for(db_path, tmp_path)
+        check = DbTriggerPresenceCheck()
+        findings = check.run(ctx)
+        ctx.close()
+        assert findings == []
+
+    def test_missing_trigger_detected(self, tmp_path):
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
+        conn.commit()
+        conn.close()
+
+        ctx = _ctx_for(db_path, tmp_path)
+        check = DbTriggerPresenceCheck()
+        findings = check.run(ctx)
+        ctx.close()
+
+        assert len(findings) == 1
+        assert findings[0].severity == "error"
+        assert "tr_tool_calls_delete_release_blob" in findings[0].context["missing"]
+        assert findings[0].fix_command == "siftd doctor fix --triggers"
+
+    def test_check_attributes(self):
+        check = DbTriggerPresenceCheck()
+        assert check.name == "db-trigger-presence"
+        assert check.has_fix is True
+        assert check.requires_db is True
+        assert check.cost == "deep"
+
+
+class TestRunChecksDeepFilter:
+    """Tests for the deep= parameter on run_checks()."""
+
+    def test_deep_false_excludes_deep_checks(self, test_db):
+        findings = run_checks(db_path=test_db, deep=False)
+        # No finding should come from a deep check
+        deep_names = {"db-fk-integrity", "db-blob-refcount-drift", "db-blob-orphans", "db-trigger-presence"}
+        for f in findings:
+            assert f.check not in deep_names
+
+    def test_deep_true_includes_deep_checks(self, test_db):
+        findings = run_checks(db_path=test_db, checks=["db-fk-integrity"], deep=True)
+        assert isinstance(findings, list)
+        # No error from unknown check; healthy DB returns empty
+        assert all(isinstance(f, Finding) for f in findings)
+
+    def test_deep_false_specific_deep_check_returns_empty(self, test_db):
+        """Requesting a deep check by name without deep=True returns no findings."""
+        findings = run_checks(db_path=test_db, checks=["db-fk-integrity"], deep=False)
+        assert findings == []
+
+
+class TestDoctorDbSubcommand:
+    """Tests for `siftd doctor db` check name filtering."""
+
+    def test_db_subcommand_includes_db_prefixed_checks(self):
+        from siftd.doctor.checks import BUILTIN_CHECKS
+
+        _DB_CHECKS = {
+            "schema-current", "fts-integrity", "fts-stale",
+            "freelist", "blob-migration", "orphaned-chunks",
+        }
+        db_check_names = {
+            c.name for c in BUILTIN_CHECKS
+            if c.name.startswith("db-") or c.name in _DB_CHECKS
+        }
+        assert "db-fk-integrity" in db_check_names
+        assert "db-blob-refcount-drift" in db_check_names
+        assert "db-blob-orphans" in db_check_names
+        assert "db-trigger-presence" in db_check_names
+        assert "schema-current" in db_check_names
+        assert "fts-integrity" in db_check_names
+        # Non-db checks are excluded
+        assert "ingest-pending" not in db_check_names
+        assert "embeddings-stale" not in db_check_names
+
+
+class TestFixFunctions:
+    """Tests for the fix functions registered in _FIX_REGISTRY."""
+
+    def test_fix_blob_refcount_removes_drifted_blob(self, tmp_path):
+        """_fix_blob_refcount deletes a blob whose ref_count != actual references."""
+        from siftd.cli.data import _fix_blob_refcount
+
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            "INSERT INTO content_blobs (hash, content, ref_count, created_at) "
+            "VALUES ('deadbeef01', 'data', 99, '2024-01-01T00:00:00Z')"
+        )
+        conn.commit()
+
+        result = _fix_blob_refcount(conn, db_path)
+        conn.close()
+
+        # Row should be gone (ref_count corrected to 0 then deleted)
+        from siftd.storage.sqlite import open_database
+        check_conn = open_database(db_path)
+        row = check_conn.execute(
+            "SELECT 1 FROM content_blobs WHERE hash = 'deadbeef01'"
+        ).fetchone()
+        check_conn.close()
+        assert row is None
+        assert "repaired" in result
+
+    def test_fix_blob_refcount_count_matches_drifted_rows_only(self, tmp_path):
+        """Reported 'repaired' count reflects drifted rows, not the full table size."""
+        from siftd.cli.data import _fix_blob_refcount
+
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.execute("PRAGMA foreign_keys = OFF")
+        # 5 healthy blobs (ref_count = 0 with no references — orphans, will be deleted by sweep)
+        for i in range(5):
+            conn.execute(
+                "INSERT INTO content_blobs (hash, content, ref_count, created_at) "
+                "VALUES (?, 'data', 0, '2024-01-01T00:00:00Z')",
+                (f"healthy{i:02d}",),
+            )
+        # 1 drifted blob (ref_count = 99 but no references)
+        conn.execute(
+            "INSERT INTO content_blobs (hash, content, ref_count, created_at) "
+            "VALUES ('drifted01', 'data', 99, '2024-01-01T00:00:00Z')"
+        )
+        conn.commit()
+
+        result = _fix_blob_refcount(conn, db_path)
+        conn.close()
+
+        # Only the drifted row should be reported as 'repaired' (UPDATE only matched it).
+        # The 5 healthy orphans had ref_count = 0 and stayed at 0, so the UPDATE skipped them.
+        assert result.startswith("1 blob(s) repaired"), (
+            f"Expected count to reflect drifted rows only, got: {result}"
+        )
+
+    def test_fix_blob_refcount_removes_orphan(self, tmp_path):
+        """_fix_blob_refcount deletes a blob with ref_count=0 (no references)."""
+        from siftd.cli.data import _fix_blob_refcount
+
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            "INSERT INTO content_blobs (hash, content, ref_count, created_at) "
+            "VALUES ('orphanhash1', 'orphan', 0, '2024-01-01T00:00:00Z')"
+        )
+        conn.commit()
+
+        result = _fix_blob_refcount(conn, db_path)
+        conn.close()
+
+        from siftd.storage.sqlite import open_database
+        check_conn = open_database(db_path)
+        row = check_conn.execute(
+            "SELECT 1 FROM content_blobs WHERE hash = 'orphanhash1'"
+        ).fetchone()
+        check_conn.close()
+        assert row is None
+        assert "orphan" in result
+
+    def test_fix_blob_triggers_recreates_missing_trigger(self, tmp_path):
+        """_fix_blob_triggers recreates both triggers after one is dropped."""
+        from siftd.cli.data import _fix_blob_triggers
+
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
+        conn.commit()
+
+        _fix_blob_triggers(conn, db_path)
+        conn.close()
+
+        from siftd.storage.sqlite import open_database
+        check_conn = open_database(db_path)
+        triggers = {
+            row[0]
+            for row in check_conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger'"
+            ).fetchall()
+        }
+        check_conn.close()
+        assert "tr_tool_calls_delete_release_blob" in triggers
+        assert "tr_tool_calls_update_release_blob" in triggers

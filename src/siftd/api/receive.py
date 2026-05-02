@@ -21,6 +21,7 @@ def receive_database(
     rebuild_fts: bool = False,
     user_id: str | None = None,
     push_id: str | None = None,
+    preflight: bool = True,
 ) -> dict:
     """Create or merge a source database into the target.
 
@@ -30,6 +31,9 @@ def receive_database(
         rebuild_fts: Whether to rebuild the FTS5 index after merge.
         user_id: Authenticated user identity to stamp as conversation owner.
         push_id: Push log ID for provenance linking.
+        preflight: If True (default), run structural integrity checks on the
+            source before merging. Pass False to bypass (e.g. for known-good
+            corpora or when the check has already been done upstream).
 
     Returns:
         Dict with ``status`` ("created" or "merged") and merge stats.
@@ -37,11 +41,16 @@ def receive_database(
     Raises:
         ValueError: If source is not a valid SQLite database.
         FileNotFoundError: If source does not exist.
+        PreflightError: If preflight=True and source fails integrity checks.
     """
     if not source_path.exists():
         raise FileNotFoundError(f"Source not found: {source_path}")
 
     _validate_sqlite(source_path)
+
+    if preflight:
+        from siftd.api.database import run_preflight
+        run_preflight(source_path)
 
     if not target_db.exists():
         result = _create_from_source(source_path, target_db)
@@ -63,6 +72,7 @@ def receive_database(
         target_db, source_path,
         rebuild_fts=rebuild_fts,
         before_commit=_on_before_commit,
+        preflight=False,  # source already checked above
     )
     result["status"] = "merged"
 

@@ -34,6 +34,7 @@ def run_checks(
     checks: list[str] | None = None,
     db_path: Path | None = None,
     embed_db_path: Path | None = None,
+    deep: bool = False,
     on_check_done: object | None = None,
 ) -> list[Finding]:
     """Run health checks and return findings.
@@ -45,6 +46,7 @@ def run_checks(
         checks: Specific check names to run, or None for all.
         db_path: Main database path. Uses default if not specified.
         embed_db_path: Embeddings database path. Uses default if not specified.
+        deep: Include checks with cost="deep". Default False.
 
     Returns:
         List of Finding objects from all checks.
@@ -77,6 +79,10 @@ def run_checks(
         if unknown:
             raise ValueError(f"Unknown check(s): {', '.join(sorted(unknown))}")
         checks_to_run = [c for c in BUILTIN_CHECKS if c.name in checks]
+
+    # Exclude deep checks unless explicitly requested
+    if not deep:
+        checks_to_run = [c for c in checks_to_run if c.cost != "deep"]
 
     # Only require DB if any requested check needs it
     db_required = any(c.requires_db for c in checks_to_run)

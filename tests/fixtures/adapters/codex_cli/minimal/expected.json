@@ -1,0 +1,78 @@
+[
+  {
+    "branch": null,
+    "ended_at": "2024-01-15T10:00:04Z",
+    "external_id": "codex_cli::codex-session-1",
+    "harness": {
+      "display_name": "Codex CLI",
+      "log_format": "jsonl",
+      "name": "codex_cli",
+      "source": "openai"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Run ls command"
+            }
+          }
+        ],
+        "external_id": null,
+        "responses": [
+          {
+            "attributes": {
+              "cache_read_input_tokens": "10",
+              "cached_input_tokens": "10",
+              "reasoning_output_tokens": "5"
+            },
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "I'll run the ls command for you."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call-001",
+                  "input": {
+                    "command": "ls -la"
+                  },
+                  "name": "shell_command"
+                }
+              }
+            ],
+            "external_id": null,
+            "model": "gpt-4o",
+            "provider": null,
+            "timestamp": "2024-01-15T10:00:02Z",
+            "tool_calls": [
+              {
+                "external_id": "call-001",
+                "input": {
+                  "command": "ls -la"
+                },
+                "result": {
+                  "output": "total 8\ndrwxr-xr-x  3 user  staff  96 Jan 15 10:00 .\n-rw-r--r--  1 user  staff  42 Jan 15 10:00 README.md"
+                },
+                "status": "success",
+                "timestamp": "2024-01-15T10:00:04Z",
+                "tool_name": "shell_command"
+              }
+            ],
+            "usage": {
+              "input_tokens": 120,
+              "output_tokens": 45
+            }
+          }
+        ],
+        "timestamp": "2024-01-15T10:00:01Z"
+      }
+    ],
+    "started_at": "2024-01-15T10:00:00Z",
+    "workspace_path": "/test/workspace"
+  }
+]

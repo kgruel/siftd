@@ -291,3 +291,40 @@ class TestStaleProcessingReclaim:
 
         results = process_inbox(db)
         assert results == []
+
+
+class TestPreflightGate:
+    def test_inbox_preflight_rejects_corrupt_payload(self, db, inbox, tmp_path):
+        """Corrupt payload (FK violation) lands in status=error; staged file preserved; not retried."""
+        import sqlite3
+
+        from siftd.ids import ulid
+        from siftd.storage.sqlite import create_empty_database
+
+        corrupt = tmp_path / "corrupt.db"
+        create_empty_database(corrupt)
+        conn = sqlite3.connect(str(corrupt))
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            "INSERT INTO prompts (id, conversation_id, external_id, timestamp) "
+            "VALUES (?, 'nonexistent-conv', 'ext-p-1', '2024-01-01T00:00:00Z')",
+            (ulid(),),
+        )
+        conn.commit()
+        conn.close()
+
+        staged = stage_payload(corrupt, db)
+        payload_file = inbox / f"{staged['id']}.db"
+        assert payload_file.exists()
+
+        results = process_inbox(db)
+        assert len(results) == 1
+        assert results[0]["status"] == "error"
+        assert "integrity" in results[0]["error"].lower() or "FK" in results[0]["error"]
+
+        # Staged file is preserved on error (only cleaned up on success)
+        assert payload_file.exists()
+
+        # status='error' is permanently quarantined — not retried
+        results2 = process_inbox(db)
+        assert results2 == []

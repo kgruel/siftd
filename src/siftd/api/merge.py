@@ -24,6 +24,7 @@ def merge_database(
     dry_run: bool = False,
     replace: bool = True,
     before_commit: Callable[[sqlite3.Connection, dict], None] | None = None,
+    preflight: bool = True,
 ) -> dict:
     """Merge a source database (slice) into the target database.
 
@@ -37,17 +38,26 @@ def merge_database(
         before_commit: Optional callback(conn, stats) invoked after merge
             but before commit.  Runs in the same transaction as the merge,
             so any writes are atomic with the merge itself.
+        preflight: If True (default), run structural integrity checks on the
+            source before merging. Pass False when the caller has already
+            run preflight (e.g. receive_database calls merge_database after
+            its own preflight check).
 
     Returns:
         Dict with counts of merged entities.
 
     Raises:
         FileNotFoundError: If either database does not exist.
+        PreflightError: If preflight=True and source fails integrity checks.
     """
     if not target_db.exists():
         raise FileNotFoundError(f"Target database not found: {target_db}")
     if not source_path.exists():
         raise FileNotFoundError(f"Source database not found: {source_path}")
+
+    if preflight:
+        from siftd.api.database import run_preflight
+        run_preflight(source_path)
 
     conn = open_database(target_db)
     try:

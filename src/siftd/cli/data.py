@@ -737,6 +737,27 @@ def _doctor_fix(args) -> int:
     return 0
 
 
+def _doctor_fix_flagged(args, fix_command: str) -> int:
+    """Run a specific fix directly by fix_command key (flag-discriminated form)."""
+    db = resolve_db(args)
+    if not db.exists():
+        print(f"Database not found: {db}")
+        return 1
+
+    conn = open_database(db)
+    label, fn = _FIX_REGISTRY[fix_command]
+    print(f"  ⠋ {label}...", end="", flush=True)
+    try:
+        result = fn(conn, db)
+        print(f"\r  ✓ {label}: {result}")
+        conn.close()
+        return 0
+    except Exception as e:
+        print(f"\r  ✗ {label}: {e}")
+        conn.close()
+        return 1
+
+
 # Fix registry: maps fix_command → (label, callable(conn, db_path) → str)
 def _fix_ingest(conn, db_path):
     from siftd.api import run_ingest
@@ -789,6 +810,31 @@ def _fix_pending_tags(conn, db_path):
     return f"{sessions} session(s), {tags} tag(s) cleaned up"
 
 
+def _fix_blob_refcount(conn, db_path):
+    cur = conn.execute("""
+        UPDATE content_blobs
+        SET ref_count = COALESCE(
+            (SELECT COUNT(*) FROM tool_calls WHERE result_hash = content_blobs.hash), 0
+        )
+        WHERE ref_count != COALESCE(
+            (SELECT COUNT(*) FROM tool_calls WHERE result_hash = content_blobs.hash), 0
+        )
+    """)
+    updated = cur.rowcount
+    cur2 = conn.execute("DELETE FROM content_blobs WHERE ref_count = 0")
+    deleted = cur2.rowcount
+    conn.commit()
+    return f"{updated} blob(s) repaired, {deleted} orphan(s) removed"
+
+
+def _fix_blob_triggers(conn, db_path):
+    from siftd.api.database import recreate_blob_triggers
+
+    recreate_blob_triggers(conn)
+    conn.commit()
+    return "Triggers recreated"
+
+
 _FIX_REGISTRY = {
     "siftd ingest": ("Ingesting new files", _fix_ingest),
     "siftd ingest --rebuild-fts": ("Rebuilding FTS index", _fix_rebuild_fts),
@@ -797,30 +843,33 @@ _FIX_REGISTRY = {
     "siftd migrate blobs": ("Migrating tool results to blobs", _fix_migrate_blobs),
     "siftd backfill git-remote": ("Backfilling git remote URLs", _fix_backfill_git_remote),
     "siftd doctor fix --pending-tags": ("Cleaning up stale sessions", _fix_pending_tags),
+    "siftd doctor fix --blob-refcount": ("Repairing content blob ref counts", _fix_blob_refcount),
+    "siftd doctor fix --triggers": ("Recreating blob ref-count triggers", _fix_blob_triggers),
 }
 
 
 def _doctor_run(args, check_names: list[str] | None = None, show_fixes: bool = False) -> int:
     """Run doctor checks and display findings."""
     db = Path(args.db) if args.db else None
+    deep = getattr(args, "deep", False)
 
     # JSON output — no progress, no painted rendering
     if args.json:
-        return _doctor_run_json(args, check_names, show_fixes, db)
+        return _doctor_run_json(args, check_names, show_fixes, db, deep)
 
     # TTY — painted progress + themed findings
     if sys.stdout.isatty():
-        return _doctor_run_painted(args, check_names, show_fixes, db)
+        return _doctor_run_painted(args, check_names, show_fixes, db, deep)
 
     # Non-TTY (piped) — plain text, no progress
-    return _doctor_run_plain(args, check_names, show_fixes, db)
+    return _doctor_run_plain(args, check_names, show_fixes, db, deep)
 
 
-def _doctor_run_json(args, check_names, show_fixes, db) -> int:
+def _doctor_run_json(args, check_names, show_fixes, db, deep=False) -> int:
     from siftd.api import run_checks
 
     try:
-        findings = run_checks(checks=check_names or None, db_path=db)
+        findings = run_checks(checks=check_names or None, db_path=db, deep=deep)
     except FileNotFoundError as e:
         print(str(e))
         return 1
@@ -863,11 +912,11 @@ def _doctor_run_json(args, check_names, show_fixes, db) -> int:
     return 1 if fail_count > 0 else 0
 
 
-def _doctor_run_plain(args, check_names, show_fixes, db) -> int:
+def _doctor_run_plain(args, check_names, show_fixes, db, deep=False) -> int:
     from siftd.api import run_checks
 
     try:
-        findings = run_checks(checks=check_names or None, db_path=db)
+        findings = run_checks(checks=check_names or None, db_path=db, deep=deep)
     except FileNotFoundError as e:
         print(str(e))
         return 1
@@ -914,7 +963,7 @@ def _doctor_run_plain(args, check_names, show_fixes, db) -> int:
     return 1 if fail_count > 0 else 0
 
 
-def _doctor_run_painted(args, check_names, show_fixes, db) -> int:
+def _doctor_run_painted(args, check_names, show_fixes, db, deep=False) -> int:
     from painted import InPlaceRenderer, use_theme
 
     from siftd.api import list_checks, run_checks
@@ -924,6 +973,8 @@ def _doctor_run_painted(args, check_names, show_fixes, db) -> int:
     all_checks = list_checks()
     if check_names:
         all_checks = [c for c in all_checks if c.name in check_names]
+    if not deep:
+        all_checks = [c for c in all_checks if getattr(c, "cost", "") != "deep"]
     check_names_ordered = [c.name for c in all_checks]
 
     completed: dict[str, list] = {}
@@ -943,6 +994,7 @@ def _doctor_run_painted(args, check_names, show_fixes, db) -> int:
             findings = run_checks(
                 checks=check_names or None,
                 db_path=db,
+                deep=deep,
                 on_check_done=on_done,
             )
         except FileNotFoundError as e:
@@ -974,9 +1026,18 @@ def cmd_doctor(args) -> int:
     subcommand_args = args.subcommand or []
     action = subcommand_args[0] if subcommand_args else None
 
-    # Warn about --pending-tags without fix subcommand
-    if getattr(args, "pending_tags", False) and action != "fix":
-        print("Note: --pending-tags ignored without 'fix' subcommand", file=sys.stderr)
+    # Warn about fix-only flags being used outside the 'fix' subcommand.
+    if action != "fix":
+        for flag, name in (
+            ("pending_tags", "--pending-tags"),
+            ("blob_refcount", "--blob-refcount"),
+            ("triggers", "--triggers"),
+        ):
+            if getattr(args, flag, False):
+                print(
+                    f"Note: {name} ignored without 'fix' subcommand",
+                    file=sys.stderr,
+                )
 
     # New subcommands: list, run, fix
     if action == "list":
@@ -990,7 +1051,24 @@ def cmd_doctor(args) -> int:
     if action == "fix":
         if getattr(args, "pending_tags", False):
             return _doctor_fix_pending_tags(args)
+        if getattr(args, "blob_refcount", False):
+            return _doctor_fix_flagged(args, "siftd doctor fix --blob-refcount")
+        if getattr(args, "triggers", False):
+            return _doctor_fix_flagged(args, "siftd doctor fix --triggers")
         return _doctor_fix(args)
+
+    if action == "db":
+        from siftd.doctor.checks import BUILTIN_CHECKS
+
+        _DB_CHECKS = {
+            "schema-current", "fts-integrity", "fts-stale",
+            "freelist", "blob-migration", "orphaned-chunks",
+        }
+        db_check_names = [
+            c.name for c in BUILTIN_CHECKS
+            if c.name.startswith("db-") or c.name in _DB_CHECKS
+        ]
+        return _doctor_run(args, check_names=db_check_names)
 
     # Legacy: siftd doctor checks
     if action == "checks":
@@ -1130,4 +1208,7 @@ exit codes:
     p_doctor.add_argument("--json", action="store_true", help="Output as JSON")
     p_doctor.add_argument("--strict", action="store_true", help="Exit 1 on warnings (not just errors). Useful for CI.")
     p_doctor.add_argument("--pending-tags", action="store_true", help="Clean up stale sessions and orphaned pending tags (use with 'fix')")
+    p_doctor.add_argument("--deep", action="store_true", help="Include deep integrity checks (slower).")
+    p_doctor.add_argument("--blob-refcount", action="store_true", dest="blob_refcount", help="Re-derive blob ref counts and sweep orphans (use with 'fix').")
+    p_doctor.add_argument("--triggers", action="store_true", help="Recreate blob ref-count triggers (use with 'fix').")
     p_doctor.set_defaults(func=cmd_doctor)

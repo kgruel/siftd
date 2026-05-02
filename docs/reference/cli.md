@@ -16,8 +16,9 @@ positional arguments:
     session-id          Print the session ID for the current workspace
     config              View or modify config settings
     adapters            List discovered adapters
-    db                  Database operations (info, backup, restore, vacuum,
-                        slice, merge, send, receive, remote, push, pull)
+    db                  Database operations (info, schema-version, backup,
+                        restore, vacuum, slice, merge, send, receive, remote,
+                        push, pull)
     tag                 Manage tags: apply, remove, list, rename, delete
     tools               Summarize tool usage by category
     query               List and filter conversations by metadata
@@ -111,11 +112,13 @@ options:
 
 ```
 usage: siftd db [-h]
-                {info,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull} ...
+                {info,schema-version,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull} ...
 
 positional arguments:
-  {info,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull}
+  {info,schema-version,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull}
     info                Show database file metadata and schema info
+    schema-version      Show migration triage info: current version, target,
+                        pending migrations
     stats               Show database statistics
     workspaces          List workspaces with conversation counts
     path                Show XDG paths
@@ -142,6 +145,7 @@ Container-level operations on the siftd database.
 
 examples:
   siftd db info                          # database file metadata
+  siftd db schema-version                # migration triage info
   siftd db stats                         # full statistics
   siftd db workspaces                    # list workspaces
   siftd db path                          # show XDG paths
@@ -418,17 +422,23 @@ examples:
 ## siftd doctor
 
 ```
-usage: siftd doctor [-h] [--json] [--strict] [--pending-tags] [subcommand ...]
+usage: siftd doctor [-h] [--json] [--strict] [--pending-tags] [--deep]
+                    [--blob-refcount] [--triggers]
+                    [subcommand ...]
 
 positional arguments:
-  subcommand      list | run [checks...] | fix | <check-name>
+  subcommand       list | run [checks...] | fix | <check-name>
 
 options:
-  -h, --help      show this help message and exit
-  --json          Output as JSON
-  --strict        Exit 1 on warnings (not just errors). Useful for CI.
-  --pending-tags  Clean up stale sessions and orphaned pending tags (use with
-                  'fix')
+  -h, --help       show this help message and exit
+  --json           Output as JSON
+  --strict         Exit 1 on warnings (not just errors). Useful for CI.
+  --pending-tags   Clean up stale sessions and orphaned pending tags (use with
+                   'fix')
+  --deep           Include deep integrity checks (slower).
+  --blob-refcount  Re-derive blob ref counts and sweep orphans (use with
+                   'fix').
+  --triggers       Recreate blob ref-count triggers (use with 'fix').
 
 examples:
   siftd doctor                          # run all checks

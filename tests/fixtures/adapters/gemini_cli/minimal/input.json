@@ -1,0 +1,35 @@
+{
+  "sessionId": "gemini-session-1",
+  "projectHash": "abc123",
+  "startTime": "2024-01-15T10:00:00Z",
+  "lastUpdated": "2024-01-15T10:00:05Z",
+  "messages": [
+    {
+      "type": "user",
+      "id": "msg-001",
+      "timestamp": "2024-01-15T10:00:00Z",
+      "content": "List the files in this directory"
+    },
+    {
+      "type": "gemini",
+      "id": "msg-002",
+      "timestamp": "2024-01-15T10:00:02Z",
+      "model": "gemini-2.0-flash",
+      "content": "I'll list the files for you.",
+      "tokens": {"input": 50, "output": 30},
+      "thoughts": [
+        {"subject": "Planning", "description": "User wants to see directory contents", "timestamp": "2024-01-15T10:00:01Z"}
+      ],
+      "toolCalls": [
+        {
+          "id": "tool-001",
+          "name": "list_files",
+          "args": {"path": "."},
+          "status": "success",
+          "timestamp": "2024-01-15T10:00:02Z",
+          "result": [{"functionResponse": {"response": {"files": ["README.md", "src/"]}}}]
+        }
+      ]
+    }
+  ]
+}

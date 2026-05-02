@@ -1,0 +1,58 @@
+[
+  {
+    "branch": null,
+    "ended_at": null,
+    "external_id": "aider::170f9bf11af0::2025-07-15 14:32:01",
+    "harness": {
+      "display_name": "Aider",
+      "log_format": "markdown",
+      "name": "aider",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "write a hello world script"
+            }
+          }
+        ],
+        "external_id": null,
+        "responses": [
+          {
+            "attributes": {
+              "approx_cost": "0.01",
+              "approx_input_tokens": "2100",
+              "approx_output_tokens": "256"
+            },
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "Here's a simple hello world script:\n\n```python\nprint(\"Hello, World!\")\n```\n\nI'll create this file for you."
+                }
+              },
+              {
+                "block_type": "tool_output",
+                "content": {
+                  "text": "Tokens: 2.1k sent, 256 received. Cost: $0.01\nApplied edit to hello.py"
+                }
+              }
+            ],
+            "external_id": null,
+            "model": null,
+            "provider": null,
+            "timestamp": "2025-07-15T14:32:01",
+            "tool_calls": [],
+            "usage": null
+          }
+        ],
+        "timestamp": "2025-07-15T14:32:01"
+      }
+    ],
+    "started_at": "2025-07-15T14:32:01",
+    "workspace_path": "tests/fixtures/adapters/aider/minimal"
+  }
+]

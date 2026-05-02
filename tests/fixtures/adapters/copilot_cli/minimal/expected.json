@@ -1,0 +1,94 @@
+[
+  {
+    "branch": "main",
+    "ended_at": "2024-04-20T09:00:16Z",
+    "external_id": "copilot_cli::copilot-session-001",
+    "harness": {
+      "display_name": "Copilot CLI",
+      "log_format": "jsonl",
+      "name": "copilot_cli",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "List the files in the current directory"
+            }
+          }
+        ],
+        "external_id": null,
+        "responses": [
+          {
+            "attributes": {},
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "I'll list the files for you."
+                }
+              },
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "The user wants to see the files in the current directory."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call-001",
+                  "input": {
+                    "command": "ls -la"
+                  },
+                  "name": "bash"
+                }
+              }
+            ],
+            "external_id": null,
+            "model": "claude-haiku-4.5",
+            "provider": null,
+            "timestamp": "2024-04-20T09:00:12Z",
+            "tool_calls": [
+              {
+                "external_id": "call-001",
+                "input": {
+                  "command": "ls -la"
+                },
+                "result": {
+                  "content": "total 8\ndrwxr-xr-x  4 user  staff  128 Apr 20 09:00 .\n-rw-r--r--  1 user  staff   45 Apr 20 09:00 README.md\ndrwxr-xr-x  3 user  staff   96 Apr 20 09:00 src/"
+                },
+                "status": "success",
+                "timestamp": "2024-04-20T09:00:14Z",
+                "tool_name": "bash"
+              }
+            ],
+            "usage": null
+          },
+          {
+            "attributes": {},
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "The directory contains a README.md file and a src/ directory."
+                }
+              }
+            ],
+            "external_id": null,
+            "model": "claude-haiku-4.5",
+            "provider": null,
+            "timestamp": "2024-04-20T09:00:16Z",
+            "tool_calls": [],
+            "usage": null
+          }
+        ],
+        "timestamp": "2024-04-20T09:00:10Z"
+      }
+    ],
+    "started_at": "2024-04-20T09:00:00Z",
+    "workspace_path": "/test/workspace"
+  }
+]

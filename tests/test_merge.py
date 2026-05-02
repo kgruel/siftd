@@ -771,7 +771,7 @@ def test_merge_rejects_source_missing_runtime_schema(tmp_path):
     )
 
     with pytest.raises(RuntimeError, match="missing required runtime schema: content_blobs table"):
-        merge_database(target, source)
+        merge_database(target, source, preflight=False)
 
 
 def test_merge_rejects_source_missing_result_hash_column(tmp_path):
@@ -785,7 +785,7 @@ def test_merge_rejects_source_missing_result_hash_column(tmp_path):
     )
 
     with pytest.raises(RuntimeError, match="tool_calls.result_hash column"):
-        merge_database(target, source)
+        merge_database(target, source, preflight=False)
 
 
 def test_cli_invalid_file(tmp_path, capsys):
@@ -903,3 +903,75 @@ def test_missing_source_db(tmp_path):
     create_database(target).close()
     with pytest.raises(FileNotFoundError, match="Source"):
         merge_database(target_db=target, source_path=tmp_path / "nonexistent.db")
+
+
+# =============================================================================
+# Preflight gate
+# =============================================================================
+
+
+def _make_fk_corrupt_source(tmp_path):
+    from siftd.ids import ulid
+    from siftd.storage.sqlite import create_empty_database
+
+    p = tmp_path / "corrupt-source.db"
+    create_empty_database(p)
+    conn = sqlite3.connect(str(p))
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "INSERT INTO prompts (id, conversation_id, external_id, timestamp) "
+        "VALUES (?, 'nonexistent-conv', 'ext-p-1', '2024-01-01T00:00:00Z')",
+        (ulid(),),
+    )
+    conn.commit()
+    conn.close()
+    return p
+
+
+def _make_no_triggers_source(tmp_path):
+    from siftd.storage.sqlite import create_empty_database
+
+    p = tmp_path / "notriggers-source.db"
+    create_empty_database(p)
+    conn = sqlite3.connect(str(p))
+    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
+    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_update_release_blob")
+    conn.commit()
+    conn.close()
+    return p
+
+
+def test_merge_preflight_fk_violation(tmp_path):
+    """FK violation in source raises PreflightError; target is unmodified."""
+    from siftd.api.database import PreflightError
+
+    target = _make_db(tmp_path / "target.db", conversations=[{"external_id": "conv-A"}])
+    source = _make_fk_corrupt_source(tmp_path)
+
+    with pytest.raises(PreflightError, match="FK violation"):
+        merge_database(target, source)
+
+    conn = sqlite3.connect(str(target))
+    count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+    conn.close()
+    assert count == 1
+
+
+def test_merge_preflight_missing_trigger(tmp_path):
+    """Missing blob triggers in source raises PreflightError."""
+    from siftd.api.database import PreflightError
+
+    target = _make_db(tmp_path / "target.db", conversations=[{"external_id": "conv-A"}])
+    source = _make_no_triggers_source(tmp_path)
+
+    with pytest.raises(PreflightError, match="trigger"):
+        merge_database(target, source)
+
+
+def test_merge_preflight_disabled(tmp_path):
+    """preflight=False bypasses the gate; merge succeeds on trigger-less source."""
+    target = _make_db(tmp_path / "target.db", conversations=[{"external_id": "conv-A"}])
+    source = _make_no_triggers_source(tmp_path)
+
+    result = merge_database(target, source, preflight=False)
+    assert result["conversations"] == 0  # empty source, nothing to merge

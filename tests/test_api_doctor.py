@@ -24,7 +24,7 @@ def test_list_checks_returns_check_info_list():
         assert isinstance(c.description, str)
         assert isinstance(c.has_fix, bool)
         assert isinstance(c.requires_db, bool)
-        assert c.cost in ("fast", "slow")
+        assert c.cost in ("fast", "slow", "deep")
 
 
 def test_finding_dataclass_fields():
