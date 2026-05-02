@@ -314,6 +314,13 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
                                     WHERE tc.conversation_id IN (SELECT id FROM _slice_conv_ids))
     """)
 
+    conn.execute("""
+        INSERT OR IGNORE INTO slice.attributes
+        SELECT a.* FROM attributes a
+        WHERE a.target_id IN (SELECT id FROM slice.events)
+           OR a.target_id IN (SELECT id FROM _slice_conv_ids)
+    """)
+
     # --- Tag tables ---
 
     # Tags referenced by any junction table we'll copy

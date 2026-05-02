@@ -19,6 +19,7 @@ from pathlib import Path
 from siftd.domain import Conversation
 from siftd.ids import ulid as _ulid
 from siftd.model_names import parse_model_name
+from siftd.storage.attributes import set_attribute
 from siftd.storage.events import (
     ensure_event_tool_call_triggers,
     insert_event,
@@ -1931,23 +1932,6 @@ def insert_conversation(
     return ulid
 
 
-def insert_response_attribute(
-    conn: sqlite3.Connection,
-    response_id: str,
-    key: str,
-    value: str,
-    scope: str | None = None,
-) -> str:
-    """Insert a response attribute, return id (ULID). Upserts on conflict."""
-    ulid = _ulid()
-    conn.execute(
-        """INSERT INTO response_attributes (id, response_id, key, value, scope)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT (response_id, key, scope) DO UPDATE SET value = excluded.value""",
-        (ulid, response_id, key, value, scope)
-    )
-    return ulid
-
 
 # =============================================================================
 # Compatibility shims (slice 2–3 transition; remove in slice 8)
@@ -1962,7 +1946,7 @@ def insert_prompt(
 ) -> str:
     uid = _ulid()
     insert_event(conn, uid, "prompt", conversation_id, timestamp, external_id=external_id)
-    # Dual-write: old table needed for response_attributes/prompt_attributes FK chain. Remove slice 8.
+    # Dual-write: old table needed for prompt_content FK chain. Remove slice 8.
     conn.execute(
         "INSERT INTO prompts (id, conversation_id, external_id, timestamp) VALUES (?, ?, ?, ?)",
         (uid, conversation_id, external_id, timestamp),
@@ -1984,7 +1968,7 @@ def insert_response(
     uid = _ulid()
     insert_event(conn, uid, "response", conversation_id, timestamp, parent_id=prompt_id, external_id=external_id)
     insert_event_response(conn, uid, model_id=model_id, provider_id=provider_id, input_tokens=input_tokens, output_tokens=output_tokens)
-    # Dual-write: old table needed for response_attributes FK. Remove slice 8.
+    # Dual-write: old table needed for response_content FK chain. Remove slice 8.
     conn.execute(
         """INSERT INTO responses
            (id, conversation_id, prompt_id, model_id, provider_id, external_id, timestamp, input_tokens, output_tokens)
@@ -2169,11 +2153,8 @@ def store_conversation(
                 if block.block_type == "text" and block.content.get("text"):
                     insert_fts_content(conn, content_id, "response", conversation_id, block.content["text"])
 
-            # Insert response attributes (response_attributes table — slice 4 owns migration)
             for attr_key, attr_value in response.attributes.items():
-                insert_response_attribute(
-                    conn, response_id, attr_key, attr_value, scope="provider"
-                )
+                set_attribute(conn, "response", response_id, attr_key, attr_value, scope="provider")
 
             # Insert tool calls
             for tool_call in response.tool_calls:

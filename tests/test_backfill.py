@@ -163,7 +163,7 @@ class TestBackfillResponseAttributes:
         _ingest(db, p)
         db.commit()
         assert backfill_response_attributes(db) == 2
-        keys = {r["key"] for r in db.execute("SELECT key FROM response_attributes WHERE response_id='r1'").fetchall()}
+        keys = {r["key"] for r in db.execute("SELECT key FROM attributes WHERE target_kind='response' AND target_id='r1'").fetchall()}
         assert keys == {"cache_creation_input_tokens", "cache_read_input_tokens"}
 
     @pytest.mark.parametrize("record,desc", [

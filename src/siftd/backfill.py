@@ -14,7 +14,8 @@ from siftd.domain.shell_categories import (
 )
 from siftd.model_names import parse_model_name
 from siftd.safecall import parse_json
-from siftd.storage.sqlite import get_or_create_provider, insert_response_attribute
+from siftd.storage.attributes import set_attribute
+from siftd.storage.sqlite import get_or_create_provider
 from siftd.storage.tags import (
     DERIVATIVE_TAG,
     apply_tag,
@@ -152,7 +153,7 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
 
     For each ingested claude_code file, re-parses the JSONL and extracts
     cache_creation_input_tokens / cache_read_input_tokens from message.usage,
-    then stores them as response_attributes.
+    then stores them as polymorphic attributes (target_kind='response').
 
     Returns count of attributes inserted.
     """
@@ -207,16 +208,12 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
             response_id = row["id"]
 
             if cache_creation:
-                insert_response_attribute(
-                    conn, response_id, "cache_creation_input_tokens",
-                    str(cache_creation), scope="provider"
-                )
+                set_attribute(conn, "response", response_id, "cache_creation_input_tokens",
+                              str(cache_creation), scope="provider")
                 inserted += 1
             if cache_read:
-                insert_response_attribute(
-                    conn, response_id, "cache_read_input_tokens",
-                    str(cache_read), scope="provider"
-                )
+                set_attribute(conn, "response", response_id, "cache_read_input_tokens",
+                              str(cache_read), scope="provider")
                 inserted += 1
 
     conn.commit()

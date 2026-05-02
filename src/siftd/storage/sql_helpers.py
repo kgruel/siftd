@@ -137,7 +137,7 @@ def cost_expr_sql(
     Computes:
         (non-cached input tokens * input_rate + output tokens * output_rate) / 1M
 
-    Cache-read tokens (from response_attributes) are subtracted from input
+    Cache-read tokens (from the polymorphic attributes table) are subtracted from input
     tokens so they aren't double-charged.  The CASE clamps negative values
     to zero (a response may report more cache-read than total input tokens
     due to rounding in some providers).
@@ -161,10 +161,11 @@ def cost_expr_sql(
 
     cache_read = (
         f"COALESCE("
-        f"(SELECT MAX(CAST(ra.value AS INTEGER))"
-        f" FROM response_attributes ra"
-        f" WHERE ra.response_id = {r}.id"
-        f" AND ra.key = 'cache_read_input_tokens'), 0)"
+        f"(SELECT MAX(CAST(a.value AS INTEGER))"
+        f" FROM attributes a"
+        f" WHERE a.target_kind = 'response'"
+        f" AND a.target_id = {r}.id"
+        f" AND a.key = 'cache_read_input_tokens'), 0)"
     )
 
     return (

@@ -30,11 +30,11 @@ LEFT JOIN models m ON m.id = er.model_id
 LEFT JOIN providers pv ON pv.id = er.provider_id
 LEFT JOIN pricing pr ON pr.model_id = er.model_id AND pr.provider_id = er.provider_id
 LEFT JOIN (
-    SELECT response_id, MAX(CAST(value AS INTEGER)) AS cache_read
-    FROM response_attributes
-    WHERE key = 'cache_read_input_tokens'
-    GROUP BY response_id
-) ra_cache_read ON ra_cache_read.response_id = e.id
+    SELECT target_id, MAX(CAST(value AS INTEGER)) AS cache_read
+    FROM attributes
+    WHERE target_kind = 'response' AND key = 'cache_read_input_tokens'
+    GROUP BY target_id
+) ra_cache_read ON ra_cache_read.target_id = e.id
 WHERE e.kind = 'response'
   AND (er.input_tokens IS NOT NULL OR er.output_tokens IS NOT NULL)
 GROUP BY w.path, m.name, pv.name

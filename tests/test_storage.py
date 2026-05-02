@@ -280,7 +280,7 @@ class TestStoreConversation:
         # FTS indexed
         assert len(conn.execute("SELECT * FROM content_fts WHERE content_fts MATCH 'Python'").fetchall()) >= 1
         # Response attributes
-        assert any(r["key"] == "cache_read_input_tokens" for r in conn.execute("SELECT * FROM response_attributes").fetchall())
+        assert any(r["key"] == "cache_read_input_tokens" for r in conn.execute("SELECT * FROM attributes WHERE target_kind='response'").fetchall())
         # Auto-tagged shell commands
         tags = conn.execute("SELECT t.name FROM tool_call_tags tct JOIN tags t ON t.id=tct.tag_id").fetchall()
         assert any("shell:" in t["name"] for t in tags)

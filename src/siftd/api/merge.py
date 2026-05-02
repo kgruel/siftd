@@ -378,6 +378,13 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
         WHERE stca.tool_call_id IN (SELECT id FROM main.tool_calls)
     """)
 
+    conn.execute("""
+        INSERT OR IGNORE INTO attributes
+        SELECT * FROM src.attributes
+        WHERE target_id IN (SELECT id FROM main.conversations)
+           OR target_id IN (SELECT id FROM main.events)
+    """)
+
     # --- Step 4: Tag junction tables (remap tag_id) ---
 
     # New tags = source rows inserted as-is (identity mapping: source_id kept as target_id).
@@ -591,6 +598,11 @@ def _replace_stale_conversations(conn) -> tuple[int, list[str]]:
     conn.execute("""
         DELETE FROM event_tool_call
         WHERE event_id IN (SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs))
+    """)
+    conn.execute("""
+        DELETE FROM attributes
+        WHERE target_id IN (SELECT id FROM _stale_convs)
+           OR target_id IN (SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs))
     """)
     conn.execute("DELETE FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     conn.execute("DELETE FROM conversation_attributes WHERE conversation_id IN (SELECT id FROM _stale_convs)")
