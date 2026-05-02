@@ -131,7 +131,7 @@ class TestSQLBuilders:
     def test_tool_tags(self):
         w, p = [], []
         _add_tool_call_tags(w, p, ["shell:test"])
-        assert len(w) == 1 and "tool_call_tags" in w[0]
+        assert len(w) == 1 and "tag_assignments" in w[0]
 
     def test_tool_tags_none(self):
         w, p = [], []

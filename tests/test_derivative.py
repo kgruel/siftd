@@ -109,9 +109,9 @@ class TestTagDerivativeConversation:
 
         # Verify tag exists
         row = conn.execute("""
-            SELECT t.name FROM conversation_tags ct
-            JOIN tags t ON t.id = ct.tag_id
-            WHERE ct.conversation_id = ?
+            SELECT t.name FROM tag_assignments ta
+            JOIN tags t ON t.id = ta.tag_id
+            WHERE ta.target_kind = 'conversation' AND ta.target_id = ?
         """, (self.conv_id,)).fetchone()
         assert row["name"] == DERIVATIVE_TAG
 
@@ -123,7 +123,7 @@ class TestTagDerivativeConversation:
 
         # No tag applied
         row = conn.execute(
-            "SELECT COUNT(*) as cnt FROM conversation_tags WHERE conversation_id = ?",
+            "SELECT COUNT(*) as cnt FROM tag_assignments WHERE target_kind='conversation' AND target_id = ?",
             (self.conv_id,),
         ).fetchone()
         assert row["cnt"] == 0
@@ -140,7 +140,7 @@ class TestTagDerivativeConversation:
         assert result is False
 
         count = conn.execute(
-            "SELECT COUNT(*) as cnt FROM conversation_tags WHERE conversation_id = ?",
+            "SELECT COUNT(*) as cnt FROM tag_assignments WHERE target_kind='conversation' AND target_id = ?",
             (self.conv_id,),
         ).fetchone()["cnt"]
         assert count == 1
@@ -218,10 +218,10 @@ class TestBackfillDerivativeTags:
 
         # Verify which conversations are tagged
         rows = conn.execute("""
-            SELECT c.external_id FROM conversation_tags ct
-            JOIN tags t ON t.id = ct.tag_id
-            JOIN conversations c ON c.id = ct.conversation_id
-            WHERE t.name = ?
+            SELECT c.external_id FROM tag_assignments ta
+            JOIN tags t ON t.id = ta.tag_id
+            JOIN conversations c ON c.id = ta.target_id
+            WHERE ta.target_kind = 'conversation' AND t.name = ?
             ORDER BY c.external_id
         """, (DERIVATIVE_TAG,)).fetchall()
         assert [r["external_id"] for r in rows] == ["c1", "c2"]

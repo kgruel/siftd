@@ -255,7 +255,7 @@ class TestIngestEdgeCases:
         # Conversation and tag preserved
         assert updated_info["conversation_id"] == conv_id
         tag_row = conn.execute(
-            "SELECT 1 FROM conversation_tags WHERE conversation_id = ? AND tag_id = ?",
+            "SELECT 1 FROM tag_assignments WHERE target_kind='conversation' AND target_id = ? AND tag_id = ?",
             (conv_id, tag_id),
         ).fetchone()
         assert tag_row is not None
@@ -501,7 +501,7 @@ class TestCascadeDelete:
         assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM prompt_content").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM response_content").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM conversation_tags").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='conversation'").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM ingested_files").fetchone()[0] == 1
 
         # Delete the conversation
@@ -515,7 +515,7 @@ class TestCascadeDelete:
         assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM prompt_content").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM response_content").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM conversation_tags").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='conversation'").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM ingested_files").fetchone()[0] == 0
 
         # FTS should also be cleaned up
@@ -645,22 +645,27 @@ class TestEnsureTablesCascade:
             '{"command": "ls"}', '{"output": "..."}', "success", "2024-01-01T00:00:02Z",
         )
 
-        # Apply tag to tool_call (uses tool_call_tags table)
+        # Apply tag to tool_call (writes to tag_assignments)
         apply_tag(conn, "tool_call", tool_call_id, tag_id)
         conn.commit()
 
-        # Verify tool_call_tag exists
-        assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 1
+        # Verify tag_assignment exists
+        assert conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'"
+        ).fetchone()[0] == 1
 
-        # Delete the conversation (should cascade to tool_calls → tool_call_tags)
-        conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+        # Delete the conversation via delete_conversation (explicitly cleans tag_assignments)
+        from siftd.storage.sqlite import delete_conversation
+        delete_conversation(conn, conv_id)
         conn.commit()
 
-        # tool_call_tags should be gone via CASCADE, no FK error
-        assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 0
+        # tag_assignments cleaned up, tool_calls gone via cascade
+        assert conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'"
+        ).fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 0
 
-        # Tag itself should still exist (only junction record removed)
+        # Tag itself should still exist (only assignment record removed)
         assert conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0] == 1
 
         conn.close()
@@ -707,14 +712,19 @@ class TestEnsureTablesCascade:
         apply_tag(conn, "tool_call", tool_call_id, tag_id)
         conn.commit()
 
-        assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 1
+        # tag_assignments has the assignment
+        assert conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'"
+        ).fetchone()[0] == 1
 
-        # Delete the tag (should cascade to tool_call_tags)
+        # Delete the tag — tag_assignments.tag_id has ON DELETE CASCADE
         conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
         conn.commit()
 
-        # tool_call_tags junction should be gone, tool_call remains
-        assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 0
+        # tag_assignments row should be gone via CASCADE, tool_call remains
+        assert conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'"
+        ).fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
 
         conn.close()

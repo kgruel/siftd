@@ -220,7 +220,7 @@ def test_tag_name_dedup(tmp_path):
     conn = sqlite3.connect(str(target))
     conn.row_factory = sqlite3.Row
     tags = conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
-    junctions = conn.execute("SELECT COUNT(*) FROM conversation_tags").fetchone()[0]
+    junctions = conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='conversation'").fetchone()[0]
     conn.close()
     assert tags == 1  # one "research" tag, not two
     assert junctions == 2  # both conversations tagged
@@ -459,7 +459,7 @@ def test_workspace_tag_remapping(tmp_path):
 
     conn = sqlite3.connect(str(target))
     conn.row_factory = sqlite3.Row
-    wt_count = conn.execute("SELECT COUNT(*) FROM workspace_tags").fetchone()[0]
+    wt_count = conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='workspace'").fetchone()[0]
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     conn.close()
 
@@ -493,7 +493,7 @@ def test_tool_call_tag_remapping(tmp_path):
 
     conn = sqlite3.connect(str(target))
     conn.row_factory = sqlite3.Row
-    tct_count = conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0]
+    tct_count = conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'").fetchone()[0]
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     conn.close()
 
@@ -618,8 +618,9 @@ def test_replace_cascades_children(tmp_path):
 
     # Tag should be from source
     tag_name = conn.execute("""
-        SELECT t.name FROM conversation_tags ct
-        JOIN tags t ON t.id = ct.tag_id
+        SELECT t.name FROM tag_assignments ta
+        JOIN tags t ON t.id = ta.tag_id
+        WHERE ta.target_kind = 'conversation'
     """).fetchone()[0]
     assert tag_name == "research"
 
@@ -681,7 +682,7 @@ def test_replace_cascades_grandchildren(tmp_path):
     assert tgt_conn.execute("SELECT COUNT(*) FROM prompt_attributes").fetchone()[0] == 1
     assert tgt_conn.execute("SELECT COUNT(*) FROM response_attributes").fetchone()[0] == 1
     assert tgt_conn.execute("SELECT COUNT(*) FROM tool_call_attributes").fetchone()[0] == 1
-    assert tgt_conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 1
+    assert tgt_conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'").fetchone()[0] == 1
     assert tgt_conn.execute("SELECT COUNT(*) FROM ingested_files").fetchone()[0] == 1
     tgt_conn.close()
 
@@ -709,7 +710,7 @@ def test_replace_cascades_grandchildren(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM prompt_attributes").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM response_attributes").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM tool_call_attributes").fetchone()[0] == 0
-    assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM ingested_files").fetchone()[0] == 0
 
     # Content should be from source

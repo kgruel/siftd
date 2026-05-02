@@ -244,10 +244,10 @@ def backfill_derivative_tags(conn: sqlite3.Connection) -> int:
     tag_row = conn.execute("SELECT id FROM tags WHERE name = ?", (DERIVATIVE_TAG,)).fetchone()
     if tag_row:
         rows = conn.execute(
-            "SELECT conversation_id FROM conversation_tags WHERE tag_id = ?",
+            "SELECT target_id FROM tag_assignments WHERE target_kind='conversation' AND tag_id = ?",
             (tag_row["id"],)
         ).fetchall()
-        already_tagged = {r["conversation_id"] for r in rows}
+        already_tagged = {r["target_id"] for r in rows}
 
     # Find candidate tool calls from relevant tools
     placeholders = ",".join("?" * len(tool_ids))

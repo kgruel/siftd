@@ -121,9 +121,9 @@ class TestLiveTaggingFlow:
         # 4. Verify tag was applied
         cur = live_db["conn"].execute("""
             SELECT t.name FROM tags t
-            JOIN conversation_tags ct ON ct.tag_id = t.id
-            JOIN conversations c ON c.id = ct.conversation_id
-            WHERE c.external_id = ?
+            JOIN tag_assignments ta ON ta.tag_id = t.id
+            JOIN conversations c ON c.id = ta.target_id
+            WHERE ta.target_kind = 'conversation' AND c.external_id = ?
         """, (session_id,))
         tags = [row[0] for row in cur.fetchall()]
         assert tag_name in tags
@@ -161,13 +161,13 @@ class TestLiveTaggingFlow:
         adapter = make_live_adapter(str(test_file), conversation)
         ingest_all(live_db["conn"], [adapter])
 
-        # 4. Verify tag was applied to the prompt
+        # 4. Verify tag was applied to the exchange (anchor = prompt event)
         cur = live_db["conn"].execute("""
             SELECT t.name FROM tags t
-            JOIN prompt_tags pt ON pt.tag_id = t.id
-            JOIN prompts p ON p.id = pt.prompt_id
-            JOIN conversations c ON c.id = p.conversation_id
-            WHERE c.external_id = ?
+            JOIN tag_assignments ta ON ta.tag_id = t.id
+            JOIN events e ON e.id = ta.target_id
+            JOIN conversations c ON c.id = e.conversation_id
+            WHERE ta.target_kind = 'exchange' AND c.external_id = ?
         """, (session_id,))
         tags = [row[0] for row in cur.fetchall()]
         assert tag_name in tags
@@ -198,9 +198,9 @@ class TestLiveTaggingFlow:
         # Tag should NOT be applied
         cur = live_db["conn"].execute("""
             SELECT t.name FROM tags t
-            JOIN conversation_tags ct ON ct.tag_id = t.id
-            JOIN conversations c ON c.id = ct.conversation_id
-            WHERE c.external_id = ?
+            JOIN tag_assignments ta ON ta.tag_id = t.id
+            JOIN conversations c ON c.id = ta.target_id
+            WHERE ta.target_kind = 'conversation' AND c.external_id = ?
         """, (session_id,))
         tags = [row[0] for row in cur.fetchall()]
         assert tag_name not in tags
@@ -233,9 +233,9 @@ class TestLiveTaggingFlow:
         # Tag should be applied
         cur = live_db["conn"].execute("""
             SELECT t.name FROM tags t
-            JOIN conversation_tags ct ON ct.tag_id = t.id
-            JOIN conversations c ON c.id = ct.conversation_id
-            WHERE c.external_id = ?
+            JOIN tag_assignments ta ON ta.tag_id = t.id
+            JOIN conversations c ON c.id = ta.target_id
+            WHERE ta.target_kind = 'conversation' AND c.external_id = ?
         """, (session_id,))
         tags = [row[0] for row in cur.fetchall()]
         assert tag_name in tags
@@ -266,7 +266,8 @@ class TestLiveTaggingFlow:
         # Tag should NOT be applied (prompt at index 10 doesn't exist)
         cur = live_db["conn"].execute("""
             SELECT t.name FROM tags t
-            JOIN prompt_tags pt ON pt.tag_id = t.id
+            JOIN tag_assignments ta ON ta.tag_id = t.id
+            WHERE ta.target_kind = 'exchange'
         """)
         tags = [row[0] for row in cur.fetchall()]
         assert tag_name not in tags
@@ -298,9 +299,9 @@ class TestLiveTaggingFlow:
 
         cur = live_db["conn"].execute("""
             SELECT t.name FROM tags t
-            JOIN conversation_tags ct ON ct.tag_id = t.id
-            JOIN conversations c ON c.id = ct.conversation_id
-            WHERE c.external_id = ?
+            JOIN tag_assignments ta ON ta.tag_id = t.id
+            JOIN conversations c ON c.id = ta.target_id
+            WHERE ta.target_kind = 'conversation' AND c.external_id = ?
         """, (session_id,))
         applied_tags = [row[0] for row in cur.fetchall()]
 
@@ -337,9 +338,9 @@ class TestLiveTaggingFlow:
 
         cur = live_db["conn"].execute("""
             SELECT t.name FROM tags t
-            JOIN conversation_tags ct ON ct.tag_id = t.id
-            JOIN conversations c ON c.id = ct.conversation_id
-            WHERE c.external_id = ?
+            JOIN tag_assignments ta ON ta.tag_id = t.id
+            JOIN conversations c ON c.id = ta.target_id
+            WHERE ta.target_kind = 'conversation' AND c.external_id = ?
         """, (session_id,))
         applied_tags = [row[0] for row in cur.fetchall()]
         assert applied_tags == [new_name]
@@ -371,9 +372,9 @@ class TestLiveTaggingFlow:
 
         cur = live_db["conn"].execute("""
             SELECT t.name FROM tags t
-            JOIN conversation_tags ct ON ct.tag_id = t.id
-            JOIN conversations c ON c.id = ct.conversation_id
-            WHERE c.external_id = ?
+            JOIN tag_assignments ta ON ta.tag_id = t.id
+            JOIN conversations c ON c.id = ta.target_id
+            WHERE ta.target_kind = 'conversation' AND c.external_id = ?
         """, (session_id,))
         assert cur.fetchall() == []
         assert live_db["conn"].execute("SELECT COUNT(*) FROM tags WHERE name = ?", (tag_name,)).fetchone()[0] == 0
@@ -419,9 +420,9 @@ class TestLiveTaggingFlow:
         # Verify tag was applied
         cur = live_db["conn"].execute("""
             SELECT t.name FROM tags t
-            JOIN conversation_tags ct ON ct.tag_id = t.id
-            JOIN conversations c ON c.id = ct.conversation_id
-            WHERE c.external_id = ?
+            JOIN tag_assignments ta ON ta.tag_id = t.id
+            JOIN conversations c ON c.id = ta.target_id
+            WHERE ta.target_kind = 'conversation' AND c.external_id = ?
         """, (namespaced_session_id,))
         tags = [row[0] for row in cur.fetchall()]
         assert tag_name in tags
@@ -473,9 +474,9 @@ class TestLiveTaggingFlow:
         # Tag should be applied to the subagent conversation
         cur = live_db["conn"].execute("""
             SELECT t.name FROM tags t
-            JOIN conversation_tags ct ON ct.tag_id = t.id
-            JOIN conversations c ON c.id = ct.conversation_id
-            WHERE c.external_id = ?
+            JOIN tag_assignments ta ON ta.tag_id = t.id
+            JOIN conversations c ON c.id = ta.target_id
+            WHERE ta.target_kind = 'conversation' AND c.external_id = ?
         """, (subagent_external_id,))
         tags = [row[0] for row in cur.fetchall()]
         assert tag_name in tags

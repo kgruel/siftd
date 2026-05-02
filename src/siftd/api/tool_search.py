@@ -363,8 +363,9 @@ def _add_conversation_tags_any(where: list[str], params: list[object], tags: lis
         params.append(val)
     clause = " OR ".join(parts)
     where.append(
-        "ts.conversation_id IN (SELECT ct.conversation_id FROM conversation_tags ct"
-        f" JOIN tags tg ON tg.id = ct.tag_id WHERE {clause})"
+        "ts.conversation_id IN (SELECT ta.target_id FROM tag_assignments ta"
+        " JOIN tags tg ON tg.id = ta.tag_id"
+        f" WHERE ta.target_kind = 'conversation' AND ({clause}))"
     )
 
 
@@ -374,8 +375,9 @@ def _add_conversation_tags_all(where: list[str], params: list[object], tags: lis
     for tag in tags:
         op, val = _tag_condition(tag)
         where.append(
-            "ts.conversation_id IN (SELECT ct.conversation_id FROM conversation_tags ct"
-            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {op})"
+            "ts.conversation_id IN (SELECT ta.target_id FROM tag_assignments ta"
+            " JOIN tags tg ON tg.id = ta.tag_id"
+            f" WHERE ta.target_kind = 'conversation' AND {op})"
         )
         params.append(val)
 
@@ -390,8 +392,9 @@ def _add_conversation_tags_none(where: list[str], params: list[object], tags: li
         params.append(val)
     clause = " OR ".join(parts)
     where.append(
-        "ts.conversation_id NOT IN (SELECT ct.conversation_id FROM conversation_tags ct"
-        f" JOIN tags tg ON tg.id = ct.tag_id WHERE {clause})"
+        "ts.conversation_id NOT IN (SELECT ta.target_id FROM tag_assignments ta"
+        " JOIN tags tg ON tg.id = ta.tag_id"
+        f" WHERE ta.target_kind = 'conversation' AND ({clause}))"
     )
 
 
@@ -414,6 +417,7 @@ def _add_tool_call_tags(where: list[str], params: list[object], tags: list[str] 
         params.append(val)
     clause = " OR ".join(parts)
     where.append(
-        "ts.tool_call_id IN (SELECT tct.tool_call_id FROM tool_call_tags tct"
-        f" JOIN tags tg ON tg.id = tct.tag_id WHERE {clause})"
+        "ts.tool_call_id IN (SELECT ta.target_id FROM tag_assignments ta"
+        " JOIN tags tg ON tg.id = ta.tag_id"
+        f" WHERE ta.target_kind = 'tool_call' AND ({clause}))"
     )

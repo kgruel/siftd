@@ -24,6 +24,9 @@ from siftd.storage.tags import (
     get_tag_id as _get_tag_id,
 )
 from siftd.storage.tags import (
+    get_tags_for as _get_tags_for,
+)
+from siftd.storage.tags import (
     list_tags as _list_tags,
 )
 from siftd.storage.tags import (
@@ -50,6 +53,7 @@ __all__ = [
     "delete_tag",
     "get_tag_id",
     "get_or_create_tag",
+    "get_tags_for",
     "list_tags",
     "rename_tag_safe",
     "remove_tag",
@@ -57,6 +61,9 @@ __all__ = [
     "tag_info_from_dict",
     "tag_info_list_from_dict",
 ]
+
+_GRANULAR_KINDS = frozenset({"prompt", "response", "tool_call", "exchange"})
+_ALL_ENTITY_TYPES = frozenset({"conversation", "workspace"}) | _GRANULAR_KINDS
 
 
 @dataclass
@@ -69,7 +76,7 @@ class TagInfo:
     conversation_count: int
     workspace_count: int
     tool_call_count: int
-    prompt_count: int
+    exchange_count: int
 
 
 TagMutationResult = Literal["applied", "removed", "not_found", "already_applied", "not_applied"]
@@ -157,7 +164,7 @@ def list_tags(
                 conversation_count=r["conversation_count"],
                 workspace_count=r["workspace_count"],
                 tool_call_count=r["tool_call_count"],
-                prompt_count=r["prompt_count"],
+                exchange_count=r["exchange_count"],
             )
             for r in rows
         ]
@@ -192,6 +199,24 @@ def get_tag_id(
     return _get_tag_id(conn, name)
 
 
+def get_tags_for(
+    conn: sqlite3.Connection,
+    target_kind: str,
+    target_id: str,
+) -> list:
+    """Return tag rows for a given target.
+
+    Args:
+        conn: Database connection.
+        target_kind: One of 'conversation', 'workspace', 'prompt', 'response', 'tool_call', 'exchange'.
+        target_id: The target entity's ULID.
+
+    Returns:
+        List of Row objects with name, description, applied_at.
+    """
+    return _get_tags_for(conn, target_kind, target_id)
+
+
 def apply_tag(
     conn: sqlite3.Connection,
     entity_type: str,
@@ -204,7 +229,7 @@ def apply_tag(
 
     Args:
         conn: Database connection.
-        entity_type: One of 'conversation', 'workspace', 'tool_call'.
+        entity_type: One of 'conversation', 'workspace', 'prompt', 'response', 'tool_call', 'exchange'.
         entity_id: The entity's ULID.
         tag_id: The tag's ULID.
         commit: Whether to commit the transaction.
@@ -254,11 +279,14 @@ def apply_tags(
     """
     from siftd.api.conversations import get_recent_conversation_ids, resolve_entity_id
 
-    if entity_type not in {"conversation", "workspace", "tool_call"}:
-        raise ValueError(f"Unsupported entity_type: {entity_type}")
+    if entity_type not in _ALL_ENTITY_TYPES:
+        raise ValueError(f"Unsupported entity_type: {entity_type!r}. Valid: {sorted(_ALL_ENTITY_TYPES)}")
 
     if owner and entity_type != "conversation":
         raise PermissionError("tag mutation is only supported for conversations when auth is enabled")
+
+    if last is not None and entity_type in _GRANULAR_KINDS:
+        raise ValueError("--last is only supported for conversation and workspace entity types")
 
     conn = _open_database(db_path)
     try:

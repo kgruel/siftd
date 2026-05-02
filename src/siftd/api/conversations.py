@@ -259,9 +259,10 @@ def _list_conversations_impl(
     if tool_tag:
         op, val = _tag_condition(tool_tag)
         wb.add(
-            "c.id IN (SELECT tc.conversation_id FROM tool_calls tc"
-            " JOIN tool_call_tags tct ON tct.tool_call_id = tc.id"
-            f" JOIN tags tg ON tg.id = tct.tag_id WHERE {op})",
+            "c.id IN (SELECT e.conversation_id FROM tag_assignments ta"
+            " JOIN events e ON e.id = ta.target_id"
+            " JOIN tags tg ON tg.id = ta.tag_id"
+            f" WHERE ta.target_kind = 'tool_call' AND {op})",
             val,
         )
 
@@ -1106,6 +1107,19 @@ def resolve_entity_id(
     elif entity_type == "tool_call":
         row = conn.execute(
             "SELECT id FROM events WHERE id = ? AND kind = 'tool_call'", (entity_id,)
+        ).fetchone()
+    elif entity_type == "prompt":
+        row = conn.execute(
+            "SELECT id FROM events WHERE id = ? AND kind = 'prompt'", (entity_id,)
+        ).fetchone()
+    elif entity_type == "response":
+        row = conn.execute(
+            "SELECT id FROM events WHERE id = ? AND kind = 'response'", (entity_id,)
+        ).fetchone()
+    elif entity_type == "exchange":
+        # exchange uses a prompt event as anchor
+        row = conn.execute(
+            "SELECT id FROM events WHERE id = ? AND kind = 'prompt'", (entity_id,)
         ).fetchone()
     else:
         return None

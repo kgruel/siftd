@@ -337,6 +337,14 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
             SELECT tct.tag_id FROM tool_call_tags tct
             WHERE tct.tool_call_id IN (SELECT tc.id FROM tool_calls tc
                                         WHERE tc.conversation_id IN (SELECT id FROM _slice_conv_ids))
+            UNION
+            SELECT ta.tag_id FROM tag_assignments ta
+            WHERE (ta.target_kind = 'conversation' AND ta.target_id IN (SELECT id FROM _slice_conv_ids))
+               OR (ta.target_kind = 'workspace' AND ta.target_id IN (SELECT id FROM slice.workspaces))
+               OR (ta.target_kind IN ('prompt','response','tool_call','exchange')
+                   AND ta.target_id IN (
+                       SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
+                   ))
         )
     """)
 
@@ -387,6 +395,19 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
             WHERE pt.prompt_id IN (SELECT p.id FROM prompts p
                                     WHERE p.conversation_id IN (SELECT id FROM _slice_conv_ids))
         """)
+
+    # tag_assignments (polymorphic, added slice 5)
+    conn.execute("""
+        INSERT OR IGNORE INTO slice.tag_assignments
+        SELECT ta.*
+        FROM tag_assignments ta
+        WHERE (ta.target_kind = 'conversation' AND ta.target_id IN (SELECT id FROM _slice_conv_ids))
+           OR (ta.target_kind = 'workspace' AND ta.target_id IN (SELECT id FROM slice.workspaces))
+           OR (ta.target_kind IN ('prompt','response','tool_call','exchange')
+               AND ta.target_id IN (
+                   SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
+               ))
+    """)
 
     # Skip ephemeral: ingested_files, active_sessions, pending_tags
 

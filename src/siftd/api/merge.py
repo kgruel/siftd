@@ -460,6 +460,37 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
             WHERE spt.prompt_id IN (SELECT id FROM main.prompts)
         """)
 
+    # --- tag_assignments (polymorphic, added slice 5) ---
+    # Workspace target_ids are remapped via _id_map; conversation/event IDs are preserved.
+    if conn.execute(
+        "SELECT 1 FROM src.sqlite_master WHERE type='table' AND name='tag_assignments'"
+    ).fetchone():
+        conn.execute("""
+            INSERT OR IGNORE INTO tag_assignments (id, target_kind, target_id, tag_id, applied_at)
+            SELECT
+                sta.id,
+                sta.target_kind,
+                CASE
+                    WHEN sta.target_kind = 'workspace'
+                    THEN COALESCE(ws_map.target_id, sta.target_id)
+                    ELSE sta.target_id
+                END AS target_id,
+                COALESCE(tag_map.target_id, sta.tag_id) AS tag_id,
+                sta.applied_at
+            FROM src.tag_assignments sta
+            LEFT JOIN _id_map tag_map ON tag_map.table_name = 'tags'       AND tag_map.source_id = sta.tag_id
+            LEFT JOIN _id_map ws_map  ON ws_map.table_name  = 'workspaces' AND ws_map.source_id  = sta.target_id
+            WHERE
+                (sta.target_kind = 'conversation'
+                 AND sta.target_id IN (SELECT id FROM main.conversations))
+                OR
+                (sta.target_kind = 'workspace'
+                 AND COALESCE(ws_map.target_id, sta.target_id) IN (SELECT id FROM main.workspaces))
+                OR
+                (sta.target_kind IN ('prompt','response','tool_call','exchange')
+                 AND sta.target_id IN (SELECT id FROM main.events))
+        """)
+
     # --- Step 5: content_blobs ref_count ---
 
     conn.execute("""
@@ -603,6 +634,15 @@ def _replace_stale_conversations(conn) -> tuple[int, list[str]]:
         DELETE FROM attributes
         WHERE target_id IN (SELECT id FROM _stale_convs)
            OR target_id IN (SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs))
+    """)
+    # tag_assignments: must delete event-kind rows before events are deleted (no FK cascade)
+    conn.execute("""
+        DELETE FROM tag_assignments
+        WHERE (target_kind = 'conversation' AND target_id IN (SELECT id FROM _stale_convs))
+           OR (target_kind IN ('prompt','response','tool_call','exchange')
+               AND target_id IN (
+                   SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs)
+               ))
     """)
     conn.execute("DELETE FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     conn.execute("DELETE FROM conversation_attributes WHERE conversation_id IN (SELECT id FROM _stale_convs)")

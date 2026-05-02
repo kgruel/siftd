@@ -282,7 +282,7 @@ class TestStoreConversation:
         # Response attributes
         assert any(r["key"] == "cache_read_input_tokens" for r in conn.execute("SELECT * FROM attributes WHERE target_kind='response'").fetchall())
         # Auto-tagged shell commands
-        tags = conn.execute("SELECT t.name FROM tool_call_tags tct JOIN tags t ON t.id=tct.tag_id").fetchall()
+        tags = conn.execute("SELECT t.name FROM tag_assignments ta JOIN tags t ON t.id=ta.tag_id WHERE ta.target_kind='tool_call'").fetchall()
         assert any("shell:" in t["name"] for t in tags)
 
     def test_workspace_cache(self, db):
@@ -331,7 +331,7 @@ class TestStoreConversation:
                     tool_calls=[ToolCall(tool_name="shell.execute", external_id="tc1",
                         input={"command": "siftd search foo"}, result={"output": "found"}, status="success")])])])
         cid = sq.store_conversation(db, conv, commit=True)
-        tags = db.execute("SELECT t.name FROM conversation_tags ct JOIN tags t ON t.id=ct.tag_id WHERE ct.conversation_id=?", (cid,)).fetchall()
+        tags = db.execute("SELECT t.name FROM tag_assignments ta JOIN tags t ON t.id=ta.tag_id WHERE ta.target_kind='conversation' AND ta.target_id=?", (cid,)).fetchall()
         assert any("derivative" in t["name"] for t in tags)
 
 
@@ -552,7 +552,7 @@ class TestSqlHelpers:
         tid = tags.get_or_create_tag(conn, "t")
         tags.apply_tag(conn, "conversation", cid, tid)
         conn.commit()
-        assert batched_execute(conn, "DELETE FROM conversation_tags WHERE conversation_id IN ({placeholders})", [cid]) >= 1
+        assert batched_execute(conn, "DELETE FROM tag_assignments WHERE target_kind='conversation' AND target_id IN ({placeholders})", [cid]) >= 1
         assert batched_execute(conn, "DELETE FROM tags WHERE id IN ({placeholders})", []) == 0
 
 

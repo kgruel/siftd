@@ -477,9 +477,9 @@ def fetch_conversation_tags(
 ) -> list[str]:
     """Fetch tag names for a conversation."""
     rows = conn.execute(
-        "SELECT t.name FROM conversation_tags ct "
-        "JOIN tags t ON t.id = ct.tag_id "
-        "WHERE ct.conversation_id = ? ORDER BY t.name",
+        "SELECT t.name FROM tag_assignments ta "
+        "JOIN tags t ON t.id = ta.tag_id "
+        "WHERE ta.target_kind = 'conversation' AND ta.target_id = ? ORDER BY t.name",
         (conversation_id,),
     ).fetchall()
     return [row["name"] for row in rows]
@@ -498,10 +498,10 @@ def fetch_tags_for_conversations(
 
     rows = batched_in_query(
         conn,
-        "SELECT ct.conversation_id, t.name "
-        "FROM conversation_tags ct "
-        "JOIN tags t ON t.id = ct.tag_id "
-        "WHERE ct.conversation_id IN ({placeholders}) "
+        "SELECT ta.target_id AS conversation_id, t.name "
+        "FROM tag_assignments ta "
+        "JOIN tags t ON t.id = ta.tag_id "
+        "WHERE ta.target_kind = 'conversation' AND ta.target_id IN ({placeholders}) "
         "ORDER BY t.name",
         conversation_ids,
     )
@@ -727,16 +727,18 @@ def fetch_top_conversation_tags(
     """Fetch top conversation tags by usage."""
     if owner and not has_conversation_owners_table(conn):
         return []
-    where_sql = ""
-    params: list[object] = [limit]
+    where_clauses = ["ta.target_kind = 'conversation'"]
+    params: list[object] = []
     if owner:
-        where_sql = f"WHERE {owner_predicate('ct.conversation_id')}"
-        params = [owner, limit]
+        where_clauses.append(owner_predicate("ta.target_id"))
+        params.append(owner)
+    params.append(limit)
+    where_sql = "WHERE " + " AND ".join(where_clauses)
     return conn.execute(
         f"""
-        SELECT t.name, COUNT(ct.id) AS count
+        SELECT t.name, COUNT(ta.id) AS count
         FROM tags t
-        JOIN conversation_tags ct ON ct.tag_id = t.id
+        JOIN tag_assignments ta ON ta.tag_id = t.id
         {where_sql}
         GROUP BY t.id
         ORDER BY count DESC, t.name
@@ -884,7 +886,7 @@ def fetch_tool_tags_by_prefix(
     """Fetch tool call tag usage counts filtered by prefix."""
     if owner and not has_conversation_owners_table(conn):
         return []
-    where = ["t.name LIKE ?"]
+    where = ["t.name LIKE ?", "ta.target_kind = 'tool_call'"]
     params: list[object] = [f"{prefix}%"]
     if owner:
         where.append(owner_predicate("e.conversation_id"))
@@ -892,10 +894,10 @@ def fetch_tool_tags_by_prefix(
 
     return conn.execute(
         f"""
-        SELECT t.name, COUNT(tct.id) as count
+        SELECT t.name, COUNT(ta.id) as count
         FROM tags t
-        JOIN tool_call_tags tct ON tct.tag_id = t.id
-        JOIN events e ON e.id = tct.tool_call_id
+        JOIN tag_assignments ta ON ta.tag_id = t.id
+        JOIN events e ON e.id = ta.target_id
         WHERE {' AND '.join(where)}
         GROUP BY t.id
         ORDER BY count DESC
@@ -913,7 +915,7 @@ def fetch_tool_tags_by_workspace(
     """Fetch per-workspace tool tag usage counts."""
     if owner and not has_conversation_owners_table(conn):
         return []
-    where = ["t.name LIKE ?"]
+    where = ["t.name LIKE ?", "ta.target_kind = 'tool_call'"]
     params: list[object] = [f"{prefix}%"]
     if owner:
         where.append(owner_predicate("e.conversation_id"))
@@ -924,10 +926,10 @@ def fetch_tool_tags_by_workspace(
         SELECT
             COALESCE(w.path, '(no workspace)') as workspace,
             t.name as tag,
-            COUNT(tct.id) as count
-        FROM tool_call_tags tct
-        JOIN tags t ON t.id = tct.tag_id
-        JOIN events e ON e.id = tct.tool_call_id
+            COUNT(ta.id) as count
+        FROM tag_assignments ta
+        JOIN tags t ON t.id = ta.tag_id
+        JOIN events e ON e.id = ta.target_id
         JOIN conversations c ON c.id = e.conversation_id
         LEFT JOIN workspaces w ON w.id = c.workspace_id
         WHERE {' AND '.join(where)}

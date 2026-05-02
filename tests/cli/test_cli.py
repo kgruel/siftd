@@ -52,9 +52,9 @@ def test_tag_bulk_apply(test_db, capsys):
     # Verify all three tags are persisted
     conn = open_database(test_db)
     tags = conn.execute(
-        """SELECT t.name FROM conversation_tags ct
-           JOIN tags t ON t.id = ct.tag_id
-           WHERE ct.conversation_id = ?
+        """SELECT t.name FROM tag_assignments ta
+           JOIN tags t ON t.id = ta.tag_id
+           WHERE ta.target_kind = 'conversation' AND ta.target_id = ?
            ORDER BY t.name""",
         (conv_id,),
     ).fetchall()
@@ -83,13 +83,82 @@ def test_tag_bulk_remove(test_db, capsys):
     # Only beta should remain
     conn = open_database(test_db)
     tags = conn.execute(
-        """SELECT t.name FROM conversation_tags ct
-           JOIN tags t ON t.id = ct.tag_id
-           WHERE ct.conversation_id = ?""",
+        """SELECT t.name FROM tag_assignments ta
+           JOIN tags t ON t.id = ta.tag_id
+           WHERE ta.target_kind = 'conversation' AND ta.target_id = ?""",
         (conv_id,),
     ).fetchall()
     conn.close()
     assert [r["name"] for r in tags] == ["beta"]
+
+
+def test_tag_colon_path_prompt(test_db, capsys):
+    """siftd tag <conv>:prompt:1 <tag> tags the first prompt event."""
+    from siftd.storage.sqlite import open_database
+
+    conn = open_database(test_db)
+    conv_id = conn.execute("SELECT id FROM conversations ORDER BY started_at LIMIT 1").fetchone()["id"]
+    conn.close()
+
+    rc = main(["--db", str(test_db), "tag", f"{conv_id}:prompt:1", "colon:prompt-tag"])
+    assert rc == 0
+
+    captured = capsys.readouterr()
+    assert "Applied tag 'colon:prompt-tag'" in captured.out
+
+    conn = open_database(test_db)
+    row = conn.execute(
+        "SELECT ta.target_kind FROM tag_assignments ta "
+        "JOIN tags t ON t.id=ta.tag_id WHERE t.name='colon:prompt-tag'"
+    ).fetchone()
+    conn.close()
+    assert row is not None and row["target_kind"] == "prompt"
+
+
+def test_tag_colon_path_exchange(test_db, capsys):
+    """siftd tag <conv>:exchange:1 <tag> tags with target_kind='exchange'."""
+    from siftd.storage.sqlite import open_database
+
+    conn = open_database(test_db)
+    conv_id = conn.execute("SELECT id FROM conversations ORDER BY started_at LIMIT 1").fetchone()["id"]
+    conn.close()
+
+    rc = main(["--db", str(test_db), "tag", f"{conv_id}:exchange:1", "colon:exchange-tag"])
+    assert rc == 0
+
+    conn = open_database(test_db)
+    row = conn.execute(
+        "SELECT ta.target_kind FROM tag_assignments ta "
+        "JOIN tags t ON t.id=ta.tag_id WHERE t.name='colon:exchange-tag'"
+    ).fetchone()
+    conn.close()
+    assert row is not None and row["target_kind"] == "exchange"
+
+
+def test_tag_colon_path_invalid_kind(test_db, capsys):
+    """siftd tag <conv>:badkind:1 <tag> prints error and exits 1."""
+    from siftd.storage.sqlite import open_database
+
+    conn = open_database(test_db)
+    conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+    conn.close()
+
+    rc = main(["--db", str(test_db), "tag", f"{conv_id}:badkind:1", "some-tag"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "Unknown target kind" in captured.out or "Unknown target kind" in captured.err
+
+
+def test_tag_colon_path_out_of_range(test_db, capsys):
+    """siftd tag <conv>:prompt:999 <tag> prints error (out of range) and exits 1."""
+    from siftd.storage.sqlite import open_database
+
+    conn = open_database(test_db)
+    conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+    conn.close()
+
+    rc = main(["--db", str(test_db), "tag", f"{conv_id}:prompt:999", "some-tag"])
+    assert rc == 1
 
 
 class TestIngestCommand:

@@ -2236,6 +2236,18 @@ def delete_conversation(conn: sqlite3.Connection, conversation_id: str) -> None:
         "DELETE FROM content_fts WHERE conversation_id = ?", (conversation_id,)
     )
 
+    # tag_assignments has no FK cascade to conversations or events; must delete explicitly
+    conn.execute(
+        "DELETE FROM tag_assignments WHERE target_kind = 'conversation' AND target_id = ?",
+        (conversation_id,),
+    )
+    conn.execute(
+        "DELETE FROM tag_assignments "
+        "WHERE target_kind IN ('prompt', 'response', 'tool_call', 'exchange') "
+        "AND target_id IN (SELECT id FROM events WHERE conversation_id = ?)",
+        (conversation_id,),
+    )
+
     # Delete conversation - CASCADE handles all child tables
     conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
 

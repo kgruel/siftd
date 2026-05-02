@@ -100,8 +100,9 @@ class WhereBuilder:
             self.params.append(val)
         clause = " OR ".join(parts)
         self.conditions.append(
-            f"c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
-            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {clause})"
+            f"c.id IN (SELECT ta.target_id FROM tag_assignments ta"
+            f" JOIN tags tg ON tg.id = ta.tag_id"
+            f" WHERE ta.target_kind='conversation' AND ({clause}))"
         )
 
     def tags_all(self, tags: list[str] | None) -> None:
@@ -111,8 +112,9 @@ class WhereBuilder:
         for t in tags:
             op, val = tag_condition(t)
             self.conditions.append(
-                f"c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
-                f" JOIN tags tg ON tg.id = ct.tag_id WHERE {op})"
+                f"c.id IN (SELECT ta.target_id FROM tag_assignments ta"
+                f" JOIN tags tg ON tg.id = ta.tag_id"
+                f" WHERE ta.target_kind='conversation' AND {op})"
             )
             self.params.append(val)
 
@@ -127,8 +129,9 @@ class WhereBuilder:
             self.params.append(val)
         clause = " OR ".join(parts)
         self.conditions.append(
-            f"c.id NOT IN (SELECT ct.conversation_id FROM conversation_tags ct"
-            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {clause})"
+            f"c.id NOT IN (SELECT ta.target_id FROM tag_assignments ta"
+            f" JOIN tags tg ON tg.id = ta.tag_id"
+            f" WHERE ta.target_kind='conversation' AND ({clause}))"
         )
 
     def joins_sql(self) -> str:

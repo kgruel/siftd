@@ -254,6 +254,22 @@ def merge_duplicate_workspaces(
                         VALUES (?, ?, ?, ?)
                     """, (_ulid(), keeper_id, tag_row["tag_id"], now))
 
+                # Migrate tag_assignments (polymorphic) — no FK cascade to workspaces, must re-point explicitly
+                cur2 = conn.execute(
+                    "SELECT tag_id, applied_at FROM tag_assignments "
+                    "WHERE target_kind = 'workspace' AND target_id = ?",
+                    (other_id,)
+                )
+                for ta_row in cur2.fetchall():
+                    conn.execute("""
+                        INSERT OR IGNORE INTO tag_assignments (id, target_kind, target_id, tag_id, applied_at)
+                        VALUES (?, 'workspace', ?, ?, ?)
+                    """, (_ulid(), keeper_id, ta_row["tag_id"], ta_row["applied_at"]))
+                conn.execute(
+                    "DELETE FROM tag_assignments WHERE target_kind = 'workspace' AND target_id = ?",
+                    (other_id,)
+                )
+
                 # Delete the duplicate workspace (will cascade-delete its workspace_tags)
                 conn.execute("DELETE FROM workspaces WHERE id = ?", (other_id,))
 

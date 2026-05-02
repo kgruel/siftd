@@ -41,7 +41,7 @@ def test_tags():
         conversation_count=1,
         workspace_count=1,
         tool_call_count=0,
-        prompt_count=2,
+        exchange_count=2,
     )
     payload = render_tags([t], _F)["tags"][0]
     assert payload["name"] == "b"

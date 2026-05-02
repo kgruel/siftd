@@ -805,11 +805,11 @@ def _apply_pending_tags(
             # Look up the prompt at exchange_index
             prompt_id = _get_prompt_by_index(conn, conversation_id, pt.exchange_index)
             if prompt_id:
-                result = apply_tag(conn, "prompt", prompt_id, tag_id)
+                result = apply_tag(conn, "exchange", prompt_id, tag_id)
                 if result:
                     applied += 1
                     logger.debug(
-                        f"Applied tag '{pt.tag_name}' to prompt {prompt_id[:12]} "
+                        f"Applied tag '{pt.tag_name}' to exchange {prompt_id[:12]} "
                         f"(exchange {pt.exchange_index})"
                     )
             else:
@@ -830,7 +830,7 @@ def _get_prompt_by_index(
     conversation_id: str,
     exchange_index: int | None,
 ) -> str | None:
-    """Get the prompt ID at a specific exchange index (0-based).
+    """Get the prompt ID at a specific exchange index (1-based).
 
     Returns None if index is out of range or None.
     """
@@ -841,10 +841,10 @@ def _get_prompt_by_index(
         """
         SELECT id FROM events
         WHERE kind = 'prompt' AND conversation_id = ?
-        ORDER BY timestamp
+        ORDER BY timestamp, id
         LIMIT 1 OFFSET ?
         """,
-        (conversation_id, exchange_index),
+        (conversation_id, exchange_index - 1),
     )
     row = cur.fetchone()
     return row["id"] if row else None

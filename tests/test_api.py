@@ -646,9 +646,9 @@ class TestIngestTimeShellTagging:
 
         cur = conn.execute("""
             SELECT t.name
-            FROM tool_call_tags tct
-            JOIN tags t ON t.id = tct.tag_id
-            JOIN tool_calls tc ON tc.id = tct.tool_call_id
+            FROM tag_assignments ta
+            JOIN tags t ON t.id = ta.tag_id
+            WHERE ta.target_kind = 'tool_call'
         """)
         tags = [row["name"] for row in cur.fetchall()]
         conn.close()
@@ -679,7 +679,7 @@ class TestIngestTimeShellTagging:
 
         store_conversation(conn, conversation, commit=True)
 
-        cur = conn.execute("SELECT COUNT(*) as cnt FROM tool_call_tags")
+        cur = conn.execute("SELECT COUNT(*) as cnt FROM tag_assignments WHERE target_kind='tool_call'")
         count = cur.fetchone()["cnt"]
         conn.close()
 
