@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Polymorphic storage refactor (schema v3 → v7)** — Four parallel storage forks (events: `prompts`/`responses`/`tool_calls`; content: `prompt_content`/`response_content`; four `*_attributes` tables; four `*_tags` tables) dissolved into a unified polymorphic schema: `events` + sparse `event_response`/`event_tool_call`/`event_content` extensions + polymorphic `attributes` (target_kind, target_id) + `tag_assignments` (target_kind, target_id). Aggregations (exchange, turn) are query-time `parent_id` walks, never tables.
+  - **Migration runs once on first open after upgrade.** Pre-migration backup via SQLite online backup API. Versions v4 (events schema), v5 (FTS5 simplification), v6 (legacy table drops + blob preservation), v7 (pending_tags exchange_index alignment).
+  - **Granular tagging via colon-paths** — `siftd tag <conv>:<kind>:<n>` targets a specific prompt, response, tool_call, or exchange (1-indexed, deterministic ordering by `timestamp, id`). `<kind>` ∈ `{prompt, response, tool_call, exchange}`.
+  - **Thinking blocks now FTS-searchable** — Live-write + migration + rebuild use uniform `$.text IS NOT NULL` filter; thinking content surfaces in `siftd query -s` results.
+  - **`list_tags` returns `prompt_count` + `response_count` + `exchange_count`** alongside aggregate `usage_count`. Per-target-kind breakdown for tag inspection.
+  - **Polymorphic cleanup triggers** — Cascade-orphan triggers on `events`, `workspaces`, `conversations` automatically clean orphaned `attributes` and `tag_assignments` rows. Replaces explicit cleanup calls.
+  - **`siftd slice` opens source read-only** — Refuses with clear error if source `user_version < SCHEMA_VERSION` (no auto-upgrade, no backup file leakage).
+
 - **Schema v3: `content_blobs.ref_count` integrity** — Column now carries `NOT NULL DEFAULT 1 CHECK (ref_count >= 0)`. `release_content()` clamps via `MAX(ref_count - 1, 0)` and the delete trigger uses `<= 0` consistently. Migration garbage-collects any legacy `ref_count <= 0` rows (nulling dangling `tool_calls.result_hash` references first) before recreating the table with the new constraint; also patches the old delete trigger in-place for existing databases. Schema version bumped to 3.
 - **Hash-collision detection (fail-closed)** — `store_content()` and `migrate_existing_results()` now verify existing blob content before reusing a hash. If two distinct content values produce the same SHA256 digest, a `BlobCollisionError` is raised instead of silently corrupting the stored blob.
 - **`verify_migration` integrity report** — Two new keys: `ref_count_mismatches` (blobs where stored `ref_count` diverges from actual `tool_calls` reference count) and `negative_ref_counts` (pre-migration legacy corruption diagnostic; reports 0 on fully migrated databases).
