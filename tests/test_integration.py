@@ -255,7 +255,7 @@ class TestIngestEdgeCases:
         # Conversation and tag preserved
         assert updated_info["conversation_id"] == conv_id
         tag_row = conn.execute(
-            "SELECT 1 FROM conversation_tags WHERE conversation_id = ? AND tag_id = ?",
+            "SELECT 1 FROM tag_assignments WHERE target_kind='conversation' AND target_id = ? AND tag_id = ?",
             (conv_id, tag_id),
         ).fetchone()
         assert tag_row is not None
@@ -496,12 +496,12 @@ class TestCascadeDelete:
 
         # Verify data exists
         assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM prompt_content").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM response_content").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM conversation_tags").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='prompt'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='response'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='tool_call'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM event_content WHERE event_id IN (SELECT id FROM events WHERE kind='prompt')").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM event_content WHERE event_id IN (SELECT id FROM events WHERE kind='response')").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='conversation'").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM ingested_files").fetchone()[0] == 1
 
         # Delete the conversation
@@ -510,12 +510,11 @@ class TestCascadeDelete:
 
         # All child records should be gone
         assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM prompt_content").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM response_content").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM conversation_tags").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='prompt'").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='response'").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='tool_call'").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM event_content").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='conversation'").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM ingested_files").fetchone()[0] == 0
 
         # FTS should also be cleaned up
@@ -540,7 +539,7 @@ class TestCascadeDelete:
 
         # Verify both exist
         assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 2
-        assert conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='prompt'").fetchone()[0] == 2
 
         # Delete first conversation
         delete_conversation(conn, conv1_id)
@@ -548,7 +547,7 @@ class TestCascadeDelete:
 
         # Second should still exist
         assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='prompt'").fetchone()[0] == 1
         remaining = conn.execute("SELECT id FROM conversations").fetchone()[0]
         assert remaining == conv2_id
 
@@ -576,36 +575,33 @@ class TestCascadeDelete:
         conv_id = store_conversation(conn, conversation, commit=True)
 
         # Verify data exists
-        assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='tool_call'").fetchone()[0] == 1
 
         # Direct SQL delete (bypassing delete_conversation function)
         conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
         conn.commit()
 
         # CASCADE should have cleaned up children
-        assert conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='prompt'").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='response'").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='tool_call'").fetchone()[0] == 0
 
         conn.close()
 
 
 class TestEnsureTablesCascade:
-    """Test that ensure_* functions create tables with proper ON DELETE CASCADE.
+    """Test that tag_assignments CASCADE correctly with events-based schema.
 
-    This tests the upgrade path where tables are created via ensure_* functions
-    rather than via schema.sql. The ensure_* functions must define CASCADE
-    constraints that match schema.sql.
+    Verifies that tag_assignments rows are removed when their referenced
+    tool_call events are deleted (via conversation delete), and that
+    tag_assignments rows cascade when a tag is deleted.
     """
 
     def test_ensure_tool_call_tags_has_cascade(self, tmp_path):
-        """tool_call_tags created via ensure_* cascades on tool_call deletion.
+        """tag_assignments cascade on conversation deletion (events-based schema).
 
-        Simulates the upgrade path:
-        1. DB exists without tool_call_tags table
-        2. ensure_tool_call_tags_table() creates it
-        3. Data inserted, then parent deleted
-        4. CASCADE should remove child records without FK error
+        Verifies that when a conversation is deleted, tag_assignments for its
+        tool_call events are cleaned up, and tool_call events are gone.
         """
         from siftd.storage.sqlite import (
             get_or_create_harness,
@@ -645,28 +641,35 @@ class TestEnsureTablesCascade:
             '{"command": "ls"}', '{"output": "..."}', "success", "2024-01-01T00:00:02Z",
         )
 
-        # Apply tag to tool_call (uses tool_call_tags table)
+        # Apply tag to tool_call (writes to tag_assignments)
         apply_tag(conn, "tool_call", tool_call_id, tag_id)
         conn.commit()
 
-        # Verify tool_call_tag exists
-        assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 1
+        # Verify tag_assignment exists
+        assert conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'"
+        ).fetchone()[0] == 1
 
-        # Delete the conversation (should cascade to tool_calls → tool_call_tags)
-        conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+        # Delete the conversation via delete_conversation (explicitly cleans tag_assignments)
+        from siftd.storage.sqlite import delete_conversation
+        delete_conversation(conn, conv_id)
         conn.commit()
 
-        # tool_call_tags should be gone via CASCADE, no FK error
-        assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 0
+        # tag_assignments cleaned up, tool_call events gone via cascade
+        assert conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'"
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM events WHERE kind='tool_call'"
+        ).fetchone()[0] == 0
 
-        # Tag itself should still exist (only junction record removed)
+        # Tag itself should still exist (only assignment record removed)
         assert conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0] == 1
 
         conn.close()
 
     def test_ensure_tool_call_tags_cascades_on_tag_deletion(self, tmp_path):
-        """tool_call_tags created via ensure_* cascades on tag deletion."""
+        """tag_assignments cascade on tag deletion, tool_call event remains."""
         from siftd.storage.sqlite import (
             get_or_create_harness,
             get_or_create_model,
@@ -707,14 +710,21 @@ class TestEnsureTablesCascade:
         apply_tag(conn, "tool_call", tool_call_id, tag_id)
         conn.commit()
 
-        assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 1
+        # tag_assignments has the assignment
+        assert conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'"
+        ).fetchone()[0] == 1
 
-        # Delete the tag (should cascade to tool_call_tags)
+        # Delete the tag — tag_assignments.tag_id has ON DELETE CASCADE
         conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
         conn.commit()
 
-        # tool_call_tags junction should be gone, tool_call remains
-        assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
+        # tag_assignments row should be gone via CASCADE, tool_call event remains
+        assert conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'"
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM events WHERE kind='tool_call'"
+        ).fetchone()[0] == 1
 
         conn.close()

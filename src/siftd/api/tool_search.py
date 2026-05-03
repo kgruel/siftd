@@ -144,10 +144,12 @@ def search_tool_calls(
 
 
 def _needs_rebuild(conn: sqlite3.Connection) -> bool:
-    """Check if the projection is missing or behind tool_calls."""
+    """Check if the projection is missing or behind event_tool_call."""
     try:
         ts_count = conn.execute("SELECT COUNT(*) FROM tool_search").fetchone()[0]
-        tc_count = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
+        tc_count = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE kind = 'tool_call'"
+        ).fetchone()[0]
         return ts_count < tc_count
     except sqlite3.OperationalError:
         return True  # tables missing
@@ -163,9 +165,10 @@ def _search_tool_calls_impl(
     base_from = (
         " FROM tool_search ts"
         " LEFT JOIN conversations c ON c.id = ts.conversation_id"
-        " LEFT JOIN responses r ON r.id = ts.response_id"
-        " LEFT JOIN models m ON m.id = r.model_id"
-        " LEFT JOIN providers p ON p.id = r.provider_id"
+        " LEFT JOIN events e_r ON e_r.id = ts.response_id AND e_r.kind = 'response'"
+        " LEFT JOIN event_response er ON er.event_id = e_r.id"
+        " LEFT JOIN models m ON m.id = er.model_id"
+        " LEFT JOIN providers p ON p.id = er.provider_id"
         " LEFT JOIN harnesses h ON h.id = c.harness_id"
     )
 
@@ -210,9 +213,10 @@ def _search_tool_calls_impl(
             " FROM tool_search_fts"
             " JOIN tool_search ts ON ts.rowid = tool_search_fts.rowid"
             " LEFT JOIN conversations c ON c.id = ts.conversation_id"
-            " LEFT JOIN responses r ON r.id = ts.response_id"
-            " LEFT JOIN models m ON m.id = r.model_id"
-            " LEFT JOIN providers p ON p.id = r.provider_id"
+            " LEFT JOIN events e_r ON e_r.id = ts.response_id AND e_r.kind = 'response'"
+            " LEFT JOIN event_response er ON er.event_id = e_r.id"
+            " LEFT JOIN models m ON m.id = er.model_id"
+            " LEFT JOIN providers p ON p.id = er.provider_id"
             " LEFT JOIN harnesses h ON h.id = c.harness_id"
             " WHERE tool_search_fts MATCH ?"
         )
@@ -359,8 +363,9 @@ def _add_conversation_tags_any(where: list[str], params: list[object], tags: lis
         params.append(val)
     clause = " OR ".join(parts)
     where.append(
-        "ts.conversation_id IN (SELECT ct.conversation_id FROM conversation_tags ct"
-        f" JOIN tags tg ON tg.id = ct.tag_id WHERE {clause})"
+        "ts.conversation_id IN (SELECT ta.target_id FROM tag_assignments ta"
+        " JOIN tags tg ON tg.id = ta.tag_id"
+        f" WHERE ta.target_kind = 'conversation' AND ({clause}))"
     )
 
 
@@ -370,8 +375,9 @@ def _add_conversation_tags_all(where: list[str], params: list[object], tags: lis
     for tag in tags:
         op, val = _tag_condition(tag)
         where.append(
-            "ts.conversation_id IN (SELECT ct.conversation_id FROM conversation_tags ct"
-            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {op})"
+            "ts.conversation_id IN (SELECT ta.target_id FROM tag_assignments ta"
+            " JOIN tags tg ON tg.id = ta.tag_id"
+            f" WHERE ta.target_kind = 'conversation' AND {op})"
         )
         params.append(val)
 
@@ -386,8 +392,9 @@ def _add_conversation_tags_none(where: list[str], params: list[object], tags: li
         params.append(val)
     clause = " OR ".join(parts)
     where.append(
-        "ts.conversation_id NOT IN (SELECT ct.conversation_id FROM conversation_tags ct"
-        f" JOIN tags tg ON tg.id = ct.tag_id WHERE {clause})"
+        "ts.conversation_id NOT IN (SELECT ta.target_id FROM tag_assignments ta"
+        " JOIN tags tg ON tg.id = ta.tag_id"
+        f" WHERE ta.target_kind = 'conversation' AND ({clause}))"
     )
 
 
@@ -410,6 +417,7 @@ def _add_tool_call_tags(where: list[str], params: list[object], tags: list[str] 
         params.append(val)
     clause = " OR ".join(parts)
     where.append(
-        "ts.tool_call_id IN (SELECT tct.tool_call_id FROM tool_call_tags tct"
-        f" JOIN tags tg ON tg.id = tct.tag_id WHERE {clause})"
+        "ts.tool_call_id IN (SELECT ta.target_id FROM tag_assignments ta"
+        " JOIN tags tg ON tg.id = ta.tag_id"
+        f" WHERE ta.target_kind = 'tool_call' AND ({clause}))"
     )

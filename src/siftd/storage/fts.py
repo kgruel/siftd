@@ -69,9 +69,9 @@ def ensure_fts_table(conn: sqlite3.Connection) -> None:
     expected = """
         CREATE VIRTUAL TABLE content_fts USING fts5(
             text_content,
-            content_id UNINDEXED,
-            side UNINDEXED,
-            conversation_id UNINDEXED,
+            event_content_id UNINDEXED,
+            event_id         UNINDEXED,
+            conversation_id  UNINDEXED,
             tokenize='porter unicode61 remove_diacritics 1'
         )
     """
@@ -94,41 +94,29 @@ def ensure_fts_table(conn: sqlite3.Connection) -> None:
 
 
 def rebuild_fts_index(conn: sqlite3.Connection, *, commit: bool = False) -> None:
-    """Drop and rebuild the FTS index from all text content blocks.
+    """Drop and rebuild the FTS index from all event_content blocks.
 
-    Reads prompt_content and response_content where block_type='text',
-    extracts the text from JSON content, and populates content_fts.
+    Indexes all event_content rows that have indexable text ($.text IS NOT NULL),
+    which includes text and thinking block types. Populates content_fts.
     """
+    # event_content may not exist yet when called from ensure_fts_table before migration 4 runs
+    if not conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='event_content'"
+    ).fetchone():
+        return
     conn.execute("DELETE FROM content_fts")
 
-    # Index prompt text blocks
     conn.execute("""
-        INSERT INTO content_fts (text_content, content_id, side, conversation_id)
+        INSERT INTO content_fts (text_content, event_content_id, event_id, conversation_id)
         SELECT
-            json_extract(pc.content, '$.text'),
-            pc.id,
-            'prompt',
-            p.conversation_id
-        FROM prompt_content pc
-        JOIN prompts p ON p.id = pc.prompt_id
-        WHERE pc.block_type = 'text'
-          AND json_valid(pc.content)
-          AND json_extract(pc.content, '$.text') IS NOT NULL
-    """)
-
-    # Index response text blocks
-    conn.execute("""
-        INSERT INTO content_fts (text_content, content_id, side, conversation_id)
-        SELECT
-            json_extract(rc.content, '$.text'),
-            rc.id,
-            'response',
-            r.conversation_id
-        FROM response_content rc
-        JOIN responses r ON r.id = rc.response_id
-        WHERE rc.block_type = 'text'
-          AND json_valid(rc.content)
-          AND json_extract(rc.content, '$.text') IS NOT NULL
+            json_extract(ec.content, '$.text'),
+            ec.id,
+            ec.event_id,
+            e.conversation_id
+        FROM event_content ec
+        JOIN events e ON e.id = ec.event_id
+        WHERE json_valid(ec.content)
+          AND json_extract(ec.content, '$.text') IS NOT NULL
     """)
 
     if commit:
@@ -136,57 +124,46 @@ def rebuild_fts_index(conn: sqlite3.Connection, *, commit: bool = False) -> None
 
 
 def get_fts_sync_status(conn: sqlite3.Connection) -> dict:
-    """Detect FTS5 index sync issues with content tables.
+    """Detect FTS5 index sync issues with event_content.
 
-    Returns dict with keys: orphaned_count, missing_prompt_count,
-    missing_response_count. All zeros if FTS table doesn't exist.
+    Returns dict with keys: orphaned_count, missing_count.
+    All zeros if FTS table doesn't exist.
     """
     row = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts'"
     ).fetchone()
     if not row:
-        return {"orphaned_count": 0, "missing_prompt_count": 0, "missing_response_count": 0}
+        return {"orphaned_count": 0, "missing_count": 0}
 
     orphaned_count = conn.execute("""
         SELECT COUNT(*) FROM content_fts
-        WHERE content_id NOT IN (SELECT id FROM prompt_content)
-          AND content_id NOT IN (SELECT id FROM response_content)
+        WHERE event_content_id NOT IN (SELECT id FROM event_content)
     """).fetchone()[0]
 
-    missing_prompt_count = conn.execute("""
-        SELECT COUNT(*) FROM prompt_content pc
-        WHERE pc.block_type = 'text'
-          AND json_valid(pc.content)
-          AND json_extract(pc.content, '$.text') IS NOT NULL
-          AND pc.id NOT IN (SELECT content_id FROM content_fts WHERE side = 'prompt')
-    """).fetchone()[0]
-
-    missing_response_count = conn.execute("""
-        SELECT COUNT(*) FROM response_content rc
-        WHERE rc.block_type = 'text'
-          AND json_valid(rc.content)
-          AND json_extract(rc.content, '$.text') IS NOT NULL
-          AND rc.id NOT IN (SELECT content_id FROM content_fts WHERE side = 'response')
+    missing_count = conn.execute("""
+        SELECT COUNT(*) FROM event_content ec
+        WHERE json_valid(ec.content)
+          AND json_extract(ec.content, '$.text') IS NOT NULL
+          AND ec.id NOT IN (SELECT event_content_id FROM content_fts)
     """).fetchone()[0]
 
     return {
         "orphaned_count": orphaned_count,
-        "missing_prompt_count": missing_prompt_count,
-        "missing_response_count": missing_response_count,
+        "missing_count": missing_count,
     }
 
 
 def insert_fts_content(
     conn: sqlite3.Connection,
-    content_id: str,
-    side: str,
+    event_content_id: str,
+    event_id: str,
     conversation_id: str,
     text: str,
 ) -> None:
     """Insert a single text entry into the FTS index."""
     conn.execute(
-        "INSERT INTO content_fts (text_content, content_id, side, conversation_id) VALUES (?, ?, ?, ?)",
-        (text, content_id, side, conversation_id),
+        "INSERT INTO content_fts (text_content, event_content_id, event_id, conversation_id) VALUES (?, ?, ?, ?)",
+        (text, event_content_id, event_id, conversation_id),
     )
 
 
@@ -199,7 +176,7 @@ def search_content(
 ) -> list[dict]:
     """Search text content using FTS5 MATCH.
 
-    Returns list of dicts with: conversation_id, side, snippet, rank.
+    Returns list of dicts with: conversation_id, kind, snippet, rank.
     """
     sanitized = sanitize_fts5_query(query, raw=raw_fts, operator="and")
     if sanitized.fts_query is None:
@@ -207,13 +184,14 @@ def search_content(
     cur = conn.execute(
         """
         SELECT
-            conversation_id,
-            side,
+            content_fts.conversation_id,
+            e.kind,
             snippet(content_fts, 0, '>>>', '<<<', '...', 64) as snippet,
-            rank
+            content_fts.rank
         FROM content_fts
+        JOIN events e ON e.id = content_fts.event_id
         WHERE content_fts MATCH ?
-        ORDER BY rank
+        ORDER BY content_fts.rank
         LIMIT ?
         """,
         (sanitized.fts_query, limit),
@@ -221,7 +199,7 @@ def search_content(
     return [
         {
             "conversation_id": row["conversation_id"],
-            "side": row["side"],
+            "kind": row["kind"],
             "snippet": row["snippet"],
             "rank": row["rank"],
         }
@@ -342,13 +320,14 @@ def fts5_best_hit_for_conversation(
     cur = conn.execute(
         """
         SELECT
-            side,
+            e.kind,
             snippet(content_fts, 0, '>>>', '<<<', '...', 64) as snippet,
-            rank
+            content_fts.rank
         FROM content_fts
+        JOIN events e ON e.id = content_fts.event_id
         WHERE content_fts MATCH ?
-          AND conversation_id = ?
-        ORDER BY rank
+          AND content_fts.conversation_id = ?
+        ORDER BY content_fts.rank
         LIMIT 1
         """,
         (fts_query, conversation_id),
@@ -356,4 +335,4 @@ def fts5_best_hit_for_conversation(
     row = cur.fetchone()
     if not row:
         return None
-    return {"side": row["side"], "snippet": row["snippet"], "rank": row["rank"]}
+    return {"kind": row["kind"], "snippet": row["snippet"], "rank": row["rank"]}

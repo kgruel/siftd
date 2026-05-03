@@ -15,9 +15,9 @@ def ensure_tool_search_tables(conn: sqlite3.Connection, *, commit: bool = False)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS tool_search (
-            tool_call_id TEXT PRIMARY KEY REFERENCES tool_calls(id) ON DELETE CASCADE,
+            tool_call_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
             conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-            response_id TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+            response_id TEXT,
             timestamp TEXT,
             tool_name TEXT,
             tool_family TEXT,
@@ -87,22 +87,24 @@ def rebuild_tool_search_index(conn: sqlite3.Connection, *, commit: bool = False)
     rows = conn.execute(
         """
         SELECT
-            tc.id AS tool_call_id,
-            tc.conversation_id,
-            tc.response_id,
-            tc.timestamp,
-            tc.status,
-            tc.input AS input_json,
-            COALESCE(cb.content, tc.result) AS result_json,
+            e.id AS tool_call_id,
+            e.conversation_id,
+            e.parent_id AS response_id,
+            e.timestamp,
+            etc.status,
+            etc.input AS input_json,
+            cb.content AS result_json,
             t.name AS tool_name,
             t.description AS tool_description,
             w.path AS workspace_path
-        FROM tool_calls tc
-        LEFT JOIN tools t ON t.id = tc.tool_id
-        LEFT JOIN content_blobs cb ON cb.hash = tc.result_hash
-        LEFT JOIN conversations c ON c.id = tc.conversation_id
+        FROM events e
+        JOIN event_tool_call etc ON etc.event_id = e.id
+        LEFT JOIN tools t ON t.id = etc.tool_id
+        LEFT JOIN content_blobs cb ON cb.hash = etc.result_hash
+        LEFT JOIN conversations c ON c.id = e.conversation_id
         LEFT JOIN workspaces w ON w.id = c.workspace_id
-        ORDER BY tc.timestamp, tc.id
+        WHERE e.kind = 'tool_call'
+        ORDER BY e.timestamp, e.id
         """
     ).fetchall()
 

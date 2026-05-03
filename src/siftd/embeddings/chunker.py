@@ -305,20 +305,21 @@ def extract_tool_summary_chunks(
     import os
     from collections import defaultdict
 
-    where = ""
     params: tuple = ()
+    conv_filter = ""
     if conversation_ids:
         ph = ",".join("?" * len(conversation_ids))
-        where = f"WHERE tc.conversation_id IN ({ph})"
+        conv_filter = f" AND e.conversation_id IN ({ph})"
         params = tuple(conversation_ids)
 
     rows = main_conn.execute(
-        f"""SELECT tc.conversation_id, t.name AS tool_name, t.category,
-                   tc.input, tc.status
-            FROM tool_calls tc
-            LEFT JOIN tools t ON tc.tool_id = t.id
-            {where}
-            ORDER BY tc.conversation_id, tc.timestamp""",
+        f"""SELECT e.conversation_id, t.name AS tool_name, t.category,
+                   etc.input, etc.status
+            FROM events e
+            JOIN event_tool_call etc ON etc.event_id = e.id
+            LEFT JOIN tools t ON t.id = etc.tool_id
+            WHERE e.kind = 'tool_call'{conv_filter}
+            ORDER BY e.conversation_id, e.timestamp""",
         params,
     ).fetchall()
 

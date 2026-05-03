@@ -19,12 +19,21 @@ from pathlib import Path
 from siftd.domain import Conversation
 from siftd.ids import ulid as _ulid
 from siftd.model_names import parse_model_name
+from siftd.storage.attributes import set_attribute
+from siftd.storage.events import (
+    ensure_event_tool_call_triggers,
+    ensure_polymorphic_cleanup_triggers,
+    insert_event,
+    insert_event_content,
+    insert_event_response,
+    insert_event_tool_call,
+)
 from siftd.storage.fts import ensure_fts_table, insert_fts_content
-from siftd.storage.sessions import ensure_prompt_tags_table, ensure_session_tables
+from siftd.storage.sessions import ensure_session_tables
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 7
 
 # Registry of versioned migrations: version -> migration function.
 # Each function migrates the DB from version-1 to version.
@@ -86,12 +95,24 @@ def open_database(
         if is_new:
             schema = SCHEMA_PATH.read_text()
             conn.executescript(schema)
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")  # fresh DB IS at latest schema
             conn.commit()
 
         if not read_only:
             # Serialize concurrent migration startups: acquire write lock before
             # reading user_version or any migration metadata (R2 dispatch race).
             conn.execute(f"PRAGMA busy_timeout = {MIGRATION_BUSY_TIMEOUT_MS}")
+
+            # Peek user_version outside the write lock to determine whether a
+            # pre-migration backup is needed.  backup_database() opens its own
+            # source connection so it cannot run while BEGIN IMMEDIATE holds an
+            # exclusive lock on the same file.
+            _version_peek = conn.execute("PRAGMA user_version").fetchone()[0]
+            if not is_new and _version_peek < SCHEMA_VERSION:
+                from datetime import date as _date
+                _bak_name = f"{db_path.stem}.bak.{_date.today():%Y%m%d}.db"
+                backup_database(db_path, db_path.parent / _bak_name)
+
             # PRAGMA foreign_keys cannot be changed inside an active transaction
             # (SQLite silently ignores it). Migrations need FK OFF so that
             # DROP TABLE in _recreate_table_with_fks does not trigger ON DELETE
@@ -114,13 +135,9 @@ def open_database(
             ensure_fts_table(conn)
             ensure_pricing_table(conn)
             ensure_canonical_tools(conn)
-            ensure_tool_call_tags_table(conn)
             ensure_content_blobs_table(conn)
             ensure_session_tables(conn)
-            ensure_prompt_tags_table(conn)
             _ensure_git_remote_index(conn)
-            _ensure_tag_indexes(conn)
-            _ensure_response_attributes_key_index(conn)
             _ensure_conversation_stats_table(conn)
             ensure_conversation_owners_table(conn)
             ensure_sync_inbox_table(conn)
@@ -130,6 +147,12 @@ def open_database(
             for _v in range(version + 1, SCHEMA_VERSION + 1):
                 if _v in MIGRATIONS:
                     MIGRATIONS[_v](conn)
+
+            # Replace tr_tool_calls_* triggers with tr_event_tool_call_* on every
+            # write open so old DBs upgraded in-place get the new trigger names.
+            ensure_event_tool_call_triggers(conn)
+            # Ensure polymorphic cascade-cleanup triggers exist (idempotent).
+            ensure_polymorphic_cleanup_triggers(conn)
 
             # Stamp schema version after successful migrations
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -1025,6 +1048,15 @@ def _migrate_blob_integrity_v3(conn: sqlite3.Connection) -> None:
     Also fixes the delete trigger from `ref_count = 0` to `ref_count <= 0` for
     existing databases that have the old trigger from before this migration.
     """
+    # Add result_hash column to tool_calls if it exists and lacks the column.
+    # Moved here from ensure_content_blobs_table (slice 8 cleanup).
+    cur = conn.execute("PRAGMA table_info(tool_calls)")
+    tc_cols = {row[1] for row in cur.fetchall()}
+    if tc_cols and "result_hash" not in tc_cols:
+        conn.execute(
+            "ALTER TABLE tool_calls ADD COLUMN result_hash TEXT REFERENCES content_blobs(hash)"
+        )
+
     # Check whether content_blobs exists and already has the CHECK constraint
     # (fresh DBs created from the updated schema.sql have it already).
     ddl_row = conn.execute(
@@ -1088,41 +1120,504 @@ def _migrate_blob_integrity_v3(conn: sqlite3.Connection) -> None:
                 f"FK violations after blob integrity migration: {list(violations[:5])}"
             )
 
-    # Unconditionally drop+recreate both blob refcount triggers with the current
-    # clamped form. This covers three failure modes:
+    # Drop+recreate blob refcount triggers on tool_calls when the table exists.
+    # This covers three failure modes:
     # - cascade migration (v2) drops triggers via DROP TABLE tool_calls, so they
     #   may not exist at all when this migration runs
     # - pre-v3 delete trigger using `ref_count = 0` instead of `ref_count <= 0`
     # - pre-fix update trigger using unclamped `ref_count - 1` instead of MAX(...)
-    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
-    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_update_release_blob")
-    conn.execute("""
-        CREATE TRIGGER tr_tool_calls_delete_release_blob
-        AFTER DELETE ON tool_calls
-        FOR EACH ROW
-        WHEN OLD.result_hash IS NOT NULL
-        BEGIN
-            UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
-            DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
-        END
-    """)
-    conn.execute("""
-        CREATE TRIGGER tr_tool_calls_update_release_blob
-        AFTER UPDATE OF result_hash ON tool_calls
-        FOR EACH ROW
-        WHEN OLD.result_hash IS NOT NEW.result_hash
-        BEGIN
-            UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0)
-                WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
-            DELETE FROM content_blobs
-                WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
-            UPDATE content_blobs SET ref_count = ref_count + 1
-                WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
-        END
-    """)
+    # On v6+ DBs where tool_calls has been dropped, this block is skipped entirely.
+    _tc_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tool_calls'"
+    ).fetchone()
+    if _tc_exists:
+        conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
+        conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_update_release_blob")
+        conn.execute("""
+            CREATE TRIGGER tr_tool_calls_delete_release_blob
+            AFTER DELETE ON tool_calls
+            FOR EACH ROW
+            WHEN OLD.result_hash IS NOT NULL
+            BEGIN
+                UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
+                DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER tr_tool_calls_update_release_blob
+            AFTER UPDATE OF result_hash ON tool_calls
+            FOR EACH ROW
+            WHEN OLD.result_hash IS NOT NEW.result_hash
+            BEGIN
+                UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0)
+                    WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
+                DELETE FROM content_blobs
+                    WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
+                UPDATE content_blobs SET ref_count = ref_count + 1
+                    WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
+            END
+        """)
 
 
 MIGRATIONS[3] = _migrate_blob_integrity_v3
+
+
+# =============================================================================
+# Version-4 migration: polymorphic events schema
+# =============================================================================
+
+
+class MigrationAssertionError(RuntimeError):
+    """Raised when a post-backfill row-count assertion fails.
+
+    Propagates out of the migration function, through the runner, into
+    open_database()'s outer except block, which issues ROLLBACK.
+    """
+
+
+def _migrate_v4_polymorphic_schema(conn: sqlite3.Connection) -> None:
+    """Version-4 migration: create polymorphic events tables and backfill from old forks.
+
+    Creates events, event_response, event_tool_call, event_content, attributes,
+    and tag_assignments tables, then backfills data from the existing
+    prompts/responses/tool_calls/prompt_content/response_content/*_attributes/*_tags tables.
+
+    Old tables are NOT dropped here (slice 8 cleanup). Storage writers continue
+    writing to old tables until slices 2-5 move them.
+
+    Caller (open_database runner) owns the transaction — this function must not
+    call conn.commit(), conn.rollback(), or conn.execute("BEGIN").
+    """
+    # 1. Create new tables (IF NOT EXISTS — fresh DBs created from the updated
+    #    schema.sql already have them; existing DBs don't yet).
+    #    Use individual execute() calls — executescript() issues an implicit COMMIT
+    #    which would break the runner's outer BEGIN IMMEDIATE transaction.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS events (
+            id              TEXT PRIMARY KEY,
+            kind            TEXT NOT NULL,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            parent_id       TEXT REFERENCES events(id) ON DELETE CASCADE,
+            external_id     TEXT,
+            timestamp       TEXT NOT NULL,
+            UNIQUE (conversation_id, kind, external_id)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_events_conversation_kind ON events(conversation_id, kind)"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_parent ON events(parent_id)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS event_response (
+            event_id        TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+            model_id        TEXT REFERENCES models(id) ON DELETE SET NULL,
+            provider_id     TEXT REFERENCES providers(id) ON DELETE SET NULL,
+            input_tokens    INTEGER,
+            output_tokens   INTEGER
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS event_tool_call (
+            event_id        TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+            tool_id         TEXT REFERENCES tools(id) ON DELETE SET NULL,
+            input           TEXT,
+            result_hash     TEXT REFERENCES content_blobs(hash),
+            status          TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS event_content (
+            id              TEXT PRIMARY KEY,
+            event_id        TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+            block_index     INTEGER NOT NULL,
+            block_type      TEXT NOT NULL,
+            content         TEXT NOT NULL,
+            UNIQUE (event_id, block_index)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_event_content_event ON event_content(event_id)"
+    )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS attributes (
+            id              TEXT PRIMARY KEY,
+            target_kind     TEXT NOT NULL,
+            target_id       TEXT NOT NULL,
+            key             TEXT NOT NULL,
+            value           TEXT NOT NULL,
+            scope           TEXT,
+            UNIQUE (target_kind, target_id, key, scope)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_attributes_target ON attributes(target_kind, target_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_attributes_key"
+        " ON attributes(key, target_kind, target_id, value)"
+    )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tag_assignments (
+            id              TEXT PRIMARY KEY,
+            target_kind     TEXT NOT NULL,
+            target_id       TEXT NOT NULL,
+            tag_id          TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            applied_at      TEXT NOT NULL,
+            UNIQUE (target_kind, target_id, tag_id)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tag_assignments_target"
+        " ON tag_assignments(target_kind, target_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tag_assignments_tag ON tag_assignments(tag_id)"
+    )
+
+    # 2. Backfill events from prompts (kind='prompt', parent_id=NULL)
+    conn.execute("""
+        INSERT OR IGNORE INTO events (id, kind, conversation_id, parent_id, external_id, timestamp)
+        SELECT id, 'prompt', conversation_id, NULL, external_id, timestamp
+        FROM prompts
+    """)
+
+    # 3. Backfill events from responses (kind='response', parent_id=prompt_id)
+    conn.execute("""
+        INSERT OR IGNORE INTO events (id, kind, conversation_id, parent_id, external_id, timestamp)
+        SELECT id, 'response', conversation_id, prompt_id, external_id, timestamp
+        FROM responses
+    """)
+
+    # 3.5 Pre-pass: suffix duplicate tool_call external_ids within the same conversation.
+    #
+    # events has UNIQUE (conversation_id, kind, external_id). If two tool_calls rows in the
+    # same conversation share a non-NULL external_id, the backfill INSERT OR IGNORE would
+    # silently drop one of them — causing the post-backfill assertion to fail (count mismatch)
+    # and rolling back the whole migration.
+    #
+    # Fix: rewrite external_id in tool_calls to external_id || ':n' (rn=row number within
+    # the duplicate group) for every row beyond the first. This mutates the soon-to-be-dropped
+    # legacy table and is bounded by row count. The suffixed IDs are permanent post-migration.
+    conn.execute("""
+        UPDATE tool_calls
+        SET external_id = tool_calls.external_id || ':' || ranked.rn
+        FROM (
+            SELECT id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY conversation_id, external_id
+                       ORDER BY COALESCE(timestamp, ''), id
+                   ) AS rn
+            FROM tool_calls
+            WHERE external_id IS NOT NULL
+        ) AS ranked
+        WHERE tool_calls.id = ranked.id
+          AND ranked.rn > 1
+    """)
+
+    # 4. Backfill events from tool_calls (kind='tool_call', parent_id=response_id)
+    #    tool_calls.timestamp is nullable; use empty string as sentinel for NOT NULL.
+    conn.execute("""
+        INSERT OR IGNORE INTO events (id, kind, conversation_id, parent_id, external_id, timestamp)
+        SELECT id, 'tool_call', conversation_id, response_id, external_id,
+               COALESCE(timestamp, '')
+        FROM tool_calls
+    """)
+
+    # 5. Backfill sparse extensions
+    conn.execute("""
+        INSERT OR IGNORE INTO event_response (event_id, model_id, provider_id, input_tokens, output_tokens)
+        SELECT id, model_id, provider_id, input_tokens, output_tokens
+        FROM responses
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO event_tool_call (event_id, tool_id, input, result_hash, status)
+        SELECT id, tool_id, input, result_hash, status
+        FROM tool_calls
+    """)
+
+    # 6. Backfill content (IDs preserved from prompt_content / response_content)
+    conn.execute("""
+        INSERT OR IGNORE INTO event_content (id, event_id, block_index, block_type, content)
+        SELECT id, prompt_id, block_index, block_type, content
+        FROM prompt_content
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO event_content (id, event_id, block_index, block_type, content)
+        SELECT id, response_id, block_index, block_type, content
+        FROM response_content
+    """)
+
+    # 7. Backfill attributes from all four old tables
+    conn.execute("""
+        INSERT OR IGNORE INTO attributes (id, target_kind, target_id, key, value, scope)
+        SELECT id, 'conversation', conversation_id, key, value, scope
+        FROM conversation_attributes
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO attributes (id, target_kind, target_id, key, value, scope)
+        SELECT id, 'prompt', prompt_id, key, value, scope
+        FROM prompt_attributes
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO attributes (id, target_kind, target_id, key, value, scope)
+        SELECT id, 'response', response_id, key, value, scope
+        FROM response_attributes
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO attributes (id, target_kind, target_id, key, value, scope)
+        SELECT id, 'tool_call', tool_call_id, key, value, scope
+        FROM tool_call_attributes
+    """)
+
+    # 8. Backfill tag_assignments from old junction tables
+    conn.execute("""
+        INSERT OR IGNORE INTO tag_assignments (id, target_kind, target_id, tag_id, applied_at)
+        SELECT id, 'workspace', workspace_id, tag_id, applied_at
+        FROM workspace_tags
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO tag_assignments (id, target_kind, target_id, tag_id, applied_at)
+        SELECT id, 'conversation', conversation_id, tag_id, applied_at
+        FROM conversation_tags
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO tag_assignments (id, target_kind, target_id, tag_id, applied_at)
+        SELECT id, 'tool_call', tool_call_id, tag_id, applied_at
+        FROM tool_call_tags
+    """)
+
+    # prompt_tags is half-wired: present on any DB opened with current code, but
+    # the API never writes to it.  Guard against DBs that predate ensure_prompt_tags_table().
+    has_prompt_tags = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prompt_tags'"
+    ).fetchone() is not None
+    if has_prompt_tags:
+        conn.execute("""
+            INSERT OR IGNORE INTO tag_assignments (id, target_kind, target_id, tag_id, applied_at)
+            SELECT id, 'prompt', prompt_id, tag_id, applied_at
+            FROM prompt_tags
+        """)
+
+    # 9. Row-count assertions: mismatch raises MigrationAssertionError → caller rolls back.
+    def _count(q: str) -> int:
+        return conn.execute(q).fetchone()[0]
+
+    def _assert_eq(label: str, actual_q: str, expected: int) -> None:
+        actual = _count(actual_q)
+        if actual != expected:
+            raise MigrationAssertionError(
+                f"Migration v4 assertion failed — {label}: expected {expected}, got {actual}"
+            )
+
+    _assert_eq(
+        "events[prompt]",
+        "SELECT COUNT(*) FROM events WHERE kind='prompt'",
+        _count("SELECT COUNT(*) FROM prompts"),
+    )
+    _assert_eq(
+        "events[response]",
+        "SELECT COUNT(*) FROM events WHERE kind='response'",
+        _count("SELECT COUNT(*) FROM responses"),
+    )
+    _assert_eq(
+        "events[tool_call]",
+        "SELECT COUNT(*) FROM events WHERE kind='tool_call'",
+        _count("SELECT COUNT(*) FROM tool_calls"),
+    )
+    _assert_eq(
+        "event_response",
+        "SELECT COUNT(*) FROM event_response",
+        _count("SELECT COUNT(*) FROM responses"),
+    )
+    _assert_eq(
+        "event_tool_call",
+        "SELECT COUNT(*) FROM event_tool_call",
+        _count("SELECT COUNT(*) FROM tool_calls"),
+    )
+    _assert_eq(
+        "event_content",
+        "SELECT COUNT(*) FROM event_content",
+        _count("SELECT COUNT(*) FROM prompt_content") +
+        _count("SELECT COUNT(*) FROM response_content"),
+    )
+    _assert_eq(
+        "attributes",
+        "SELECT COUNT(*) FROM attributes",
+        _count("SELECT COUNT(*) FROM conversation_attributes") +
+        _count("SELECT COUNT(*) FROM prompt_attributes") +
+        _count("SELECT COUNT(*) FROM response_attributes") +
+        _count("SELECT COUNT(*) FROM tool_call_attributes"),
+    )
+    expected_tag_assignments = (
+        _count("SELECT COUNT(*) FROM workspace_tags") +
+        _count("SELECT COUNT(*) FROM conversation_tags") +
+        _count("SELECT COUNT(*) FROM tool_call_tags") +
+        (_count("SELECT COUNT(*) FROM prompt_tags") if has_prompt_tags else 0)
+    )
+    _assert_eq(
+        "tag_assignments",
+        "SELECT COUNT(*) FROM tag_assignments",
+        expected_tag_assignments,
+    )
+
+
+MIGRATIONS[4] = _migrate_v4_polymorphic_schema
+
+
+def _migrate_v5_fts_simplification(conn: sqlite3.Connection) -> None:
+    """Drop content_fts with old side column, recreate from event_content."""
+    conn.execute("DROP TABLE IF EXISTS content_fts")
+    conn.execute("""
+        CREATE VIRTUAL TABLE content_fts USING fts5(
+            text_content,
+            event_content_id UNINDEXED,
+            event_id         UNINDEXED,
+            conversation_id  UNINDEXED,
+            tokenize='porter unicode61 remove_diacritics 1'
+        )
+    """)
+    conn.execute("""
+        INSERT INTO content_fts (text_content, event_content_id, event_id, conversation_id)
+        SELECT
+            json_extract(ec.content, '$.text'),
+            ec.id,
+            ec.event_id,
+            e.conversation_id
+        FROM event_content ec
+        JOIN events e ON e.id = ec.event_id
+        WHERE json_valid(ec.content)
+          AND json_extract(ec.content, '$.text') IS NOT NULL
+    """)
+    fts_count = conn.execute("SELECT COUNT(*) FROM content_fts").fetchone()[0]
+    ec_count = conn.execute("""
+        SELECT COUNT(*) FROM event_content
+        WHERE json_valid(content)
+          AND json_extract(content, '$.text') IS NOT NULL
+    """).fetchone()[0]
+    if fts_count != ec_count:
+        raise RuntimeError(
+            f"FTS5 repopulation mismatch: {fts_count} FTS rows vs {ec_count} event_content rows"
+        )
+
+
+MIGRATIONS[5] = _migrate_v5_fts_simplification
+
+
+def _migrate_v6_drop_legacy_tables(conn: sqlite3.Connection) -> None:
+    """v6: Drop 13 legacy tables and heal content_blob ref_count."""
+    # Step 0: Inline blob migration for any tool_calls rows whose result TEXT was never
+    # migrated to content_blobs (migrate_blobs.py was a separate optional step pre-slice-8).
+    # Must run BEFORE the ref_count heal so the heal sees the newly-created blob rows.
+    has_tool_calls = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='tool_calls'"
+    ).fetchone()
+    if has_tool_calls:
+        unmigrated = conn.execute(
+            "SELECT id, result FROM tool_calls WHERE result IS NOT NULL AND result_hash IS NULL"
+        ).fetchall()
+        from datetime import UTC
+        from datetime import datetime as _datetime
+        now = _datetime.now(UTC).isoformat()
+        for row in unmigrated:
+            tool_call_id = row[0]
+            result_text = row[1]
+            blob_hash = hashlib.sha256(result_text.encode()).hexdigest()
+            conn.execute(
+                "INSERT OR IGNORE INTO content_blobs (hash, content, ref_count, created_at)"
+                " VALUES (?, ?, 0, ?)",
+                (blob_hash, result_text, now),
+            )
+            conn.execute(
+                "UPDATE tool_calls SET result_hash = ? WHERE id = ?",
+                (blob_hash, tool_call_id),
+            )
+            conn.execute(
+                "UPDATE event_tool_call SET result_hash = ? WHERE event_id = ?",
+                (blob_hash, tool_call_id),
+            )
+
+    # Step 1: Heal ref_count before any drops
+    conn.execute("""
+        UPDATE content_blobs
+        SET ref_count = COALESCE(
+            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
+        )
+        WHERE ref_count != COALESCE(
+            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
+        )
+    """)
+    conn.execute("DELETE FROM content_blobs WHERE ref_count = 0")
+
+    # Step 2: Drop old tables in child→parent order
+    conn.execute("PRAGMA foreign_keys = OFF")
+    for table in (
+        "tool_call_attributes",
+        "tool_call_tags",
+        "response_content",
+        "response_attributes",
+        "prompt_content",
+        "prompt_attributes",
+        "prompt_tags",
+        "conversation_attributes",
+        "conversation_tags",
+        "workspace_tags",
+        "tool_calls",
+        "responses",
+        "prompts",
+    ):
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
+MIGRATIONS[6] = _migrate_v6_drop_legacy_tables
+
+
+def _migrate_v7_pending_tags_exchange_index(conn: sqlite3.Connection) -> None:
+    """v7: Increment pending_tags.exchange_index by 1 (0-based → 1-based).
+
+    Slice 5 changed the exchange tagging API from 0-based to 1-based indices.
+    Any pending_tags rows written before that change carry 0-based indices and
+    must be incremented before the strict >= 1 validation in _get_prompt_by_index
+    can be relied upon.
+    """
+    # pending_tags may not exist on very old DBs that skipped ensure_session_tables;
+    # ensure it exists before touching it.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pending_tags (
+            id                 TEXT PRIMARY KEY,
+            harness_session_id TEXT NOT NULL,
+            tag_name           TEXT NOT NULL,
+            entity_type        TEXT NOT NULL DEFAULT 'conversation',
+            exchange_index     INTEGER,
+            created_at         TEXT NOT NULL
+        )
+    """)
+    before_count = conn.execute(
+        "SELECT COUNT(*) FROM pending_tags WHERE exchange_index IS NOT NULL"
+    ).fetchone()[0]
+
+    conn.execute(
+        "UPDATE pending_tags SET exchange_index = exchange_index + 1 WHERE exchange_index IS NOT NULL"
+    )
+
+    after_count = conn.execute(
+        "SELECT COUNT(*) FROM pending_tags WHERE exchange_index IS NOT NULL"
+    ).fetchone()[0]
+    if after_count != before_count:
+        raise RuntimeError(
+            f"Migration v7 assertion failed — pending_tags count changed: "
+            f"before={before_count}, after={after_count}"
+        )
+    invalid = conn.execute(
+        "SELECT COUNT(*) FROM pending_tags WHERE exchange_index IS NOT NULL AND exchange_index < 1"
+    ).fetchone()[0]
+    if invalid:
+        raise RuntimeError(
+            f"Migration v7 assertion failed — {invalid} rows still have exchange_index < 1 after increment"
+        )
+
+
+MIGRATIONS[7] = _migrate_v7_pending_tags_exchange_index
 
 
 # Known model prices (input_per_mtok, output_per_mtok) in USD per million tokens.
@@ -1170,19 +1665,6 @@ def ensure_pricing_table(conn: sqlite3.Connection) -> None:
         )
 
 
-def ensure_tool_call_tags_table(conn: sqlite3.Connection) -> None:
-    """Create the tool_call_tags table if it doesn't exist. Idempotent."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS tool_call_tags (
-            id              TEXT PRIMARY KEY,
-            tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
-            tag_id          TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-            applied_at      TEXT NOT NULL,
-            UNIQUE (tool_call_id, tag_id)
-        )
-    """)
-
-
 def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
     """Create content_blobs table and result_hash column if they don't exist. Idempotent."""
     # Create content_blobs table (with NOT NULL + CHECK added in schema v3).
@@ -1200,83 +1682,11 @@ def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_content_blobs_ref_count ON content_blobs(ref_count)"
     )
 
-    # Add result_hash column to tool_calls if it doesn't exist
-    cur = conn.execute("PRAGMA table_info(tool_calls)")
-    columns = {row[1] for row in cur.fetchall()}
-    if "result_hash" not in columns:
-        conn.execute(
-            "ALTER TABLE tool_calls ADD COLUMN result_hash TEXT REFERENCES content_blobs(hash)"
-        )
-
-    # Create trigger for ref_count cleanup on delete
-    cur = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='tr_tool_calls_delete_release_blob'"
-    )
-    if not cur.fetchone():
-        conn.execute("""
-            CREATE TRIGGER tr_tool_calls_delete_release_blob
-            AFTER DELETE ON tool_calls
-            FOR EACH ROW
-            WHEN OLD.result_hash IS NOT NULL
-            BEGIN
-                UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
-                DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
-            END
-        """)
-
-    # Create trigger for ref_count adjustment when result_hash changes
-    cur = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='tr_tool_calls_update_release_blob'"
-    )
-    if not cur.fetchone():
-        conn.execute("""
-            CREATE TRIGGER tr_tool_calls_update_release_blob
-            AFTER UPDATE OF result_hash ON tool_calls
-            FOR EACH ROW
-            WHEN OLD.result_hash IS NOT NEW.result_hash
-            BEGIN
-                UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0)
-                    WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
-                DELETE FROM content_blobs
-                    WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
-                UPDATE content_blobs SET ref_count = ref_count + 1
-                    WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
-            END
-        """)
-
 
 def _ensure_git_remote_index(conn: sqlite3.Connection) -> None:
     """Create index on workspaces.git_remote if it doesn't exist. Idempotent."""
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_workspaces_git_remote ON workspaces(git_remote)"
-    )
-
-
-def _ensure_tag_indexes(conn: sqlite3.Connection) -> None:
-    """Create tag_id indexes on tag junction tables. Idempotent.
-
-    Speeds up delete_tag() and list_tags() COUNT subqueries.
-    """
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_workspace_tags_tag ON workspace_tags(tag_id)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_conversation_tags_tag ON conversation_tags(tag_id)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_tool_call_tags_tag ON tool_call_tags(tag_id)"
-    )
-
-
-def _ensure_response_attributes_key_index(conn: sqlite3.Connection) -> None:
-    """Create covering index on response_attributes(key, response_id, value).
-
-    Eliminates full table scan in the cache_read_input_tokens subquery
-    used by list_conversations cost calculation.
-    """
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_response_attributes_key"
-        " ON response_attributes(key, response_id, value)"
     )
 
 
@@ -1669,19 +2079,21 @@ def insert_conversation(
     return ulid
 
 
+
+# =============================================================================
+# Compatibility shims (slice 2–3 transition; remove in slice 8)
+# These preserve old call-sites while data is now stored in events tables.
+# =============================================================================
+
 def insert_prompt(
     conn: sqlite3.Connection,
     conversation_id: str,
     external_id: str | None,
     timestamp: str,
 ) -> str:
-    """Insert prompt, return id (ULID)."""
-    ulid = _ulid()
-    conn.execute(
-        "INSERT INTO prompts (id, conversation_id, external_id, timestamp) VALUES (?, ?, ?, ?)",
-        (ulid, conversation_id, external_id, timestamp)
-    )
-    return ulid
+    uid = _ulid()
+    insert_event(conn, uid, "prompt", conversation_id, timestamp, external_id=external_id)
+    return uid
 
 
 def insert_response(
@@ -1695,15 +2107,10 @@ def insert_response(
     input_tokens: int | None = None,
     output_tokens: int | None = None,
 ) -> str:
-    """Insert response, return id (ULID)."""
-    ulid = _ulid()
-    conn.execute(
-        """INSERT INTO responses
-           (id, conversation_id, prompt_id, model_id, provider_id, external_id, timestamp, input_tokens, output_tokens)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (ulid, conversation_id, prompt_id, model_id, provider_id, external_id, timestamp, input_tokens, output_tokens)
-    )
-    return ulid
+    uid = _ulid()
+    insert_event(conn, uid, "response", conversation_id, timestamp, parent_id=prompt_id, external_id=external_id)
+    insert_event_response(conn, uid, model_id=model_id, provider_id=provider_id, input_tokens=input_tokens, output_tokens=output_tokens)
+    return uid
 
 
 def insert_prompt_content(
@@ -1713,13 +2120,9 @@ def insert_prompt_content(
     block_type: str,
     content: str,
 ) -> str:
-    """Insert prompt content block, return id (ULID)."""
-    ulid = _ulid()
-    conn.execute(
-        "INSERT INTO prompt_content (id, prompt_id, block_index, block_type, content) VALUES (?, ?, ?, ?, ?)",
-        (ulid, prompt_id, block_index, block_type, content)
-    )
-    return ulid
+    uid = _ulid()
+    insert_event_content(conn, content_id=uid, event_id=prompt_id, block_index=block_index, block_type=block_type, content=content)
+    return uid
 
 
 def insert_response_content(
@@ -1729,31 +2132,9 @@ def insert_response_content(
     block_type: str,
     content: str,
 ) -> str:
-    """Insert response content block, return id (ULID)."""
-    ulid = _ulid()
-    conn.execute(
-        "INSERT INTO response_content (id, response_id, block_index, block_type, content) VALUES (?, ?, ?, ?, ?)",
-        (ulid, response_id, block_index, block_type, content)
-    )
-    return ulid
-
-
-def insert_response_attribute(
-    conn: sqlite3.Connection,
-    response_id: str,
-    key: str,
-    value: str,
-    scope: str | None = None,
-) -> str:
-    """Insert a response attribute, return id (ULID). Upserts on conflict."""
-    ulid = _ulid()
-    conn.execute(
-        """INSERT INTO response_attributes (id, response_id, key, value, scope)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT (response_id, key, scope) DO UPDATE SET value = excluded.value""",
-        (ulid, response_id, key, value, scope)
-    )
-    return ulid
+    uid = _ulid()
+    insert_event_content(conn, content_id=uid, event_id=response_id, block_index=block_index, block_type=block_type, content=content)
+    return uid
 
 
 def insert_tool_call(
@@ -1770,49 +2151,10 @@ def insert_tool_call(
     dedupe_result: bool = True,
     filter_binary: bool = True,
 ) -> str:
-    """Insert tool call, return id (ULID).
-
-    Args:
-        dedupe_result: If True (default), stores result in content_blobs for
-            deduplication. If False, stores inline in result column.
-        filter_binary: If True (default), filter binary content (images, base64)
-            from the result before storage.
-    """
-    from siftd.content.filters import filter_tool_result_binary
-    from siftd.storage.blobs import store_content
-
-    ulid = _ulid()
-    result_hash = None
-
-    # Apply binary filtering if enabled
-    if result_json is not None and filter_binary:
-        try:
-            result_data = json.loads(result_json)
-            filtered_data = filter_tool_result_binary(result_data)
-            if filtered_data is not result_data:
-                result_json = json.dumps(filtered_data)
-        except (ValueError, TypeError):
-            # Not valid JSON, leave as-is
-            pass
-
-    if result_json is not None and dedupe_result:
-        # Store in content_blobs and reference by hash
-        result_hash = store_content(conn, result_json)
-        conn.execute(
-            """INSERT INTO tool_calls
-               (id, response_id, conversation_id, tool_id, external_id, input, result_hash, status, timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (ulid, response_id, conversation_id, tool_id, external_id, input_json, result_hash, status, timestamp)
-        )
-    else:
-        # Store inline (legacy behavior or dedupe disabled)
-        conn.execute(
-            """INSERT INTO tool_calls
-               (id, response_id, conversation_id, tool_id, external_id, input, result, status, timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (ulid, response_id, conversation_id, tool_id, external_id, input_json, result_json, status, timestamp)
-        )
-    return ulid
+    uid = _ulid()
+    insert_event(conn, uid, "tool_call", conversation_id, timestamp or "", parent_id=response_id, external_id=external_id)
+    insert_event_tool_call(conn, uid, tool_id=tool_id, input_json=input_json, result_json=result_json, status=status, dedupe_result=dedupe_result, filter_binary=filter_binary)
+    return uid
 
 
 # =============================================================================
@@ -1891,29 +2233,20 @@ def store_conversation(
 
     # Process prompts
     for prompt in conversation.prompts:
-        prompt_id = insert_prompt(
-            conn,
-            conversation_id=conversation_id,
-            external_id=prompt.external_id,
-            timestamp=prompt.timestamp,
-        )
+        prompt_id = insert_prompt(conn, conversation_id, prompt.external_id, prompt.timestamp)
 
         # Insert prompt content blocks
         for idx, block in enumerate(prompt.content):
-            content_id = insert_prompt_content(
-                conn, prompt_id, idx, block.block_type, json.dumps(block.content)
-            )
-            if block.block_type == "text" and block.content.get("text"):
-                insert_fts_content(conn, content_id, "prompt", conversation_id, block.content["text"])
+            content_id = insert_prompt_content(conn, prompt_id, idx, block.block_type, json.dumps(block.content))
+            if text := block.content.get("text"):
+                insert_fts_content(conn, content_id, prompt_id, conversation_id, text)
 
         # Process responses for this prompt
         for response in prompt.responses:
-            # Get or create model if specified
             model_id = None
             if response.model:
                 model_id = get_or_create_model(conn, response.model)
 
-            # Extract usage
             input_tokens = None
             output_tokens = None
             if response.usage:
@@ -1934,24 +2267,18 @@ def store_conversation(
 
             # Insert response content blocks
             for idx, block in enumerate(response.content):
-                content_id = insert_response_content(
-                    conn, response_id, idx, block.block_type, json.dumps(block.content)
-                )
-                if block.block_type == "text" and block.content.get("text"):
-                    insert_fts_content(conn, content_id, "response", conversation_id, block.content["text"])
+                content_id = insert_response_content(conn, response_id, idx, block.block_type, json.dumps(block.content))
+                if text := block.content.get("text"):
+                    insert_fts_content(conn, content_id, response_id, conversation_id, text)
 
-            # Insert response attributes
             for attr_key, attr_value in response.attributes.items():
-                insert_response_attribute(
-                    conn, response_id, attr_key, attr_value, scope="provider"
-                )
+                set_attribute(conn, "response", response_id, attr_key, attr_value, scope="provider")
 
             # Insert tool calls
             for tool_call in response.tool_calls:
                 tool_id = get_or_create_tool_by_alias(
                     conn, tool_call.tool_name, harness_id
                 )
-                # Cache tool canonical name to avoid per-call SELECT
                 if tool_id not in _tool_name_cache:
                     _tool_name_cache[tool_id] = conn.execute(
                         "SELECT name FROM tools WHERE id = ?", (tool_id,)
@@ -1967,14 +2294,11 @@ def store_conversation(
                     input_json=json.dumps(tool_call.input),
                     result_json=json.dumps(tool_call.result) if tool_call.result else None,
                     status=tool_call.status,
-                    timestamp=tool_call.timestamp,
+                    timestamp=tool_call.timestamp or response.timestamp,
                     filter_binary=filter_binary,
                 )
 
-                # Auto-tag shell commands at ingest time
                 tag_shell_command(conn, tool_call_id, canonical_name, tool_call.input)
-
-                # Auto-tag derivative conversations (contain siftd search/query)
                 tag_derivative_conversation(
                     conn, conversation_id, canonical_name, tool_call.input
                 )
@@ -2018,19 +2342,23 @@ def get_harness_id_by_name(conn: sqlite3.Connection, name: str) -> str | None:
 def delete_conversation(conn: sqlite3.Connection, conversation_id: str) -> None:
     """Delete a conversation and all related data.
 
-    Uses ON DELETE CASCADE to automatically remove child records:
-    prompts, responses, tool_calls, content blocks, attributes, tags,
-    and ingested_files.
+    Explicitly deletes:
+    - content_fts (virtual table, no FK/trigger support)
 
-    Note: FTS index (content_fts) must be cleaned up manually since
-    it's a virtual table without FK support.
+    Conversation FK CASCADE handles: events, event_content, event_response,
+    event_tool_call, ingested_files, content_blobs (via tr_event_tool_call_* trigger).
+
+    tr_polymorphic_*_cleanup triggers handle tag_assignments and attributes for
+    conversations, events, and workspaces — no explicit cleanup needed here.
     """
-    # Clean up FTS index entries (virtual tables don't support CASCADE)
+    # Clean up FTS index entries (virtual tables don't support CASCADE or triggers)
     conn.execute(
         "DELETE FROM content_fts WHERE conversation_id = ?", (conversation_id,)
     )
 
-    # Delete conversation - CASCADE handles all child tables
+    # Delete conversation - CASCADE handles events and all event_* children;
+    # tr_polymorphic_conversations_cleanup cleans tag_assignments/attributes for the
+    # conversation row, and tr_polymorphic_events_cleanup fires for each cascaded event row.
     conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
 
 
@@ -2212,14 +2540,14 @@ def get_models_without_pricing(conn: sqlite3.Connection) -> list[dict]:
 
     cur = conn.execute("""
         SELECT DISTINCT m.name as model_name, COALESCE(p.name, 'unknown') as provider_name
-        FROM responses r
-        JOIN models m ON r.model_id = m.id
-        LEFT JOIN providers p ON r.provider_id = p.id
-        WHERE r.model_id IS NOT NULL
+        FROM event_response er
+        JOIN models m ON er.model_id = m.id
+        LEFT JOIN providers p ON er.provider_id = p.id
+        WHERE er.model_id IS NOT NULL
           AND NOT EXISTS (
             SELECT 1 FROM pricing pr
-            WHERE pr.model_id = r.model_id
-              AND (r.provider_id IS NULL OR pr.provider_id = r.provider_id)
+            WHERE pr.model_id = er.model_id
+              AND (er.provider_id IS NULL OR pr.provider_id = er.provider_id)
           )
         ORDER BY provider_name, m.name
     """)
@@ -2252,14 +2580,6 @@ def get_pending_schema_migrations(conn: sqlite3.Connection) -> list[str]:
     if "error" not in columns:
         pending.append("add error column to ingested_files")
 
-    # CASCADE deletes on prompts (from _migrate_add_cascade_deletes)
-    cur = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='prompts'"
-    )
-    row = cur.fetchone()
-    if row and "ON DELETE CASCADE" not in (row[0] or ""):
-        pending.append("add CASCADE deletes to foreign keys")
-
     # pricing table (from ensure_pricing_table)
     cur = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='pricing'"
@@ -2273,13 +2593,6 @@ def get_pending_schema_migrations(conn: sqlite3.Connection) -> list[str]:
     )
     if not cur.fetchone():
         pending.append("create content_blobs table")
-
-    # tool_call_tags table (from ensure_tool_call_tags_table)
-    cur = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='tool_call_tags'"
-    )
-    if not cur.fetchone():
-        pending.append("create tool_call_tags table")
 
     # FTS5 content_fts table (from ensure_fts_table)
     cur = conn.execute(
@@ -2307,33 +2620,12 @@ def get_pending_schema_migrations(conn: sqlite3.Connection) -> list[str]:
     if not cur.fetchone():
         pending.append("create session tables")
 
-    # prompt_tags table (from ensure_prompt_tags_table)
-    cur = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='prompt_tags'"
-    )
-    if not cur.fetchone():
-        pending.append("create prompt_tags table")
-
     # git_remote index (from _ensure_git_remote_index)
     cur = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspaces_git_remote'"
     )
     if not cur.fetchone():
         pending.append("create git_remote index on workspaces")
-
-    # tag indexes (from _ensure_tag_indexes)
-    cur = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_tags_tag'"
-    )
-    if not cur.fetchone():
-        pending.append("create tag indexes on junction tables")
-
-    # response_attributes covering index (from _ensure_response_attributes_key_index)
-    cur = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_response_attributes_key'"
-    )
-    if not cur.fetchone():
-        pending.append("create response_attributes covering index")
 
     # conversation_stats table (from _ensure_conversation_stats_table)
     cur = conn.execute(

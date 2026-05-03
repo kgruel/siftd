@@ -15,14 +15,10 @@ def tag_condition(tag_value: str) -> tuple[str, str]:
 # Phase-1 ID queries include only the joins their filters actually need.
 JOINS: dict[str, str] = {
     "w": "LEFT JOIN workspaces w ON w.id = c.workspace_id",
-    "r": "LEFT JOIN responses r ON r.conversation_id = c.id",
-    "m": "LEFT JOIN models m ON m.id = r.model_id",
 }
 
-# Dependency edges: requesting 'm' also requires 'r'.
-_JOIN_DEPS: dict[str, list[str]] = {
-    "m": ["r"],
-}
+# Dependency edges (none remaining after responses join removal).
+_JOIN_DEPS: dict[str, list[str]] = {}
 
 
 class WhereBuilder:
@@ -64,9 +60,10 @@ class WhereBuilder:
     def model(self, value: str | None) -> None:
         if value:
             self.add(
-                "EXISTS (SELECT 1 FROM responses r_m"
-                " JOIN models m ON m.id = r_m.model_id"
-                " WHERE r_m.conversation_id = c.id"
+                "EXISTS (SELECT 1 FROM events e_m"
+                " JOIN event_response er_m ON er_m.event_id = e_m.id"
+                " JOIN models m ON m.id = er_m.model_id"
+                " WHERE e_m.conversation_id = c.id AND e_m.kind = 'response'"
                 " AND (m.raw_name LIKE ? OR m.name LIKE ?))",
                 f"%{value}%",
                 f"%{value}%",
@@ -99,8 +96,9 @@ class WhereBuilder:
             self.params.append(val)
         clause = " OR ".join(parts)
         self.conditions.append(
-            f"c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
-            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {clause})"
+            f"c.id IN (SELECT ta.target_id FROM tag_assignments ta"
+            f" JOIN tags tg ON tg.id = ta.tag_id"
+            f" WHERE ta.target_kind='conversation' AND ({clause}))"
         )
 
     def tags_all(self, tags: list[str] | None) -> None:
@@ -110,8 +108,9 @@ class WhereBuilder:
         for t in tags:
             op, val = tag_condition(t)
             self.conditions.append(
-                f"c.id IN (SELECT ct.conversation_id FROM conversation_tags ct"
-                f" JOIN tags tg ON tg.id = ct.tag_id WHERE {op})"
+                f"c.id IN (SELECT ta.target_id FROM tag_assignments ta"
+                f" JOIN tags tg ON tg.id = ta.tag_id"
+                f" WHERE ta.target_kind='conversation' AND {op})"
             )
             self.params.append(val)
 
@@ -126,20 +125,15 @@ class WhereBuilder:
             self.params.append(val)
         clause = " OR ".join(parts)
         self.conditions.append(
-            f"c.id NOT IN (SELECT ct.conversation_id FROM conversation_tags ct"
-            f" JOIN tags tg ON tg.id = ct.tag_id WHERE {clause})"
+            f"c.id NOT IN (SELECT ta.target_id FROM tag_assignments ta"
+            f" JOIN tags tg ON tg.id = ta.tag_id"
+            f" WHERE ta.target_kind='conversation' AND ({clause}))"
         )
 
     def joins_sql(self) -> str:
         """Return JOIN clauses for all required tables, in dependency order."""
-        # Stable order: w, r, m (respects FK dependencies)
-        ordered = [alias for alias in ("w", "r", "m") if alias in self._joins]
+        ordered = [alias for alias in ("w",) if alias in self._joins]
         return "\n        ".join(JOINS[a] for a in ordered)
-
-    @property
-    def needs_group_by(self) -> bool:
-        """True when JOINs introduce duplicates that require GROUP BY c.id."""
-        return "r" in self._joins
 
     def where_sql(self) -> str:
         """Return 'WHERE ...' string, or empty string if no conditions."""

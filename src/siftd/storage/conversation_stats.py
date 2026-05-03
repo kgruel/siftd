@@ -77,16 +77,22 @@ def rebuild_conversation_stats(conn: sqlite3.Connection, *, commit: bool = False
                               total_tokens, model_name, cost)
         SELECT
             c.id,
-            (SELECT COUNT(*) FROM prompts WHERE conversation_id = c.id),
-            (SELECT COUNT(*) FROM responses WHERE conversation_id = c.id),
-            (SELECT COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0)
-             FROM responses WHERE conversation_id = c.id),
-            (SELECT m.name FROM responses r2
-             LEFT JOIN models m ON m.id = r2.model_id
-             WHERE r2.conversation_id = c.id
+            (SELECT COUNT(*) FROM events WHERE kind = 'prompt' AND conversation_id = c.id),
+            (SELECT COUNT(*) FROM events WHERE kind = 'response' AND conversation_id = c.id),
+            (SELECT COALESCE(SUM(er.input_tokens), 0) + COALESCE(SUM(er.output_tokens), 0)
+             FROM events e JOIN event_response er ON er.event_id = e.id
+             WHERE e.kind = 'response' AND e.conversation_id = c.id),
+            (SELECT m.name
+             FROM events e_r2
+             JOIN event_response er2 ON er2.event_id = e_r2.id
+             LEFT JOIN models m ON m.id = er2.model_id
+             WHERE e_r2.kind = 'response' AND e_r2.conversation_id = c.id
              GROUP BY m.name ORDER BY COUNT(*) DESC LIMIT 1),
             (SELECT {cost_expr}
-             FROM responses r {cost_join}
+             FROM (SELECT e.id, e.conversation_id, er.input_tokens, er.output_tokens,
+                          er.model_id, er.provider_id
+                   FROM events e JOIN event_response er ON er.event_id = e.id
+                   WHERE e.kind = 'response') r {cost_join}
              WHERE r.conversation_id = c.id)
         FROM conversations c
     """)

@@ -621,7 +621,7 @@
     -r, --remove          Remove tag instead of applying
     --session ID          Queue tag for a live session (applied at ingest)
     --current             Auto-detect current session (falls back to --last)
-    --exchange INDEX      Tag specific exchange (0-based, requires --session)
+    --exchange INDEX      Tag specific exchange (1-based, requires --session)
     --prefix PREFIX       Filter tag list by prefix (use with 'tag list')
     --limit LIMIT         Max conversations in drill-down (default: 10, use with
                           'tag list <name>')

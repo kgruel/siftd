@@ -1,8 +1,8 @@
 from siftd.doctor.checks import CheckContext, CheckCost, Finding
 
 _REQUIRED_TRIGGERS = (
-    "tr_tool_calls_delete_release_blob",
-    "tr_tool_calls_update_release_blob",
+    "tr_event_tool_call_delete_release_blob",
+    "tr_event_tool_call_update_release_blob",
 )
 
 

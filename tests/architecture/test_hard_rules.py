@@ -803,34 +803,27 @@ class TestSchemaStability:
         "workspaces",
         # Core
         "conversations",
-        "prompts",
-        "responses",
-        "tool_calls",
-        # Content
-        "prompt_content",
-        "response_content",
+        # Content-addressable storage
         "content_blobs",
-        # Attributes
-        "conversation_attributes",
-        "prompt_attributes",
-        "response_attributes",
-        "tool_call_attributes",
         # Tags
         "tags",
-        "workspace_tags",
-        "conversation_tags",
-        "tool_call_tags",
         # Operational
         "ingested_files",
         # Migration-ensured
         "conversation_stats",
         "active_sessions",
         "pending_tags",
-        "prompt_tags",
         "conversation_owners",
         "sync_inbox",
         # FTS5 virtual table (shows as type='table' in sqlite_master)
         "content_fts",
+        # Polymorphic event tables (schema v4+, legacy tables dropped in v6)
+        "events",
+        "event_response",
+        "event_tool_call",
+        "event_content",
+        "attributes",
+        "tag_assignments",
     }
 
     def test_expected_tables_exist(self, db):
@@ -867,9 +860,10 @@ class TestSchemaStability:
 
     CRITICAL_COLUMNS = {
         "conversations": {"id", "external_id", "harness_id", "workspace_id", "started_at", "branch"},
-        "responses": {"id", "conversation_id", "prompt_id", "model_id", "provider_id", "timestamp", "input_tokens", "output_tokens"},
-        "prompts": {"id", "conversation_id", "timestamp"},
-        "tool_calls": {"id", "response_id", "conversation_id", "tool_id", "result_hash", "status"},
+        "events": {"id", "kind", "conversation_id", "parent_id", "external_id", "timestamp"},
+        "event_response": {"event_id", "model_id", "provider_id", "input_tokens", "output_tokens"},
+        "event_tool_call": {"event_id", "tool_id", "input", "result_hash", "status"},
+        "event_content": {"id", "event_id", "block_index", "block_type", "content"},
         "content_blobs": {"hash", "content", "ref_count", "created_at"},
         "tags": {"id", "name", "created_at"},
         "ingested_files": {"id", "path", "file_hash", "harness_id", "conversation_id", "error", "file_mtime", "file_size"},

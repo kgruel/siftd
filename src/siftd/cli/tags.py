@@ -70,7 +70,7 @@ def _parse_tag_args(positional: list[str]) -> tuple[str, str, list[str]] | None:
     """
     if len(positional) >= 2:
         # Check if first arg is an entity type
-        if positional[0] in ("conversation", "workspace", "tool_call"):
+        if positional[0] in ("conversation", "workspace", "tool_call", "prompt", "response", "exchange"):
             if len(positional) < 3:
                 return None
             return (positional[0], positional[1], positional[2:])
@@ -241,7 +241,10 @@ def _cmd_tag_list(args, db: Path) -> int:
 
     # When filtering temporally, hide tags with zero counts in the window
     if since or before:
-        tags = [t for t in tags if t.conversation_count or t.tool_call_count or t.workspace_count]
+        tags = [t for t in tags if (
+            t.conversation_count or t.workspace_count or t.tool_call_count
+            or t.exchange_count or t.prompt_count or t.response_count
+        )]
         if not tags:
             print("No tags found in the specified time range.")
             return 0
@@ -261,6 +264,12 @@ def _cmd_tag_list(args, db: Path) -> int:
             counts.append(f"{tag.workspace_count} workspaces")
         if tag.tool_call_count:
             counts.append(f"{tag.tool_call_count} tool_calls")
+        if tag.exchange_count:
+            counts.append(f"{tag.exchange_count} exchanges")
+        if tag.prompt_count:
+            counts.append(f"{tag.prompt_count} prompts")
+        if tag.response_count:
+            counts.append(f"{tag.response_count} responses")
         count_str = f" ({', '.join(counts)})" if counts else ""
         desc = f" - {tag.description}" if tag.description else ""
         print(f"  {tag.name}{desc}{count_str}")
@@ -383,7 +392,9 @@ def _cmd_tag_delete(args, db: Path) -> int:
         tag_info.conversation_count
         + tag_info.workspace_count
         + tag_info.tool_call_count
+        + tag_info.exchange_count
         + tag_info.prompt_count
+        + tag_info.response_count
     )
 
     force = getattr(args, "force", False)
@@ -395,8 +406,12 @@ def _cmd_tag_delete(args, db: Path) -> int:
             parts.append(f"{tag_info.workspace_count} workspaces")
         if tag_info.tool_call_count:
             parts.append(f"{tag_info.tool_call_count} tool_calls")
+        if tag_info.exchange_count:
+            parts.append(f"{tag_info.exchange_count} exchanges")
         if tag_info.prompt_count:
             parts.append(f"{tag_info.prompt_count} prompts")
+        if tag_info.response_count:
+            parts.append(f"{tag_info.response_count} responses")
         print(f"Tag '{tag_name}' is applied to {', '.join(parts)}. Use --force to delete.")
         conn.close()
         return 1
@@ -417,8 +432,12 @@ def _cmd_tag_delete(args, db: Path) -> int:
         parts.append(f"{tag_info.workspace_count} workspaces")
     if tag_info.tool_call_count:
         parts.append(f"{tag_info.tool_call_count} tool_calls")
+    if tag_info.exchange_count:
+        parts.append(f"{tag_info.exchange_count} exchanges")
     if tag_info.prompt_count:
         parts.append(f"{tag_info.prompt_count} prompts")
+    if tag_info.response_count:
+        parts.append(f"{tag_info.response_count} responses")
     if parts:
         print(f"Deleted tag '{tag_name}' (was applied to {', '.join(parts)})")
     else:
@@ -473,6 +492,65 @@ def cmd_tag(args) -> int:
         return 1
 
     removing = args.remove
+
+    # Colon-path syntax: <conv>:<kind>:<n> <tag> [tag2...]
+    if positional and args.last is None:
+        from siftd.api.granular_targets import GRANULAR_KINDS, parse_colon_path, resolve_colon_target
+
+        _cp = parse_colon_path(positional[0])
+        if _cp is not None:
+            _conv_ref, _kind, _n = _cp
+            _tag_names = positional[1:]
+            if not _tag_names:
+                print("Usage: siftd tag <conv>:<kind>:<n> <tag> [tag2 ...]")
+                return 1
+            if _kind not in GRANULAR_KINDS:
+                print(f"Error: Unknown target kind {_kind!r}. Valid: {', '.join(sorted(GRANULAR_KINDS))}")
+                return 1
+            _conn = open_database(db)
+            try:
+                from siftd.api.conversations import resolve_entity_id
+                _conv_id = resolve_entity_id(_conn, "conversation", _conv_ref)
+                if _conv_id is None:
+                    print(f"conversation not found: {_conv_ref}")
+                    return 1
+                try:
+                    _target_kind, _target_id = resolve_colon_target(_conn, _conv_id, _kind, _n)
+                except (ValueError, IndexError) as e:
+                    print(f"Error: {e}")
+                    return 1
+            finally:
+                _conn.close()
+            try:
+                _result = apply_tags(
+                    db_path=db,
+                    tags=_tag_names,
+                    entity_type=_target_kind,
+                    entity_id=_target_id,
+                    remove=removing,
+                )
+            except FileNotFoundError:
+                print(f"{_target_kind} not found: {_target_id[:12]}")
+                return 1
+            except ValueError as e:
+                print(f"Error: {e}")
+                return 1
+            _resolved_id = _result.resolved_entity_id or _target_id
+            if removing:
+                for _row in _result.results:
+                    if _row.status == "not_found":
+                        print(f"Tag '{_row.tag}' not found")
+                    elif _row.status == "removed":
+                        print(f"Removed tag '{_row.tag}' from {_target_kind} {_resolved_id[:12]}")
+                    else:
+                        print(f"Tag '{_row.tag}' not applied to {_target_kind} {_resolved_id[:12]}")
+            else:
+                for _row in _result.results:
+                    if _row.status == "applied":
+                        print(f"Applied tag '{_row.tag}' to {_target_kind} {_resolved_id[:12]}")
+                    else:
+                        print(f"Tag '{_row.tag}' already applied to {_target_kind} {_resolved_id[:12]}")
+            return 0
 
     # Normalize args into a POST body for delegation
     from painted import Fidelity
@@ -590,6 +668,7 @@ def cmd_tag(args) -> int:
     if not parsed:
         print("Usage: siftd tag <id> <tag> [tag2 ...]")
         print("       siftd tag <entity_type> <id> <tag> [tag2 ...]")
+        print("       siftd tag <conv>:<kind>:<n> <tag> [tag2 ...]")
         print("       siftd tag --last [N] <tag> [tag2 ...]")
         print("       siftd tag --session <id> <tag> [tag2 ...]")
         print("       siftd tag --remove <id> <tag> [tag2 ...]")
@@ -597,7 +676,7 @@ def cmd_tag(args) -> int:
         print("       siftd tag rename <old> <new>")
         print("       siftd tag delete <name> [--force]")
         print("\nTip: Use --session to queue tags for live sessions before ingest.", file=sys.stderr)
-        print("\nEntity types: conversation (default), workspace, tool_call")
+        print("\nEntity types: conversation (default), workspace, tool_call, prompt, response, exchange")
         return 1
 
     entity_type, entity_id, tag_names = parsed
@@ -712,7 +791,7 @@ live session tagging:
     p_tag.add_argument("-r", "--remove", action="store_true", help="Remove tag instead of applying")
     p_tag.add_argument("--session", metavar="ID", help="Queue tag for a live session (applied at ingest)")
     p_tag.add_argument("--current", action="store_true", help="Auto-detect current session (falls back to --last)")
-    p_tag.add_argument("--exchange", type=int, metavar="INDEX", help="Tag specific exchange (0-based, requires --session)")
+    p_tag.add_argument("--exchange", type=int, metavar="INDEX", help="Tag specific exchange (1-based, requires --session)")
 
     # Flags for subcommands (list, delete)
     p_tag.add_argument("--prefix", metavar="PREFIX", help="Filter tag list by prefix (use with 'tag list')")

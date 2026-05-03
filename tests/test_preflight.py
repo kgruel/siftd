@@ -16,7 +16,7 @@ def _make_clean_db(tmp_path, name="test.db"):
 
 
 def _make_fk_corrupt_db(tmp_path, name="corrupt.db"):
-    """Create a DB with a FK violation (prompt with non-existent conversation_id).
+    """Create a DB with a FK violation (event with non-existent conversation_id).
 
     Requires PRAGMA foreign_keys = OFF to insert the dangling row; otherwise
     SQLite rejects the INSERT before foreign_key_check can detect it.
@@ -26,8 +26,8 @@ def _make_fk_corrupt_db(tmp_path, name="corrupt.db"):
     conn = sqlite3.connect(str(p))
     conn.execute("PRAGMA foreign_keys = OFF")
     conn.execute(
-        "INSERT INTO prompts (id, conversation_id, external_id, timestamp) "
-        "VALUES (?, 'nonexistent-conv', 'ext-p-1', '2024-01-01T00:00:00Z')",
+        "INSERT INTO events (id, kind, conversation_id, external_id, timestamp) "
+        "VALUES (?, 'prompt', 'nonexistent-conv', 'ext-p-1', '2024-01-01T00:00:00Z')",
         (ulid(),),
     )
     conn.commit()
@@ -40,8 +40,8 @@ def _make_no_triggers_db(tmp_path, name="notriggers.db"):
     p = tmp_path / name
     create_empty_database(p)
     conn = sqlite3.connect(str(p))
-    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
-    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_update_release_blob")
+    conn.execute("DROP TRIGGER IF EXISTS tr_event_tool_call_delete_release_blob")
+    conn.execute("DROP TRIGGER IF EXISTS tr_event_tool_call_update_release_blob")
     conn.commit()
     conn.close()
     return p

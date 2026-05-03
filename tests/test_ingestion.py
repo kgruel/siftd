@@ -8,6 +8,7 @@ from siftd.adapters.sdk import AdapterParseError
 from siftd.ingestion.orchestration import (
     _compare_timestamps,
     _extract_first_text,
+    _get_prompt_by_index,
     _get_single_conversation,
     _normalize_status,
     _parse_timestamp,
@@ -183,3 +184,37 @@ class TestSummarizeConversation:
         result = _summarize_conversation(conv)
         assert result["summary"] is None
         assert result["exchange_count"] == 0
+
+
+class TestGetPromptByIndex:
+    def test_zero_raises_value_error(self, tmp_path):
+        """_get_prompt_by_index rejects exchange_index=0 (0-based index, API is 1-based)."""
+        from siftd.storage.sqlite import open_database
+
+        conn = open_database(tmp_path / "t.db")
+        try:
+            with pytest.raises(ValueError, match="exchange_index must be >= 1"):
+                _get_prompt_by_index(conn, "any-conv-id", 0)
+        finally:
+            conn.close()
+
+    def test_negative_raises_value_error(self, tmp_path):
+        """_get_prompt_by_index rejects negative exchange_index."""
+        from siftd.storage.sqlite import open_database
+
+        conn = open_database(tmp_path / "t.db")
+        try:
+            with pytest.raises(ValueError, match="exchange_index must be >= 1"):
+                _get_prompt_by_index(conn, "any-conv-id", -1)
+        finally:
+            conn.close()
+
+    def test_none_returns_none(self, tmp_path):
+        """_get_prompt_by_index returns None when exchange_index is None."""
+        from siftd.storage.sqlite import open_database
+
+        conn = open_database(tmp_path / "t.db")
+        try:
+            assert _get_prompt_by_index(conn, "any-conv-id", None) is None
+        finally:
+            conn.close()

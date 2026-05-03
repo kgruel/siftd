@@ -43,7 +43,24 @@ def test_open_close_and_cache_cleanup_paths(monkeypatch, tmp_path):
 def test_usage_functions_with_stats_table(tmp_path):
     db = tmp_path / "u.db"
     conn = sqlite3.connect(db)
-    conn.executescript("CREATE TABLE conversations (id TEXT PRIMARY KEY, workspace_id TEXT);CREATE TABLE responses (conversation_id TEXT, model_id TEXT, input_tokens INTEGER, output_tokens INTEGER);CREATE TABLE models (id TEXT PRIMARY KEY, raw_name TEXT);CREATE TABLE workspaces (id TEXT PRIMARY KEY, path TEXT);CREATE TABLE conversation_stats (conversation_id TEXT, cost REAL, total_tokens INTEGER);INSERT INTO models VALUES ('m1','model-a');INSERT INTO workspaces VALUES ('w1','/tmp/ws');INSERT INTO conversations VALUES ('c1','w1');INSERT INTO responses VALUES ('c1','m1',10,20);INSERT INTO conversation_stats VALUES ('c1',1.5,30);")
+    conn.executescript(
+        "CREATE TABLE conversations (id TEXT PRIMARY KEY, workspace_id TEXT);"
+        "CREATE TABLE models (id TEXT PRIMARY KEY, raw_name TEXT, name TEXT);"
+        "CREATE TABLE workspaces (id TEXT PRIMARY KEY, path TEXT);"
+        "CREATE TABLE harnesses (id TEXT PRIMARY KEY, name TEXT);"
+        "CREATE TABLE providers (id TEXT PRIMARY KEY, name TEXT);"
+        "CREATE TABLE events (id TEXT PRIMARY KEY, kind TEXT, conversation_id TEXT, parent_id TEXT, external_id TEXT, timestamp TEXT);"
+        "CREATE TABLE event_response (event_id TEXT PRIMARY KEY, model_id TEXT, provider_id TEXT, input_tokens INTEGER, output_tokens INTEGER);"
+        "CREATE TABLE responses (id TEXT PRIMARY KEY, conversation_id TEXT, model_id TEXT, input_tokens INTEGER, output_tokens INTEGER);"
+        "CREATE TABLE conversation_stats (conversation_id TEXT, cost REAL, total_tokens INTEGER);"
+        "INSERT INTO models VALUES ('m1','model-a','model-a');"
+        "INSERT INTO workspaces VALUES ('w1','/tmp/ws');"
+        "INSERT INTO conversations VALUES ('c1','w1');"
+        "INSERT INTO events VALUES ('e1','response','c1',NULL,NULL,'2024-01-01T00:00:00Z');"
+        "INSERT INTO event_response VALUES ('e1','m1',NULL,10,20);"
+        "INSERT INTO responses VALUES ('r1','c1','m1',10,20);"
+        "INSERT INTO conversation_stats VALUES ('c1',1.5,30);"
+    )
     conn.close()
 
     s = get_usage_summary(db_path=db)

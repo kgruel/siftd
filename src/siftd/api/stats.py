@@ -553,10 +553,11 @@ def get_usage_summary(*, db_path: Path | None = None) -> UsageSummary:
     try:
         row = conn.execute(
             "SELECT COUNT(DISTINCT c.id) AS n,"
-            " COALESCE(SUM(r.input_tokens), 0) AS inp,"
-            " COALESCE(SUM(r.output_tokens), 0) AS out"
+            " COALESCE(SUM(er.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(er.output_tokens), 0) AS out"
             " FROM conversations c"
-            " LEFT JOIN responses r ON r.conversation_id = c.id"
+            " LEFT JOIN events e ON e.conversation_id = c.id AND e.kind = 'response'"
+            " LEFT JOIN event_response er ON er.event_id = e.id"
         ).fetchone()
         # Cost is per-conversation in conversation_stats, sum separately
         has_stats = conn.execute(
@@ -588,11 +589,13 @@ def get_usage_by_model(*, db_path: Path | None = None) -> list[GroupUsage]:
         # Tokens from responses grouped by model
         token_rows = conn.execute(
             "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
-            " COUNT(DISTINCT r.conversation_id) AS convs,"
-            " COALESCE(SUM(r.input_tokens), 0) AS inp,"
-            " COALESCE(SUM(r.output_tokens), 0) AS out"
-            " FROM responses r"
-            " LEFT JOIN models m ON r.model_id = m.id"
+            " COUNT(DISTINCT e.conversation_id) AS convs,"
+            " COALESCE(SUM(er.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(er.output_tokens), 0) AS out"
+            " FROM events e"
+            " JOIN event_response er ON er.event_id = e.id"
+            " LEFT JOIN models m ON er.model_id = m.id"
+            " WHERE e.kind = 'response'"
             " GROUP BY m.raw_name"
         ).fetchall()
         has_stats = conn.execute(
@@ -604,8 +607,9 @@ def get_usage_by_model(*, db_path: Path | None = None) -> list[GroupUsage]:
                 "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
                 " COALESCE(SUM(cs.cost), 0) AS cost"
                 " FROM conversation_stats cs"
-                " JOIN responses r ON r.conversation_id = cs.conversation_id"
-                " LEFT JOIN models m ON r.model_id = m.id"
+                " JOIN events e ON e.conversation_id = cs.conversation_id AND e.kind = 'response'"
+                " JOIN event_response er ON er.event_id = e.id"
+                " LEFT JOIN models m ON er.model_id = m.id"
                 " GROUP BY m.raw_name"
             ).fetchall()
             cost_by_model = {r["name"]: r["cost"] for r in cost_rows}
@@ -634,11 +638,12 @@ def get_usage_by_workspace(*, db_path: Path | None = None) -> list[GroupUsage]:
         token_rows = conn.execute(
             "SELECT COALESCE(w.path, '') AS name,"
             " COUNT(DISTINCT c.id) AS convs,"
-            " COALESCE(SUM(r.input_tokens), 0) AS inp,"
-            " COALESCE(SUM(r.output_tokens), 0) AS out"
+            " COALESCE(SUM(er.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(er.output_tokens), 0) AS out"
             " FROM conversations c"
             " LEFT JOIN workspaces w ON c.workspace_id = w.id"
-            " LEFT JOIN responses r ON r.conversation_id = c.id"
+            " LEFT JOIN events e ON e.conversation_id = c.id AND e.kind = 'response'"
+            " LEFT JOIN event_response er ON er.event_id = e.id"
             " GROUP BY w.path"
         ).fetchall()
         # Cost from conversation_stats grouped by workspace

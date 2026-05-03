@@ -407,8 +407,8 @@ class TestBackfillFilterBinary:
         # Old blob should be deleted (ref_count went from 3 to 0)
         assert get_ref_count(conn, old_hash) == 0
 
-        # All tool_calls should now point to the new hash
-        cur = conn.execute("SELECT DISTINCT result_hash FROM tool_calls")
+        # All event_tool_call rows should now point to the new hash
+        cur = conn.execute("SELECT DISTINCT result_hash FROM event_tool_call WHERE result_hash IS NOT NULL")
         hashes = [row[0] for row in cur.fetchall()]
         assert len(hashes) == 1
         new_hash = hashes[0]

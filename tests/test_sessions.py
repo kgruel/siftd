@@ -9,7 +9,6 @@ from siftd.storage.sessions import (
     PendingTag,
     cleanup_stale_sessions,
     consume_pending_tags,
-    ensure_prompt_tags_table,
     ensure_session_tables,
     get_orphaned_pending_tags_count,
     get_pending_tags,
@@ -270,23 +269,3 @@ class TestOrphanedAndStaleCounts:
         assert count == 1
 
 
-class TestPromptTagsTable:
-    """Tests for ensure_prompt_tags_table()."""
-
-    def test_prompt_tags_table_created(self, db):
-        """ensure_prompt_tags_table creates the table."""
-        # Table should already exist from create_database
-        cur = db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='prompt_tags'"
-        )
-        assert cur.fetchone() is not None
-
-    def test_prompt_tags_table_is_idempotent(self, db):
-        """Calling ensure_prompt_tags_table multiple times is safe."""
-        ensure_prompt_tags_table(db)
-        ensure_prompt_tags_table(db)
-
-        cur = db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='prompt_tags'"
-        )
-        assert cur.fetchone() is not None

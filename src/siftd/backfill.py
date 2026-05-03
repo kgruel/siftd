@@ -14,7 +14,8 @@ from siftd.domain.shell_categories import (
 )
 from siftd.model_names import parse_model_name
 from siftd.safecall import parse_json
-from siftd.storage.sqlite import get_or_create_provider, insert_response_attribute
+from siftd.storage.attributes import set_attribute
+from siftd.storage.sqlite import get_or_create_provider
 from siftd.storage.tags import (
     DERIVATIVE_TAG,
     apply_tag,
@@ -69,12 +70,14 @@ def backfill_providers(conn: sqlite3.Connection) -> int:
         source = harness_row["source"]
         provider_id = get_or_create_provider(conn, source)
 
-        # Update responses that belong to conversations from this harness
+        # Update event_response rows that belong to conversations from this harness
         cur = conn.execute("""
-            UPDATE responses SET provider_id = ?
+            UPDATE event_response SET provider_id = ?
             WHERE provider_id IS NULL
-              AND conversation_id IN (
-                  SELECT id FROM conversations WHERE harness_id = ?
+              AND event_id IN (
+                  SELECT e.id FROM events e
+                  JOIN conversations c ON c.id = e.conversation_id
+                  WHERE c.harness_id = ?
               )
         """, (provider_id, harness_id))
         updated += cur.rowcount
@@ -100,14 +103,16 @@ def backfill_shell_tags(conn: sqlite3.Connection) -> dict[str, int]:
 
     # Find all shell.execute calls that don't already have a shell:* tag
     cur = conn.execute("""
-        SELECT tc.id, tc.input
-        FROM tool_calls tc
-        WHERE tc.tool_id = ?
-        AND tc.id NOT IN (
-            SELECT tct.tool_call_id
-            FROM tool_call_tags tct
-            JOIN tags t ON t.id = tct.tag_id
-            WHERE t.name LIKE 'shell:%'
+        SELECT e.id, etc.input
+        FROM events e
+        JOIN event_tool_call etc ON etc.event_id = e.id
+        WHERE e.kind = 'tool_call'
+        AND etc.tool_id = ?
+        AND e.id NOT IN (
+            SELECT ta.target_id
+            FROM tag_assignments ta
+            JOIN tags t ON t.id = ta.tag_id
+            WHERE ta.target_kind = 'tool_call' AND t.name LIKE 'shell:%'
         )
     """, (shell_tool_id,))
 
@@ -150,7 +155,7 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
 
     For each ingested claude_code file, re-parses the JSONL and extracts
     cache_creation_input_tokens / cache_read_input_tokens from message.usage,
-    then stores them as response_attributes.
+    then stores them as polymorphic attributes (target_kind='response').
 
     Returns count of attributes inserted.
     """
@@ -197,7 +202,7 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
             # Find the response in DB
             response_external_id = f"claude_code::{external_msg_id}"
             row = conn.execute(
-                "SELECT id FROM responses WHERE conversation_id = ? AND external_id = ?",
+                "SELECT id FROM events WHERE kind = 'response' AND conversation_id = ? AND external_id = ?",
                 (conversation_id, response_external_id)
             ).fetchone()
             if not row:
@@ -205,16 +210,12 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
             response_id = row["id"]
 
             if cache_creation:
-                insert_response_attribute(
-                    conn, response_id, "cache_creation_input_tokens",
-                    str(cache_creation), scope="provider"
-                )
+                set_attribute(conn, "response", response_id, "cache_creation_input_tokens",
+                              str(cache_creation), scope="provider")
                 inserted += 1
             if cache_read:
-                insert_response_attribute(
-                    conn, response_id, "cache_read_input_tokens",
-                    str(cache_read), scope="provider"
-                )
+                set_attribute(conn, "response", response_id, "cache_read_input_tokens",
+                              str(cache_read), scope="provider")
                 inserted += 1
 
     conn.commit()
@@ -245,19 +246,21 @@ def backfill_derivative_tags(conn: sqlite3.Connection) -> int:
     tag_row = conn.execute("SELECT id FROM tags WHERE name = ?", (DERIVATIVE_TAG,)).fetchone()
     if tag_row:
         rows = conn.execute(
-            "SELECT conversation_id FROM conversation_tags WHERE tag_id = ?",
+            "SELECT target_id FROM tag_assignments WHERE target_kind='conversation' AND tag_id = ?",
             (tag_row["id"],)
         ).fetchall()
-        already_tagged = {r["conversation_id"] for r in rows}
+        already_tagged = {r["target_id"] for r in rows}
 
     # Find candidate tool calls from relevant tools
     placeholders = ",".join("?" * len(tool_ids))
     tool_id_list = list(tool_ids.values())
     cur = conn.execute(f"""
-        SELECT tc.conversation_id, tc.input, t.name AS tool_name
-        FROM tool_calls tc
-        JOIN tools t ON t.id = tc.tool_id
-        WHERE tc.tool_id IN ({placeholders})
+        SELECT e.conversation_id, etc.input, t.name AS tool_name
+        FROM events e
+        JOIN event_tool_call etc ON etc.event_id = e.id
+        JOIN tools t ON t.id = etc.tool_id
+        WHERE e.kind = 'tool_call'
+        AND etc.tool_id IN ({placeholders})
     """, tool_id_list)
 
     # Collect conversation IDs that need tagging
@@ -290,7 +293,7 @@ def backfill_filter_binary(conn: sqlite3.Connection, *, dry_run: bool = False) -
 
     Scans content_blobs for binary content (images, base64 data) and replaces
     with filtered versions. Since content_blobs uses content-addressable storage,
-    this creates new filtered blobs and updates tool_calls.result_hash to point
+    this creates new filtered blobs and updates event_tool_call.result_hash to point
     to them.
 
     Args:
@@ -343,7 +346,7 @@ def backfill_filter_binary(conn: sqlite3.Connection, *, dry_run: bool = False) -
 
         if not dry_run:
             # Insert blob with ref_count=0; the AFTER UPDATE trigger on
-            # tool_calls.result_hash handles all ref_count bookkeeping.
+            # event_tool_call.result_hash handles all ref_count bookkeeping.
             from datetime import UTC, datetime
 
             conn.execute(
@@ -356,13 +359,13 @@ def backfill_filter_binary(conn: sqlite3.Connection, *, dry_run: bool = False) -
 
         stats["filtered"] += 1
 
-    # Update tool_calls to point to new hashes — the AFTER UPDATE trigger
+    # Update event_tool_call to point to new hashes — the AFTER UPDATE trigger
     # decrements old blob ref_count and increments new blob ref_count for
     # each row, then garbage-collects blobs that reach ref_count <= 0.
     if not dry_run and hash_mapping:
         for old_hash, new_hash in hash_mapping.items():
             conn.execute(
-                "UPDATE tool_calls SET result_hash = ? WHERE result_hash = ?",
+                "UPDATE event_tool_call SET result_hash = ? WHERE result_hash = ?",
                 (new_hash, old_hash),
             )
 

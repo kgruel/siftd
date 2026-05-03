@@ -14,7 +14,6 @@ Usage:
 
 import sqlite3
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
 
 from siftd.git import get_git_remote_url
@@ -241,18 +240,21 @@ def merge_duplicate_workspaces(
                     (keeper_id, other_id)
                 )
 
-                # Migrate workspace_tags to keeper (ignore duplicates)
-                # Must provide id and applied_at for each row
-                now = datetime.now(UTC).isoformat()
-                cur = conn.execute(
-                    "SELECT tag_id FROM workspace_tags WHERE workspace_id = ?",
+                # Migrate tag_assignments (polymorphic) — no FK cascade to workspaces, must re-point explicitly
+                cur2 = conn.execute(
+                    "SELECT tag_id, applied_at FROM tag_assignments "
+                    "WHERE target_kind = 'workspace' AND target_id = ?",
                     (other_id,)
                 )
-                for tag_row in cur.fetchall():
+                for ta_row in cur2.fetchall():
                     conn.execute("""
-                        INSERT OR IGNORE INTO workspace_tags (id, workspace_id, tag_id, applied_at)
-                        VALUES (?, ?, ?, ?)
-                    """, (_ulid(), keeper_id, tag_row["tag_id"], now))
+                        INSERT OR IGNORE INTO tag_assignments (id, target_kind, target_id, tag_id, applied_at)
+                        VALUES (?, 'workspace', ?, ?, ?)
+                    """, (_ulid(), keeper_id, ta_row["tag_id"], ta_row["applied_at"]))
+                conn.execute(
+                    "DELETE FROM tag_assignments WHERE target_kind = 'workspace' AND target_id = ?",
+                    (other_id,)
+                )
 
                 # Delete the duplicate workspace (will cascade-delete its workspace_tags)
                 conn.execute("DELETE FROM workspaces WHERE id = ?", (other_id,))

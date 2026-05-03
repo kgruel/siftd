@@ -101,16 +101,16 @@ class TestFixtureMigration:
                 for r in conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='trigger'"
                     " AND name IN ("
-                    "'tr_tool_calls_delete_release_blob',"
-                    "'tr_tool_calls_update_release_blob'"
+                    "'tr_event_tool_call_delete_release_blob',"
+                    "'tr_event_tool_call_update_release_blob'"
                     ")"
                 ).fetchall()
             }
-            assert "tr_tool_calls_delete_release_blob" in triggers, (
-                f"{fixture_path.name}: tr_tool_calls_delete_release_blob missing after migration"
+            assert "tr_event_tool_call_delete_release_blob" in triggers, (
+                f"{fixture_path.name}: tr_event_tool_call_delete_release_blob missing after migration"
             )
-            assert "tr_tool_calls_update_release_blob" in triggers, (
-                f"{fixture_path.name}: tr_tool_calls_update_release_blob missing after migration"
+            assert "tr_event_tool_call_update_release_blob" in triggers, (
+                f"{fixture_path.name}: tr_event_tool_call_update_release_blob missing after migration"
             )
         finally:
             conn.close()

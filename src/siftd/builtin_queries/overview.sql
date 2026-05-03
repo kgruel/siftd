@@ -3,8 +3,8 @@
 
 SELECT
     (SELECT COUNT(*) FROM conversations) as conversations,
-    (SELECT COUNT(*) FROM prompts) as prompts,
-    (SELECT COUNT(*) FROM responses) as responses,
-    (SELECT COUNT(*) FROM tool_calls) as tool_calls,
+    (SELECT COUNT(*) FROM events WHERE kind = 'prompt') as prompts,
+    (SELECT COUNT(*) FROM events WHERE kind = 'response') as responses,
+    (SELECT COUNT(*) FROM events WHERE kind = 'tool_call') as tool_calls,
     (SELECT COUNT(DISTINCT workspace_id) FROM conversations WHERE workspace_id IS NOT NULL) as workspaces,
-    (SELECT COUNT(DISTINCT model_id) FROM responses WHERE model_id IS NOT NULL) as models_used
+    (SELECT COUNT(DISTINCT er.model_id) FROM event_response er WHERE er.model_id IS NOT NULL) as models_used

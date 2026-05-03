@@ -803,13 +803,19 @@ def _apply_pending_tags(
 
         elif pt.entity_type == "exchange":
             # Look up the prompt at exchange_index
-            prompt_id = _get_prompt_by_index(conn, conversation_id, pt.exchange_index)
+            try:
+                prompt_id = _get_prompt_by_index(conn, conversation_id, pt.exchange_index)
+            except ValueError as e:
+                logger.warning(
+                    f"Invalid exchange_index for tag '{pt.tag_name}' in session {session_id[:8]}: {e}"
+                )
+                continue
             if prompt_id:
-                result = apply_tag(conn, "prompt", prompt_id, tag_id)
+                result = apply_tag(conn, "exchange", prompt_id, tag_id)
                 if result:
                     applied += 1
                     logger.debug(
-                        f"Applied tag '{pt.tag_name}' to prompt {prompt_id[:12]} "
+                        f"Applied tag '{pt.tag_name}' to exchange {prompt_id[:12]} "
                         f"(exchange {pt.exchange_index})"
                     )
             else:
@@ -830,21 +836,23 @@ def _get_prompt_by_index(
     conversation_id: str,
     exchange_index: int | None,
 ) -> str | None:
-    """Get the prompt ID at a specific exchange index (0-based).
+    """Get the prompt ID at a specific exchange index (1-based).
 
     Returns None if index is out of range or None.
     """
     if exchange_index is None:
         return None
+    if exchange_index < 1:
+        raise ValueError(f"exchange_index must be >= 1, got {exchange_index}")
 
     cur = conn.execute(
         """
-        SELECT id FROM prompts
-        WHERE conversation_id = ?
-        ORDER BY timestamp
+        SELECT id FROM events
+        WHERE kind = 'prompt' AND conversation_id = ?
+        ORDER BY timestamp, id
         LIMIT 1 OFFSET ?
         """,
-        (conversation_id, exchange_index),
+        (conversation_id, exchange_index - 1),
     )
     row = cur.fetchone()
     return row["id"] if row else None

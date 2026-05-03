@@ -306,8 +306,8 @@ class TestPreflightGate:
         conn = sqlite3.connect(str(corrupt))
         conn.execute("PRAGMA foreign_keys = OFF")
         conn.execute(
-            "INSERT INTO prompts (id, conversation_id, external_id, timestamp) "
-            "VALUES (?, 'nonexistent-conv', 'ext-p-1', '2024-01-01T00:00:00Z')",
+            "INSERT INTO events (id, kind, conversation_id, timestamp) "
+            "VALUES (?, 'prompt', 'nonexistent-conv', '2024-01-01T00:00:00Z')",
             (ulid(),),
         )
         conn.commit()

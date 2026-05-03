@@ -82,19 +82,28 @@ class TestSanitizeFts5Query:
 
 @pytest.fixture
 def fts_conn():
-    """In-memory SQLite with content_fts and test content."""
+    """In-memory SQLite with content_fts, events, and test content."""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute("""
+        CREATE TABLE events (
+            id TEXT PRIMARY KEY, kind TEXT NOT NULL, conversation_id TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
         CREATE VIRTUAL TABLE content_fts USING fts5(
-            text_content, content_id UNINDEXED, side UNINDEXED, conversation_id UNINDEXED,
+            text_content, event_content_id UNINDEXED, event_id UNINDEXED, conversation_id UNINDEXED,
             tokenize='porter unicode61 remove_diacritics 1'
         )
     """)
+    conn.executemany(
+        "INSERT INTO events (id, kind, conversation_id) VALUES (?, ?, ?)",
+        [("e1", "prompt", "conv1"), ("e2", "response", "conv2"), ("e3", "prompt", "conv3")],
+    )
     rows = [
-        ("Python function error crash debug", "c1", "prompt", "conv1"),
-        ("Go language performance benchmark", "c2", "response", "conv2"),
-        ("R programming statistics analysis", "c3", "prompt", "conv3"),
+        ("Python function error crash debug", "ec1", "e1", "conv1"),
+        ("Go language performance benchmark", "ec2", "e2", "conv2"),
+        ("R programming statistics analysis", "ec3", "e3", "conv3"),
     ]
     conn.executemany("INSERT INTO content_fts VALUES (?, ?, ?, ?)", rows)
     conn.commit()

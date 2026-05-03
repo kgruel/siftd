@@ -106,118 +106,6 @@ A single interaction through one harness
 | `started_at` | TEXT | NOT NULL | ISO timestamp |
 | `ended_at` | TEXT |  | ISO timestamp, NULL if unknown/abandoned |
 
-### prompts
-
-User's input
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | TEXT | PRIMARY KEY | ULID |
-| `conversation_id` | TEXT | NOT NULL REFERENCES conversations(id) ON DELETE CASCADE |  |
-| `external_id` | TEXT |  | harness's message ID |
-| `timestamp` | TEXT | NOT NULL |  |
-
-### responses
-
-Model's output
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | TEXT | PRIMARY KEY | ULID |
-| `conversation_id` | TEXT | NOT NULL REFERENCES conversations(id) ON DELETE CASCADE |  |
-| `prompt_id` | TEXT | REFERENCES prompts(id) ON DELETE CASCADE |  |
-| `model_id` | TEXT | REFERENCES models(id) ON DELETE SET NULL |  |
-| `provider_id` | TEXT | REFERENCES providers(id) ON DELETE SET NULL |  |
-| `external_id` | TEXT |  | harness's message ID |
-| `timestamp` | TEXT | NOT NULL |  |
-| `input_tokens` | INTEGER |  | universal |
-| `output_tokens` | INTEGER |  | universal |
-
-### tool_calls
-
-Tool invocations during response generation
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | TEXT | PRIMARY KEY | ULID |
-| `response_id` | TEXT | NOT NULL REFERENCES responses(id) ON DELETE CASCADE |  |
-| `conversation_id` | TEXT | NOT NULL REFERENCES conversations(id) ON DELETE CASCADE |  |
-| `tool_id` | TEXT | REFERENCES tools(id) ON DELETE SET NULL |  |
-| `external_id` | TEXT |  | model-assigned tool_call_id |
-| `input` | TEXT |  | JSON arguments |
-| `result` | TEXT |  | JSON result (legacy, use result_hash) |
-| `result_hash` | TEXT | REFERENCES content_blobs(hash) | deduplicated result |
-| `status` | TEXT |  | success, error, pending |
-| `timestamp` | TEXT |  |  |
-
-## CONTENT TABLES
-
-### prompt_content
-
-Content blocks in prompts (usually just text, but could be attachments)
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | TEXT | PRIMARY KEY | ULID |
-| `prompt_id` | TEXT | NOT NULL REFERENCES prompts(id) ON DELETE CASCADE |  |
-| `block_index` | INTEGER | NOT NULL |  |
-| `block_type` | TEXT | NOT NULL | text, image, file |
-| `content` | TEXT | NOT NULL | the actual content or reference |
-
-### response_content
-
-Content blocks in responses (text, thinking, tool references)
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | TEXT | PRIMARY KEY | ULID |
-| `response_id` | TEXT | NOT NULL REFERENCES responses(id) ON DELETE CASCADE |  |
-| `block_index` | INTEGER | NOT NULL |  |
-| `block_type` | TEXT | NOT NULL | text, thinking, tool_use, tool_result |
-| `content` | TEXT | NOT NULL |  |
-
-## ATTRIBUTE TABLES
-
-### conversation_attributes
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | TEXT | PRIMARY KEY | ULID |
-| `conversation_id` | TEXT | NOT NULL REFERENCES conversations(id) ON DELETE CASCADE |  |
-| `key` | TEXT | NOT NULL |  |
-| `value` | TEXT | NOT NULL |  |
-| `scope` | TEXT |  | NULL=user, 'provider', 'analyzer', etc. |
-
-### prompt_attributes
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | TEXT | PRIMARY KEY | ULID |
-| `prompt_id` | TEXT | NOT NULL REFERENCES prompts(id) ON DELETE CASCADE |  |
-| `key` | TEXT | NOT NULL |  |
-| `value` | TEXT | NOT NULL |  |
-| `scope` | TEXT |  |  |
-
-### response_attributes
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | TEXT | PRIMARY KEY | ULID |
-| `response_id` | TEXT | NOT NULL REFERENCES responses(id) ON DELETE CASCADE |  |
-| `key` | TEXT | NOT NULL |  |
-| `value` | TEXT | NOT NULL |  |
-| `scope` | TEXT |  |  |
-
-### tool_call_attributes
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | TEXT | PRIMARY KEY | ULID |
-| `tool_call_id` | TEXT | NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE |  |
-| `key` | TEXT | NOT NULL |  |
-| `value` | TEXT | NOT NULL |  |
-| `scope` | TEXT |  |  |
-
 ## TAG TABLES
 
 ### tags
@@ -228,33 +116,6 @@ Content blocks in responses (text, thinking, tool references)
 | `name` | TEXT | NOT NULL UNIQUE |  |
 | `description` | TEXT |  |  |
 | `created_at` | TEXT | NOT NULL |  |
-
-### workspace_tags
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | TEXT | PRIMARY KEY | ULID |
-| `workspace_id` | TEXT | NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE |  |
-| `tag_id` | TEXT | NOT NULL REFERENCES tags(id) ON DELETE CASCADE |  |
-| `applied_at` | TEXT | NOT NULL |  |
-
-### conversation_tags
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | TEXT | PRIMARY KEY | ULID |
-| `conversation_id` | TEXT | NOT NULL REFERENCES conversations(id) ON DELETE CASCADE |  |
-| `tag_id` | TEXT | NOT NULL REFERENCES tags(id) ON DELETE CASCADE |  |
-| `applied_at` | TEXT | NOT NULL |  |
-
-### tool_call_tags
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | TEXT | PRIMARY KEY | ULID |
-| `tool_call_id` | TEXT | NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE |  |
-| `tag_id` | TEXT | NOT NULL REFERENCES tags(id) ON DELETE CASCADE |  |
-| `applied_at` | TEXT | NOT NULL |  |
 
 ## OPERATIONAL TABLES
 
@@ -308,6 +169,107 @@ _Virtual table using fts5._
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
 | `text_content` | TEXT |  |  |
-| `content_id` | TEXT | UNINDEXED |  |
-| `side` | TEXT | UNINDEXED |  |
+| `event_content_id` | TEXT | UNINDEXED |  |
+| `event_id` | TEXT | UNINDEXED |  |
 | `conversation_id` | TEXT | UNINDEXED |  |
+| `tokenize` | TEXT |  |  |
+
+## POLYMORPHIC EVENT TABLES (schema v4+)
+
+### events
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | TEXT | PRIMARY KEY | ULID (preserved from prompts/responses/tool_calls) |
+| `kind` | TEXT | NOT NULL | 'prompt' \| 'response' \| 'tool_call' |
+| `conversation_id` | TEXT | NOT NULL REFERENCES conversations(id) ON DELETE CASCADE |  |
+| `parent_id` | TEXT | REFERENCES events(id) ON DELETE CASCADE |  |
+| `external_id` | TEXT |  | harness's identifier (NULL for synthetic) |
+| `timestamp` | TEXT | NOT NULL |  |
+
+### event_response
+
+Sparse extension: only present for kind='response'
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `event_id` | TEXT | PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE |  |
+| `model_id` | TEXT | REFERENCES models(id) ON DELETE SET NULL |  |
+| `provider_id` | TEXT | REFERENCES providers(id) ON DELETE SET NULL |  |
+| `input_tokens` | INTEGER |  |  |
+| `output_tokens` | INTEGER |  |  |
+
+### event_tool_call
+
+Sparse extension: only present for kind='tool_call'
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `event_id` | TEXT | PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE |  |
+| `tool_id` | TEXT | REFERENCES tools(id) ON DELETE SET NULL |  |
+| `input` | TEXT |  | JSON arguments |
+| `result_hash` | TEXT | REFERENCES content_blobs(hash) |  |
+| `status` | TEXT |  | success \| error \| pending |
+
+### event_content
+
+Trigger to decrement ref_count and garbage collect when event_tool_call rows are deleted
+CREATE TRIGGER tr_event_tool_call_delete_release_blob
+AFTER DELETE ON event_tool_call
+FOR EACH ROW
+WHEN OLD.result_hash IS NOT NULL
+BEGIN
+    UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0) WHERE hash = OLD.result_hash;
+    DELETE FROM content_blobs WHERE hash = OLD.result_hash AND ref_count <= 0;
+END;
+
+-- Trigger to adjust ref_count when result_hash changes on event_tool_call
+CREATE TRIGGER tr_event_tool_call_update_release_blob
+AFTER UPDATE OF result_hash ON event_tool_call
+FOR EACH ROW
+WHEN OLD.result_hash IS NOT NEW.result_hash
+BEGIN
+    -- Decrement old blob (if any)
+    UPDATE content_blobs SET ref_count = MAX(ref_count - 1, 0)
+        WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash;
+    DELETE FROM content_blobs
+        WHERE OLD.result_hash IS NOT NULL AND hash = OLD.result_hash AND ref_count <= 0;
+    -- Increment new blob (if any)
+    UPDATE content_blobs SET ref_count = ref_count + 1
+        WHERE NEW.result_hash IS NOT NULL AND hash = NEW.result_hash;
+END;
+
+-- Unified content blocks (replaces prompt_content + response_content)
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | TEXT | PRIMARY KEY | ULID (preserved from prompt_content/response_content) |
+| `event_id` | TEXT | NOT NULL REFERENCES events(id) ON DELETE CASCADE |  |
+| `block_index` | INTEGER | NOT NULL |  |
+| `block_type` | TEXT | NOT NULL | text \| thinking \| tool_use \| tool_result \| image \| ... |
+| `content` | TEXT | NOT NULL |  |
+
+### attributes
+
+Polymorphic schemaless key-value (replaces *_attributes tables)
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | TEXT | PRIMARY KEY | ULID |
+| `target_kind` | TEXT | NOT NULL | 'conversation' \| 'prompt' \| 'response' \| 'tool_call' |
+| `target_id` | TEXT | NOT NULL | references conversations.id OR events.id |
+| `key` | TEXT | NOT NULL |  |
+| `value` | TEXT | NOT NULL |  |
+| `scope` | TEXT |  | NULL=user, 'provider', 'analyzer', etc. |
+
+### tag_assignments
+
+Polymorphic tag assignments (replaces workspace_tags/conversation_tags/tool_call_tags/prompt_tags)
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | TEXT | PRIMARY KEY | ULID |
+| `target_kind` | TEXT | NOT NULL | 'conversation' \| 'workspace' \| 'prompt' \| 'response' \| 'tool_call' \| 'exchange' |
+| `target_id` | TEXT | NOT NULL |  |
+| `tag_id` | TEXT | NOT NULL REFERENCES tags(id) ON DELETE CASCADE |  |
+| `applied_at` | TEXT | NOT NULL |  |

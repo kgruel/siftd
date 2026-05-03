@@ -233,7 +233,7 @@ def fts5_search_content(
         raw_fts: If True, pass query directly to FTS5 without sanitization.
 
     Returns:
-        List of dicts with: conversation_id, side, snippet, rank.
+        List of dicts with: conversation_id, kind, snippet, rank.
     """
     from siftd.storage.fts import search_content as _search_content
 
@@ -455,9 +455,9 @@ def enrich_context_window(conn: sqlite3.Connection, results: list[SearchChunk], 
 
         all_prompts = conn.execute(
             """
-            SELECT p.id FROM prompts p
-            WHERE p.conversation_id = ?
-            ORDER BY p.timestamp
+            SELECT e.id FROM events e
+            WHERE e.conversation_id = ? AND e.kind = 'prompt'
+            ORDER BY e.timestamp
         """,
             (r.conversation_id,),
         ).fetchall()
@@ -725,7 +725,7 @@ def hybrid_search(
                     conversation_id=r["conversation_id"],
                     score=abs(r["rank"]),
                     text=r["snippet"],
-                    chunk_type=r["side"],
+                    chunk_type=r["kind"],
                     source_ids=[],
                     file_refs=[],
                 )

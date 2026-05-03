@@ -84,6 +84,129 @@ def test_rename_and_delete_safe_paths(test_db):
         delete_tag_safe(db_path=test_db, tag_name="renamed:ok")
 
 
+def test_granular_tag_roundtrip_per_kind(test_db):
+    """apply_tags writes to tag_assignments for each granular target_kind."""
+    conn = open_database(test_db)
+    try:
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        prompt_id = conn.execute(
+            "SELECT id FROM events WHERE kind='prompt' AND conversation_id=? LIMIT 1",
+            (conv_id,),
+        ).fetchone()["id"]
+        response_id = conn.execute(
+            "SELECT id FROM events WHERE kind='response' AND conversation_id=? LIMIT 1",
+            (conv_id,),
+        ).fetchone()["id"]
+    finally:
+        conn.close()
+
+    for kind, eid in [("prompt", prompt_id), ("response", response_id), ("exchange", prompt_id)]:
+        result = apply_tags(db_path=test_db, tags=[f"test:{kind}"], entity_type=kind, entity_id=eid)
+        assert result.results[0].status == "applied", f"kind={kind}"
+
+    conn = open_database(test_db)
+    try:
+        rows = conn.execute(
+            "SELECT target_kind FROM tag_assignments WHERE target_id IN (?, ?)",
+            (prompt_id, response_id),
+        ).fetchall()
+        kinds_found = {r["target_kind"] for r in rows}
+    finally:
+        conn.close()
+
+    assert "prompt" in kinds_found
+    assert "response" in kinds_found
+    assert "exchange" in kinds_found
+
+
+def test_granular_tag_cross_kind_isolation(test_db):
+    """Tagging a prompt event does not affect response queries and vice versa."""
+    conn = open_database(test_db)
+    try:
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        prompt_id = conn.execute(
+            "SELECT id FROM events WHERE kind='prompt' AND conversation_id=? LIMIT 1",
+            (conv_id,),
+        ).fetchone()["id"]
+        response_id = conn.execute(
+            "SELECT id FROM events WHERE kind='response' AND conversation_id=? LIMIT 1",
+            (conv_id,),
+        ).fetchone()["id"]
+    finally:
+        conn.close()
+
+    apply_tags(db_path=test_db, tags=["isolation:prompt-only"], entity_type="prompt", entity_id=prompt_id)
+
+    conn = open_database(test_db)
+    try:
+        prompt_count = conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments ta JOIN tags t ON t.id=ta.tag_id "
+            "WHERE ta.target_kind='prompt' AND ta.target_id=? AND t.name='isolation:prompt-only'",
+            (prompt_id,),
+        ).fetchone()[0]
+        response_count = conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments ta JOIN tags t ON t.id=ta.tag_id "
+            "WHERE ta.target_kind='response' AND ta.target_id=? AND t.name='isolation:prompt-only'",
+            (response_id,),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    assert prompt_count == 1
+    assert response_count == 0
+
+
+def test_exchange_and_prompt_coexist_on_same_event(test_db):
+    """exchange and prompt tags can coexist on the same event ID (different target_kind)."""
+    conn = open_database(test_db)
+    try:
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        prompt_id = conn.execute(
+            "SELECT id FROM events WHERE kind='prompt' AND conversation_id=? LIMIT 1",
+            (conv_id,),
+        ).fetchone()["id"]
+    finally:
+        conn.close()
+
+    apply_tags(db_path=test_db, tags=["label:prompt-level"], entity_type="prompt", entity_id=prompt_id)
+    apply_tags(db_path=test_db, tags=["label:exchange-level"], entity_type="exchange", entity_id=prompt_id)
+
+    conn = open_database(test_db)
+    try:
+        prompt_tag = conn.execute(
+            "SELECT t.name FROM tag_assignments ta JOIN tags t ON t.id=ta.tag_id "
+            "WHERE ta.target_kind='prompt' AND ta.target_id=?",
+            (prompt_id,),
+        ).fetchone()
+        exchange_tag = conn.execute(
+            "SELECT t.name FROM tag_assignments ta JOIN tags t ON t.id=ta.tag_id "
+            "WHERE ta.target_kind='exchange' AND ta.target_id=?",
+            (prompt_id,),
+        ).fetchone()
+        row_count = conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_id=?",
+            (prompt_id,),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    assert prompt_tag["name"] == "label:prompt-level"
+    assert exchange_tag["name"] == "label:exchange-level"
+    assert row_count == 2  # two distinct rows for same event_id, different target_kind
+
+
+def test_apply_tags_rejects_invalid_granular_kind(test_db):
+    """apply_tags raises ValueError for unknown entity types."""
+    conn = open_database(test_db)
+    try:
+        event_id = conn.execute("SELECT id FROM events LIMIT 1").fetchone()["id"]
+    finally:
+        conn.close()
+
+    with pytest.raises(ValueError, match="Unsupported entity_type"):
+        apply_tags(db_path=test_db, tags=["x"], entity_type="nonsense", entity_id=event_id)
+
+
 def test_rename_delete_owner_protection(test_db):
     conv1, _ = _conversation_ids(test_db)[:2]
     conn = open_database(test_db)

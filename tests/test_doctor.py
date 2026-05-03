@@ -10,7 +10,6 @@ from siftd.api import (
     run_checks,
 )
 from siftd.doctor.checks import (
-    BlobMigrationCheck,
     CheckContext,
     ConfigValidCheck,
     CostCoverageCheck,
@@ -81,7 +80,6 @@ class TestListChecks:
         # embeddings-compat is from main (replaces embeddings-dimension-mismatch)
         assert "embeddings-compat" in names
         assert "workspace-identity" in names
-        assert "blob-migration" in names
         # Deep checks
         assert "db-fk-integrity" in names
         assert "db-blob-refcount-drift" in names
@@ -972,10 +970,10 @@ class TestFtsStaleCheck:
         write_conn.row_factory = sqlite3.Row
         ensure_fts_table(write_conn)
 
-        # Insert orphaned FTS entry (content_id doesn't exist)
+        # Insert orphaned FTS entry (event_content_id doesn't exist)
         write_conn.execute("""
-            INSERT INTO content_fts (text_content, content_id, side, conversation_id)
-            VALUES ('orphan text', 'nonexistent-id', 'prompt', 'some-conv')
+            INSERT INTO content_fts (text_content, event_content_id, event_id, conversation_id)
+            VALUES ('orphan text', 'nonexistent-ec-id', 'nonexistent-e-id', 'some-conv')
         """)
         write_conn.commit()
         write_conn.close()
@@ -1012,8 +1010,7 @@ class TestFtsStaleCheck:
         assert len(findings) == 1
         assert findings[0].check == "fts-stale"
         assert "missing" in findings[0].message
-        assert findings[0].context["missing_prompt_count"] > 0 or \
-               findings[0].context["missing_response_count"] > 0
+        assert findings[0].context["missing_count"] > 0
 
 
 class TestFtsIntegrityCheck:
@@ -1213,42 +1210,6 @@ class TestWorkspaceIdentityCheck:
         assert check.cost == "fast"
 
 
-class TestBlobMigrationCheck:
-    """Tests for the blob-migration check."""
-
-    def test_no_pending(self, check_context, monkeypatch):
-        """Returns no findings when no migrations pending."""
-        monkeypatch.setattr(
-            "siftd.storage.migrate_blobs.count_pending_migrations",
-            lambda conn: {"total": 0, "unique": 0, "size_bytes": 0},
-        )
-        check = BlobMigrationCheck()
-        findings = check.run(check_context)
-        assert findings == []
-
-    def test_pending_migrations(self, check_context, monkeypatch):
-        """Reports info finding for pending blob migrations."""
-        monkeypatch.setattr(
-            "siftd.storage.migrate_blobs.count_pending_migrations",
-            lambda conn: {"total": 500, "unique": 200, "size_bytes": 5_242_880},
-        )
-        check = BlobMigrationCheck()
-        findings = check.run(check_context)
-        assert len(findings) == 1
-        assert findings[0].severity == "info"
-        assert "500 tool call" in findings[0].message
-        assert "5.0MB" in findings[0].message
-        assert findings[0].fix_command == "siftd migrate blobs"
-
-    def test_finding_structure(self):
-        """Check has correct attributes."""
-        check = BlobMigrationCheck()
-        assert check.name == "blob-migration"
-        assert check.has_fix is True
-        assert check.requires_db is True
-        assert check.cost == "fast"
-
-
 # ---------------------------------------------------------------------------
 # Helpers for deep-check tests
 # ---------------------------------------------------------------------------
@@ -1433,7 +1394,7 @@ class TestDbTriggerPresenceCheck:
 
     def test_missing_trigger_detected(self, tmp_path):
         conn, db_path = _make_deep_ctx(tmp_path)
-        conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
+        conn.execute("DROP TRIGGER IF EXISTS tr_event_tool_call_delete_release_blob")
         conn.commit()
         conn.close()
 
@@ -1444,7 +1405,7 @@ class TestDbTriggerPresenceCheck:
 
         assert len(findings) == 1
         assert findings[0].severity == "error"
-        assert "tr_tool_calls_delete_release_blob" in findings[0].context["missing"]
+        assert "tr_event_tool_call_delete_release_blob" in findings[0].context["missing"]
         assert findings[0].fix_command == "siftd doctor fix --triggers"
 
     def test_check_attributes(self):
@@ -1588,7 +1549,7 @@ class TestFixFunctions:
         from siftd.cli.data import _fix_blob_triggers
 
         conn, db_path = _make_deep_ctx(tmp_path)
-        conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
+        conn.execute("DROP TRIGGER IF EXISTS tr_event_tool_call_delete_release_blob")
         conn.commit()
 
         _fix_blob_triggers(conn, db_path)
@@ -1603,5 +1564,5 @@ class TestFixFunctions:
             ).fetchall()
         }
         check_conn.close()
-        assert "tr_tool_calls_delete_release_blob" in triggers
-        assert "tr_tool_calls_update_release_blob" in triggers
+        assert "tr_event_tool_call_delete_release_blob" in triggers
+        assert "tr_event_tool_call_update_release_blob" in triggers

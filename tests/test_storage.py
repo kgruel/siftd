@@ -181,30 +181,29 @@ class TestBlobStorage:
 class TestToolCallBlobs:
     def test_dedupe_and_cascade(self, db):
         c, r = _scaffold(db)
-        sq.insert_tool_call(db, r, c, None, "tc1", '{}', '{"c":"f"}', "success", "2024-01-01T10:00:01Z")
+        tc_id = sq.insert_tool_call(db, r, c, None, "tc1", '{}', '{"c":"f"}', "success", "2024-01-01T10:00:01Z")
         db.commit()
-        row = db.execute("SELECT result, result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
-        assert row["result"] is None and row["result_hash"] is not None
+        row = db.execute("SELECT result_hash FROM event_tool_call WHERE event_id=?", (tc_id,)).fetchone()
+        assert row["result_hash"] is not None
         # Delete cascades and releases blob
         sq.delete_conversation(db, c)
         db.commit()
         assert get_ref_count(db, row["result_hash"]) == 0
 
-    def test_dedupe_disabled_and_null(self, db):
+    def test_null_result_stored(self, db):
         c, r = _scaffold(db)
-        sq.insert_tool_call(db, r, c, None, "tc1", '{}', '{"i":1}', "s", "2024-01-01T10:00:01Z", dedupe_result=False)
-        sq.insert_tool_call(db, r, c, None, "tc2", '{}', None, "s", "2024-01-01T10:00:02Z")
-        # Non-JSON result with filter_binary=True → hits except path
-        sq.insert_tool_call(db, r, c, None, "tc3", '{}', 'not-json', "s", "2024-01-01T10:00:03Z")
-        # Large base64 in result → filter_binary modifies data, hits json.dumps path
+        tc_id = sq.insert_tool_call(db, r, c, None, "tc1", '{}', None, "s", "2024-01-01T10:00:02Z")
+        # Non-JSON result with filter_binary=True → hits except path, still stored in blobs
+        tc2_id = sq.insert_tool_call(db, r, c, None, "tc3", '{}', 'not-json', "s", "2024-01-01T10:00:03Z")
+        # Large base64 in result → filter_binary modifies data
         import base64
         big_b64 = base64.b64encode(b"x" * 10000).decode()
-        sq.insert_tool_call(db, r, c, None, "tc4", '{}', f'{{"content": "{big_b64}"}}', "s", "2024-01-01T10:00:04Z")
+        tc3_id = sq.insert_tool_call(db, r, c, None, "tc4", '{}', f'{{"content": "{big_b64}"}}', "s", "2024-01-01T10:00:04Z")
         db.commit()
-        row = db.execute("SELECT result, result_hash FROM tool_calls WHERE external_id='tc1'").fetchone()
-        assert row["result"] == '{"i":1}' and row["result_hash"] is None
-        # Non-JSON was still stored (filter_binary exception path leaves it as-is)
-        assert db.execute("SELECT result_hash FROM tool_calls WHERE external_id='tc3'").fetchone()["result_hash"] is not None
+        row = db.execute("SELECT result_hash FROM event_tool_call WHERE event_id=?", (tc_id,)).fetchone()
+        assert row["result_hash"] is None  # no result → no blob
+        # Non-JSON was still stored in blobs (filter_binary exception path leaves it as-is)
+        assert db.execute("SELECT result_hash FROM event_tool_call WHERE event_id=?", (tc2_id,)).fetchone()["result_hash"] is not None
 
     def test_shared_blob_cascade(self, db):
         h = sq.get_or_create_harness(db, "test", source="test")
@@ -224,26 +223,6 @@ class TestToolCallBlobs:
         assert get_ref_count(db, compute_content_hash(result)) == 1
 
 
-class TestBlobMigration:
-    def test_migrate_lifecycle(self, db):
-        from siftd.storage.migrate_blobs import count_pending_migrations, migrate_existing_results, verify_migration
-        assert migrate_existing_results(db)["migrated"] == 0  # empty
-        c, r = _scaffold(db)
-        for ext, val in [("tc1", '{"a":1}'), ("tc2", '{"a":1}'), ("tc3", '{"b":2}')]:
-            sq.insert_tool_call(db, r, c, None, ext, '{}', val, "s", None, dedupe_result=False)
-        db.commit()
-        assert count_pending_migrations(db)["total"] == 3
-        s = migrate_existing_results(db)
-        assert s["migrated"] == 3 and s["blobs_created"] == 2
-        assert verify_migration(db)["pending"] == 0
-
-    def test_migrate_preserves(self, db):
-        from siftd.storage.migrate_blobs import migrate_existing_results
-        c, r = _scaffold(db)
-        sq.insert_tool_call(db, r, c, None, "new", '{}', '{"s":1}', "s", None, dedupe_result=True)
-        sq.insert_tool_call(db, r, c, None, "old", '{}', '{"s":1}', "s", None, dedupe_result=False)
-        db.commit()
-        assert migrate_existing_results(db)["blobs_reused"] == 1
 
 
 # === store_conversation ===
@@ -252,15 +231,15 @@ class TestStoreConversation:
     def test_stores_full_conversation(self, populated_db):
         conn, cid = populated_db
         assert conn.execute("SELECT external_id FROM conversations WHERE id=?", (cid,)).fetchone()[0] == "conv-1"
-        assert conn.execute("SELECT COUNT(*) FROM prompts WHERE conversation_id=?", (cid,)).fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM responses WHERE conversation_id=?", (cid,)).fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM tool_calls WHERE conversation_id=?", (cid,)).fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE conversation_id=? AND kind='prompt'", (cid,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE conversation_id=? AND kind='response'", (cid,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE conversation_id=? AND kind='tool_call'", (cid,)).fetchone()[0] == 2
         # FTS indexed
         assert len(conn.execute("SELECT * FROM content_fts WHERE content_fts MATCH 'Python'").fetchall()) >= 1
         # Response attributes
-        assert any(r["key"] == "cache_read_input_tokens" for r in conn.execute("SELECT * FROM response_attributes").fetchall())
+        assert any(r["key"] == "cache_read_input_tokens" for r in conn.execute("SELECT * FROM attributes WHERE target_kind='response'").fetchall())
         # Auto-tagged shell commands
-        tags = conn.execute("SELECT t.name FROM tool_call_tags tct JOIN tags t ON t.id=tct.tag_id").fetchall()
+        tags = conn.execute("SELECT t.name FROM tag_assignments ta JOIN tags t ON t.id=ta.tag_id WHERE ta.target_kind='tool_call'").fetchall()
         assert any("shell:" in t["name"] for t in tags)
 
     def test_workspace_cache(self, db):
@@ -309,7 +288,7 @@ class TestStoreConversation:
                     tool_calls=[ToolCall(tool_name="shell.execute", external_id="tc1",
                         input={"command": "siftd search foo"}, result={"output": "found"}, status="success")])])])
         cid = sq.store_conversation(db, conv, commit=True)
-        tags = db.execute("SELECT t.name FROM conversation_tags ct JOIN tags t ON t.id=ct.tag_id WHERE ct.conversation_id=?", (cid,)).fetchall()
+        tags = db.execute("SELECT t.name FROM tag_assignments ta JOIN tags t ON t.id=ta.tag_id WHERE ta.target_kind='conversation' AND ta.target_id=?", (cid,)).fetchall()
         assert any("derivative" in t["name"] for t in tags)
 
 
@@ -355,6 +334,57 @@ class TestConversationOps:
         sq.delete_conversation(conn, cid)
         conn.commit()
         assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+
+    def test_delete_cleans_exchange_tag_assignments_and_attributes(self, populated_db):
+        """delete_conversation cascade triggers remove tag_assignments and attributes for exchange events."""
+        conn, cid = populated_db
+        # Find an event to tag at exchange scope
+        event_id = conn.execute("SELECT id FROM events LIMIT 1").fetchone()["id"]
+        tag_id = tags.get_or_create_tag(conn, "exchange-tag")
+        tags.apply_tag(conn, "exchange", event_id, tag_id)
+        conn.execute(
+            "INSERT INTO attributes (id, target_kind, target_id, key, value) VALUES (?,?,?,?,?)",
+            ("attr1", "exchange", event_id, "k", "v"),
+        )
+        conn.commit()
+
+        sq.delete_conversation(conn, cid)
+        conn.commit()
+
+        ta_count = conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_kind='exchange' AND target_id=?",
+            (event_id,),
+        ).fetchone()[0]
+        assert ta_count == 0, "exchange tag_assignments should be cleaned up by trigger"
+
+        attr_count = conn.execute(
+            "SELECT COUNT(*) FROM attributes WHERE target_kind='exchange' AND target_id=?",
+            (event_id,),
+        ).fetchone()[0]
+        assert attr_count == 0, "exchange attributes should be cleaned up by trigger"
+
+    def test_cascade_trigger_cleans_polymorphic_rows_on_event_delete(self, populated_db):
+        """tr_polymorphic_events_cleanup trigger fires on direct DELETE FROM events."""
+        conn, cid = populated_db
+        event_id = conn.execute("SELECT id FROM events LIMIT 1").fetchone()["id"]
+        tag_id = tags.get_or_create_tag(conn, "orphan-tag")
+        tags.apply_tag(conn, "prompt", event_id, tag_id)
+        conn.execute(
+            "INSERT INTO attributes (id, target_kind, target_id, key, value) VALUES (?,?,?,?,?)",
+            ("attr2", "prompt", event_id, "k", "v"),
+        )
+        conn.commit()
+
+        # Direct delete (not via delete_conversation) — trigger should still fire
+        conn.execute("DELETE FROM events WHERE id=?", (event_id,))
+        conn.commit()
+
+        assert conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_id=?", (event_id,)
+        ).fetchone()[0] == 0, "tag_assignments orphan should be removed by trigger"
+        assert conn.execute(
+            "SELECT COUNT(*) FROM attributes WHERE target_id=?", (event_id,)
+        ).fetchone()[0] == 0, "attributes orphan should be removed by trigger"
 
 
 # === File dedup ===
@@ -431,7 +461,7 @@ class TestFTS:
         # Recreate without porter
         conn = open_database(tmp_path / "t.db")
         conn.execute("DROP TABLE IF EXISTS content_fts")
-        conn.execute("CREATE VIRTUAL TABLE content_fts USING fts5(text_content, content_id UNINDEXED, side UNINDEXED, conversation_id UNINDEXED)")
+        conn.execute("CREATE VIRTUAL TABLE content_fts USING fts5(text_content, event_content_id UNINDEXED, event_id UNINDEXED, conversation_id UNINDEXED)")
         conn.commit()
         fts.ensure_fts_table(conn)
         assert "porter" in (conn.execute("SELECT sql FROM sqlite_master WHERE name='content_fts'").fetchone()[0] or "").lower()
@@ -472,13 +502,6 @@ class TestWhereBuilder:
         wb = WhereBuilder()
         wb.workspace("p")
         assert "workspaces" in wb.joins_sql()
-        assert not wb.needs_group_by
-        wb.require_join("r")
-        assert wb.needs_group_by
-        # Transitive deps: m → r
-        wb2 = WhereBuilder()
-        wb2.require_join("m")
-        assert "responses" in wb2.joins_sql() and "models" in wb2.joins_sql()
 
     def test_owner_filter(self):
         wb = WhereBuilder()
@@ -487,9 +510,8 @@ class TestWhereBuilder:
         assert "conversation_owners" in sql
         assert "user_id = ?" in sql
         assert wb.params == ["alice@co.com"]
-        # No JOINs needed, no GROUP BY impact
+        # No JOINs needed
         assert wb.joins_sql() == ""
-        assert not wb.needs_group_by
 
     def test_owner_none_is_noop(self):
         wb = WhereBuilder()
@@ -530,7 +552,7 @@ class TestSqlHelpers:
         tid = tags.get_or_create_tag(conn, "t")
         tags.apply_tag(conn, "conversation", cid, tid)
         conn.commit()
-        assert batched_execute(conn, "DELETE FROM conversation_tags WHERE conversation_id IN ({placeholders})", [cid]) >= 1
+        assert batched_execute(conn, "DELETE FROM tag_assignments WHERE target_kind='conversation' AND target_id IN ({placeholders})", [cid]) >= 1
         assert batched_execute(conn, "DELETE FROM tags WHERE id IN ({placeholders})", []) == 0
 
 
@@ -617,13 +639,13 @@ class TestTags:
         wt = tags.get_or_create_tag(conn, "wt")
         assert tags.apply_tag(conn, "workspace", ws, wt, commit=True) is not None
         assert tags.remove_tag(conn, "workspace", ws, wt, commit=True)
-        # Tool call
-        tc = conn.execute("SELECT id FROM tool_calls LIMIT 1").fetchone()["id"]
+        # Tool call (via events table)
+        tc = conn.execute("SELECT id FROM events WHERE kind='tool_call' LIMIT 1").fetchone()["id"]
         tt = tags.get_or_create_tag(conn, "tt")
         assert tags.apply_tag(conn, "tool_call", tc, tt, commit=True) is not None
         assert tags.remove_tag(conn, "tool_call", tc, tt, commit=True)
-        # Prompt
-        pid = conn.execute("SELECT id FROM prompts LIMIT 1").fetchone()["id"]
+        # Prompt (via events table)
+        pid = conn.execute("SELECT id FROM events WHERE kind='prompt' LIMIT 1").fetchone()["id"]
         pt = tags.get_or_create_tag(conn, "pt")
         assert tags.apply_tag(conn, "prompt", pid, pt, commit=True) is not None
         assert tags.remove_tag(conn, "prompt", pid, pt, commit=True)
@@ -657,7 +679,7 @@ class TestTags:
 
     def test_tag_shell_command(self, populated_db):
         conn, _ = populated_db
-        tc = conn.execute("SELECT id FROM tool_calls LIMIT 1").fetchone()["id"]
+        tc = conn.execute("SELECT id FROM events WHERE kind='tool_call' LIMIT 1").fetchone()["id"]
         assert tags.tag_shell_command(conn, tc, "shell.execute", {"command": "pytest"}) is not None
         assert tags.tag_shell_command(conn, tc, "file.read", {"path": "/t"}) is None
         assert tags.tag_shell_command(conn, tc, "shell.execute", None) is None
@@ -698,7 +720,7 @@ class TestQueries:
         assert cid in q.fetch_tags_for_conversations(conn, [cid])
         r = q.fetch_conversation_exchanges(conn, conversation_id=cid)
         assert cid in r and len(r[cid]) >= 1
-        pids = [r["id"] for r in conn.execute("SELECT id FROM prompts WHERE conversation_id=?", (cid,)).fetchall()]
+        pids = [r["id"] for r in conn.execute("SELECT id FROM events WHERE kind='prompt' AND conversation_id=?", (cid,)).fetchall()]
         assert len(q.fetch_prompt_response_texts(conn, pids)) >= 1
 
     def test_stats(self, populated_db):
@@ -721,7 +743,7 @@ class TestQueries:
         conn, cid = populated_db
         assert cid in q.fetch_all_conversation_ids(conn)
         assert cid in q.fetch_conversation_timestamps(conn, [cid])
-        pids = [r["id"] for r in conn.execute("SELECT id FROM prompts WHERE conversation_id=?", (cid,)).fetchall()]
+        pids = [r["id"] for r in conn.execute("SELECT id FROM events WHERE kind='prompt' AND conversation_id=?", (cid,)).fetchall()]
         assert len(q.fetch_prompt_timestamps(conn, pids)) >= 1
         sq.record_ingested_file(conn, "/f.jsonl", "h", cid, commit=True)
         assert q.fetch_last_ingest_time(conn) is not None
@@ -890,7 +912,7 @@ class TestDatabaseOps:
     def test_open_and_backup(self, tmp_path):
         conn = open_database(tmp_path / "new.db")
         tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
-        assert "conversations" in tables and "prompts" in tables
+        assert "conversations" in tables and "events" in tables
         conn.close()
         # Read-only
         conn = open_database(tmp_path / "new.db", read_only=True)
@@ -967,7 +989,7 @@ class TestDiagnostics:
 
     def test_get_models_without_pricing(self, db):
         assert sq.get_models_without_pricing(db) == []
-        # Insert model + provider + conversation chain + response
+        # Insert model + provider + conversation chain + response via events
         db.execute("INSERT INTO models (id, raw_name, name) VALUES ('m1', 'gpt-4', 'gpt-4')")
         db.execute("INSERT INTO providers (id, name) VALUES ('p1', 'openai')")
         db.execute("INSERT INTO harnesses (id, name) VALUES ('h1', 'test')")
@@ -976,11 +998,12 @@ class TestDiagnostics:
             "VALUES ('c1', 'ext1', 'h1', '2024-01-01')"
         )
         db.execute(
-            "INSERT INTO prompts (id, conversation_id, timestamp) VALUES ('pr1', 'c1', '2024-01-01')"
+            "INSERT INTO events (id, kind, conversation_id, external_id, timestamp) "
+            "VALUES ('r1', 'response', 'c1', 'ext_r1', '2024-01-01')"
         )
         db.execute(
-            "INSERT INTO responses (id, conversation_id, prompt_id, timestamp, model_id, provider_id) "
-            "VALUES ('r1', 'c1', 'pr1', '2024-01-01', 'm1', 'p1')"
+            "INSERT INTO event_response (event_id, model_id, provider_id) "
+            "VALUES ('r1', 'm1', 'p1')"
         )
         db.commit()
         result = sq.get_models_without_pricing(db)
@@ -1005,8 +1028,7 @@ class TestFTSSync:
     def test_get_fts_sync_status(self, db):
         result = fts.get_fts_sync_status(db)
         assert result["orphaned_count"] == 0
-        assert result["missing_prompt_count"] == 0
-        assert result["missing_response_count"] == 0
+        assert result["missing_count"] == 0
 
 
 class TestMigrateWorkspaces:
@@ -1120,7 +1142,7 @@ class TestMigrateWorkspaces:
         assert db.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0] == 1
 
     def test_merge_with_tags(self, db):
-        """Test merge migrates workspace_tags."""
+        """Test merge migrates workspace tag_assignments."""
         from siftd.storage.migrate_workspaces import merge_duplicate_workspaces
         db.execute(
             "INSERT INTO workspaces (id, path, git_remote, discovered_at) "
@@ -1132,17 +1154,17 @@ class TestMigrateWorkspaces:
         )
         db.execute("INSERT INTO tags (id, name, created_at) VALUES ('t1', 'important', '2024-01-01')")
         db.execute(
-            "INSERT INTO workspace_tags (id, workspace_id, tag_id, applied_at) "
-            "VALUES ('wt1', 'w2', 't1', '2024-01-01')"
+            "INSERT INTO tag_assignments (id, target_kind, target_id, tag_id, applied_at) "
+            "VALUES ('wt1', 'workspace', 'w2', 't1', '2024-01-01')"
         )
         db.commit()
         stats = merge_duplicate_workspaces(db)
         assert stats["workspaces_merged"] == 1
         # Tag should be migrated to keeper (w1)
         row = db.execute(
-            "SELECT workspace_id FROM workspace_tags WHERE tag_id = 't1'"
+            "SELECT target_id FROM tag_assignments WHERE tag_id = 't1' AND target_kind = 'workspace'"
         ).fetchone()
-        assert row["workspace_id"] == "w1"
+        assert row["target_id"] == "w1"
 
 
 class TestPreMigrationGuards:
@@ -1176,22 +1198,17 @@ class TestPendingMigrationsDetection:
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
         conn.execute("CREATE TABLE ingested_files (id TEXT PRIMARY KEY, path TEXT)")
-        conn.execute("CREATE TABLE prompts (id TEXT PRIMARY KEY, conversation_id TEXT)")
+        conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY, branch TEXT)")
         conn.commit()
         pending = sq.get_pending_schema_migrations(conn)
         assert "add error column to ingested_files" in pending
-        assert "add CASCADE deletes to foreign keys" in pending
         assert "create pricing table" in pending
         assert "create content_blobs table" in pending
-        assert "create tool_call_tags table" in pending
         assert "create FTS5 search index" in pending
         assert "add file_mtime/file_size columns to ingested_files" in pending
-        assert "add branch column to conversations" in pending
+        assert "add branch column to conversations" not in pending  # column exists
         assert "create session tables" in pending
-        assert "create prompt_tags table" in pending
         assert "create git_remote index on workspaces" in pending
-        assert "create tag indexes on junction tables" in pending
-        assert "create response_attributes covering index" in pending
         assert "create conversation_stats table" in pending
         assert "create conversation_owners table" in pending
         assert "create sync_inbox table" in pending
@@ -1204,41 +1221,10 @@ class TestFTSSyncNoTable:
         conn = sqlite3.connect(str(tmp_path / "bare.db"))
         conn.row_factory = sqlite3.Row
         result = fts.get_fts_sync_status(conn)
-        assert result == {"orphaned_count": 0, "missing_prompt_count": 0, "missing_response_count": 0}
+        assert result == {"orphaned_count": 0, "missing_count": 0}
         conn.close()
 
 
-class TestMigrateBlobs:
-    def test_count_pending_migrations(self, db):
-        from siftd.storage.migrate_blobs import count_pending_migrations
-        result = count_pending_migrations(db)
-        assert "total" in result and "unique" in result
-
-    def test_migrate_with_actual_data(self, db):
-        from siftd.storage.migrate_blobs import migrate_existing_results
-        # Insert a tool call with a result to migrate
-        db.execute("INSERT INTO harnesses (id, name) VALUES ('h1', 'test')")
-        db.execute(
-            "INSERT INTO conversations (id, external_id, harness_id, started_at) "
-            "VALUES ('c1', 'ext1', 'h1', '2024-01-01')"
-        )
-        db.execute(
-            "INSERT INTO prompts (id, conversation_id, timestamp) VALUES ('p1', 'c1', '2024-01-01')"
-        )
-        db.execute(
-            "INSERT INTO responses (id, conversation_id, prompt_id, timestamp) "
-            "VALUES ('r1', 'c1', 'p1', '2024-01-01')"
-        )
-        db.execute(
-            "INSERT INTO tool_calls (id, response_id, conversation_id, input) "
-            "VALUES ('tc1', 'r1', 'c1', '{}')"
-        )
-        db.execute("UPDATE tool_calls SET result = 'hello world' WHERE id = 'tc1'")
-        db.commit()
-        progress = []
-        stats = migrate_existing_results(db, on_progress=lambda done, total: progress.append((done, total)))
-        assert stats["migrated"] == 1
-        assert len(progress) > 0  # on_progress was called
 
 
 # === Blob integrity (S2: R14, H17, H18) ===
@@ -1417,67 +1403,3 @@ class TestBlobIntegrityH17:
         store_content(db, "same", commit=True)
         assert get_ref_count(db, "b" * 64) == 2
 
-    def test_migrate_collision_raises(self, db, monkeypatch):
-        from siftd.storage.blobs import BlobCollisionError
-        from siftd.storage.migrate_blobs import migrate_existing_results
-        db.execute("INSERT INTO harnesses (id, name) VALUES ('mh1', 'test')")
-        db.execute("INSERT INTO conversations (id, external_id, harness_id, started_at) VALUES ('mc1', 'me1', 'mh1', '2024-01-01')")
-        db.execute("INSERT INTO prompts (id, conversation_id, timestamp) VALUES ('mp1', 'mc1', '2024-01-01')")
-        db.execute("INSERT INTO responses (id, conversation_id, prompt_id, timestamp) VALUES ('mr1', 'mc1', 'mp1', '2024-01-01')")
-        db.execute("INSERT INTO tool_calls (id, response_id, conversation_id, input) VALUES ('mtc1', 'mr1', 'mc1', '{}')")
-        db.execute("INSERT INTO tool_calls (id, response_id, conversation_id, input) VALUES ('mtc2', 'mr1', 'mc1', '{}')")
-        db.execute("UPDATE tool_calls SET result = 'content_A' WHERE id = 'mtc1'")
-        db.execute("UPDATE tool_calls SET result = 'content_B' WHERE id = 'mtc2'")
-        db.commit()
-        monkeypatch.setattr("siftd.storage.blobs._sha256", self._fake_sha256("c" * 64))
-        with pytest.raises(BlobCollisionError):
-            migrate_existing_results(db)
-
-
-class TestBlobIntegrityH18:
-    """H18: verify_migration reports ref_count_mismatches and negative_ref_counts."""
-
-    def test_ref_count_mismatches(self, db):
-        from siftd.storage.migrate_blobs import verify_migration
-        c, r = _scaffold(db)
-        # Insert blobs with deliberate mismatches
-        db.execute("INSERT INTO content_blobs (hash, content, ref_count, created_at) VALUES ('h_over', 'over', 2, '2024-01-01')")
-        db.execute("INSERT INTO content_blobs (hash, content, ref_count, created_at) VALUES ('h_under', 'under', 0, '2024-01-01')")
-        db.execute("INSERT INTO content_blobs (hash, content, ref_count, created_at) VALUES ('h_match', 'match', 3, '2024-01-01')")
-        # 1 ref for h_over (stored=2 → over-count)
-        db.execute(f"INSERT INTO tool_calls (id, response_id, conversation_id, input, result_hash) VALUES ('tc_o1', '{r}', '{c}', '{{}}', 'h_over')")
-        # 2 refs for h_under (stored=0 → under-count)
-        db.execute(f"INSERT INTO tool_calls (id, response_id, conversation_id, input, result_hash) VALUES ('tc_u1', '{r}', '{c}', '{{}}', 'h_under')")
-        db.execute(f"INSERT INTO tool_calls (id, response_id, conversation_id, input, result_hash) VALUES ('tc_u2', '{r}', '{c}', '{{}}', 'h_under')")
-        # 3 refs for h_match (stored=3 → match)
-        db.execute(f"INSERT INTO tool_calls (id, response_id, conversation_id, input, result_hash) VALUES ('tc_m1', '{r}', '{c}', '{{}}', 'h_match')")
-        db.execute(f"INSERT INTO tool_calls (id, response_id, conversation_id, input, result_hash) VALUES ('tc_m2', '{r}', '{c}', '{{}}', 'h_match')")
-        db.execute(f"INSERT INTO tool_calls (id, response_id, conversation_id, input, result_hash) VALUES ('tc_m3', '{r}', '{c}', '{{}}', 'h_match')")
-        db.commit()
-
-        result = verify_migration(db)
-        assert result["ref_count_mismatches"] == 2  # h_over and h_under
-        assert result["orphaned_blobs"] == 1         # h_under (ref_count=0)
-        assert result["negative_ref_counts"] == 0
-
-    def test_negative_ref_counts_reported(self, tmp_path):
-        from siftd.storage.migrate_blobs import verify_migration
-        conn = sqlite3.connect(str(tmp_path / "raw.db"))
-        conn.row_factory = sqlite3.Row
-        conn.execute("""CREATE TABLE content_blobs (
-            hash TEXT PRIMARY KEY,
-            content TEXT NOT NULL,
-            ref_count INTEGER DEFAULT 1,
-            created_at TEXT NOT NULL
-        )""")
-        conn.execute("""CREATE TABLE tool_calls (
-            id TEXT PRIMARY KEY,
-            result TEXT,
-            result_hash TEXT REFERENCES content_blobs(hash)
-        )""")
-        conn.execute("INSERT INTO content_blobs VALUES ('hn', 'neg', -1, '2024-01-01')")
-        conn.execute("INSERT INTO content_blobs VALUES ('hp', 'pos', 2, '2024-01-01')")
-        conn.commit()
-        result = verify_migration(conn)
-        assert result["negative_ref_counts"] == 1
-        conn.close()

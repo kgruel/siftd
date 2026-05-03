@@ -789,13 +789,6 @@ def _fix_search_rebuild(conn, db_path):
     return f"{result.get('chunks_added', 0)} chunk(s) indexed"
 
 
-def _fix_migrate_blobs(conn, db_path):
-    from siftd.api.migrations import migrate_blobs
-
-    result = migrate_blobs(conn)
-    return f"{result['migrated']} result(s) migrated, {result['blobs_created']} blob(s) created"
-
-
 def _fix_backfill_git_remote(conn, db_path):
     from siftd.api.migrations import backfill_git_remotes
 
@@ -814,10 +807,10 @@ def _fix_blob_refcount(conn, db_path):
     cur = conn.execute("""
         UPDATE content_blobs
         SET ref_count = COALESCE(
-            (SELECT COUNT(*) FROM tool_calls WHERE result_hash = content_blobs.hash), 0
+            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
         )
         WHERE ref_count != COALESCE(
-            (SELECT COUNT(*) FROM tool_calls WHERE result_hash = content_blobs.hash), 0
+            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
         )
     """)
     updated = cur.rowcount
@@ -840,7 +833,6 @@ _FIX_REGISTRY = {
     "siftd ingest --rebuild-fts": ("Rebuilding FTS index", _fix_rebuild_fts),
     "siftd search --index": ("Indexing embeddings", _fix_search_index),
     "siftd search --rebuild": ("Rebuilding embeddings index", _fix_search_rebuild),
-    "siftd migrate blobs": ("Migrating tool results to blobs", _fix_migrate_blobs),
     "siftd backfill git-remote": ("Backfilling git remote URLs", _fix_backfill_git_remote),
     "siftd doctor fix --pending-tags": ("Cleaning up stale sessions", _fix_pending_tags),
     "siftd doctor fix --blob-refcount": ("Repairing content blob ref counts", _fix_blob_refcount),

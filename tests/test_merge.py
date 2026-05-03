@@ -22,7 +22,7 @@ def _legacy_merge_schema(*, include_content_blobs: bool, include_result_hash: bo
             schema,
         )
         schema = re.sub(
-            r"\nCREATE TRIGGER tr_tool_calls_delete_release_blob\n.*?\nEND;\n",
+            r"\nCREATE TRIGGER tr_event_tool_call_[^\n]+\n.*?\nEND;\n",
             "\n",
             schema,
             flags=re.S,
@@ -35,7 +35,7 @@ def _legacy_merge_schema(*, include_content_blobs: bool, include_result_hash: bo
             flags=re.M,
         )
         schema = re.sub(
-            r"\nCREATE TRIGGER tr_tool_calls_delete_release_blob\n.*?\nEND;\n",
+            r"\nCREATE TRIGGER tr_event_tool_call_[^\n]+\n.*?\nEND;\n",
             "\n",
             schema,
             flags=re.S,
@@ -102,7 +102,7 @@ def test_duplicate_skip(tmp_path):
     # Child rows should not be doubled
     conn = sqlite3.connect(str(target))
     conn.row_factory = sqlite3.Row
-    prompts = conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0]
+    prompts = conn.execute("SELECT COUNT(*) FROM events WHERE kind='prompt'").fetchone()[0]
     conn.close()
     assert prompts == 1
 
@@ -220,7 +220,7 @@ def test_tag_name_dedup(tmp_path):
     conn = sqlite3.connect(str(target))
     conn.row_factory = sqlite3.Row
     tags = conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
-    junctions = conn.execute("SELECT COUNT(*) FROM conversation_tags").fetchone()[0]
+    junctions = conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='conversation'").fetchone()[0]
     conn.close()
     assert tags == 1  # one "research" tag, not two
     assert junctions == 2  # both conversations tagged
@@ -242,13 +242,13 @@ def test_content_blobs_dedup_and_ref_count(tmp_path):
 
     conn = sqlite3.connect(str(target))
     conn.row_factory = sqlite3.Row
-    tool_calls = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
+    tool_calls = conn.execute("SELECT COUNT(*) FROM events WHERE kind='tool_call'").fetchone()[0]
     assert tool_calls == 2
 
-    # Verify ref_counts are correct
+    # Verify ref_counts are correct (event_tool_call is authoritative; tool_calls.result_hash is NULL for new data)
     for row in conn.execute("SELECT hash, ref_count FROM content_blobs").fetchall():
         actual_refs = conn.execute(
-            "SELECT COUNT(*) FROM tool_calls WHERE result_hash = ?", (row["hash"],)
+            "SELECT COUNT(*) FROM event_tool_call WHERE result_hash = ?", (row["hash"],)
         ).fetchone()[0]
         assert row["ref_count"] == actual_refs, f"hash {row['hash']}: ref_count={row['ref_count']} but actual={actual_refs}"
     conn.close()
@@ -352,9 +352,7 @@ def test_empty_source(tmp_path):
     result = merge_database(target, source)
     assert result["conversations"] == 0
     assert result["skipped_conversations"] == 0
-    assert result["prompts"] == 0
-    assert result["responses"] == 0
-    assert result["tool_calls"] == 0
+    assert result["content_blobs"] == 0
 
 
 def test_cli_integration(tmp_path, capsys):
@@ -423,9 +421,9 @@ def test_duplicate_children_not_orphaned(tmp_path):
     conn.execute("PRAGMA foreign_keys = ON")
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
 
-    # Prompt count should be unchanged (1 from original)
-    prompts = conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0]
-    responses = conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0]
+    # Event count should be unchanged (1 prompt + 1 response from original)
+    prompts = conn.execute("SELECT COUNT(*) FROM events WHERE kind='prompt'").fetchone()[0]
+    responses = conn.execute("SELECT COUNT(*) FROM events WHERE kind='response'").fetchone()[0]
     conn.close()
 
     assert violations == []
@@ -459,7 +457,7 @@ def test_workspace_tag_remapping(tmp_path):
 
     conn = sqlite3.connect(str(target))
     conn.row_factory = sqlite3.Row
-    wt_count = conn.execute("SELECT COUNT(*) FROM workspace_tags").fetchone()[0]
+    wt_count = conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='workspace'").fetchone()[0]
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     conn.close()
 
@@ -482,7 +480,7 @@ def test_tool_call_tag_remapping(tmp_path):
     from siftd.storage.sqlite import open_database as _open
 
     src_conn = _open(source)
-    tc_id = src_conn.execute("SELECT id FROM tool_calls LIMIT 1").fetchone()["id"]
+    tc_id = src_conn.execute("SELECT id FROM events WHERE kind='tool_call' LIMIT 1").fetchone()["id"]
     tag_id = get_or_create_tag(src_conn, "shell:test")
     apply_tag(src_conn, "tool_call", tc_id, tag_id)
     src_conn.commit()
@@ -493,7 +491,7 @@ def test_tool_call_tag_remapping(tmp_path):
 
     conn = sqlite3.connect(str(target))
     conn.row_factory = sqlite3.Row
-    tct_count = conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0]
+    tct_count = conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'").fetchone()[0]
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     conn.close()
 
@@ -529,11 +527,13 @@ def test_replace_stale_conversation(tmp_path):
     convs = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
     assert convs == 1  # not duplicated
 
-    # Prompt text should be from source
+    # Prompt text should be from source (event_content stores JSON blocks)
+    import json
     text = conn.execute(
-        "SELECT content FROM prompt_content LIMIT 1"
+        "SELECT ec.content FROM event_content ec"
+        " JOIN events e ON e.id = ec.event_id WHERE e.kind='prompt' LIMIT 1"
     ).fetchone()[0]
-    assert "Updated v2" in text
+    assert "Updated v2" in json.loads(text).get("text", "")
 
     # FK integrity
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
@@ -565,11 +565,13 @@ def test_no_replace_keeps_original(tmp_path):
     # Target should still have original
     conn = sqlite3.connect(str(target))
     conn.row_factory = sqlite3.Row
+    import json
     text = conn.execute(
-        "SELECT content FROM prompt_content LIMIT 1"
+        "SELECT ec.content FROM event_content ec"
+        " JOIN events e ON e.id = ec.event_id WHERE e.kind='prompt' LIMIT 1"
     ).fetchone()[0]
     conn.close()
-    assert "Original v1" in text
+    assert "Original v1" in json.loads(text).get("text", "")
 
 
 def test_replace_cascades_children(tmp_path):
@@ -605,21 +607,22 @@ def test_replace_cascades_children(tmp_path):
     conn.row_factory = sqlite3.Row
 
     # Should have exactly 1 of each — old children deleted, new ones inserted
-    assert conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='prompt'").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='response'").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='tool_call'").fetchone()[0] == 1
 
     # Tool should be the source's
     tool_name = conn.execute("""
-        SELECT t.name FROM tool_calls tc
-        JOIN tools t ON t.id = tc.tool_id
+        SELECT t.name FROM event_tool_call etc
+        JOIN tools t ON t.id = etc.tool_id
     """).fetchone()[0]
     assert tool_name == "file.read"
 
     # Tag should be from source
     tag_name = conn.execute("""
-        SELECT t.name FROM conversation_tags ct
-        JOIN tags t ON t.id = ct.tag_id
+        SELECT t.name FROM tag_assignments ta
+        JOIN tags t ON t.id = ta.tag_id
+        WHERE ta.target_kind = 'conversation'
     """).fetchone()[0]
     assert tag_name == "research"
 
@@ -645,25 +648,24 @@ def test_replace_cascades_grandchildren(tmp_path):
         }],
     )
 
-    # Seed grandchild rows in target: prompt_attributes, response_attributes,
-    # tool_call_attributes, tool_call_tags, ingested_files
+    # Seed grandchild rows in target: attributes, tool_call tag_assignments, ingested_files
     tgt_conn = _open(target)
-    prompt_id = tgt_conn.execute("SELECT id FROM prompts LIMIT 1").fetchone()["id"]
-    response_id = tgt_conn.execute("SELECT id FROM responses LIMIT 1").fetchone()["id"]
-    tc_id = tgt_conn.execute("SELECT id FROM tool_calls LIMIT 1").fetchone()["id"]
+    prompt_id = tgt_conn.execute("SELECT id FROM events WHERE kind='prompt' LIMIT 1").fetchone()["id"]
+    response_id = tgt_conn.execute("SELECT id FROM events WHERE kind='response' LIMIT 1").fetchone()["id"]
+    tc_id = tgt_conn.execute("SELECT id FROM events WHERE kind='tool_call' LIMIT 1").fetchone()["id"]
     conv_id = tgt_conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
     harness_id = tgt_conn.execute("SELECT harness_id FROM conversations LIMIT 1").fetchone()[0]
 
     tgt_conn.execute(
-        "INSERT INTO prompt_attributes (id, prompt_id, key, value) VALUES (?, ?, 'k', 'v')",
+        "INSERT INTO attributes (id, target_kind, target_id, key, value) VALUES (?, 'prompt', ?, 'k', 'v')",
         (_ulid(), prompt_id),
     )
     tgt_conn.execute(
-        "INSERT INTO response_attributes (id, response_id, key, value) VALUES (?, ?, 'k', 'v')",
+        "INSERT INTO attributes (id, target_kind, target_id, key, value) VALUES (?, 'response', ?, 'k', 'v')",
         (_ulid(), response_id),
     )
     tgt_conn.execute(
-        "INSERT INTO tool_call_attributes (id, tool_call_id, key, value) VALUES (?, ?, 'k', 'v')",
+        "INSERT INTO attributes (id, target_kind, target_id, key, value) VALUES (?, 'tool_call', ?, 'k', 'v')",
         (_ulid(), tc_id),
     )
     tag_id = get_or_create_tag(tgt_conn, "tc-tag")
@@ -676,12 +678,11 @@ def test_replace_cascades_grandchildren(tmp_path):
     tgt_conn.commit()
 
     # Verify seeded rows exist
-    assert tgt_conn.execute("SELECT COUNT(*) FROM prompt_content").fetchone()[0] == 1
-    assert tgt_conn.execute("SELECT COUNT(*) FROM response_content").fetchone()[0] == 1
-    assert tgt_conn.execute("SELECT COUNT(*) FROM prompt_attributes").fetchone()[0] == 1
-    assert tgt_conn.execute("SELECT COUNT(*) FROM response_attributes").fetchone()[0] == 1
-    assert tgt_conn.execute("SELECT COUNT(*) FROM tool_call_attributes").fetchone()[0] == 1
-    assert tgt_conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 1
+    assert tgt_conn.execute("SELECT COUNT(*) FROM event_content").fetchone()[0] >= 1
+    assert tgt_conn.execute("SELECT COUNT(*) FROM attributes WHERE target_kind='prompt'").fetchone()[0] == 1
+    assert tgt_conn.execute("SELECT COUNT(*) FROM attributes WHERE target_kind='response'").fetchone()[0] == 1
+    assert tgt_conn.execute("SELECT COUNT(*) FROM attributes WHERE target_kind='tool_call'").fetchone()[0] == 1
+    assert tgt_conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'").fetchone()[0] == 1
     assert tgt_conn.execute("SELECT COUNT(*) FROM ingested_files").fetchone()[0] == 1
     tgt_conn.close()
 
@@ -704,17 +705,20 @@ def test_replace_cascades_grandchildren(tmp_path):
     conn.row_factory = sqlite3.Row
 
     # Old grandchildren must be gone; only source's children remain
-    assert conn.execute("SELECT COUNT(*) FROM prompt_content").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM response_content").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM prompt_attributes").fetchone()[0] == 0
-    assert conn.execute("SELECT COUNT(*) FROM response_attributes").fetchone()[0] == 0
-    assert conn.execute("SELECT COUNT(*) FROM tool_call_attributes").fetchone()[0] == 0
-    assert conn.execute("SELECT COUNT(*) FROM tool_call_tags").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM event_content").fetchone()[0] >= 1
+    assert conn.execute("SELECT COUNT(*) FROM attributes WHERE target_kind='prompt'").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM attributes WHERE target_kind='response'").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM attributes WHERE target_kind='tool_call'").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM ingested_files").fetchone()[0] == 0
 
-    # Content should be from source
-    text = conn.execute("SELECT content FROM prompt_content LIMIT 1").fetchone()[0]
-    assert "New prompt" in text
+    # Content should be from source (event_content stores JSON blocks)
+    import json
+    content_json = conn.execute(
+        "SELECT ec.content FROM event_content ec"
+        " JOIN events e ON e.id = ec.event_id WHERE e.kind='prompt' LIMIT 1"
+    ).fetchone()[0]
+    assert "New prompt" in json.loads(content_json).get("text", "")
 
     # FK integrity
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
@@ -774,18 +778,22 @@ def test_merge_rejects_source_missing_runtime_schema(tmp_path):
         merge_database(target, source, preflight=False)
 
 
-def test_merge_rejects_source_missing_result_hash_column(tmp_path):
-    """Same user_version but missing runtime columns is rejected before merge SQL runs."""
+def test_merge_rejects_source_missing_event_tool_call_table(tmp_path):
+    """Source DB missing event_tool_call table is rejected before merge SQL runs."""
+    import sqlite3 as _sqlite3
     target = _make_db(tmp_path / "target.db", conversations=[])
-    source = tmp_path / "source.db"
-    _write_legacy_merge_db(
-        source,
-        include_content_blobs=True,
-        include_result_hash=False,
-    )
+    source_path = tmp_path / "source-no-etc.db"
+    conn = _sqlite3.connect(str(source_path))
+    conn.execute("PRAGMA user_version = %d" % SCHEMA_VERSION)
+    conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+    conn.execute("CREATE TABLE content_blobs (hash TEXT PRIMARY KEY, content TEXT, ref_count INTEGER, created_at TEXT)")
+    conn.execute("CREATE TABLE events (id TEXT PRIMARY KEY, kind TEXT, conversation_id TEXT, parent_id TEXT, external_id TEXT, timestamp TEXT)")
+    # Intentionally omit event_tool_call
+    conn.commit()
+    conn.close()
 
-    with pytest.raises(RuntimeError, match="tool_calls.result_hash column"):
-        merge_database(target, source, preflight=False)
+    with pytest.raises(RuntimeError, match="event_tool_call table"):
+        merge_database(target, source_path, preflight=False)
 
 
 def test_cli_invalid_file(tmp_path, capsys):
@@ -919,8 +927,8 @@ def _make_fk_corrupt_source(tmp_path):
     conn = sqlite3.connect(str(p))
     conn.execute("PRAGMA foreign_keys = OFF")
     conn.execute(
-        "INSERT INTO prompts (id, conversation_id, external_id, timestamp) "
-        "VALUES (?, 'nonexistent-conv', 'ext-p-1', '2024-01-01T00:00:00Z')",
+        "INSERT INTO events (id, kind, conversation_id, external_id, timestamp) "
+        "VALUES (?, 'prompt', 'nonexistent-conv', 'ext-p-1', '2024-01-01T00:00:00Z')",
         (ulid(),),
     )
     conn.commit()
@@ -934,8 +942,8 @@ def _make_no_triggers_source(tmp_path):
     p = tmp_path / "notriggers-source.db"
     create_empty_database(p)
     conn = sqlite3.connect(str(p))
-    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_delete_release_blob")
-    conn.execute("DROP TRIGGER IF EXISTS tr_tool_calls_update_release_blob")
+    conn.execute("DROP TRIGGER IF EXISTS tr_event_tool_call_delete_release_blob")
+    conn.execute("DROP TRIGGER IF EXISTS tr_event_tool_call_update_release_blob")
     conn.commit()
     conn.close()
     return p

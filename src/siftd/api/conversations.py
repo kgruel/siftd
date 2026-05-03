@@ -242,8 +242,10 @@ def _list_conversations_impl(
 
     if tool:
         wb.add(
-            "c.id IN (SELECT tc.conversation_id FROM tool_calls tc"
-            " JOIN tools t ON t.id = tc.tool_id WHERE t.name = ?)",
+            "c.id IN (SELECT e.conversation_id FROM events e"
+            " JOIN event_tool_call etc ON etc.event_id = e.id"
+            " JOIN tools t ON t.id = etc.tool_id"
+            " WHERE e.kind = 'tool_call' AND t.name = ?)",
             tool,
         )
 
@@ -257,9 +259,10 @@ def _list_conversations_impl(
     if tool_tag:
         op, val = _tag_condition(tool_tag)
         wb.add(
-            "c.id IN (SELECT tc.conversation_id FROM tool_calls tc"
-            " JOIN tool_call_tags tct ON tct.tool_call_id = tc.id"
-            f" JOIN tags tg ON tg.id = tct.tag_id WHERE {op})",
+            "c.id IN (SELECT e.conversation_id FROM tag_assignments ta"
+            " JOIN events e ON e.id = ta.target_id"
+            " JOIN tags tg ON tg.id = ta.tag_id"
+            f" WHERE ta.target_kind = 'tool_call' AND {op})",
             val,
         )
 
@@ -272,13 +275,11 @@ def _list_conversations_impl(
     # WhereBuilder tracks which JOINs its filters actually need, so we only
     # join responses/models when a filter (e.g. --model) requires them.
     phase1_joins = wb.joins_sql()
-    group_by = "GROUP BY c.id" if wb.needs_group_by else ""
     id_sql = f"""
         SELECT c.id
         FROM conversations c
         {phase1_joins}
         {where}
-        {group_by}
         ORDER BY c.started_at {order}
         {limit_clause}
     """
@@ -299,19 +300,21 @@ def _list_conversations_impl(
             f"""SELECT c.id AS conversation_id, w.path AS workspace,
                     c.started_at,
                     COALESCE(cs.prompt_count,
-                        (SELECT COUNT(*) FROM prompts WHERE conversation_id = c.id)
+                        (SELECT COUNT(*) FROM events WHERE kind = 'prompt' AND conversation_id = c.id)
                     ) AS prompts,
                     COALESCE(cs.response_count,
-                        (SELECT COUNT(*) FROM responses WHERE conversation_id = c.id)
+                        (SELECT COUNT(*) FROM events WHERE kind = 'response' AND conversation_id = c.id)
                     ) AS responses,
                     COALESCE(cs.total_tokens,
-                        (SELECT COALESCE(SUM(input_tokens),0) + COALESCE(SUM(output_tokens),0)
-                         FROM responses WHERE conversation_id = c.id)
+                        (SELECT COALESCE(SUM(er2.input_tokens),0) + COALESCE(SUM(er2.output_tokens),0)
+                         FROM events e2 JOIN event_response er2 ON er2.event_id = e2.id
+                         WHERE e2.kind = 'response' AND e2.conversation_id = c.id)
                     ) AS tokens,
                     COALESCE(cs.model_name,
-                        (SELECT m2.name FROM responses r2
-                         LEFT JOIN models m2 ON m2.id = r2.model_id
-                         WHERE r2.conversation_id = c.id
+                        (SELECT m2.name FROM events e2
+                         JOIN event_response er2 ON er2.event_id = e2.id
+                         LEFT JOIN models m2 ON m2.id = er2.model_id
+                         WHERE e2.kind = 'response' AND e2.conversation_id = c.id
                          GROUP BY m2.name ORDER BY COUNT(*) DESC LIMIT 1)
                     ) AS model,
                     cs.cost
@@ -325,26 +328,33 @@ def _list_conversations_impl(
     else:
         # Fallback: compute from source tables (before first ingest rebuilds
         # the stats table, or if the table was dropped).
+        # r2 alias: expose event_id as id so cost_expr_sql's {r}.id works against
+        # the polymorphic attributes table (target_id = event_id for responses).
         cost_subquery = (
             f"""(SELECT ROUND(SUM({cost_expr_sql('r2', 'pr', coalesce_pricing=True)}) / 1000000.0, 4)
-            FROM responses r2
+            FROM events e2
+            JOIN (SELECT er2.event_id AS id, er2.model_id, er2.provider_id,
+                         er2.input_tokens, er2.output_tokens
+                  FROM event_response er2) r2 ON r2.id = e2.id
             LEFT JOIN pricing pr ON pr.model_id = r2.model_id
                                  AND pr.provider_id = r2.provider_id
-            WHERE r2.conversation_id = c.id)"""
+            WHERE e2.kind = 'response' AND e2.conversation_id = c.id)"""
             if has_pricing
             else "NULL"
         )
         rows = conn.execute(
             f"""SELECT c.id AS conversation_id, w.path AS workspace,
-                    (SELECT m2.name FROM responses r2
-                     LEFT JOIN models m2 ON m2.id = r2.model_id
-                     WHERE r2.conversation_id = c.id
+                    (SELECT m2.name FROM events e2
+                     JOIN event_response er2 ON er2.event_id = e2.id
+                     LEFT JOIN models m2 ON m2.id = er2.model_id
+                     WHERE e2.kind = 'response' AND e2.conversation_id = c.id
                      GROUP BY m2.name ORDER BY COUNT(*) DESC LIMIT 1) AS model,
                     c.started_at,
-                    (SELECT COUNT(*) FROM prompts WHERE conversation_id = c.id) AS prompts,
-                    (SELECT COUNT(*) FROM responses WHERE conversation_id = c.id) AS responses,
-                    (SELECT COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0)
-                     FROM responses WHERE conversation_id = c.id) AS tokens,
+                    (SELECT COUNT(*) FROM events WHERE kind = 'prompt' AND conversation_id = c.id) AS prompts,
+                    (SELECT COUNT(*) FROM events WHERE kind = 'response' AND conversation_id = c.id) AS responses,
+                    (SELECT COALESCE(SUM(er2.input_tokens), 0) + COALESCE(SUM(er2.output_tokens), 0)
+                     FROM events e2 JOIN event_response er2 ON er2.event_id = e2.id
+                     WHERE e2.kind = 'response' AND e2.conversation_id = c.id) AS tokens,
                     {cost_subquery} AS cost
                 FROM conversations c
                 LEFT JOIN workspaces w ON w.id = c.workspace_id
@@ -1098,7 +1108,22 @@ def resolve_entity_id(
     elif entity_type == "workspace":
         row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
     elif entity_type == "tool_call":
-        row = conn.execute("SELECT id FROM tool_calls WHERE id = ?", (entity_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM events WHERE id = ? AND kind = 'tool_call'", (entity_id,)
+        ).fetchone()
+    elif entity_type == "prompt":
+        row = conn.execute(
+            "SELECT id FROM events WHERE id = ? AND kind = 'prompt'", (entity_id,)
+        ).fetchone()
+    elif entity_type == "response":
+        row = conn.execute(
+            "SELECT id FROM events WHERE id = ? AND kind = 'response'", (entity_id,)
+        ).fetchone()
+    elif entity_type == "exchange":
+        # exchange uses a prompt event as anchor
+        row = conn.execute(
+            "SELECT id FROM events WHERE id = ? AND kind = 'prompt'", (entity_id,)
+        ).fetchone()
     else:
         return None
     return row["id"] if row else None

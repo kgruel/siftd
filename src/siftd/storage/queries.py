@@ -82,10 +82,11 @@ def fetch_exchanges(
     if prompt_ids is not None:
         # Use batched_in_query for prompt_ids, with other conditions as prefix
         # Note: ORDER BY in query is per-batch; we sort globally after
-        where_prefix = " AND ".join(conditions) + " AND " if conditions else ""
+        kind_cond = "kind = 'prompt'"
+        where_prefix = " AND ".join(conditions + [kind_cond]) + " AND " if conditions else f"{kind_cond} AND "
         prompt_rows = batched_in_query(
             conn,
-            f"SELECT conversation_id, id, timestamp FROM prompts "
+            f"SELECT conversation_id, id, timestamp FROM events "
             f"WHERE {where_prefix}id IN ({{placeholders}}) ORDER BY timestamp",
             prompt_ids,
             prefix_params=tuple(params),
@@ -94,16 +95,16 @@ def fetch_exchanges(
         prompt_rows = sorted(prompt_rows, key=lambda r: r["timestamp"])
     elif conditions:
         # Only non-batched filters
-        where_clause = "WHERE " + " AND ".join(conditions)
+        where_clause = "WHERE " + " AND ".join(conditions) + " AND kind = 'prompt'"
         prompt_rows = conn.execute(
-            f"SELECT conversation_id, id, timestamp FROM prompts "
+            f"SELECT conversation_id, id, timestamp FROM events "
             f"{where_clause} ORDER BY timestamp",
             params,
         ).fetchall()
     else:
         # No filters
         prompt_rows = conn.execute(
-            "SELECT conversation_id, id, timestamp FROM prompts ORDER BY timestamp"
+            "SELECT conversation_id, id, timestamp FROM events WHERE kind = 'prompt' ORDER BY timestamp"
         ).fetchall()
 
     if not prompt_rows:
@@ -116,12 +117,12 @@ def fetch_exchanges(
     # Fetch prompt content blocks in order (batched)
     prompt_content_rows = batched_in_query(
         conn,
-        "SELECT prompt_id, json_extract(content, '$.text') AS text "
-        "FROM prompt_content "
-        "WHERE prompt_id IN ({placeholders}) "
+        "SELECT event_id AS prompt_id, json_extract(content, '$.text') AS text "
+        "FROM event_content "
+        "WHERE event_id IN ({placeholders}) "
         "AND block_type = 'text' "
         "AND json_extract(content, '$.text') IS NOT NULL "
-        "ORDER BY prompt_id, block_index",
+        "ORDER BY event_id, block_index",
         prompt_id_list,
     )
 
@@ -133,9 +134,9 @@ def fetch_exchanges(
     # Fetch responses for these prompts (batched)
     response_rows = batched_in_query(
         conn,
-        "SELECT id, prompt_id, timestamp FROM responses "
-        "WHERE prompt_id IN ({placeholders}) "
-        "ORDER BY prompt_id, timestamp",
+        "SELECT id, parent_id AS prompt_id, timestamp FROM events "
+        "WHERE kind = 'response' AND parent_id IN ({placeholders}) "
+        "ORDER BY parent_id, timestamp",
         prompt_id_list,
     )
 
@@ -145,12 +146,12 @@ def fetch_exchanges(
         # Fetch response content blocks in order (batched)
         response_content_rows = batched_in_query(
             conn,
-            "SELECT response_id, json_extract(content, '$.text') AS text "
-            "FROM response_content "
-            "WHERE response_id IN ({placeholders}) "
+            "SELECT event_id AS response_id, json_extract(content, '$.text') AS text "
+            "FROM event_content "
+            "WHERE event_id IN ({placeholders}) "
             "AND block_type = 'text' "
             "AND json_extract(content, '$.text') IS NOT NULL "
-            "ORDER BY response_id, block_index",
+            "ORDER BY event_id, block_index",
             response_ids,
         )
 
@@ -305,9 +306,10 @@ def fetch_conversation_model(
 ) -> str | None:
     """Get most frequently used model name for a conversation."""
     row = conn.execute(
-        "SELECT m.name FROM responses r "
-        "LEFT JOIN models m ON m.id = r.model_id "
-        "WHERE r.conversation_id = ? "
+        "SELECT m.name FROM events e "
+        "JOIN event_response er ON er.event_id = e.id "
+        "LEFT JOIN models m ON m.id = er.model_id "
+        "WHERE e.conversation_id = ? AND e.kind = 'response' "
         "GROUP BY m.name ORDER BY COUNT(*) DESC LIMIT 1",
         (conversation_id,),
     ).fetchone()
@@ -323,9 +325,10 @@ def fetch_conversation_token_totals(
     Returns (input_tokens, output_tokens).
     """
     row = conn.execute(
-        "SELECT COALESCE(SUM(input_tokens), 0) AS input_tok, "
-        "COALESCE(SUM(output_tokens), 0) AS output_tok "
-        "FROM responses WHERE conversation_id = ?",
+        "SELECT COALESCE(SUM(er.input_tokens), 0) AS input_tok, "
+        "COALESCE(SUM(er.output_tokens), 0) AS output_tok "
+        "FROM events e JOIN event_response er ON er.event_id = e.id "
+        "WHERE e.conversation_id = ? AND e.kind = 'response'",
         (conversation_id,),
     ).fetchone()
     return row["input_tok"], row["output_tok"]
@@ -337,7 +340,7 @@ def fetch_prompts_for_conversation(
 ) -> list[sqlite3.Row]:
     """Fetch all prompts for a conversation, ordered by timestamp."""
     return conn.execute(
-        "SELECT id, timestamp FROM prompts WHERE conversation_id = ? ORDER BY timestamp",
+        "SELECT id, timestamp FROM events WHERE conversation_id = ? AND kind = 'prompt' ORDER BY timestamp",
         (conversation_id,),
     ).fetchall()
 
@@ -348,8 +351,8 @@ def fetch_prompt_text_content(
 ) -> list[sqlite3.Row]:
     """Fetch text content blocks for a prompt."""
     return conn.execute(
-        "SELECT content FROM prompt_content "
-        "WHERE prompt_id = ? AND block_type = 'text' ORDER BY block_index",
+        "SELECT content FROM event_content "
+        "WHERE event_id = ? AND block_type = 'text' ORDER BY block_index",
         (prompt_id,),
     ).fetchall()
 
@@ -367,10 +370,10 @@ def fetch_prompt_text_contents(
 
     rows = batched_in_query(
         conn,
-        "SELECT prompt_id, content FROM prompt_content "
-        "WHERE prompt_id IN ({placeholders}) "
+        "SELECT event_id AS prompt_id, content FROM event_content "
+        "WHERE event_id IN ({placeholders}) "
         "AND block_type = 'text' "
-        "ORDER BY prompt_id, block_index",
+        "ORDER BY event_id, block_index",
         prompt_ids,
     )
 
@@ -386,8 +389,9 @@ def fetch_responses_for_conversation(
 ) -> list[sqlite3.Row]:
     """Fetch all responses for a conversation, ordered by timestamp."""
     return conn.execute(
-        "SELECT id, prompt_id, timestamp, input_tokens, output_tokens "
-        "FROM responses WHERE conversation_id = ? ORDER BY timestamp",
+        "SELECT e.id, e.parent_id AS prompt_id, e.timestamp, er.input_tokens, er.output_tokens "
+        "FROM events e JOIN event_response er ON er.event_id = e.id "
+        "WHERE e.conversation_id = ? AND e.kind = 'response' ORDER BY e.timestamp",
         (conversation_id,),
     ).fetchall()
 
@@ -398,8 +402,8 @@ def fetch_response_text_content(
 ) -> list[sqlite3.Row]:
     """Fetch text content blocks for a response."""
     return conn.execute(
-        "SELECT content FROM response_content "
-        "WHERE response_id = ? AND block_type = 'text' ORDER BY block_index",
+        "SELECT content FROM event_content "
+        "WHERE event_id = ? AND block_type = 'text' ORDER BY block_index",
         (response_id,),
     ).fetchall()
 
@@ -415,25 +419,27 @@ def fetch_tool_calls_for_conversation(
     Args:
         conn: Database connection.
         conversation_id: Conversation ULID.
-        include_content: If True, join content_blobs for tool input/result.
+        include_content: If True, join content_blobs for tool result.
     """
     if include_content:
         return conn.execute(
-            "SELECT tc.response_id, tc.external_id, t.name AS tool_name, tc.status, "
-            "tc.input, COALESCE(cb.content, tc.result) AS result "
-            "FROM tool_calls tc "
-            "LEFT JOIN tools t ON t.id = tc.tool_id "
-            "LEFT JOIN content_blobs cb ON cb.hash = tc.result_hash "
-            "WHERE tc.conversation_id = ? "
-            "ORDER BY tc.timestamp",
+            "SELECT e.parent_id AS response_id, e.external_id, t.name AS tool_name, "
+            "etc.status, etc.input, cb.content AS result "
+            "FROM events e "
+            "JOIN event_tool_call etc ON etc.event_id = e.id "
+            "LEFT JOIN tools t ON t.id = etc.tool_id "
+            "LEFT JOIN content_blobs cb ON cb.hash = etc.result_hash "
+            "WHERE e.conversation_id = ? AND e.kind = 'tool_call' "
+            "ORDER BY e.timestamp",
             (conversation_id,),
         ).fetchall()
     return conn.execute(
-        "SELECT tc.response_id, tc.external_id, t.name AS tool_name, tc.status "
-        "FROM tool_calls tc "
-        "LEFT JOIN tools t ON t.id = tc.tool_id "
-        "WHERE tc.conversation_id = ? "
-        "ORDER BY tc.timestamp",
+        "SELECT e.parent_id AS response_id, e.external_id, t.name AS tool_name, etc.status "
+        "FROM events e "
+        "JOIN event_tool_call etc ON etc.event_id = e.id "
+        "LEFT JOIN tools t ON t.id = etc.tool_id "
+        "WHERE e.conversation_id = ? AND e.kind = 'tool_call' "
+        "ORDER BY e.timestamp",
         (conversation_id,),
     ).fetchall()
 
@@ -452,10 +458,10 @@ def fetch_response_content_blocks(
 
     rows = batched_in_query(
         conn,
-        "SELECT response_id, block_type, content, block_index "
-        "FROM response_content "
-        "WHERE response_id IN ({placeholders}) "
-        "ORDER BY response_id, block_index",
+        "SELECT event_id AS response_id, block_type, content, block_index "
+        "FROM event_content "
+        "WHERE event_id IN ({placeholders}) "
+        "ORDER BY event_id, block_index",
         response_ids,
     )
 
@@ -471,9 +477,9 @@ def fetch_conversation_tags(
 ) -> list[str]:
     """Fetch tag names for a conversation."""
     rows = conn.execute(
-        "SELECT t.name FROM conversation_tags ct "
-        "JOIN tags t ON t.id = ct.tag_id "
-        "WHERE ct.conversation_id = ? ORDER BY t.name",
+        "SELECT t.name FROM tag_assignments ta "
+        "JOIN tags t ON t.id = ta.tag_id "
+        "WHERE ta.target_kind = 'conversation' AND ta.target_id = ? ORDER BY t.name",
         (conversation_id,),
     ).fetchall()
     return [row["name"] for row in rows]
@@ -492,10 +498,10 @@ def fetch_tags_for_conversations(
 
     rows = batched_in_query(
         conn,
-        "SELECT ct.conversation_id, t.name "
-        "FROM conversation_tags ct "
-        "JOIN tags t ON t.id = ct.tag_id "
-        "WHERE ct.conversation_id IN ({placeholders}) "
+        "SELECT ta.target_id AS conversation_id, t.name "
+        "FROM tag_assignments ta "
+        "JOIN tags t ON t.id = ta.tag_id "
+        "WHERE ta.target_kind = 'conversation' AND ta.target_id IN ({placeholders}) "
         "ORDER BY t.name",
         conversation_ids,
     )
@@ -512,9 +518,9 @@ def fetch_tags_for_conversations(
 
 _COUNTABLE_TABLES = frozenset({
     "conversations",
-    "prompts",
-    "responses",
-    "tool_calls",
+    "prompts",    # counts events WHERE kind='prompt'
+    "responses",  # counts events WHERE kind='response'
+    "tool_calls", # counts events WHERE kind='tool_call'
     "harnesses",
     "workspaces",
     "tools",
@@ -541,6 +547,12 @@ def fetch_table_count(
     if owner and not has_conversation_owners_table(conn):
         return 0
     if not owner:
+        if table_name == "prompts":
+            return conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'prompt'").fetchone()[0]
+        if table_name == "responses":
+            return conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'response'").fetchone()[0]
+        if table_name == "tool_calls":
+            return conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'tool_call'").fetchone()[0]
         return conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
 
     if table_name == "conversations":
@@ -550,17 +562,17 @@ def fetch_table_count(
         ).fetchone()[0]
     if table_name == "prompts":
         return conn.execute(
-            f"SELECT COUNT(*) FROM prompts p WHERE {owner_predicate('p.conversation_id')}",
+            f"SELECT COUNT(*) FROM events e WHERE e.kind = 'prompt' AND {owner_predicate('e.conversation_id')}",
             (owner,),
         ).fetchone()[0]
     if table_name == "responses":
         return conn.execute(
-            f"SELECT COUNT(*) FROM responses r WHERE {owner_predicate('r.conversation_id')}",
+            f"SELECT COUNT(*) FROM events e WHERE e.kind = 'response' AND {owner_predicate('e.conversation_id')}",
             (owner,),
         ).fetchone()[0]
     if table_name == "tool_calls":
         return conn.execute(
-            f"SELECT COUNT(*) FROM tool_calls tc WHERE {owner_predicate('tc.conversation_id')}",
+            f"SELECT COUNT(*) FROM events e WHERE e.kind = 'tool_call' AND {owner_predicate('e.conversation_id')}",
             (owner,),
         ).fetchone()[0]
     if table_name == "harnesses":
@@ -577,14 +589,18 @@ def fetch_table_count(
         ).fetchone()[0]
     if table_name == "tools":
         return conn.execute(
-            f"SELECT COUNT(DISTINCT tc.tool_id) FROM tool_calls tc "
-            f"WHERE tc.tool_id IS NOT NULL AND {owner_predicate('tc.conversation_id')}",
+            f"SELECT COUNT(DISTINCT etc.tool_id) FROM events e "
+            f"JOIN event_tool_call etc ON etc.event_id = e.id "
+            f"WHERE e.kind = 'tool_call' AND etc.tool_id IS NOT NULL "
+            f"AND {owner_predicate('e.conversation_id')}",
             (owner,),
         ).fetchone()[0]
     if table_name == "models":
         return conn.execute(
-            f"SELECT COUNT(DISTINCT r.model_id) FROM responses r "
-            f"WHERE r.model_id IS NOT NULL AND {owner_predicate('r.conversation_id')}",
+            f"SELECT COUNT(DISTINCT er.model_id) FROM events e "
+            f"JOIN event_response er ON er.event_id = e.id "
+            f"WHERE e.kind = 'response' AND er.model_id IS NOT NULL "
+            f"AND {owner_predicate('e.conversation_id')}",
             (owner,),
         ).fetchone()[0]
     if table_name == "ingested_files":
@@ -711,16 +727,18 @@ def fetch_top_conversation_tags(
     """Fetch top conversation tags by usage."""
     if owner and not has_conversation_owners_table(conn):
         return []
-    where_sql = ""
-    params: list[object] = [limit]
+    where_clauses = ["ta.target_kind = 'conversation'"]
+    params: list[object] = []
     if owner:
-        where_sql = f"WHERE {owner_predicate('ct.conversation_id')}"
-        params = [owner, limit]
+        where_clauses.append(owner_predicate("ta.target_id"))
+        params.append(owner)
+    params.append(limit)
+    where_sql = "WHERE " + " AND ".join(where_clauses)
     return conn.execute(
         f"""
-        SELECT t.name, COUNT(ct.id) AS count
+        SELECT t.name, COUNT(ta.id) AS count
         FROM tags t
-        JOIN conversation_tags ct ON ct.tag_id = t.id
+        JOIN tag_assignments ta ON ta.tag_id = t.id
         {where_sql}
         GROUP BY t.id
         ORDER BY count DESC, t.name
@@ -751,9 +769,10 @@ def fetch_model_names(conn: sqlite3.Connection, *, owner: str | None = None) -> 
     if owner:
         rows = conn.execute(
             f"SELECT DISTINCT COALESCE(m.raw_name, 'unknown') AS name "
-            f"FROM responses r "
-            f"LEFT JOIN models m ON m.id = r.model_id "
-            f"WHERE {owner_predicate('r.conversation_id')} "
+            f"FROM events e "
+            f"JOIN event_response er ON er.event_id = e.id "
+            f"LEFT JOIN models m ON m.id = er.model_id "
+            f"WHERE e.kind = 'response' AND {owner_predicate('e.conversation_id')} "
             f"ORDER BY name",
             (owner,),
         ).fetchall()
@@ -776,19 +795,19 @@ def fetch_top_tools(
     """
     if owner and not has_conversation_owners_table(conn):
         return []
-    where_sql = ""
+    where_sql = "WHERE e.kind = 'tool_call' AND etc.tool_id IS NOT NULL"
     params: list[object] = [limit]
     if owner:
-        where_sql = f"WHERE tc.tool_id IS NOT NULL AND {owner_predicate('tc.conversation_id')}"
+        where_sql += f" AND {owner_predicate('e.conversation_id')}"
         params = [owner, limit]
     return conn.execute(
         f"""
         SELECT t.name, counts.uses
         FROM (
-            SELECT tool_id, COUNT(*) as uses
-            FROM tool_calls tc
+            SELECT etc.tool_id, COUNT(*) as uses
+            FROM events e JOIN event_tool_call etc ON etc.event_id = e.id
             {where_sql}
-            GROUP BY tool_id
+            GROUP BY etc.tool_id
             ORDER BY uses DESC
             LIMIT ?
         ) counts
@@ -809,12 +828,12 @@ def fetch_response_token_coverage(
         return 0, 0
     sql = (
         "SELECT COUNT(*) AS total, "
-        "SUM(CASE WHEN input_tokens IS NOT NULL OR output_tokens IS NOT NULL THEN 1 ELSE 0 END) "
-        "AS with_tokens FROM responses r"
+        "SUM(CASE WHEN er.input_tokens IS NOT NULL OR er.output_tokens IS NOT NULL THEN 1 ELSE 0 END) "
+        "AS with_tokens FROM events e JOIN event_response er ON er.event_id = e.id WHERE e.kind = 'response'"
     )
     params: tuple[object, ...] = ()
     if owner:
-        sql += f" WHERE {owner_predicate('r.conversation_id')}"
+        sql += f" AND {owner_predicate('e.conversation_id')}"
         params = (owner,)
     row = conn.execute(sql, params).fetchone()
     total = row["total"] if row else 0
@@ -830,21 +849,22 @@ def fetch_token_coverage_by_harness(
     """Fetch response token coverage grouped by harness, optionally scoped to an owner."""
     if owner and not has_conversation_owners_table(conn):
         return []
-    where_sql = ""
+    extra_where = ""
     params: tuple[object, ...] = ()
     if owner:
-        where_sql = f"WHERE {owner_predicate('c.id')}"
+        extra_where = f"AND {owner_predicate('c.id')}"
         params = (owner,)
     return conn.execute(
         f"""
         SELECT h.name AS harness,
-               COUNT(r.id) AS responses,
-               SUM(CASE WHEN r.input_tokens IS NOT NULL OR r.output_tokens IS NOT NULL THEN 1 ELSE 0 END)
+               COUNT(e.id) AS responses,
+               SUM(CASE WHEN er.input_tokens IS NOT NULL OR er.output_tokens IS NOT NULL THEN 1 ELSE 0 END)
                    AS with_tokens
-        FROM responses r
-        JOIN conversations c ON c.id = r.conversation_id
+        FROM events e
+        JOIN event_response er ON er.event_id = e.id
+        JOIN conversations c ON c.id = e.conversation_id
         JOIN harnesses h ON h.id = c.harness_id
-        {where_sql}
+        WHERE e.kind = 'response' {extra_where}
         GROUP BY h.name
         ORDER BY responses DESC
         """,
@@ -866,18 +886,18 @@ def fetch_tool_tags_by_prefix(
     """Fetch tool call tag usage counts filtered by prefix."""
     if owner and not has_conversation_owners_table(conn):
         return []
-    where = ["t.name LIKE ?"]
+    where = ["t.name LIKE ?", "ta.target_kind = 'tool_call'"]
     params: list[object] = [f"{prefix}%"]
     if owner:
-        where.append(owner_predicate("tc.conversation_id"))
+        where.append(owner_predicate("e.conversation_id"))
         params.append(owner)
 
     return conn.execute(
         f"""
-        SELECT t.name, COUNT(tct.id) as count
+        SELECT t.name, COUNT(ta.id) as count
         FROM tags t
-        JOIN tool_call_tags tct ON tct.tag_id = t.id
-        JOIN tool_calls tc ON tc.id = tct.tool_call_id
+        JOIN tag_assignments ta ON ta.tag_id = t.id
+        JOIN events e ON e.id = ta.target_id
         WHERE {' AND '.join(where)}
         GROUP BY t.id
         ORDER BY count DESC
@@ -895,10 +915,10 @@ def fetch_tool_tags_by_workspace(
     """Fetch per-workspace tool tag usage counts."""
     if owner and not has_conversation_owners_table(conn):
         return []
-    where = ["t.name LIKE ?"]
+    where = ["t.name LIKE ?", "ta.target_kind = 'tool_call'"]
     params: list[object] = [f"{prefix}%"]
     if owner:
-        where.append(owner_predicate("tc.conversation_id"))
+        where.append(owner_predicate("e.conversation_id"))
         params.append(owner)
 
     return conn.execute(
@@ -906,11 +926,11 @@ def fetch_tool_tags_by_workspace(
         SELECT
             COALESCE(w.path, '(no workspace)') as workspace,
             t.name as tag,
-            COUNT(tct.id) as count
-        FROM tool_call_tags tct
-        JOIN tags t ON t.id = tct.tag_id
-        JOIN tool_calls tc ON tc.id = tct.tool_call_id
-        JOIN conversations c ON c.id = tc.conversation_id
+            COUNT(ta.id) as count
+        FROM tag_assignments ta
+        JOIN tags t ON t.id = ta.tag_id
+        JOIN events e ON e.id = ta.target_id
+        JOIN conversations c ON c.id = e.conversation_id
         LEFT JOIN workspaces w ON w.id = c.workspace_id
         WHERE {' AND '.join(where)}
         GROUP BY w.id, t.id
@@ -963,7 +983,7 @@ def fetch_prompt_timestamps(
 
     rows = batched_in_query(
         conn,
-        "SELECT id, timestamp FROM prompts WHERE id IN ({placeholders})",
+        "SELECT id, timestamp FROM events WHERE kind = 'prompt' AND id IN ({placeholders})",
         prompt_ids,
     )
     return {row["id"]: row["timestamp"] or "" for row in rows}

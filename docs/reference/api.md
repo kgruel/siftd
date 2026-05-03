@@ -1239,7 +1239,9 @@ Tag with usage counts.
 | `conversation_count` | `int` |  |
 | `workspace_count` | `int` |  |
 | `tool_call_count` | `int` |  |
+| `exchange_count` | `int` |  |
 | `prompt_count` | `int` |  |
+| `response_count` | `int` |  |
 
 ### IngestRunResult
 
@@ -1412,7 +1414,7 @@ def apply_tag(conn: Connection, entity_type: str, entity_id: str, tag_id: str, *
 **Parameters:**
 
 - `conn`: Database connection.
-- `entity_type`: One of 'conversation', 'workspace', 'tool_call'.
+- `entity_type`: One of 'conversation', 'workspace', 'prompt', 'response', 'tool_call', 'exchange'.
 - `entity_id`: The entity's ULID.
 - `tag_id`: The tag's ULID.
 

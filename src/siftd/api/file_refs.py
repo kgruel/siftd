@@ -70,16 +70,18 @@ def fetch_file_refs(
     placeholders = ",".join("?" * len(source_ids))
     rows = conn.execute(
         f"""
-        SELECT r.prompt_id, t.name AS tool_name,
-               tc.input AS input_json,
-               COALESCE(tc.result, cb.content) AS result_json
-        FROM tool_calls tc
-        JOIN responses r ON r.id = tc.response_id
-        JOIN tools t ON t.id = tc.tool_id
-        LEFT JOIN content_blobs cb ON tc.result_hash = cb.hash
-        WHERE r.prompt_id IN ({placeholders})
+        SELECT e_r.parent_id AS prompt_id, t.name AS tool_name,
+               etc.input AS input_json,
+               cb.content AS result_json
+        FROM events e
+        JOIN event_tool_call etc ON etc.event_id = e.id
+        JOIN events e_r ON e_r.id = e.parent_id AND e_r.kind = 'response'
+        JOIN tools t ON t.id = etc.tool_id
+        LEFT JOIN content_blobs cb ON etc.result_hash = cb.hash
+        WHERE e_r.parent_id IN ({placeholders})
+          AND e.kind = 'tool_call'
           AND t.name IN ('file.read', 'file.write', 'file.edit')
-        ORDER BY tc.timestamp
+        ORDER BY e.timestamp
     """,
         source_ids,
     ).fetchall()
