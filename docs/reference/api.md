@@ -1240,6 +1240,8 @@ Tag with usage counts.
 | `workspace_count` | `int` |  |
 | `tool_call_count` | `int` |  |
 | `exchange_count` | `int` |  |
+| `prompt_count` | `int` |  |
+| `response_count` | `int` |  |
 
 ### IngestRunResult
 

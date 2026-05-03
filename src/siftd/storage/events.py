@@ -47,6 +47,43 @@ def ensure_event_tool_call_triggers(conn: sqlite3.Connection) -> None:
     """)
 
 
+def ensure_polymorphic_cleanup_triggers(conn: sqlite3.Connection) -> None:
+    """Create IF NOT EXISTS cleanup triggers for polymorphic tables.
+
+    tag_assignments and attributes have no FK on target_id, so these triggers
+    cascade-clean orphan rows when events/workspaces/conversations are deleted.
+    Idempotent — safe to call on every open_database write path.
+    """
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS tr_polymorphic_events_cleanup
+        AFTER DELETE ON events
+        BEGIN
+            DELETE FROM tag_assignments
+            WHERE target_id = OLD.id
+              AND target_kind IN ('prompt', 'response', 'tool_call', 'exchange');
+            DELETE FROM attributes
+            WHERE target_id = OLD.id
+              AND target_kind IN ('prompt', 'response', 'tool_call', 'exchange');
+        END
+    """)
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS tr_polymorphic_workspaces_cleanup
+        AFTER DELETE ON workspaces
+        BEGIN
+            DELETE FROM tag_assignments WHERE target_id = OLD.id AND target_kind = 'workspace';
+            DELETE FROM attributes WHERE target_id = OLD.id AND target_kind = 'workspace';
+        END
+    """)
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS tr_polymorphic_conversations_cleanup
+        AFTER DELETE ON conversations
+        BEGIN
+            DELETE FROM tag_assignments WHERE target_id = OLD.id AND target_kind = 'conversation';
+            DELETE FROM attributes WHERE target_id = OLD.id AND target_kind = 'conversation';
+        END
+    """)
+
+
 # ---------------------------------------------------------------------------
 # Writers
 # ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from siftd.storage.sqlite import open_database
+from siftd.storage.sqlite import SCHEMA_VERSION, open_database
 
 
 def slice_database(
@@ -48,10 +48,19 @@ def slice_database(
     if not source_db.exists():
         raise FileNotFoundError(f"Database not found: {source_db}")
 
-    # Ensure source DB is on the current schema before any read-only access.
-    # open_database in write mode runs pending migrations (e.g. v4 backfill).
-    _ensure_conn = open_database(source_db)
-    _ensure_conn.close()
+    # Verify source DB is at the current schema version. We do not auto-migrate here
+    # because opening in write mode creates a backup file alongside the source, which
+    # is surprising and breaks on read-only filesystems. Callers must upgrade first.
+    _check_conn = open_database(source_db, read_only=True)
+    try:
+        _src_version = _check_conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        _check_conn.close()
+    if _src_version < SCHEMA_VERSION:
+        raise RuntimeError(
+            f"Source database is at schema v{_src_version}; current schema is v{SCHEMA_VERSION}. "
+            "Run 'siftd query' against the source to upgrade it first."
+        )
 
     # Step 1: Resolve conversation IDs using existing filter infrastructure
     conversations = list_conversations(
@@ -77,9 +86,10 @@ def slice_database(
 
     create_empty_database(target_path)
 
-    # Step 3: Open source and ATTACH target, then copy.
-    # Not read_only because ATTACH/DETACH and CREATE TEMP TABLE require write capability.
-    conn = open_database(source_db)
+    # Step 3: Open source read-only and ATTACH target (writable) for cross-DB INSERT...SELECT.
+    # ATTACH and CREATE TEMP TABLE work on read-only connections — the restriction only
+    # applies to writes on the main (source) file.
+    conn = open_database(source_db, read_only=True)
     try:
         conn.execute("ATTACH DATABASE ? AS slice", (str(target_path),))
 

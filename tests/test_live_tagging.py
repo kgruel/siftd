@@ -139,7 +139,7 @@ class TestLiveTaggingFlow:
         """Full flow for exchange-level tagging."""
         session_id = "test-session-456"
         tag_name = "key-insight"
-        exchange_index = 0
+        exchange_index = 1
 
         test_file = tmp_path / "session.jsonl"
         test_file.write_text("{}")

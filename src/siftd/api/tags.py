@@ -77,6 +77,8 @@ class TagInfo:
     workspace_count: int
     tool_call_count: int
     exchange_count: int
+    prompt_count: int
+    response_count: int
 
 
 TagMutationResult = Literal["applied", "removed", "not_found", "already_applied", "not_applied"]
@@ -165,6 +167,8 @@ def list_tags(
                 workspace_count=r["workspace_count"],
                 tool_call_count=r["tool_call_count"],
                 exchange_count=r["exchange_count"],
+                prompt_count=r["prompt_count"],
+                response_count=r["response_count"],
             )
             for r in rows
         ]

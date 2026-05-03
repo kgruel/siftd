@@ -22,6 +22,7 @@ from siftd.model_names import parse_model_name
 from siftd.storage.attributes import set_attribute
 from siftd.storage.events import (
     ensure_event_tool_call_triggers,
+    ensure_polymorphic_cleanup_triggers,
     insert_event,
     insert_event_content,
     insert_event_response,
@@ -32,7 +33,7 @@ from siftd.storage.sessions import ensure_session_tables
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # Registry of versioned migrations: version -> migration function.
 # Each function migrates the DB from version-1 to version.
@@ -150,6 +151,8 @@ def open_database(
             # Replace tr_tool_calls_* triggers with tr_event_tool_call_* on every
             # write open so old DBs upgraded in-place get the new trigger names.
             ensure_event_tool_call_triggers(conn)
+            # Ensure polymorphic cascade-cleanup triggers exist (idempotent).
+            ensure_polymorphic_cleanup_triggers(conn)
 
             # Stamp schema version after successful migrations
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -1285,6 +1288,32 @@ def _migrate_v4_polymorphic_schema(conn: sqlite3.Connection) -> None:
         FROM responses
     """)
 
+    # 3.5 Pre-pass: suffix duplicate tool_call external_ids within the same conversation.
+    #
+    # events has UNIQUE (conversation_id, kind, external_id). If two tool_calls rows in the
+    # same conversation share a non-NULL external_id, the backfill INSERT OR IGNORE would
+    # silently drop one of them — causing the post-backfill assertion to fail (count mismatch)
+    # and rolling back the whole migration.
+    #
+    # Fix: rewrite external_id in tool_calls to external_id || ':n' (rn=row number within
+    # the duplicate group) for every row beyond the first. This mutates the soon-to-be-dropped
+    # legacy table and is bounded by row count. The suffixed IDs are permanent post-migration.
+    conn.execute("""
+        UPDATE tool_calls
+        SET external_id = tool_calls.external_id || ':' || ranked.rn
+        FROM (
+            SELECT id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY conversation_id, external_id
+                       ORDER BY COALESCE(timestamp, ''), id
+                   ) AS rn
+            FROM tool_calls
+            WHERE external_id IS NOT NULL
+        ) AS ranked
+        WHERE tool_calls.id = ranked.id
+          AND ranked.rn > 1
+    """)
+
     # 4. Backfill events from tool_calls (kind='tool_call', parent_id=response_id)
     #    tool_calls.timestamp is nullable; use empty string as sentinel for NOT NULL.
     conn.execute("""
@@ -1476,6 +1505,37 @@ MIGRATIONS[5] = _migrate_v5_fts_simplification
 
 def _migrate_v6_drop_legacy_tables(conn: sqlite3.Connection) -> None:
     """v6: Drop 13 legacy tables and heal content_blob ref_count."""
+    # Step 0: Inline blob migration for any tool_calls rows whose result TEXT was never
+    # migrated to content_blobs (migrate_blobs.py was a separate optional step pre-slice-8).
+    # Must run BEFORE the ref_count heal so the heal sees the newly-created blob rows.
+    has_tool_calls = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='tool_calls'"
+    ).fetchone()
+    if has_tool_calls:
+        unmigrated = conn.execute(
+            "SELECT id, result FROM tool_calls WHERE result IS NOT NULL AND result_hash IS NULL"
+        ).fetchall()
+        from datetime import UTC
+        from datetime import datetime as _datetime
+        now = _datetime.now(UTC).isoformat()
+        for row in unmigrated:
+            tool_call_id = row[0]
+            result_text = row[1]
+            blob_hash = hashlib.sha256(result_text.encode()).hexdigest()
+            conn.execute(
+                "INSERT OR IGNORE INTO content_blobs (hash, content, ref_count, created_at)"
+                " VALUES (?, ?, 0, ?)",
+                (blob_hash, result_text, now),
+            )
+            conn.execute(
+                "UPDATE tool_calls SET result_hash = ? WHERE id = ?",
+                (blob_hash, tool_call_id),
+            )
+            conn.execute(
+                "UPDATE event_tool_call SET result_hash = ? WHERE event_id = ?",
+                (blob_hash, tool_call_id),
+            )
+
     # Step 1: Heal ref_count before any drops
     conn.execute("""
         UPDATE content_blobs
@@ -1510,6 +1570,54 @@ def _migrate_v6_drop_legacy_tables(conn: sqlite3.Connection) -> None:
 
 
 MIGRATIONS[6] = _migrate_v6_drop_legacy_tables
+
+
+def _migrate_v7_pending_tags_exchange_index(conn: sqlite3.Connection) -> None:
+    """v7: Increment pending_tags.exchange_index by 1 (0-based → 1-based).
+
+    Slice 5 changed the exchange tagging API from 0-based to 1-based indices.
+    Any pending_tags rows written before that change carry 0-based indices and
+    must be incremented before the strict >= 1 validation in _get_prompt_by_index
+    can be relied upon.
+    """
+    # pending_tags may not exist on very old DBs that skipped ensure_session_tables;
+    # ensure it exists before touching it.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pending_tags (
+            id                 TEXT PRIMARY KEY,
+            harness_session_id TEXT NOT NULL,
+            tag_name           TEXT NOT NULL,
+            entity_type        TEXT NOT NULL DEFAULT 'conversation',
+            exchange_index     INTEGER,
+            created_at         TEXT NOT NULL
+        )
+    """)
+    before_count = conn.execute(
+        "SELECT COUNT(*) FROM pending_tags WHERE exchange_index IS NOT NULL"
+    ).fetchone()[0]
+
+    conn.execute(
+        "UPDATE pending_tags SET exchange_index = exchange_index + 1 WHERE exchange_index IS NOT NULL"
+    )
+
+    after_count = conn.execute(
+        "SELECT COUNT(*) FROM pending_tags WHERE exchange_index IS NOT NULL"
+    ).fetchone()[0]
+    if after_count != before_count:
+        raise RuntimeError(
+            f"Migration v7 assertion failed — pending_tags count changed: "
+            f"before={before_count}, after={after_count}"
+        )
+    invalid = conn.execute(
+        "SELECT COUNT(*) FROM pending_tags WHERE exchange_index IS NOT NULL AND exchange_index < 1"
+    ).fetchone()[0]
+    if invalid:
+        raise RuntimeError(
+            f"Migration v7 assertion failed — {invalid} rows still have exchange_index < 1 after increment"
+        )
+
+
+MIGRATIONS[7] = _migrate_v7_pending_tags_exchange_index
 
 
 # Known model prices (input_per_mtok, output_per_mtok) in USD per million tokens.
@@ -2234,44 +2342,23 @@ def get_harness_id_by_name(conn: sqlite3.Connection, name: str) -> str | None:
 def delete_conversation(conn: sqlite3.Connection, conversation_id: str) -> None:
     """Delete a conversation and all related data.
 
-    Explicitly deletes polymorphic tables (no FK cascade to conversations/events):
-    - content_fts (virtual table, no FK support)
-    - tag_assignments (polymorphic, no FK to conversations or events)
-    - attributes (polymorphic, no FK to conversations or events)
+    Explicitly deletes:
+    - content_fts (virtual table, no FK/trigger support)
 
     Conversation FK CASCADE handles: events, event_content, event_response,
-    event_tool_call, ingested_files, content_blobs (via trigger).
+    event_tool_call, ingested_files, content_blobs (via tr_event_tool_call_* trigger).
+
+    tr_polymorphic_*_cleanup triggers handle tag_assignments and attributes for
+    conversations, events, and workspaces — no explicit cleanup needed here.
     """
-    # Clean up FTS index entries (virtual tables don't support CASCADE)
+    # Clean up FTS index entries (virtual tables don't support CASCADE or triggers)
     conn.execute(
         "DELETE FROM content_fts WHERE conversation_id = ?", (conversation_id,)
     )
 
-    # tag_assignments has no FK cascade to conversations or events; must delete explicitly
-    conn.execute(
-        "DELETE FROM tag_assignments WHERE target_kind = 'conversation' AND target_id = ?",
-        (conversation_id,),
-    )
-    conn.execute(
-        "DELETE FROM tag_assignments "
-        "WHERE target_kind IN ('prompt', 'response', 'tool_call', 'exchange') "
-        "AND target_id IN (SELECT id FROM events WHERE conversation_id = ?)",
-        (conversation_id,),
-    )
-
-    # attributes has no FK cascade; must delete explicitly
-    conn.execute(
-        "DELETE FROM attributes WHERE target_kind = 'conversation' AND target_id = ?",
-        (conversation_id,),
-    )
-    conn.execute(
-        "DELETE FROM attributes "
-        "WHERE target_kind IN ('prompt', 'response', 'tool_call') "
-        "AND target_id IN (SELECT id FROM events WHERE conversation_id = ?)",
-        (conversation_id,),
-    )
-
-    # Delete conversation - CASCADE handles events and all event_* children
+    # Delete conversation - CASCADE handles events and all event_* children;
+    # tr_polymorphic_conversations_cleanup cleans tag_assignments/attributes for the
+    # conversation row, and tr_polymorphic_events_cleanup fires for each cascaded event row.
     conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
 
 

@@ -241,7 +241,10 @@ def _cmd_tag_list(args, db: Path) -> int:
 
     # When filtering temporally, hide tags with zero counts in the window
     if since or before:
-        tags = [t for t in tags if t.conversation_count or t.tool_call_count or t.workspace_count]
+        tags = [t for t in tags if (
+            t.conversation_count or t.workspace_count or t.tool_call_count
+            or t.exchange_count or t.prompt_count or t.response_count
+        )]
         if not tags:
             print("No tags found in the specified time range.")
             return 0
@@ -261,6 +264,12 @@ def _cmd_tag_list(args, db: Path) -> int:
             counts.append(f"{tag.workspace_count} workspaces")
         if tag.tool_call_count:
             counts.append(f"{tag.tool_call_count} tool_calls")
+        if tag.exchange_count:
+            counts.append(f"{tag.exchange_count} exchanges")
+        if tag.prompt_count:
+            counts.append(f"{tag.prompt_count} prompts")
+        if tag.response_count:
+            counts.append(f"{tag.response_count} responses")
         count_str = f" ({', '.join(counts)})" if counts else ""
         desc = f" - {tag.description}" if tag.description else ""
         print(f"  {tag.name}{desc}{count_str}")
@@ -384,6 +393,8 @@ def _cmd_tag_delete(args, db: Path) -> int:
         + tag_info.workspace_count
         + tag_info.tool_call_count
         + tag_info.exchange_count
+        + tag_info.prompt_count
+        + tag_info.response_count
     )
 
     force = getattr(args, "force", False)
@@ -397,6 +408,10 @@ def _cmd_tag_delete(args, db: Path) -> int:
             parts.append(f"{tag_info.tool_call_count} tool_calls")
         if tag_info.exchange_count:
             parts.append(f"{tag_info.exchange_count} exchanges")
+        if tag_info.prompt_count:
+            parts.append(f"{tag_info.prompt_count} prompts")
+        if tag_info.response_count:
+            parts.append(f"{tag_info.response_count} responses")
         print(f"Tag '{tag_name}' is applied to {', '.join(parts)}. Use --force to delete.")
         conn.close()
         return 1
@@ -419,6 +434,10 @@ def _cmd_tag_delete(args, db: Path) -> int:
         parts.append(f"{tag_info.tool_call_count} tool_calls")
     if tag_info.exchange_count:
         parts.append(f"{tag_info.exchange_count} exchanges")
+    if tag_info.prompt_count:
+        parts.append(f"{tag_info.prompt_count} prompts")
+    if tag_info.response_count:
+        parts.append(f"{tag_info.response_count} responses")
     if parts:
         print(f"Deleted tag '{tag_name}' (was applied to {', '.join(parts)})")
     else:

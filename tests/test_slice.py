@@ -383,6 +383,12 @@ def test_slice_migrated_column_order(tmp_path):
     conn.commit()
     conn.close()
 
+    # Migrate source to current schema before slicing.
+    # slice_database requires source to already be at SCHEMA_VERSION.
+    from siftd.storage.sqlite import open_database as _open_db
+    _mc = _open_db(source)
+    _mc.close()
+
     # Slice should work despite column order mismatch
     target = tmp_path / "sliced.db"
     result = slice_database(source, target, rebuild_fts=False)
@@ -427,3 +433,34 @@ def test_slice_by_tags(test_db, tmp_path):
     target = tmp_path / "sliced.db"
     result = slice_database(test_db, target, tag=["test-slice-tag"])
     assert result["conversations"] == 1
+
+
+def test_slice_refuses_old_schema_version(tmp_path):
+    """slice_database raises RuntimeError when source schema version < SCHEMA_VERSION."""
+    source = tmp_path / "old.db"
+    conn = sqlite3.connect(str(source))
+    conn.execute("PRAGMA user_version = 5")
+    conn.commit()
+    conn.close()
+
+    target = tmp_path / "target.db"
+    with pytest.raises(RuntimeError, match="schema v5"):
+        slice_database(source, target)
+
+
+def test_slice_no_backup_file_in_source_dir(test_db, tmp_path):
+    """slice_database opens source read-only — no backup files appear next to source."""
+    source_dir = test_db.parent
+    before = set(source_dir.iterdir())
+
+    target = tmp_path / "sliced.db"
+    result = slice_database(test_db, target)
+
+    # Prove the slice actually ran (not a silent no-op) before checking for backup leaks.
+    assert target.exists(), "target database should have been created"
+    assert result.get("conversations", 0) >= 1, "slice should have copied at least one conversation"
+
+    after = set(source_dir.iterdir())
+    new_files = after - before
+    bak_files = [f for f in new_files if ".bak." in f.name or f.suffix == ".bak"]
+    assert not bak_files, f"Unexpected backup files created: {[f.name for f in bak_files]}"

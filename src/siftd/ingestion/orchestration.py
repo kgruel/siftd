@@ -803,7 +803,13 @@ def _apply_pending_tags(
 
         elif pt.entity_type == "exchange":
             # Look up the prompt at exchange_index
-            prompt_id = _get_prompt_by_index(conn, conversation_id, pt.exchange_index)
+            try:
+                prompt_id = _get_prompt_by_index(conn, conversation_id, pt.exchange_index)
+            except ValueError as e:
+                logger.warning(
+                    f"Invalid exchange_index for tag '{pt.tag_name}' in session {session_id[:8]}: {e}"
+                )
+                continue
             if prompt_id:
                 result = apply_tag(conn, "exchange", prompt_id, tag_id)
                 if result:
@@ -836,6 +842,8 @@ def _get_prompt_by_index(
     """
     if exchange_index is None:
         return None
+    if exchange_index < 1:
+        raise ValueError(f"exchange_index must be >= 1, got {exchange_index}")
 
     cur = conn.execute(
         """

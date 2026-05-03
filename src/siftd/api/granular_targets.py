@@ -83,4 +83,6 @@ def parse_colon_path(raw: str) -> tuple[str, str, int] | None:
         n = int(n_str)
     except ValueError:
         return None
+    if n < 1:
+        return None
     return conv_ref, kind, n

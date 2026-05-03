@@ -1327,6 +1327,37 @@ class TestMigrateV4PolymorphicSchema:
         conn.close()
         assert version == SCHEMA_VERSION
 
+    def test_duplicate_tool_call_external_ids_suffixed(self, tmp_path, monkeypatch):
+        """v4 migration: duplicate tool_call external_ids get ':N' suffix to avoid UNIQUE conflict."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v3_db(tmp_path)
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
+        raw.execute("INSERT INTO workspaces VALUES ('w1','/code',NULL,'2024-01-01T00:00:00Z')")
+        raw.execute("INSERT INTO conversations VALUES ('c1','ext-c1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)")
+        raw.execute("INSERT INTO prompts VALUES ('p1','c1','ep1','2024-01-01T00:01:00Z')")
+        raw.execute("INSERT INTO responses VALUES ('r1','c1','p1',NULL,NULL,'er1','2024-01-01T00:01:01Z',100,200)")
+        # Two tool_calls in the same conversation sharing the same non-NULL external_id
+        raw.execute("INSERT INTO tool_calls VALUES ('tc1','r1','c1',NULL,'dupe-id','{}',NULL,NULL,'success','2024-01-01T00:01:02Z')")
+        raw.execute("INSERT INTO tool_calls VALUES ('tc2','r1','c1',NULL,'dupe-id','{}',NULL,NULL,'success','2024-01-01T00:01:03Z')")
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+        try:
+            # Pin by event id: ROW_NUMBER orders by timestamp ASC, so tc1 (earlier) keeps
+            # the original external_id and tc2 (later) gets the ':2' suffix.
+            ext_id_by_id = dict(conn.execute(
+                "SELECT id, external_id FROM events WHERE id IN ('tc1','tc2')"
+            ).fetchall())
+            assert ext_id_by_id["tc1"] == "dupe-id", "earlier row should keep original external_id"
+            assert ext_id_by_id["tc2"] == "dupe-id:2", "later row should get ':2' suffix"
+        finally:
+            conn.close()
+
 
 # ---------------------------------------------------------------------------
 # TestMigrateV5FtsSimplification — slice-6 acceptance criteria
@@ -1431,6 +1462,19 @@ def _make_v5_db(tmp_path: Path, name: str = "v5test.db") -> Path:
     conn = sqlite3.connect(str(path))
     conn.executescript(_LEGACY_V5_NO_CASCADE)
     conn.execute("PRAGMA user_version = 5")
+    conn.commit()
+    conn.close()
+    return path
+
+
+_V6_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "schemas" / "v6.sql"
+
+
+def _make_v6_db(tmp_path: Path, name: str = "v6test.db") -> Path:
+    """Create a DB at schema version 6 using the v6.sql fixture."""
+    path = tmp_path / name
+    conn = sqlite3.connect(str(path))
+    conn.executescript(_V6_FIXTURE_PATH.read_text())
     conn.commit()
     conn.close()
     return path
@@ -1588,6 +1632,51 @@ class TestMigrationsV6:
         finally:
             conn.close()
 
+    def test_blob_preservation_from_unmigrated_result(self, tmp_path, monkeypatch):
+        """v6 migration inlines blob migration for tool_calls rows with result but no result_hash."""
+        import hashlib
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v5_db(tmp_path)
+        result_text = '{"output": "hello migration"}'
+        expected_hash = hashlib.sha256(result_text.encode()).hexdigest()
+
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
+        raw.execute("INSERT INTO workspaces VALUES ('w1','/p',NULL,'2024-01-01')")
+        raw.execute("INSERT INTO conversations VALUES ('c1','e1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)")
+        raw.execute("INSERT INTO prompts VALUES ('p1','c1','ep1','2024-01-01T00:00:00Z')")
+        raw.execute("INSERT INTO responses VALUES ('r1','c1','p1',NULL,NULL,'er1','2024-01-01T00:00:01Z',10,20)")
+        # tool_calls row with result text but no result_hash (pre-blob-migration state)
+        raw.execute(
+            "INSERT INTO tool_calls VALUES ('tc1','r1','c1',NULL,NULL,'{}',?,NULL,'success','2024-01-01T00:00:02Z')",
+            (result_text,),
+        )
+        # Corresponding events + event_tool_call as v4 migration would have created (result_hash also NULL)
+        raw.execute("INSERT INTO events VALUES ('tc1','tool_call','c1','r1',NULL,'2024-01-01T00:00:02Z')")
+        raw.execute("INSERT INTO event_tool_call VALUES ('tc1',NULL,'{}',NULL,'success')")
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+        try:
+            blob = conn.execute(
+                "SELECT content, ref_count FROM content_blobs WHERE hash=?", (expected_hash,)
+            ).fetchone()
+            assert blob is not None, f"content_blobs row missing for hash {expected_hash}"
+            assert blob[0] == result_text
+            assert blob[1] == 1  # ref_count healed to 1 (one event_tool_call references it)
+
+            etc = conn.execute(
+                "SELECT result_hash FROM event_tool_call WHERE event_id='tc1'"
+            ).fetchone()
+            assert etc is not None
+            assert etc[0] == expected_hash
+        finally:
+            conn.close()
+
 
 # ---------------------------------------------------------------------------
 # TestFreshDBInitialization — Resolution #10
@@ -1641,5 +1730,70 @@ class TestFreshDBInitialization:
         try:
             version = conn.execute("PRAGMA user_version").fetchone()[0]
             assert version == SCHEMA_VERSION
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
+# TestMigrationsV7 — pending_tags exchange_index 0-based → 1-based
+# ---------------------------------------------------------------------------
+
+
+class TestMigrationsV7:
+    def test_pending_tags_non_null_incremented(self, tmp_path, monkeypatch):
+        """v6 → v7: non-NULL pending_tags.exchange_index values are incremented by 1."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v6_db(tmp_path)
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute(
+            "INSERT INTO pending_tags VALUES ('pt1','sess1','my-tag','conversation',5,'2024-01-01T00:00:00Z')"
+        )
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+        try:
+            row = conn.execute("SELECT exchange_index FROM pending_tags WHERE id='pt1'").fetchone()
+            assert row is not None
+            assert row[0] == 6  # 5 + 1
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        finally:
+            conn.close()
+
+    def test_pending_tags_null_unchanged(self, tmp_path, monkeypatch):
+        """v6 → v7: NULL exchange_index rows are not modified."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v6_db(tmp_path)
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute(
+            "INSERT INTO pending_tags VALUES ('pt1','sess1','conv-tag','conversation',NULL,'2024-01-01T00:00:00Z')"
+        )
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+        try:
+            row = conn.execute("SELECT exchange_index FROM pending_tags WHERE id='pt1'").fetchone()
+            assert row is not None
+            assert row[0] is None  # NULL stays NULL
+        finally:
+            conn.close()
+
+    def test_empty_pending_tags_no_error(self, tmp_path, monkeypatch):
+        """v7 migration succeeds with an empty pending_tags table."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v6_db(tmp_path)
+        conn = open_database(path)
+        try:
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+            assert conn.execute("SELECT COUNT(*) FROM pending_tags").fetchone()[0] == 0
         finally:
             conn.close()

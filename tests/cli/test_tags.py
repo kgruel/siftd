@@ -423,12 +423,12 @@ class TestTagsEdgeBranches:
 
         # _cmd_tag_list temporal/prefix no matches via direct call
         list_args = SimpleNamespace(positional=["list"], since="2024-01-01", before=None, prefix=None)
-        monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [SimpleNamespace(name="x", description=None, conversation_count=0, workspace_count=0, tool_call_count=0, exchange_count=0)])
+        monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [SimpleNamespace(name="x", description=None, conversation_count=0, workspace_count=0, tool_call_count=0, exchange_count=0, prompt_count=0, response_count=0)])
         monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
         assert tags_cli._cmd_tag_list(list_args, Path(test_db)) == 0
 
         list_args = SimpleNamespace(positional=["list"], since=None, before=None, prefix="zzz")
-        monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [SimpleNamespace(name="abc", description=None, conversation_count=1, workspace_count=0, tool_call_count=0, exchange_count=0)])
+        monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [SimpleNamespace(name="abc", description=None, conversation_count=1, workspace_count=0, tool_call_count=0, exchange_count=0, prompt_count=0, response_count=0)])
         assert tags_cli._cmd_tag_list(list_args, Path(test_db)) == 0
 
         # rename/delete error branches
@@ -491,6 +491,8 @@ class TestTagsEdgeBranches:
                     "tool_call_count": 2,
                     "conversation_count": 0,
                     "exchange_count": 0,
+                    "prompt_count": 0,
+                    "response_count": 0,
                 }],
             },
         )
@@ -506,7 +508,7 @@ class TestTagsEdgeBranches:
         assert tags_cli._cmd_tag_rename(SimpleNamespace(positional=["rename", "a", "b"]), Path(test_db)) == 1
 
         # delete: warning and deleted messaging include workspace/tool/prompt counts
-        ti = SimpleNamespace(name="t", conversation_count=1, workspace_count=2, tool_call_count=3, exchange_count=4)
+        ti = SimpleNamespace(name="t", conversation_count=1, workspace_count=2, tool_call_count=3, exchange_count=4, prompt_count=0, response_count=0)
         monkeypatch.setattr("siftd.cli.tags.list_tags", lambda conn=None: [ti])
         monkeypatch.setattr("siftd.cli.tags.delete_tag_safe", lambda *a, **k: None)
         assert tags_cli._cmd_tag_delete(SimpleNamespace(positional=["delete", "t"], force=False), Path(test_db)) == 1

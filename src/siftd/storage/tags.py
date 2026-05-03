@@ -312,6 +312,50 @@ def list_tags(
             f"WHERE {' AND '.join(exchange_where)}"
         )
 
+    # prompt count — same pattern as tool_call_count
+    prompt_where = ["ta.tag_id = t.id", "ta.target_kind = 'prompt'"]
+    prompt_params: list[object] = []
+    prompt_joins: list[str] = []
+    if has_time_filter or owner:
+        prompt_joins.append("JOIN events e ON e.id = ta.target_id")
+        prompt_joins.append("JOIN conversations c ON c.id = e.conversation_id")
+    if owner:
+        prompt_where.append(owner_predicate("e.conversation_id"))
+        prompt_params.append(owner)
+    if since:
+        prompt_where.append("c.started_at >= ?")
+        prompt_params.append(since)
+    if before:
+        prompt_where.append("c.started_at < ?")
+        prompt_params.append(before)
+    prompt_count_sql = (
+        "SELECT COUNT(*) FROM tag_assignments ta "
+        f"{' '.join(prompt_joins)} "
+        f"WHERE {' AND '.join(prompt_where)}"
+    )
+
+    # response count — same pattern as tool_call_count
+    response_where = ["ta.tag_id = t.id", "ta.target_kind = 'response'"]
+    response_params: list[object] = []
+    response_joins: list[str] = []
+    if has_time_filter or owner:
+        response_joins.append("JOIN events e ON e.id = ta.target_id")
+        response_joins.append("JOIN conversations c ON c.id = e.conversation_id")
+    if owner:
+        response_where.append(owner_predicate("e.conversation_id"))
+        response_params.append(owner)
+    if since:
+        response_where.append("c.started_at >= ?")
+        response_params.append(since)
+    if before:
+        response_where.append("c.started_at < ?")
+        response_params.append(before)
+    response_count_sql = (
+        "SELECT COUNT(*) FROM tag_assignments ta "
+        f"{' '.join(response_joins)} "
+        f"WHERE {' AND '.join(response_where)}"
+    )
+
     sql = f"""
         SELECT
             t.name,
@@ -320,11 +364,13 @@ def list_tags(
             ({conversation_count_sql}) as conversation_count,
             ({workspace_count_sql}) as workspace_count,
             ({tool_call_count_sql}) as tool_call_count,
-            ({exchange_count_sql}) as exchange_count
+            ({exchange_count_sql}) as exchange_count,
+            ({prompt_count_sql}) as prompt_count,
+            ({response_count_sql}) as response_count
         FROM tags t
         ORDER BY t.name
     """
-    all_params = [*conv_params, *ws_params, *tc_params, *exchange_params]
+    all_params = [*conv_params, *ws_params, *tc_params, *exchange_params, *prompt_params, *response_params]
 
     cur = conn.execute(sql, all_params)
     rows = [
@@ -336,11 +382,16 @@ def list_tags(
             "workspace_count": row["workspace_count"],
             "tool_call_count": row["tool_call_count"],
             "exchange_count": row["exchange_count"],
+            "prompt_count": row["prompt_count"],
+            "response_count": row["response_count"],
         }
         for row in cur.fetchall()
     ]
     if owner:
-        rows = [r for r in rows if (r["conversation_count"] or r["workspace_count"] or r["tool_call_count"] or r["exchange_count"])]
+        rows = [r for r in rows if (
+            r["conversation_count"] or r["workspace_count"] or r["tool_call_count"]
+            or r["exchange_count"] or r["prompt_count"] or r["response_count"]
+        )]
     return rows
 
 

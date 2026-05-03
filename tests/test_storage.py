@@ -335,6 +335,57 @@ class TestConversationOps:
         conn.commit()
         assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
 
+    def test_delete_cleans_exchange_tag_assignments_and_attributes(self, populated_db):
+        """delete_conversation cascade triggers remove tag_assignments and attributes for exchange events."""
+        conn, cid = populated_db
+        # Find an event to tag at exchange scope
+        event_id = conn.execute("SELECT id FROM events LIMIT 1").fetchone()["id"]
+        tag_id = tags.get_or_create_tag(conn, "exchange-tag")
+        tags.apply_tag(conn, "exchange", event_id, tag_id)
+        conn.execute(
+            "INSERT INTO attributes (id, target_kind, target_id, key, value) VALUES (?,?,?,?,?)",
+            ("attr1", "exchange", event_id, "k", "v"),
+        )
+        conn.commit()
+
+        sq.delete_conversation(conn, cid)
+        conn.commit()
+
+        ta_count = conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_kind='exchange' AND target_id=?",
+            (event_id,),
+        ).fetchone()[0]
+        assert ta_count == 0, "exchange tag_assignments should be cleaned up by trigger"
+
+        attr_count = conn.execute(
+            "SELECT COUNT(*) FROM attributes WHERE target_kind='exchange' AND target_id=?",
+            (event_id,),
+        ).fetchone()[0]
+        assert attr_count == 0, "exchange attributes should be cleaned up by trigger"
+
+    def test_cascade_trigger_cleans_polymorphic_rows_on_event_delete(self, populated_db):
+        """tr_polymorphic_events_cleanup trigger fires on direct DELETE FROM events."""
+        conn, cid = populated_db
+        event_id = conn.execute("SELECT id FROM events LIMIT 1").fetchone()["id"]
+        tag_id = tags.get_or_create_tag(conn, "orphan-tag")
+        tags.apply_tag(conn, "prompt", event_id, tag_id)
+        conn.execute(
+            "INSERT INTO attributes (id, target_kind, target_id, key, value) VALUES (?,?,?,?,?)",
+            ("attr2", "prompt", event_id, "k", "v"),
+        )
+        conn.commit()
+
+        # Direct delete (not via delete_conversation) — trigger should still fire
+        conn.execute("DELETE FROM events WHERE id=?", (event_id,))
+        conn.commit()
+
+        assert conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_id=?", (event_id,)
+        ).fetchone()[0] == 0, "tag_assignments orphan should be removed by trigger"
+        assert conn.execute(
+            "SELECT COUNT(*) FROM attributes WHERE target_id=?", (event_id,)
+        ).fetchone()[0] == 0, "attributes orphan should be removed by trigger"
+
 
 # === File dedup ===
 
