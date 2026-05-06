@@ -40,6 +40,11 @@ def _legacy_merge_schema(*, include_content_blobs: bool, include_result_hash: bo
             schema,
             flags=re.S,
         )
+        schema = re.sub(
+            r"\nCREATE INDEX idx_event_tool_call_result_hash[^;]*;\n",
+            "\n",
+            schema,
+        )
         schema = re.sub(r",(\s*\n\s*\))", r"\1", schema)
     return schema
 

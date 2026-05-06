@@ -1536,14 +1536,24 @@ def _migrate_v6_drop_legacy_tables(conn: sqlite3.Connection) -> None:
                 (blob_hash, tool_call_id),
             )
 
-    # Step 1: Heal ref_count before any drops
+    # Step 1: Heal ref_count before any drops.
+    # The naive correlated-subquery form is O(M·N) and pinned a CPU for 44+ min
+    # on a 2.9G real-world db. Index event_tool_call(result_hash) and rewrite as
+    # a single set-based UPDATE so event_tool_call is scanned once.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_event_tool_call_result_hash"
+        " ON event_tool_call(result_hash) WHERE result_hash IS NOT NULL"
+    )
     conn.execute("""
+        WITH counts AS (
+            SELECT result_hash, COUNT(*) AS c
+            FROM event_tool_call
+            WHERE result_hash IS NOT NULL
+            GROUP BY result_hash
+        )
         UPDATE content_blobs
         SET ref_count = COALESCE(
-            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
-        )
-        WHERE ref_count != COALESCE(
-            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
+            (SELECT c FROM counts WHERE counts.result_hash = content_blobs.hash), 0
         )
     """)
     conn.execute("DELETE FROM content_blobs WHERE ref_count = 0")

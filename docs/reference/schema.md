@@ -213,7 +213,12 @@ Sparse extension: only present for kind='tool_call'
 
 ### event_content
 
-Trigger to decrement ref_count and garbage collect when event_tool_call rows are deleted
+Indexed for fast ref_count maintenance (M6 heal + delete/update triggers).
+-- Without this, GROUP BY result_hash and WHERE result_hash = ? are full scans.
+CREATE INDEX idx_event_tool_call_result_hash
+    ON event_tool_call(result_hash) WHERE result_hash IS NOT NULL;
+
+-- Trigger to decrement ref_count and garbage collect when event_tool_call rows are deleted
 CREATE TRIGGER tr_event_tool_call_delete_release_blob
 AFTER DELETE ON event_tool_call
 FOR EACH ROW
