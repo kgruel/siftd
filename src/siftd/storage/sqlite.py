@@ -46,6 +46,78 @@ MIGRATION_BUSY_TIMEOUT_MS = int(os.environ.get("SIFTD_MIGRATION_BUSY_TIMEOUT_MS"
 _logger = logging.getLogger(__name__)
 
 
+class SchemaUpgradeRequiredError(RuntimeError):
+    """Raised on read-only open of a stale-schema DB that cannot be auto-upgraded.
+
+    The fix is to make the database file (and parent directory) writable so a
+    subsequent open can apply the schema migration in-place, or to migrate a
+    writable copy first.
+    """
+
+
+def _peek_user_version(db_path: Path) -> int:
+    """Best-effort peek of PRAGMA user_version using a transient RO connection.
+
+    Returns 0 on any sqlite error (garbage file, locked, etc.) — treated as
+    'no info, don't auto-upgrade'. immutable=1 mirrors the main RO open and
+    prevents creation of WAL/SHM sidecar files.
+    """
+    try:
+        peek = sqlite3.connect(
+            f"file:{db_path.as_posix()}?mode=ro&immutable=1", uri=True
+        )
+        try:
+            return peek.execute("PRAGMA user_version").fetchone()[0]
+        finally:
+            peek.close()
+    except sqlite3.Error:
+        return 0
+
+
+def _ensure_schema_for_readonly(db_path: Path) -> None:
+    """Auto-upgrade a stale-schema DB so a read-only open will not crash.
+
+    Called from open_database(read_only=True) before the RO connection is opened.
+    If the DB is at a known stale version (0 < v < SCHEMA_VERSION):
+      - file + parent dir writable: recurse into write-mode open_database to run
+        the migration once, then return so the RO open can proceed against the
+        upgraded file.
+      - otherwise: raise SchemaUpgradeRequiredError with a clear message.
+
+    Version == 0 is skipped — it means either an uninitialized/garbage file or
+    a pre-versioning DB (extremely rare). Either way we let the main RO open
+    fall through and surface its own error.
+
+    Without this, RO commands (query, doctor, peek, search) crashed with a
+    cryptic 'no such table: events' on a stale DB. See
+    docs/dev/plans/2026-05-03-events-polymorphic-followup.md finding #1.
+    """
+    version = _peek_user_version(db_path)
+    if version == 0 or version >= SCHEMA_VERSION:
+        return
+    file_writable = os.access(db_path, os.W_OK)
+    dir_writable = os.access(db_path.parent, os.W_OK)
+    if not (file_writable and dir_writable):
+        raise SchemaUpgradeRequiredError(
+            f"Database at {db_path} is at schema v{version}; this siftd install "
+            f"requires v{SCHEMA_VERSION}. Cannot auto-upgrade — "
+            f"{'file' if not file_writable else 'parent directory'} is not writable. "
+            f"Make it writable and re-run, or migrate a writable copy."
+        )
+    _logger.info(
+        "Auto-upgrading schema v%d → v%d for read-only open of %s",
+        version, SCHEMA_VERSION, db_path,
+    )
+    upgrader = open_database(db_path, read_only=False)
+    try:
+        # Checkpoint+truncate so the upgraded user_version lands in the main DB
+        # file. Without this, the subsequent RO open (which uses immutable=1
+        # for sidecar-free reads) only sees the pre-upgrade header.
+        upgrader.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        upgrader.close()
+
+
 # =============================================================================
 # Connection and migrations
 # =============================================================================
@@ -56,6 +128,7 @@ def open_database(
     *,
     read_only: bool = False,
     check_same_thread: bool = True,
+    auto_upgrade: bool = True,
 ) -> sqlite3.Connection:
     """Open database connection, creating schema if needed.
 
@@ -63,13 +136,25 @@ def open_database(
         db_path: Path to the database file.
         read_only: If True, open without running migrations/ensures that write.
             This enables read-only operations (status/query/search) against a DB that
-            lives on read-only media or in restricted environments.
+            lives on read-only media or in restricted environments. If the DB is
+            below SCHEMA_VERSION the migration is run in a transient write-mode
+            open before the RO connection is established (or
+            SchemaUpgradeRequiredError is raised if the file is not writable).
         check_same_thread: If False, allow the connection to be used from multiple
             threads.  Useful for concurrent read-only access (e.g. doctor checks).
+        auto_upgrade: When True (default) and read_only=True, a stale-schema DB
+            is migrated up to SCHEMA_VERSION in a transient write-mode open.
+            Set False for callers that need to *inspect* the on-disk schema
+            version without mutating the file (e.g. `db schema-version`, slice
+            source pre-check). Ignored when read_only=False (write-mode always
+            migrates).
     """
     is_new = not db_path.exists()
     if is_new and read_only:
         raise FileNotFoundError(f"Database not found: {db_path}")
+
+    if read_only and not is_new and auto_upgrade:
+        _ensure_schema_for_readonly(db_path)
 
     if read_only:
         # Use URI mode with mode=ro&immutable=1 to avoid creating WAL/SHM sidecars

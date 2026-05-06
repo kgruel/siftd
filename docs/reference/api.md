@@ -1374,18 +1374,20 @@ def create_database(db_path: pathlib._local.Path | None = ...) -> Connection
 Open a database connection.
 
 ```python
-def open_database(db_path: pathlib._local.Path | None = ..., *, read_only: bool = ...) -> Connection
+def open_database(db_path: pathlib._local.Path | None = ..., *, read_only: bool = ..., auto_upgrade: bool = ...) -> Connection
 ```
 
 **Parameters:**
 
 - `db_path`: Path to the database file. If None, uses the default path.
+- `read_only`: If True, open in read-only mode.
 
 **Returns:** An open sqlite3.Connection with row_factory set.
 
 **Raises:**
 
 - `FileNotFoundError`: If read_only=True and database doesn't exist.
+- `SchemaUpgradeRequiredError`: If read_only=True, schema is stale, and the file is not writable for an auto-upgrade.
 
 ### run_preflight
 

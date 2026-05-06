@@ -76,21 +76,33 @@ def run_preflight(path: Path, label: str = "source") -> None:
         )
 
 
-def open_database(db_path: Path | None = None, *, read_only: bool = False) -> sqlite3.Connection:
+def open_database(
+    db_path: Path | None = None,
+    *,
+    read_only: bool = False,
+    auto_upgrade: bool = True,
+) -> sqlite3.Connection:
     """Open a database connection.
 
     Args:
         db_path: Path to the database file. If None, uses the default path.
-        read_only: If True, open in read-only mode (no migrations).
+        read_only: If True, open in read-only mode.
+        auto_upgrade: When read_only=True and the on-disk schema is below
+            SCHEMA_VERSION, run the migration in a transient write-mode open
+            before the RO connection is established. Set False for diagnostic
+            commands that must report the on-disk version without mutating it
+            (`db schema-version`, slice source pre-check).
 
     Returns:
         An open sqlite3.Connection with row_factory set.
 
     Raises:
         FileNotFoundError: If read_only=True and database doesn't exist.
+        SchemaUpgradeRequiredError: If read_only=True, schema is stale, and
+            the file is not writable for an auto-upgrade.
     """
     path = db_path or _db_path()
-    return _open_database(path, read_only=read_only)
+    return _open_database(path, read_only=read_only, auto_upgrade=auto_upgrade)
 
 
 def backup_database(source_path: Path, target_path: Path) -> None:

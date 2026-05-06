@@ -36,7 +36,8 @@ def cmd_db_info(args) -> int:
 
     from siftd.api import open_database
 
-    conn = open_database(db, read_only=True)
+    # Diagnostic command — report what's on disk; don't auto-upgrade as a side effect.
+    conn = open_database(db, read_only=True, auto_upgrade=False)
     try:
         size_bytes = db.stat().st_size
         page_size = conn.execute("PRAGMA page_size").fetchone()[0]
@@ -74,7 +75,8 @@ def cmd_db_schema_version(args) -> int:
     from siftd.api import open_database
     from siftd.api.migrations import get_schema_version_info
 
-    conn = open_database(db, read_only=True)
+    # Triage command — must report the on-disk version even when stale.
+    conn = open_database(db, read_only=True, auto_upgrade=False)
     try:
         current = conn.execute("PRAGMA user_version").fetchone()[0]
     finally:
