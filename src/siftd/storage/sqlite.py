@@ -1367,6 +1367,17 @@ def _migrate_v4_polymorphic_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_tag_assignments_tag ON tag_assignments(tag_id)"
     )
 
+    # Progress: report what's about to be copied. The polymorphic backfill is the
+    # I/O-heavy phase (writes the bulk of the migration WAL) and previously ran
+    # in silence for tens of minutes on real data.
+    _n_prompts = conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0]
+    _n_responses = conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0]
+    _n_tool_calls = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
+    _logger.info(
+        "Migration v4: copying %d prompts, %d responses, %d tool_calls into events",
+        _n_prompts, _n_responses, _n_tool_calls,
+    )
+
     # 2. Backfill events from prompts (kind='prompt', parent_id=NULL)
     conn.execute("""
         INSERT OR IGNORE INTO events (id, kind, conversation_id, parent_id, external_id, timestamp)
@@ -1559,6 +1570,11 @@ MIGRATIONS[4] = _migrate_v4_polymorphic_schema
 
 def _migrate_v5_fts_simplification(conn: sqlite3.Connection) -> None:
     """Drop content_fts with old side column, recreate from event_content."""
+    _n_blocks = conn.execute("""
+        SELECT COUNT(*) FROM event_content
+        WHERE json_valid(content) AND json_extract(content, '$.text') IS NOT NULL
+    """).fetchone()[0]
+    _logger.info("Migration v5: rebuilding FTS5 index from %d text blocks", _n_blocks)
     conn.execute("DROP TABLE IF EXISTS content_fts")
     conn.execute("""
         CREATE VIRTUAL TABLE content_fts USING fts5(
@@ -1633,6 +1649,12 @@ def _migrate_v6_drop_legacy_tables(conn: sqlite3.Connection) -> None:
     # The naive correlated-subquery form is O(M·N) and pinned a CPU for 44+ min
     # on a 2.9G real-world db. Index event_tool_call(result_hash) and rewrite as
     # a single set-based UPDATE so event_tool_call is scanned once.
+    _n_blobs = conn.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0]
+    _n_etc = conn.execute("SELECT COUNT(*) FROM event_tool_call").fetchone()[0]
+    _logger.info(
+        "Migration v6: healing content_blob ref counts (%d blobs, %d tool_call refs)",
+        _n_blobs, _n_etc,
+    )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_event_tool_call_result_hash"
         " ON event_tool_call(result_hash) WHERE result_hash IS NOT NULL"
@@ -1652,8 +1674,7 @@ def _migrate_v6_drop_legacy_tables(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM content_blobs WHERE ref_count = 0")
 
     # Step 2: Drop old tables in child→parent order
-    conn.execute("PRAGMA foreign_keys = OFF")
-    for table in (
+    _legacy_tables = (
         "tool_call_attributes",
         "tool_call_tags",
         "response_content",
@@ -1667,7 +1688,10 @@ def _migrate_v6_drop_legacy_tables(conn: sqlite3.Connection) -> None:
         "tool_calls",
         "responses",
         "prompts",
-    ):
+    )
+    _logger.info("Migration v6: dropping %d legacy tables", len(_legacy_tables))
+    conn.execute("PRAGMA foreign_keys = OFF")
+    for table in _legacy_tables:
         conn.execute(f"DROP TABLE IF EXISTS {table}")
     conn.execute("PRAGMA foreign_keys = ON")
 
@@ -1698,6 +1722,9 @@ def _migrate_v7_pending_tags_exchange_index(conn: sqlite3.Connection) -> None:
     before_count = conn.execute(
         "SELECT COUNT(*) FROM pending_tags WHERE exchange_index IS NOT NULL"
     ).fetchone()[0]
+    _logger.info(
+        "Migration v7: rewriting %d pending_tags exchange_index entries", before_count
+    )
 
     conn.execute(
         "UPDATE pending_tags SET exchange_index = exchange_index + 1 WHERE exchange_index IS NOT NULL"
