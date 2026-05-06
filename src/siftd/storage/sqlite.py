@@ -196,6 +196,14 @@ def open_database(
             if not is_new and _version_peek < SCHEMA_VERSION:
                 from datetime import date as _date
                 _bak_name = f"{db_path.stem}.bak.{_date.today():%Y%m%d}.db"
+                # Surface the migration + backup so users see the side effect
+                # of the auto-upgrade path; otherwise the backup file appears
+                # silently next to their DB.
+                _logger.info(
+                    "Migrating schema v%d → v%d (%s)",
+                    _version_peek, SCHEMA_VERSION, db_path,
+                )
+                _logger.info("Creating pre-migration backup: %s", _bak_name)
                 backup_database(db_path, db_path.parent / _bak_name)
 
             # PRAGMA foreign_keys cannot be changed inside an active transaction

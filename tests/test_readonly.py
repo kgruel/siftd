@@ -91,6 +91,34 @@ class TestReadOnlyMode:
         finally:
             os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)
 
+    def test_cli_main_translates_schema_upgrade_required_to_clean_error(self, tmp_path, capsys):
+        """CLI main() must catch SchemaUpgradeRequiredError so the user sees a
+        friendly message rather than a Python traceback. cmd_query (and other
+        RO subcommands) only catch FileNotFoundError / OperationalError.
+        Regression for PR #16 review feedback.
+        """
+        from siftd.cli import main
+        from siftd.storage.sqlite import SCHEMA_VERSION
+
+        db_path = tmp_path / "test.db"
+        conn = open_database(db_path)
+        conn.close()
+        import sqlite3
+        raw = sqlite3.connect(db_path)
+        raw.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+        raw.commit()
+        raw.close()
+
+        os.chmod(db_path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+        try:
+            rc = main(["--db", str(db_path), "query", "--limit", "1"])
+        finally:
+            os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "Error:" in err
+        assert "not writable" in err
+
     def test_read_only_stale_writable_auto_upgrades(self, tmp_path):
         """RO open of a stale-schema DB on a writable file auto-upgrades, then
         the RO connection sees the up-to-date schema. See finding #1.

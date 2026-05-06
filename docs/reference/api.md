@@ -1306,6 +1306,10 @@ A registered sync remote.
 
 Raised when a source database fails integrity pre-flight checks.
 
+#### SchemaUpgradeRequiredError
+
+Raised on read-only open of a stale-schema DB that cannot be auto-upgraded.
+
 #### AdapterSelectionError
 
 Raised when requested adapter names match no discovered adapters.

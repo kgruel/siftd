@@ -7,7 +7,16 @@ import sqlite3
 from pathlib import Path
 
 from siftd.paths import db_path as _db_path
-from siftd.storage.sqlite import open_database as _open_database
+from siftd.storage.sqlite import (
+    SchemaUpgradeRequiredError,
+)
+from siftd.storage.sqlite import (
+    open_database as _open_database,
+)
+
+# Re-exported via siftd.api so CLI can catch it without crossing the
+# cli → storage import boundary enforced by tests/architecture/test_imports.py.
+__all__ = ["SchemaUpgradeRequiredError"]
 
 # Checks run as pre-flight gates before merge/receive.
 # db-blob-refcount-drift is intentionally excluded: sync slices copy ref_count
