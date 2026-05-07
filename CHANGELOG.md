@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-06
+
+> **Upgrade note.** This release ships a one-way schema migration (v3 → v7).
+> Run any siftd command after upgrading to trigger it; a pre-migration backup
+> is written next to your database as `<name>.bak.YYYYMMDD.db` automatically.
+> On a 3 GB database the migration takes ~40 seconds and emits per-phase
+> progress to stderr. Read-only commands (`query`, `doctor`, `peek`, `search`)
+> auto-upgrade transparently if the file is writable, or raise a clear
+> `SchemaUpgradeRequiredError` if not.
+
 ### Added
 
 - **Polymorphic storage refactor (schema v3 → v7)** — Four parallel storage forks (events: `prompts`/`responses`/`tool_calls`; content: `prompt_content`/`response_content`; four `*_attributes` tables; four `*_tags` tables) dissolved into a unified polymorphic schema: `events` + sparse `event_response`/`event_tool_call`/`event_content` extensions + polymorphic `attributes` (target_kind, target_id) + `tag_assignments` (target_kind, target_id). Aggregations (exchange, turn) are query-time `parent_id` walks, never tables.
@@ -17,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Polymorphic cleanup triggers** — Cascade-orphan triggers on `events`, `workspaces`, `conversations` automatically clean orphaned `attributes` and `tag_assignments` rows. Replaces explicit cleanup calls.
   - **`siftd slice` opens source read-only** — Refuses with clear error if source `user_version < SCHEMA_VERSION` (no auto-upgrade, no backup file leakage).
 
+- **Migrations as a first-class subsystem.** A `MIGRATIONS[v]` registry replaces the previous ad-hoc per-version code; each migration owns one transactional phase of work. Supporting tooling:
+  - **`siftd db schema-version`** — Triage command. Reports current vs target version, lists applied / pending migrations, returns non-zero on schema-newer-than-binary (telling the user to upgrade siftd, not the DB).
+  - **`siftd doctor` deep checks** — `db-fk-integrity`, `db-trigger-presence`, `db-blob-refcount-drift` audits. Run via `siftd doctor --deep`.
+  - **Deep preflight gate on `db merge` / `db receive`** — Source databases are integrity-checked before merge so corruption isn't propagated; `PreflightError` carries the failing finding messages and source path so inbox failures stay traceable.
+  - **Schema fixtures + parametrized upgrade tests** — `tests/fixtures/schemas/v{0..7}.sql` snapshot the schema at each version; tests walk every adjacent upgrade pair so migrations can't silently drift from the schema they target.
+  - **Adapter golden fixtures** — Tiny canonical input/output pairs for each ingest adapter (`tests/fixtures/adapters/`) catch parser regressions when upstream CLIs change their log formats.
+
+- **Auto-upgrade for read-only commands on stale-schema DBs** — `open_database(read_only=True)` peeks `user_version` and runs the migration in a transient write-mode open if the file is writable. If not writable, raises `SchemaUpgradeRequiredError` (re-exported via `siftd.api`) with a clear message instead of crashing later with `OperationalError("no such table: events")`. `auto_upgrade=False` opt-out for diagnostic callers (`db schema-version`, `db info`, `slice` source pre-check) that need to inspect the on-disk version without mutating it.
+
 - **Schema v3: `content_blobs.ref_count` integrity** — Column now carries `NOT NULL DEFAULT 1 CHECK (ref_count >= 0)`. `release_content()` clamps via `MAX(ref_count - 1, 0)` and the delete trigger uses `<= 0` consistently. Migration garbage-collects any legacy `ref_count <= 0` rows (nulling dangling `tool_calls.result_hash` references first) before recreating the table with the new constraint; also patches the old delete trigger in-place for existing databases. Schema version bumped to 3.
 - **Hash-collision detection (fail-closed)** — `store_content()` and `migrate_existing_results()` now verify existing blob content before reusing a hash. If two distinct content values produce the same SHA256 digest, a `BlobCollisionError` is raised instead of silently corrupting the stored blob.
 - **`verify_migration` integrity report** — Two new keys: `ref_count_mismatches` (blobs where stored `ref_count` diverges from actual `tool_calls` reference count) and `negative_ref_counts` (pre-migration legacy corruption diagnostic; reports 0 on fully migrated databases).
@@ -25,6 +44,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`siftd doctor fix` no longer auto-merges duplicate workspaces** — The duplicate-workspace finding is now informational-only. To merge, run `siftd migrate --merge-workspaces` manually.
 - **Search-chunk JSON output omits `chunk_id` and `source_ids` by default** — These are storage-internal identifiers that were leaking through search results. Use `--debug-ids` (CLI) or `?debug_ids=1` (serve) to restore them. Conversation summaries/details are unchanged — `conversation_id` remains visible as the public addressable handle.
+- **CLI logs to stderr at INFO** — `cli/__init__.py` `main()` configures the `siftd.*` logger with a `%(message)s` stderr handler so auto-upgrade and migration-progress events surface to users. Idempotent so test re-entry doesn't pile up duplicate handlers.
+
+### Fixed
+
+- **Migration v6 ref_count heal was O(M·N) and pinned a CPU for 44+ minutes** on a real 2.9 GB database before being killed. The naive correlated-subquery form scanned `event_tool_call` once per `content_blobs` row against an unindexed FK column. Rewritten as a single set-based `UPDATE` driven by a `WITH counts AS (… GROUP BY result_hash)` CTE, with a partial index on `event_tool_call(result_hash)` added in M6 (and to fresh schemas). Migration v3 → v7 against the same database now completes in ~40 seconds. Contract regression test asserts `EXPLAIN QUERY PLAN` of the heal query consults the index.
+- **Schema migrations no longer run silently** — Each `MIGRATIONS[v]` phase emits an INFO log line with the row counts driving the work (e.g. `Migration v4: copying 34494 prompts, 454733 responses, 287176 tool_calls into events`). Plus two lines from the `open_database` runner: `Migrating schema vX → vY` and `Creating pre-migration backup: <name>`. Catches the previous failure mode where users assumed silent migrations were stuck and Ctrl-C'd them.
+- **Doctor and similar read-only commands no longer create surprise WAL/SHM sidecars** under the new auto-upgrade path — the `_peek_user_version` helper opens the DB with `mode=ro&immutable=1`, mirroring the main RO connection, and the auto-upgrader runs `PRAGMA wal_checkpoint(TRUNCATE)` before closing so the upgraded `user_version` lands in the main DB file.
+- **Doctor `CheckContext` lazy-init race under thread pool** — Concurrent doctor checks could double-initialize the per-context connection. Lock added.
+- **Embeddings indexer connection lifetimes** — `try/finally` wrapping ensures connections are always closed on indexing failures.
+- **Timestamp writes are UTC-aware** — Storage writers use `datetime.now(UTC).isoformat()` consistently; previously some paths emitted naive timestamps that compared incorrectly against ISO-Z reads.
+- **Blob triggers dropped before `content_blobs` recreate in v3 migration** — Without dropping first, SQLite refused to recreate the table while triggers referenced it.
 
 ### Removed
 
