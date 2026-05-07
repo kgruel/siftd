@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **Polymorphic tag filter** — `siftd query -l <tag>`, `--all-tags`, and `--no-tag` now match tags applied at any conversation-bearing target_kind (`conversation`, `prompt`, `response`, `tool_call`, `exchange`). Previously, after the polymorphic storage refactor (v0.8.0), only conversation-scoped tags were visible to these filters; tags applied at event granularity were silently invisible. New `--on KIND` flag opts into legacy single-kind filtering.
-
 ### Added
 
 - **Event IDs in JSON (default-on)** — `Turn` gains `prompt_id` / `response_ids[]` / `tool_call_ids[]`; `NarrativeBlock` gains `event_id`; `ToolCallDetail` gains `tool_call_id`. Search chunks emit `chunk_id` / `source_ids` by default. Enables agents to round-trip event IDs through query → tag / detail surfaces without secondary lookups.
@@ -18,16 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Event detail surface** — `EventDetail` dataclass + `get_event(id, *, include_neighbors=False)` API. `siftd query <event_id>` smart-routes via prefix-match across event kinds. `GET /api/v1/events/{id}` HTTP route.
 - **Tag-prefix conventions table** — `[tag_prefixes]` config section with built-in defaults (`decision:`, `research:`, `useful:`, `rationale:`, `genesis:`). `siftd config tag-prefixes [--json]` dumps the resolved table. Groundwork for future skill/hook consumers; no runtime consumer in this release.
 
-### Removed
+### Changed
 
-- **`siftd tool-search` command and its denormalized projection table.**
-  The `tool_search` table and `tool_search_fts` virtual table are dropped in schema
-  migration v8. Capability lost: bare-text FTS over a 280-char tool-call result
-  snippet. Tool-call queries now go through the events substrate via `siftd query
-  --tool` and structured tag filters. Production data migrating from v7 → v8 will
-  have ~2 GB of reclaimable space; run `siftd db vacuum` after migration to recover
-  it. The `/api/v1/tool-search` HTTP route, the serve HTML `/tools` page, and the
-  `tools.limit` config key are also removed.
+- **CI matrix expanded to Python 3.12, 3.13, and 3.14.** Previously only 3.12 was tested; argparse formatting differences in later versions had silently slipped past CI. Help-snapshot tests now run on every matrix version via per-version snapshot directories at `tests/snapshots/__snapshots__/py{ver}/`. Snapshot policy: `docs/guides/snapshot-policy.md`.
 
 ### Deprecated
 
@@ -35,7 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **`siftd tags` command** — Deprecated command removed. Use `siftd tag list`, `siftd tag rename`, or `siftd tag delete` instead.
+- **`siftd tool-search` command and its denormalized projection table.** The `tool_search` table and `tool_search_fts` virtual table are dropped in schema migration v8. Capability lost: bare-text FTS over a 280-char tool-call result snippet. Tool-call queries now go through the events substrate via `siftd query --tool` and structured tag filters. Production data migrating from v7 → v8 will have ~2 GB of reclaimable space; run `siftd db vacuum` after migration to recover it. The `/api/v1/tool-search` HTTP route, the serve HTML `/tools` page, and the `tools.limit` config key are also removed.
+- **`siftd tags` command.** Deprecated command removed. Use `siftd tag list`, `siftd tag rename`, or `siftd tag delete` instead.
+
+### Fixed
+
+- **Polymorphic tag filter** — `siftd query -l <tag>`, `--all-tags`, and `--no-tag` now match tags applied at any conversation-bearing target_kind (`conversation`, `prompt`, `response`, `tool_call`, `exchange`). Previously, after the polymorphic storage refactor (v0.8.0), only conversation-scoped tags were visible to these filters; tags applied at event granularity were silently invisible. New `--on KIND` flag opts into legacy single-kind filtering.
+- **Test suite stability under restricted environments** — 5 git tests now pass under sandboxes without git user config (subprocess passes `-c user.email/-c user.name`); 5 chmod-based readonly tests skip cleanly under root via `@pytest.mark.skipif(os.getuid() == 0)`.
 
 ## [0.8.0] - 2026-05-06
 
