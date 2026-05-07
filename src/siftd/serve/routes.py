@@ -106,6 +106,7 @@ async def index() -> dict:
             {"method": "GET", "path": "/api/v1/tool-search", "description": "Search tool calls"},
             {"method": "GET", "path": "/api/v1/export", "description": "Export full conversations"},
             {"method": "POST", "path": "/api/v1/tag", "description": "Apply, remove, rename, or delete tags"},
+            {"method": "POST", "path": "/api/v1/sessions/{id}/tags", "description": "Queue a pending tag for a live session"},
         ],
     }
 
@@ -274,6 +275,87 @@ async def tag_write_route(request: Request, db_path: Path) -> dict | Response:
     except Exception:
         pass
     return payload
+
+
+@post("/api/v1/sessions/{session_id:str}/tags", status_code=200)
+async def session_queue_tag_route(
+    request: Request, session_id: str, db_path: Path,
+) -> dict | Response:
+    """Queue a pending tag against a live session.
+
+    Request body (JSON):
+      tags: list[str]              — required
+      entity_type: str             — "conversation" (default), "exchange",
+                                     "prompt", "response", "tool_call"
+      exchange_index: int | null   — 1-based; mutually exclusive with last_marker
+      last_marker: str | null      — "last_prompt" | "last_response" |
+                                     "last_exchange" | "last_tool_call"
+
+    Returns: {"queued": [...], "duplicate": [...]}.
+    """
+    from litestar.exceptions import PermissionDeniedException
+
+    from siftd.api import create_database, open_database
+    from siftd.api.sessions import queue_tag as _queue_tag
+    from siftd.serve.auth import require_write
+
+    require_write(request)
+
+    import json as json_mod
+
+    try:
+        body = json_mod.loads(await request.body())
+    except (json_mod.JSONDecodeError, ValueError):
+        return Response(content={"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return Response(content={"error": "request body must be a JSON object"}, status_code=400)
+
+    tag_names = body.get("tags") or []
+    if not tag_names or not isinstance(tag_names, list):
+        return Response(content={"error": "tags must be a non-empty list"}, status_code=400)
+
+    entity_type = str(body.get("entity_type") or "conversation")
+    exchange_index_raw = body.get("exchange_index")
+    last_marker = body.get("last_marker")
+    last_marker = str(last_marker) if last_marker is not None else None
+
+    try:
+        exchange_index = int(exchange_index_raw) if exchange_index_raw is not None else None
+    except (TypeError, ValueError):
+        return Response(content={"error": "exchange_index must be an integer"}, status_code=400)
+
+    # Use create_database so session tables exist if this is a fresh DB
+    if db_path.exists():
+        conn = open_database(db_path)
+    else:
+        conn = create_database(db_path)
+
+    try:
+        queued: list[str] = []
+        duplicate: list[str] = []
+        try:
+            for name in tag_names:
+                result = _queue_tag(
+                    conn, session_id, str(name),
+                    entity_type=entity_type,
+                    exchange_index=exchange_index,
+                    last_marker=last_marker,
+                    commit=False,
+                )
+                if result:
+                    queued.append(str(name))
+                else:
+                    duplicate.append(str(name))
+        except ValueError as e:
+            return Response(content={"error": str(e)}, status_code=400)
+        except PermissionError as e:
+            raise PermissionDeniedException(str(e)) from e
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"queued": queued, "duplicate": duplicate}
 
 
 @get("/api/v1/tool-search")

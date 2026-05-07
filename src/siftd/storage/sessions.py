@@ -12,14 +12,27 @@ from datetime import UTC, datetime, timedelta
 
 from siftd.ids import ulid as _ulid
 
+# Pending tag entity_type values that the resolver knows about.
+# Phase 3: extended from {conversation, exchange} to all five kinds.
+_VALID_PENDING_ENTITY_TYPES: frozenset[str] = frozenset({
+    "conversation", "exchange", "prompt", "response", "tool_call",
+})
+
+# Symbolic markers for "tag the most recent <kind> at ingest time."
+# Resolved against the events table when the session is ingested.
+_VALID_LAST_MARKERS: frozenset[str] = frozenset({
+    "last_prompt", "last_response", "last_exchange", "last_tool_call",
+})
+
 
 @dataclass
 class PendingTag:
     """A tag queued for application at ingest time."""
 
     tag_name: str
-    entity_type: str  # 'conversation' or 'exchange'
-    exchange_index: int | None  # None for conversation, 0-based for exchange
+    entity_type: str  # 'conversation' | 'exchange' | 'prompt' | 'response' | 'tool_call'
+    exchange_index: int | None  # None for conversation, 1-based for exchange
+    last_marker: str | None = None  # 'last_prompt' | 'last_response' | 'last_exchange' | 'last_tool_call'
 
 
 def ensure_session_tables(conn: sqlite3.Connection, *, commit: bool = False) -> None:
@@ -49,10 +62,43 @@ def ensure_session_tables(conn: sqlite3.Connection, *, commit: bool = False) -> 
             tag_name TEXT NOT NULL,
             entity_type TEXT NOT NULL DEFAULT 'conversation',
             exchange_index INTEGER,
+            last_marker TEXT,
             created_at TEXT NOT NULL,
-            UNIQUE (harness_session_id, tag_name, entity_type, exchange_index)
+            UNIQUE (harness_session_id, tag_name, entity_type, exchange_index, last_marker)
         )
     """)
+
+    # Phase 3 migration: rebuild pre-Phase-3 pending_tags tables that lack
+    # last_marker. Schema-additive: existing rows retain their values and
+    # apply via the legacy code path (NULL last_marker).
+    #
+    # Only rebuilds if the existing table has the post-v6 column set
+    # (entity_type, exchange_index). Older legacy tables are left alone here
+    # — the dedicated migration phases in storage.sqlite handle those.
+    cur = conn.execute("PRAGMA table_info(pending_tags)")
+    pt_columns = {row[1] for row in cur.fetchall()}
+    has_post_v6 = {"entity_type", "exchange_index"}.issubset(pt_columns)
+    if has_post_v6 and "last_marker" not in pt_columns:
+        conn.execute("""
+            CREATE TABLE pending_tags_new (
+                id TEXT PRIMARY KEY,
+                harness_session_id TEXT NOT NULL,
+                tag_name TEXT NOT NULL,
+                entity_type TEXT NOT NULL DEFAULT 'conversation',
+                exchange_index INTEGER,
+                last_marker TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE (harness_session_id, tag_name, entity_type, exchange_index, last_marker)
+            )
+        """)
+        conn.execute("""
+            INSERT INTO pending_tags_new
+                (id, harness_session_id, tag_name, entity_type, exchange_index, last_marker, created_at)
+            SELECT id, harness_session_id, tag_name, entity_type, exchange_index, NULL, created_at
+            FROM pending_tags
+        """)
+        conn.execute("DROP TABLE pending_tags")
+        conn.execute("ALTER TABLE pending_tags_new RENAME TO pending_tags")
 
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_pending_tags_session
@@ -121,26 +167,50 @@ def queue_tag(
     *,
     entity_type: str = "conversation",
     exchange_index: int | None = None,
+    last_marker: str | None = None,
     commit: bool = False,
 ) -> str | None:
-    """Insert into pending_tags. Returns ULID or None if duplicate."""
+    """Insert into pending_tags. Returns ULID or None if duplicate.
+
+    last_marker, when set, defers target resolution to ingest time:
+    'last_prompt' / 'last_response' / 'last_exchange' / 'last_tool_call'.
+    Mutually exclusive with exchange_index — both targeting modes can't apply.
+    """
+    if entity_type not in _VALID_PENDING_ENTITY_TYPES:
+        raise ValueError(
+            f"Unknown entity_type {entity_type!r}. "
+            f"Valid: {sorted(_VALID_PENDING_ENTITY_TYPES)}",
+        )
+    if last_marker is not None and last_marker not in _VALID_LAST_MARKERS:
+        raise ValueError(
+            f"Unknown last_marker {last_marker!r}. "
+            f"Valid: {sorted(_VALID_LAST_MARKERS)}",
+        )
+    if last_marker is not None and exchange_index is not None:
+        raise ValueError(
+            "queue_tag accepts at most one of exchange_index or last_marker, not both",
+        )
+
     # Check for duplicate explicitly (SQLite UNIQUE doesn't handle NULL correctly)
-    if exchange_index is None:
-        cur = conn.execute(
-            """
-            SELECT 1 FROM pending_tags
-            WHERE harness_session_id = ? AND tag_name = ? AND entity_type = ? AND exchange_index IS NULL
-            """,
-            (harness_session_id, tag_name, entity_type),
-        )
-    else:
-        cur = conn.execute(
-            """
-            SELECT 1 FROM pending_tags
-            WHERE harness_session_id = ? AND tag_name = ? AND entity_type = ? AND exchange_index = ?
-            """,
-            (harness_session_id, tag_name, entity_type, exchange_index),
-        )
+    cur = conn.execute(
+        """
+        SELECT 1 FROM pending_tags
+        WHERE harness_session_id = ? AND tag_name = ? AND entity_type = ?
+          AND (
+              (exchange_index IS NULL AND ? IS NULL)
+              OR exchange_index = ?
+          )
+          AND (
+              (last_marker IS NULL AND ? IS NULL)
+              OR last_marker = ?
+          )
+        """,
+        (
+            harness_session_id, tag_name, entity_type,
+            exchange_index, exchange_index,
+            last_marker, last_marker,
+        ),
+    )
 
     if cur.fetchone():
         return None  # Duplicate
@@ -150,10 +220,11 @@ def queue_tag(
 
     conn.execute(
         """
-        INSERT INTO pending_tags (id, harness_session_id, tag_name, entity_type, exchange_index, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO pending_tags
+            (id, harness_session_id, tag_name, entity_type, exchange_index, last_marker, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (ulid, harness_session_id, tag_name, entity_type, exchange_index, now),
+        (ulid, harness_session_id, tag_name, entity_type, exchange_index, last_marker, now),
     )
 
     if commit:
@@ -188,6 +259,13 @@ def rename_pending_tag(
                     OR (
                         existing.exchange_index IS NULL
                         AND pending_tags.exchange_index IS NULL
+                    )
+                )
+                AND (
+                    existing.last_marker = pending_tags.last_marker
+                    OR (
+                        existing.last_marker IS NULL
+                        AND pending_tags.last_marker IS NULL
                     )
                 )
           )
@@ -231,7 +309,7 @@ def get_pending_tags(
     """Return list of pending tags for this session."""
     cur = conn.execute(
         """
-        SELECT tag_name, entity_type, exchange_index
+        SELECT tag_name, entity_type, exchange_index, last_marker
         FROM pending_tags
         WHERE harness_session_id = ?
         ORDER BY created_at
@@ -244,6 +322,7 @@ def get_pending_tags(
             tag_name=row["tag_name"],
             entity_type=row["entity_type"],
             exchange_index=row["exchange_index"],
+            last_marker=row["last_marker"],
         )
         for row in cur.fetchall()
     ]

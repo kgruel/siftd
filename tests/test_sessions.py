@@ -236,6 +236,120 @@ class TestCleanupStaleSessions:
         assert count == 0
 
 
+class TestQueueTagLastMarker:
+    """Phase 3: queue_tag accepts last_marker for late-binding."""
+
+    def test_queue_with_last_response(self, db):
+        register_session(db, "s1", "claude_code", commit=True)
+        result = queue_tag(
+            db, "s1", "review-me",
+            entity_type="response", last_marker="last_response", commit=True,
+        )
+        assert result is not None
+        tags = get_pending_tags(db, "s1")
+        assert len(tags) == 1
+        assert tags[0].tag_name == "review-me"
+        assert tags[0].entity_type == "response"
+        assert tags[0].last_marker == "last_response"
+        assert tags[0].exchange_index is None
+
+    def test_queue_with_last_prompt(self, db):
+        register_session(db, "s1", "claude_code", commit=True)
+        result = queue_tag(
+            db, "s1", "decision:auth",
+            entity_type="prompt", last_marker="last_prompt", commit=True,
+        )
+        assert result is not None
+        tags = get_pending_tags(db, "s1")
+        assert tags[0].last_marker == "last_prompt"
+
+    def test_queue_with_last_tool_call(self, db):
+        register_session(db, "s1", "claude_code", commit=True)
+        queue_tag(
+            db, "s1", "slow",
+            entity_type="tool_call", last_marker="last_tool_call", commit=True,
+        )
+        tags = get_pending_tags(db, "s1")
+        assert tags[0].last_marker == "last_tool_call"
+
+    def test_invalid_last_marker_rejected(self, db):
+        register_session(db, "s1", "claude_code", commit=True)
+        with pytest.raises(ValueError, match="Unknown last_marker"):
+            queue_tag(db, "s1", "x", last_marker="bogus", commit=True)
+
+    def test_invalid_entity_type_rejected(self, db):
+        register_session(db, "s1", "claude_code", commit=True)
+        with pytest.raises(ValueError, match="Unknown entity_type"):
+            queue_tag(db, "s1", "x", entity_type="workspace", commit=True)
+
+    def test_exchange_index_and_last_marker_mutually_exclusive(self, db):
+        register_session(db, "s1", "claude_code", commit=True)
+        with pytest.raises(ValueError, match="at most one"):
+            queue_tag(
+                db, "s1", "x",
+                entity_type="exchange", exchange_index=1,
+                last_marker="last_exchange", commit=True,
+            )
+
+    def test_same_tag_different_last_markers(self, db):
+        """Different last_markers don't collide on UNIQUE."""
+        register_session(db, "s1", "claude_code", commit=True)
+        r1 = queue_tag(db, "s1", "review", entity_type="prompt",
+                       last_marker="last_prompt", commit=True)
+        r2 = queue_tag(db, "s1", "review", entity_type="response",
+                       last_marker="last_response", commit=True)
+        assert r1 is not None and r2 is not None
+        assert len(get_pending_tags(db, "s1")) == 2
+
+    def test_same_marker_twice_returns_none(self, db):
+        register_session(db, "s1", "claude_code", commit=True)
+        r1 = queue_tag(db, "s1", "x", entity_type="response",
+                       last_marker="last_response", commit=True)
+        r2 = queue_tag(db, "s1", "x", entity_type="response",
+                       last_marker="last_response", commit=True)
+        assert r1 is not None and r2 is None
+
+
+class TestPendingTagsSchemaUpgrade:
+    """Phase 3: existing pending_tags rows survive the schema rebuild."""
+
+    def test_pre_phase3_table_gets_last_marker_column(self, tmp_path):
+        """A pending_tags table without last_marker is rebuilt in-place."""
+        db_path = tmp_path / "legacy.db"
+        # Build the legacy 6-column table directly
+        raw = sqlite3.connect(str(db_path))
+        raw.execute("""
+            CREATE TABLE pending_tags (
+                id TEXT PRIMARY KEY,
+                harness_session_id TEXT NOT NULL,
+                tag_name TEXT NOT NULL,
+                entity_type TEXT NOT NULL DEFAULT 'conversation',
+                exchange_index INTEGER,
+                created_at TEXT NOT NULL,
+                UNIQUE (harness_session_id, tag_name, entity_type, exchange_index)
+            )
+        """)
+        raw.execute(
+            "INSERT INTO pending_tags VALUES (?, ?, ?, ?, ?, ?)",
+            ("pt1", "sess1", "legacy-tag", "conversation", None, "2024-01-01T00:00:00Z"),
+        )
+        raw.commit()
+        raw.row_factory = sqlite3.Row
+
+        # Run ensure_session_tables which performs the rebuild
+        ensure_session_tables(raw, commit=True)
+
+        # last_marker column now exists; legacy row is preserved with NULL
+        cur = raw.execute("PRAGMA table_info(pending_tags)")
+        cols = {row[1] for row in cur.fetchall()}
+        assert "last_marker" in cols
+
+        row = raw.execute("SELECT * FROM pending_tags WHERE id='pt1'").fetchone()
+        assert row["tag_name"] == "legacy-tag"
+        assert row["last_marker"] is None
+        raw.close()
+
+
 class TestOrphanedAndStaleCounts:
     """Tests for get_orphaned_pending_tags_count() and get_stale_sessions_count()."""
 

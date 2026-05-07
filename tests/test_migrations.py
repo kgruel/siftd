@@ -617,7 +617,7 @@ class TestMigrateCascadeV2:
             "INSERT INTO active_sessions VALUES ('sess1','claude_code','/proj','2024-01-01T00:00:00Z','2024-01-01T00:00:00Z')"
         )
         conn.execute(
-            "INSERT INTO pending_tags VALUES ('pt1','sess1','my-tag','conversation',NULL,'2024-01-01T00:00:00Z')"
+            "INSERT INTO pending_tags VALUES ('pt1','sess1','my-tag','conversation',NULL,NULL,'2024-01-01T00:00:00Z')"
         )
         conn.execute(
             "INSERT INTO push_log VALUES ('pl1','user@host','2024-01-01T00:00:00Z',3,1024,NULL)"

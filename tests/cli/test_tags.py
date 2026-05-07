@@ -155,6 +155,81 @@ class TestCmdTag:
         err = capsys.readouterr().err
         assert "--exchange ignored" in err
 
+    def test_tag_last_response_queues_with_marker(self, test_db, capsys):
+        """--last-response queues a tag with last_marker='last_response'."""
+        from siftd.api.sessions import register_session
+        from siftd.storage.sessions import get_pending_tags
+
+        sid = "session-last-response"
+        conn = open_database(test_db)
+        register_session(conn, sid, "claude_code", commit=True)
+        conn.close()
+
+        rc = main(["--db", str(test_db), "tag", "--session", sid,
+                   "--last-response", "review-me"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "review-me" in out
+        assert "last response" in out
+
+        conn = open_database(test_db)
+        try:
+            tags = get_pending_tags(conn, sid)
+            assert len(tags) == 1
+            assert tags[0].tag_name == "review-me"
+            assert tags[0].entity_type == "response"
+            assert tags[0].last_marker == "last_response"
+        finally:
+            conn.close()
+
+    def test_tag_last_prompt_marker(self, test_db):
+        from siftd.api.sessions import register_session
+        from siftd.storage.sessions import get_pending_tags
+
+        sid = "s-last-prompt"
+        conn = open_database(test_db)
+        register_session(conn, sid, "claude_code", commit=True)
+        conn.close()
+
+        assert main(["--db", str(test_db), "tag", "--session", sid,
+                     "--last-prompt", "decision:auth"]) == 0
+
+        conn = open_database(test_db)
+        try:
+            tags = get_pending_tags(conn, sid)
+            assert tags[0].entity_type == "prompt"
+            assert tags[0].last_marker == "last_prompt"
+        finally:
+            conn.close()
+
+    def test_last_marker_flags_mutually_exclusive(self, test_db, capsys):
+        """Two --last-* flags simultaneously is an error."""
+        from siftd.api.sessions import register_session
+
+        sid = "s-conflict"
+        conn = open_database(test_db)
+        register_session(conn, sid, "claude_code", commit=True)
+        conn.close()
+
+        rc = main([
+            "--db", str(test_db), "tag", "--session", sid,
+            "--last-response", "--last-prompt", "x",
+        ])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "at most one of" in err
+
+    def test_last_marker_without_session_warns(self, test_db, capsys):
+        """--last-response without --session/--current emits a note."""
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+
+        main(["--db", str(test_db), "tag", "--last-response", conv_id, "foo"])
+        err = capsys.readouterr().err
+        assert "--last-response" in err
+        assert "ignored" in err
+
     def test_tag_current_with_session(self, test_db, capsys, tmp_path, monkeypatch):
         """--current queues tags when a session is registered."""
         from siftd.paths import session_id_file
