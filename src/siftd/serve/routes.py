@@ -283,7 +283,7 @@ async def event_detail_route(
     request: Request, event_id: str, db_path: Path,
     neighbors: bool = Parameter(query="neighbors", default=False),
 ) -> dict | Response:
-    """Return a single event by ID (Phase 4)."""
+    """Return a single event by ID."""
     from siftd.api.events import get_event
     from siftd.serialization.events import serialize_event_detail
 

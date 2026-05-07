@@ -128,8 +128,8 @@ class SearchChunk:
     def to_render_dict(self, debug_ids: bool = True) -> dict[str, Any]:
         """Convert to the legacy dict shape expected by current formatters.
 
-        chunk_id/source_ids are emitted by default (Phase 2). The debug_ids
-        kwarg is retained for backward compatibility but no longer gates output.
+        chunk_id/source_ids are emitted by default. The debug_ids kwarg is
+        kept for backward compatibility but no longer gates output.
         """
         out: dict[str, Any] = {
             "conversation_id": self.conversation_id,

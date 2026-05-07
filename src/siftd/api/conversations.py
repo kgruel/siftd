@@ -558,7 +558,7 @@ def get_conversation(
         tool_summaries = _collapse_tool_call_rows(all_tcs)
 
         turn_response_ids = [r["id"] for r in prompt_responses]
-        turn_tool_call_ids = [tcid for tcid in (_row_get(tc, "tool_call_id") for tc in all_tcs) if tcid]
+        turn_tool_call_ids = [tc["tool_call_id"] for tc in all_tcs]
 
         turns.append(
             Turn(
@@ -589,16 +589,6 @@ def get_conversation(
         turns=turns,
         tags=tags,
     )
-
-
-def _row_get(row, key: str, default=None):
-    """Get a value from a sqlite3.Row or dict by key, with a default if absent."""
-    try:
-        if hasattr(row, "keys") and key not in row.keys():
-            return default
-        return row[key]
-    except (KeyError, IndexError):
-        return default
 
 
 def _matches_tool_filter(tool_name: str, status: str, tool_filter: str | None) -> bool:
@@ -746,7 +736,7 @@ def _build_narrative(
                             status=status,
                             input=tc["input"] if include_tool_content else None,
                             result=tc["result"] if include_tool_content else None,
-                            tool_call_id=_row_get(tc, "tool_call_id"),
+                            tool_call_id=tc["tool_call_id"],
                         )
                         pending_tools.append(detail)
 
@@ -1120,8 +1110,8 @@ def resolve_entity_id(
     elif entity_type == "workspace":
         row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
     elif entity_type in ("tool_call", "prompt", "response"):
-        # Phase 4: extend prefix-match to event kinds so smart-routed
-        # `siftd query <event_prefix>` works the same as conversation IDs.
+        # Prefix-match across event kinds so `siftd query <event_prefix>`
+        # works the same as conversation IDs.
         kind = entity_type
         row = conn.execute(
             "SELECT id FROM events"

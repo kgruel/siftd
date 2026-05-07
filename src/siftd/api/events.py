@@ -2,9 +2,7 @@
 
 Exposes a single event (prompt, response, or tool_call) by its ULID,
 with content blocks, tags, conversation context, and kind-specific data.
-
-Phase 4 of the event-ergonomics plan: lets `siftd query <event_id>` work
-as a peer to `siftd query <conversation_id>`.
+Lets `siftd query <event_id>` work as a peer to `siftd query <conversation_id>`.
 """
 
 from __future__ import annotations
@@ -15,10 +13,15 @@ from pathlib import Path
 from typing import Any
 
 from siftd.paths import db_path as default_db_path
+from siftd.storage.queries import (
+    fetch_conversation_by_id_or_prefix,
+    fetch_conversation_model,
+)
 from siftd.storage.sqlite import open_database
 from siftd.storage.tags import get_tags_for
 
 _EVENT_KINDS = ("prompt", "response", "tool_call")
+_ULID_LEN = 26
 
 
 @dataclass
@@ -72,33 +75,23 @@ class EventDetail:
         return out
 
 
-def _resolve_event_id(conn: sqlite3.Connection, event_id: str) -> tuple[str, str] | None:
-    """Resolve a possibly-prefix event ID to (id, kind), or None.
+def resolve_event_row(
+    conn: sqlite3.Connection, event_id: str,
+) -> sqlite3.Row | None:
+    """Resolve a possibly-prefix event ID to its full row, or None.
 
-    Tries exact match first, then prefix. Ambiguous prefixes resolve to the
-    first match by ULID order — callers should pass enough characters to
-    disambiguate (12+ recommended).
+    Skips prefix-LIKE entirely when the input is a full 26-char ULID.
     """
-    row = conn.execute(
-        "SELECT id, kind FROM events WHERE id = ?",
-        (event_id,),
-    ).fetchone()
-    if row:
-        return (row["id"], row["kind"])
-    row = conn.execute(
-        "SELECT id, kind FROM events WHERE id LIKE ? ORDER BY id LIMIT 1",
-        (f"{event_id}%",),
-    ).fetchone()
-    if row:
-        return (row["id"], row["kind"])
-    return None
-
-
-def _fetch_event_row(conn: sqlite3.Connection, event_id: str) -> sqlite3.Row | None:
+    if len(event_id) == _ULID_LEN:
+        return conn.execute(
+            "SELECT id, kind, conversation_id, parent_id, external_id, timestamp"
+            " FROM events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
     return conn.execute(
         "SELECT id, kind, conversation_id, parent_id, external_id, timestamp"
-        " FROM events WHERE id = ?",
-        (event_id,),
+        " FROM events WHERE id LIKE ? ORDER BY id LIMIT 1",
+        (f"{event_id}%",),
     ).fetchone()
 
 
@@ -191,140 +184,66 @@ def _fetch_tool_call_kind_specific(
 def _fetch_conversation_summary(
     conn: sqlite3.Connection, conversation_id: str,
 ) -> dict[str, Any] | None:
-    row = conn.execute(
-        "SELECT c.id, c.started_at, w.path AS workspace_path"
-        " FROM conversations c"
-        " LEFT JOIN workspaces w ON w.id = c.workspace_id"
-        " WHERE c.id = ?",
-        (conversation_id,),
-    ).fetchone()
-    if row is None:
+    """Minimal conversation context for an event.
+
+    Reuses fetch_conversation_by_id_or_prefix and fetch_conversation_model
+    so the SQL stays in one place and tracks any future schema changes.
+    """
+    base = fetch_conversation_by_id_or_prefix(conn, conversation_id)
+    if base is None:
         return None
-    # Pick a model — same heuristic as get_conversation: most-frequent response model.
-    model_row = conn.execute(
-        "SELECT m.name AS name, COUNT(*) AS n"
-        " FROM events e"
-        " JOIN event_response er ON er.event_id = e.id"
-        " LEFT JOIN models m ON m.id = er.model_id"
-        " WHERE e.conversation_id = ? AND e.kind = 'response' AND m.name IS NOT NULL"
-        " GROUP BY m.name ORDER BY n DESC LIMIT 1",
-        (conversation_id,),
-    ).fetchone()
     return {
-        "id": row["id"],
-        "started_at": row["started_at"],
-        "workspace": row["workspace_path"],
-        "model": model_row["name"] if model_row else None,
+        "id": base["id"],
+        "started_at": base["started_at"],
+        "workspace": base["workspace"],
+        "model": fetch_conversation_model(conn, conversation_id),
     }
 
 
 def _fetch_event_tags(conn: sqlite3.Connection, event_id: str, kind: str) -> list[str]:
-    """Tags assigned to this event, across both event-kind and exchange (prompt anchor)."""
-    rows = get_tags_for(conn, kind, event_id)
-    names = [row["name"] for row in rows]
-    # Prompts also surface 'exchange'-kind tags (same target_id, different kind)
+    """Tags assigned to this event.
+
+    Prompts also surface 'exchange'-kind tags (same target_id, different kind);
+    fetched in a single query covering both target_kinds.
+    """
     if kind == "prompt":
-        ex_rows = get_tags_for(conn, "exchange", event_id)
-        names.extend(row["name"] for row in ex_rows if row["name"] not in names)
-    return names
+        rows = conn.execute(
+            "SELECT DISTINCT t.name FROM tag_assignments ta"
+            " JOIN tags t ON t.id = ta.tag_id"
+            " WHERE ta.target_id = ? AND ta.target_kind IN ('prompt', 'exchange')"
+            " ORDER BY t.name",
+            (event_id,),
+        ).fetchall()
+        return [row["name"] for row in rows]
+    return [row["name"] for row in get_tags_for(conn, kind, event_id)]
 
 
 def _fetch_neighbors(
     conn: sqlite3.Connection, event_id: str, kind: str, conversation_id: str,
+    timestamp: str | None,
 ) -> dict[str, str | None]:
-    """Return prev/next event of the same kind in the conversation by timestamp+id."""
-    base = (
-        "SELECT timestamp, id FROM events"
-        " WHERE conversation_id = ? AND kind = ? AND id = ?"
-    )
-    cur = conn.execute(base, (conversation_id, kind, event_id)).fetchone()
-    if cur is None:
+    """Return prev/next event of the same kind by (timestamp, id) order."""
+    if timestamp is None:
         return {"prev_event_id": None, "next_event_id": None}
-    ts, eid = cur["timestamp"], cur["id"]
 
     prev_row = conn.execute(
         "SELECT id FROM events"
         " WHERE conversation_id = ? AND kind = ?"
         "   AND (timestamp < ? OR (timestamp = ? AND id < ?))"
         " ORDER BY timestamp DESC, id DESC LIMIT 1",
-        (conversation_id, kind, ts, ts, eid),
+        (conversation_id, kind, timestamp, timestamp, event_id),
     ).fetchone()
     next_row = conn.execute(
         "SELECT id FROM events"
         " WHERE conversation_id = ? AND kind = ?"
         "   AND (timestamp > ? OR (timestamp = ? AND id > ?))"
         " ORDER BY timestamp ASC, id ASC LIMIT 1",
-        (conversation_id, kind, ts, ts, eid),
+        (conversation_id, kind, timestamp, timestamp, event_id),
     ).fetchone()
     return {
         "prev_event_id": prev_row["id"] if prev_row else None,
         "next_event_id": next_row["id"] if next_row else None,
     }
-
-
-def get_event(
-    id: str,
-    *,
-    db_path: Path | None = None,
-    include_content: bool = True,
-    include_neighbors: bool = False,
-) -> EventDetail | None:
-    """Get a single event by ID (full or prefix).
-
-    Args:
-        id: Event ULID, or a prefix of one.
-        db_path: Path to database. Uses default if not specified.
-        include_content: Include `content_blocks`. Default True.
-        include_neighbors: Include `neighbors` (opt-in for cost). Default False.
-
-    Returns:
-        EventDetail or None if no event matches.
-
-    Raises:
-        FileNotFoundError: If the database does not exist.
-    """
-    db = db_path or default_db_path()
-    if not db.exists():
-        raise FileNotFoundError(f"Database not found: {db}")
-
-    conn = open_database(db, read_only=True)
-    try:
-        resolved = _resolve_event_id(conn, id)
-        if resolved is None:
-            return None
-        event_id, kind = resolved
-        if kind not in _EVENT_KINDS:
-            return None
-
-        row = _fetch_event_row(conn, event_id)
-        if row is None:
-            return None
-
-        content_blocks = _fetch_content_blocks(conn, event_id) if include_content else []
-        tags = _fetch_event_tags(conn, event_id, kind)
-        kind_specific = _kind_specific_for(conn, event_id, kind)
-        conv_summary = _fetch_conversation_summary(conn, row["conversation_id"])
-        neighbors = (
-            _fetch_neighbors(conn, event_id, kind, row["conversation_id"])
-            if include_neighbors
-            else None
-        )
-
-        return EventDetail(
-            id=row["id"],
-            kind=row["kind"],
-            conversation_id=row["conversation_id"],
-            parent_id=row["parent_id"],
-            external_id=row["external_id"],
-            timestamp=row["timestamp"],
-            tags=tags,
-            content_blocks=content_blocks,
-            kind_specific=kind_specific,
-            conversation=conv_summary,
-            neighbors=neighbors,
-        )
-    finally:
-        conn.close()
 
 
 def _kind_specific_for(conn: sqlite3.Connection, event_id: str, kind: str) -> dict[str, Any]:
@@ -337,22 +256,73 @@ def _kind_specific_for(conn: sqlite3.Connection, event_id: str, kind: str) -> di
     return {}
 
 
-def get_event_neighbors(
-    id: str, *, db_path: Path | None = None,
-) -> dict[str, str | None] | None:
-    """Standalone neighbors lookup. Returns None if the event is not found."""
-    db = db_path or default_db_path()
-    if not db.exists():
-        raise FileNotFoundError(f"Database not found: {db}")
-    conn = open_database(db, read_only=True)
+def get_event(
+    id: str,
+    *,
+    db_path: Path | None = None,
+    conn: sqlite3.Connection | None = None,
+    include_content: bool = True,
+    include_neighbors: bool = False,
+) -> EventDetail | None:
+    """Get a single event by ID (full or prefix).
+
+    Args:
+        id: Event ULID, or a prefix of one.
+        db_path: Path to database. Uses default if not specified.
+        conn: Optional existing read-only connection. Caller retains ownership;
+            if provided, db_path is ignored. Useful to avoid a second open
+            after a smart-route probe.
+        include_content: Include `content_blocks`. Default True.
+        include_neighbors: Include `neighbors` (opt-in for cost). Default False.
+
+    Returns:
+        EventDetail or None if no event matches.
+
+    Raises:
+        FileNotFoundError: If the database does not exist.
+    """
+    if conn is None:
+        db = db_path or default_db_path()
+        if not db.exists():
+            raise FileNotFoundError(f"Database not found: {db}")
+        owned_conn = open_database(db, read_only=True)
+    else:
+        owned_conn = None
+
+    work_conn = conn or owned_conn
+    assert work_conn is not None  # mypy: one of the two is set
     try:
-        resolved = _resolve_event_id(conn, id)
-        if resolved is None:
+        row = resolve_event_row(work_conn, id)
+        if row is None or row["kind"] not in _EVENT_KINDS:
             return None
-        event_id, kind = resolved
-        row = _fetch_event_row(conn, event_id)
-        if row is None:
-            return None
-        return _fetch_neighbors(conn, event_id, kind, row["conversation_id"])
+
+        event_id = row["id"]
+        kind = row["kind"]
+        content_blocks = _fetch_content_blocks(work_conn, event_id) if include_content else []
+        tags = _fetch_event_tags(work_conn, event_id, kind)
+        kind_specific = _kind_specific_for(work_conn, event_id, kind)
+        conv_summary = _fetch_conversation_summary(work_conn, row["conversation_id"])
+        neighbors = (
+            _fetch_neighbors(
+                work_conn, event_id, kind, row["conversation_id"], row["timestamp"],
+            )
+            if include_neighbors
+            else None
+        )
+
+        return EventDetail(
+            id=event_id,
+            kind=kind,
+            conversation_id=row["conversation_id"],
+            parent_id=row["parent_id"],
+            external_id=row["external_id"],
+            timestamp=row["timestamp"],
+            tags=tags,
+            content_blocks=content_blocks,
+            kind_specific=kind_specific,
+            conversation=conv_summary,
+            neighbors=neighbors,
+        )
     finally:
-        conn.close()
+        if owned_conn is not None:
+            owned_conn.close()

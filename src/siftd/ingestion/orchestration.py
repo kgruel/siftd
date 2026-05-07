@@ -749,6 +749,17 @@ def _update_stats_for_conversation(
             stats.by_harness[harness_name]["tool_calls"] += len(response.tool_calls)
 
 
+# Late-bound markers resolve to the most recent event of the kind at ingest
+# time. Map: marker → (target_kind, kind-to-fetch). last_exchange is anchored
+# on the prompt event, so its target_kind differs from the kind queried.
+_LAST_MARKER_DISPATCH: dict[str, tuple[str, str]] = {
+    "last_prompt": ("prompt", "prompt"),
+    "last_response": ("response", "response"),
+    "last_exchange": ("exchange", "prompt"),
+    "last_tool_call": ("tool_call", "tool_call"),
+}
+
+
 def _apply_pending_tags(
     conn: sqlite3.Connection,
     adapter: AdapterModule,
@@ -790,16 +801,6 @@ def _apply_pending_tags(
         if parent_id:
             unregister_session(conn, parent_id)
         return 0
-
-    # Phase 3: late-bound markers resolve to the most recent event of the kind
-    # at ingest time. The marker → (target_kind, kind-to-fetch) mapping.
-    _LAST_MARKER_DISPATCH = {
-        "last_prompt": ("prompt", "prompt"),
-        "last_response": ("response", "response"),
-        # last_exchange is anchored on the prompt event (target_kind='exchange').
-        "last_exchange": ("exchange", "prompt"),
-        "last_tool_call": ("tool_call", "tool_call"),
-    }
 
     applied = 0
     for pt in pending:

@@ -1278,7 +1278,7 @@ class TestBuildNarrative:
             {"block_type": "tool_use", "content": '{"id": "tu1"}'},
             {"block_type": "text", "content": "After tools"},
         ]
-        tool_calls = [{"external_id": "tu1", "tool_name": "file.read", "status": "success", "input": "{}", "result": "ok"}]
+        tool_calls = [{"tool_call_id": "tc-1", "external_id": "tu1", "tool_name": "file.read", "status": "success", "input": "{}", "result": "ok"}]
         result = _build_narrative(
             [{"id": "r1"}],
             {"r1": blocks},
@@ -1299,7 +1299,7 @@ class TestBuildNarrative:
             {"block_type": "tool_use", "content": '{"id": "tu1"}'},
             {"block_type": "thinking", "content": '{"thinking": "hmm"}'},
         ]
-        tool_calls = [{"external_id": "tu1", "tool_name": "shell.execute", "status": "success", "input": "{}", "result": "ok"}]
+        tool_calls = [{"tool_call_id": "tc-1", "external_id": "tu1", "tool_name": "shell.execute", "status": "success", "input": "{}", "result": "ok"}]
         result = _build_narrative(
             [{"id": "r1"}],
             {"r1": blocks},
@@ -1318,7 +1318,7 @@ class TestBuildNarrative:
         blocks = [
             {"block_type": "tool_use", "content": '{"id": "unknown_id"}'},
         ]
-        tool_calls = [{"external_id": None, "tool_name": "file.write", "status": "success", "input": "{}", "result": "ok"}]
+        tool_calls = [{"tool_call_id": "tc-1", "external_id": None, "tool_name": "file.write", "status": "success", "input": "{}", "result": "ok"}]
         result = _build_narrative(
             [{"id": "r1"}],
             {"r1": blocks},
@@ -1337,7 +1337,7 @@ class TestBuildNarrative:
             {"block_type": "tool_use", "content": '{"id": "tu1"}'},
             {"block_type": "tool_result", "content": '{"text": "result data"}'},
         ]
-        tool_calls = [{"external_id": "tu1", "tool_name": "file.read", "status": "success", "input": "{}", "result": "ok"}]
+        tool_calls = [{"tool_call_id": "tc-1", "external_id": "tu1", "tool_name": "file.read", "status": "success", "input": "{}", "result": "ok"}]
         result = _build_narrative(
             [{"id": "r1"}],
             {"r1": blocks},
@@ -1357,8 +1357,8 @@ class TestBuildNarrative:
             {"block_type": "tool_use", "content": '{"id": "tu_unknown"}'},
         ]
         tool_calls = [
-            {"external_id": "tu1", "tool_name": "file.read", "status": "success", "input": "{}", "result": "ok"},
-            {"external_id": "tu2", "tool_name": "file.write", "status": "success", "input": "{}", "result": "done"},
+            {"tool_call_id": "tc-1", "external_id": "tu1", "tool_name": "file.read", "status": "success", "input": "{}", "result": "ok"},
+            {"tool_call_id": "tc-2", "external_id": "tu2", "tool_name": "file.write", "status": "success", "input": "{}", "result": "done"},
         ]
         result = _build_narrative(
             [{"id": "r1"}],

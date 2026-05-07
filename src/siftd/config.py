@@ -206,9 +206,9 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     # Update
     _SchemaEntry("update.check", "bool", _is_bool_like,
                  "Check PyPI for updates after commands (24h interval)", "true"),
-    # Tag prefixes (Phase 5) — convention table for tag families.
-    # User-defined prefix names map to the colon-prefix string used by
-    # `siftd query -l <prefix>:` and the FTS5 LIKE matcher in tag_condition().
+    # Tag prefixes — convention table for tag families. User-defined prefix
+    # names map to the colon-prefix string used by `siftd query -l <prefix>:`
+    # and the FTS5 LIKE matcher in tag_condition().
     _SchemaEntry("tag_prefixes.*", "string", _is_str,
                  "User-defined tag-prefix conventions (e.g. research = \"research:\")", ""),
 ]
@@ -458,9 +458,9 @@ def remove_config_list(key: str, value: str) -> bool:
 
 
 
-# Phase 5: built-in tag-prefix conventions. User config under [tag_prefixes]
-# merges over these defaults — see get_tag_prefixes(). Names are advisory;
-# the actual matcher (`siftd query -l <prefix>:`) is independent of this table.
+# Built-in tag-prefix conventions. User config under [tag_prefixes] merges
+# over these defaults — see get_tag_prefixes(). Names are advisory; the
+# actual matcher (`siftd query -l <prefix>:`) is independent of this table.
 DEFAULT_TAG_PREFIXES: dict[str, str] = {
     "decision": "decision:",
     "research": "research:",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from siftd.api import EventDetail, get_event, get_event_neighbors
+from siftd.api import EventDetail, get_event
 from siftd.api.conversations import resolve_entity_id
 from siftd.serialization.events import serialize_event_detail
 from siftd.storage.sqlite import (
@@ -165,10 +165,10 @@ class TestNeighbors:
         detail_r2 = get_event(r2, db_path=db, include_neighbors=True)
         assert detail_r2.neighbors == {"prev_event_id": r1, "next_event_id": None}
 
-    def test_get_event_neighbors_helper(self, db_with_events):
+    def test_neighbors_via_get_event(self, db_with_events):
         db, _c, _p1, _p2, r1, r2, _tc1 = db_with_events
-        nb = get_event_neighbors(r1, db_path=db)
-        assert nb == {"prev_event_id": None, "next_event_id": r2}
+        detail = get_event(r1, db_path=db, include_neighbors=True)
+        assert detail.neighbors == {"prev_event_id": None, "next_event_id": r2}
 
 
 class TestSerializeEventDetail:

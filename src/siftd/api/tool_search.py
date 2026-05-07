@@ -197,9 +197,18 @@ def _search_tool_calls_impl(
     _add_like_or_clauses(where, params, "h.name", parsed.fields.get("harness"))
     _add_since_before(where, params, "c.started_at", parsed.fields.get("since"), op=">=")
     _add_since_before(where, params, "c.started_at", parsed.fields.get("before"), op="<")
-    _add_conversation_tags_any(where, params, parsed.fields.get("tag"), tag_kind)
-    _add_conversation_tags_all(where, params, parsed.fields.get("all_tags"), tag_kind)
-    _add_conversation_tags_none(where, params, parsed.fields.get("no_tag"), tag_kind)
+    # Reuse WhereBuilder's polymorphic tag subquery — base_from already
+    # aliases the conversation as `c`, so its `c.id IN (...)` predicates
+    # slot in directly. Joins it would emit are unused here (tool_search
+    # already joins conversations).
+    from siftd.storage.filters import WhereBuilder
+
+    _wb = WhereBuilder()
+    _wb.tags_any(parsed.fields.get("tag"), kinds=tag_kind)
+    _wb.tags_all(parsed.fields.get("all_tags"), kinds=tag_kind)
+    _wb.tags_none(parsed.fields.get("no_tag"), kinds=tag_kind)
+    where.extend(_wb.conditions)
+    params.extend(_wb.params)
     _add_tool_call_tags(where, params, parsed.fields.get("tool_tag"))
 
     where_sql = f" WHERE {' AND '.join(where)}" if where else ""
@@ -353,73 +362,6 @@ def _add_since_before(
     for value in values:
         where.append(f"{column} {op} ?")
         params.append(value)
-
-
-def _add_conversation_tags_any(
-    where: list[str], params: list[object],
-    tags: list[str] | None, tag_kind: list[str] | None = None,
-) -> None:
-    if not tags:
-        return
-    from siftd.storage.filters import _normalize_kinds, _tag_target_subquery
-
-    allowed = _normalize_kinds(tag_kind)
-    if not allowed:
-        where.append("0")
-        return
-    parts = []
-    clause_params: list[str] = []
-    for tag in tags:
-        op, val = _tag_condition(tag)
-        parts.append(op)
-        clause_params.append(val)
-    sub = _tag_target_subquery(allowed, " OR ".join(parts))
-    where.append(f"ts.conversation_id IN ({sub})")
-    params.extend(allowed)
-    params.extend(clause_params)
-
-
-def _add_conversation_tags_all(
-    where: list[str], params: list[object],
-    tags: list[str] | None, tag_kind: list[str] | None = None,
-) -> None:
-    if not tags:
-        return
-    from siftd.storage.filters import _normalize_kinds, _tag_target_subquery
-
-    allowed = _normalize_kinds(tag_kind)
-    if not allowed:
-        where.append("0")
-        return
-    for tag in tags:
-        op, val = _tag_condition(tag)
-        sub = _tag_target_subquery(allowed, op)
-        where.append(f"ts.conversation_id IN ({sub})")
-        params.extend(allowed)
-        params.append(val)
-
-
-def _add_conversation_tags_none(
-    where: list[str], params: list[object],
-    tags: list[str] | None, tag_kind: list[str] | None = None,
-) -> None:
-    if not tags:
-        return
-    from siftd.storage.filters import _normalize_kinds, _tag_target_subquery
-
-    allowed = _normalize_kinds(tag_kind)
-    if not allowed:
-        return
-    parts = []
-    clause_params: list[str] = []
-    for tag in tags:
-        op, val = _tag_condition(tag)
-        parts.append(op)
-        clause_params.append(val)
-    sub = _tag_target_subquery(allowed, " OR ".join(parts))
-    where.append(f"ts.conversation_id NOT IN ({sub})")
-    params.extend(allowed)
-    params.extend(clause_params)
 
 
 def _add_owner_clause(where: list[str], params: list[object], owner: str | None) -> None:

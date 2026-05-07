@@ -203,7 +203,9 @@ class TestCmdTag:
             conn.close()
 
     def test_last_marker_flags_mutually_exclusive(self, test_db, capsys):
-        """Two --last-* flags simultaneously is an error."""
+        """argparse rejects two --last-* flags simultaneously."""
+        import pytest
+
         from siftd.api.sessions import register_session
 
         sid = "s-conflict"
@@ -211,13 +213,14 @@ class TestCmdTag:
         register_session(conn, sid, "claude_code", commit=True)
         conn.close()
 
-        rc = main([
-            "--db", str(test_db), "tag", "--session", sid,
-            "--last-response", "--last-prompt", "x",
-        ])
-        assert rc == 1
+        with pytest.raises(SystemExit) as exc_info:
+            main([
+                "--db", str(test_db), "tag", "--session", sid,
+                "--last-response", "--last-prompt", "x",
+            ])
+        assert exc_info.value.code == 2
         err = capsys.readouterr().err
-        assert "at most one of" in err
+        assert "not allowed with argument" in err
 
     def test_last_marker_without_session_warns(self, test_db, capsys):
         """--last-response without --session/--current emits a note."""

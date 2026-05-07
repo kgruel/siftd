@@ -627,11 +627,10 @@
 # name: TestHelpSnapshots.test_subcommand_help[tag]
   '''
   usage: siftd tag [-h] [-n [N]] [-r] [--session ID] [--current]
-                   [--exchange INDEX] [--last-prompt] [--last-response]
-                   [--last-exchange] [--last-tool-call] [--prefix PREFIX]
-                   [--limit LIMIT] [--force] [-w SUBSTR] [-m NAME]
-                   [--since DATE] [--before DATE] [-l NAME] [--all-tags NAME]
-                   [--no-tag NAME] [--on KIND] [--owner USER]
+                   [--exchange INDEX | --last-prompt | --last-response | --last-exchange | --last-tool-call]
+                   [--prefix PREFIX] [--limit LIMIT] [--force] [-w SUBSTR]
+                   [-m NAME] [--since DATE] [--before DATE] [-l NAME]
+                   [--all-tags NAME] [--no-tag NAME] [--on KIND] [--owner USER]
                    [positional ...]
   
   Apply, remove, list, rename, or delete tags.

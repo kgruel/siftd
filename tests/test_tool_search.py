@@ -4,9 +4,6 @@ import sqlite3
 
 from siftd.api.database import create_database
 from siftd.api.tool_search import (
-    _add_conversation_tags_all,
-    _add_conversation_tags_any,
-    _add_conversation_tags_none,
     _add_owner_clause,
     _add_tool_call_tags,
     _search_tool_calls_impl,
@@ -86,53 +83,12 @@ class TestToolSearchIndex:
 
 
 class TestSQLBuilders:
-    """Tests for SQL WHERE clause builder functions."""
+    """Tests for SQL WHERE clause builder functions.
 
-    def test_tags_any(self):
-        # Default kinds=None matches all conversation-bearing kinds (5 total).
-        w, p = [], []
-        _add_conversation_tags_any(w, p, ["bug", "feat"])
-        assert len(w) == 1 and "OR" in w[0]
-        # 5 kind placeholders + 2 tag values
-        assert p == ["conversation", "prompt", "response", "tool_call", "exchange", "bug", "feat"]
-
-    def test_tags_any_scoped(self):
-        w, p = [], []
-        _add_conversation_tags_any(w, p, ["bug"], ["conversation"])
-        assert p == ["conversation", "bug"]
-
-    def test_tags_any_none(self):
-        w, p = [], []
-        _add_conversation_tags_any(w, p, None)
-        assert w == []
-
-    def test_tags_all(self):
-        w, p = [], []
-        _add_conversation_tags_all(w, p, ["bug", "fix"])
-        assert len(w) == 2
-        # Two subqueries × (5 kind placeholders + 1 value) = 12
-        assert len(p) == 12
-
-    def test_tags_all_scoped(self):
-        w, p = [], []
-        _add_conversation_tags_all(w, p, ["bug", "fix"], ["response"])
-        assert p == ["response", "bug", "response", "fix"]
-
-    def test_tags_all_none(self):
-        w, p = [], []
-        _add_conversation_tags_all(w, p, None)
-        assert w == []
-
-    def test_tags_none(self):
-        w, p = [], []
-        _add_conversation_tags_none(w, p, ["wip"])
-        assert len(w) == 1 and "NOT IN" in w[0]
-        assert p == ["conversation", "prompt", "response", "tool_call", "exchange", "wip"]
-
-    def test_tags_none_empty(self):
-        w, p = [], []
-        _add_conversation_tags_none(w, p, None)
-        assert w == []
+    Conversation-tag filtering is delegated to WhereBuilder (covered by
+    tests/test_storage.py::TestWhereBuilder); only the tool-search-specific
+    builders are tested here.
+    """
 
     def test_owner(self):
         w, p = [], []

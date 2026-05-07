@@ -106,10 +106,6 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
         ]
         return output
 
-    # debug_ids retained as a no-op alias for one minor version (deprecated).
-    # IDs are now default-on; the flag has no effect.
-    context.get("debug_ids", False)
-
     if mode == "thread":
         tier1 = context.get("tier1", [])
         tier2 = context.get("tier2", [])
@@ -152,10 +148,7 @@ def render_tool_search(result: Any, fidelity: Fidelity, **context: Any) -> dict:
 
 
 def _json_chunk_list(results: list) -> list[dict]:
-    """Build JSON-safe list of chunk dicts.
-
-    Emits chunk_id and source_ids by default (Phase 2: event-level addressability).
-    """
+    """Build JSON-safe list of chunk dicts. Emits chunk_id and source_ids."""
     from siftd.domain.search_types import ScoreBreakdown
 
     out = []

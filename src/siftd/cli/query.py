@@ -149,36 +149,60 @@ def cmd_tools(args) -> int:
 
 
 
-def _id_resolves_to_event(args) -> bool:
-    """Cheap probe: does args.conversation_id resolve to an event (not a conversation)?
+def _dispatch_detail(args) -> int:
+    """Single-pass smart-router for `siftd query <id>`.
 
-    Tries conversation prefix-match first; if it doesn't hit, checks events.
-    Returns False on any DB error so the caller falls through to the
-    conversation path with its own error reporting.
+    Opens the DB once, classifies the ID, branches to the right detail
+    handler. The conversation path closes the probe conn and re-enters
+    its existing dispatch flow; the event path threads the conn into
+    get_event to avoid a second open.
     """
-    from siftd.api import open_database, resolve_entity_id
+    from siftd.api import open_database
 
     db = resolve_db(args)
     if not db or not db.exists():
-        return False
+        return _query_detail(args)
     try:
-        conn = open_database(db, read_only=True)
+        probe = open_database(db, read_only=True)
     except Exception:
-        return False
+        return _query_detail(args)
     try:
-        if resolve_entity_id(conn, "conversation", args.conversation_id):
-            return False
-        # Try each event kind via the polymorphic resolver
-        for kind in ("response", "tool_call", "prompt"):
-            if resolve_entity_id(conn, kind, args.conversation_id):
-                return True
-        return False
+        classified = _resolve_query_id(probe, args.conversation_id)
+    except Exception:
+        probe.close()
+        return _query_detail(args)
+
+    if classified is None or classified[0] == "conversation":
+        probe.close()
+        return _query_detail(args)
+
+    try:
+        return _query_event_detail(args, conn=probe)
     finally:
-        conn.close()
+        probe.close()
 
 
-def _query_event_detail(args) -> int:
-    """Show event detail (Phase 4): kind-specific JSON or a compact text view."""
+def _resolve_query_id(conn, raw_id: str) -> tuple[str, str] | None:
+    """Classify the positional ID as a conversation or event reference.
+
+    Returns ('conversation', full_id) or ('event', full_id) or None.
+    Conversation match wins when both branches resolve (rare, since ULIDs
+    are globally unique — but cheap to enforce).
+    """
+    from siftd.api import resolve_entity_id
+    from siftd.api.events import resolve_event_row
+
+    conv = resolve_entity_id(conn, "conversation", raw_id)
+    if conv:
+        return ("conversation", conv)
+    row = resolve_event_row(conn, raw_id)
+    if row and row["kind"] in ("prompt", "response", "tool_call"):
+        return ("event", row["id"])
+    return None
+
+
+def _query_event_detail(args, *, conn=None) -> int:
+    """Show event detail. Pass `conn=` to skip a redundant DB open."""
     import json as _json
 
     from siftd.api.events import get_event
@@ -192,6 +216,7 @@ def _query_event_detail(args) -> int:
         detail = get_event(
             args.conversation_id,
             db_path=effective_db,
+            conn=conn,
             include_content=True,
             include_neighbors=include_neighbors,
         )
@@ -423,13 +448,10 @@ def cmd_query(args) -> int:
     if args.conversation_id == "sql":
         return _query_sql(args)
 
-    # Dispatch to detail view if an ID was provided. Smart-route between
-    # conversation detail and event detail based on which kind the ID
-    # resolves to (Phase 4: events get the same prefix-match resolver).
+    # Dispatch to detail view: classify the ID once, then route. Pass the
+    # probe connection through to the event path so we don't re-open.
     if args.conversation_id:
-        if _id_resolves_to_event(args):
-            return _query_event_detail(args)
-        return _query_detail(args)
+        return _dispatch_detail(args)
 
     from dataclasses import asdict
 

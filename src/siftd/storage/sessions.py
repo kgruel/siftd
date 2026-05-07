@@ -13,7 +13,6 @@ from datetime import UTC, datetime, timedelta
 from siftd.ids import ulid as _ulid
 
 # Pending tag entity_type values that the resolver knows about.
-# Phase 3: extended from {conversation, exchange} to all five kinds.
 _VALID_PENDING_ENTITY_TYPES: frozenset[str] = frozenset({
     "conversation", "exchange", "prompt", "response", "tool_call",
 })
@@ -68,13 +67,13 @@ def ensure_session_tables(conn: sqlite3.Connection, *, commit: bool = False) -> 
         )
     """)
 
-    # Phase 3 migration: rebuild pre-Phase-3 pending_tags tables that lack
-    # last_marker. Schema-additive: existing rows retain their values and
-    # apply via the legacy code path (NULL last_marker).
+    # In-place migration: rebuild legacy pending_tags tables that lack the
+    # last_marker column. Schema-additive — existing rows retain their values
+    # and apply via the NULL-last_marker path.
     #
     # Only rebuilds if the existing table has the post-v6 column set
-    # (entity_type, exchange_index). Older legacy tables are left alone here
-    # — the dedicated migration phases in storage.sqlite handle those.
+    # (entity_type, exchange_index). Older tables are handled by the
+    # dedicated migration phases in storage.sqlite.
     cur = conn.execute("PRAGMA table_info(pending_tags)")
     pt_columns = {row[1] for row in cur.fetchall()}
     has_post_v6 = {"entity_type", "exchange_index"}.issubset(pt_columns)
