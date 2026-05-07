@@ -9,9 +9,14 @@ import pytest
 from siftd.storage.sqlite import open_database
 
 
+# Tests that use chmod to change file permissions won't work when running as root
+skip_if_root = pytest.mark.skipif(os.getuid() == 0, reason="requires non-root for chmod")
+
+
 class TestReadOnlyMode:
     """Tests for open_database read_only parameter."""
 
+    @skip_if_root
     def test_read_only_succeeds_on_readonly_file(self, tmp_path):
         """read_only=True opens successfully when file is chmod read-only."""
         db_path = tmp_path / "test.db"
@@ -34,6 +39,7 @@ class TestReadOnlyMode:
             # Restore permissions for cleanup
             os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)
 
+    @skip_if_root
     def test_read_only_false_fails_on_readonly_file(self, tmp_path):
         """read_only=False fails when file is chmod read-only."""
         db_path = tmp_path / "test.db"
@@ -66,6 +72,7 @@ class TestReadOnlyMode:
         with pytest.raises(FileNotFoundError, match="Database not found"):
             open_database(db_path, read_only=True)
 
+    @skip_if_root
     def test_read_only_stale_unwritable_raises_schema_upgrade_required(self, tmp_path):
         """RO open of a stale-schema DB on a non-writable file raises a clear error
         instead of crashing later with a cryptic 'no such table: events'.
@@ -91,6 +98,7 @@ class TestReadOnlyMode:
         finally:
             os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)
 
+    @skip_if_root
     def test_cli_main_translates_schema_upgrade_required_to_clean_error(self, tmp_path, capsys):
         """CLI main() must catch SchemaUpgradeRequiredError so the user sees a
         friendly message rather than a Python traceback. cmd_query (and other
@@ -211,6 +219,7 @@ class TestSearchReadOnlyMode:
         assert not wal_path.exists(), "WAL file should not be created by get_active_conversation_ids"
         assert not shm_path.exists(), "SHM file should not be created by get_active_conversation_ids"
 
+    @skip_if_root
     def test_filter_conversations_works_on_readonly_file(self, tmp_path):
         """filter_conversations() works when DB file is chmod read-only."""
         from siftd.search import filter_conversations

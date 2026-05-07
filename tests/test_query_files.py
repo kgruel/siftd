@@ -1,5 +1,6 @@
 """Tests for user-defined SQL query files with dual variable syntax."""
 
+import os
 import pytest
 
 from siftd.api.conversations import (
@@ -208,12 +209,9 @@ class TestRunQueryFile:
         with pytest.raises(QueryError, match="Query file not found"):
             run_query_file("nope", {}, db_path=test_db)
 
+    @pytest.mark.skipif(os.getuid() == 0, reason="requires non-root for chmod")
     def test_permission_error_raises_query_error(self, test_db, tmp_path, monkeypatch):
         """PermissionError reading query file surfaces as QueryError with path."""
-        import os
-        if os.getuid() == 0:
-            pytest.skip("chmod has no effect when running as root")
-
         queries = tmp_path / "queries"
         queries.mkdir()
         sql_file = queries / "perm.sql"

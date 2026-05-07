@@ -125,7 +125,7 @@ class TestResolveWorktreeToMain:
 
         # Need an initial commit to create a worktree
         subprocess.run(
-            ["git", "-C", str(main), "commit", "--allow-empty", "-m", "init"],
+            ["git", "-C", str(main), "-c", "user.email=test@test.com", "-c", "user.name=Test", "commit", "--allow-empty", "-m", "init"],
             check=True, capture_output=True
         )
 
@@ -145,7 +145,7 @@ class TestResolveWorktreeToMain:
         main.mkdir()
         subprocess.run(["git", "init", str(main)], check=True, capture_output=True)
         subprocess.run(
-            ["git", "-C", str(main), "commit", "--allow-empty", "-m", "init"],
+            ["git", "-C", str(main), "-c", "user.email=test@test.com", "-c", "user.name=Test", "commit", "--allow-empty", "-m", "init"],
             check=True, capture_output=True
         )
 
@@ -200,7 +200,7 @@ class TestResolveWorktreeToMain:
         main.mkdir()
         subprocess.run(["git", "init", str(main)], check=True, capture_output=True)
         subprocess.run(
-            ["git", "-C", str(main), "commit", "--allow-empty", "-m", "init"],
+            ["git", "-C", str(main), "-c", "user.email=test@test.com", "-c", "user.name=Test", "commit", "--allow-empty", "-m", "init"],
             check=True, capture_output=True
         )
 
@@ -266,7 +266,7 @@ class TestGetCanonicalWorkspacePath:
         main.mkdir()
         subprocess.run(["git", "init", str(main)], check=True, capture_output=True)
         subprocess.run(
-            ["git", "-C", str(main), "commit", "--allow-empty", "-m", "init"],
+            ["git", "-C", str(main), "-c", "user.email=test@test.com", "-c", "user.name=Test", "commit", "--allow-empty", "-m", "init"],
             check=True, capture_output=True
         )
 
@@ -288,7 +288,7 @@ class TestGetCanonicalWorkspacePath:
         main.mkdir()
         subprocess.run(["git", "init", str(main)], check=True, capture_output=True)
         subprocess.run(
-            ["git", "-C", str(main), "commit", "--allow-empty", "-m", "init"],
+            ["git", "-C", str(main), "-c", "user.email=test@test.com", "-c", "user.name=Test", "commit", "--allow-empty", "-m", "init"],
             check=True, capture_output=True
         )
 
