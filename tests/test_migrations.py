@@ -1677,6 +1677,46 @@ class TestMigrationsV6:
         finally:
             conn.close()
 
+    def test_result_hash_index_present_and_used_after_heal(self, tmp_path, monkeypatch):
+        """Regression: M6 must create idx_event_tool_call_result_hash and the heal
+        must consult it. Without the index the heal is O(M·N) and pinned a CPU
+        for 44+ min on a 2.9G real-world db (see plans/2026-05-03-events-polymorphic-followup.md).
+        """
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v5_db(tmp_path)
+        raw = sqlite3.connect(str(path))
+        raw.execute("PRAGMA foreign_keys = OFF")
+        raw.execute("INSERT INTO harnesses VALUES ('h1','test',NULL,NULL,NULL,NULL)")
+        raw.execute("INSERT INTO workspaces VALUES ('w1','/p',NULL,'2024-01-01')")
+        raw.execute("INSERT INTO conversations VALUES ('c1','e1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)")
+        raw.execute("INSERT INTO events VALUES ('ev1','response','c1',NULL,NULL,'2024-01-01T00:00:00Z')")
+        raw.execute("INSERT INTO content_blobs VALUES ('blobZ','content Z',1,'2024-01-01')")
+        raw.execute("INSERT INTO event_tool_call VALUES ('etc1','ev1',NULL,'blobZ','success')")
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+        try:
+            idx = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+                ("idx_event_tool_call_result_hash",),
+            ).fetchone()
+            assert idx is not None, "M6 must create idx_event_tool_call_result_hash"
+
+            plan = conn.execute(
+                "EXPLAIN QUERY PLAN "
+                "SELECT result_hash, COUNT(*) FROM event_tool_call "
+                "WHERE result_hash IS NOT NULL GROUP BY result_hash"
+            ).fetchall()
+            plan_text = " | ".join(str(row[3]) for row in plan)
+            assert "idx_event_tool_call_result_hash" in plan_text, (
+                f"Heal query must use index; plan was: {plan_text}"
+            )
+        finally:
+            conn.close()
+
 
 # ---------------------------------------------------------------------------
 # TestFreshDBInitialization — Resolution #10
