@@ -287,7 +287,7 @@ class TestMigrationProgressLogging:
         joined = "\n".join(messages)
 
         assert "Migrating schema v3" in joined, joined
-        for phase in ("Migration v4", "Migration v5", "Migration v6", "Migration v7"):
+        for phase in ("Migration v4", "Migration v5", "Migration v6", "Migration v7", "Migration v8"):
             assert phase in joined, f"missing {phase} log line in:\n{joined}"
 
 
@@ -1868,3 +1868,120 @@ class TestMigrationsV7:
             assert conn.execute("SELECT COUNT(*) FROM pending_tags").fetchone()[0] == 0
         finally:
             conn.close()
+
+
+# ---------------------------------------------------------------------------
+# TestMigrationsV8 — v7 → v8: drop tool_search projection
+# ---------------------------------------------------------------------------
+
+_V7_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "schemas" / "v7.sql"
+
+
+def _make_v7_db(tmp_path: Path, name: str = "v7test.db") -> Path:
+    """Create a DB at schema version 7 using the v7.sql fixture."""
+    path = tmp_path / name
+    conn = sqlite3.connect(str(path))
+    conn.executescript(_V7_FIXTURE_PATH.read_text())
+    conn.commit()
+    conn.close()
+    return path
+
+
+def _add_tool_search_tables(path: Path) -> None:
+    """Inject tool_search + tool_search_fts into an existing DB to simulate production state."""
+    conn = sqlite3.connect(str(path))
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tool_search (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT,
+            tool_name TEXT,
+            result_snippet TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS tool_search_fts
+        USING fts5(result_snippet, content=tool_search, tokenize='porter unicode61')
+    """)
+    conn.execute("INSERT INTO tool_search VALUES ('ts1', 'c1', 'Read', 'some result')")
+    conn.commit()
+    conn.close()
+
+
+class TestMigrationsV8:
+    def test_drops_tool_search_tables(self, tmp_path, monkeypatch):
+        """v7 → v8: tool_search and tool_search_fts are removed."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v7_db(tmp_path)
+        _add_tool_search_tables(path)
+
+        # Verify tables exist before migration
+        pre = sqlite3.connect(str(path))
+        tables_before = _tables(pre)
+        pre.close()
+        assert "tool_search" in tables_before
+        assert "tool_search_fts" in tables_before
+
+        conn = open_database(path)
+        try:
+            tables_after = _tables(conn)
+            assert "tool_search" not in tables_after
+            assert "tool_search_fts" not in tables_after
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        finally:
+            conn.close()
+
+    def test_noop_when_table_absent(self, tmp_path, monkeypatch):
+        """v7 → v8: migration succeeds cleanly when tool_search was never created."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v7_db(tmp_path)
+        conn = open_database(path)
+        try:
+            assert "tool_search" not in _tables(conn)
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        finally:
+            conn.close()
+
+    def test_idempotent_double_run(self, tmp_path, monkeypatch):
+        """Running v8 migration twice (DROP IF EXISTS) does not raise."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        path = _make_v7_db(tmp_path)
+        _add_tool_search_tables(path)
+
+        conn = open_database(path)
+        conn.close()
+
+        # Re-open an already-v8 DB; migration is not re-run but the DROP IF EXISTS
+        # guards mean calling the function directly must also be safe.
+        conn2 = open_database(path)
+        try:
+            from siftd.storage.sqlite import _migrate_v8_drop_tool_search
+            _migrate_v8_drop_tool_search(conn2)  # explicit second call must not raise
+            assert conn2.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        finally:
+            conn2.close()
+
+    def test_v8_schema_fixture_matches_migrated_db(self, tmp_path, monkeypatch):
+        """v8 fixture tables match what open_database produces after v7 → v8 migration."""
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        v8_sql = (Path(__file__).parent / "fixtures" / "schemas" / "v8.sql").read_text()
+        fixture_conn = _legacy_db(tmp_path, schema_sql=v8_sql, name="fixture_v8.db")
+        fixture_tables = _tables(fixture_conn)
+        fixture_conn.close()
+
+        path = _make_v7_db(tmp_path, name="migrated_v8.db")
+        conn = open_database(path)
+        try:
+            migrated_tables = _tables(conn)
+        finally:
+            conn.close()
+
+        assert "tool_search" not in fixture_tables
+        assert "tool_search" not in migrated_tables

@@ -10,7 +10,6 @@ import siftd.storage.queries as q
 import siftd.storage.sessions as sess
 import siftd.storage.sqlite as sq
 import siftd.storage.tags as tags
-import siftd.storage.tool_search as ts
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall, Usage
 from siftd.storage import BlobCollisionError, compute_content_hash, get_content, get_ref_count, release_content, store_content
 from siftd.storage.filters import WhereBuilder, tag_condition
@@ -892,27 +891,6 @@ class TestConversationStats:
             "SELECT cost FROM conversation_stats WHERE conversation_id=?", (conv_id,)
         ).fetchone()
         assert row["cost"] is None, f"Expected NULL cost for unpriced model, got {row['cost']}"
-
-
-# === Tool search ===
-
-class TestToolSearch:
-    def test_rebuild(self, populated_db):
-        conn, _ = populated_db
-        ts.rebuild_tool_search_index(conn, commit=True)
-        assert len(conn.execute("SELECT * FROM tool_search").fetchall()) == 2
-        assert len(conn.execute("SELECT * FROM tool_search_fts WHERE tool_search_fts MATCH 'pytest'").fetchall()) >= 1
-
-    def test_helpers(self):
-        assert ts._tool_family("file.read") == "file" and ts._tool_family(None) is None
-        assert ts._extract_path({"file_path": "/t.py"}) == "/t.py" and ts._extract_path({}) is None
-        assert ts._extract_command({"command": "ls"}) == "ls" and ts._extract_command({}) is None
-        assert ts._command_verb("ls -la") == "ls" and ts._command_verb(None) is None
-        assert ts._extract_pattern({"pattern": "*.py"}) == "*.py" and ts._extract_pattern({}) is None
-        assert ts._extract_arg({"query": "q"}) == "q" and ts._extract_arg({}) is None
-        assert ts._extract_result_snippet({"error": "e"}) == "e" and ts._extract_result_snippet({}) is None
-        assert ts._loads_dict(None) == {} and ts._loads_dict("bad") == {} and ts._loads_dict('"s"') == {}
-        assert ts._normalize_tool_tokens(None) is None and ts._normalize_tool_tokens("file.read") is not None
 
 
 # === Database ops ===

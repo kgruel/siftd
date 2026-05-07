@@ -4,7 +4,6 @@ from dataclasses import fields as dataclass_fields
 from types import SimpleNamespace as NS
 
 from siftd.api.tags import TagInfo
-from siftd.api.tool_search import ToolSearchResult
 from siftd.serialization.serve_fmt import (
     render_detail,
     render_export,
@@ -12,7 +11,6 @@ from siftd.serialization.serve_fmt import (
     render_search,
     render_stats,
     render_tags,
-    render_tool_search,
     render_tools,
     render_tools_by_workspace,
     render_workspaces,
@@ -48,37 +46,6 @@ def test_tags():
     payload = render_tags([t], _F)["tags"][0]
     assert payload["name"] == "b"
     assert set(payload) == {f.name for f in dataclass_fields(TagInfo)}
-
-
-def test_tool_search_empty():
-    parsed = NS(raw="x", fields={}, bare_terms=[], unknown_fields={})
-    assert render_tool_search((parsed, []), _F)["result_count"] == 0
-
-
-def test_tool_search_hit():
-    hit = ToolSearchResult(
-        tool_call_id="t",
-        conversation_id="c",
-        response_id="r1",
-        timestamp="d",
-        tool_name="e",
-        tool_family="f",
-        status="ok",
-        path="/p",
-        basename="f",
-        ext="py",
-        command="cmd",
-        command_verb="v",
-        pattern="needle",
-        arg="arg",
-        result_snippet="r",
-        workspace_path="/w",
-        rank=1,
-    )
-    parsed = NS(raw="q", fields={"tool": ["e"]}, bare_terms=["q"], unknown_fields={})
-    payload = render_tool_search((parsed, [hit]), _F)
-    assert payload["result_count"] == 1
-    assert set(payload["results"][0]) == {f.name for f in dataclass_fields(ToolSearchResult)}
 
 
 def test_tools():

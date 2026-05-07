@@ -6,12 +6,12 @@ _Auto-generated from `--help` output._
 
 ```
 usage: siftd [-h] [--version] [--db PATH]
-             {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,tool-search,install,peek,export,serve,upgrade} ...
+             {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade} ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,tool-search,install,peek,export,serve,upgrade}
+  {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
     register            Register an active session for live tagging
     session-id          Print the session ID for the current workspace
     config              View or modify config settings
@@ -29,7 +29,6 @@ positional arguments:
     doctor              Run health checks and maintenance
     search              Search conversations (auto-selects FTS5 or semantic
                         based on what's installed)
-    tool-search         Search tool calls with fielded query syntax
     install             Install optional dependencies or bundled components
     peek                Inspect live sessions from disk (bypasses SQLite)
     export              Export conversations as markdown or JSON
@@ -626,70 +625,6 @@ examples:
   siftd search --no-diversity "chunking"               # pure relevance order (deterministic)
   siftd search --lambda 0.5 "design"                   # more diverse results (less redundancy)
   siftd search --json "auth" | jq '.results[0].breakdown'  # score component breakdown
-```
-
-## siftd tool-search
-
-```
-usage: siftd tool-search [-h] [-w SUBSTR] [-m NAME] [--since DATE]
-                         [--before DATE] [-l NAME] [--all-tags NAME]
-                         [--no-tag NAME] [--on KIND] [-t NAME]
-                         [--tool-tag NAME] [--owner USER] [-n LIMIT] [--json]
-                         [--grouped] [--ungrouped] [--show-snippets]
-                         [--rebuild-index]
-                         [query ...]
-
-Search tool calls with structured inline fields plus bare-term FTS.
-
-Filter contract:
-- repeated same field = OR
-- different fields = AND
-- CLI flags and inline fields accumulate into the same field set
-- inline field aliases: all-tags/all_tag/all-tag → all_tags; no-tag → no_tag; tool-tag → tool_tag
-- date fields (`since:`, `before:`) accept YYYY-MM-DD, Nd, Nw, today, yesterday
-- invalid inline dates fail with a parse error
-
-positional arguments:
-  query                 Tool search query
-
-options:
-  -h, --help            show this help message and exit
-  -n, --limit LIMIT     Max results (default: 20)
-  --json                Output as structured JSON
-  --grouped             Group results by conversation (default: on)
-  --ungrouped           Show one row per tool call
-  --show-snippets       Show short per-match snippets under compact grouped
-                        results
-  --rebuild-index       Rebuild the tool-search projection before searching
-
-filtering:
-  -w, --workspace SUBSTR
-                        Filter by workspace path substring
-  -m, --model NAME      Filter by model name
-  --since DATE          Conversations started after this date (YYYY-MM-DD, 7d,
-                        1w, yesterday, today)
-  --before DATE         Conversations started before this date (YYYY-MM-DD,
-                        7d, 1w, yesterday, today)
-  -t, --tool NAME       Filter by canonical tool name (e.g. shell.execute)
-  --owner USER          Filter to conversations owned by this user
-
-tag filtering:
-  -l, --tag NAME        Filter by tag (repeatable, OR logic)
-  --all-tags NAME       Require all specified tags (AND logic)
-  --no-tag NAME         Exclude conversations with this tag (NOT logic)
-  --on KIND             Scope tag filters to a specific target kind
-                        (repeatable). Default: match tags on any kind
-                        (conversation, prompt, response, tool_call, exchange).
-  --tool-tag NAME       Filter by tool call tag (e.g. shell:test)
-
-examples:
-  siftd tool-search tool:file.read path:pyproject.toml
-  siftd tool-search status:error tool:shell.execute git
-  siftd tool-search -w siftd --since 7d tool:file.edit
-  siftd tool-search --tool-tag shell:test cmd:pytest
-  siftd tool-search --show-snippets tool:file.read path:pyproject.toml
-  siftd tool-search --ungrouped status:error tool:shell.execute
-  siftd tool-search --json cmd:git tool:shell.execute
 ```
 
 ## siftd install

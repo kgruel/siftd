@@ -100,12 +100,6 @@ def test_json_fmt_stats(monkeypatch):
     assert render_stats("x", Fidelity(depth=1)) == {"ok": 1}
 
 
-def test_json_fmt_tool_search():
-    from siftd.output.json_fmt import render_tool_search
-    parsed = NS(raw="q", fields={}, bare_terms=[], unknown_fields={})
-    assert render_tool_search((parsed, []), Fidelity(depth=1))["query"] == "q"
-
-
 # --- format_registry ---
 
 def test_select_format():

@@ -12,12 +12,6 @@ All keys can be managed via `siftd config set <key> <value>`.
 |-----|------|---------|-------------|
 | `path` | string | `~/.local/share/siftd/siftd.db` | Override default database path |
 
-## [tools]
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `limit` | int | `20` | Default result limit for tool-search |
-
 ## [query]
 
 | Key | Type | Default | Description |

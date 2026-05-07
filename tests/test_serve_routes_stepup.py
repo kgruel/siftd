@@ -50,12 +50,10 @@ def test_dispatch_wrappers_forward_params(monkeypatch, tmp_path):
     _run(routes.tools_route.fn(req, db, prefix="x:"))
     _run(routes.tools_by_workspace_route.fn(req, db, prefix="x:", n=3))
     _run(routes.tags_route.fn(req, db, since="a", before="b"))
-    _run(routes.tool_search_route.fn(req, db, q="q", n=2))
     _run(routes.export_route.fn(req, db, n=1))
     _run(routes.conversation_detail.fn(req, db, id="abc", include_thinking=True, include_tool_content=True, tool_filter="shell"))
     _run(routes.conversation_list.fn(req, db, n=5, oldest=True))
     assert seen[0][0] == "/api/v1/stats"
-    assert any(p == "/api/v1/tool-search" and prm["q"] == "q" for p, _, _, prm, _ in seen)
     assert any(p == "/api/v1/conversations" and prm["id"] == "abc" for p, _, _, prm, _ in seen)
 
 

@@ -94,9 +94,6 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     # Database
     _SchemaEntry("db.path", "string", _is_str,
                  "Override default database path", "~/.local/share/siftd/siftd.db"),
-    # Tools
-    _SchemaEntry("tools.limit", "int", _is_int_like,
-                 "Default result limit for tool-search", "20"),
     # Query
     _SchemaEntry("query.limit", "int", _is_int_like,
                  "Default conversation list limit", "20"),

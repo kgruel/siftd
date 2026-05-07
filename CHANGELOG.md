@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Event detail surface** — `EventDetail` dataclass + `get_event(id, *, include_neighbors=False)` API. `siftd query <event_id>` smart-routes via prefix-match across event kinds. `GET /api/v1/events/{id}` HTTP route.
 - **Tag-prefix conventions table** — `[tag_prefixes]` config section with built-in defaults (`decision:`, `research:`, `useful:`, `rationale:`, `genesis:`). `siftd config tag-prefixes [--json]` dumps the resolved table. Groundwork for future skill/hook consumers; no runtime consumer in this release.
 
+### Removed
+
+- **`siftd tool-search` command and its denormalized projection table.**
+  The `tool_search` table and `tool_search_fts` virtual table are dropped in schema
+  migration v8. Capability lost: bare-text FTS over a 280-char tool-call result
+  snippet. Tool-call queries now go through the events substrate via `siftd query
+  --tool` and structured tag filters. Production data migrating from v7 → v8 will
+  have ~2 GB of reclaimable space; run `siftd db vacuum` after migration to recover
+  it. The `/api/v1/tool-search` HTTP route, the serve HTML `/tools` page, and the
+  `tools.limit` config key are also removed.
+
 ### Deprecated
 
 - **`--debug-ids` flag and `debug_ids` kwarg** — Now a hidden no-op (chunk_id and source_ids ship by default in JSON). Accepted on `siftd search`, `to_render_dict()`, `render_search()`, and the serve render context through v0.9.x; removed in v0.10.0.

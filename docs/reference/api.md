@@ -666,44 +666,6 @@ Conversation-level aggregate derived from chunk results.
 | `started_at` | `str \| None` |  |
 | `file_refs` | `list[Any] \| None` |  |
 
-### ToolSearchGroup
-
-Conversation-level grouping for tool-search presentation.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `conversation_id` | `str` |  |
-| `workspace_path` | `str \| None` |  |
-| `first_timestamp` | `str \| None` |  |
-| `last_timestamp` | `str \| None` |  |
-| `tool_call_count` | `int` |  |
-| `tool_names` | `list[str]` |  |
-| `results` | `list[ToolSearchResult]` |  |
-
-### ToolSearchResult
-
-Single tool-call search result.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `tool_call_id` | `str` |  |
-| `conversation_id` | `str` |  |
-| `response_id` | `str` |  |
-| `timestamp` | `str \| None` |  |
-| `tool_name` | `str \| None` |  |
-| `tool_family` | `str \| None` |  |
-| `status` | `str \| None` |  |
-| `path` | `str \| None` |  |
-| `basename` | `str \| None` |  |
-| `ext` | `str \| None` |  |
-| `command` | `str \| None` |  |
-| `command_verb` | `str \| None` |  |
-| `pattern` | `str \| None` |  |
-| `arg` | `str \| None` |  |
-| `result_snippet` | `str \| None` |  |
-| `workspace_path` | `str \| None` |  |
-| `rank` | `float \| None` |  |
-
 ### Functions
 
 ### search_chunks
@@ -855,22 +817,6 @@ def build_index(*, db_path: pathlib._local.Path | None = ..., embed_db_path: pat
 - `FileNotFoundError`: If main database doesn't exist.
 - `RuntimeError`: If no embedding backend is available.
 - `EmbeddingsNotAvailable`: If embedding dependencies are not installed.
-
-### group_tool_search_results
-
-Collapse tool-call results into conversation groups for display.
-
-```python
-def group_tool_search_results(results: list[ToolSearchResult]) -> list[ToolSearchGroup]
-```
-
-### search_tool_calls
-
-Search tool calls using structured fields + FTS over the projection.
-
-```python
-def search_tool_calls(q: str, *, db_path: pathlib._local.Path | None = ..., n: int = ..., rebuild_index: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., tool: str | None = ..., tool_tag: str | None = ..., owner: str | None = ...) -> tuple[ToolQuery, list[ToolSearchResult]]
-```
 
 ## Stats
 

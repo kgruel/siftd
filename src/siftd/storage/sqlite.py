@@ -33,7 +33,7 @@ from siftd.storage.sessions import ensure_session_tables
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Registry of versioned migrations: version -> migration function.
 # Each function migrates the DB from version-1 to version.
@@ -1748,6 +1748,33 @@ def _migrate_v7_pending_tags_exchange_index(conn: sqlite3.Connection) -> None:
 
 
 MIGRATIONS[7] = _migrate_v7_pending_tags_exchange_index
+
+
+def _migrate_v8_drop_tool_search(conn: sqlite3.Connection) -> None:
+    """v8: Drop tool_search projection table and its FTS5 virtual table.
+
+    tool_search was a denormalized projection introduced pre-v0.8.0 to compensate
+    for the four-fork storage. Post-v0.8.0 the events substrate renders it redundant.
+    Production data had 400k+ FK orphans against tables dropped in v6.
+    Rollback: restore from the auto-generated pre-migration backup file
+    (<db>.bak.YYYYMMDD.db next to the database).
+    """
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tool_search'"
+    ).fetchone()
+    if has_table:
+        row_count = conn.execute("SELECT COUNT(*) FROM tool_search").fetchone()[0]
+        _logger.info("Migration v8: dropping tool_search projection (~%d rows reclaimable)", row_count)
+    else:
+        _logger.info("Migration v8: tool_search table absent, nothing to drop")
+    # FTS virtual table must be dropped first; it binds to tool_search rowids.
+    conn.execute("DROP TABLE IF EXISTS tool_search_fts")
+    conn.execute("DROP TABLE IF EXISTS tool_search")
+    # SQLite drops triggers tied to the parent table automatically; no explicit
+    # DROP TRIGGER needed.
+
+
+MIGRATIONS[8] = _migrate_v8_drop_tool_search
 
 
 # Known model prices (input_per_mtok, output_per_mtok) in USD per million tokens.

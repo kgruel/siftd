@@ -118,7 +118,6 @@ def _page_shell(
   <a href="/" hx-get="/query" hx-target="#list" hx-push-url="/"
     hx-on::before-request="document.querySelectorAll('#filters select,#filters input').forEach(e=>e.value='')">Recent</a>
   <a href="#" hx-get="/peek" hx-target="#list">Live</a>
-  <a href="#" hx-get="/tools" hx-target="#list">Tools</a>
   <a href="#" hx-get="/stats" hx-target="#detail" hx-swap="innerHTML">Stats</a>
   <button class="density-toggle" onclick="document.body.classList.toggle('compact')" title="Toggle compact mode">Compact</button>
 </nav>
@@ -706,103 +705,6 @@ async def ui_stats(request: Request, db_path: Path) -> Response:
         by_workspace=by_workspace,
     )
     return _html_response(html)
-
-
-# ---------------------------------------------------------------------------
-# Tool search
-# ---------------------------------------------------------------------------
-
-
-@get("/tools")
-async def ui_tools(
-    request: Request,
-    db_path: Path,
-    q: str = Parameter(query="q", default=""),
-    n: int = Parameter(query="n", default=30),
-) -> Response:
-    """Tool call search — list pane view with inline search input."""
-    from html import escape
-
-    from siftd.api.dispatch import Operation, execute
-    from siftd.api.tool_search import search_tool_calls
-    from siftd.output.common import fmt_timestamp, fmt_workspace
-
-    owner = _effective_owner(request, None)
-
-    # Search input (always shown)
-    input_html = (
-        '<div class="tool-search-bar">'
-        f'<input type="search" name="q" value="{escape(q)}" placeholder="Search tool calls..."'
-        f' hx-get="/tools" hx-target="#list" hx-trigger="keyup changed delay:300ms"'
-        f' hx-include="this" class="tool-search-input">'
-        '</div>'
-    )
-
-    if not q.strip():
-        return _html_response(
-            input_html
-            + '<p class="empty">Search tool calls by file path, command, pattern, or content</p>'
-        )
-
-    op = Operation(
-        path="/api/v1/tool-search",
-        method="GET",
-        fn=search_tool_calls,
-        params={"q": q, "db_path": db_path, "n": n, "owner": owner},
-        render_method="raw",
-        fidelity=_fidelity(),
-        db=db_path,
-    )
-
-    try:
-        results = execute(op)
-    except Exception:
-        return _html_response(
-            input_html + f'<p class="empty">No results for: {escape(q)}</p>'
-        )
-
-    if not results:
-        return _html_response(
-            input_html + f'<p class="empty">No results for: {escape(q)}</p>'
-        )
-
-    # Group by conversation
-    from siftd.api.tool_search import group_tool_search_results
-
-    groups = group_tool_search_results(results)
-
-    parts = [input_html]
-    parts.append(f'<p class="tool-search-count">{len(results)} calls in {len(groups)} conversations</p>')
-    parts.append('<table class="conversation-list">')
-    parts.append(
-        "<thead><tr>"
-        '<th class="temporal">Time</th>'
-        '<th class="workspace">Workspace</th>'
-        '<th class="tool-name">Tools</th>'
-        '<th class="metric">Calls</th>'
-        "</tr></thead><tbody>"
-    )
-
-    detail_base = "/query"
-    shell_base = "/"
-    for g in groups:
-        cid = g.conversation_id
-        ts = fmt_timestamp(g.first_timestamp) if g.first_timestamp else ""
-        ws = fmt_workspace(g.workspace_path)
-        tool_list = ", ".join(g.tool_names[:5])
-        if len(g.tool_names) > 5:
-            tool_list += f" +{len(g.tool_names) - 5}"
-        parts.append(
-            f"<tr{_hx_detail(detail_base, cid, shell_base)}>"
-            f'<td class="temporal">{escape(ts)}</td>'
-            f'<td class="workspace">{escape(ws)}</td>'
-            f'<td class="tool-name">{escape(tool_list)}</td>'
-            f'<td class="metric">{g.tool_call_count}</td>'
-            f"</tr>"
-        )
-
-    parts.append("</tbody></table>")
-    return _html_response("\n".join(parts))
 
 
 # ---------------------------------------------------------------------------

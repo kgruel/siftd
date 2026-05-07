@@ -43,23 +43,6 @@ def render_tags(tags: list, fidelity: Fidelity) -> dict:
     }
 
 
-def render_tool_search(result: Any, fidelity: Fidelity) -> dict:
-    """Serialize (ToolQuery, list[ToolSearchResult]) to JSON-safe dict."""
-    parsed, results = result
-    serialized = [
-        r if isinstance(r, dict) else dataclasses.asdict(r)
-        for r in results
-    ]
-    return {
-        "query": parsed.raw,
-        "fields": parsed.fields,
-        "bare_terms": parsed.bare_terms,
-        "unknown_fields": parsed.unknown_fields,
-        "result_count": len(serialized),
-        "results": serialized,
-    }
-
-
 def render_tools(tags: list, fidelity: Fidelity) -> dict:
     """Serialize tool tag summary to JSON-safe dict."""
     total = sum(t.count for t in tags)

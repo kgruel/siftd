@@ -103,7 +103,6 @@ async def index() -> dict:
             {"method": "GET", "path": "/api/v1/tools", "description": "Tool tag usage summary"},
             {"method": "GET", "path": "/api/v1/tools/workspaces", "description": "Tool tags by workspace"},
             {"method": "GET", "path": "/api/v1/tags", "description": "List tags with counts"},
-            {"method": "GET", "path": "/api/v1/tool-search", "description": "Search tool calls"},
             {"method": "GET", "path": "/api/v1/export", "description": "Export full conversations"},
             {"method": "POST", "path": "/api/v1/tag", "description": "Apply, remove, rename, or delete tags"},
             {"method": "POST", "path": "/api/v1/sessions/{id}/tags", "description": "Queue a pending tag for a live session"},
@@ -380,38 +379,6 @@ async def session_queue_tag_route(
         conn.close()
 
     return {"queued": queued, "duplicate": duplicate}
-
-
-@get("/api/v1/tool-search")
-async def tool_search_route(
-    request: Request,
-    db_path: Path,
-    q: str = Parameter(query="q"),
-    workspace: str | None = Parameter(query="workspace", default=None),
-    model: str | None = Parameter(query="model", default=None),
-    since: str | None = Parameter(query="since", default=None),
-    before: str | None = Parameter(query="before", default=None),
-    tool: str | None = Parameter(query="tool", default=None),
-    tool_tag: str | None = Parameter(query="tool_tag", default=None),
-    tag: list[str] | None = Parameter(query="tag", default=None),
-    all_tags: list[str] | None = Parameter(query="all_tags", default=None),
-    no_tag: list[str] | None = Parameter(query="no_tag", default=None),
-    tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
-    n: int = Parameter(query="n", default=20),
-    owner: str | None = Parameter(query="owner", default=None),
-) -> dict | Response:
-    """Search tool calls via FTS."""
-    from siftd.api.tool_search import search_tool_calls
-
-    owner = _effective_owner(request, owner)
-    return _dispatch(
-        "/api/v1/tool-search", "GET", search_tool_calls,
-        {"q": q, "db_path": db_path, "n": n, "workspace": workspace, "model": model,
-         "since": since, "before": before, "tag": tag, "all_tags": all_tags,
-         "no_tag": no_tag, "tag_kind": tag_kind, "tool": tool,
-         "tool_tag": tool_tag, "owner": owner},
-        "tool_search", db_path,
-    )
 
 
 @get("/api/v1/export")

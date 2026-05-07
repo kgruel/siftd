@@ -140,12 +140,6 @@ def render_tags(tags: list, fidelity: Fidelity, **context: Any) -> dict:
     return _impl(tags, fidelity)
 
 
-def render_tool_search(result: Any, fidelity: Fidelity, **context: Any) -> dict:
-    """Render tool search results as a dict."""
-    from siftd.serialization.serve_fmt import render_tool_search as _impl
-
-    return _impl(result, fidelity)
-
 
 def _json_chunk_list(results: list) -> list[dict]:
     """Build JSON-safe list of chunk dicts. Emits chunk_id and source_ids."""

@@ -113,14 +113,6 @@ def test_ui_stats_tools_tag_suggest_and_export(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.stats.get_usage_by_workspace", lambda **_k: [])
     assert "<stats/>" in _run(hr.ui_stats.fn(SimpleNamespace(), db)).content
 
-    assert "Search tool calls" in _run(hr.ui_tools.fn(SimpleNamespace(), db, q="", n=30)).content
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: (_ for _ in ()).throw(RuntimeError("x")))
-    assert "No results" in _run(hr.ui_tools.fn(SimpleNamespace(), db, q="abc", n=30)).content
-
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: [{"x": 1}])
-    monkeypatch.setattr("siftd.api.tool_search.group_tool_search_results", lambda _r: [SimpleNamespace(conversation_id="c1", first_timestamp="t", workspace_path="/w", tool_names=["Read"], tool_call_count=1)])
-    assert "conversation-list" in _run(hr.ui_tools.fn(SimpleNamespace(), db, q="abc", n=30)).content
-
     monkeypatch.setattr("siftd.api.tags.list_tags", lambda **_k: [SimpleNamespace(name="alpha"), SimpleNamespace(name="beta")])
     assert "alpha" in _run(hr.ui_tags_suggest.fn(SimpleNamespace(), db, tag="a")).content
     assert "No conversation ID" in _run(hr.ui_export.fn(SimpleNamespace(), db, id="", format="md")).content
@@ -185,7 +177,7 @@ def test_ui_follow_poll_and_first_load(monkeypatch):
     assert "follow-content" in full.content and "every 2s" in full.content
 
 
-def test_ui_stats_exception_branches_and_ui_tools_no_results(monkeypatch, tmp_path):
+def test_ui_stats_exception_branches(monkeypatch, tmp_path):
     db = tmp_path / "db.db"
     monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: {"ok": True})
@@ -195,20 +187,9 @@ def test_ui_stats_exception_branches_and_ui_tools_no_results(monkeypatch, tmp_pa
     out = _run(hr.ui_stats.fn(SimpleNamespace(), db))
     assert "<stats/>" in out.content
 
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: [])
-    tools = _run(hr.ui_tools.fn(SimpleNamespace(), db, q="abc", n=30))
-    assert "No results" in tools.content
 
-
-def test_ui_tools_many_tool_names_and_ui_tag_success(monkeypatch, tmp_path):
+def test_ui_tag_success(monkeypatch, tmp_path):
     db = tmp_path / "db.db"
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: [{"x": 1}, {"x": 2}])
-    monkeypatch.setattr(
-        "siftd.api.tool_search.group_tool_search_results",
-        lambda _r: [SimpleNamespace(conversation_id="c1", first_timestamp="t", workspace_path="/w", tool_names=["a", "b", "c", "d", "e", "f"], tool_call_count=2)],
-    )
-    out = _run(hr.ui_tools.fn(SimpleNamespace(), db, q="abc", n=30))
-    assert "+1" in out.content
 
     class _Req:
         async def form(self):
