@@ -762,32 +762,6 @@ def cmd_tag(args) -> int:
     return 0
 
 
-def _cmd_tags_deprecated(args) -> int:
-    """Deprecated: delegate 'siftd tags' to 'siftd tag list/rename/delete'."""
-    print(
-        "Warning: 'siftd tags' is deprecated. Use 'siftd tag list', 'siftd tag rename', or 'siftd tag delete'.",
-        file=sys.stderr,
-    )
-
-    # Map old flags to subcommand dispatch
-    if getattr(args, "rename", None):
-        old_name, new_name = args.rename
-        args.positional = ["rename", old_name, new_name]
-        return _cmd_tag_rename(args, resolve_db(args))
-
-    if getattr(args, "delete", None):
-        args.positional = ["delete", args.delete]
-        return _cmd_tag_delete(args, resolve_db(args))
-
-    # List or drill-down
-    name = getattr(args, "name", None)
-    if name:
-        args.positional = ["list", name]
-    else:
-        args.positional = ["list"]
-    return _cmd_tag_list(args, resolve_db(args))
-
-
 def build_tags_parser(subparsers) -> None:
     """Add 'tag' subparser (and hidden 'tags' deprecation bridge)."""
     # tag — unified entry point
@@ -866,19 +840,3 @@ live session tagging:
     add_filter_args(p_tag, include_model=True)
 
     p_tag.set_defaults(func=cmd_tag)
-
-    # tags — hidden deprecation bridge (remove after one release)
-    # Register parser but remove from displayed choices
-    p_tags = subparsers.add_parser(
-        "tags",
-        help=argparse.SUPPRESS,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p_tags.add_argument("name", nargs="?", help=argparse.SUPPRESS)
-    p_tags.add_argument("--prefix", metavar="PREFIX", help=argparse.SUPPRESS)
-    p_tags.add_argument("--limit", type=int, default=10, help=argparse.SUPPRESS)
-    p_tags.add_argument("--rename", nargs=2, metavar=("OLD", "NEW"), help=argparse.SUPPRESS)
-    p_tags.add_argument("--delete", metavar="NAME", help=argparse.SUPPRESS)
-    p_tags.add_argument("--force", action="store_true", help=argparse.SUPPRESS)
-    add_filter_args(p_tags, include_model=True)
-    p_tags.set_defaults(func=_cmd_tags_deprecated)

@@ -416,62 +416,6 @@ class TestSubcommandDisambiguation:
         assert "Usage:" in capsys.readouterr().out
 
 
-# ---------------------------------------------------------------------------
-# Deprecated 'tags' command (bridge)
-# ---------------------------------------------------------------------------
-
-
-class TestTagsDeprecationBridge:
-    def test_tags_warns(self, test_db, capsys):
-        """siftd tags emits deprecation warning."""
-        main(["--db", str(test_db), "tags"])
-        err = capsys.readouterr().err
-        assert "deprecated" in err.lower()
-
-    def test_tags_list_still_works(self, test_db, capsys):
-        """siftd tags still lists tags (with warning)."""
-        conn = open_database(test_db)
-        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
-        conn.close()
-        main(["--db", str(test_db), "tag", conv_id, "bridge-tag"])
-        capsys.readouterr()
-
-        rc = main(["--db", str(test_db), "tags"])
-        assert rc == 0
-        combined = capsys.readouterr()
-        assert "bridge-tag" in combined.out
-        assert "deprecated" in combined.err.lower()
-
-    def test_tags_rename_still_works(self, test_db, capsys):
-        """siftd tags --rename still works (with warning)."""
-        conn = open_database(test_db)
-        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
-        conn.close()
-        main(["--db", str(test_db), "tag", conv_id, "old-bridge"])
-        capsys.readouterr()
-
-        rc = main(["--db", str(test_db), "tags", "--rename", "old-bridge", "new-bridge"])
-        assert rc == 0
-        combined = capsys.readouterr()
-        assert "Renamed" in combined.out
-        assert "deprecated" in combined.err.lower()
-
-    def test_tags_delete_still_works(self, test_db, capsys):
-        """siftd tags --delete still works (with warning)."""
-        conn = open_database(test_db)
-        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
-        conn.close()
-        main(["--db", str(test_db), "tag", conv_id, "del-bridge"])
-        main(["--db", str(test_db), "tag", "--remove", conv_id, "del-bridge"])
-        capsys.readouterr()
-
-        rc = main(["--db", str(test_db), "tags", "--delete", "del-bridge"])
-        assert rc == 0
-        combined = capsys.readouterr()
-        assert "Deleted" in combined.out
-        assert "deprecated" in combined.err.lower()
-
-
 class TestTagsEdgeBranches:
     def test_detect_current_session_fallback_and_exception(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -628,6 +572,3 @@ class TestTagsEdgeBranches:
         monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
         args3 = SimpleNamespace(positional=["list"], since="2024-01-01", before=None, prefix=None)
         assert tags_cli._cmd_tag_list(args3, Path(test_db)) == 0
-
-        # deprecated tags name positional branch
-        assert main(["--db", str(test_db), "tags", "some-tag"]) in (0, 1)

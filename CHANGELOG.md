@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`--debug-ids` flag and `debug_ids` kwarg** — Now a hidden no-op (chunk_id and source_ids ship by default in JSON). Accepted on `siftd search`, `to_render_dict()`, `render_search()`, and the serve render context through v0.9.x; removed in v0.10.0.
 
+### Removed
+
+- **`siftd tags` command** — Deprecated command removed. Use `siftd tag list`, `siftd tag rename`, or `siftd tag delete` instead.
+
 ## [0.8.0] - 2026-05-06
 
 > **Upgrade note.** This release ships a one-way schema migration (v3 → v7).

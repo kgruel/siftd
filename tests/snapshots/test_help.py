@@ -49,7 +49,6 @@ SUBCOMMANDS = [
     "register",
     "session-id",
     "tag",
-    "tags",
     "tools",
     "query",
     "backfill",
