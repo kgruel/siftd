@@ -20,9 +20,19 @@ import dataclasses
 import json
 import random
 import string
+import sys
 from pathlib import Path
 
 import pytest
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # Route CLI help snapshots to a per-Python-version subdirectory so that
+    # --snapshot-update on one version never deletes another version's snapshots.
+    # syrupy reads config.option.snapshot_dirname in pytest_sessionstart and sets
+    # SnapshotCollectionStorage.snapshot_dirname from it — this hook runs first.
+    ver = f"py{sys.version_info.major}{sys.version_info.minor}"
+    config.option.snapshot_dirname = f"__snapshots__/{ver}"
 
 from siftd.domain.models import (
     ContentBlock,
