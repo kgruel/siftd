@@ -51,7 +51,7 @@ def slice_database(
     # Verify source DB is at the current schema version. We do not auto-migrate here
     # because opening in write mode creates a backup file alongside the source, which
     # is surprising and breaks on read-only filesystems. Callers must upgrade first.
-    _check_conn = open_database(source_db, read_only=True)
+    _check_conn = open_database(source_db, read_only=True, auto_upgrade=False)
     try:
         _src_version = _check_conn.execute("PRAGMA user_version").fetchone()[0]
     finally:

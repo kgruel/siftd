@@ -66,30 +66,87 @@ class TestReadOnlyMode:
         with pytest.raises(FileNotFoundError, match="Database not found"):
             open_database(db_path, read_only=True)
 
-    def test_read_only_skips_migrations(self, tmp_path):
-        """read_only=True does not attempt migrations."""
+    def test_read_only_stale_unwritable_raises_schema_upgrade_required(self, tmp_path):
+        """RO open of a stale-schema DB on a non-writable file raises a clear error
+        instead of crashing later with a cryptic 'no such table: events'.
+        See plans/2026-05-03-events-polymorphic-followup.md finding #1.
+        """
+        from siftd.storage.sqlite import SCHEMA_VERSION, SchemaUpgradeRequiredError
+
         db_path = tmp_path / "test.db"
 
-        # Create a minimal DB without running migrations
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+        # Build a writable DB then stamp it at an older schema version.
+        conn = open_database(db_path)
         conn.close()
+        import sqlite3
+        raw = sqlite3.connect(db_path)
+        raw.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+        raw.commit()
+        raw.close()
 
-        # Make file read-only
         os.chmod(db_path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-
         try:
-            # Should open without error (no migration attempts)
-            conn = open_database(db_path, read_only=True)
-            # Verify we can read
-            tables = [r[0] for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()]
-            assert "conversations" in tables
-            conn.close()
+            with pytest.raises(SchemaUpgradeRequiredError, match="not writable"):
+                open_database(db_path, read_only=True)
         finally:
             os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)
+
+    def test_cli_main_translates_schema_upgrade_required_to_clean_error(self, tmp_path, capsys):
+        """CLI main() must catch SchemaUpgradeRequiredError so the user sees a
+        friendly message rather than a Python traceback. cmd_query (and other
+        RO subcommands) only catch FileNotFoundError / OperationalError.
+        Regression for PR #16 review feedback.
+        """
+        from siftd.cli import main
+        from siftd.storage.sqlite import SCHEMA_VERSION
+
+        db_path = tmp_path / "test.db"
+        conn = open_database(db_path)
+        conn.close()
+        import sqlite3
+        raw = sqlite3.connect(db_path)
+        raw.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+        raw.commit()
+        raw.close()
+
+        os.chmod(db_path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+        try:
+            rc = main(["--db", str(db_path), "query", "--limit", "1"])
+        finally:
+            os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "Error:" in err
+        assert "not writable" in err
+
+    def test_read_only_stale_writable_auto_upgrades(self, tmp_path):
+        """RO open of a stale-schema DB on a writable file auto-upgrades, then
+        the RO connection sees the up-to-date schema. See finding #1.
+        """
+        from siftd.storage.sqlite import SCHEMA_VERSION
+
+        db_path = tmp_path / "test.db"
+
+        conn = open_database(db_path)
+        conn.close()
+        import sqlite3
+        raw = sqlite3.connect(db_path)
+        raw.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+        raw.commit()
+        raw.close()
+        assert sqlite3.connect(db_path).execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION - 1
+
+        # File is writable — RO open should auto-upgrade and succeed.
+        conn = open_database(db_path, read_only=True)
+        try:
+            v = conn.execute("PRAGMA user_version").fetchone()[0]
+            assert v == SCHEMA_VERSION
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            assert "events" in tables
+        finally:
+            conn.close()
 
     def test_read_only_uses_uri_mode(self, tmp_path):
         """read_only=True uses URI mode with immutable flag."""

@@ -34,6 +34,7 @@ from siftd.api.conversations import (
 )
 from siftd.api.database import (
     PreflightError,
+    SchemaUpgradeRequiredError,
     audit_db_integrity,
     backup_database,
     create_database,
@@ -196,6 +197,7 @@ __all__ = [
     "run_backfill",
     # database
     "PreflightError",
+    "SchemaUpgradeRequiredError",
     "audit_db_integrity",
     "backup_database",
     "create_database",
