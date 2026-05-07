@@ -23,6 +23,7 @@ def slice_database(
     tag: list[str] | None = None,
     all_tags: list[str] | None = None,
     no_tag: list[str] | None = None,
+    tag_kind: list[str] | None = None,
     tool: str | None = None,
     tool_tag: str | None = None,
     search: str | None = None,
@@ -74,6 +75,7 @@ def slice_database(
         tag=tag,
         all_tags=all_tags,
         no_tag=no_tag,
+        tag_kind=tag_kind,
         tool_tag=tool_tag,
         n=0,  # unlimited
         owner=owner,

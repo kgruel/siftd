@@ -132,6 +132,12 @@ All keys can be managed via `siftd config set <key> <value>`.
 |-----|------|---------|-------------|
 | `check` | bool | `true` | Check PyPI for updates after commands (24h interval) |
 
+## [tag_prefixes]
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `*` | string | — | User-defined tag-prefix conventions (e.g. research = "research:") |
+
 ## Examples
 
 ```bash

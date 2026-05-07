@@ -233,11 +233,13 @@ class PaintedEmitter:
 
     # -- NarrativeEmitter interface --
 
-    def text(self, content: str) -> None:
+    def text(self, content: str, *, event_id: str | None = None) -> None:
+        del event_id
         # Walker already truncated; limit=0 avoids double truncation
         _append_multiline(self._pending, "  ", self._ds.assistant, content, self._ds.assistant, 0)
 
-    def thinking(self, content: str) -> None:
+    def thinking(self, content: str, *, event_id: str | None = None) -> None:
+        del event_id
         self._flush_lines()
         think_lines: list[Line] = []
         _append_multiline(think_lines, "", self._ds.thinking, content, self._ds.thinking, 0)
@@ -255,7 +257,8 @@ class PaintedEmitter:
         )
         self._parts.append(self._pad(bordered, left=4))
 
-    def thinking_placeholder(self) -> None:
+    def thinking_placeholder(self, *, event_id: str | None = None) -> None:
+        del event_id
         self._pending.append(_line(("    ", self._ds.separator), ("*[thinking]*", self._ds.thinking)))
 
     def tool_summary(self, tools: list[tuple[str, int, str | None]]) -> None:
@@ -268,7 +271,11 @@ class PaintedEmitter:
         raw_input: str | None,
         raw_result: str | None,
         status: str | None,
+        *,
+        event_id: str | None = None,
+        tool_call_id: str | None = None,
     ) -> None:
+        del event_id, tool_call_id
         title = name
         if count > 1:
             title += f" ×{count}"
@@ -295,7 +302,8 @@ class PaintedEmitter:
             )
             self._parts.append(self._pad(bordered, left=4))
 
-    def tool_output(self, block_type: str, content: str) -> None:
+    def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
+        del event_id
         _append_multiline(
             self._pending,
             f"  [{block_type}] ",

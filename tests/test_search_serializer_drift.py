@@ -7,8 +7,8 @@ from siftd.domain.search_types import ConversationSearchSummary, ScoreBreakdown,
 from siftd.serialization.serve_fmt import render_search
 
 
-def test_serve_search_chunk_serialization_default_omits_internal_ids():
-    """render_search() default mode omits chunk_id and source_ids."""
+def test_serve_search_chunk_serialization_default_includes_internal_ids():
+    """Phase 2: render_search() default mode includes chunk_id and source_ids."""
     chunk = SearchChunk(
         conversation_id="c1",
         score=0.9,
@@ -26,8 +26,8 @@ def test_serve_search_chunk_serialization_default_omits_internal_ids():
     out = render_search([chunk], NS(depth=1))
     result = out["results"][0]
 
-    assert "chunk_id" not in result
-    assert "source_ids" not in result
+    assert result["chunk_id"] == "k1"
+    assert result["source_ids"] == ["p1"]
     assert "conversation_id" in result
 
 

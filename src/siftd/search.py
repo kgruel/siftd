@@ -348,6 +348,7 @@ def hybrid_search(
     tag: list[str] | None = None,
     all_tags: list[str] | None = None,
     no_tag: list[str] | None = None,
+    tag_kind: list[str] | None = None,
     include_derivative: bool = False,
     backend: str | None = None,
     exclude_active: bool = True,
@@ -447,6 +448,7 @@ def hybrid_search(
             tags=tag,
             all_tags=all_tags,
             exclude_tags=exclude_tags_final or None,
+            tag_kind=tag_kind,
         )
 
         # Pre-filter active sessions when we have an explicit candidate set
@@ -700,6 +702,7 @@ def filter_conversations(
     all_tags: list[str] | None = None,
     exclude_tags: list[str] | None = None,
     owner: str | None = None,
+    tag_kind: list[str] | None = None,
 ) -> set[str] | None:
     """Apply filters and return candidate conversation IDs.
 
@@ -715,6 +718,7 @@ def filter_conversations(
         all_tags: AND filter — conversations with all of these tags.
         exclude_tags: NOT filter — exclude conversations with any of these tags.
         owner: Filter to conversations owned by this user_id.
+        tag_kind: Scope tag matching to specific target_kinds. Defaults to all.
 
     Returns:
         Set of conversation IDs matching filters, or None if no filters.
@@ -727,6 +731,7 @@ def filter_conversations(
         return _filter_conversations_conn(
             conn, workspace=workspace, model=model, since=since, before=before,
             tags=tags, all_tags=all_tags, exclude_tags=exclude_tags, owner=owner,
+            tag_kind=tag_kind,
         )
     finally:
         conn.close()
@@ -743,6 +748,7 @@ def _filter_conversations_conn(
     all_tags: list[str] | None = None,
     exclude_tags: list[str] | None = None,
     owner: str | None = None,
+    tag_kind: list[str] | None = None,
 ) -> set[str] | None:
     """Internal: filter conversations using an existing connection."""
     if not any([workspace, model, since, before, tags, all_tags, exclude_tags, owner]):
@@ -757,9 +763,9 @@ def _filter_conversations_conn(
     wb.since(since)
     wb.before(before)
     wb.owner(owner)
-    wb.tags_any(tags)
-    wb.tags_all(all_tags)
-    wb.tags_none(exclude_tags)
+    wb.tags_any(tags, kinds=tag_kind)
+    wb.tags_all(all_tags, kinds=tag_kind)
+    wb.tags_none(exclude_tags, kinds=tag_kind)
 
     joins = wb.joins_sql()
     joins_clause = f"\n        {joins}" if joins else ""
@@ -846,6 +852,7 @@ def resolve_candidates(
     tag: list[str] | None = None,
     all_tags: list[str] | None = None,
     no_tag: list[str] | None = None,
+    tag_kind: list[str] | None = None,
     exclude_active: bool = True,
     include_derivative: bool = False,
     owner: str | None = None,
@@ -872,6 +879,7 @@ def resolve_candidates(
         all_tags=all_tags,
         exclude_tags=effective_exclude or None,
         owner=owner,
+        tag_kind=tag_kind,
     )
 
     if exclude_active:

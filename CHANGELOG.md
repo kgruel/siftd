@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Polymorphic tag filter** — `siftd query -l <tag>`, `--all-tags`, and `--no-tag` now match tags applied at any conversation-bearing target_kind (`conversation`, `prompt`, `response`, `tool_call`, `exchange`). Previously, after the polymorphic storage refactor (v0.8.0), only conversation-scoped tags were visible to these filters; tags applied at event granularity were silently invisible. New `--on KIND` flag opts into legacy single-kind filtering.
+
+### Added
+
+- **Event IDs in JSON (default-on)** — `Turn` gains `prompt_id` / `response_ids[]` / `tool_call_ids[]`; `NarrativeBlock` gains `event_id`; `ToolCallDetail` gains `tool_call_id`. Search chunks emit `chunk_id` / `source_ids` by default. Enables agents to round-trip event IDs through query → tag / detail surfaces without secondary lookups.
+- **Late-bound `--last-*` pending tags** — `siftd tag --session <id> --last-{prompt,response,exchange,tool-call}` queues tag intent against a live session; resolution to the most-recent matching event happens on next `siftd ingest`. Schema-additive `last_marker` column on `pending_tags` (in-place rebuild on first open). New `POST /api/v1/sessions/{id}/tags` HTTP route.
+- **Event detail surface** — `EventDetail` dataclass + `get_event(id, *, include_neighbors=False)` API. `siftd query <event_id>` smart-routes via prefix-match across event kinds. `GET /api/v1/events/{id}` HTTP route.
+- **Tag-prefix conventions table** — `[tag_prefixes]` config section with built-in defaults (`decision:`, `research:`, `useful:`, `rationale:`, `genesis:`). `siftd config tag-prefixes [--json]` dumps the resolved table. Groundwork for future skill/hook consumers; no runtime consumer in this release.
+
+### Deprecated
+
+- **`--debug-ids` flag and `debug_ids` kwarg** — Now a hidden no-op (chunk_id and source_ids ship by default in JSON). Accepted on `siftd search`, `to_render_dict()`, `render_search()`, and the serve render context through v0.9.x; removed in v0.10.0.
+
 ## [0.8.0] - 2026-05-06
 
 > **Upgrade note.** This release ships a one-way schema migration (v3 → v7).

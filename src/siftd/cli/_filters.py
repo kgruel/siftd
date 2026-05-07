@@ -25,6 +25,7 @@ class FilterArgs:
     tag: list[str] | None = None
     all_tags: list[str] | None = None
     no_tag: list[str] | None = None
+    tag_kind: list[str] | None = None
     tool: str | None = None
     tool_tag: str | None = None
     search: str | None = None
@@ -88,6 +89,15 @@ def add_filter_args(
         "--no-tag", action="append", metavar="NAME",
         help="Exclude conversations with this tag (NOT logic)",
     )
+    tag_group.add_argument(
+        "--on", action="append", metavar="KIND",
+        choices=["conversation", "prompt", "response", "tool_call", "exchange"],
+        dest="tag_kind",
+        help=(
+            "Scope tag filters to a specific target kind (repeatable). "
+            "Default: match tags on any kind (conversation, prompt, response, tool_call, exchange)."
+        ),
+    )
     if include_tool:
         filter_group.add_argument(
             "-t", "--tool", metavar="NAME",
@@ -123,6 +133,7 @@ def extract_filter_args(args) -> FilterArgs:
         tag=getattr(args, "tag", None),
         all_tags=getattr(args, "all_tags", None),
         no_tag=getattr(args, "no_tag", None),
+        tag_kind=getattr(args, "tag_kind", None),
         tool=getattr(args, "tool", None),
         tool_tag=getattr(args, "tool_tag", None),
         search=getattr(args, "search", None),

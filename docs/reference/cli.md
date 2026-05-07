@@ -78,16 +78,18 @@ Exits with code 1 if no session ID found (for scripting).
 ## siftd config
 
 ```
-usage: siftd config [-h] [{get,set,path,append,remove}] [key] [value]
+usage: siftd config [-h] [--json]
+                    [{get,set,path,append,remove,tag-prefixes}] [key] [value]
 
 positional arguments:
-  {get,set,path,append,remove}
+  {get,set,path,append,remove,tag-prefixes}
                         Action to perform
   key                   Config key (dotted path, e.g., serve.host)
   value                 Value to use (for 'set', 'append', 'remove')
 
 options:
   -h, --help            show this help message and exit
+  --json                JSON output (currently used by 'tag-prefixes')
 
 examples:
   siftd config                        # show all config
@@ -96,6 +98,8 @@ examples:
   siftd config set serve.port 9090        # set value
   siftd config append adapters.claude_code.locations ~/.claude/projects
   siftd config remove adapters.claude_code.locations ~/.claude/projects
+  siftd config tag-prefixes               # show resolved tag-prefix table
+  siftd config tag-prefixes --json        # same, as JSON
 ```
 
 ## siftd adapters
@@ -165,10 +169,11 @@ examples:
 
 ```
 usage: siftd tag [-h] [-n [N]] [-r] [--session ID] [--current]
-                 [--exchange INDEX] [--prefix PREFIX] [--limit LIMIT]
-                 [--force] [-w SUBSTR] [-m NAME] [--since DATE]
-                 [--before DATE] [-l NAME] [--all-tags NAME] [--no-tag NAME]
-                 [--owner USER]
+                 [--exchange INDEX | --last-prompt | --last-response |
+                 --last-exchange | --last-tool-call] [--prefix PREFIX]
+                 [--limit LIMIT] [--force] [-w SUBSTR] [-m NAME]
+                 [--since DATE] [--before DATE] [-l NAME] [--all-tags NAME]
+                 [--no-tag NAME] [--on KIND] [--owner USER]
                  [positional ...]
 
 Apply, remove, list, rename, or delete tags.
@@ -185,6 +190,14 @@ options:
   --session ID          Queue tag for a live session (applied at ingest)
   --current             Auto-detect current session (falls back to --last)
   --exchange INDEX      Tag specific exchange (1-based, requires --session)
+  --last-prompt         Tag the last prompt of the session (requires
+                        --session/--current)
+  --last-response       Tag the last response of the session (requires
+                        --session/--current)
+  --last-exchange       Tag the last exchange of the session (requires
+                        --session/--current)
+  --last-tool-call      Tag the last tool_call of the session (requires
+                        --session/--current)
   --prefix PREFIX       Filter tag list by prefix (use with 'tag list')
   --limit LIMIT         Max conversations in drill-down (default: 10, use with
                         'tag list <name>')
@@ -205,6 +218,9 @@ tag filtering:
   -l, --tag NAME        Filter by tag (repeatable, OR logic)
   --all-tags NAME       Require all specified tags (AND logic)
   --no-tag NAME         Exclude conversations with this tag (NOT logic)
+  --on KIND             Scope tag filters to a specific target kind
+                        (repeatable). Default: match tags on any kind
+                        (conversation, prompt, response, tool_call, exchange).
 
 examples:
   siftd tag 01HX... important              # tag conversation (default)
@@ -254,11 +270,12 @@ examples:
 
 ```
 usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
-                   [-l NAME] [--all-tags NAME] [--no-tag NAME] [-t NAME]
-                   [--tool-tag NAME] [--owner USER] [-n LIMIT] [-v] [--oldest]
-                   [--json] [--stats] [--exchanges N] [-b] [--summary] [-F]
-                   [--chars N] [--thinking] [--tools [FILTER]]
-                   [--tool-chars N] [--var KEY=VALUE]
+                   [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
+                   [-t NAME] [--tool-tag NAME] [--owner USER] [-n LIMIT] [-v]
+                   [--oldest] [--json] [--stats] [--exchanges N] [-b]
+                   [--summary] [-F] [--chars N] [--thinking]
+                   [--tools [FILTER]] [--tool-chars N] [--neighbors]
+                   [--var KEY=VALUE]
                    [conversation_id] [sql_name]
 
 positional arguments:
@@ -284,6 +301,9 @@ tag filtering:
   -l, --tag NAME        Filter by tag (repeatable, OR logic)
   --all-tags NAME       Require all specified tags (AND logic)
   --no-tag NAME         Exclude conversations with this tag (NOT logic)
+  --on KIND             Scope tag filters to a specific target kind
+                        (repeatable). Default: match tags on any kind
+                        (conversation, prompt, response, tool_call, exchange).
   --tool-tag NAME       Filter by tool call tag (e.g. shell:test)
 
 output:
@@ -304,6 +324,8 @@ detail view:
                         prefix or 'errors')
   --tool-chars N        Truncate tool input/result at N characters (default:
                         120)
+  --neighbors           Include prev_event_id/next_event_id in event detail
+                        output
 
 sql queries:
   --var KEY=VALUE       Substitute $KEY with VALUE in SQL
@@ -465,9 +487,9 @@ exit codes:
 
 ```
 usage: siftd search [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
-                    [-l NAME] [--all-tags NAME] [--no-tag NAME] [--owner USER]
-                    [-n LIMIT] [-v] [--full] [--context N] [--thread]
-                    [--by-time] [--json] [--debug-ids] [--format NAME]
+                    [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
+                    [--owner USER] [-n LIMIT] [-v] [--full] [--context N]
+                    [--thread] [--by-time] [--json] [--format NAME]
                     [--conversations] [--first] [--refs [FILES]] [--fts]
                     [--semantic] [--embeddings-only] [--recall N]
                     [--threshold SCORE] [--raw-fts] [--no-diversity]
@@ -497,6 +519,9 @@ tag filtering:
   -l, --tag NAME        Filter by tag (repeatable, OR logic)
   --all-tags NAME       Require all specified tags (AND logic)
   --no-tag NAME         Exclude conversations with this tag (NOT logic)
+  --on KIND             Scope tag filters to a specific target kind
+                        (repeatable). Default: match tags on any kind
+                        (conversation, prompt, response, tool_call, exchange).
 
 output:
   -n, --limit LIMIT     Max results (default: 10)
@@ -507,8 +532,6 @@ output:
                         shortlist
   --by-time             Sort results by time instead of score
   --json                Output as structured JSON
-  --debug-ids           Include internal chunk_id and source_ids in JSON
-                        output (default: omitted)
   --format NAME         Use named formatter (built-in or drop-in plugin)
 
 result modes:
@@ -610,9 +633,10 @@ examples:
 ```
 usage: siftd tool-search [-h] [-w SUBSTR] [-m NAME] [--since DATE]
                          [--before DATE] [-l NAME] [--all-tags NAME]
-                         [--no-tag NAME] [-t NAME] [--tool-tag NAME]
-                         [--owner USER] [-n LIMIT] [--json] [--grouped]
-                         [--ungrouped] [--show-snippets] [--rebuild-index]
+                         [--no-tag NAME] [--on KIND] [-t NAME]
+                         [--tool-tag NAME] [--owner USER] [-n LIMIT] [--json]
+                         [--grouped] [--ungrouped] [--show-snippets]
+                         [--rebuild-index]
                          [query ...]
 
 Search tool calls with structured inline fields plus bare-term FTS.
@@ -653,6 +677,9 @@ tag filtering:
   -l, --tag NAME        Filter by tag (repeatable, OR logic)
   --all-tags NAME       Require all specified tags (AND logic)
   --no-tag NAME         Exclude conversations with this tag (NOT logic)
+  --on KIND             Scope tag filters to a specific target kind
+                        (repeatable). Default: match tags on any kind
+                        (conversation, prompt, response, tool_call, exchange).
   --tool-tag NAME       Filter by tool call tag (e.g. shell:test)
 
 examples:
@@ -767,9 +794,9 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
 
 ```
 usage: siftd export [-h] [-n [N]] [-w SUBSTR] [--since DATE] [--before DATE]
-                    [-l NAME] [--no-tag NAME] [-s QUERY] [--owner USER]
-                    [--thinking] [--tools] [-b] [-F] [--json] [--no-header]
-                    [-o FILE]
+                    [-l NAME] [--no-tag NAME] [--on KIND] [-s QUERY]
+                    [--owner USER] [--thinking] [--tools] [-b] [-F] [--json]
+                    [--no-header] [-o FILE]
                     [conversation_id]
 
 positional arguments:
@@ -793,6 +820,9 @@ filtering:
 tag filtering:
   -l, --tag NAME        Filter by tag (repeatable, OR logic)
   --no-tag NAME         Exclude conversations with this tag (NOT logic)
+  --on KIND             Scope tag filters to a specific target kind
+                        (repeatable). Default: match tags on any kind
+                        (conversation, prompt, response, tool_call, exchange).
 
 rendering:
   --thinking            Expand thinking/reasoning blocks (default:

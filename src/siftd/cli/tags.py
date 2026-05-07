@@ -98,6 +98,7 @@ def _tag_session(args, db: Path, session_id: str) -> int:
     if not tag_names:
         print("Usage: siftd tag --session <id> <tag> [tag2 ...]")
         print("       siftd tag --session <id> --exchange <index> <tag> [tag2 ...]")
+        print("       siftd tag --session <id> --last-response <tag> [tag2 ...]")
         conn.close()
         return 1
 
@@ -105,24 +106,34 @@ def _tag_session(args, db: Path, session_id: str) -> int:
     if not is_session_registered(conn, session_id):
         print(f"Warning: Session {session_id[:8]}... not registered", file=sys.stderr)
 
-    # Determine entity type and exchange index
-    exchange_index = getattr(args, "exchange", None)
-    entity_type = "exchange" if exchange_index is not None else "conversation"
+    # Argparse's mutually-exclusive group already enforced "at most one of
+    # --exchange / --last-*"; this just maps the flag to (entity_type,
+    # exchange_index, last_marker).
+    entity_type, exchange_index, last_marker = _session_targeting(args)
 
     # Queue each tag
     queued = 0
     for tag_name in tag_names:
-        result = queue_pending_tag(
-            conn,
-            session_id,
-            tag_name,
-            entity_type=entity_type,
-            exchange_index=exchange_index,
-            commit=False,
-        )
+        try:
+            result = queue_pending_tag(
+                conn,
+                session_id,
+                tag_name,
+                entity_type=entity_type,
+                exchange_index=exchange_index,
+                last_marker=last_marker,
+                commit=False,
+            )
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            conn.close()
+            return 1
         if result:
             queued += 1
-            if exchange_index is not None:
+            if last_marker:
+                pretty = last_marker.replace("last_", "last ")
+                print(f"Queued tag '{tag_name}' for {pretty} of session {session_id[:8]}...")
+            elif exchange_index is not None:
                 print(f"Queued tag '{tag_name}' for exchange {exchange_index}")
             else:
                 print(f"Queued tag '{tag_name}' for session {session_id[:8]}...")
@@ -132,6 +143,31 @@ def _tag_session(args, db: Path, session_id: str) -> int:
     conn.commit()
     conn.close()
     return 0
+
+
+# entity_type mirrors the kind being targeted; the resolver uses last_marker
+# to pick the actual event at ingest time.
+_LAST_FLAG_TO_KIND: dict[str, str] = {
+    "last_prompt": "prompt",
+    "last_response": "response",
+    "last_exchange": "exchange",
+    "last_tool_call": "tool_call",
+}
+
+
+def _session_targeting(args) -> tuple[str, int | None, str | None]:
+    """Map argparse flags to (entity_type, exchange_index, last_marker).
+
+    Mutual exclusion is enforced by argparse's mutually-exclusive group;
+    this is a pure dispatch.
+    """
+    for flag, kind in _LAST_FLAG_TO_KIND.items():
+        if getattr(args, flag, False):
+            return (kind, None, flag)
+    exchange_index = getattr(args, "exchange", None)
+    if exchange_index is not None:
+        return ("exchange", exchange_index, None)
+    return ("conversation", None, None)
 
 
 def _cmd_tag_list(args, db: Path) -> int:
@@ -481,6 +517,13 @@ def cmd_tag(args) -> int:
         print("Note: --exchange ignored without --session", file=sys.stderr)
     if args.last is not None and session_id:
         print("Note: --last ignored with --session", file=sys.stderr)
+    last_marker_flags = [
+        flag for flag in ("last_prompt", "last_response", "last_exchange", "last_tool_call")
+        if getattr(args, flag, False)
+    ]
+    if last_marker_flags and not session_id:
+        names = ", ".join("--" + f.replace("_", "-") for f in last_marker_flags)
+        print(f"Note: {names} ignored without --session/--current", file=sys.stderr)
 
     # Handle --session mode (queue pending tags)
     if session_id:
@@ -791,7 +834,27 @@ live session tagging:
     p_tag.add_argument("-r", "--remove", action="store_true", help="Remove tag instead of applying")
     p_tag.add_argument("--session", metavar="ID", help="Queue tag for a live session (applied at ingest)")
     p_tag.add_argument("--current", action="store_true", help="Auto-detect current session (falls back to --last)")
-    p_tag.add_argument("--exchange", type=int, metavar="INDEX", help="Tag specific exchange (1-based, requires --session)")
+    target_group = p_tag.add_mutually_exclusive_group()
+    target_group.add_argument(
+        "--exchange", type=int, metavar="INDEX",
+        help="Tag specific exchange (1-based, requires --session)",
+    )
+    target_group.add_argument(
+        "--last-prompt", action="store_true", dest="last_prompt",
+        help="Tag the last prompt of the session (requires --session/--current)",
+    )
+    target_group.add_argument(
+        "--last-response", action="store_true", dest="last_response",
+        help="Tag the last response of the session (requires --session/--current)",
+    )
+    target_group.add_argument(
+        "--last-exchange", action="store_true", dest="last_exchange",
+        help="Tag the last exchange of the session (requires --session/--current)",
+    )
+    target_group.add_argument(
+        "--last-tool-call", action="store_true", dest="last_tool_call",
+        help="Tag the last tool_call of the session (requires --session/--current)",
+    )
 
     # Flags for subcommands (list, delete)
     p_tag.add_argument("--prefix", metavar="PREFIX", help="Filter tag list by prefix (use with 'tag list')")

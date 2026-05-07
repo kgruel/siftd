@@ -127,6 +127,9 @@ A single user→assistant exchange for detail view.
 | `narrative` | `list[PeekNarrativeBlock]` |  |
 | `input_tokens` | `int` |  |
 | `output_tokens` | `int` |  |
+| `prompt_external_id` | `str \| None` |  |
+| `response_external_ids` | `list[str]` |  |
+| `tool_use_ids` | `list[str]` |  |
 
 ### SessionDetail
 
@@ -277,6 +280,7 @@ A single block in the response narrative.
 | `block_type` | `str` |  |
 | `content` | `str \| None` |  |
 | `tool_calls` | `list[ToolCallDetail]` |  |
+| `event_id` | `str \| None` |  |
 
 ### ToolCallDetail
 
@@ -289,6 +293,7 @@ Tool call with optional input/result for --tools mode.
 | `count` | `int` |  |
 | `input` | `str \| None` |  |
 | `result` | `str \| None` |  |
+| `tool_call_id` | `str \| None` |  |
 
 ### ToolCallSummary
 
@@ -312,6 +317,9 @@ A prompt and its full response narrative.
 | `total_output_tokens` | `int` |  |
 | `narrative` | `list[NarrativeBlock]` |  |
 | `_tool_call_summaries` | `list[ToolCallSummary]` |  |
+| `prompt_id` | `str \| None` |  |
+| `response_ids` | `list[str]` |  |
+| `tool_call_ids` | `list[str]` |  |
 
 ### Functions
 
@@ -334,7 +342,7 @@ def get_recent_conversation_ids(conn: Connection, limit: int, *, owner: str | No
 List conversations with optional filtering.
 
 ```python
-def list_conversations(*, db_path: pathlib._local.Path | None = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., tool: str | None = ..., tag: str | list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tool_tag: str | None = ..., n: int = ..., oldest: bool = ..., owner: str | None = ...) -> list[ConversationSummary]
+def list_conversations(*, db_path: pathlib._local.Path | None = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., tool: str | None = ..., tag: str | list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., tool_tag: str | None = ..., n: int = ..., oldest: bool = ..., owner: str | None = ...) -> list[ConversationSummary]
 ```
 
 **Parameters:**
@@ -349,6 +357,7 @@ def list_conversations(*, db_path: pathlib._local.Path | None = ..., workspace: 
 - `tag`: OR filter — conversations with any of these tags. Also accepts a single string for backward compat.
 - `all_tags`: AND filter — conversations with all of these tags.
 - `no_tag`: NOT filter — exclude conversations with any of these tags.
+- `tag_kind`: Scope tag/all_tags/no_tag matching to specific target_kinds (e.g., ['conversation'], ['response', 'tool_call']). Defaults to all conversation-bearing kinds when None.
 - `tool_tag`: Filter by tool call tag (e.g., 'shell:test').
 - `n`: Maximum results to return (0 = unlimited).
 - `oldest`: Sort by oldest first instead of newest.
@@ -702,7 +711,7 @@ Single tool-call search result.
 Canonical entry point for retrieving search chunks.
 
 ```python
-def search_chunks(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ..., raw_fts: bool = ...) -> list[SearchChunk]
+def search_chunks(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ..., raw_fts: bool = ...) -> list[SearchChunk]
 ```
 
 ### hybrid_search
@@ -710,7 +719,7 @@ def search_chunks(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None
 Unified search pipeline — FTS5, semantic, or hybrid.
 
 ```python
-def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., raw_fts: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ...) -> list[SearchChunk]
+def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., raw_fts: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ...) -> list[SearchChunk]
 ```
 
 **Parameters:**
@@ -860,7 +869,7 @@ def group_tool_search_results(results: list[ToolSearchResult]) -> list[ToolSearc
 Search tool calls using structured fields + FTS over the projection.
 
 ```python
-def search_tool_calls(q: str, *, db_path: pathlib._local.Path | None = ..., n: int = ..., rebuild_index: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tool: str | None = ..., tool_tag: str | None = ..., owner: str | None = ...) -> tuple[ToolQuery, list[ToolSearchResult]]
+def search_tool_calls(q: str, *, db_path: pathlib._local.Path | None = ..., n: int = ..., rebuild_index: bool = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., tool: str | None = ..., tool_tag: str | None = ..., owner: str | None = ...) -> tuple[ToolQuery, list[ToolSearchResult]]
 ```
 
 ## Stats
@@ -1159,7 +1168,7 @@ A conversation prepared for export.
 Export conversations matching the specified criteria.
 
 ```python
-def export_conversations(*, id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib._local.Path | None = ..., include_thinking: bool = ..., include_tool_content: bool = ..., owner: str | None = ...) -> list[ExportedConversation]
+def export_conversations(*, id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib._local.Path | None = ..., include_thinking: bool = ..., include_tool_content: bool = ..., owner: str | None = ...) -> list[ExportedConversation]
 ```
 
 ### export_document
@@ -1242,6 +1251,24 @@ Tag with usage counts.
 | `exchange_count` | `int` |  |
 | `prompt_count` | `int` |  |
 | `response_count` | `int` |  |
+
+### EventDetail
+
+A single event with content, tags, and kind-specific data.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `str` |  |
+| `kind` | `str` |  |
+| `conversation_id` | `str` |  |
+| `parent_id` | `str \| None` |  |
+| `external_id` | `str \| None` |  |
+| `timestamp` | `str \| None` |  |
+| `tags` | `list[str]` |  |
+| `content_blocks` | `list[dict[str, Any]]` |  |
+| `kind_specific` | `dict[str, Any]` |  |
+| `conversation` | `dict[str, Any] \| None` |  |
+| `neighbors` | `dict[str, str \| None] \| None` |  |
 
 ### IngestRunResult
 
@@ -1534,6 +1561,27 @@ def rename_tag(old_name: str = ..., new_name: str = ..., *, conn: sqlite3.Connec
 
 - `ValueError`: If new_name already exists.
 
+### get_event
+
+Get a single event by ID (full or prefix).
+
+```python
+def get_event(id: str, *, db_path: pathlib._local.Path | None = ..., conn: sqlite3.Connection | None = ..., include_content: bool = ..., include_neighbors: bool = ...) -> siftd.api.events.EventDetail | None
+```
+
+**Parameters:**
+
+- `id`: Event ULID, or a prefix of one.
+- `db_path`: Path to database. Uses default if not specified.
+- `conn`: Optional existing read-only connection. Caller retains ownership; if provided, db_path is ignored. Useful to avoid a second open after a smart-route probe.
+- `include_content`: Include `content_blocks`. Default True.
+
+**Returns:** EventDetail or None if no event matches.
+
+**Raises:**
+
+- `FileNotFoundError`: If the database does not exist.
+
 ### run_ingest
 
 Run ingestion from discovered adapters.
@@ -1619,7 +1667,7 @@ def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = 
 Export filtered conversations into a standalone SQLite database.
 
 ```python
-def slice_database(source_db: Path, target_path: Path, *, workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tool: str | None = ..., tool_tag: str | None = ..., search: str | None = ..., rebuild_fts: bool = ..., owner: str | None = ...) -> dict
+def slice_database(source_db: Path, target_path: Path, *, workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., tool: str | None = ..., tool_tag: str | None = ..., search: str | None = ..., rebuild_fts: bool = ..., owner: str | None = ...) -> dict
 ```
 
 **Parameters:**

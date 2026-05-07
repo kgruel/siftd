@@ -498,6 +498,54 @@ class TestWhereBuilder:
         sql2, val2 = tag_condition("bugfix")
         assert "=" in sql2 and val2 == "bugfix"
 
+    def test_tags_default_is_polymorphic(self):
+        """Default kinds=None matches conversation + all event kinds."""
+        wb = WhereBuilder()
+        wb.tags_any(["bug"])
+        sql = wb.where_sql()
+        assert "LEFT JOIN events" in sql
+        assert "CASE ta.target_kind" in sql
+        assert "e.conversation_id" in sql
+        # Five kind placeholders + one tag value
+        assert wb.params == ["conversation", "prompt", "response", "tool_call", "exchange", "bug"]
+
+    def test_tags_scoped_to_conversation(self):
+        """kinds=['conversation'] preserves legacy behavior."""
+        wb = WhereBuilder()
+        wb.tags_any(["bug"], kinds=["conversation"])
+        assert wb.params == ["conversation", "bug"]
+
+    def test_tags_scoped_to_response(self):
+        wb = WhereBuilder()
+        wb.tags_any(["review"], kinds=["response"])
+        assert wb.params == ["response", "review"]
+
+    def test_tags_scoped_to_multiple_event_kinds(self):
+        wb = WhereBuilder()
+        wb.tags_any(["x"], kinds=["prompt", "response"])
+        assert wb.params == ["prompt", "response", "x"]
+
+    def test_tags_unknown_kind_filtered_out(self):
+        """Unknown kinds (e.g. 'workspace') short-circuit to no-match."""
+        wb = WhereBuilder()
+        wb.tags_any(["x"], kinds=["workspace"])
+        assert wb.where_sql() == "WHERE 0"
+        assert wb.params == []
+
+    def test_tags_all_polymorphic_params(self):
+        wb = WhereBuilder()
+        wb.tags_all(["a", "b"])
+        # Two subqueries: each emits 5 kinds + 1 tag value
+        assert wb.params == ["conversation", "prompt", "response", "tool_call", "exchange", "a",
+                             "conversation", "prompt", "response", "tool_call", "exchange", "b"]
+
+    def test_tags_none_polymorphic_uses_not_in(self):
+        wb = WhereBuilder()
+        wb.tags_none(["spam"])
+        sql = wb.where_sql()
+        assert "NOT IN" in sql
+        assert "LEFT JOIN events" in sql
+
     def test_joins_and_groupby(self):
         wb = WhereBuilder()
         wb.workspace("p")

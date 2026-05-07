@@ -25,12 +25,14 @@ from siftd.serve.html_routes import (
 from siftd.serve.routes import (
     conversation_detail,
     conversation_list,
+    event_detail_route,
     export_route,
     health,
     index,
     pull,
     push,
     search_route,
+    session_queue_tag_route,
     stats_route,
     sync_status_route,
     tag_write_route,
@@ -74,8 +76,10 @@ def create_app(
     return Litestar(
         route_handlers=[
             index, health, stats_route, workspaces_route, tools_route, tools_by_workspace_route,
-            tag_write_route, tags_route, tool_search_route, export_route,
-            push, pull, sync_status_route, conversation_detail, conversation_list, search_route,
+            tag_write_route, session_queue_tag_route, tags_route,
+            tool_search_route, export_route,
+            push, pull, sync_status_route, conversation_detail, conversation_list,
+            event_detail_route, search_route,
             ui_shell, ui_meta, ui_query, ui_search, ui_peek, ui_follow, ui_stats,
             ui_tag, ui_tags_suggest, ui_tools, ui_export,
             static_router,

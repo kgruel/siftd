@@ -223,6 +223,42 @@ class TestDefaultsAndLookups:
         _w(config_dir, '[tools]\nlimit = "all"\n')
         assert get_tools_defaults() == {}
 
+    def test_tag_prefixes_defaults(self, config_dir):
+        """No config file → built-in defaults are returned."""
+        from siftd.config import DEFAULT_TAG_PREFIXES, get_tag_prefixes
+
+        prefixes = get_tag_prefixes()
+        for name, value in DEFAULT_TAG_PREFIXES.items():
+            assert prefixes[name] == value
+
+    def test_tag_prefixes_user_extends(self, config_dir):
+        """User entries are merged on top of defaults."""
+        from siftd.config import get_tag_prefixes
+
+        _w(config_dir, '[tag_prefixes]\nmyproj = "myproj:"\n')
+        prefixes = get_tag_prefixes()
+        assert prefixes["myproj"] == "myproj:"
+        # Defaults still present
+        assert prefixes["research"] == "research:"
+
+    def test_tag_prefixes_user_overrides_default(self, config_dir):
+        """A user entry with the same name overrides the default value."""
+        from siftd.config import get_tag_prefixes
+
+        _w(config_dir, '[tag_prefixes]\nresearch = "rsrch:"\n')
+        assert get_tag_prefixes()["research"] == "rsrch:"
+
+    def test_tag_prefixes_skips_non_string_values(self, config_dir):
+        """Non-string values in the user table are silently skipped."""
+        from siftd.config import DEFAULT_TAG_PREFIXES, get_tag_prefixes
+
+        _w(config_dir, '[tag_prefixes]\nbroken = 123\nok = "ok:"\n')
+        prefixes = get_tag_prefixes()
+        assert "broken" not in prefixes
+        assert prefixes["ok"] == "ok:"
+        # Defaults retained
+        assert prefixes["research"] == DEFAULT_TAG_PREFIXES["research"]
+
     def test_adapter_locations(self, config_dir):
         assert get_adapter_locations("nonexistent") is None
         _w(config_dir, '[adapters.claude_code]\nlocations = ["~/.claude", "/other"]\n')

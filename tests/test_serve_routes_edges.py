@@ -205,6 +205,129 @@ def test_tag_write_no_matching_entities_returns_404(monkeypatch, tmp_path):
     assert hasattr(out, "status_code") and out.status_code == 404
 
 
+def _make_session_db(tmp_path):
+    """Create a real db with active_sessions/pending_tags so the route can write."""
+    from siftd.api import create_database
+    from siftd.api.sessions import register_session
+
+    db_path = tmp_path / "db.db"
+    conn = create_database(db_path)
+    register_session(conn, "sess-1", "claude_code", "/p", commit=True)
+    conn.close()
+    return db_path
+
+
+def test_session_queue_tag_route_happy_path(monkeypatch, tmp_path):
+    """POST /api/v1/sessions/{id}/tags queues a pending tag and returns the result."""
+    import json as json_mod
+
+    from siftd.storage.sessions import get_pending_tags
+    from siftd.api import open_database
+
+    db_path = _make_session_db(tmp_path)
+
+    req = SimpleNamespace(user=SimpleNamespace(sub="anonymous"))
+
+    async def _body():
+        return json_mod.dumps({
+            "tags": ["review-me"],
+            "entity_type": "response",
+            "last_marker": "last_response",
+        }).encode()
+    req.body = _body
+
+    monkeypatch.setattr("siftd.serve.auth.require_write", lambda _r: None)
+    out = _run(routes.session_queue_tag_route.fn(req, "sess-1", db_path))
+    assert out == {"queued": ["review-me"], "duplicate": []}
+
+    # Verify it actually landed in pending_tags
+    conn = open_database(db_path, read_only=True)
+    try:
+        tags = get_pending_tags(conn, "sess-1")
+        assert len(tags) == 1
+        assert tags[0].tag_name == "review-me"
+        assert tags[0].entity_type == "response"
+        assert tags[0].last_marker == "last_response"
+    finally:
+        conn.close()
+
+
+def test_session_queue_tag_route_duplicate(monkeypatch, tmp_path):
+    """Re-queueing the same tag returns it under 'duplicate', not 'queued'."""
+    import json as json_mod
+
+    db_path = _make_session_db(tmp_path)
+
+    req = SimpleNamespace(user=SimpleNamespace(sub="anonymous"))
+
+    async def _body():
+        return json_mod.dumps({"tags": ["dup-me"]}).encode()
+    req.body = _body
+
+    monkeypatch.setattr("siftd.serve.auth.require_write", lambda _r: None)
+    _run(routes.session_queue_tag_route.fn(req, "sess-1", db_path))
+    # Second call with the same body
+    req2 = SimpleNamespace(user=SimpleNamespace(sub="anonymous"))
+    req2.body = _body
+    out = _run(routes.session_queue_tag_route.fn(req2, "sess-1", db_path))
+    assert out == {"queued": [], "duplicate": ["dup-me"]}
+
+
+def test_session_queue_tag_route_missing_db_returns_404(monkeypatch, tmp_path):
+    """Non-existent DB returns 404 instead of silently creating one."""
+    import json as json_mod
+
+    req = SimpleNamespace(user=SimpleNamespace(sub="anonymous"))
+
+    async def _body():
+        return json_mod.dumps({"tags": ["x"]}).encode()
+    req.body = _body
+
+    monkeypatch.setattr("siftd.serve.auth.require_write", lambda _r: None)
+    out = _run(routes.session_queue_tag_route.fn(
+        req, "sess-1", tmp_path / "missing.db",
+    ))
+    assert hasattr(out, "status_code") and out.status_code == 404
+    assert not (tmp_path / "missing.db").exists()
+
+
+def test_session_queue_tag_route_invalid_marker_returns_400(monkeypatch, tmp_path):
+    """An invalid last_marker value surfaces as a 400."""
+    import json as json_mod
+
+    db_path = _make_session_db(tmp_path)
+    req = SimpleNamespace(user=SimpleNamespace(sub="anonymous"))
+
+    async def _body():
+        return json_mod.dumps({
+            "tags": ["x"],
+            "last_marker": "bogus",
+        }).encode()
+    req.body = _body
+
+    monkeypatch.setattr("siftd.serve.auth.require_write", lambda _r: None)
+    out = _run(routes.session_queue_tag_route.fn(req, "sess-1", db_path))
+    assert hasattr(out, "status_code") and out.status_code == 400
+    assert "Unknown last_marker" in out.content["error"]
+
+
+def test_session_queue_tag_route_empty_tags_returns_400(monkeypatch, tmp_path):
+    """Empty tags list returns 400 (and never opens the DB)."""
+    import json as json_mod
+
+    req = SimpleNamespace(user=SimpleNamespace(sub="anonymous"))
+
+    async def _body():
+        return json_mod.dumps({"tags": []}).encode()
+    req.body = _body
+
+    monkeypatch.setattr("siftd.serve.auth.require_write", lambda _r: None)
+    out = _run(routes.session_queue_tag_route.fn(
+        req, "sess-1", tmp_path / "irrelevant.db",
+    ))
+    assert hasattr(out, "status_code") and out.status_code == 400
+
+
 def test_sync_status_redacts_inbox_error(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "siftd.api.inbox.get_inbox_status",

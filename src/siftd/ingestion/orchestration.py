@@ -749,6 +749,17 @@ def _update_stats_for_conversation(
             stats.by_harness[harness_name]["tool_calls"] += len(response.tool_calls)
 
 
+# Late-bound markers resolve to the most recent event of the kind at ingest
+# time. Map: marker → (target_kind, kind-to-fetch). last_exchange is anchored
+# on the prompt event, so its target_kind differs from the kind queried.
+_LAST_MARKER_DISPATCH: dict[str, tuple[str, str]] = {
+    "last_prompt": ("prompt", "prompt"),
+    "last_response": ("response", "response"),
+    "last_exchange": ("exchange", "prompt"),
+    "last_tool_call": ("tool_call", "tool_call"),
+}
+
+
 def _apply_pending_tags(
     conn: sqlite3.Connection,
     adapter: AdapterModule,
@@ -795,7 +806,31 @@ def _apply_pending_tags(
     for pt in pending:
         tag_id = get_or_create_tag(conn, pt.tag_name)
 
-        if pt.entity_type == "conversation":
+        if pt.last_marker:
+            dispatch = _LAST_MARKER_DISPATCH.get(pt.last_marker)
+            if dispatch is None:
+                logger.warning(
+                    f"Unknown last_marker {pt.last_marker!r} for tag '{pt.tag_name}' "
+                    f"in session {session_id[:8]}; skipping"
+                )
+                continue
+            target_kind, fetch_kind = dispatch
+            event_id = _get_last_event_id(conn, conversation_id, fetch_kind)
+            if event_id is None:
+                logger.warning(
+                    f"No {fetch_kind} found for session {session_id[:8]}; "
+                    f"tag '{pt.tag_name}' ({pt.last_marker}) not applied"
+                )
+                continue
+            result = apply_tag(conn, target_kind, event_id, tag_id)
+            if result:
+                applied += 1
+                logger.debug(
+                    f"Applied tag '{pt.tag_name}' to {target_kind} {event_id[:12]} "
+                    f"({pt.last_marker})"
+                )
+
+        elif pt.entity_type == "conversation":
             result = apply_tag(conn, "conversation", conversation_id, tag_id)
             if result:
                 applied += 1
@@ -829,6 +864,29 @@ def _apply_pending_tags(
     if parent_id:
         unregister_session(conn, parent_id)
     return applied
+
+
+def _get_last_event_id(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    kind: str,
+) -> str | None:
+    """Return the most-recent event ID of `kind` in this conversation, or None.
+
+    Ordered by (timestamp DESC, id DESC) so ULID ordering breaks ties
+    deterministically when multiple events share a timestamp.
+    """
+    cur = conn.execute(
+        """
+        SELECT id FROM events
+        WHERE conversation_id = ? AND kind = ?
+        ORDER BY timestamp DESC, id DESC
+        LIMIT 1
+        """,
+        (conversation_id, kind),
+    )
+    row = cur.fetchone()
+    return row["id"] if row else None
 
 
 def _get_prompt_by_index(

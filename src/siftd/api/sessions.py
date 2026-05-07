@@ -49,15 +49,22 @@ def queue_tag(
     *,
     entity_type: str = "conversation",
     exchange_index: int | None = None,
+    last_marker: str | None = None,
     commit: bool = False,
 ) -> str | None:
-    """Insert into pending_tags. Returns ULID or None if duplicate."""
+    """Insert into pending_tags. Returns ULID or None if duplicate.
+
+    last_marker (one of 'last_prompt', 'last_response', 'last_exchange',
+    'last_tool_call') defers target resolution to ingest time, when the
+    most-recent event of the matching kind is selected.
+    """
     return _queue_tag(
         conn,
         harness_session_id,
         tag_name,
         entity_type=entity_type,
         exchange_index=exchange_index,
+        last_marker=last_marker,
         commit=commit,
     )
 

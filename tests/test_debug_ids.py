@@ -1,10 +1,14 @@
-"""Tests for H5b: hide internal search-chunk IDs by default.
+"""Phase 2: chunk IDs are now default-on in JSON.
+
+Previously H5b hid them behind --debug-ids. Phase 2 reverses that to make
+events addressable by default. The --debug-ids flag is retained as a
+deprecated no-op alias for one minor version.
 
 Covers:
-- SearchChunk.to_render_dict(debug_ids=False/True)
-- json_fmt._json_chunk_list and render_search
-- serve_fmt.render_search
-- Serve route plumbs debug_ids via render_context
+- SearchChunk.to_render_dict default-on
+- json_fmt._json_chunk_list default-on
+- json_fmt.render_search default-on (debug_ids kwarg accepted, no longer gates)
+- serve_fmt.render_search default-on (same)
 - conversation_id preserved in conversation serializers (regression guard)
 """
 
@@ -13,7 +17,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from siftd.domain.search_types import ScoreBreakdown, SearchChunk
+from siftd.domain.search_types import SearchChunk
 from siftd.output import json_fmt
 from siftd.serialization.serve_fmt import render_search as serve_render_search
 
@@ -34,10 +38,10 @@ def _chunk(**kwargs):
 # ── SearchChunk.to_render_dict ──────────────────────────────────────────────
 
 class TestToRenderDict:
-    def test_default_omits_internal_ids(self):
+    def test_default_includes_internal_ids(self):
         d = _chunk().to_render_dict()
-        assert "chunk_id" not in d
-        assert "source_ids" not in d
+        assert d["chunk_id"] == "chunk-xyz"
+        assert d["source_ids"] == ["src-001", "src-002"]
 
     def test_default_preserves_public_fields(self):
         d = _chunk().to_render_dict()
@@ -46,78 +50,60 @@ class TestToRenderDict:
         assert d["chunk_type"] == "exchange"
         assert d["text"] == "hello world"
 
-    def test_debug_ids_includes_internal_ids(self):
-        chunk = _chunk()
-        d = chunk.to_render_dict(debug_ids=True)
-        assert d["chunk_id"] == "chunk-xyz"
-        assert d["source_ids"] == ["src-001", "src-002"]
-
-    def test_debug_ids_preserves_public_fields(self):
-        d = _chunk().to_render_dict(debug_ids=True)
-        assert d["conversation_id"] == "conv-abc"
+    def test_explicit_debug_ids_false_omits(self):
+        """Legacy opt-out still works for callers that want the old shape."""
+        d = _chunk().to_render_dict(debug_ids=False)
+        assert "chunk_id" not in d
+        assert "source_ids" not in d
 
 
 # ── json_fmt._json_chunk_list ───────────────────────────────────────────────
 
 class TestJsonChunkList:
     def _rows(self, **kwargs):
-        return [_chunk(**kwargs).to_render_dict(debug_ids=True)]
+        return [_chunk(**kwargs).to_render_dict()]
 
-    def test_default_omits_internal_ids(self):
+    def test_default_includes_internal_ids(self):
         out = json_fmt._json_chunk_list(self._rows())
-        assert "chunk_id" not in out[0]
-        assert "source_ids" not in out[0]
+        assert out[0]["chunk_id"] == "chunk-xyz"
+        assert out[0]["source_ids"] == ["src-001", "src-002"]
 
     def test_default_preserves_conversation_id(self):
         out = json_fmt._json_chunk_list(self._rows())
         assert out[0]["conversation_id"] == "conv-abc"
-
-    def test_debug_ids_includes_internal_ids(self):
-        out = json_fmt._json_chunk_list(self._rows(), debug_ids=True)
-        assert out[0]["chunk_id"] == "chunk-xyz"
-        assert out[0]["source_ids"] == ["src-001", "src-002"]
 
 
 # ── json_fmt.render_search ──────────────────────────────────────────────────
 
 class TestJsonFmtRenderSearch:
     def _results(self):
-        return [_chunk().to_render_dict(debug_ids=True)]
+        return [_chunk().to_render_dict()]
 
-    def test_default_snapshot(self):
+    def test_default_includes_chunk_ids(self):
         from painted import Fidelity
         out = json_fmt.render_search(self._results(), Fidelity(), query="q", mode="chunks")
-        chunk = out["results"][0]
-        assert "chunk_id" not in chunk
-        assert "source_ids" not in chunk
-        assert chunk["conversation_id"] == "conv-abc"
-        assert chunk["score"] == 0.85
-        assert "conversation" in chunk
-
-    def test_debug_ids_snapshot(self):
-        from painted import Fidelity
-        out = json_fmt.render_search(
-            self._results(), Fidelity(), query="q", mode="chunks", debug_ids=True
-        )
         chunk = out["results"][0]
         assert chunk["chunk_id"] == "chunk-xyz"
         assert chunk["source_ids"] == ["src-001", "src-002"]
         assert chunk["conversation_id"] == "conv-abc"
+        assert chunk["score"] == 0.85
+        assert "conversation" in chunk
 
-    def test_thread_mode_default_omits_internal_ids(self):
+    def test_debug_ids_kwarg_is_noop(self):
+        """--debug-ids no longer gates IDs; flag accepted for back-compat."""
         from painted import Fidelity
-        rows = self._results()
         out = json_fmt.render_search(
-            rows, Fidelity(), query="q", mode="thread", tier1=rows, tier2=[]
+            self._results(), Fidelity(), query="q", mode="chunks", debug_ids=False,
         )
-        assert "chunk_id" not in out["tier1"][0]
-        assert "source_ids" not in out["tier1"][0]
+        chunk = out["results"][0]
+        assert chunk["chunk_id"] == "chunk-xyz"
+        assert chunk["source_ids"] == ["src-001", "src-002"]
 
-    def test_thread_mode_debug_ids_includes_them(self):
+    def test_thread_mode_default_includes_chunk_ids(self):
         from painted import Fidelity
         rows = self._results()
         out = json_fmt.render_search(
-            rows, Fidelity(), query="q", mode="thread", tier1=rows, tier2=[], debug_ids=True
+            rows, Fidelity(), query="q", mode="thread", tier1=rows, tier2=[],
         )
         assert out["tier1"][0]["chunk_id"] == "chunk-xyz"
 
@@ -125,26 +111,18 @@ class TestJsonFmtRenderSearch:
 # ── serve_fmt.render_search ─────────────────────────────────────────────────
 
 class TestServeFmtRenderSearch:
-    def test_default_omits_internal_ids(self):
+    def test_default_includes_chunk_ids(self):
         from painted import Fidelity
         chunk = _chunk()
         out = serve_render_search([chunk], Fidelity())
         result = out["results"][0]
-        assert "chunk_id" not in result
-        assert "source_ids" not in result
+        assert result["chunk_id"] == "chunk-xyz"
+        assert result["source_ids"] == ["src-001", "src-002"]
 
     def test_default_preserves_conversation_id(self):
         from painted import Fidelity
         out = serve_render_search([_chunk()], Fidelity())
         assert out["results"][0]["conversation_id"] == "conv-abc"
-
-    def test_debug_ids_includes_internal_ids(self):
-        from painted import Fidelity
-        chunk = _chunk()
-        out = serve_render_search([chunk], Fidelity(), debug_ids=True)
-        result = out["results"][0]
-        assert result["chunk_id"] == "chunk-xyz"
-        assert result["source_ids"] == ["src-001", "src-002"]
 
     def test_result_count_unchanged(self):
         from painted import Fidelity
@@ -154,15 +132,18 @@ class TestServeFmtRenderSearch:
             assert out["result_count"] == 2
 
 
-# ── Serve route render_context plumbing ────────────────────────────────────
+# ── Serve route render_context plumbing (kept for back-compat) ─────────────
 
 import pytest
 
 
 @pytest.mark.serve
-def test_search_route_plumbs_debug_ids_false(monkeypatch, tmp_path):
-    """search_route passes render_context={"debug_ids": False} by default."""
-    import asyncio
+def test_search_route_still_accepts_debug_ids(monkeypatch, tmp_path):
+    """search_route still accepts debug_ids parameter (kept for backward compat).
+
+    The rendered output no longer changes based on the value, but the route
+    still threads it through for one minor version of deprecation.
+    """
     pytest.importorskip("litestar")
     from siftd.serve import routes
 
@@ -174,25 +155,7 @@ def test_search_route_plumbs_debug_ids_false(monkeypatch, tmp_path):
 
     monkeypatch.setattr(routes, "_dispatch", fake_dispatch)
     asyncio.run(routes.search_route.fn(SimpleNamespace(), tmp_path / "db.db", q="hi", debug_ids=False))
-    assert seen_rc[0].get("debug_ids") is False
-
-
-@pytest.mark.serve
-def test_search_route_plumbs_debug_ids_true(monkeypatch, tmp_path):
-    """search_route passes render_context={"debug_ids": True} when debug_ids=True."""
-    import asyncio
-    pytest.importorskip("litestar")
-    from siftd.serve import routes
-
-    seen_rc = []
-
-    def fake_dispatch(*args, **kwargs):
-        seen_rc.append(kwargs.get("render_context") or {})
-        return {"result_count": 0, "results": []}
-
-    monkeypatch.setattr(routes, "_dispatch", fake_dispatch)
-    asyncio.run(routes.search_route.fn(SimpleNamespace(), tmp_path / "db.db", q="hi", debug_ids=True))
-    assert seen_rc[0].get("debug_ids") is True
+    assert "debug_ids" in seen_rc[0]
 
 
 # ── Regression: conversation_id in conversation serializers ─────────────────

@@ -47,6 +47,10 @@ from siftd.api.doctor import (
     list_checks,
     run_checks,
 )
+from siftd.api.events import (
+    EventDetail,
+    get_event,
+)
 from siftd.api.export import (
     ExportArtifact,
     ExportedConversation,
@@ -244,6 +248,9 @@ __all__ = [
     "list_conversations",
     "get_conversation",
     "resolve_entity_id",
+    # events
+    "EventDetail",
+    "get_event",
     # query files
     "QueryFile",
     "QueryResult",

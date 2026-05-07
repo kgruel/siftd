@@ -106,6 +106,8 @@ async def index() -> dict:
             {"method": "GET", "path": "/api/v1/tool-search", "description": "Search tool calls"},
             {"method": "GET", "path": "/api/v1/export", "description": "Export full conversations"},
             {"method": "POST", "path": "/api/v1/tag", "description": "Apply, remove, rename, or delete tags"},
+            {"method": "POST", "path": "/api/v1/sessions/{id}/tags", "description": "Queue a pending tag for a live session"},
+            {"method": "GET", "path": "/api/v1/events/{id}", "description": "Get a single event by ID"},
         ],
     }
 
@@ -276,6 +278,110 @@ async def tag_write_route(request: Request, db_path: Path) -> dict | Response:
     return payload
 
 
+@get("/api/v1/events/{event_id:str}")
+async def event_detail_route(
+    request: Request, event_id: str, db_path: Path,
+    neighbors: bool = Parameter(query="neighbors", default=False),
+) -> dict | Response:
+    """Return a single event by ID."""
+    from siftd.api.events import get_event
+    from siftd.serialization.events import serialize_event_detail
+
+    del request  # unused; auth middleware enforces read access
+
+    try:
+        detail = get_event(
+            event_id, db_path=db_path, include_neighbors=neighbors,
+        )
+    except FileNotFoundError as e:
+        return Response(content={"error": str(e)}, status_code=404)
+    if detail is None:
+        return Response(content={"error": "event not found"}, status_code=404)
+    return serialize_event_detail(detail)
+
+
+@post("/api/v1/sessions/{session_id:str}/tags", status_code=200)
+async def session_queue_tag_route(
+    request: Request, session_id: str, db_path: Path,
+) -> dict | Response:
+    """Queue a pending tag against a live session.
+
+    Request body (JSON):
+      tags: list[str]              — required
+      entity_type: str             — "conversation" (default), "exchange",
+                                     "prompt", "response", "tool_call"
+      exchange_index: int | null   — 1-based; mutually exclusive with last_marker
+      last_marker: str | null      — "last_prompt" | "last_response" |
+                                     "last_exchange" | "last_tool_call"
+
+    Returns: {"queued": [...], "duplicate": [...]}.
+    """
+    from litestar.exceptions import PermissionDeniedException
+
+    from siftd.api import open_database
+    from siftd.api.sessions import queue_tag as _queue_tag
+    from siftd.serve.auth import require_write
+
+    require_write(request)
+
+    import json as json_mod
+
+    try:
+        body = json_mod.loads(await request.body())
+    except (json_mod.JSONDecodeError, ValueError):
+        return Response(content={"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return Response(content={"error": "request body must be a JSON object"}, status_code=400)
+
+    tag_names = body.get("tags") or []
+    if not tag_names or not isinstance(tag_names, list):
+        return Response(content={"error": "tags must be a non-empty list"}, status_code=400)
+
+    entity_type = str(body.get("entity_type") or "conversation")
+    exchange_index_raw = body.get("exchange_index")
+    last_marker = body.get("last_marker")
+    last_marker = str(last_marker) if last_marker is not None else None
+
+    try:
+        exchange_index = int(exchange_index_raw) if exchange_index_raw is not None else None
+    except (TypeError, ValueError):
+        return Response(content={"error": "exchange_index must be an integer"}, status_code=400)
+
+    if not db_path.exists():
+        return Response(
+            content={"error": f"Database not found: {db_path}"},
+            status_code=404,
+        )
+    conn = open_database(db_path)
+
+    try:
+        queued: list[str] = []
+        duplicate: list[str] = []
+        try:
+            for name in tag_names:
+                result = _queue_tag(
+                    conn, session_id, str(name),
+                    entity_type=entity_type,
+                    exchange_index=exchange_index,
+                    last_marker=last_marker,
+                    commit=False,
+                )
+                if result:
+                    queued.append(str(name))
+                else:
+                    duplicate.append(str(name))
+        except ValueError as e:
+            return Response(content={"error": str(e)}, status_code=400)
+        except PermissionError as e:
+            raise PermissionDeniedException(str(e)) from e
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"queued": queued, "duplicate": duplicate}
+
+
 @get("/api/v1/tool-search")
 async def tool_search_route(
     request: Request,
@@ -290,6 +396,7 @@ async def tool_search_route(
     tag: list[str] | None = Parameter(query="tag", default=None),
     all_tags: list[str] | None = Parameter(query="all_tags", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
     n: int = Parameter(query="n", default=20),
     owner: str | None = Parameter(query="owner", default=None),
 ) -> dict | Response:
@@ -301,7 +408,8 @@ async def tool_search_route(
         "/api/v1/tool-search", "GET", search_tool_calls,
         {"q": q, "db_path": db_path, "n": n, "workspace": workspace, "model": model,
          "since": since, "before": before, "tag": tag, "all_tags": all_tags,
-         "no_tag": no_tag, "tool": tool, "tool_tag": tool_tag, "owner": owner},
+         "no_tag": no_tag, "tag_kind": tag_kind, "tool": tool,
+         "tool_tag": tool_tag, "owner": owner},
         "tool_search", db_path,
     )
 
@@ -316,6 +424,7 @@ async def export_route(
     before: str | None = Parameter(query="before", default=None),
     tag: list[str] | None = Parameter(query="tag", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
     n: int = Parameter(query="n", default=0),
     owner: str | None = Parameter(query="owner", default=None),
 ) -> dict | Response:
@@ -326,7 +435,7 @@ async def export_route(
     return _dispatch(
         "/api/v1/export", "GET", export_conversations,
         {"id": id, "workspace": workspace, "since": since, "before": before,
-         "tag": tag, "no_tag": no_tag, "n": n, "db_path": db_path,
+         "tag": tag, "no_tag": no_tag, "tag_kind": tag_kind, "n": n, "db_path": db_path,
          "owner": owner},
         "export", db_path,
     )
@@ -404,6 +513,7 @@ async def pull(
     model: str | None = Parameter(query="model", default=None),
     tag: list[str] | None = Parameter(query="tag", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
     owner: str | None = Parameter(query="owner", default=None),
     dry_run: int = Parameter(query="dry_run", default=0),
 ) -> Response | File:
@@ -424,6 +534,7 @@ async def pull(
             before=before,
             tag=tag,
             no_tag=no_tag,
+            tag_kind=tag_kind,
             n=0,
             owner=owner,
         )
@@ -464,6 +575,7 @@ async def pull(
             model=model,
             tag=tag,
             no_tag=no_tag,
+            tag_kind=tag_kind,
             rebuild_fts=False,
             owner=owner,
         )
@@ -555,6 +667,7 @@ async def conversation_list(
     tag: list[str] | None = Parameter(query="tag", default=None),
     all_tags: list[str] | None = Parameter(query="all_tags", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
     tool: str | None = Parameter(query="tool", default=None),
     tool_tag: str | None = Parameter(query="tool_tag", default=None),
     search: str | None = Parameter(query="search", default=None),
@@ -571,7 +684,8 @@ async def conversation_list(
         {"db_path": db_path, "workspace": workspace, "model": model,
          "since": since, "before": before, "search": search, "tool": tool,
          "tag": tag, "all_tags": all_tags, "no_tag": no_tag,
-         "tool_tag": tool_tag, "n": n, "oldest": oldest, "owner": owner},
+         "tag_kind": tag_kind, "tool_tag": tool_tag,
+         "n": n, "oldest": oldest, "owner": owner},
         "list", db_path,
     )
 
@@ -599,6 +713,7 @@ async def search_route(
     tag: list[str] | None = Parameter(query="tag", default=None),
     all_tags: list[str] | None = Parameter(query="all_tags", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
     include_derivative: bool = Parameter(query="include_derivative", default=False),
     owner: str | None = Parameter(query="owner", default=None),
     debug_ids: bool = Parameter(query="debug_ids", default=False),
@@ -626,7 +741,8 @@ async def search_route(
              "recency_half_life": recency_half_life,
              "recency_max_boost": recency_max_boost,
              "threshold": threshold, "tag": tag, "all_tags": all_tags,
-             "no_tag": no_tag, "include_derivative": include_derivative,
+             "no_tag": no_tag, "tag_kind": tag_kind,
+             "include_derivative": include_derivative,
              "owner": owner, "raw_fts": raw_fts},
             "search", db_path,
             render_context={"debug_ids": debug_ids},

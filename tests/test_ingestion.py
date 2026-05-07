@@ -8,6 +8,7 @@ from siftd.adapters.sdk import AdapterParseError
 from siftd.ingestion.orchestration import (
     _compare_timestamps,
     _extract_first_text,
+    _get_last_event_id,
     _get_prompt_by_index,
     _get_single_conversation,
     _normalize_status,
@@ -218,3 +219,252 @@ class TestGetPromptByIndex:
             assert _get_prompt_by_index(conn, "any-conv-id", None) is None
         finally:
             conn.close()
+
+
+class TestGetLastEventId:
+    """_get_last_event_id picks the most-recent event of `kind`."""
+
+    def _seed(self, tmp_path):
+        from siftd.storage.sqlite import (
+            create_database, get_or_create_harness, get_or_create_model,
+            get_or_create_tool, get_or_create_workspace, insert_conversation,
+            insert_prompt, insert_response, insert_tool_call,
+        )
+        db_path = tmp_path / "events.db"
+        conn = create_database(db_path)
+        h = get_or_create_harness(conn, "h", source="t", log_format="jsonl")
+        ws = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+        m = get_or_create_model(conn, "m1")
+        t = get_or_create_tool(conn, "shell.execute")
+        c = insert_conversation(conn, external_id="c", harness_id=h,
+                                workspace_id=ws, started_at="2024-01-15T10:00:00Z")
+        # Two prompts/responses/tool_calls in chronological order
+        p1 = insert_prompt(conn, c, "p1", "2024-01-15T10:00:00Z")
+        r1 = insert_response(conn, c, p1, m, None, "r1", "2024-01-15T10:00:01Z")
+        tc1 = insert_tool_call(conn, r1, c, t, "tc1", "{}", "{}", "success",
+                               "2024-01-15T10:00:01Z")
+        p2 = insert_prompt(conn, c, "p2", "2024-01-15T11:00:00Z")
+        r2 = insert_response(conn, c, p2, m, None, "r2", "2024-01-15T11:00:01Z")
+        tc2 = insert_tool_call(conn, r2, c, t, "tc2", "{}", "{}", "success",
+                               "2024-01-15T11:00:01Z")
+        conn.commit()
+        return conn, c, p1, p2, r1, r2, tc1, tc2
+
+    def test_last_prompt(self, tmp_path):
+        conn, c, _p1, p2, *_ = self._seed(tmp_path)
+        try:
+            assert _get_last_event_id(conn, c, "prompt") == p2
+        finally:
+            conn.close()
+
+    def test_last_response(self, tmp_path):
+        conn, c, _p1, _p2, _r1, r2, *_ = self._seed(tmp_path)
+        try:
+            assert _get_last_event_id(conn, c, "response") == r2
+        finally:
+            conn.close()
+
+    def test_last_tool_call(self, tmp_path):
+        conn, c, *_, tc1, tc2 = self._seed(tmp_path)
+        del tc1
+        try:
+            assert _get_last_event_id(conn, c, "tool_call") == tc2
+        finally:
+            conn.close()
+
+    def test_empty_returns_none(self, tmp_path):
+        from siftd.storage.sqlite import (
+            create_database, get_or_create_harness, get_or_create_workspace,
+            insert_conversation,
+        )
+        db_path = tmp_path / "empty.db"
+        conn = create_database(db_path)
+        h = get_or_create_harness(conn, "h", source="t", log_format="jsonl")
+        ws = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+        c = insert_conversation(conn, external_id="c", harness_id=h,
+                                workspace_id=ws, started_at="2024-01-15T10:00:00Z")
+        try:
+            assert _get_last_event_id(conn, c, "response") is None
+        finally:
+            conn.close()
+
+
+class TestApplyPendingTagsLastMarkers:
+    """End-to-end: pending tags with last_marker apply to the right event at ingest."""
+
+    def test_last_response_lands_on_most_recent_response(self, tmp_path):
+        from siftd.api.sessions import queue_tag as api_queue_tag
+        from siftd.ingestion.orchestration import _apply_pending_tags
+        from siftd.storage.sessions import register_session
+        from siftd.storage.sqlite import (
+            create_database, get_or_create_harness, get_or_create_model,
+            get_or_create_workspace, insert_conversation, insert_prompt,
+            insert_response,
+        )
+
+        db_path = tmp_path / "lm.db"
+        conn = create_database(db_path)
+        h = get_or_create_harness(conn, "claude_code", source="t", log_format="jsonl")
+        ws = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+        m = get_or_create_model(conn, "m1")
+
+        sid = "session-xyz"
+        register_session(conn, sid, "claude_code", "/p")
+        c = insert_conversation(conn, external_id=sid, harness_id=h,
+                                workspace_id=ws, started_at="2024-01-15T10:00:00Z")
+        p1 = insert_prompt(conn, c, "p1", "2024-01-15T10:00:00Z")
+        r1 = insert_response(conn, c, p1, m, None, "r1", "2024-01-15T10:00:01Z")
+        p2 = insert_prompt(conn, c, "p2", "2024-01-15T11:00:00Z")
+        r2 = insert_response(conn, c, p2, m, None, "r2", "2024-01-15T11:00:01Z")
+        del p1, p2, r1  # silence unused
+
+        api_queue_tag(conn, sid, "review-me",
+                      entity_type="response", last_marker="last_response")
+
+        # Build a minimal adapter stub recognized by _apply_pending_tags
+        class _Adapter:
+            SUPPORTS_LIVE_REGISTRATION = True
+
+        class _Conv:
+            external_id = sid
+
+        applied = _apply_pending_tags(conn, _Adapter(), _Conv(), c)
+        conn.commit()
+
+        assert applied == 1
+        # Tag should be on r2 (the most recent response), not r1
+        row = conn.execute(
+            "SELECT ta.target_kind, ta.target_id FROM tag_assignments ta "
+            "JOIN tags t ON t.id = ta.tag_id WHERE t.name = 'review-me'",
+        ).fetchone()
+        assert row is not None
+        assert row["target_kind"] == "response"
+        assert row["target_id"] == r2
+        conn.close()
+
+    def test_last_prompt_lands_on_most_recent_prompt(self, tmp_path):
+        from siftd.api.sessions import queue_tag as api_queue_tag
+        from siftd.ingestion.orchestration import _apply_pending_tags
+        from siftd.storage.sessions import register_session
+        from siftd.storage.sqlite import (
+            create_database, get_or_create_harness, get_or_create_workspace,
+            insert_conversation, insert_prompt,
+        )
+
+        db_path = tmp_path / "lm2.db"
+        conn = create_database(db_path)
+        h = get_or_create_harness(conn, "claude_code", source="t", log_format="jsonl")
+        ws = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+        sid = "s2"
+        register_session(conn, sid, "claude_code", "/p")
+        c = insert_conversation(conn, external_id=sid, harness_id=h,
+                                workspace_id=ws, started_at="2024-01-15T10:00:00Z")
+        p1 = insert_prompt(conn, c, "p1", "2024-01-15T10:00:00Z")
+        p2 = insert_prompt(conn, c, "p2", "2024-01-15T11:00:00Z")
+        del p1
+
+        api_queue_tag(conn, sid, "decision:auth",
+                      entity_type="prompt", last_marker="last_prompt")
+
+        class _Adapter:
+            SUPPORTS_LIVE_REGISTRATION = True
+
+        class _Conv:
+            external_id = sid
+
+        applied = _apply_pending_tags(conn, _Adapter(), _Conv(), c)
+        conn.commit()
+        assert applied == 1
+        row = conn.execute(
+            "SELECT ta.target_kind, ta.target_id FROM tag_assignments ta "
+            "JOIN tags t ON t.id = ta.tag_id WHERE t.name = 'decision:auth'",
+        ).fetchone()
+        assert row["target_kind"] == "prompt"
+        assert row["target_id"] == p2
+        conn.close()
+
+    def test_last_exchange_anchors_on_most_recent_prompt(self, tmp_path):
+        """last_exchange resolves to the most recent prompt event but tags it
+        as target_kind='exchange' (the polymorphic exchange anchor)."""
+        from siftd.api.sessions import queue_tag as api_queue_tag
+        from siftd.ingestion.orchestration import _apply_pending_tags
+        from siftd.storage.sessions import register_session
+        from siftd.storage.sqlite import (
+            create_database, get_or_create_harness, get_or_create_workspace,
+            insert_conversation, insert_prompt,
+        )
+
+        db_path = tmp_path / "lm_exchange.db"
+        conn = create_database(db_path)
+        h = get_or_create_harness(conn, "claude_code", source="t", log_format="jsonl")
+        ws = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+        sid = "s-exchange"
+        register_session(conn, sid, "claude_code", "/p")
+        c = insert_conversation(conn, external_id=sid, harness_id=h,
+                                workspace_id=ws, started_at="2024-01-15T10:00:00Z")
+        p1 = insert_prompt(conn, c, "p1", "2024-01-15T10:00:00Z")
+        p2 = insert_prompt(conn, c, "p2", "2024-01-15T11:00:00Z")
+        del p1
+
+        api_queue_tag(conn, sid, "key-insight",
+                      entity_type="exchange", last_marker="last_exchange")
+
+        class _Adapter:
+            SUPPORTS_LIVE_REGISTRATION = True
+
+        class _Conv:
+            external_id = sid
+
+        applied = _apply_pending_tags(conn, _Adapter(), _Conv(), c)
+        conn.commit()
+
+        assert applied == 1
+        # Tag should land on p2 (most recent prompt) with target_kind='exchange'
+        row = conn.execute(
+            "SELECT ta.target_kind, ta.target_id FROM tag_assignments ta "
+            "JOIN tags t ON t.id = ta.tag_id WHERE t.name = 'key-insight'",
+        ).fetchone()
+        assert row is not None
+        assert row["target_kind"] == "exchange"
+        assert row["target_id"] == p2
+        conn.close()
+
+    def test_no_matching_event_skips_tag(self, tmp_path):
+        """Tag with last_tool_call but no tool_calls in the conversation: skip."""
+        from siftd.api.sessions import queue_tag as api_queue_tag
+        from siftd.ingestion.orchestration import _apply_pending_tags
+        from siftd.storage.sessions import register_session
+        from siftd.storage.sqlite import (
+            create_database, get_or_create_harness, get_or_create_workspace,
+            insert_conversation, insert_prompt,
+        )
+
+        db_path = tmp_path / "lm3.db"
+        conn = create_database(db_path)
+        h = get_or_create_harness(conn, "claude_code", source="t", log_format="jsonl")
+        ws = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+        sid = "s3"
+        register_session(conn, sid, "claude_code", "/p")
+        c = insert_conversation(conn, external_id=sid, harness_id=h,
+                                workspace_id=ws, started_at="2024-01-15T10:00:00Z")
+        insert_prompt(conn, c, "p1", "2024-01-15T10:00:00Z")
+
+        api_queue_tag(conn, sid, "slow",
+                      entity_type="tool_call", last_marker="last_tool_call")
+
+        class _Adapter:
+            SUPPORTS_LIVE_REGISTRATION = True
+
+        class _Conv:
+            external_id = sid
+
+        applied = _apply_pending_tags(conn, _Adapter(), _Conv(), c)
+        conn.commit()
+        assert applied == 0
+        # No tag assignment created
+        row = conn.execute(
+            "SELECT 1 FROM tag_assignments ta "
+            "JOIN tags t ON t.id = ta.tag_id WHERE t.name = 'slow'",
+        ).fetchone()
+        assert row is None
+        conn.close()
