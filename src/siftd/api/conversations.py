@@ -1119,22 +1119,21 @@ def resolve_entity_id(
         ).fetchone()
     elif entity_type == "workspace":
         row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
-    elif entity_type == "tool_call":
+    elif entity_type in ("tool_call", "prompt", "response"):
+        # Phase 4: extend prefix-match to event kinds so smart-routed
+        # `siftd query <event_prefix>` works the same as conversation IDs.
+        kind = entity_type
         row = conn.execute(
-            "SELECT id FROM events WHERE id = ? AND kind = 'tool_call'", (entity_id,)
-        ).fetchone()
-    elif entity_type == "prompt":
-        row = conn.execute(
-            "SELECT id FROM events WHERE id = ? AND kind = 'prompt'", (entity_id,)
-        ).fetchone()
-    elif entity_type == "response":
-        row = conn.execute(
-            "SELECT id FROM events WHERE id = ? AND kind = 'response'", (entity_id,)
+            "SELECT id FROM events"
+            " WHERE (id = ? OR id LIKE ?) AND kind = ?",
+            (entity_id, f"{entity_id}%", kind),
         ).fetchone()
     elif entity_type == "exchange":
         # exchange uses a prompt event as anchor
         row = conn.execute(
-            "SELECT id FROM events WHERE id = ? AND kind = 'prompt'", (entity_id,)
+            "SELECT id FROM events"
+            " WHERE (id = ? OR id LIKE ?) AND kind = 'prompt'",
+            (entity_id, f"{entity_id}%"),
         ).fetchone()
     else:
         return None

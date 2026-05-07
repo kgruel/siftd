@@ -107,6 +107,7 @@ async def index() -> dict:
             {"method": "GET", "path": "/api/v1/export", "description": "Export full conversations"},
             {"method": "POST", "path": "/api/v1/tag", "description": "Apply, remove, rename, or delete tags"},
             {"method": "POST", "path": "/api/v1/sessions/{id}/tags", "description": "Queue a pending tag for a live session"},
+            {"method": "GET", "path": "/api/v1/events/{id}", "description": "Get a single event by ID"},
         ],
     }
 
@@ -275,6 +276,28 @@ async def tag_write_route(request: Request, db_path: Path) -> dict | Response:
     except Exception:
         pass
     return payload
+
+
+@get("/api/v1/events/{event_id:str}")
+async def event_detail_route(
+    request: Request, event_id: str, db_path: Path,
+    neighbors: bool = Parameter(query="neighbors", default=False),
+) -> dict | Response:
+    """Return a single event by ID (Phase 4)."""
+    from siftd.api.events import get_event
+    from siftd.serialization.events import serialize_event_detail
+
+    del request  # unused; auth middleware enforces read access
+
+    try:
+        detail = get_event(
+            event_id, db_path=db_path, include_neighbors=neighbors,
+        )
+    except FileNotFoundError as e:
+        return Response(content={"error": str(e)}, status_code=404)
+    if detail is None:
+        return Response(content={"error": "event not found"}, status_code=404)
+    return serialize_event_detail(detail)
 
 
 @post("/api/v1/sessions/{session_id:str}/tags", status_code=200)

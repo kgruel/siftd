@@ -352,7 +352,8 @@
                      [-t NAME] [--tool-tag NAME] [--owner USER] [-n LIMIT] [-v]
                      [--oldest] [--json] [--stats] [--exchanges N] [-b]
                      [--summary] [-F] [--chars N] [--thinking]
-                     [--tools [FILTER]] [--tool-chars N] [--var KEY=VALUE]
+                     [--tools [FILTER]] [--tool-chars N] [--neighbors]
+                     [--var KEY=VALUE]
                      [conversation_id] [sql_name]
   
   positional arguments:
@@ -403,6 +404,8 @@
                           prefix or 'errors')
     --tool-chars N        Truncate tool input/result at N characters (default:
                           120)
+    --neighbors           Include prev_event_id/next_event_id in event detail
+                          output
   
   sql queries:
     --var KEY=VALUE       Substitute $KEY with VALUE in SQL

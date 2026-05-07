@@ -149,6 +149,102 @@ def cmd_tools(args) -> int:
 
 
 
+def _id_resolves_to_event(args) -> bool:
+    """Cheap probe: does args.conversation_id resolve to an event (not a conversation)?
+
+    Tries conversation prefix-match first; if it doesn't hit, checks events.
+    Returns False on any DB error so the caller falls through to the
+    conversation path with its own error reporting.
+    """
+    from siftd.api import open_database, resolve_entity_id
+
+    db = resolve_db(args)
+    if not db or not db.exists():
+        return False
+    try:
+        conn = open_database(db, read_only=True)
+    except Exception:
+        return False
+    try:
+        if resolve_entity_id(conn, "conversation", args.conversation_id):
+            return False
+        # Try each event kind via the polymorphic resolver
+        for kind in ("response", "tool_call", "prompt"):
+            if resolve_entity_id(conn, kind, args.conversation_id):
+                return True
+        return False
+    finally:
+        conn.close()
+
+
+def _query_event_detail(args) -> int:
+    """Show event detail (Phase 4): kind-specific JSON or a compact text view."""
+    import json as _json
+
+    from siftd.api.events import get_event
+
+    db = Path(args.db) if args.db else None
+    effective_db = db or resolve_db(args)
+
+    include_neighbors = getattr(args, "neighbors", False)
+
+    try:
+        detail = get_event(
+            args.conversation_id,
+            db_path=effective_db,
+            include_content=True,
+            include_neighbors=include_neighbors,
+        )
+    except FileNotFoundError as e:
+        print(str(e))
+        print("Run 'siftd ingest' to create it.")
+        return 1
+
+    if not detail:
+        print(f"Event not found: {args.conversation_id}")
+        return 1
+
+    if getattr(args, "json", False):
+        print(_json.dumps(detail.to_dict(), indent=2))
+        return 0
+
+    # Compact text rendering — keep it minimal; agents will use --json.
+    print(f"Event: {detail.id}")
+    print(f"Kind: {detail.kind}")
+    print(f"Conversation: {detail.conversation_id}")
+    if detail.parent_id:
+        print(f"Parent: {detail.parent_id}")
+    if detail.external_id:
+        print(f"External ID: {detail.external_id}")
+    if detail.timestamp:
+        print(f"Timestamp: {detail.timestamp}")
+    if detail.tags:
+        print(f"Tags: {', '.join(detail.tags)}")
+    if detail.kind == "response" and detail.kind_specific:
+        ks = detail.kind_specific
+        if ks.get("model"):
+            print(f"Model: {ks['model']}")
+        toks = (ks.get("input_tokens") or 0, ks.get("output_tokens") or 0)
+        if any(toks):
+            print(f"Tokens: {toks[0]} in / {toks[1]} out")
+        children = ks.get("tool_calls") or []
+        if children:
+            print(f"Tool calls: {len(children)}")
+    if detail.kind == "tool_call" and detail.kind_specific:
+        ks = detail.kind_specific
+        if ks.get("tool_name"):
+            print(f"Tool: {ks['tool_name']} ({ks.get('status') or 'unknown'})")
+    if include_neighbors and detail.neighbors:
+        nb = detail.neighbors
+        if nb.get("prev_event_id"):
+            print(f"Prev: {nb['prev_event_id']}")
+        if nb.get("next_event_id"):
+            print(f"Next: {nb['next_event_id']}")
+    if detail.content_blocks:
+        print(f"Content blocks: {len(detail.content_blocks)}")
+    return 0
+
+
 def _query_detail(args) -> int:
     """Show conversation detail timeline."""
     from siftd.api import get_conversation
@@ -327,8 +423,12 @@ def cmd_query(args) -> int:
     if args.conversation_id == "sql":
         return _query_sql(args)
 
-    # Dispatch to detail view if conversation ID provided
+    # Dispatch to detail view if an ID was provided. Smart-route between
+    # conversation detail and event detail based on which kind the ID
+    # resolves to (Phase 4: events get the same prefix-match resolver).
     if args.conversation_id:
+        if _id_resolves_to_event(args):
+            return _query_event_detail(args)
         return _query_detail(args)
 
     from dataclasses import asdict
@@ -526,6 +626,8 @@ examples:
         help="Show tool inputs/results (optional filter: tool name prefix or 'errors')")
     detail_group.add_argument("--tool-chars", type=int, metavar="N", default=None,
         help="Truncate tool input/result at N characters (default: 120)")
+    detail_group.add_argument("--neighbors", action="store_true",
+        help="Include prev_event_id/next_event_id in event detail output")
 
     # SQL query options
     sql_group = p_query.add_argument_group("sql queries")
