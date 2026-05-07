@@ -6,13 +6,19 @@ from pathlib import Path
 
 @dataclass
 class PeekToolCall:
-    """Tool call detail for peek narrative rendering."""
+    """Tool call detail for peek narrative rendering.
+
+    external_id (when surfaced by the adapter) is the tool_use id from the
+    harness JSONL — useful for matching live tool calls before ingest. The
+    internal events.id ULID does not exist for live sessions.
+    """
 
     tool_name: str
     count: int = 1
     input: str | None = None
     result: str | None = None
     status: str = "success"
+    external_id: str | None = None
 
 
 @dataclass
@@ -39,7 +45,13 @@ class PeekScanResult:
 
 @dataclass
 class PeekExchange:
-    """A single user→assistant exchange for detail view."""
+    """A single user→assistant exchange for detail view.
+
+    External IDs (prompt_external_id, response_external_ids, tool_use_ids)
+    are the harness-level identifiers from the live session log. Internal
+    ULIDs do not exist pre-ingest; consumers needing internal ids must
+    wait until the session is ingested and use Phase 4's get_event API.
+    """
 
     timestamp: str | None = None
     prompt_text: str | None = None
@@ -48,6 +60,9 @@ class PeekExchange:
     narrative: list[PeekNarrativeBlock] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
+    prompt_external_id: str | None = None
+    response_external_ids: list[str] = field(default_factory=list)
+    tool_use_ids: list[str] = field(default_factory=list)
 
 
 @dataclass

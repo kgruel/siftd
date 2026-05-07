@@ -124,19 +124,21 @@ class TestJsonRenderSearch:
         )
 
         chunk = result["results"][0]
-        assert "chunk_id" not in chunk
-        assert "source_ids" not in chunk
+        # Phase 2: chunk_id and source_ids are now default-on
+        assert "chunk_id" in chunk
+        assert "source_ids" in chunk
         assert "conversation_id" in chunk
         assert "score" in chunk
         assert "chunk_type" in chunk
         assert "text" in chunk
         assert "conversation" in chunk
 
-    def test_includes_internal_ids_when_debug_ids(self, enriched_results):
+    def test_debug_ids_is_noop(self, enriched_results):
+        """Phase 2: debug_ids kwarg accepted but no longer gates output."""
         from siftd.output import json_fmt
 
         result = json_fmt.render_search(
-            enriched_results, Fidelity(), query="caching", mode="chunks", debug_ids=True
+            enriched_results, Fidelity(), query="caching", mode="chunks", debug_ids=False,
         )
 
         chunk = result["results"][0]

@@ -32,18 +32,21 @@ class MarkdownEmitter:
     def __init__(self) -> None:
         self.lines: list[str] = []
 
-    def text(self, content: str) -> None:
+    def text(self, content: str, *, event_id: str | None = None) -> None:
+        del event_id
         self.lines.append(content)
         self.lines.append("")
 
-    def thinking(self, content: str) -> None:
+    def thinking(self, content: str, *, event_id: str | None = None) -> None:
+        del event_id
         self.lines.append("> **Thinking**")
         self.lines.append(">")
         for line in content.split("\n"):
             self.lines.append(f"> {line}")
         self.lines.append("")
 
-    def thinking_placeholder(self) -> None:
+    def thinking_placeholder(self, *, event_id: str | None = None) -> None:
+        del event_id
         self.lines.append("*[thinking]*")
         self.lines.append("")
 
@@ -64,7 +67,11 @@ class MarkdownEmitter:
         raw_input: str | None,
         raw_result: str | None,
         status: str | None,
+        *,
+        event_id: str | None = None,
+        tool_call_id: str | None = None,
     ) -> None:
+        del event_id, tool_call_id
         count_suffix = f" ×{count}" if count > 1 else ""
         status_suffix = f" ({status})" if status and status != "success" else ""
         header = f"- **{name}**{count_suffix}{status_suffix}"
@@ -84,7 +91,8 @@ class MarkdownEmitter:
             for rline in result_text.split("\n"):
                 self.lines.append(f"  {rline}")
 
-    def tool_output(self, block_type: str, content: str) -> None:
+    def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
+        del event_id
         self.lines.append(f"```\n{content}\n```")
         self.lines.append("")
 
@@ -102,7 +110,8 @@ class HtmlEmitter:
         self._escape = escape
         self.parts: list[str] = []
 
-    def text(self, content: str) -> None:
+    def text(self, content: str, *, event_id: str | None = None) -> None:
+        del event_id
         try:
             import mistune
 
@@ -119,7 +128,8 @@ class HtmlEmitter:
                         f'<p class="narrative-text">{self._escape(stripped)}</p>'
                     )
 
-    def thinking(self, content: str) -> None:
+    def thinking(self, content: str, *, event_id: str | None = None) -> None:
+        del event_id
         self.parts.append(
             f'<details class="thinking" open>'
             f"<summary>Thinking</summary>"
@@ -127,7 +137,8 @@ class HtmlEmitter:
             f"</details>"
         )
 
-    def thinking_placeholder(self) -> None:
+    def thinking_placeholder(self, *, event_id: str | None = None) -> None:
+        del event_id
         self.parts.append('<span class="thinking placeholder">[thinking]</span>')
 
     def tool_summary(self, tools: list[tuple[str, int, str | None]]) -> None:
@@ -176,7 +187,11 @@ class HtmlEmitter:
         raw_input: str | None,
         raw_result: str | None,
         status: str | None,
+        *,
+        event_id: str | None = None,
+        tool_call_id: str | None = None,
     ) -> None:
+        del event_id, tool_call_id
         from siftd.output.tool_presenters import extract_tool_presentation
 
         e = self._escape
@@ -248,7 +263,8 @@ class HtmlEmitter:
         parts.append("</details>" if has_content else "</div>")
         self.parts.append("\n".join(parts))
 
-    def tool_output(self, block_type: str, content: str) -> None:
+    def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
+        del block_type, event_id
         self.parts.append(
             f'<pre class="tool-result">{self._escape(content)}</pre>'
         )

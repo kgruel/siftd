@@ -21,17 +21,20 @@ class NarrativeEmitter(Protocol):
 
     Emitters accumulate output in their preferred format
     (painted Lines, markdown strings, JSON dicts, etc.).
+
+    Methods take optional event_id / tool_call_id kwargs so JSON output
+    can address individual events. Painted/markdown emitters ignore them.
     """
 
-    def text(self, content: str) -> None:
+    def text(self, content: str, *, event_id: str | None = None) -> None:
         """Emit a text content block."""
         ...
 
-    def thinking(self, content: str) -> None:
+    def thinking(self, content: str, *, event_id: str | None = None) -> None:
         """Emit expanded thinking content."""
         ...
 
-    def thinking_placeholder(self) -> None:
+    def thinking_placeholder(self, *, event_id: str | None = None) -> None:
         """Emit a thinking placeholder (thinking exists but not expanded)."""
         ...
 
@@ -50,6 +53,9 @@ class NarrativeEmitter(Protocol):
         raw_input: str | None,
         raw_result: str | None,
         status: str | None,
+        *,
+        event_id: str | None = None,
+        tool_call_id: str | None = None,
     ) -> None:
         """Emit detailed tool call content (input/result).
 
@@ -57,7 +63,7 @@ class NarrativeEmitter(Protocol):
         """
         ...
 
-    def tool_output(self, block_type: str, content: str) -> None:
+    def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
         """Emit tool_result or tool_output content."""
         ...
 
@@ -132,6 +138,7 @@ def walk_narrative(
     for block in blocks:
         block_type = getattr(block, "block_type", "")
         content = getattr(block, "content", None) or ""
+        block_event_id = getattr(block, "event_id", None)
 
         if block_type == "text":
             _flush()
@@ -139,12 +146,12 @@ def walk_narrative(
             if text:
                 if chars_limit > 0:
                     text = _truncate(text, chars_limit)
-                emitter.text(text)
+                emitter.text(text, event_id=block_event_id)
 
         elif block_type == "thinking":
             if show_thinking and content.strip():
                 _flush()
-                emitter.thinking(content.strip())
+                emitter.thinking(content.strip(), event_id=block_event_id)
             elif content:
                 pending_has_thinking = True
 
@@ -159,6 +166,8 @@ def walk_narrative(
                         getattr(tc, "input", None),
                         getattr(tc, "result", None),
                         getattr(tc, "status", None),
+                        event_id=block_event_id,
+                        tool_call_id=getattr(tc, "tool_call_id", None),
                     )
             else:
                 pending_tools.extend(tool_calls)
@@ -166,7 +175,7 @@ def walk_narrative(
         elif block_type in ("tool_result", "tool_output"):
             if show_tools and content.strip():
                 _flush()
-                emitter.tool_output(block_type, content.strip())
+                emitter.tool_output(block_type, content.strip(), event_id=block_event_id)
 
     _flush()
 
@@ -174,20 +183,30 @@ def walk_narrative(
 class JsonEmitter:
     """Emits narrative as JSON-serializable dicts.
 
-    Accumulates into self.blocks: list[dict].
+    Accumulates into self.blocks: list[dict]. Event IDs are emitted
+    default-on so JSON consumers can address individual events.
     """
 
     def __init__(self) -> None:
         self.blocks: list[dict] = []
 
-    def text(self, content: str) -> None:
-        self.blocks.append({"type": "text", "content": content})
+    def text(self, content: str, *, event_id: str | None = None) -> None:
+        d: dict = {"type": "text", "content": content}
+        if event_id:
+            d["event_id"] = event_id
+        self.blocks.append(d)
 
-    def thinking(self, content: str) -> None:
-        self.blocks.append({"type": "thinking", "content": content})
+    def thinking(self, content: str, *, event_id: str | None = None) -> None:
+        d: dict = {"type": "thinking", "content": content}
+        if event_id:
+            d["event_id"] = event_id
+        self.blocks.append(d)
 
-    def thinking_placeholder(self) -> None:
-        self.blocks.append({"type": "thinking"})
+    def thinking_placeholder(self, *, event_id: str | None = None) -> None:
+        d: dict = {"type": "thinking"}
+        if event_id:
+            d["event_id"] = event_id
+        self.blocks.append(d)
 
     def tool_summary(self, tools: list[tuple[str, int, str | None]]) -> None:
         self.blocks.append({
@@ -205,6 +224,9 @@ class JsonEmitter:
         raw_input: str | None,
         raw_result: str | None,
         status: str | None,
+        *,
+        event_id: str | None = None,
+        tool_call_id: str | None = None,
     ) -> None:
         d: dict = {"name": name, "count": count}
         if status:
@@ -213,7 +235,14 @@ class JsonEmitter:
             d["input"] = raw_input
         if raw_result:
             d["result"] = raw_result
+        if tool_call_id:
+            d["tool_call_id"] = tool_call_id
+        if event_id:
+            d["event_id"] = event_id
         self.blocks.append({"type": "tool_call", **d})
 
-    def tool_output(self, block_type: str, content: str) -> None:
-        self.blocks.append({"type": block_type, "content": content})
+    def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
+        d: dict = {"type": block_type, "content": content}
+        if event_id:
+            d["event_id"] = event_id
+        self.blocks.append(d)

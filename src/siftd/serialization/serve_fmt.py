@@ -86,18 +86,21 @@ def render_tools_by_workspace(results: list, fidelity: Fidelity) -> dict:
     }
 
 
-def render_search(results: list, fidelity: Fidelity, debug_ids: bool = False) -> dict:
-    """Serialize SearchResult list to JSON-safe dict."""
+def render_search(results: list, fidelity: Fidelity, debug_ids: bool = True) -> dict:
+    """Serialize SearchResult list to JSON-safe dict.
+
+    chunk_id and source_ids are now emitted by default (Phase 2). The
+    debug_ids kwarg is kept for backward compatibility but no longer gates
+    them — pass it as False only if you have a downstream consumer that
+    fails on unexpected fields.
+    """
+    del debug_ids
     serialized = []
     for r in results:
         if isinstance(r, dict):
             serialized.append(r)
         else:
-            d = dataclasses.asdict(r)
-            if not debug_ids:
-                d.pop("chunk_id", None)
-                d.pop("source_ids", None)
-            serialized.append(d)
+            serialized.append(dataclasses.asdict(r))
     return {
         "result_count": len(serialized),
         "results": serialized,

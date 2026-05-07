@@ -51,6 +51,7 @@ class ToolCallDetail:
     count: int = 1
     input: str | None = None
     result: str | None = None
+    tool_call_id: str | None = None
 
 
 @dataclass
@@ -60,6 +61,7 @@ class NarrativeBlock:
     block_type: str  # "text", "thinking", "tool_calls", "tool_result", "tool_output"
     content: str | None = None
     tool_calls: list[ToolCallDetail] = field(default_factory=list)
+    event_id: str | None = None
 
 
 @dataclass
@@ -74,6 +76,9 @@ class Turn:
     _tool_call_summaries: list[ToolCallSummary] = field(
         default_factory=list, repr=False,
     )
+    prompt_id: str | None = None
+    response_ids: list[str] = field(default_factory=list)
+    tool_call_ids: list[str] = field(default_factory=list)
 
     @property
     def response_text(self) -> str | None:
@@ -529,6 +534,7 @@ def get_conversation(
                     prompt_text=prompt_text or None,
                     total_input_tokens=0,
                     total_output_tokens=0,
+                    prompt_id=prompt_id,
                 )
             )
             continue
@@ -551,6 +557,9 @@ def get_conversation(
             all_tcs.extend(tc_by_response.get(r["id"], []))
         tool_summaries = _collapse_tool_call_rows(all_tcs)
 
+        turn_response_ids = [r["id"] for r in prompt_responses]
+        turn_tool_call_ids = [tcid for tcid in (_row_get(tc, "tool_call_id") for tc in all_tcs) if tcid]
+
         turns.append(
             Turn(
                 timestamp=p["timestamp"],
@@ -559,6 +568,9 @@ def get_conversation(
                 total_output_tokens=turn_output,
                 narrative=narrative,
                 _tool_call_summaries=tool_summaries,
+                prompt_id=prompt_id,
+                response_ids=turn_response_ids,
+                tool_call_ids=turn_tool_call_ids,
             )
         )
 
@@ -577,6 +589,16 @@ def get_conversation(
         turns=turns,
         tags=tags,
     )
+
+
+def _row_get(row, key: str, default=None):
+    """Get a value from a sqlite3.Row or dict by key, with a default if absent."""
+    try:
+        if hasattr(row, "keys") and key not in row.keys():
+            return default
+        return row[key]
+    except (KeyError, IndexError):
+        return default
 
 
 def _matches_tool_filter(tool_name: str, status: str, tool_filter: str | None) -> bool:
@@ -654,46 +676,43 @@ def _build_narrative(
         # Accumulate consecutive tool calls for collapsing
         pending_tools: list[ToolCallDetail] = []
 
+        def _flush_tools(narrative=narrative, resp_id=resp_id):
+            nonlocal pending_tools
+            if pending_tools:
+                narrative.append(NarrativeBlock(
+                    block_type="tool_calls",
+                    tool_calls=_collapse_tool_details(
+                        pending_tools,
+                        collapse=not include_tool_content,
+                    ),
+                    event_id=resp_id,
+                ))
+                pending_tools = []
+
         for block in content_blocks:
             block_type = block["block_type"]
 
             if block_type == "text":
-                # Flush any pending tool calls before text
-                if pending_tools:
-                    narrative.append(NarrativeBlock(
-                        block_type="tool_calls",
-                        tool_calls=_collapse_tool_details(
-                            pending_tools,
-                            collapse=not include_tool_content,
-                        ),
-                    ))
-                    pending_tools = []
+                _flush_tools()
 
                 text = _extract_text(block["content"])
                 if text.strip():
                     narrative.append(NarrativeBlock(
                         block_type="text",
                         content=text,
+                        event_id=resp_id,
                     ))
 
             elif block_type == "thinking":
                 if include_thinking:
-                    # Flush pending tool calls
-                    if pending_tools:
-                        narrative.append(NarrativeBlock(
-                            block_type="tool_calls",
-                            tool_calls=_collapse_tool_details(
-                                pending_tools,
-                                collapse=not include_tool_content,
-                            ),
-                        ))
-                        pending_tools = []
+                    _flush_tools()
 
                     text = _extract_thinking(block["content"])
                     if text.strip():
                         narrative.append(NarrativeBlock(
                             block_type="thinking",
                             content=text,
+                            event_id=resp_id,
                         ))
 
             elif block_type == "tool_use":
@@ -727,37 +746,23 @@ def _build_narrative(
                             status=status,
                             input=tc["input"] if include_tool_content else None,
                             result=tc["result"] if include_tool_content else None,
+                            tool_call_id=_row_get(tc, "tool_call_id"),
                         )
                         pending_tools.append(detail)
 
             elif block_type in ("tool_result", "tool_output"):
-                # Flush any pending tool calls before tool output
-                if pending_tools:
-                    narrative.append(NarrativeBlock(
-                        block_type="tool_calls",
-                        tool_calls=_collapse_tool_details(
-                            pending_tools,
-                            collapse=not include_tool_content,
-                        ),
-                    ))
-                    pending_tools = []
+                _flush_tools()
 
                 text = _extract_tool_result(block["content"])
                 if text.strip():
                     narrative.append(NarrativeBlock(
                         block_type=block_type,
                         content=text,
+                        event_id=resp_id,
                     ))
 
         # Flush remaining tool calls
-        if pending_tools:
-            narrative.append(NarrativeBlock(
-                block_type="tool_calls",
-                tool_calls=_collapse_tool_details(
-                    pending_tools,
-                    collapse=not include_tool_content,
-                ),
-            ))
+        _flush_tools()
 
     return narrative
 
@@ -839,6 +844,7 @@ def _collapse_tool_details(
                 count=count,
                 input=prev.input,
                 result=prev.result,
+                tool_call_id=prev.tool_call_id if count == 1 else None,
             ))
             prev = tc
             count = 1
@@ -849,6 +855,7 @@ def _collapse_tool_details(
         count=count,
         input=prev.input,
         result=prev.result,
+        tool_call_id=prev.tool_call_id if count == 1 else None,
     ))
     return collapsed
 

@@ -675,6 +675,150 @@ class TestListConversationsPolymorphicTags:
         assert ids == {a, b, c}
 
 
+class TestGetConversationEventIds:
+    """get_conversation must surface prompt_id/response_ids/tool_call_ids on Turn."""
+
+    @pytest.fixture
+    def db_with_event_ids(self, tmp_path):
+        from siftd.storage.sqlite import (
+            create_database, get_or_create_harness, get_or_create_model,
+            get_or_create_tool, get_or_create_workspace, insert_conversation,
+            insert_prompt, insert_prompt_content, insert_response,
+            insert_response_content, insert_tool_call,
+        )
+
+        db_path = tmp_path / "events.db"
+        conn = create_database(db_path)
+        h = get_or_create_harness(conn, "h", source="t", log_format="jsonl")
+        ws = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+        m = get_or_create_model(conn, "claude-3-opus")
+        t = get_or_create_tool(conn, "shell.execute")
+
+        c = insert_conversation(conn, external_id="x", harness_id=h,
+                                workspace_id=ws, started_at="2024-01-15T10:00:00Z")
+
+        p1 = insert_prompt(conn, c, "p1", "2024-01-15T10:00:00Z")
+        insert_prompt_content(conn, p1, 0, "text", '{"text": "do thing"}')
+        r1 = insert_response(conn, c, p1, m, None, "r1",
+                             "2024-01-15T10:00:01Z", input_tokens=10, output_tokens=5)
+        insert_response_content(conn, r1, 0, "text", '{"text": "result text"}')
+        insert_response_content(conn, r1, 1, "tool_use",
+                                '{"id": "toolu_1", "name": "shell.execute", "input": {"command": "ls"}}')
+        tc1 = insert_tool_call(conn, r1, c, t, "toolu_1",
+                               '{"command": "ls"}', '{}', "success", "2024-01-15T10:00:01Z")
+
+        p2 = insert_prompt(conn, c, "p2", "2024-01-15T10:01:00Z")
+        insert_prompt_content(conn, p2, 0, "text", '{"text": "next"}')
+
+        conn.commit()
+        conn.close()
+        return db_path, c, p1, r1, tc1, p2
+
+    def test_turn_carries_event_ids(self, db_with_event_ids):
+        db, _c, p1, r1, tc1, p2 = db_with_event_ids
+        detail = get_conversation(_c, db_path=db, include_tool_content=True)
+        assert detail is not None
+        assert len(detail.turns) == 2
+
+        t1 = detail.turns[0]
+        assert t1.prompt_id == p1
+        assert t1.response_ids == [r1]
+        assert t1.tool_call_ids == [tc1]
+
+        # Empty-response turn still carries prompt_id
+        t2 = detail.turns[1]
+        assert t2.prompt_id == p2
+        assert t2.response_ids == []
+        assert t2.tool_call_ids == []
+
+    def test_narrative_blocks_carry_event_id(self, db_with_event_ids):
+        db, _c, _p1, r1, _tc1, _p2 = db_with_event_ids
+        detail = get_conversation(_c, db_path=db, include_tool_content=True)
+        t1 = detail.turns[0]
+        # Every block in turn 1 came from r1
+        for blk in t1.narrative:
+            assert blk.event_id == r1
+
+    def test_tool_call_detail_has_id(self, db_with_event_ids):
+        db, _c, _p1, _r1, tc1, _p2 = db_with_event_ids
+        detail = get_conversation(_c, db_path=db, include_tool_content=True)
+        # Find the tool_calls block in turn 1
+        tool_blocks = [b for b in detail.turns[0].narrative if b.block_type == "tool_calls"]
+        assert tool_blocks, "expected at least one tool_calls block"
+        # When include_tool_content=True (collapse=False), tool_call_id is preserved
+        flat_tools = [tc for b in tool_blocks for tc in b.tool_calls]
+        assert any(tc.tool_call_id == tc1 for tc in flat_tools)
+
+
+class TestSerializeConversationDetailEventIds:
+    def test_json_emits_event_ids_default_on(self, tmp_path):
+        from siftd.serialization.conversations import serialize_conversation_detail
+        from siftd.storage.sqlite import (
+            create_database, get_or_create_harness, get_or_create_model,
+            get_or_create_workspace, insert_conversation, insert_prompt,
+            insert_prompt_content, insert_response, insert_response_content,
+        )
+
+        db_path = tmp_path / "ser.db"
+        conn = create_database(db_path)
+        h = get_or_create_harness(conn, "h", source="t", log_format="jsonl")
+        ws = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+        m = get_or_create_model(conn, "claude-3-opus")
+        c = insert_conversation(conn, external_id="x", harness_id=h,
+                                workspace_id=ws, started_at="2024-01-15T10:00:00Z")
+        p = insert_prompt(conn, c, "p1", "2024-01-15T10:00:00Z")
+        insert_prompt_content(conn, p, 0, "text", '{"text": "q"}')
+        r = insert_response(conn, c, p, m, None, "r1",
+                            "2024-01-15T10:00:01Z", input_tokens=1, output_tokens=1)
+        insert_response_content(conn, r, 0, "text", '{"text": "answer"}')
+        conn.commit()
+        conn.close()
+
+        detail = get_conversation(c, db_path=db_path)
+        d = serialize_conversation_detail(detail)
+        assert d["turns"][0]["prompt_id"] == p
+        assert d["turns"][0]["response_ids"] == [r]
+        # narrative block carries event_id
+        narr = d["turns"][0]["narrative"]
+        text_blocks = [b for b in narr if b.get("type") == "text"]
+        assert text_blocks
+        assert text_blocks[0]["event_id"] == r
+
+
+class TestSearchJsonChunkIds:
+    def test_chunk_id_and_source_ids_default_on(self):
+        from siftd.output.json_fmt import _json_chunk_list
+
+        rows = [{
+            "conversation_id": "C123",
+            "score": 0.9,
+            "chunk_type": "response",
+            "text": "snippet",
+            "_started_at": "2024-01-01",
+            "_workspace": "/p",
+            "chunk_id": "chunk-1",
+            "source_ids": ["e1", "e2"],
+        }]
+        out = _json_chunk_list(rows)
+        assert out[0]["chunk_id"] == "chunk-1"
+        assert out[0]["source_ids"] == ["e1", "e2"]
+
+
+class TestDebugIdsBackcompat:
+    def test_debug_ids_flag_still_parses(self):
+        import argparse
+
+        from siftd.cli.search import build_search_parser
+
+        # Build a minimal parser with the search subcommand
+        root = argparse.ArgumentParser()
+        sub = root.add_subparsers(dest="command")
+        build_search_parser(sub)
+        # --debug-ids is suppressed in --help but still accepts and sets the flag
+        args = root.parse_args(["search", "q", "--debug-ids"])
+        assert args.debug_ids is True
+
+
 class TestGetToolTagSummary:
     def test_returns_tag_counts(self, test_db_with_tool_tags):
         tags = get_tool_tag_summary(db_path=test_db_with_tool_tags)

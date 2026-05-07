@@ -106,18 +106,20 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
         ]
         return output
 
-    debug_ids = context.get("debug_ids", False)
+    # debug_ids retained as a no-op alias for one minor version (deprecated).
+    # IDs are now default-on; the flag has no effect.
+    context.get("debug_ids", False)
 
     if mode == "thread":
         tier1 = context.get("tier1", [])
         tier2 = context.get("tier2", [])
         output["result_count"] = len(tier1) + len(tier2)
-        output["tier1"] = _json_chunk_list(tier1, debug_ids=debug_ids)
-        output["tier2"] = _json_chunk_list(tier2, debug_ids=debug_ids)
+        output["tier1"] = _json_chunk_list(tier1)
+        output["tier2"] = _json_chunk_list(tier2)
         return output
 
     # Chunks mode
-    output["results"] = _json_chunk_list(results, debug_ids=debug_ids)
+    output["results"] = _json_chunk_list(results)
     return output
 
 
@@ -149,8 +151,11 @@ def render_tool_search(result: Any, fidelity: Fidelity, **context: Any) -> dict:
     return _impl(result, fidelity)
 
 
-def _json_chunk_list(results: list, debug_ids: bool = False) -> list[dict]:
-    """Build JSON-safe list of chunk dicts."""
+def _json_chunk_list(results: list) -> list[dict]:
+    """Build JSON-safe list of chunk dicts.
+
+    Emits chunk_id and source_ids by default (Phase 2: event-level addressability).
+    """
     from siftd.domain.search_types import ScoreBreakdown
 
     out = []
@@ -164,10 +169,9 @@ def _json_chunk_list(results: list, debug_ids: bool = False) -> list[dict]:
                 "started_at": r.get("_started_at"),
                 "workspace": r.get("_workspace"),
             },
+            "chunk_id": r.get("chunk_id"),
+            "source_ids": r.get("source_ids", []),
         }
-        if debug_ids:
-            chunk["chunk_id"] = r.get("chunk_id")
-            chunk["source_ids"] = r.get("source_ids", [])
 
         breakdown = r.get("breakdown")
         if breakdown and isinstance(breakdown, ScoreBreakdown):

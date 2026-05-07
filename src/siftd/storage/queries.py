@@ -423,7 +423,8 @@ def fetch_tool_calls_for_conversation(
     """
     if include_content:
         return conn.execute(
-            "SELECT e.parent_id AS response_id, e.external_id, t.name AS tool_name, "
+            "SELECT e.id AS tool_call_id, e.parent_id AS response_id, "
+            "e.external_id, t.name AS tool_name, "
             "etc.status, etc.input, cb.content AS result "
             "FROM events e "
             "JOIN event_tool_call etc ON etc.event_id = e.id "
@@ -434,7 +435,8 @@ def fetch_tool_calls_for_conversation(
             (conversation_id,),
         ).fetchall()
     return conn.execute(
-        "SELECT e.parent_id AS response_id, e.external_id, t.name AS tool_name, etc.status "
+        "SELECT e.id AS tool_call_id, e.parent_id AS response_id, "
+        "e.external_id, t.name AS tool_name, etc.status "
         "FROM events e "
         "JOIN event_tool_call etc ON etc.event_id = e.id "
         "LEFT JOIN tools t ON t.id = etc.tool_id "

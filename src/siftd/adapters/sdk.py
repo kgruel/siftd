@@ -806,9 +806,12 @@ def peek_exchanges_from_records(
                             )
                             or None
                         )
+                    tool_use_id = block.get("id") or block.get("tool_use_id") or block.get("call_id")
                     pending_tool_blocks.append(
-                        PeekToolCall(tool_name=tool_name, input=hint)
+                        PeekToolCall(tool_name=tool_name, input=hint, external_id=tool_use_id),
                     )
+                    if tool_use_id:
+                        current_exchange.tool_use_ids.append(str(tool_use_id))
             if pending_tool_blocks:
                 current_exchange.narrative.append(
                     PeekNarrativeBlock(

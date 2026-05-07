@@ -125,8 +125,12 @@ class SearchChunk:
             context_window=data.get("context_window") or data.get("_context"),
         )
 
-    def to_render_dict(self, debug_ids: bool = False) -> dict[str, Any]:
-        """Convert to the legacy dict shape expected by current formatters."""
+    def to_render_dict(self, debug_ids: bool = True) -> dict[str, Any]:
+        """Convert to the legacy dict shape expected by current formatters.
+
+        chunk_id/source_ids are emitted by default (Phase 2). The debug_ids
+        kwarg is retained for backward compatibility but no longer gates output.
+        """
         out: dict[str, Any] = {
             "conversation_id": self.conversation_id,
             "score": self.score,

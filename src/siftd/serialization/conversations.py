@@ -70,7 +70,7 @@ def serialize_conversation_detail(
         narrative = getattr(turn, "narrative", [])
         walk_narrative(narrative, emitter, fidelity=fidelity)
 
-        turns_data.append({
+        turn_dict: dict[str, Any] = {
             "timestamp": getattr(turn, "timestamp", None),
             "prompt": getattr(turn, "prompt_text", None),
             "narrative": emitter.blocks,
@@ -78,7 +78,17 @@ def serialize_conversation_detail(
                 "input": getattr(turn, "total_input_tokens", 0),
                 "output": getattr(turn, "total_output_tokens", 0),
             },
-        })
+        }
+        prompt_id = getattr(turn, "prompt_id", None)
+        if prompt_id:
+            turn_dict["prompt_id"] = prompt_id
+        response_ids = getattr(turn, "response_ids", None) or []
+        if response_ids:
+            turn_dict["response_ids"] = list(response_ids)
+        tool_call_ids = getattr(turn, "tool_call_ids", None) or []
+        if tool_call_ids:
+            turn_dict["tool_call_ids"] = list(tool_call_ids)
+        turns_data.append(turn_dict)
 
     return {
         "id": detail.id,

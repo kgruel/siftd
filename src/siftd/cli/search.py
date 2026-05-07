@@ -667,7 +667,7 @@ examples:
     output_group.add_argument("--thread", action="store_true", help="Narrative thread: top conversations expanded, rest as shortlist")
     output_group.add_argument("--by-time", action="store_true", help="Sort results by time instead of score")
     output_group.add_argument("--json", action="store_true", help="Output as structured JSON")
-    output_group.add_argument("--debug-ids", action="store_true", dest="debug_ids", help="Include internal chunk_id and source_ids in JSON output (default: omitted)")
+    output_group.add_argument("--debug-ids", action="store_true", dest="debug_ids", help=argparse.SUPPRESS)
     output_group.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
 
     # Result modes
