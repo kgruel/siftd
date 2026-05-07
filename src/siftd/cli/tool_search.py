@@ -51,6 +51,7 @@ def cmd_tool_search(args) -> int:
             "tag": filters.tag,
             "all_tags": filters.all_tags,
             "no_tag": filters.no_tag,
+            "tag_kind": filters.tag_kind,
             "tool": filters.tool,
             "tool_tag": filters.tool_tag,
             "owner": filters.owner,

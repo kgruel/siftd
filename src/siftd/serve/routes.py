@@ -290,6 +290,7 @@ async def tool_search_route(
     tag: list[str] | None = Parameter(query="tag", default=None),
     all_tags: list[str] | None = Parameter(query="all_tags", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
     n: int = Parameter(query="n", default=20),
     owner: str | None = Parameter(query="owner", default=None),
 ) -> dict | Response:
@@ -301,7 +302,8 @@ async def tool_search_route(
         "/api/v1/tool-search", "GET", search_tool_calls,
         {"q": q, "db_path": db_path, "n": n, "workspace": workspace, "model": model,
          "since": since, "before": before, "tag": tag, "all_tags": all_tags,
-         "no_tag": no_tag, "tool": tool, "tool_tag": tool_tag, "owner": owner},
+         "no_tag": no_tag, "tag_kind": tag_kind, "tool": tool,
+         "tool_tag": tool_tag, "owner": owner},
         "tool_search", db_path,
     )
 
@@ -316,6 +318,7 @@ async def export_route(
     before: str | None = Parameter(query="before", default=None),
     tag: list[str] | None = Parameter(query="tag", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
     n: int = Parameter(query="n", default=0),
     owner: str | None = Parameter(query="owner", default=None),
 ) -> dict | Response:
@@ -326,7 +329,7 @@ async def export_route(
     return _dispatch(
         "/api/v1/export", "GET", export_conversations,
         {"id": id, "workspace": workspace, "since": since, "before": before,
-         "tag": tag, "no_tag": no_tag, "n": n, "db_path": db_path,
+         "tag": tag, "no_tag": no_tag, "tag_kind": tag_kind, "n": n, "db_path": db_path,
          "owner": owner},
         "export", db_path,
     )
@@ -404,6 +407,7 @@ async def pull(
     model: str | None = Parameter(query="model", default=None),
     tag: list[str] | None = Parameter(query="tag", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
     owner: str | None = Parameter(query="owner", default=None),
     dry_run: int = Parameter(query="dry_run", default=0),
 ) -> Response | File:
@@ -424,6 +428,7 @@ async def pull(
             before=before,
             tag=tag,
             no_tag=no_tag,
+            tag_kind=tag_kind,
             n=0,
             owner=owner,
         )
@@ -464,6 +469,7 @@ async def pull(
             model=model,
             tag=tag,
             no_tag=no_tag,
+            tag_kind=tag_kind,
             rebuild_fts=False,
             owner=owner,
         )
@@ -555,6 +561,7 @@ async def conversation_list(
     tag: list[str] | None = Parameter(query="tag", default=None),
     all_tags: list[str] | None = Parameter(query="all_tags", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
     tool: str | None = Parameter(query="tool", default=None),
     tool_tag: str | None = Parameter(query="tool_tag", default=None),
     search: str | None = Parameter(query="search", default=None),
@@ -571,7 +578,8 @@ async def conversation_list(
         {"db_path": db_path, "workspace": workspace, "model": model,
          "since": since, "before": before, "search": search, "tool": tool,
          "tag": tag, "all_tags": all_tags, "no_tag": no_tag,
-         "tool_tag": tool_tag, "n": n, "oldest": oldest, "owner": owner},
+         "tag_kind": tag_kind, "tool_tag": tool_tag,
+         "n": n, "oldest": oldest, "owner": owner},
         "list", db_path,
     )
 
@@ -599,6 +607,7 @@ async def search_route(
     tag: list[str] | None = Parameter(query="tag", default=None),
     all_tags: list[str] | None = Parameter(query="all_tags", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
+    tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
     include_derivative: bool = Parameter(query="include_derivative", default=False),
     owner: str | None = Parameter(query="owner", default=None),
     debug_ids: bool = Parameter(query="debug_ids", default=False),
@@ -626,7 +635,8 @@ async def search_route(
              "recency_half_life": recency_half_life,
              "recency_max_boost": recency_max_boost,
              "threshold": threshold, "tag": tag, "all_tags": all_tags,
-             "no_tag": no_tag, "include_derivative": include_derivative,
+             "no_tag": no_tag, "tag_kind": tag_kind,
+             "include_derivative": include_derivative,
              "owner": owner, "raw_fts": raw_fts},
             "search", db_path,
             render_context={"debug_ids": debug_ids},

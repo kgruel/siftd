@@ -162,6 +162,7 @@ def list_conversations(
     tag: str | list[str] | None = None,
     all_tags: list[str] | None = None,
     no_tag: list[str] | None = None,
+    tag_kind: list[str] | None = None,
     tool_tag: str | None = None,
     n: int = 10,
     oldest: bool = False,
@@ -181,6 +182,9 @@ def list_conversations(
             a single string for backward compat.
         all_tags: AND filter — conversations with all of these tags.
         no_tag: NOT filter — exclude conversations with any of these tags.
+        tag_kind: Scope tag/all_tags/no_tag matching to specific target_kinds
+            (e.g., ['conversation'], ['response', 'tool_call']). Defaults to
+            all conversation-bearing kinds when None.
         tool_tag: Filter by tool call tag (e.g., 'shell:test').
         n: Maximum results to return (0 = unlimited).
         oldest: Sort by oldest first instead of newest.
@@ -199,7 +203,7 @@ def list_conversations(
 
     conn = open_database(db, read_only=True)
     try:
-        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest, owner)
+        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest, owner, tag_kind)
     finally:
         conn.close()
 
@@ -219,6 +223,7 @@ def _list_conversations_impl(
     n: int,
     oldest: bool,
     owner: str | None = None,
+    tag_kind: list[str] | None = None,
 ) -> list[ConversationSummary]:
     """Implementation of list_conversations with connection already open."""
     # Check if pricing table exists
@@ -252,9 +257,9 @@ def _list_conversations_impl(
     # Normalize tag: accept str (single) or list (OR filter)
     effective_tags = [tag] if isinstance(tag, str) else list(tag or [])
 
-    wb.tags_any(effective_tags or None)
-    wb.tags_all(all_tags)
-    wb.tags_none(no_tag)
+    wb.tags_any(effective_tags or None, kinds=tag_kind)
+    wb.tags_all(all_tags, kinds=tag_kind)
+    wb.tags_none(no_tag, kinds=tag_kind)
 
     if tool_tag:
         op, val = _tag_condition(tool_tag)

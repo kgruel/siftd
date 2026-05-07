@@ -1,6 +1,14 @@
 """Dynamic WHERE clause builder for conversation filters."""
 
 
+# Tag target_kinds whose target_id resolves to a conversation (directly or via events).
+# 'workspace' is excluded — workspace tags don't map to a single conversation.
+ALL_CONVERSATION_TAG_KINDS: tuple[str, ...] = (
+    "conversation", "prompt", "response", "tool_call", "exchange",
+)
+_EVENT_TAG_KINDS: frozenset[str] = frozenset({"prompt", "response", "tool_call", "exchange"})
+
+
 def tag_condition(tag_value: str) -> tuple[str, str]:
     """Return (SQL fragment, param) for a tag value with optional prefix match.
 
@@ -9,6 +17,39 @@ def tag_condition(tag_value: str) -> tuple[str, str]:
     if tag_value.endswith(":"):
         return "tg.name LIKE ?", f"{tag_value}%"
     return "tg.name = ?", tag_value
+
+
+def _normalize_kinds(kinds: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    """Return the effective kinds tuple, defaulting to all conversation-bearing kinds.
+
+    Unknown kinds (e.g. 'workspace') are filtered out to keep the subquery
+    well-formed; an empty result short-circuits to no-match downstream.
+    """
+    if not kinds:
+        return ALL_CONVERSATION_TAG_KINDS
+    return tuple(k for k in kinds if k in ALL_CONVERSATION_TAG_KINDS)
+
+
+def _tag_target_subquery(allowed_kinds: tuple[str, ...], tag_clause: str) -> str:
+    """Build a subquery that yields conversation IDs for matched tag rows.
+
+    Resolves the polymorphic target_kind: rows tagged on a conversation
+    contribute their target_id directly; rows tagged on an event
+    (prompt/response/tool_call/exchange) join through events.conversation_id.
+    """
+    placeholders = ", ".join("?" * len(allowed_kinds))
+    return (
+        "SELECT CASE ta.target_kind"
+        " WHEN 'conversation' THEN ta.target_id"
+        " ELSE e.conversation_id"
+        " END AS conv_id"
+        " FROM tag_assignments ta"
+        " JOIN tags tg ON tg.id = ta.tag_id"
+        " LEFT JOIN events e ON e.id = ta.target_id"
+        " AND ta.target_kind IN ('prompt','response','tool_call','exchange')"
+        f" WHERE ta.target_kind IN ({placeholders})"
+        f" AND ({tag_clause})"
+    )
 
 
 # Available JOIN clauses, keyed by alias.
@@ -85,50 +126,73 @@ class WhereBuilder:
                 value,
             )
 
-    def tags_any(self, tags: list[str] | None) -> None:
-        """OR semantics: conversation has ANY of these tags."""
+    def tags_any(
+        self, tags: list[str] | None,
+        *, kinds: list[str] | tuple[str, ...] | None = None,
+    ) -> None:
+        """OR semantics: conversation has ANY of these tags.
+
+        Matches tags applied at any conversation-bearing target_kind
+        (conversation, prompt, response, tool_call, exchange) by default.
+        Pass `kinds=` to scope to specific target_kinds.
+        """
         if not tags:
             return
-        parts = []
+        allowed = _normalize_kinds(kinds)
+        if not allowed:
+            self.conditions.append("0")
+            return
+        parts: list[str] = []
+        clause_params: list[str] = []
         for t in tags:
             op, val = tag_condition(t)
             parts.append(op)
-            self.params.append(val)
-        clause = " OR ".join(parts)
-        self.conditions.append(
-            f"c.id IN (SELECT ta.target_id FROM tag_assignments ta"
-            f" JOIN tags tg ON tg.id = ta.tag_id"
-            f" WHERE ta.target_kind='conversation' AND ({clause}))"
-        )
+            clause_params.append(val)
+        tag_clause = " OR ".join(parts)
+        sub = _tag_target_subquery(allowed, tag_clause)
+        self.conditions.append(f"c.id IN ({sub})")
+        self.params.extend(allowed)
+        self.params.extend(clause_params)
 
-    def tags_all(self, tags: list[str] | None) -> None:
+    def tags_all(
+        self, tags: list[str] | None,
+        *, kinds: list[str] | tuple[str, ...] | None = None,
+    ) -> None:
         """AND semantics: conversation has ALL of these tags."""
         if not tags:
             return
+        allowed = _normalize_kinds(kinds)
+        if not allowed:
+            self.conditions.append("0")
+            return
         for t in tags:
             op, val = tag_condition(t)
-            self.conditions.append(
-                f"c.id IN (SELECT ta.target_id FROM tag_assignments ta"
-                f" JOIN tags tg ON tg.id = ta.tag_id"
-                f" WHERE ta.target_kind='conversation' AND {op})"
-            )
+            sub = _tag_target_subquery(allowed, op)
+            self.conditions.append(f"c.id IN ({sub})")
+            self.params.extend(allowed)
             self.params.append(val)
 
-    def tags_none(self, tags: list[str] | None) -> None:
+    def tags_none(
+        self, tags: list[str] | None,
+        *, kinds: list[str] | tuple[str, ...] | None = None,
+    ) -> None:
         """NOT semantics: conversation has NONE of these tags."""
         if not tags:
             return
-        parts = []
+        allowed = _normalize_kinds(kinds)
+        if not allowed:
+            return
+        parts: list[str] = []
+        clause_params: list[str] = []
         for t in tags:
             op, val = tag_condition(t)
             parts.append(op)
-            self.params.append(val)
-        clause = " OR ".join(parts)
-        self.conditions.append(
-            f"c.id NOT IN (SELECT ta.target_id FROM tag_assignments ta"
-            f" JOIN tags tg ON tg.id = ta.tag_id"
-            f" WHERE ta.target_kind='conversation' AND ({clause}))"
-        )
+            clause_params.append(val)
+        tag_clause = " OR ".join(parts)
+        sub = _tag_target_subquery(allowed, tag_clause)
+        self.conditions.append(f"c.id NOT IN ({sub})")
+        self.params.extend(allowed)
+        self.params.extend(clause_params)
 
     def joins_sql(self) -> str:
         """Return JOIN clauses for all required tables, in dependency order."""

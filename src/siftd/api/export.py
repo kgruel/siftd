@@ -45,6 +45,7 @@ def export_conversations(
     workspace: str | None = None,
     tag: list[str] | None = None,
     no_tag: list[str] | None = None,
+    tag_kind: list[str] | None = None,
     since: str | None = None,
     before: str | None = None,
     search: str | None = None,
@@ -79,6 +80,7 @@ def export_conversations(
         workspace=workspace,
         tag=tag,
         no_tag=no_tag,
+        tag_kind=tag_kind,
         since=since,
         before=before,
         search=search,
@@ -142,6 +144,7 @@ def export_document(
     workspace: str | None = None,
     tag: list[str] | None = None,
     no_tag: list[str] | None = None,
+    tag_kind: list[str] | None = None,
     since: str | None = None,
     before: str | None = None,
     search: str | None = None,
@@ -176,8 +179,8 @@ def export_document(
 
     conversations = export_conversations(
         id=id, last=last, n=n, workspace=workspace, tag=tag,
-        no_tag=no_tag, since=since, before=before, search=search,
-        db_path=db_path, include_thinking=include_thinking,
+        no_tag=no_tag, tag_kind=tag_kind, since=since, before=before,
+        search=search, db_path=db_path, include_thinking=include_thinking,
         include_tool_content=include_tool_content, owner=owner,
     )
 

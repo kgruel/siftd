@@ -40,6 +40,7 @@ def cmd_export(args) -> int:
             "workspace": args.workspace,
             "tag": args.tag,
             "no_tag": getattr(args, "no_tag", None),
+            "tag_kind": getattr(args, "tag_kind", None),
             "since": args.since,
             "before": args.before,
             "search": args.search,
