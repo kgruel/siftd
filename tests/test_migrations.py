@@ -260,6 +260,37 @@ class TestSessionsLastSeenAtMigration:
         conn.close()
 
 
+class TestMigrationProgressLogging:
+    """Contract: each MIGRATIONS[v] phase emits at least one INFO log line.
+
+    Without these lines the migration appeared to hang silently for tens of
+    minutes on real-world data — see plans/2026-05-03-events-polymorphic-followup.md
+    finding #2.
+    """
+
+    def test_each_phase_emits_info_log(self, tmp_path, monkeypatch, caplog):
+        import siftd.storage.sqlite as sqlite_mod
+        monkeypatch.setattr(sqlite_mod, "backup_database", lambda s, t: None)
+
+        v3_sql = (Path(__file__).parent / "fixtures" / "schemas" / "v3.sql").read_text()
+        path = tmp_path / "v3.db"
+        conn = sqlite3.connect(str(path))
+        conn.executescript(v3_sql)
+        conn.commit()
+        conn.close()
+
+        with caplog.at_level(logging.INFO, logger="siftd.storage.sqlite"):
+            conn = open_database(path)
+            conn.close()
+
+        messages = [r.message for r in caplog.records if r.name == "siftd.storage.sqlite"]
+        joined = "\n".join(messages)
+
+        assert "Migrating schema v3" in joined, joined
+        for phase in ("Migration v4", "Migration v5", "Migration v6", "Migration v7"):
+            assert phase in joined, f"missing {phase} log line in:\n{joined}"
+
+
 class TestOpenDatabaseMigrations:
     def test_full_migration_path(self, tmp_path):
         """open_database on a legacy DB runs all migrations."""
