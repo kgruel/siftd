@@ -129,7 +129,7 @@ class SearchChunk:
         """Convert to the legacy dict shape expected by current formatters.
 
         chunk_id/source_ids are emitted by default. The debug_ids kwarg is
-        kept for backward compatibility but no longer gates output.
+        accepted for backward compatibility through v0.9.x and removed in v0.10.0.
         """
         out: dict[str, Any] = {
             "conversation_id": self.conversation_id,

@@ -90,7 +90,7 @@ def render_search(results: list, fidelity: Fidelity, debug_ids: bool = True) -> 
     """Serialize SearchResult list to JSON-safe dict.
 
     chunk_id and source_ids are emitted by default. The debug_ids kwarg is
-    kept for backward compatibility but no longer gates output.
+    accepted for backward compatibility through v0.9.x and removed in v0.10.0.
     """
     del debug_ids
     serialized = []

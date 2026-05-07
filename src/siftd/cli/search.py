@@ -667,6 +667,7 @@ examples:
     output_group.add_argument("--thread", action="store_true", help="Narrative thread: top conversations expanded, rest as shortlist")
     output_group.add_argument("--by-time", action="store_true", help="Sort results by time instead of score")
     output_group.add_argument("--json", action="store_true", help="Output as structured JSON")
+    # --debug-ids: deprecated no-op; chunk_id/source_ids ship by default. Accepted through v0.9.x, removed in v0.10.0.
     output_group.add_argument("--debug-ids", action="store_true", dest="debug_ids", help=argparse.SUPPRESS)
     output_group.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
 
