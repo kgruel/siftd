@@ -70,7 +70,6 @@ def main(argv=None) -> int:
     build_serve_parser(subparsers)
     build_upgrade_parser(subparsers)
 
-
     args = parser.parse_args(argv)
     if not hasattr(args, "func") or args.func is None:
         parser.print_help()

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-07
+
 ### Added
 
 - **Event IDs in JSON (default-on)** — `Turn` gains `prompt_id` / `response_ids[]` / `tool_call_ids[]`; `NarrativeBlock` gains `event_id`; `ToolCallDetail` gains `tool_call_id`. Search chunks emit `chunk_id` / `source_ids` by default. Enables agents to round-trip event IDs through query → tag / detail surfaces without secondary lookups.
@@ -31,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Polymorphic tag filter** — `siftd query -l <tag>`, `--all-tags`, and `--no-tag` now match tags applied at any conversation-bearing target_kind (`conversation`, `prompt`, `response`, `tool_call`, `exchange`). Previously, after the polymorphic storage refactor (v0.8.0), only conversation-scoped tags were visible to these filters; tags applied at event granularity were silently invisible. New `--on KIND` flag opts into legacy single-kind filtering.
 - **Test suite stability under restricted environments** — 5 git tests now pass under sandboxes without git user config (subprocess passes `-c user.email/-c user.name`); 5 chmod-based readonly tests skip cleanly under root via `@pytest.mark.skipif(os.getuid() == 0)`.
+- **Stale `siftd tags` references** purged from `README.md`, `docs/concepts/tags.md`, and `plugin/skills/siftd/reference/tags.md`. Stale docstring on `build_tags_parser` and stray blank-line residue in `cli/__init__.py` and `output/json_fmt.py` after the tool_search and tags-shim removals.
 
 ## [0.8.0] - 2026-05-06
 

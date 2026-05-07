@@ -763,7 +763,7 @@ def cmd_tag(args) -> int:
 
 
 def build_tags_parser(subparsers) -> None:
-    """Add 'tag' subparser (and hidden 'tags' deprecation bridge)."""
+    """Add 'tag' subparser."""
     # tag — unified entry point
     p_tag = subparsers.add_parser(
         "tag",

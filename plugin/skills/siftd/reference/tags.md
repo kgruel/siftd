@@ -32,20 +32,20 @@ siftd tag -r --last research:auth            # remove from most recent
 ## Listing tags
 
 ```bash
-siftd tags                                   # list all tags with counts
+siftd tag list                               # list all tags with counts
 ```
 
 ## Renaming and deleting tags
 
 **Rename** — updates all associations:
 ```bash
-siftd tags --rename old-name new-name
+siftd tag rename old-name new-name
 ```
 
 **Delete** — removes tag and all associations:
 ```bash
-siftd tags --delete unused-tag
-siftd tags --delete unused-tag --force       # skip confirmation
+siftd tag delete unused-tag
+siftd tag delete unused-tag --force          # skip confirmation
 ```
 
 ## Filtering by tags

@@ -33,7 +33,7 @@ siftd tag 01JGK3 decision:authentication
 siftd tag 01JGK3 2025-q1-review
 ```
 
-Tags are created on first use. If you typo a tag name, you've created a new tag. Use `siftd tags` to see what exists.
+Tags are created on first use. If you typo a tag name, you've created a new tag. Use `siftd tag list` to see what exists.
 
 Tags can be applied to:
 - **Conversations** — most common, marks an entire session
@@ -117,7 +117,7 @@ siftd search -l decision:auth "token expiry" # search within specific tag
 List all tags with counts:
 
 ```bash
-siftd tags
+siftd tag list
 ```
 
 ```
@@ -132,20 +132,20 @@ siftd tags
 Drill into a specific tag:
 
 ```bash
-siftd tags decision:auth
+siftd tag list decision:auth
 ```
 
 Rename a tag (updates all associations):
 
 ```bash
-siftd tags --rename auth-decision decision:auth
+siftd tag rename auth-decision decision:auth
 ```
 
 Delete a tag:
 
 ```bash
-siftd tags --delete old-tag          # refuses if tag has associations
-siftd tags --delete old-tag --force  # deletes tag and all associations
+siftd tag delete old-tag          # refuses if tag has associations
+siftd tag delete old-tag --force  # deletes tag and all associations
 ```
 
 ## Auto-applied tags

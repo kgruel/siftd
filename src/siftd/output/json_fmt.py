@@ -140,7 +140,6 @@ def render_tags(tags: list, fidelity: Fidelity, **context: Any) -> dict:
     return _impl(tags, fidelity)
 
 
-
 def _json_chunk_list(results: list) -> list[dict]:
     """Build JSON-safe list of chunk dicts. Emits chunk_id and source_ids."""
     from siftd.domain.search_types import ScoreBreakdown

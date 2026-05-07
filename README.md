@@ -189,7 +189,7 @@ siftd search -l research: "authentication" # search within tagged
 List your tags:
 
 ```bash
-siftd tags
+siftd tag list
 ```
 
 ```
