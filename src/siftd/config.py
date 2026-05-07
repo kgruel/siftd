@@ -206,6 +206,11 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     # Update
     _SchemaEntry("update.check", "bool", _is_bool_like,
                  "Check PyPI for updates after commands (24h interval)", "true"),
+    # Tag prefixes (Phase 5) — convention table for tag families.
+    # User-defined prefix names map to the colon-prefix string used by
+    # `siftd query -l <prefix>:` and the FTS5 LIKE matcher in tag_condition().
+    _SchemaEntry("tag_prefixes.*", "string", _is_str,
+                 "User-defined tag-prefix conventions (e.g. research = \"research:\")", ""),
 ]
 
 
@@ -451,6 +456,34 @@ def remove_config_list(key: str, value: str) -> bool:
     _write_config(path, tomlkit.dumps(doc))
     return True
 
+
+
+# Phase 5: built-in tag-prefix conventions. User config under [tag_prefixes]
+# merges over these defaults — see get_tag_prefixes(). Names are advisory;
+# the actual matcher (`siftd query -l <prefix>:`) is independent of this table.
+DEFAULT_TAG_PREFIXES: dict[str, str] = {
+    "decision": "decision:",
+    "research": "research:",
+    "useful": "useful:",
+    "rationale": "rationale:",
+    "genesis": "genesis:",
+}
+
+
+def get_tag_prefixes() -> dict[str, str]:
+    """Return the resolved tag-prefix convention table.
+
+    Built-in defaults (DEFAULT_TAG_PREFIXES) merged with user-defined
+    entries from the [tag_prefixes] section of ~/.config/siftd/config.toml.
+    User entries override defaults of the same name. Non-string values are
+    silently skipped.
+    """
+    resolved: dict[str, str] = dict(DEFAULT_TAG_PREFIXES)
+    user_table = get_config_table("tag_prefixes") or {}
+    for name, value in user_table.items():
+        if isinstance(value, str):
+            resolved[str(name)] = value
+    return resolved
 
 
 def get_query_defaults() -> dict:

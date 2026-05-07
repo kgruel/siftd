@@ -284,6 +284,7 @@ def cmd_config(args) -> int:
         _validate_config,
         append_config_list,
         get_config,
+        get_tag_prefixes,
         load_config,
         remove_config_list,
         set_config,
@@ -292,6 +293,21 @@ def cmd_config(args) -> int:
     # siftd config path
     if args.action == "path":
         print(config_file())
+        return 0
+
+    # siftd config tag-prefixes [--json]
+    if args.action == "tag-prefixes":
+        prefixes = get_tag_prefixes()
+        if getattr(args, "json", False):
+            print(json.dumps(prefixes, indent=2, sort_keys=True))
+            return 0
+        if not prefixes:
+            print("No tag prefixes defined.")
+            return 0
+        # Sorted name → prefix mapping; one per line.
+        width = max(len(name) for name in prefixes)
+        for name in sorted(prefixes):
+            print(f"  {name:<{width}}  {prefixes[name]}")
         return 0
 
     # siftd config get <key>
@@ -422,12 +438,14 @@ def build_meta_parser(subparsers) -> None:
   siftd config get serve.host             # get specific value
   siftd config set serve.port 9090        # set value
   siftd config append adapters.claude_code.locations ~/.claude/projects
-  siftd config remove adapters.claude_code.locations ~/.claude/projects""",
+  siftd config remove adapters.claude_code.locations ~/.claude/projects
+  siftd config tag-prefixes               # show resolved tag-prefix table
+  siftd config tag-prefixes --json        # same, as JSON""",
     )
     p_config.add_argument(
         "action",
         nargs="?",
-        choices=["get", "set", "path", "append", "remove"],
+        choices=["get", "set", "path", "append", "remove", "tag-prefixes"],
         help="Action to perform",
     )
     p_config.add_argument("key", nargs="?", help="Config key (dotted path, e.g., serve.host)")
@@ -435,6 +453,10 @@ def build_meta_parser(subparsers) -> None:
         "value",
         nargs="?",
         help="Value to use (for 'set', 'append', 'remove')",
+    )
+    p_config.add_argument(
+        "--json", action="store_true",
+        help="JSON output (currently used by 'tag-prefixes')",
     )
     p_config.set_defaults(func=cmd_config)
 

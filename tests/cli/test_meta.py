@@ -75,6 +75,45 @@ def test_cmd_config_path_get_set(monkeypatch, capsys):
     assert cmd_config(_args(action="set", key="x.y", value="z")) == 0
 
 
+def test_cmd_config_tag_prefixes_text(monkeypatch, capsys, tmp_path):
+    """`siftd config tag-prefixes` prints a name → prefix table from defaults."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert cmd_config(_args(action="tag-prefixes")) == 0
+    out = capsys.readouterr().out
+    # All built-in defaults appear in the output
+    for name in ("decision", "research", "useful", "rationale", "genesis"):
+        assert name in out
+    # And the value (suffixed with colon) for at least one
+    assert "research:" in out
+
+
+def test_cmd_config_tag_prefixes_json(monkeypatch, capsys, tmp_path):
+    """`siftd config tag-prefixes --json` emits a parseable JSON object."""
+    import json
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert cmd_config(_args(action="tag-prefixes", json=True)) == 0
+    out = capsys.readouterr().out.strip()
+    parsed = json.loads(out)
+    assert parsed["research"] == "research:"
+    assert parsed["decision"] == "decision:"
+
+
+def test_cmd_config_tag_prefixes_user_override(monkeypatch, capsys, tmp_path):
+    """User-defined entries from [tag_prefixes] surface in the dump."""
+    import json
+
+    cfg_dir = tmp_path / "siftd"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.toml").write_text('[tag_prefixes]\nmyproj = "myproj:"\n')
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert cmd_config(_args(action="tag-prefixes", json=True)) == 0
+    parsed = json.loads(capsys.readouterr().out.strip())
+    assert parsed["myproj"] == "myproj:"
+    # Defaults retained alongside user entries
+    assert parsed["research"] == "research:"
+
+
 def test_cmd_config_append_remove_and_show(tmp_path, monkeypatch, capsys):
     cfg = tmp_path / "config.yaml"
     cfg.write_text("search:\n  formatter: verbose\n")

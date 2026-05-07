@@ -77,16 +77,18 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[config]
   '''
-  usage: siftd config [-h] [{get,set,path,append,remove}] [key] [value]
+  usage: siftd config [-h] [--json]
+                      [{get,set,path,append,remove,tag-prefixes}] [key] [value]
   
   positional arguments:
-    {get,set,path,append,remove}
+    {get,set,path,append,remove,tag-prefixes}
                           Action to perform
     key                   Config key (dotted path, e.g., serve.host)
     value                 Value to use (for 'set', 'append', 'remove')
   
   options:
     -h, --help            show this help message and exit
+    --json                JSON output (currently used by 'tag-prefixes')
   
   examples:
     siftd config                        # show all config
@@ -95,6 +97,8 @@
     siftd config set serve.port 9090        # set value
     siftd config append adapters.claude_code.locations ~/.claude/projects
     siftd config remove adapters.claude_code.locations ~/.claude/projects
+    siftd config tag-prefixes               # show resolved tag-prefix table
+    siftd config tag-prefixes --json        # same, as JSON
   
   '''
 # ---
