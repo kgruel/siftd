@@ -131,13 +131,24 @@ class TestQueueTag:
         register_session(db, "session-123", "claude_code", commit=True)
 
         result1 = queue_tag(db, "session-123", "important", entity_type="conversation", commit=True)
-        result2 = queue_tag(db, "session-123", "important", entity_type="exchange", exchange_index=0, commit=True)
+        result2 = queue_tag(db, "session-123", "important", entity_type="exchange", exchange_index=1, commit=True)
 
         assert result1 is not None
         assert result2 is not None
 
         tags = get_pending_tags(db, "session-123")
         assert len(tags) == 2
+
+    def test_queue_tag_rejects_zero_exchange_index(self, db):
+        """exchange_index is 1-based — 0 is rejected at queue time."""
+        register_session(db, "s", "claude_code", commit=True)
+        with pytest.raises(ValueError, match="exchange_index must be >= 1"):
+            queue_tag(db, "s", "x", entity_type="exchange", exchange_index=0, commit=True)
+
+    def test_queue_tag_rejects_negative_exchange_index(self, db):
+        register_session(db, "s", "claude_code", commit=True)
+        with pytest.raises(ValueError, match="exchange_index must be >= 1"):
+            queue_tag(db, "s", "x", entity_type="exchange", exchange_index=-1, commit=True)
 
     def test_queue_tag_for_unregistered_session(self, db):
         """Queueing a tag for an unregistered session still works."""

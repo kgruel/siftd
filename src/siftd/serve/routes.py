@@ -318,7 +318,7 @@ async def session_queue_tag_route(
     """
     from litestar.exceptions import PermissionDeniedException
 
-    from siftd.api import create_database, open_database
+    from siftd.api import open_database
     from siftd.api.sessions import queue_tag as _queue_tag
     from siftd.serve.auth import require_write
 
@@ -347,11 +347,12 @@ async def session_queue_tag_route(
     except (TypeError, ValueError):
         return Response(content={"error": "exchange_index must be an integer"}, status_code=400)
 
-    # Use create_database so session tables exist if this is a fresh DB
-    if db_path.exists():
-        conn = open_database(db_path)
-    else:
-        conn = create_database(db_path)
+    if not db_path.exists():
+        return Response(
+            content={"error": f"Database not found: {db_path}"},
+            status_code=404,
+        )
+    conn = open_database(db_path)
 
     try:
         queued: list[str] = []

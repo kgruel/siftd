@@ -383,6 +383,52 @@ class TestApplyPendingTagsLastMarkers:
         assert row["target_id"] == p2
         conn.close()
 
+    def test_last_exchange_anchors_on_most_recent_prompt(self, tmp_path):
+        """last_exchange resolves to the most recent prompt event but tags it
+        as target_kind='exchange' (the polymorphic exchange anchor)."""
+        from siftd.api.sessions import queue_tag as api_queue_tag
+        from siftd.ingestion.orchestration import _apply_pending_tags
+        from siftd.storage.sessions import register_session
+        from siftd.storage.sqlite import (
+            create_database, get_or_create_harness, get_or_create_workspace,
+            insert_conversation, insert_prompt,
+        )
+
+        db_path = tmp_path / "lm_exchange.db"
+        conn = create_database(db_path)
+        h = get_or_create_harness(conn, "claude_code", source="t", log_format="jsonl")
+        ws = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+        sid = "s-exchange"
+        register_session(conn, sid, "claude_code", "/p")
+        c = insert_conversation(conn, external_id=sid, harness_id=h,
+                                workspace_id=ws, started_at="2024-01-15T10:00:00Z")
+        p1 = insert_prompt(conn, c, "p1", "2024-01-15T10:00:00Z")
+        p2 = insert_prompt(conn, c, "p2", "2024-01-15T11:00:00Z")
+        del p1
+
+        api_queue_tag(conn, sid, "key-insight",
+                      entity_type="exchange", last_marker="last_exchange")
+
+        class _Adapter:
+            SUPPORTS_LIVE_REGISTRATION = True
+
+        class _Conv:
+            external_id = sid
+
+        applied = _apply_pending_tags(conn, _Adapter(), _Conv(), c)
+        conn.commit()
+
+        assert applied == 1
+        # Tag should land on p2 (most recent prompt) with target_kind='exchange'
+        row = conn.execute(
+            "SELECT ta.target_kind, ta.target_id FROM tag_assignments ta "
+            "JOIN tags t ON t.id = ta.tag_id WHERE t.name = 'key-insight'",
+        ).fetchone()
+        assert row is not None
+        assert row["target_kind"] == "exchange"
+        assert row["target_id"] == p2
+        conn.close()
+
     def test_no_matching_event_skips_tag(self, tmp_path):
         """Tag with last_tool_call but no tool_calls in the conversation: skip."""
         from siftd.api.sessions import queue_tag as api_queue_tag

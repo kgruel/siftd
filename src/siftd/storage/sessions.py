@@ -6,11 +6,14 @@ applied at ingest time. Also supports exchange-level tagging.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from siftd.ids import ulid as _ulid
+
+_logger = logging.getLogger(__name__)
 
 # Pending tag entity_type values that the resolver knows about.
 _VALID_PENDING_ENTITY_TYPES: frozenset[str] = frozenset({
@@ -78,6 +81,13 @@ def ensure_session_tables(conn: sqlite3.Connection, *, commit: bool = False) -> 
     pt_columns = {row[1] for row in cur.fetchall()}
     has_post_v6 = {"entity_type", "exchange_index"}.issubset(pt_columns)
     if has_post_v6 and "last_marker" not in pt_columns:
+        existing_count = conn.execute(
+            "SELECT COUNT(*) FROM pending_tags",
+        ).fetchone()[0]
+        _logger.info(
+            "Rebuilding pending_tags to add last_marker column (preserving %d row(s))",
+            existing_count,
+        )
         conn.execute("""
             CREATE TABLE pending_tags_new (
                 id TEXT PRIMARY KEY,
@@ -188,6 +198,10 @@ def queue_tag(
     if last_marker is not None and exchange_index is not None:
         raise ValueError(
             "queue_tag accepts at most one of exchange_index or last_marker, not both",
+        )
+    if exchange_index is not None and exchange_index < 1:
+        raise ValueError(
+            f"exchange_index must be >= 1 (1-based), got {exchange_index}",
         )
 
     # Check for duplicate explicitly (SQLite UNIQUE doesn't handle NULL correctly)
