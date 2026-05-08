@@ -35,6 +35,10 @@ def cmd_id(args) -> int:
         print(f"Error: ID not found: {args.ulid}", file=sys.stderr)
         return 1
     if classified["status"] == "ambiguous":
+        if args.json:
+            out = {"kind": "ambiguous", "candidates": classified["candidates"]}
+            print(_json.dumps(out, indent=2))
+            return 2
         print(f"Error: Ambiguous ID prefix: {args.ulid}", file=sys.stderr)
         print("Candidates:", file=sys.stderr)
         for candidate in classified["candidates"]:
@@ -56,7 +60,9 @@ def cmd_id(args) -> int:
             print(f"view:  siftd query {full_id}")
         elif kind == "event":
             conv_id = context.get("conversation_id", "")
-            print(f"event {full_id[:8]}... (conversation: {conv_id[:8]}...)")
+            turn = context.get("turn")
+            turn_str = f", turn {turn}" if turn is not None else ""
+            print(f"event {full_id[:8]}... (conversation: {conv_id[:8]}...{turn_str})")
             print(f"view:  siftd query {full_id}")
         return 0
 
@@ -103,14 +109,53 @@ def _resolve_and_classify(conn, raw_id: str) -> dict | None:
             },
         }
     if event_full:
+        turn = _event_turn_number(conn, row)
         return {
             "status": "ok",
             "kind": "event",
             "id": event_full,
-            "context": {"conversation_id": event_conversation_id},
+            "context": {"conversation_id": event_conversation_id, "turn": turn},
         }
 
     return None
+
+
+def _event_turn_number(conn, event_row) -> int | None:
+    """Compute 1-based turn index for an event by its prompt anchor."""
+    if not event_row:
+        return None
+
+    kind = event_row["kind"]
+    prompt_id = None
+
+    if kind == "prompt":
+        prompt_id = event_row["id"]
+    elif kind == "response":
+        prompt_id = event_row["parent_id"]
+    elif kind == "tool_call":
+        response_row = conn.execute(
+            "SELECT parent_id FROM events WHERE id = ?",
+            (event_row["parent_id"],),
+        ).fetchone()
+        prompt_id = response_row["parent_id"] if response_row else None
+
+    if not prompt_id:
+        return None
+
+    prompt_row = conn.execute(
+        "SELECT id, timestamp, conversation_id FROM events WHERE id = ? AND kind = 'prompt'",
+        (prompt_id,),
+    ).fetchone()
+    if not prompt_row:
+        return None
+
+    count_row = conn.execute(
+        "SELECT COUNT(*) AS n FROM events"
+        " WHERE conversation_id = ? AND kind = 'prompt'"
+        " AND (timestamp < ? OR (timestamp = ? AND id <= ?))",
+        (prompt_row["conversation_id"], prompt_row["timestamp"], prompt_row["timestamp"], prompt_row["id"]),
+    ).fetchone()
+    return int(count_row["n"]) if count_row else None
 
 
 def build_id_parser(subparsers) -> None:

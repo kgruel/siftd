@@ -79,6 +79,7 @@ class TestIdClassification:
         assert "event" in output
         assert r[:8] in output
         assert "conversation:" in output
+        assert "turn " in output
         assert "siftd query" in output
 
     def test_tool_call_event_classification(self, id_test_db, capsys):
