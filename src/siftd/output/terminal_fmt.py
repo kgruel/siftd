@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from siftd.output._id_format import short_id
+
 if TYPE_CHECKING:
     from painted import Fidelity
 
@@ -81,7 +83,6 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         lines.append(f"Conversations for: {query}\n")
         for r in results:
             conv_id = r.get("conversation_id", "")
-            short_id = conv_id[:12]
             ws = r.get("_workspace", "")
             started = r.get("_started_at", "")
             max_s = r.get("max_score", 0.0)
@@ -89,7 +90,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             n_chunks = r.get("chunk_count", 0)
 
             lines.append(
-                f"  {short_id}  max={max_s:.3f}  mean={mean_s:.3f}"
+                f"  {short_id(conv_id)}  max={max_s:.3f}  mean={mean_s:.3f}"
                 f"  [{n_chunks} chunks]  {started}  {ws}"
             )
             snippet = truncate_text(
@@ -137,7 +138,6 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             lines.append("  More results:\n")
             for r in tier2:
                 conv_id = r.get("conversation_id", "")
-                short_id = conv_id[:12]
                 ws = r.get("_workspace", "")
                 started = r.get("_started_at", "")
                 score = r.get("score", 0.0)
@@ -147,7 +147,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
                 file_refs = r.get("file_refs", [])
                 files_tag = f"  [{len(file_refs)} files]" if file_refs else ""
                 lines.append(
-                    f"  {short_id}  {score:.3f}  {ws:20s}  {started}{files_tag}  {snippet}"
+                    f"  {short_id(conv_id)}  {score:.3f}  {ws:20s}  {started}{files_tag}  {snippet}"
                 )
             lines.append("")
         return "\n".join(lines)
@@ -156,14 +156,13 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
     lines.append(f"Results for: {query}\n")
     for r in results:
         conv_id = r.get("conversation_id", "")
-        short_id = conv_id[:12]
         ws = r.get("_workspace", "")
         started = r.get("_started_at", "")
         chunk_type = r.get("chunk_type", "").upper()[:8]
         score = r.get("score", 0.0)
 
         lines.append(
-            f"  {short_id}  {score:.3f}  [{chunk_type:8s}]  {started}  {ws}"
+            f"  {short_id(conv_id)}  {score:.3f}  [{chunk_type:8s}]  {started}  {ws}"
         )
 
         exchanges = r.get("_exchanges")

@@ -15,6 +15,7 @@ from siftd.api import (
 from siftd.api.sessions import is_session_registered
 from siftd.api.sessions import queue_tag as queue_pending_tag
 from siftd.cli._common import resolve_db
+from siftd.output._id_format import short_id
 from siftd.paths import ensure_dirs, session_id_file
 
 # Subcommand names that can never collide with ULIDs (26-char base32).
@@ -573,7 +574,7 @@ def cmd_tag(args) -> int:
                     remove=removing,
                 )
             except FileNotFoundError:
-                print(f"{_target_kind} not found: {_target_id[:12]}")
+                print(f"{_target_kind} not found: {short_id(_target_id)}")
                 return 1
             except ValueError as e:
                 print(f"Error: {e}")
@@ -584,15 +585,15 @@ def cmd_tag(args) -> int:
                     if _row.status == "not_found":
                         print(f"Tag '{_row.tag}' not found")
                     elif _row.status == "removed":
-                        print(f"Removed tag '{_row.tag}' from {_target_kind} {_resolved_id[:12]}")
+                        print(f"Removed tag '{_row.tag}' from {_target_kind} {short_id(_resolved_id)}")
                     else:
-                        print(f"Tag '{_row.tag}' not applied to {_target_kind} {_resolved_id[:12]}")
+                        print(f"Tag '{_row.tag}' not applied to {_target_kind} {short_id(_resolved_id)}")
             else:
                 for _row in _result.results:
                     if _row.status == "applied":
-                        print(f"Applied tag '{_row.tag}' to {_target_kind} {_resolved_id[:12]}")
+                        print(f"Applied tag '{_row.tag}' to {_target_kind} {short_id(_resolved_id)}")
                     else:
-                        print(f"Tag '{_row.tag}' already applied to {_target_kind} {_resolved_id[:12]}")
+                        print(f"Tag '{_row.tag}' already applied to {_target_kind} {short_id(_resolved_id)}")
             return 0
 
     # Normalize args into a POST body for delegation
@@ -748,17 +749,17 @@ def cmd_tag(args) -> int:
             if status == "not_found":
                 print(f"Tag '{tag_name}' not found")
             elif status == "removed":
-                print(f"Removed tag '{tag_name}' from {entity_type} {resolved_id[:12]}")
+                print(f"Removed tag '{tag_name}' from {entity_type} {short_id(resolved_id)}")
             else:
-                print(f"Tag '{tag_name}' not applied to {entity_type} {resolved_id[:12]}")
+                print(f"Tag '{tag_name}' not applied to {entity_type} {short_id(resolved_id)}")
     else:
         for row in result_local.results:
             tag_name = row.tag
             status = row.status
             if status == "applied":
-                print(f"Applied tag '{tag_name}' to {entity_type} {resolved_id[:12]}")
+                print(f"Applied tag '{tag_name}' to {entity_type} {short_id(resolved_id)}")
             else:
-                print(f"Tag '{tag_name}' already applied to {entity_type} {resolved_id[:12]}")
+                print(f"Tag '{tag_name}' already applied to {entity_type} {short_id(resolved_id)}")
     return 0
 
 

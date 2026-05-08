@@ -18,6 +18,7 @@ from siftd.api.conversations import (
     get_conversation,
     list_conversations,
 )
+from siftd.output._id_format import short_id
 
 if TYPE_CHECKING:
     from painted import Fidelity
@@ -209,7 +210,7 @@ def export_document(
 
     # Build a descriptive filename
     if conversations and len(conversations) == 1:
-        slug = conversations[0].id[:12]
+        slug = short_id(conversations[0].id)
         filename = f"siftd-{slug}.{ext}"
     else:
         filename = f"siftd-export-{len(conversations)}.{ext}"

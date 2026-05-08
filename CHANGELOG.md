@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **`siftd db --help` epilog reorganized** — Help text now groups subcommands into logical sections: Inspection (info, schema-version, stats, workspaces, path, sync-status), Maintenance (vacuum, backup, restore), Sync (slice, merge, send, push, pull), and Sync remotes (remote, receive, process). Improves discoverability for users navigating the database operations namespace.
+- **ULID truncation standardized to 8 characters** — All list and search renderers (terminal, markdown, HTML, JSON) now display conversation IDs as 8-character short forms (`:8`). Detail views remain unchanged. Affects `siftd query`, `siftd search`, `siftd tag list`, serve HTML routes, and all export formats. **Note for agents:** grep patterns matching 12-character IDs should be updated to 8 characters for consistency with displayed output.
 
 ## [0.8.1] - 2026-05-07
 

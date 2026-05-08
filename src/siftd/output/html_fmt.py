@@ -13,6 +13,8 @@ from __future__ import annotations
 from html import escape
 from typing import TYPE_CHECKING, Any
 
+from siftd.output._id_format import short_id
+
 if TYPE_CHECKING:
     from painted import Fidelity
 
@@ -117,7 +119,7 @@ def _render_tag_section(
     The section has a stable ID for htmx fragment swaps.
     Route URLs are passed via parameters — formatters must not hardcode routes.
     """
-    section_id = f"tags-{conv_id[:12]}"
+    section_id = f"tags-{short_id(conv_id)}"
     parts = [f'<div class="tag-section" id="{escape(section_id)}">']
 
     for tag in tags:
@@ -137,8 +139,8 @@ def _render_tag_section(
             parts.append(f'<span class="tag">{escape(tag)}</span>')
 
     if interactive and tag_action_url:
-        input_id = f"tag-input-{conv_id[:12]}"
-        list_id = f"tag-suggest-{conv_id[:12]}"
+        input_id = f"tag-input-{short_id(conv_id)}"
+        list_id = f"tag-suggest-{short_id(conv_id)}"
         parts.append(
             f'<form class="tag-add" hx-post="{escape(tag_action_url)}"'
             f' hx-target="#{escape(section_id)}"'
@@ -236,7 +238,7 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
             meta.append(
                 f'<span class="metric">{escape(fmt_tokens(total_tokens))} tokens</span>'
             )
-        meta.append(f'<span class="identifier">{escape(detail_id[:12])}</span>')
+        meta.append(f'<span class="identifier">{escape(detail_id)}</span>')
 
         parts.append(f'<div class="detail-info-bar">{" ".join(meta)}</div>')
 
@@ -365,7 +367,7 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
 
     parts.append("<tbody>")
     for c in summaries:
-        cid = c.id[:12] if c.id else ""
+        cid = short_id(c.id) if c.id else ""
         parts.append(f"<tr{_hx_detail(detail_base, c.id, shell_base)}>")
         parts.append(f'<td class="identifier">{escape(cid)}</td>')
         parts.append(f'<td class="temporal">{escape(fmt_timestamp(c.started_at))}</td>')
@@ -421,7 +423,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         for r in results:
             conv_id = r.get("conversation_id", "")
             parts.append(f"<tr{_hx_detail(detail_base, conv_id, shell_base)}>")
-            parts.append(f'<td class="identifier">{escape(conv_id[:12])}</td>')
+            parts.append(f'<td class="identifier">{escape(short_id(conv_id))}</td>')
             parts.append(f'<td class="metric">{r.get("max_score", 0.0):.3f}</td>')
             parts.append(f'<td class="metric">{r.get("mean_score", 0.0):.3f}</td>')
             parts.append(f'<td class="metric">{r.get("chunk_count", 0)}</td>')
@@ -472,7 +474,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
                 parts.append(
                     f'<div class="search-hit compact"'
                     f'{_hx_detail(detail_base, conv_id, shell_base)}>'
-                    f'<span class="identifier">{escape(conv_id[:12])}</span>'
+                    f'<span class="identifier">{escape(short_id(conv_id))}</span>'
                     f' <span class="metric">{score:.3f}</span>'
                     f' <span class="workspace">{escape(ws)}</span>'
                     f' <span class="temporal">{escape(started)}</span>'
@@ -500,7 +502,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         )
         parts.append(
             f'<header>'
-            f'<span class="identifier">{escape(conv_id[:12])}</span>'
+            f'<span class="identifier">{escape(short_id(conv_id))}</span>'
             f' <span class="metric">{score:.3f}</span>'
             f' <span class="adapter">[{escape(chunk_type)}]</span>'
             f' <span class="temporal">{escape(started)}</span>'
