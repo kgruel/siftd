@@ -1146,8 +1146,8 @@ def get_conversation_metadata(
     row = conn.execute(
         "SELECT c.id, c.started_at, w.path AS workspace "
         "FROM conversations c LEFT JOIN workspaces w ON w.id = c.workspace_id "
-        "WHERE c.id = ? OR c.id LIKE ? "
+        "WHERE c.id = ? "
         "LIMIT 1",
-        (conversation_id, f"{conversation_id}%"),
+        (conversation_id,),
     ).fetchone()
     return dict(row) if row else None

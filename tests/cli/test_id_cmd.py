@@ -118,6 +118,26 @@ class TestIdClassification:
         rc = main(["--db", str(db), "id", "ZZZZZZZZZZZZZZZZZZZ"])
         assert rc == 1
 
+    def test_ambiguous_prefix_returns_exit_2(self, id_test_db, capsys):
+        """siftd id <prefix> returns 2 when it matches both conversation and event."""
+        db, c, _p, r, _tc = id_test_db
+        prefix = ""
+        for i in range(1, min(len(c), len(r)) + 1):
+            if c[:i] == r[:i]:
+                prefix = c[:i]
+            else:
+                break
+        assert prefix
+
+        rc = main(["--db", str(db), "id", prefix])
+        assert rc == 2
+
+        err = capsys.readouterr().err
+        assert "Ambiguous ID prefix" in err
+        assert "Candidates:" in err
+        assert "conversation:" in err
+        assert "event:" in err
+
     def test_json_output_conversation(self, id_test_db, capsys):
         """siftd id --json outputs structured conversation classification."""
         db, c, *_ = id_test_db

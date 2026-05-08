@@ -26,7 +26,6 @@ def cmd_id(args) -> int:
     try:
         classified = _resolve_and_classify(conn, args.ulid)
     except Exception:
-        conn.close()
         print("Error: Failed to resolve ID", file=sys.stderr)
         return 1
     finally:
@@ -35,8 +34,16 @@ def cmd_id(args) -> int:
     if classified is None:
         print(f"Error: ID not found: {args.ulid}", file=sys.stderr)
         return 1
+    if classified["status"] == "ambiguous":
+        print(f"Error: Ambiguous ID prefix: {args.ulid}", file=sys.stderr)
+        print("Candidates:", file=sys.stderr)
+        for candidate in classified["candidates"]:
+            print(f"  {candidate['kind']}: {candidate['id']}", file=sys.stderr)
+        return 2
 
-    kind, full_id, context = classified
+    kind = classified["kind"]
+    full_id = classified["id"]
+    context = classified["context"]
 
     # Text output
     if not args.json:
@@ -63,33 +70,45 @@ def cmd_id(args) -> int:
     return 0
 
 
-def _resolve_and_classify(conn, raw_id: str) -> tuple[str, str, dict] | None:
+def _resolve_and_classify(conn, raw_id: str) -> dict | None:
     """Classify the ID as conversation or event and gather context.
 
-    Returns ('conversation', full_id, context_dict) or ('event', full_id, context_dict) or None.
-    Conversation match wins when both resolve (rare, since ULIDs are globally unique).
+    Returns a resolved classification dict, an ambiguous result dict, or None.
     """
     from siftd.api import get_conversation_metadata, resolve_entity_id
     from siftd.api.events import resolve_event_row
 
-    # Try conversation match first (it wins if both match)
     conv_full = resolve_entity_id(conn, "conversation", raw_id)
-    if conv_full:
-        conv_data = get_conversation_metadata(conn, raw_id)
-        context = {
-            "workspace": conv_data.get("workspace") if conv_data else None,
-            "started_at": conv_data.get("started_at") if conv_data else None,
-        }
-        return ("conversation", conv_full, context)
-
-    # Try event match
     row = resolve_event_row(conn, raw_id)
-    if row and row["kind"] in ("prompt", "response", "tool_call"):
-        full_event_id = row["id"]
-        context = {
-            "conversation_id": row["conversation_id"],
+    event_full = row["id"] if row and row["kind"] in ("prompt", "response", "tool_call") else None
+    event_conversation_id = row["conversation_id"] if event_full and row else None
+
+    if conv_full and event_full:
+        return {
+            "status": "ambiguous",
+            "candidates": [
+                {"kind": "conversation", "id": conv_full},
+                {"kind": "event", "id": event_full},
+            ],
         }
-        return ("event", full_event_id, context)
+    if conv_full:
+        conv_data = get_conversation_metadata(conn, conv_full)
+        return {
+            "status": "ok",
+            "kind": "conversation",
+            "id": conv_full,
+            "context": {
+                "workspace": conv_data.get("workspace") if conv_data else None,
+                "started_at": conv_data.get("started_at") if conv_data else None,
+            },
+        }
+    if event_full:
+        return {
+            "status": "ok",
+            "kind": "event",
+            "id": event_full,
+            "context": {"conversation_id": event_conversation_id},
+        }
 
     return None
 
