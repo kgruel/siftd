@@ -22,6 +22,10 @@ class Finding:
         fix_command: CLI command to fix the issue (advisory only, not executed
             automatically). User must run this command manually.
         context: Optional structured data for programmatic consumers.
+        target: Optional row-scope identifier — when set, the finding refers to
+            a specific entity (e.g., a conversation id) rather than the whole
+            result set or DB. Used by the caveats producer registry to thread
+            row-level annotations through dispatch into renderers.
     """
 
     check: str
@@ -30,6 +34,7 @@ class Finding:
     fix_available: bool
     fix_command: str | None = None
     context: dict | None = None
+    target: str | None = None
 
 
 @dataclass
@@ -133,7 +138,6 @@ from siftd.doctor.checks.ingest_errors import IngestErrorsCheck  # noqa: E402
 from siftd.doctor.checks.ingest_pending import IngestPendingCheck  # noqa: E402
 from siftd.doctor.checks.orphaned_chunks import OrphanedChunksCheck  # noqa: E402
 from siftd.doctor.checks.pending_tags import PendingTagsCheck  # noqa: E402
-from siftd.doctor.checks.pricing_gaps import PricingGapsCheck  # noqa: E402
 from siftd.doctor.checks.schema_current import SchemaCurrentCheck  # noqa: E402
 from siftd.doctor.checks.workspace_identity import WorkspaceIdentityCheck  # noqa: E402
 
@@ -145,7 +149,6 @@ BUILTIN_CHECKS: list[Check] = [
     EmbeddingsCompatCheck(),
     EmbeddingsStaleCheck(),
     OrphanedChunksCheck(),
-    PricingGapsCheck(),
     CostCoverageCheck(),
     DropInsValidCheck(),
     FreelistCheck(),

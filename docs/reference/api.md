@@ -78,6 +78,7 @@ A single issue detected by a check.
 | `fix_available` | `bool` | Whether a fix suggestion exists. |
 | `fix_command` | `str \| None` | CLI command to fix the issue (advisory only, not executed automatically). User must run this command manually. |
 | `context` | `dict \| None` | Optional structured data for programmatic consumers. |
+| `target` | `str \| None` | Optional row-scope identifier — when set, the finding refers to a specific entity (e.g., a conversation id) rather than the whole result set or DB. Used by the caveats producer registry to thread row-level annotations through dispatch into renderers. |
 
 ### Functions
 

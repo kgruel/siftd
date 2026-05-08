@@ -24,7 +24,6 @@ from siftd.doctor.checks import (
     FtsStaleCheck,
     IngestPendingCheck,
     OrphanedChunksCheck,
-    PricingGapsCheck,
     SchemaCurrentCheck,
     WorkspaceIdentityCheck,
 )
@@ -69,8 +68,11 @@ class TestListChecks:
         assert "ingest-pending" in names
         assert "embeddings-stale" in names
         assert "orphaned-chunks" in names
-        assert "pricing-gaps" in names
         assert "drop-ins-valid" in names
+        # pricing-gaps was dissolved into the caveats producer registry
+        # (siftd.api.caveats._pricing_caveats); verify the check is GONE so
+        # the check list and caveats layer don't both surface the same fact.
+        assert "pricing-gaps" not in names
         assert "freelist" in names
         assert "schema-current" in names
         # New P1 checks
@@ -94,7 +96,6 @@ class TestListChecks:
         assert by_name["ingest-errors"] is False
         assert by_name["embeddings-stale"] is True
         assert by_name["orphaned-chunks"] is True
-        assert by_name["pricing-gaps"] is False
         assert by_name["drop-ins-valid"] is False
 
     def test_check_info_has_required_fields(self):
@@ -123,7 +124,6 @@ class TestListChecks:
         assert by_name["ingest-errors"] is True
         assert by_name["embeddings-stale"] is True
         assert by_name["orphaned-chunks"] is True
-        assert by_name["pricing-gaps"] is True
         assert by_name["freelist"] is True
         assert by_name["schema-current"] is True
         # Checks that don't need the database
@@ -140,7 +140,6 @@ class TestListChecks:
         # Checks that don't need the embeddings database
         assert by_name["ingest-pending"] is False
         assert by_name["ingest-errors"] is False
-        assert by_name["pricing-gaps"] is False
         assert by_name["drop-ins-valid"] is False
         assert by_name["embeddings-available"] is False
         assert by_name["freelist"] is False
@@ -156,7 +155,6 @@ class TestListChecks:
         assert by_name["ingest-errors"] == "fast"
         assert by_name["embeddings-stale"] == "fast"
         assert by_name["orphaned-chunks"] == "fast"
-        assert by_name["pricing-gaps"] == "fast"
         assert by_name["drop-ins-valid"] == "fast"
         assert by_name["embeddings-available"] == "fast"
         assert by_name["freelist"] == "fast"
@@ -292,26 +290,6 @@ class TestEmbeddingsStaleCheck:
         assert "conversation" in findings[0].message
         assert "not indexed" in findings[0].message
         assert findings[0].fix_available is True
-
-
-class TestPricingGapsCheck:
-    """Tests for the pricing-gaps check."""
-
-    def test_returns_list(self, check_context):
-        """Returns a list of findings (may be empty or have items)."""
-        check = PricingGapsCheck()
-        findings = check.run(check_context)
-        assert isinstance(findings, list)
-        assert all(isinstance(f, Finding) for f in findings)
-
-    def test_finding_structure(self, check_context):
-        """Findings have correct structure when there are gaps."""
-        check = PricingGapsCheck()
-        findings = check.run(check_context)
-        for f in findings:
-            assert f.check == "pricing-gaps"
-            assert f.severity == "warning"
-            assert f.fix_available is False
 
 
 class TestCostCoverageCheck:

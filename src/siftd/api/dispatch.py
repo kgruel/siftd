@@ -63,11 +63,21 @@ def execute(op: Operation) -> Any:
     return op.fn(**params)
 
 
-def render(result: Any, op: Operation, *, fmt: Any) -> Any:
+def render(
+    result: Any,
+    op: Operation,
+    *,
+    fmt: Any,
+    findings: list[Any] | None = None,
+) -> Any:
     """Render result through the format protocol.
 
     For render_method="raw", returns the result unchanged.
-    Otherwise calls fmt.render_{method}(result, fidelity).
+    Otherwise calls fmt.render_{method}(result, fidelity, **render_context).
+
+    `findings`, when non-empty, is threaded into render_context as
+    "caveats" — producer output is canonical, so an existing
+    render_context["caveats"] entry is overwritten.
     """
     if op.render_method == "raw":
         return result
@@ -76,16 +86,36 @@ def render(result: Any, op: Operation, *, fmt: Any) -> Any:
     if renderer is None:
         return result
 
-    return renderer(result, op.fidelity, **op.render_context)
+    ctx = dict(op.render_context)
+    if findings:
+        ctx["caveats"] = findings
+    return renderer(result, op.fidelity, **ctx)
+
+
+def execute_for_render(op: Operation) -> tuple[Any, list[Any]]:
+    """Execute and run caveat producers, returning both.
+
+    For CLI paths that bypass `dispatch.dispatch()` (e.g. cli/query.py
+    has serve-fallback branching) but still want to surface caveats.
+    """
+    from siftd.api.caveats import run_producers
+
+    result = execute(op)
+    return result, run_producers(op, result)
 
 
 def dispatch(op: Operation, *, fmt: Any) -> Any:
     """Execute + render in one call.
 
     Does not attempt serve delegation — the caller handles that via
-    serve.delegation.try_serve(op) before calling dispatch.
+    serve.delegation.try_serve(op) before calling dispatch. Caveat
+    producers run between execute and render; their findings are threaded
+    into render_context["caveats"] for the renderer to consume.
     """
+    from siftd.api.caveats import run_producers
+
     result = execute(op)
-    return render(result, op, fmt=fmt)
+    findings = run_producers(op, result)
+    return render(result, op, fmt=fmt, findings=findings)
 
 

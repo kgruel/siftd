@@ -883,6 +883,7 @@ def _doctor_run_json(args, check_names, show_fixes, db, deep=False) -> int:
                 "fix_available": f.fix_available,
                 "fix_command": f.fix_command,
                 "context": f.context,
+                "target": f.target,
             }
             for f in findings
         ],

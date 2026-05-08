@@ -4,6 +4,7 @@ This module provides programmatic access to siftd functionality.
 CLI commands are thin wrappers over these functions.
 """
 
+from siftd.api import caveats as _caveats  # noqa: F401  — registers producers at import time
 from siftd.api.adapters import (
     AdapterInfo,
     list_adapters,

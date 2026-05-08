@@ -97,8 +97,8 @@ class TestTerminalRenderList:
         assert "claude-opus-4-5" in line  # model with date stripped
         assert "3p/5r" in line
         assert "1.2k" in line
-        assert "$0.0340" in line
-        # Tags not shown at default depth
+        # Cost lives at depth>=3; tags too
+        assert "$" not in line
         assert "review" not in line
 
     def test_full_depth_shows_table_with_tags(self, summaries):
@@ -122,15 +122,63 @@ class TestTerminalRenderList:
         output = render_list([], Fidelity(depth=1))
         assert output is None
 
-    def test_none_cost_shows_zero(self, summaries):
+    def test_none_cost_shows_zero_at_full_depth(self, summaries):
         from siftd.output.terminal_fmt import render_list
 
-        fidelity = Fidelity(depth=1)
+        fidelity = Fidelity(depth=3)
         block = render_list(summaries, fidelity)
         output = self._block_to_text(block)
 
         lines = output.strip().split("\n")
-        assert "$0.0000" in lines[3]  # second data row (after header + sep)
+        # gpt-4o row has cost=None — depth>=3 surfaces $0.0000 (no caveat = no '?')
+        assert "$0.0000" in lines[3]
+
+    def test_pricing_caveat_renders_question_mark_for_targeted_row(self, summaries):
+        from siftd.doctor.checks import Finding
+        from siftd.output.terminal_fmt import render_list
+
+        caveat = Finding(
+            check="pricing-missing",
+            severity="warning",
+            message="No pricing data for gpt-4o",
+            fix_available=False,
+            context={"model": "gpt-4o"},
+            target="02XYZABC789012",
+        )
+        block = render_list(summaries, Fidelity(depth=3), caveats=[caveat])
+        output = self._block_to_text(block)
+
+        lines = output.strip().split("\n")
+        # First data row keeps its computed cost; second row swaps to '?'
+        assert "$0.0340" in lines[2]
+        cost_cell_present = any("?" in cell for cell in lines[3].split())
+        assert cost_cell_present, lines[3]
+
+    def test_caveat_footer_summarizes_kinds(self, summaries):
+        from siftd.doctor.checks import Finding
+        from siftd.output.terminal_fmt import render_list
+
+        caveats = [
+            Finding(
+                check="pricing-missing",
+                severity="warning",
+                message=f"No pricing data for {s.model}",
+                fix_available=False,
+                context={"model": s.model},
+                target=s.id,
+            )
+            for s in summaries
+        ]
+        block = render_list(summaries, Fidelity(depth=3), caveats=caveats)
+        output = self._block_to_text(block)
+        assert "2 row(s) with pricing-missing" in output
+
+    def test_no_caveats_no_footer(self, summaries):
+        from siftd.output.terminal_fmt import render_list
+
+        block = render_list(summaries, Fidelity(depth=3), caveats=[])
+        output = self._block_to_text(block)
+        assert "row(s) with" not in output
 
 
 class TestMarkdownRenderList:
@@ -150,33 +198,91 @@ class TestMarkdownRenderList:
         # No model column
         assert "Model" not in lines[0]
 
-    def test_default_depth_seven_columns(self, summaries):
+    def test_default_depth_six_columns(self, summaries):
         from siftd.output.markdown_fmt import render_list
 
         fidelity = Fidelity(depth=1)
         output = render_list(summaries, fidelity)
 
         lines = output.strip().split("\n")
-        assert "| ID | Started | Workspace | Model | Turns | Tokens | Cost |" == lines[0]
-        assert lines[1].count("---") == 7
+        # Cost moved to depth>=3; default depth has six columns
+        assert "| ID | Started | Workspace | Model | Turns | Tokens |" == lines[0]
+        assert lines[1].count("---") == 6
         assert "claude-opus-4-5" in lines[2]
         assert "3p/5r" in lines[2]
+        assert "Cost" not in lines[0]
 
-    def test_full_depth_includes_tags(self, summaries):
+    def test_full_depth_includes_cost_and_tags(self, summaries):
         from siftd.output.markdown_fmt import render_list
 
         fidelity = Fidelity(depth=3)
         output = render_list(summaries, fidelity)
 
         lines = output.strip().split("\n")
+        assert "Cost" in lines[0]
         assert "Tags" in lines[0]
         assert "review, bug" in lines[2]
+        assert "$0.0340" in lines[2]
+
+    def test_pricing_caveat_renders_question_mark(self, summaries):
+        from siftd.doctor.checks import Finding
+        from siftd.output.markdown_fmt import render_list
+
+        caveat = Finding(
+            check="pricing-missing",
+            severity="warning",
+            message="No pricing data for gpt-4o",
+            fix_available=False,
+            context={"model": "gpt-4o"},
+            target="02XYZABC789012",
+        )
+        output = render_list(summaries, Fidelity(depth=3), caveats=[caveat])
+        lines = output.strip().split("\n")
+        # First row keeps cost; second row swaps to '?'
+        assert "$0.0340" in lines[2]
+        cells = [cell.strip() for cell in lines[3].split("|")]
+        assert "?" in cells
 
     def test_empty_list_returns_empty_string(self):
         from siftd.output.markdown_fmt import render_list
 
         output = render_list([], Fidelity(depth=1))
         assert output == ""
+
+
+class TestHtmlRenderList:
+    def test_default_depth_no_cost_column(self, summaries):
+        from siftd.output.html_fmt import render_list
+
+        output = render_list(summaries, Fidelity(depth=1))
+        # Header presence
+        assert "<th class=\"model\">Model</th>" in output
+        assert "<th class=\"metric\">Tokens</th>" in output
+        # Cost at depth>=3 only
+        assert "<th class=\"metric\">Cost</th>" not in output
+
+    def test_full_depth_includes_cost(self, summaries):
+        from siftd.output.html_fmt import render_list
+
+        output = render_list(summaries, Fidelity(depth=3))
+        assert "<th class=\"metric\">Cost</th>" in output
+        assert "$0.0340" in output
+
+    def test_pricing_caveat_renders_question_mark(self, summaries):
+        from siftd.doctor.checks import Finding
+        from siftd.output.html_fmt import render_list
+
+        caveat = Finding(
+            check="pricing-missing",
+            severity="warning",
+            message="No pricing data for gpt-4o",
+            fix_available=False,
+            context={"model": "gpt-4o"},
+            target="02XYZABC789012",
+        )
+        output = render_list(summaries, Fidelity(depth=3), caveats=[caveat])
+        assert '<td class="metric missing">?</td>' in output
+        assert "$0.0340" in output  # untargeted row keeps its cost
 
 
 class TestJsonRenderList:
@@ -187,8 +293,9 @@ class TestJsonRenderList:
             output = render_list(summaries, Fidelity(depth=depth))
             data = json.loads(output)
 
-            assert len(data) == 2
-            entry = data[0]
+            assert set(data.keys()) == {"result", "caveats"}
+            assert len(data["result"]) == 2
+            entry = data["result"][0]
             assert entry["id"] == "01ABCDEF123456"
             assert entry["workspace"] == "/home/user/my-project"
             assert entry["model"] == "claude-opus-4-5-20251101"
@@ -198,18 +305,38 @@ class TestJsonRenderList:
             assert entry["cost"] == 0.034
             assert entry["tags"] == ["review", "bug"]
 
-    def test_empty_list_returns_empty_array(self):
+    def test_empty_list_returns_envelope_with_empty_result(self):
         from siftd.output.json_fmt import render_list
 
         output = render_list([], Fidelity(depth=1))
-        assert json.loads(output) == []
+        data = json.loads(output)
+        assert data == {"result": [], "caveats": []}
 
     def test_null_cost_preserved(self, summaries):
         from siftd.output.json_fmt import render_list
 
         output = render_list(summaries, Fidelity(depth=1))
         data = json.loads(output)
-        assert data[1]["cost"] is None
+        assert data["result"][1]["cost"] is None
+
+    def test_caveats_emitted_when_present(self, summaries):
+        from siftd.doctor.checks import Finding
+        from siftd.output.json_fmt import render_list
+
+        caveat = Finding(
+            check="pricing-missing",
+            severity="warning",
+            message="No pricing data for gpt-4o",
+            fix_available=False,
+            context={"model": "gpt-4o"},
+            target="02XYZABC789012",
+        )
+        output = render_list(summaries, Fidelity(depth=3), caveats=[caveat])
+        data = json.loads(output)
+        assert len(data["caveats"]) == 1
+        assert data["caveats"][0]["check"] == "pricing-missing"
+        assert data["caveats"][0]["target"] == "02XYZABC789012"
+        assert data["caveats"][0]["context"] == {"model": "gpt-4o"}
 
 
 class TestFormatTable:

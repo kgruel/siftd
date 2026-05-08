@@ -167,11 +167,18 @@ def test_query_sql_and_cmd_query_list_branches(monkeypatch, capsys, tmp_path):
         "siftd.serve.delegation.try_serve",
         lambda op: {"conversations": [{"id": "c1", "workspace": "/w", "model": "m", "started_at": "2024", "prompts": 1, "responses": 1, "tokens": 5, "cost": None, "tags": []}]},
     )
-    monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: SimpleNamespace(render_list=lambda convs, fidelity: "LIST"))
+    monkeypatch.setattr(
+        "siftd.output.format_registry.select_format",
+        lambda **k: SimpleNamespace(render_list=lambda convs, fidelity, **ctx: "LIST"),
+    )
     monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
     assert cmd_query(_args(stats=True, db=str(tmp_path / "db.sqlite"))) == 0
 
     class _F:
+        # Depth=0 keeps caveat producers' applies_to predicates False so
+        # they don't run against the SimpleNamespace fixtures below.
+        depth = 0
+
         def with_depth(self, d):
             return self
 

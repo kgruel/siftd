@@ -486,13 +486,20 @@ class TestCmdDoctor:
         assert rc in (0, 1)
 
     def test_doctor_run_json(self, test_db, capsys):
-        """siftd doctor --json returns structured findings."""
+        """siftd doctor --json returns structured findings.
+
+        Every finding includes a "target" key (None for query-scope
+        findings; entity id for row-scope). Additive schema check —
+        guards against accidental removal of the target field.
+        """
         rc = main(["--db", str(test_db), "doctor", "--json"])
         assert rc in (0, 1)
         data = json.loads(capsys.readouterr().out)
         assert "findings" in data
         assert "summary" in data
         assert isinstance(data["findings"], list)
+        for f in data["findings"]:
+            assert "target" in f, f
 
     def test_doctor_run_specific_check(self, test_db, capsys):
         """siftd doctor run <check> runs only that check."""

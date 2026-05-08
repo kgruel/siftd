@@ -50,10 +50,15 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> Any:
         0 (brief): id, timestamp, workspace
         1-2 (default): adds model, turns, tokens, cost
         3+ (full): aligned table with all columns including tags
+
+    Context keys:
+        caveats: list[Finding] — row-scope and query-scope caveats threaded
+            from dispatch. Drives '?' cells for unpriced rows and a footer
+            line summarizing kinds.
     """
     from siftd.output.painted_bridge import render_list_block
 
-    return render_list_block(summaries, fidelity)
+    return render_list_block(summaries, fidelity, caveats=context.get("caveats"))
 
 
 def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:

@@ -456,13 +456,18 @@ def cmd_query(args) -> int:
     from dataclasses import asdict
 
     from siftd.api import list_conversations
-    from siftd.api.dispatch import Operation, execute
+    from siftd.api.dispatch import Operation, execute_for_render
     from siftd.cli._filters import extract_filter_args
     from siftd.serve.delegation import try_serve
 
     db = resolve_db(args)
     filters = extract_filter_args(args)
     fidelity = fidelity_from_args(args)
+    # Apply -v before Operation is built so caveat producers' applies_to
+    # predicates see the full depth and fire when the user actually wants
+    # the verbose surface (cost column, etc.).
+    if args.verbose:
+        fidelity = fidelity.with_depth(3)
 
     op = Operation(
         path="/api/v1/conversations",
@@ -479,10 +484,13 @@ def cmd_query(args) -> int:
         db=db,
     )
 
+    caveats: list = []
+
     # Try serve, fall back to local execution
     conversations = try_serve(op)
     if conversations is not None and isinstance(conversations, dict):
-        # Server returned serialized list — deserialize back to domain objects
+        # Server returned serialized list — deserialize back to domain objects.
+        # Caveats are not threaded across the serve boundary in slice 1.
         from siftd.api.conversations import ConversationSummary
 
         conversations = [
@@ -501,7 +509,7 @@ def cmd_query(args) -> int:
         ]
     else:
         try:
-            conversations = execute(op)
+            conversations, caveats = execute_for_render(op)
         except FileNotFoundError as e:
             print(str(e))
             print("Run 'siftd ingest' to create it.")
@@ -520,7 +528,9 @@ def cmd_query(args) -> int:
 
     if not conversations:
         if args.json:
-            print("[]")
+            # Preserve envelope shape on empty result so consumers don't
+            # need to branch on shape between empty and non-empty runs.
+            print('{\n  "result": [],\n  "caveats": []\n}')
         else:
             print("No conversations found.")
             # Provide helpful hints based on filters used
@@ -545,15 +555,11 @@ def cmd_query(args) -> int:
                 )
         return 0
 
-    # Render list via formatter
+    # Render list via formatter (fidelity already includes -v; reuse op.fidelity)
     from siftd.output.format_registry import select_format
 
-    fidelity = fidelity_from_args(args)
-    if args.verbose:
-        fidelity = fidelity.with_depth(3)
-
     fmt = select_format(json_mode=args.json, is_tty=sys.stdout.isatty())
-    output = fmt.render_list(conversations, fidelity)
+    output = fmt.render_list(conversations, op.fidelity, caveats=caveats)
     emit_output(output)
 
     # Stats summary (shown after list when --stats flag is set)

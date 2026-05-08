@@ -99,8 +99,12 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
 
     Depth controls column density:
         0 (brief): ID, Started, Workspace
-        1-2 (default): adds Model, Turns, Tokens, Cost
-        3+ (full): adds Tags
+        1-2 (default): adds Model, Turns, Tokens
+        3+ (full): adds Cost, Tags
+
+    Context keys:
+        caveats: list[Finding] — drives '?' Cost cells for rows targeted by
+            pricing-missing caveats (depth>=3 only).
     """
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
 
@@ -108,12 +112,17 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
         return ""
 
     depth = fidelity.depth
+    caveats = context.get("caveats") or []
+    missing_pricing_ids = frozenset(
+        c.target for c in caveats
+        if c.check == "pricing-missing" and c.target
+    )
 
     headers = ["ID", "Started", "Workspace"]
     if depth >= 1:
-        headers += ["Model", "Turns", "Tokens", "Cost"]
+        headers += ["Model", "Turns", "Tokens"]
     if depth >= 3:
-        headers.append("Tags")
+        headers += ["Cost", "Tags"]
 
     rows = []
     for c in summaries:
@@ -127,9 +136,15 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
                 fmt_model(c.model) if c.model else "",
                 f"{c.prompt_count}p/{c.response_count}r",
                 fmt_tokens(c.total_tokens),
-                f"${c.cost:.4f}" if c.cost else "$0.0000",
             ]
         if depth >= 3:
+            if c.id in missing_pricing_ids:
+                cost_cell = "?"
+            elif c.cost:
+                cost_cell = f"${c.cost:.4f}"
+            else:
+                cost_cell = "$0.0000"
+            row.append(cost_cell)
             row.append(", ".join(c.tags) if c.tags else "")
         rows.append(row)
 

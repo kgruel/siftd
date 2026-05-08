@@ -59,15 +59,28 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> dict:
 
 
 def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
-    """Render conversation list as JSON array.
+    """Render conversation list as a JSON envelope.
 
-    Always includes all fields regardless of fidelity depth.
+    Shape (always): ``{"result": [...summaries...], "caveats": [...]}``.
+    The envelope is unconditional — empty caveats render as ``[]`` —
+    so downstream pipelines don't have to branch on shape. This is a
+    one-time break from the prior bare-array shape; consumers that
+    used ``siftd query --json | jq '.[]'`` should switch to ``.result[]``.
+
+    Context keys:
+        caveats: list[Finding] — threaded from dispatch.
     """
     import json
+    from dataclasses import asdict
 
     from siftd.serialization.conversations import serialize_conversation_list
 
-    return json.dumps(serialize_conversation_list(summaries), indent=2)
+    caveats = context.get("caveats") or []
+    envelope = {
+        "result": serialize_conversation_list(summaries),
+        "caveats": [asdict(c) for c in caveats],
+    }
+    return json.dumps(envelope, indent=2)
 
 
 def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
