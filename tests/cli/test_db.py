@@ -1,6 +1,7 @@
 """Tests for siftd db namespace commands."""
 
 import io
+import re
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
@@ -681,7 +682,7 @@ class TestDbRestoreDryRun:
         out = capsys.readouterr().out
         assert str(backup) in out
         assert str(new_db) in out
-        assert "schema version" in out
+        assert "schema version: v" in out
         assert "target does not exist" in out
         assert "conversations" in out
 
@@ -698,7 +699,8 @@ class TestDbRestoreDryRun:
 
         out = capsys.readouterr().out
         assert str(test_db) in out
-        assert "schema version" in out
+        assert "schema version: v" in out
+        assert "(no change)" in out
         assert "conversations" in out
 
     def test_dry_run_no_force_needed_when_target_exists(self, test_db, tmp_path, capsys):
@@ -755,6 +757,7 @@ class TestDbReceiveDryRun:
         assert "dry run" in out.lower()
         assert "preflight: ok" in out
         assert "conversations" in out
+        assert "(target:" in out
 
     def test_dry_run_target_unchanged(self, test_db, tmp_path, monkeypatch, capsys):
         import hashlib
@@ -770,6 +773,22 @@ class TestDbReceiveDryRun:
         rc = main(["--db", str(test_db), "db", "receive", "--dry-run"])
         assert rc == 0
         assert hashlib.sha256(test_db.read_bytes()).hexdigest() == before
+
+    def test_dry_run_shows_incoming_vs_target_counts(self, test_db, tmp_path, monkeypatch, capsys):
+        """Dry-run summary shows source and target counts per table."""
+        slice_db = tmp_path / "slice.db"
+        self._make_slice_db(slice_db)  # empty source slice -> conversations=0
+        payload = slice_db.read_bytes()
+
+        monkeypatch.setattr("siftd.api.database.run_preflight", lambda p, **kw: None)
+        monkeypatch.setattr("sys.stdin", _FakeStdin(payload))
+
+        rc = main(["--db", str(test_db), "db", "receive", "--dry-run"])
+        assert rc == 0
+
+        out = capsys.readouterr().out
+        # test_db fixture has 2 conversations; empty slice has 0.
+        assert re.search(r"conversations\s+0\s+\(target:\s+2\)", out)
 
     def test_dry_run_preflight_failure_exits_1_json_stderr(self, test_db, tmp_path, monkeypatch, capsys):
         from siftd.api.database import PreflightError

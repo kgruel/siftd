@@ -263,9 +263,9 @@ def cmd_db_restore(args) -> int:
         print(f"[dry run] source:         {source}")
         print(f"[dry run] target:         {db}")
         if tgt_schema_ver is None:
-            print(f"[dry run] schema version: {src_schema_ver} (target does not exist)")
+            print(f"[dry run] schema version: v{src_schema_ver} (target does not exist)")
         elif tgt_schema_ver == src_schema_ver:
-            print(f"[dry run] schema version: {src_schema_ver} (no change)")
+            print(f"[dry run] schema version: v{src_schema_ver} (no change)")
         elif src_schema_ver > tgt_schema_ver:
             print(f"[dry run] schema version: v{tgt_schema_ver} → v{src_schema_ver} (upgrade)")
         else:
@@ -468,16 +468,27 @@ def cmd_db_receive(args) -> int:
 
             conn = open_database(tmp_path, read_only=True, auto_upgrade=False)
             try:
-                counts = _table_row_counts(conn)
+                src_counts = _table_row_counts(conn)
             finally:
                 conn.close()
+
+            tgt_counts: dict[str, int] = {}
+            if db.exists():
+                target_conn = open_database(db, read_only=True, auto_upgrade=False)
+                try:
+                    tgt_counts = _table_row_counts(target_conn)
+                finally:
+                    target_conn.close()
 
             target_state = "would create new DB" if not db.exists() else "would merge into existing DB"
             print(f"[dry run] {target_state}")
             print("[dry run] preflight: ok")
-            print("[dry run] incoming rows:")
-            for table, n in counts.items():
-                print(f"  {table:<20s} {n:>8d}")
+            print("[dry run] incoming rows (source  →  target):")
+            all_tables = dict.fromkeys(list(src_counts) + list(tgt_counts))
+            for table in all_tables:
+                src_n = src_counts.get(table, 0)
+                tgt_n = tgt_counts.get(table, 0)
+                print(f"  {table:<20s} {src_n:>8d}  (target: {tgt_n:>8d})")
             return 0
 
         if getattr(args, "stage", False):
