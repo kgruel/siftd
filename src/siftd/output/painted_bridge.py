@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from siftd.output._id_format import short_id
 from siftd.output.common import fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
 
 if TYPE_CHECKING:
@@ -752,7 +753,7 @@ def render_list_block(
     )
 
     col_defs: list[tuple[str, Callable, PStyle, Align]] = [
-        ("id", lambda c: c.id[:12] if c.id else "", p.accent, Align.START),
+        ("id", lambda c: short_id(c.id) if c.id else "", p.accent, Align.START),
         ("started_at", lambda c: fmt_timestamp(c.started_at), p.muted, Align.START),
         ("workspace", lambda c: fmt_workspace(c.workspace_path), PStyle(), Align.START),
     ]

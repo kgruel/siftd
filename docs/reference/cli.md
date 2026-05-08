@@ -332,6 +332,9 @@ sql queries:
 List and filter conversations by metadata (workspace, model, date, tags).
 For semantic content search, use: siftd search <query>
 
+Conversation IDs displayed in lists are truncated to 8 characters; use the full 26-character ID
+to query a specific conversation.
+
 examples:
   siftd query                         # list recent conversations
   siftd query -n 20                   # list 20 conversations

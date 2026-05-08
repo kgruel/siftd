@@ -73,7 +73,7 @@ class TestTerminalRenderList:
         assert "─" in lines[1]
 
         # Data row: only id, timestamp, workspace
-        assert "01ABCDEF1234" in lines[2]
+        assert "01ABCDEF" in lines[2]
         assert "my-project" in lines[2]
         # Should NOT have model, tokens, cost
         assert "claude-opus" not in lines[2]
@@ -92,7 +92,7 @@ class TestTerminalRenderList:
         assert len(lines) == 4
 
         line = lines[2]  # first data row
-        assert "01ABCDEF1234" in line
+        assert "01ABCDEF" in line
         assert "my-project" in line
         assert "claude-opus-4-5" in line  # model with date stripped
         assert "3p/5r" in line
@@ -193,7 +193,7 @@ class TestMarkdownRenderList:
         assert len(lines) == 4
         assert "| ID | Started | Workspace |" == lines[0]
         assert "| --- | --- | --- |" == lines[1]
-        assert "01ABCDEF1234" in lines[2]
+        assert "01ABCDEF" in lines[2]
         assert "my-project" in lines[2]
         # No model column
         assert "Model" not in lines[0]
@@ -475,7 +475,7 @@ class TestMarkdownRenderSearch:
             [_chunk_result()], Fidelity(depth=1), query="test query", mode="chunks"
         )
         assert "## Results for: test query" in output
-        assert "01ABC1234567" in output
+        assert "01ABC123" in output
         assert "0.850" in output
 
     def test_conversations_mode(self):
@@ -542,7 +542,7 @@ class TestTerminalRenderSearch:
             [_chunk_result()], Fidelity(depth=1), query="test query", mode="chunks"
         )
         assert "Results for: test query" in output
-        assert "01ABC1234567" in output
+        assert "01ABC123" in output
         assert "0.850" in output
 
     def test_conversations_mode(self):

@@ -13,6 +13,7 @@ from typing import Any
 
 from siftd.cli._common import resolve_db
 from siftd.cli._filters import extract_filter_args
+from siftd.output._id_format import short_id
 from siftd.paths import embeddings_db_path
 
 
@@ -412,7 +413,7 @@ def cmd_search(args) -> int:
 
         # Tagging hint (skip for JSON output)
         if not args.json and render_results:
-            first_id = render_results[0]["conversation_id"][:12]
+            first_id = short_id(render_results[0]["conversation_id"])
             print(f"Tip: Tag useful results for future retrieval: siftd tag {first_id} research:<topic>", file=sys.stderr)
     finally:
         main_conn.close()
@@ -560,7 +561,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
 
     # Tagging hint (skip for JSON output)
     if not args.json and results:
-        first_id = results[0]["conversation_id"][:12]
+        first_id = short_id(results[0]["conversation_id"])
         print(f"Tip: Tag useful results: siftd tag {first_id} research:<topic>", file=sys.stderr)
 
     return 0

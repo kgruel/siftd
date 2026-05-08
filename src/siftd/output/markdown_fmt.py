@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from siftd.output._id_format import short_id
+
 if TYPE_CHECKING:
     from painted import Fidelity
 
@@ -40,7 +42,7 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
 
     if detail and not no_header:
         detail_id = getattr(detail, "id", "") or ""
-        lines.append(f"# Session {detail_id[:12]}")
+        lines.append(f"# Session {detail_id}")
         meta_parts: list[str] = []
         ws = fmt_workspace(getattr(detail, "workspace_path", None))
         if ws:
@@ -127,7 +129,7 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     rows = []
     for c in summaries:
         row = [
-            c.id[:12] if c.id else "",
+            short_id(c.id) if c.id else "",
             fmt_timestamp(c.started_at),
             fmt_workspace(c.workspace_path),
         ]
@@ -180,7 +182,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         for r in results:
             conv_id = r.get("conversation_id", "")
             row = [
-                conv_id[:12],
+                short_id(conv_id),
                 f"{r.get('max_score', 0.0):.3f}",
                 f"{r.get('mean_score', 0.0):.3f}",
                 str(r.get("chunk_count", 0)),
@@ -229,7 +231,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
                 snippet = truncate_text(
                     r.get("text", ""), 120
                 ).replace("\n", " ")
-                lines.append(f"- **{conv_id[:12]}** {score:.3f} — {ws} {started} — {snippet}")
+                lines.append(f"- **{short_id(conv_id)}** {score:.3f} — {ws} {started} — {snippet}")
             lines.append("")
         return "\n".join(lines)
 
@@ -243,7 +245,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         ws = r.get("_workspace", "")
         started = r.get("_started_at", "")
 
-        lines.append(f"#### {conv_id[:12]} — {score:.3f} [{chunk_type}] {started} {ws}")
+        lines.append(f"#### {short_id(conv_id)} — {score:.3f} [{chunk_type}] {started} {ws}")
         lines.append("")
 
         exchanges = r.get("_exchanges")
