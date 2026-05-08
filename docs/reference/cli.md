@@ -6,12 +6,12 @@ _Auto-generated from `--help` output._
 
 ```
 usage: siftd [-h] [--version] [--db PATH]
-             {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade} ...
+             {register,session-id,config,adapters,db,tag,id,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade} ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
+  {register,session-id,config,adapters,db,tag,id,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
     register            Register an active session for live tagging
     session-id          Print the session ID for the current workspace
     config              View or modify config settings
@@ -20,6 +20,7 @@ positional arguments:
                         restore, vacuum, slice, merge, send, receive, remote,
                         push, pull)
     tag                 Manage tags: apply, remove, list, rename, delete
+    id                  Classify a ULID and show its type and context
     tools               Summarize tool usage by category
     query               List and filter conversations by metadata
     ingest              Ingest logs from all sources
@@ -254,6 +255,23 @@ live session tagging:
   siftd tag --current decision:auth              # auto-detect session, queue tag
   siftd tag --session abc123 decision:auth       # queue tag for session
   siftd tag --session abc123 --exchange 5 key    # queue tag for exchange 5
+```
+
+## siftd id
+
+```
+usage: siftd id [-h] [--json] ulid
+
+positional arguments:
+  ulid        ULID or ULID prefix to classify
+
+options:
+  -h, --help  show this help message and exit
+  --json      Output as JSON
+
+examples:
+  siftd id 01HX4G7K9                   # identify a conversation or event
+  siftd id 01HX4G7K9 --json            # structured classification
 ```
 
 ## siftd tools

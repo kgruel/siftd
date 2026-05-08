@@ -390,6 +390,20 @@ def get_conversation(id: str, *, db_path: pathlib._local.Path | None = ..., incl
 
 - `FileNotFoundError`: If database does not exist.
 
+### get_conversation_metadata
+
+Get conversation metadata (workspace, started_at) by ID or prefix.
+
+```python
+def get_conversation_metadata(conn: Connection, conversation_id: str) -> dict | None
+```
+
+**Parameters:**
+
+- `conn`: Database connection.
+
+**Returns:** Dict with keys 'id', 'workspace', 'started_at', or None if not found.
+
 ### resolve_entity_id
 
 Resolve an entity ID, supporting prefix match for conversations.
