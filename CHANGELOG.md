@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--latest` alias for `--last`** — Both `siftd tag` and `siftd export` now accept `--latest` as an alias for the existing `--last` flag, providing an alternative ergonomic name for the same functionality.
+
 ### Changed
 
 - **`siftd db --help` epilog reorganized** — Help text now groups subcommands into logical sections: Inspection (info, schema-version, stats, workspaces, path, sync-status), Maintenance (vacuum, backup, restore), Sync (slice, merge, send, push, pull), and Sync remotes (remote, receive, process). Improves discoverability for users navigating the database operations namespace.

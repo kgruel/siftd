@@ -121,6 +121,35 @@ class TestCmdTag:
         assert "Applied tag 'multi-a'" in out
         assert "Applied tag 'multi-b'" in out
 
+    def test_tag_latest_alias_single(self, test_db, capsys):
+        """--latest as alias for --last (single conversation)."""
+        rc = main(["--db", str(test_db), "tag", "--latest", "latest-tag"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Applied tag 'latest-tag'" in out
+
+    def test_tag_latest_alias_n(self, test_db, capsys):
+        """--latest N as alias for --last N."""
+        rc = main(["--db", str(test_db), "tag", "--latest", "2", "batch-latest"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "2 conversation" in out
+        assert "Applied tag 'batch-latest'" in out
+
+    def test_tag_latest_and_last_both_work(self, test_db, capsys):
+        """Both --latest and --last apply tags successfully (identical argument parsing)."""
+        # Tag with --last
+        rc1 = main(["--db", str(test_db), "tag", "--last", "2", "last-batch"])
+        assert rc1 == 0
+        out1 = capsys.readouterr().out
+        assert "2 conversation" in out1
+
+        # Tag with --latest
+        rc2 = main(["--db", str(test_db), "tag", "--latest", "2", "latest-batch"])
+        assert rc2 == 0
+        out2 = capsys.readouterr().out
+        assert "2 conversation" in out2
+
     def test_tag_last_n_multiple_tags(self, test_db, capsys):
         """--last N with multiple tags."""
         rc = main(["--db", str(test_db), "tag", "--last", "2", "batch-a", "batch-b"])

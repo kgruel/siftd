@@ -64,6 +64,24 @@ class TestBuildExportParser:
         ns = parent.parse_args(["export", "01HX4G7K"])
         assert ns.conversation_id == "01HX4G7K"
 
+    def test_parser_latest_alias_without_count(self):
+        import argparse
+
+        parent = argparse.ArgumentParser()
+        subs = parent.add_subparsers()
+        build_export_parser(subs)
+        ns = parent.parse_args(["export", "--latest"])
+        assert ns.last == 1
+
+    def test_parser_latest_alias_with_count(self):
+        import argparse
+
+        parent = argparse.ArgumentParser()
+        subs = parent.add_subparsers()
+        build_export_parser(subs)
+        ns = parent.parse_args(["export", "--latest", "5"])
+        assert ns.last == 5
+
 
 class TestCmdExport:
     def test_operation_construction_md(self, monkeypatch, tmp_path):

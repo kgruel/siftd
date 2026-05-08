@@ -800,6 +800,7 @@ live session tagging:
     p_tag.add_argument(
         "-n",
         "--last",
+        "--latest",
         nargs="?",
         const=1,
         default=None,

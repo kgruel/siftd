@@ -240,7 +240,8 @@
   
   options:
     -h, --help            show this help message and exit
-    -n [N], --last [N]    Export N most recent sessions (default: 1 if no ID
+    -n [N], --last [N], --latest [N]
+                          Export N most recent sessions (default: 1 if no ID
                           given)
   
   filtering:
@@ -705,7 +706,8 @@
   
   options:
     -h, --help            show this help message and exit
-    -n [N], --last [N]    Tag N most recent conversations (default: 1 if flag
+    -n [N], --last [N], --latest [N]
+                          Tag N most recent conversations (default: 1 if flag
                           used without N)
     -r, --remove          Remove tag instead of applying
     --session ID          Queue tag for a live session (applied at ingest)
