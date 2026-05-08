@@ -93,3 +93,15 @@ class TestHelpSnapshots:
         stdout = run_siftd(subcommand, "--help")
         normalized = stdout.replace(HOME, "~")
         assert normalized == snapshot
+
+    def test_db_restore_help(self, snapshot):
+        """siftd db restore --help includes --dry-run."""
+        stdout = run_siftd("db", "restore", "--help")
+        normalized = stdout.replace(HOME, "~")
+        assert normalized == snapshot
+
+    def test_db_receive_help(self, snapshot):
+        """siftd db receive --help includes --dry-run."""
+        stdout = run_siftd("db", "receive", "--help")
+        normalized = stdout.replace(HOME, "~")
+        assert normalized == snapshot

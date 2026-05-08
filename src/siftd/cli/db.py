@@ -25,6 +25,22 @@ def _database_artifacts(db_path: Path) -> list[Path]:
     return [db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm")]
 
 
+_SUMMARY_TABLES = ("conversations", "events", "tags", "content_blobs")
+
+
+def _table_row_counts(conn) -> dict[str, int]:
+    existing = {
+        r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    return {
+        t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        for t in _SUMMARY_TABLES
+        if t in existing
+    }
+
+
 def cmd_db_info(args) -> int:
     """Show database file metadata and schema information."""
     db = resolve_db(args)
@@ -226,6 +242,42 @@ def cmd_db_restore(args) -> int:
 
     db = resolve_db(args)
 
+    if getattr(args, "dry_run", False):
+        from siftd.api import open_database
+
+        tgt_schema_ver = None
+        tgt_counts: dict[str, int] = {}
+        if db.exists():
+            conn2 = open_database(db, read_only=True, auto_upgrade=False)
+            try:
+                tgt_schema_ver = conn2.execute("PRAGMA user_version").fetchone()[0]
+                tgt_counts = _table_row_counts(conn2)
+            finally:
+                conn2.close()
+        conn = open_database(source, read_only=True, auto_upgrade=False)
+        try:
+            src_schema_ver = conn.execute("PRAGMA user_version").fetchone()[0]
+            src_counts = _table_row_counts(conn)
+        finally:
+            conn.close()
+        print(f"[dry run] source:         {source}")
+        print(f"[dry run] target:         {db}")
+        if tgt_schema_ver is None:
+            print(f"[dry run] schema version: v{src_schema_ver} (target does not exist)")
+        elif tgt_schema_ver == src_schema_ver:
+            print(f"[dry run] schema version: v{src_schema_ver} (no change)")
+        elif src_schema_ver > tgt_schema_ver:
+            print(f"[dry run] schema version: v{tgt_schema_ver} → v{src_schema_ver} (upgrade)")
+        else:
+            print(f"[dry run] schema version: v{tgt_schema_ver} → v{src_schema_ver} (DOWNGRADE)")
+        print("[dry run] row counts (source  →  target):")
+        all_tables = dict.fromkeys(list(src_counts) + list(tgt_counts))
+        for table in all_tables:
+            src_n = src_counts.get(table, 0)
+            tgt_n = tgt_counts.get(table, 0)
+            print(f"  {table:<20s} {src_n:>8d}  (target: {tgt_n:>8d})")
+        return 0
+
     if db.exists() and not args.force:
         print(f"Database already exists: {db}", file=sys.stderr)
         print("Use --force to overwrite.", file=sys.stderr)
@@ -403,6 +455,41 @@ def cmd_db_receive(args) -> int:
                 file=sys.stderr,
             )
             return 1
+
+        if getattr(args, "dry_run", False):
+            from siftd.api import open_database
+            from siftd.api.database import PreflightError, run_preflight
+
+            try:
+                run_preflight(tmp_path)
+            except PreflightError as exc:
+                print(json.dumps({"error": str(exc)}), file=sys.stderr)
+                return 1
+
+            conn = open_database(tmp_path, read_only=True, auto_upgrade=False)
+            try:
+                src_counts = _table_row_counts(conn)
+            finally:
+                conn.close()
+
+            tgt_counts: dict[str, int] = {}
+            if db.exists():
+                target_conn = open_database(db, read_only=True, auto_upgrade=False)
+                try:
+                    tgt_counts = _table_row_counts(target_conn)
+                finally:
+                    target_conn.close()
+
+            target_state = "would create new DB" if not db.exists() else "would merge into existing DB"
+            print(f"[dry run] {target_state}")
+            print("[dry run] preflight: ok")
+            print("[dry run] incoming rows (source  →  target):")
+            all_tables = dict.fromkeys(list(src_counts) + list(tgt_counts))
+            for table in all_tables:
+                src_n = src_counts.get(table, 0)
+                tgt_n = tgt_counts.get(table, 0)
+                print(f"  {table:<20s} {src_n:>8d}  (target: {tgt_n:>8d})")
+            return 0
 
         if getattr(args, "stage", False):
             from siftd.api.inbox import stage_payload
@@ -806,6 +893,7 @@ Sync remotes:
     p_restore = db_sub.add_parser("restore", help="Restore database from a backup file")
     p_restore.add_argument("input", help="Backup file path")
     p_restore.add_argument("--force", action="store_true", help="Overwrite existing database")
+    p_restore.add_argument("--dry-run", action="store_true", help="Preview restore without modifying database")
     p_restore.set_defaults(func=cmd_db_restore)
 
     # slice
@@ -864,6 +952,8 @@ examples:
                            help="Stage payload in inbox for deferred merge (fast ACK)")
     p_receive.add_argument("--no-preflight", action="store_true",
                            help="Skip structural integrity checks on source database")
+    p_receive.add_argument("--dry-run", action="store_true",
+                           help="Preview incoming payload without writing to database")
     p_receive.set_defaults(func=cmd_db_receive)
 
     # process
