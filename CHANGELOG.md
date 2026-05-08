@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--dry-run` for `siftd db restore` and `siftd db receive`** — preview destructive operations before applying. `db restore --dry-run` prints source path, target path, schema version direction-of-change (upgrade / DOWNGRADE / no change), and per-table row counts for both source and target without touching the target file. `db receive --dry-run` drains stdin, runs the preflight integrity check, prints per-table row counts from the incoming payload and the would-be action (create / merge), then exits 0 without writing to the database.
+
 ## [0.8.1] - 2026-05-07
 
 ### Added

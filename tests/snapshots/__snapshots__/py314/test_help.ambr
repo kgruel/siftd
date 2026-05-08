@@ -1,4 +1,38 @@
 # serializer version: 1
+# name: TestHelpSnapshots.test_db_receive_help
+  '''
+  usage: siftd db receive [-h] [--no-fts] [--stage] [--no-preflight] [--dry-run]
+  
+  options:
+    -h, --help      show this help message and exit
+    --no-fts        Skip FTS5 index rebuild
+    --stage         Stage payload in inbox for deferred merge (fast ACK)
+    --no-preflight  Skip structural integrity checks on source database
+    --dry-run       Preview incoming payload without writing to database
+  
+  Designed for SSH pipe usage — reads a slice DB from stdin and
+  creates or merges it into the target database.
+  
+  examples:
+    ssh host siftd --db /path/team.db db receive < slice.db
+    ssh host siftd --db /path/team.db db receive --no-fts < slice.db
+  
+  '''
+# ---
+# name: TestHelpSnapshots.test_db_restore_help
+  '''
+  usage: siftd db restore [-h] [--force] [--dry-run] input
+  
+  positional arguments:
+    input       Backup file path
+  
+  options:
+    -h, --help  show this help message and exit
+    --force     Overwrite existing database
+    --dry-run   Preview restore without modifying database
+  
+  '''
+# ---
 # name: TestHelpSnapshots.test_root_help
   '''
   usage: siftd [-h] [--version] [--db PATH]

@@ -666,3 +666,148 @@ class TestPullMergeErrorCli:
         assert "Pull failed:" in out.err
         assert "sqlite3" not in out.err
         assert "sqlite3" not in out.out
+
+
+class TestDbRestoreDryRun:
+    def test_dry_run_no_target_exits_0_and_prints_summary(self, test_db, tmp_path, capsys):
+        backup = tmp_path / "backup.db"
+        assert main(["--db", str(test_db), "db", "backup", str(backup)]) == 0
+
+        new_db = tmp_path / "new.db"
+        rc = main(["--db", str(new_db), "db", "restore", str(backup), "--dry-run"])
+        assert rc == 0
+        assert not new_db.exists()
+
+        out = capsys.readouterr().out
+        assert str(backup) in out
+        assert str(new_db) in out
+        assert "schema version" in out
+        assert "target does not exist" in out
+        assert "conversations" in out
+
+    def test_dry_run_existing_target_byte_identical(self, test_db, tmp_path, capsys):
+        import hashlib
+
+        backup = tmp_path / "backup.db"
+        assert main(["--db", str(test_db), "db", "backup", str(backup)]) == 0
+
+        before = hashlib.sha256(test_db.read_bytes()).hexdigest()
+        rc = main(["--db", str(test_db), "db", "restore", str(backup), "--dry-run"])
+        assert rc == 0
+        assert hashlib.sha256(test_db.read_bytes()).hexdigest() == before
+
+        out = capsys.readouterr().out
+        assert str(test_db) in out
+        assert "schema version" in out
+        assert "conversations" in out
+
+    def test_dry_run_no_force_needed_when_target_exists(self, test_db, tmp_path, capsys):
+        """--dry-run bypasses the --force guard since it never mutates."""
+        backup = tmp_path / "backup.db"
+        assert main(["--db", str(test_db), "db", "backup", str(backup)]) == 0
+
+        rc = main(["--db", str(test_db), "db", "restore", str(backup), "--dry-run"])
+        assert rc == 0
+
+    def test_dry_run_shows_downgrade_label(self, test_db, tmp_path, capsys):
+        import sqlite3 as _sqlite3
+
+        backup = tmp_path / "old.db"
+        assert main(["--db", str(test_db), "db", "backup", str(backup)]) == 0
+
+        # Stamp the backup with a lower version to simulate restoring an old backup
+        # onto a DB that has been migrated forward — that's a DOWNGRADE.
+        conn = _sqlite3.connect(str(backup))
+        conn.execute("PRAGMA user_version = 0")
+        conn.commit()
+        conn.close()
+
+        rc = main(["--db", str(test_db), "db", "restore", str(backup), "--dry-run"])
+        assert rc == 0
+        assert "DOWNGRADE" in capsys.readouterr().out
+
+
+class TestDbReceiveDryRun:
+    def _make_slice_db(self, path: Path) -> None:
+        """Create a minimal valid SQLite slice (empty schema)."""
+        from siftd.storage.sqlite import open_database
+        conn = open_database(path)
+        conn.close()
+
+    def test_dry_run_exits_0_no_receive_called(self, test_db, tmp_path, monkeypatch, capsys):
+        slice_db = tmp_path / "slice.db"
+        self._make_slice_db(slice_db)
+        payload = slice_db.read_bytes()
+
+        receive_called = []
+        monkeypatch.setattr(
+            "siftd.api.receive.receive_database",
+            lambda *a, **k: receive_called.append(1),
+        )
+        monkeypatch.setattr("siftd.api.database.run_preflight", lambda p, **kw: None)
+        monkeypatch.setattr("sys.stdin", _FakeStdin(payload))
+
+        rc = main(["--db", str(test_db), "db", "receive", "--dry-run"])
+        assert rc == 0
+        assert receive_called == []
+
+        out = capsys.readouterr().out
+        assert "dry run" in out.lower()
+        assert "preflight: ok" in out
+        assert "conversations" in out
+
+    def test_dry_run_target_unchanged(self, test_db, tmp_path, monkeypatch, capsys):
+        import hashlib
+
+        slice_db = tmp_path / "slice.db"
+        self._make_slice_db(slice_db)
+        payload = slice_db.read_bytes()
+
+        monkeypatch.setattr("siftd.api.database.run_preflight", lambda p, **kw: None)
+        monkeypatch.setattr("sys.stdin", _FakeStdin(payload))
+
+        before = hashlib.sha256(test_db.read_bytes()).hexdigest()
+        rc = main(["--db", str(test_db), "db", "receive", "--dry-run"])
+        assert rc == 0
+        assert hashlib.sha256(test_db.read_bytes()).hexdigest() == before
+
+    def test_dry_run_preflight_failure_exits_1_json_stderr(self, test_db, tmp_path, monkeypatch, capsys):
+        from siftd.api.database import PreflightError
+
+        slice_db = tmp_path / "slice.db"
+        self._make_slice_db(slice_db)
+        payload = slice_db.read_bytes()
+
+        monkeypatch.setattr(
+            "siftd.api.database.run_preflight",
+            lambda p, **kw: (_ for _ in ()).throw(PreflightError("integrity check failed")),
+        )
+        monkeypatch.setattr("sys.stdin", _FakeStdin(payload))
+
+        rc = main(["--db", str(test_db), "db", "receive", "--dry-run"])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert '"error"' in err
+        assert "integrity check failed" in err
+
+    def test_dry_run_would_create_vs_merge_label(self, tmp_path, monkeypatch, capsys):
+        """Reports 'would create' for missing target, 'would merge' for existing."""
+        slice_db = tmp_path / "slice.db"
+        self._make_slice_db(slice_db)
+        payload = slice_db.read_bytes()
+
+        monkeypatch.setattr("siftd.api.database.run_preflight", lambda p, **kw: None)
+
+        new_db = tmp_path / "nonexistent.db"
+        monkeypatch.setattr("sys.stdin", _FakeStdin(payload))
+        rc = main(["--db", str(new_db), "db", "receive", "--dry-run"])
+        assert rc == 0
+        assert "would create" in capsys.readouterr().out.lower()
+
+        existing_db = tmp_path / "existing.db"
+        from siftd.storage.sqlite import open_database
+        open_database(existing_db).close()
+        monkeypatch.setattr("sys.stdin", _FakeStdin(payload))
+        rc = main(["--db", str(existing_db), "db", "receive", "--dry-run"])
+        assert rc == 0
+        assert "would merge" in capsys.readouterr().out.lower()
