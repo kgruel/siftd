@@ -73,6 +73,7 @@ SUBCOMMANDS = [
     "doctor",
     "peek",
     "export",
+    "db",
 ]
 
 

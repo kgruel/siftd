@@ -122,6 +122,67 @@
   
   '''
 # ---
+# name: TestHelpSnapshots.test_subcommand_help[db]
+  '''
+  usage: siftd db [-h]
+                  {info,schema-version,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull} ...
+  
+  positional arguments:
+    {info,schema-version,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull}
+      info                Show database file metadata and schema info
+      schema-version      Show migration triage info: current version, target,
+                          pending migrations
+      stats               Show database statistics
+      workspaces          List workspaces with conversation counts
+      path                Show XDG paths
+      vacuum              Compact database and optimize indexes
+      backup              Create a consistent online backup
+      restore             Restore database from a backup file
+      slice               Export filtered conversations into a standalone
+                          database
+      merge               Merge an external database (slice) into the main
+                          database
+      receive             Receive a database from stdin and create-or-merge into
+                          the local database
+      process             Merge staged inbox payloads into the database
+      sync-status         Report sync capabilities and inbox status (JSON)
+      send                Slice the database and write binary SQLite to stdout
+      remote              Manage sync remotes (add, list, remove)
+      push                Push conversations to a sync remote
+      pull                Pull conversations from a sync remote
+  
+  options:
+    -h, --help            show this help message and exit
+  
+  Container-level operations on the siftd database.
+  
+  Inspection:
+    siftd db info                          # database file metadata
+    siftd db schema-version                # migration triage info
+    siftd db stats                         # full statistics
+    siftd db workspaces                    # list workspaces
+    siftd db path                          # show XDG paths
+    siftd db sync-status                   # sync capabilities and inbox state
+  
+  Maintenance:
+    siftd db vacuum                        # compact database
+    siftd db backup /tmp/siftd.db          # online backup
+    siftd db restore /tmp/siftd.db         # restore from backup
+  
+  Sync:
+    siftd db slice out.db -w project       # export filtered subset
+    siftd db merge laptop-slice.db         # merge slice into main DB
+    siftd db send > slice.db               # send via stdout (SSH pipe)
+    siftd db push alcove                   # push delta to remote
+    siftd db pull alcove                   # pull delta from remote
+  
+  Sync remotes:
+    siftd db remote add alcove host:path   # register sync remote
+    siftd db receive < slice.db            # receive via stdin (SSH pipe)
+    siftd db process                       # process staged inbox payloads
+  
+  '''
+# ---
 # name: TestHelpSnapshots.test_subcommand_help[doctor]
   '''
   usage: siftd doctor [-h] [--json] [--strict] [--pending-tags] [--deep]

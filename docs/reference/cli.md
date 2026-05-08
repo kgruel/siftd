@@ -146,22 +146,30 @@ options:
 
 Container-level operations on the siftd database.
 
-examples:
+Inspection:
   siftd db info                          # database file metadata
   siftd db schema-version                # migration triage info
   siftd db stats                         # full statistics
   siftd db workspaces                    # list workspaces
   siftd db path                          # show XDG paths
+  siftd db sync-status                   # sync capabilities and inbox state
+
+Maintenance:
   siftd db vacuum                        # compact database
   siftd db backup /tmp/siftd.db          # online backup
   siftd db restore /tmp/siftd.db         # restore from backup
+
+Sync:
   siftd db slice out.db -w project       # export filtered subset
   siftd db merge laptop-slice.db         # merge slice into main DB
   siftd db send > slice.db               # send via stdout (SSH pipe)
-  siftd db receive < slice.db            # receive via stdin (SSH pipe)
-  siftd db remote add alcove host:path   # register sync remote
   siftd db push alcove                   # push delta to remote
   siftd db pull alcove                   # pull delta from remote
+
+Sync remotes:
+  siftd db remote add alcove host:path   # register sync remote
+  siftd db receive < slice.db            # receive via stdin (SSH pipe)
+  siftd db process                       # process staged inbox payloads
 ```
 
 ## siftd tag
