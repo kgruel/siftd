@@ -27,6 +27,7 @@ from siftd.api.conversations import (
     ToolCallSummary,
     Turn,
     get_conversation,
+    get_conversation_metadata,
     get_recent_conversation_ids,
     list_conversations,
     list_query_files,
@@ -242,6 +243,7 @@ __all__ = [
     "get_recent_conversation_ids",
     "list_conversations",
     "get_conversation",
+    "get_conversation_metadata",
     "resolve_entity_id",
     # events
     "EventDetail",
