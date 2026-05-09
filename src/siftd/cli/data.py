@@ -306,7 +306,13 @@ def cmd_ingest(args) -> int:
     is_new = not db.exists()
     json_mode = getattr(args, "json", False)
 
-    quiet = getattr(args, "quiet", False)
+    quiet_explicit = getattr(args, "quiet", None)
+    auto_quiet = (
+        quiet_explicit is None
+        and not args.verbose
+        and not sys.stdout.isatty()
+    )
+    quiet = bool(quiet_explicit) or auto_quiet
 
     if json_mode:
         renderer: _IngestJsonRenderer | _IngestTextRenderer = _IngestJsonRenderer()
@@ -319,6 +325,13 @@ def cmd_ingest(args) -> int:
             else:
                 print(f"Using database: {db}")
 
+    if not json_mode and auto_quiet:
+        print(
+            "Note: ingest output quieted (not a TTY). "
+            "Pass -v to force verbose output, or -q to silence this hint.",
+            file=sys.stderr,
+        )
+
     # Handle --rebuild-fts flag
     if args.rebuild_fts:
         if json_mode:
@@ -326,20 +339,21 @@ def cmd_ingest(args) -> int:
             run_rebuild_fts(db_path=db)
             renderer._emit({"type": "fts_rebuild", "status": "done"})
         else:
-            print("Rebuilding FTS index...")
+            if not quiet:
+                print("Rebuilding FTS index...")
             run_rebuild_fts(db_path=db)
-            print("FTS index rebuilt.")
+            if not quiet:
+                print("FTS index rebuilt.")
         return 0
 
     if args.path:
         if json_mode:
             renderer._emit({"type": "scan_paths", "paths": args.path})
         else:
-            print(f"Scanning: {', '.join(args.path)}")
+            if not quiet:
+                print(f"Scanning: {', '.join(args.path)}")
 
     if not json_mode:
-        if not quiet and not sys.stdout.isatty():
-            print("Tip: use --json for newline-delimited JSON output.", file=sys.stderr)
         if not quiet:
             print("\nIngesting...")
     try:
@@ -1103,6 +1117,7 @@ def build_data_parser(subparsers) -> None:
         "-q",
         "--quiet",
         action="store_true",
+        default=None,
         help="Only show totals line",
     )
     _verbosity.add_argument(

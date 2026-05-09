@@ -164,8 +164,9 @@ def test_tag_colon_path_out_of_range(test_db, capsys):
 class TestIngestCommand:
     """Smoke tests for siftd ingest command."""
 
-    def test_ingest_creates_db(self, tmp_path, capsys):
+    def test_ingest_creates_db(self, tmp_path, capsys, monkeypatch):
         """siftd ingest creates database if it doesn't exist."""
+        monkeypatch.setattr("sys.stdout.isatty", lambda: True)
         db_path = tmp_path / "new.db"
         fixture = FIXTURES_DIR / "claude_code_minimal.jsonl"
         dest = tmp_path / "projects" / "test-session" / "conversation.jsonl"
@@ -184,8 +185,9 @@ class TestIngestCommand:
         captured = capsys.readouterr()
         assert "Creating database" in captured.out
 
-    def test_ingest_with_existing_db(self, test_db, capsys):
+    def test_ingest_with_existing_db(self, test_db, capsys, monkeypatch):
         """siftd ingest works with existing database."""
+        monkeypatch.setattr("sys.stdout.isatty", lambda: True)
         rc = main([
             "--db", str(test_db),
             "ingest",

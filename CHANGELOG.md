@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`siftd ingest` defaults to quiet when stdout is not a TTY** — When output is piped, per-file and per-adapter progress lines are suppressed; only the final totals line is printed. A one-time hint on stderr informs users of the behavior change and how to restore verbose output (`-v`). Explicit `-q` or `-v` flags are honored and suppress the hint. TTY behavior is unchanged.
 - **`siftd db --help` epilog reorganized** — Help text now groups subcommands into logical sections: Inspection (info, schema-version, stats, workspaces, path, sync-status), Maintenance (vacuum, backup, restore), Sync (slice, merge, send, push, pull), and Sync remotes (remote, receive, process). Improves discoverability for users navigating the database operations namespace.
 - **ULID truncation standardized to 8 characters** — All list and search renderers (terminal, markdown, HTML, JSON) now display conversation IDs as 8-character short forms (`:8`). Detail views remain unchanged. Affects `siftd query`, `siftd search`, `siftd tag list`, serve HTML routes, and all export formats. **Note for agents:** grep patterns matching 12-character IDs should be updated to 8 characters for consistency with displayed output.
 

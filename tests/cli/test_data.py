@@ -314,8 +314,9 @@ class TestCmdIngest:
         # Quiet mode: no "Creating database" or per-file lines
         assert "Creating database" not in out
 
-    def test_ingest_rebuild_fts(self, test_db, capsys):
+    def test_ingest_rebuild_fts(self, test_db, capsys, monkeypatch):
         """--rebuild-fts rebuilds index without ingesting."""
+        monkeypatch.setattr("sys.stdout.isatty", lambda: True)
         rc = main(["--db", str(test_db), "ingest", "--rebuild-fts"])
         assert rc == 0
         out = capsys.readouterr().out
@@ -330,6 +331,77 @@ class TestCmdIngest:
         events = [json.loads(line) for line in lines]
         types = [e["type"] for e in events]
         assert "fts_rebuild" in types
+
+    def test_ingest_rebuild_fts_auto_quiet_emits_hint(self, test_db, capsys, monkeypatch):
+        """When piped, --rebuild-fts is quiet by default and emits the behavior-change hint."""
+        monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+        rc = main(["--db", str(test_db), "ingest", "--rebuild-fts"])
+        assert rc == 0
+        out, err = capsys.readouterr()
+        assert "Rebuilding FTS index" not in out
+        assert "FTS index rebuilt" not in out
+        assert "quieted" in err
+
+
+# ---------------------------------------------------------------------------
+# cmd_ingest — TTY / auto-quiet behavior
+# ---------------------------------------------------------------------------
+
+
+class TestCmdIngestQuietDefaults:
+    """Auto-quiet: quiet by default when not a TTY; verbose by default when TTY."""
+
+    def _run(self, tmp_path, extra_args, monkeypatch, isatty):
+        monkeypatch.setattr("sys.stdout.isatty", lambda: isatty)
+        db_path = tmp_path / "test.db"
+        return main([
+            "--db", str(db_path),
+            "ingest",
+            "--adapter", "claude_code",
+            "--path", "/nonexistent/path",
+            *extra_args,
+        ])
+
+    def test_piped_auto_quiet_suppresses_progress(self, tmp_path, capsys, monkeypatch):
+        """When not a TTY and no flags, per-file output is suppressed."""
+        rc = self._run(tmp_path, [], monkeypatch, isatty=False)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Creating database" not in out
+        assert "Ingesting" not in out
+
+    def test_piped_auto_quiet_emits_hint_to_stderr(self, tmp_path, capsys, monkeypatch):
+        """Auto-quiet emits a one-time behavior-change hint to stderr."""
+        rc = self._run(tmp_path, [], monkeypatch, isatty=False)
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "quieted" in err
+        assert "-v" in err
+
+    def test_tty_verbose_by_default(self, tmp_path, capsys, monkeypatch):
+        """When stdout is a TTY, verbose behavior is unchanged (no hint)."""
+        rc = self._run(tmp_path, [], monkeypatch, isatty=True)
+        assert rc == 0
+        out, err = capsys.readouterr()
+        assert "Creating database" in out
+        assert "Ingesting" in out
+        assert "quieted" not in err
+
+    def test_explicit_quiet_suppresses_hint(self, tmp_path, capsys, monkeypatch):
+        """Explicit -q: quiet mode active, but no auto-quiet hint."""
+        rc = self._run(tmp_path, ["-q"], monkeypatch, isatty=False)
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "quieted" not in err
+
+    def test_explicit_verbose_overrides_auto_quiet(self, tmp_path, capsys, monkeypatch):
+        """Explicit -v: verbose output even when piped; no hint."""
+        rc = self._run(tmp_path, ["-v"], monkeypatch, isatty=False)
+        assert rc == 0
+        out, err = capsys.readouterr()
+        assert "Creating database" in out
+        assert "Ingesting" in out
+        assert "quieted" not in err
 
 
 # ---------------------------------------------------------------------------
