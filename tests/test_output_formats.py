@@ -466,6 +466,45 @@ class TestJsonRenderSearch:
         result = render_search([chunk], Fidelity(depth=1), query="q")
         assert "breakdown" in result["results"][0]
 
+    def test_caveats_included_in_envelope(self):
+        from siftd.doctor.checks import Finding
+        from siftd.output.json_fmt import render_search
+
+        caveat = Finding(
+            check="embeddings-stale",
+            severity="warning",
+            message="Embeddings index is stale",
+            fix_available=True,
+        )
+        result = render_search(
+            [_chunk_result()], Fidelity(depth=1), query="q", caveats=[caveat]
+        )
+        assert "caveats" in result
+        assert len(result["caveats"]) == 1
+        assert result["caveats"][0]["message"] == "Embeddings index is stale"
+        assert result["caveats"][0]["check"] == "embeddings-stale"
+
+    def test_no_caveats_yields_empty_list(self):
+        from siftd.output.json_fmt import render_search
+
+        result = render_search([_chunk_result()], Fidelity(depth=1), query="q")
+        assert result["caveats"] == []
+
+    def test_caveats_present_in_all_modes(self):
+        from siftd.doctor.checks import Finding
+        from siftd.output.json_fmt import render_search
+
+        caveat = Finding(
+            check="fts-stale", severity="warning", message="FTS index stale", fix_available=False
+        )
+        for mode, kwargs in [
+            ("chunks", {"mode": "chunks"}),
+            ("conversations", {"mode": "conversations"}),
+            ("thread", {"mode": "thread", "tier1": [], "tier2": []}),
+        ]:
+            result = render_search([], Fidelity(depth=1), query="q", caveats=[caveat], **kwargs)
+            assert result["caveats"][0]["check"] == "fts-stale", f"missing in {mode} mode"
+
 
 class TestMarkdownRenderSearch:
     def test_chunks_mode(self):
@@ -532,6 +571,39 @@ class TestMarkdownRenderSearch:
         chunk = _chunk_result(text=long_text)
         output = render_search([chunk], Fidelity(depth=0), query="q")
         assert "..." in output  # truncated at depth 0
+
+    def test_caveats_footer_appended(self):
+        from siftd.doctor.checks import Finding
+        from siftd.output.markdown_fmt import render_search
+
+        caveat = Finding(
+            check="search-mode-degraded",
+            severity="warning",
+            message="Semantic search unavailable; using FTS5",
+            fix_available=False,
+        )
+        output = render_search(
+            [_chunk_result()], Fidelity(depth=1), query="q", caveats=[caveat]
+        )
+        assert "> **Note:** Semantic search unavailable; using FTS5" in output
+
+    def test_no_caveats_no_footer(self):
+        from siftd.output.markdown_fmt import render_search
+
+        output = render_search([_chunk_result()], Fidelity(depth=1), query="q")
+        assert "> **Note:**" not in output
+
+    def test_caveats_footer_in_conversations_mode(self):
+        from siftd.doctor.checks import Finding
+        from siftd.output.markdown_fmt import render_search
+
+        caveat = Finding(
+            check="fts-stale", severity="warning", message="FTS stale", fix_available=False
+        )
+        output = render_search(
+            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations", caveats=[caveat]
+        )
+        assert "> **Note:** FTS stale" in output
 
 
 class TestTerminalRenderSearch:
@@ -614,6 +686,105 @@ class TestTerminalRenderSearch:
         output = render_search([chunk], Fidelity(depth=1), query="q")
         assert "refs:" in output
         assert "f.py(r)" in output
+
+    def test_caveats_note_appended(self):
+        from siftd.doctor.checks import Finding
+        from siftd.output.terminal_fmt import render_search
+
+        caveat = Finding(
+            check="embeddings-stale",
+            severity="warning",
+            message="Embeddings index is stale — run siftd ingest",
+            fix_available=True,
+        )
+        output = render_search(
+            [_chunk_result()], Fidelity(depth=1), query="q", caveats=[caveat]
+        )
+        assert "note: Embeddings index is stale — run siftd ingest" in output
+
+    def test_no_caveats_no_note(self):
+        from siftd.output.terminal_fmt import render_search
+
+        output = render_search([_chunk_result()], Fidelity(depth=1), query="q")
+        assert "note:" not in output
+
+    def test_caveats_note_in_conversations_mode(self):
+        from siftd.doctor.checks import Finding
+        from siftd.output.terminal_fmt import render_search
+
+        caveat = Finding(
+            check="fts-stale", severity="warning", message="FTS stale", fix_available=False
+        )
+        output = render_search(
+            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations", caveats=[caveat]
+        )
+        assert "note: FTS stale" in output
+
+
+class TestHtmlRenderSearch:
+    def test_chunks_mode_smoke(self):
+        from siftd.output.html_fmt import render_search
+
+        output = render_search(
+            [_chunk_result()], Fidelity(depth=1), query="test query", mode="chunks"
+        )
+        assert 'class="search-results chunks"' in output
+        assert "01ABC123" in output
+        assert "0.850" in output
+
+    def test_conversations_mode_smoke(self):
+        from siftd.output.html_fmt import render_search
+
+        output = render_search(
+            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations"
+        )
+        assert 'class="search-results conversations"' in output
+        assert "0.920" in output
+
+    def test_thread_mode_smoke(self):
+        from siftd.output.html_fmt import render_search
+
+        tier1 = [_chunk_result(_exchanges=[("p1", "What?", "That.")])]
+        output = render_search(
+            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1
+        )
+        assert 'class="search-results thread"' in output
+        assert "What?" in output
+
+    def test_caveats_aside_appended(self):
+        from siftd.doctor.checks import Finding
+        from siftd.output.html_fmt import render_search
+
+        caveat = Finding(
+            check="search-mode-degraded",
+            severity="warning",
+            message="Semantic search unavailable",
+            fix_available=False,
+        )
+        output = render_search(
+            [_chunk_result()], Fidelity(depth=1), query="q", caveats=[caveat]
+        )
+        assert '<aside class="caveats">' in output
+        assert '<p class="caveat">Semantic search unavailable</p>' in output
+
+    def test_no_caveats_no_aside(self):
+        from siftd.output.html_fmt import render_search
+
+        output = render_search([_chunk_result()], Fidelity(depth=1), query="q")
+        assert '<aside class="caveats">' not in output
+
+    def test_caveats_aside_in_conversations_mode(self):
+        from siftd.doctor.checks import Finding
+        from siftd.output.html_fmt import render_search
+
+        caveat = Finding(
+            check="fts-stale", severity="warning", message="FTS stale", fix_available=False
+        )
+        output = render_search(
+            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations", caveats=[caveat]
+        )
+        assert '<aside class="caveats">' in output
+        assert "FTS stale" in output
 
 
 # ---------------------------------------------------------------------------

@@ -398,6 +398,8 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         query: str — the search query
         mode: str — "chunks", "conversations", or "thread"
         detail_base: str — URL prefix for detail links
+        caveats: list[Finding] — threaded from dispatch; appended as an
+            ``<aside class="caveats">`` fragment after the results section.
     """
     from siftd.output.common import truncate_text
 
@@ -405,6 +407,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
     mode = context.get("mode", "chunks")
     detail_base = context.get("detail_base", "")
     shell_base = context.get("shell_base", "")
+    caveats = context.get("caveats") or []
 
     parts: list[str] = []
 
@@ -431,9 +434,8 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             parts.append(f'<td class="workspace">{escape(r.get("_workspace", ""))}</td>')
             parts.append("</tr>")
         parts.append("</tbody></table></section>")
-        return "\n".join(parts)
 
-    if mode == "thread":
+    elif mode == "thread":
         tier1 = context.get("tier1", [])
         tier2 = context.get("tier2", [])
         parts.append('<section class="search-results thread">')
@@ -484,42 +486,49 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             parts.append("</div>")
 
         parts.append("</section>")
-        return "\n".join(parts)
 
-    # Chunks mode
-    parts.append('<section class="search-results chunks">')
-    parts.append(f"<h2>Results for: {escape(query)}</h2>")
-    for r in results:
-        conv_id = r.get("conversation_id", "")
-        chunk_type = r.get("chunk_type", "").upper()[:8]
-        score = r.get("score", 0.0)
-        ws = r.get("_workspace", "")
-        started = r.get("_started_at", "")
+    else:
+        # Chunks mode
+        parts.append('<section class="search-results chunks">')
+        parts.append(f"<h2>Results for: {escape(query)}</h2>")
+        for r in results:
+            conv_id = r.get("conversation_id", "")
+            chunk_type = r.get("chunk_type", "").upper()[:8]
+            score = r.get("score", 0.0)
+            ws = r.get("_workspace", "")
+            started = r.get("_started_at", "")
 
-        parts.append(
-            f'<article class="search-hit"'
-            f'{_hx_detail(detail_base, conv_id, shell_base)}>'
-        )
-        parts.append(
-            f'<header>'
-            f'<span class="identifier">{escape(short_id(conv_id))}</span>'
-            f' <span class="metric">{score:.3f}</span>'
-            f' <span class="adapter">[{escape(chunk_type)}]</span>'
-            f' <span class="temporal">{escape(started)}</span>'
-            f' <span class="workspace">{escape(ws)}</span>'
-            f"</header>"
-        )
+            parts.append(
+                f'<article class="search-hit"'
+                f'{_hx_detail(detail_base, conv_id, shell_base)}>'
+            )
+            parts.append(
+                f'<header>'
+                f'<span class="identifier">{escape(short_id(conv_id))}</span>'
+                f' <span class="metric">{score:.3f}</span>'
+                f' <span class="adapter">[{escape(chunk_type)}]</span>'
+                f' <span class="temporal">{escape(started)}</span>'
+                f' <span class="workspace">{escape(ws)}</span>'
+                f"</header>"
+            )
 
-        chars = fidelity.chars
-        if chars == 0 and fidelity.depth < 2:
-            chars = 200
-        text = r.get("text", "")
-        if chars > 0:
-            text = truncate_text(text, chars)
-        parts.append(f'<div class="excerpt">{escape(text)}</div>')
-        parts.append("</article>")
+            chars = fidelity.chars
+            if chars == 0 and fidelity.depth < 2:
+                chars = 200
+            text = r.get("text", "")
+            if chars > 0:
+                text = truncate_text(text, chars)
+            parts.append(f'<div class="excerpt">{escape(text)}</div>')
+            parts.append("</article>")
 
-    parts.append("</section>")
+        parts.append("</section>")
+
+    if caveats:
+        parts.append('<aside class="caveats">')
+        for c in caveats:
+            parts.append(f'<p class="caveat">{escape(c.message)}</p>')
+        parts.append("</aside>")
+
     return "\n".join(parts)
 
 

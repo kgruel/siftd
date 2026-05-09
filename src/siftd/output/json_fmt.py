@@ -91,17 +91,22 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
         mode: str — "chunks", "conversations", or "thread"
         tier1: list — expanded results (thread mode)
         tier2: list — compact results (thread mode)
+        caveats: list[Finding] — threaded from dispatch; serialized as
+            ``"caveats": [...]`` in the envelope (empty list when absent).
     """
+    from dataclasses import asdict
     from datetime import UTC, datetime
 
     query = context.get("query", "")
     mode = context.get("mode", "chunks")
+    caveats = context.get("caveats") or []
 
     output: dict[str, Any] = {
         "query": query,
         "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "mode": mode,
         "result_count": len(results),
+        "caveats": [asdict(c) for c in caveats],
     }
 
     if mode == "conversations":
