@@ -1678,3 +1678,156 @@ class TestIngestStatusProducer:
         assert checks == {"ingest-errors", "ingest-stale"}
         assert findings[0].severity == "warning"  # Errors first
         assert findings[1].severity == "info"  # Then staleness
+
+
+class TestFtsStaleProducer:
+    """Tests for the fts-stale producer.
+
+    The producer's applies_to predicate gates on (fn is search_chunks).
+    It checks FTS index sync status and warns if missing or orphaned entries exist.
+    """
+
+    def test_applies_to_requires_search_chunks(self):
+        """Predicate is False for ops calling other functions."""
+        from siftd.api.caveats import _is_search_chunks
+
+        op = _make_op(fn=lambda: [])
+        assert _is_search_chunks(op) is False
+
+    def test_applies_to_satisfied(self):
+        """Predicate is True when op.fn is search_chunks."""
+        from siftd.api.caveats import _is_search_chunks
+        from siftd.api.search import search_chunks
+
+        op = _make_op(fn=search_chunks)
+        assert _is_search_chunks(op) is True
+
+    def test_nonexistent_db_returns_empty(self):
+        """Path doesn't exist → no finding."""
+        from siftd.api.caveats import _fts_stale_caveats
+        from siftd.api.search import search_chunks
+
+        op = _make_op(fn=search_chunks)
+        ctx = ProducerContext(db_path=Path("/nonexistent/path/db.sqlite"))
+        findings = _fts_stale_caveats(op, [], ctx)
+        assert findings == []
+
+    def test_clean_index_no_finding(self, monkeypatch):
+        """No missing or orphaned entries → no finding."""
+        from siftd.api.caveats import _fts_stale_caveats
+        from siftd.api.search import search_chunks
+
+        monkeypatch.setattr(
+            "siftd.storage.fts.get_fts_sync_status",
+            lambda conn: {"missing_count": 0, "orphaned_count": 0},
+        )
+
+        op = _make_op(fn=search_chunks)
+        findings = _fts_stale_caveats(op, [], _make_ctx())
+        assert findings == []
+
+    def test_missing_content_produces_warning(self, monkeypatch, tmp_path):
+        """Missing content blocks → warning with fix_command."""
+        from siftd.api.caveats import _fts_stale_caveats
+        from siftd.api.search import search_chunks
+
+        monkeypatch.setattr(
+            "siftd.storage.fts.get_fts_sync_status",
+            lambda conn: {"missing_count": 3, "orphaned_count": 0},
+        )
+
+        op = _make_op(fn=search_chunks)
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        findings = _fts_stale_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert findings[0].check == "fts-stale"
+        assert findings[0].severity == "warning"
+        assert "3 content blocks not indexed" in findings[0].message
+        assert findings[0].fix_available is True
+        assert findings[0].fix_command == "siftd db vacuum"
+        assert findings[0].context == {"missing_count": 3, "orphaned_count": 0}
+
+    def test_orphaned_entries_produces_warning(self, monkeypatch, tmp_path):
+        """Orphaned FTS entries → warning with fix_command."""
+        from siftd.api.caveats import _fts_stale_caveats
+        from siftd.api.search import search_chunks
+
+        monkeypatch.setattr(
+            "siftd.storage.fts.get_fts_sync_status",
+            lambda conn: {"missing_count": 0, "orphaned_count": 2},
+        )
+
+        op = _make_op(fn=search_chunks)
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        findings = _fts_stale_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert findings[0].check == "fts-stale"
+        assert findings[0].severity == "warning"
+        assert "2 orphaned FTS entries" in findings[0].message
+        assert findings[0].fix_available is True
+        assert findings[0].fix_command == "siftd db vacuum"
+        assert findings[0].context == {"missing_count": 0, "orphaned_count": 2}
+
+    def test_both_missing_and_orphaned(self, monkeypatch, tmp_path):
+        """Both missing and orphaned → single warning mentioning both."""
+        from siftd.api.caveats import _fts_stale_caveats
+        from siftd.api.search import search_chunks
+
+        monkeypatch.setattr(
+            "siftd.storage.fts.get_fts_sync_status",
+            lambda conn: {"missing_count": 3, "orphaned_count": 2},
+        )
+
+        op = _make_op(fn=search_chunks)
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        findings = _fts_stale_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert findings[0].check == "fts-stale"
+        assert findings[0].severity == "warning"
+        assert "3 content blocks not indexed" in findings[0].message
+        assert "2 orphaned FTS entries" in findings[0].message
+        assert findings[0].fix_available is True
+        assert findings[0].fix_command == "siftd db vacuum"
+        assert findings[0].context == {"missing_count": 3, "orphaned_count": 2}
+
+    def test_singular_missing_message(self, monkeypatch, tmp_path):
+        """Message uses singular 'block' for missing_count=1."""
+        from siftd.api.caveats import _fts_stale_caveats
+        from siftd.api.search import search_chunks
+
+        monkeypatch.setattr(
+            "siftd.storage.fts.get_fts_sync_status",
+            lambda conn: {"missing_count": 1, "orphaned_count": 0},
+        )
+
+        op = _make_op(fn=search_chunks)
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        findings = _fts_stale_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert "1 content block not indexed" in findings[0].message
+
+    def test_singular_orphaned_message(self, monkeypatch, tmp_path):
+        """Message uses singular 'entry' for orphaned_count=1."""
+        from siftd.api.caveats import _fts_stale_caveats
+        from siftd.api.search import search_chunks
+
+        monkeypatch.setattr(
+            "siftd.storage.fts.get_fts_sync_status",
+            lambda conn: {"missing_count": 0, "orphaned_count": 1},
+        )
+
+        op = _make_op(fn=search_chunks)
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        findings = _fts_stale_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert "1 orphaned FTS entry" in findings[0].message

@@ -354,6 +354,9 @@ def _fresh_corpus_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
             context={"total": total},
         )
     ]
+
+
+# ---------------------------------------------------------------------------
 # Embeddings staleness producer (B2)
 # ---------------------------------------------------------------------------
 
@@ -412,6 +415,7 @@ def _embeddings_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]
         fix_command="siftd search --index",
         context={"count": n},
     )]
+
 
 # ---------------------------------------------------------------------------
 # Pending tags producer (B3)
@@ -523,3 +527,47 @@ def _ingest_status_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
             ))
 
     return findings
+
+
+# ---------------------------------------------------------------------------
+# FTS stale producer (B5)
+# ---------------------------------------------------------------------------
+
+def _is_search_chunks(op) -> bool:
+    """Predicate: search_chunks operation (FTS keyword search in use)."""
+    from siftd.api.search import search_chunks
+    return op.fn is search_chunks
+
+
+@caveat_producer(kind="fts-stale", applies_to=_is_search_chunks)
+def _fts_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
+    """Caveat: FTS index out of sync with event_content.
+
+    Missing: content blocks not yet indexed.
+    Orphaned: FTS entries pointing to deleted content blocks.
+    """
+    if not Path(ctx.db_path).exists():
+        return []
+
+    from siftd.storage.fts import get_fts_sync_status
+    status = get_fts_sync_status(ctx.db())
+    missing = status["missing_count"]
+    orphaned = status["orphaned_count"]
+
+    if missing == 0 and orphaned == 0:
+        return []
+
+    parts = []
+    if missing:
+        parts.append(f"{missing} content block{'s' if missing != 1 else ''} not indexed")
+    if orphaned:
+        parts.append(f"{orphaned} orphaned FTS entr{'ies' if orphaned != 1 else 'y'}")
+
+    return [Finding(
+        check="fts-stale",
+        severity="warning",
+        message=f"FTS index out of sync: {', '.join(parts)} — run 'siftd db vacuum' to rebuild",
+        fix_available=True,
+        fix_command="siftd db vacuum",
+        context={"missing_count": missing, "orphaned_count": orphaned},
+    )]
