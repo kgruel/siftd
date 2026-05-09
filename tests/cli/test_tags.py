@@ -10,6 +10,22 @@ from siftd.cli import main
 from siftd.cli.tags import _parse_tag_args
 from siftd.storage.sqlite import open_database
 
+
+def _conversation_has_tag(db: Path, conversation_id: str, tag_name: str) -> bool:
+    """Return True when a conversation has a named tag assignment."""
+    conn = open_database(db)
+    try:
+        row = conn.execute(
+            "SELECT 1 "
+            "FROM tag_assignments ta JOIN tags t ON t.id = ta.tag_id "
+            "WHERE ta.target_kind = 'conversation' AND ta.target_id = ? AND t.name = ?",
+            (conversation_id, tag_name),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # _parse_tag_args
 # ---------------------------------------------------------------------------
@@ -288,6 +304,103 @@ class TestCmdTag:
 
 
 # ---------------------------------------------------------------------------
+# tag apply / tag remove subcommands
+# ---------------------------------------------------------------------------
+
+
+class TestCmdTagApplyRemoveSubcommands:
+    def test_apply_subcommand(self, test_db, capsys):
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+
+        rc = main(["--db", str(test_db), "tag", "apply", conv_id, "apply-tag"])
+        assert rc == 0
+        assert "Applied tag 'apply-tag'" in capsys.readouterr().out
+
+    def test_remove_subcommand(self, test_db, capsys):
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+
+        main(["--db", str(test_db), "tag", conv_id, "remove-me"])
+        capsys.readouterr()
+
+        rc = main(["--db", str(test_db), "tag", "remove", conv_id, "remove-me"])
+        assert rc == 0
+        assert "Removed tag 'remove-me'" in capsys.readouterr().out
+
+    def test_apply_subcommand_last(self, test_db, capsys):
+        rc = main(["--db", str(test_db), "tag", "apply", "--last", "apply-last-tag"])
+        assert rc == 0
+        assert "Applied tag 'apply-last-tag'" in capsys.readouterr().out
+
+    def test_remove_subcommand_last(self, test_db, capsys):
+        main(["--db", str(test_db), "tag", "--last", "remove-last-tag"])
+        capsys.readouterr()
+
+        rc = main(["--db", str(test_db), "tag", "remove", "--last", "remove-last-tag"])
+        assert rc == 0
+        assert "Removed tag 'remove-last-tag'" in capsys.readouterr().out
+
+    def test_apply_and_legacy_produce_identical_state(self, test_db, capsys):
+        conn = open_database(test_db)
+        ids = [r["id"] for r in conn.execute("SELECT id FROM conversations LIMIT 2").fetchall()]
+        conn.close()
+
+        tag_name = "apply-state-parity"
+
+        assert main(["--db", str(test_db), "tag", ids[0], tag_name]) == 0
+        capsys.readouterr()
+        assert main(["--db", str(test_db), "tag", "apply", ids[1], tag_name]) == 0
+        capsys.readouterr()
+
+        assert _conversation_has_tag(test_db, ids[0], tag_name)
+        assert _conversation_has_tag(test_db, ids[1], tag_name)
+
+    def test_remove_and_legacy_produce_identical_state(self, test_db, capsys):
+        conn = open_database(test_db)
+        ids = [r["id"] for r in conn.execute("SELECT id FROM conversations LIMIT 2").fetchall()]
+        conn.close()
+
+        tag_name = "remove-state-parity"
+
+        assert main(["--db", str(test_db), "tag", ids[0], tag_name]) == 0
+        assert main(["--db", str(test_db), "tag", ids[1], tag_name]) == 0
+        capsys.readouterr()
+        assert _conversation_has_tag(test_db, ids[0], tag_name)
+        assert _conversation_has_tag(test_db, ids[1], tag_name)
+
+        assert main(["--db", str(test_db), "tag", "--remove", ids[0], tag_name]) == 0
+        assert main(["--db", str(test_db), "tag", "remove", ids[1], tag_name]) == 0
+        capsys.readouterr()
+        assert not _conversation_has_tag(test_db, ids[0], tag_name)
+        assert not _conversation_has_tag(test_db, ids[1], tag_name)
+
+    def test_apply_subcommand_already_applied(self, test_db, capsys):
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+
+        main(["--db", str(test_db), "tag", "apply", conv_id, "dupe-apply"])
+        capsys.readouterr()
+
+        rc = main(["--db", str(test_db), "tag", "apply", conv_id, "dupe-apply"])
+        assert rc == 0
+        assert "already applied" in capsys.readouterr().out
+
+    def test_remove_subcommand_nonexistent_tag(self, test_db, capsys):
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+
+        rc = main(["--db", str(test_db), "tag", "remove", conv_id, "never-existed"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "not found" in out.lower() or "not applied" in out.lower()
+
+
+# ---------------------------------------------------------------------------
 # tag list / rename / delete (unified subcommands)
 # ---------------------------------------------------------------------------
 
@@ -445,6 +558,29 @@ class TestSubcommandDisambiguation:
         rc = main(["--db", str(test_db), "tag", "delete"])
         assert rc == 1  # fails due to missing args, but dispatched correctly
         assert "Usage:" in capsys.readouterr().out
+
+    def test_apply_dispatches_to_subcommand(self, test_db, capsys):
+        """'apply' is recognized as a subcommand, not a conversation ID."""
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+
+        rc = main(["--db", str(test_db), "tag", "apply", conv_id, "disambig-tag"])
+        assert rc == 0
+        assert "Applied tag" in capsys.readouterr().out
+
+    def test_remove_dispatches_to_subcommand(self, test_db, capsys):
+        """'remove' is recognized as a subcommand, not a conversation ID."""
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+
+        main(["--db", str(test_db), "tag", conv_id, "disambig-rm"])
+        capsys.readouterr()
+
+        rc = main(["--db", str(test_db), "tag", "remove", conv_id, "disambig-rm"])
+        assert rc == 0
+        assert "Removed tag" in capsys.readouterr().out
 
 
 class TestTagsEdgeBranches:

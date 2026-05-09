@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`siftd tag apply` and `siftd tag remove` subcommands** — Explicit named subcommands for applying and removing tags, identical in behavior to the existing positional `siftd tag <id> <tag>` and `siftd tag --remove <id> <tag>` forms. The legacy positional syntax is unchanged. `apply` and `remove` also accept `--last`, `--session`, and all other tag flags. Intended for agent prompts and scripts where explicit verb syntax is clearer.
 - **`siftd tag list --by-workspace`** — group tag counts by workspace. Counts only event-backed tags (`tool_call`, `prompt`, `response`, `exchange`); conversation-level tags are excluded by design. Composes with `--on`, `--prefix`, `-w/--workspace`, `--owner`, `--all-tags`, and `--limit` (default cap: 20 workspaces, ranked by total count descending). Other filters (`--since`, `--before`, `--no-tag`, `-l/--tag`, `-m/--model`, `--tool`, `--tool-tag`) error with exit 2 when combined with `--by-workspace`. Replaces the per-workspace view previously available only via `siftd tools --by-workspace`.
-
 - **`--timeout SECONDS` for `siftd peek --follow`** — Exit the follow loop after a wall-clock duration, even if the session remains active. Useful for integration tests and polling loops. Example: `siftd peek --follow --timeout 5` monitors a live session for 5 seconds then exits cleanly.
 - **`--latest` alias for `--last`** — Both `siftd tag` and `siftd export` now accept `--latest` as an alias for the existing `--last` flag, providing an alternative ergonomic name for the same functionality.
 - **`siftd id <ULID>` classification command** — Resolves a ULID to either a conversation or event, emits a one-line summary with context (workspace, started date for conversations; conversation ID for events) and a view hint. Supports `--json` for structured classification. Exit codes: 0 (hit), 1 (miss), 2 (ambiguous).

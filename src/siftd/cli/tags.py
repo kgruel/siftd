@@ -19,7 +19,7 @@ from siftd.output._id_format import short_id
 from siftd.paths import ensure_dirs, session_id_file
 
 # Subcommand names that can never collide with ULIDs (26-char base32).
-_TAG_SUBCOMMANDS = frozenset({"list", "rename", "delete"})
+_TAG_SUBCOMMANDS = frozenset({"apply", "remove", "list", "rename", "delete"})
 
 
 def _detect_current_session() -> str | None:
@@ -562,7 +562,7 @@ def cmd_tag(args) -> int:
     """Apply, remove, list, rename, or delete tags."""
     db = resolve_db(args)
 
-    # Check for subcommands (list, rename, delete) via positional args.
+    # Check for subcommands (apply, remove, list, rename, delete) via positional args.
     # Safe: these words can never be ULIDs (26-char base32).
     positional = args.positional or []
     if positional and positional[0] in _TAG_SUBCOMMANDS:
@@ -573,6 +573,13 @@ def cmd_tag(args) -> int:
             return _cmd_tag_rename(args, db)
         if subcmd == "delete":
             return _cmd_tag_delete(args, db)
+        # apply/remove: strip the subcommand and fall through to the legacy logic.
+        # args.positional is updated so that _tag_session (which reads it directly)
+        # sees the right tag names.
+        args.positional = positional[1:]
+        positional = args.positional
+        if subcmd == "remove":
+            args.remove = True
 
     # --- Original tag apply/remove logic below ---
 
@@ -787,6 +794,8 @@ def cmd_tag(args) -> int:
     parsed = _parse_tag_args(positional)
     if not parsed:
         print("Usage: siftd tag <id> <tag> [tag2 ...]")
+        print("       siftd tag apply <id> <tag> [tag2 ...]")
+        print("       siftd tag remove <id> <tag> [tag2 ...]")
         print("       siftd tag <entity_type> <id> <tag> [tag2 ...]")
         print("       siftd tag <conv>:<kind>:<n> <tag> [tag2 ...]")
         print("       siftd tag --last [N] <tag> [tag2 ...]")
@@ -860,6 +869,10 @@ def build_tags_parser(subparsers) -> None:
   siftd tag -r workspace 01HY... proj      # remove from workspace
 
 subcommands:
+  siftd tag apply 01HX... important         # explicit apply (same as positional)
+  siftd tag apply --last important          # apply to most recent via subcommand
+  siftd tag remove 01HX... important        # explicit remove (same as --remove)
+  siftd tag remove --last important         # remove from most recent via subcommand
   siftd tag list                            # list all tags
   siftd tag list --prefix research:         # filter by prefix
   siftd tag list research:auth              # show conversations with tag
@@ -872,7 +885,11 @@ live session tagging:
   siftd tag --session abc123 decision:auth       # queue tag for session
   siftd tag --session abc123 --exchange 5 key    # queue tag for exchange 5""",
     )
-    p_tag.add_argument("positional", nargs="*", help="[entity_type] entity_id tag [tag2 ...] | list | rename | delete")
+    p_tag.add_argument(
+        "positional",
+        nargs="*",
+        help="[entity_type] entity_id tag [tag2 ...] | apply | remove | list | rename | delete",
+    )
     p_tag.add_argument(
         "-n",
         "--last",
