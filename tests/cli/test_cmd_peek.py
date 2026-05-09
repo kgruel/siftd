@@ -232,7 +232,7 @@ class TestPeekFollowMode:
         mock_find.return_value = Path("/tmp/fake-session.jsonl")
         mock_read_detail.return_value = _detail(response_text=long_initial)
 
-        def _emit(path, *, json_mode, render, include_thinking):
+        def _emit(path, *, json_mode, render, include_thinking, **kwargs):
             assert not json_mode
             render(_follow_event(response_text=long_live))
 
@@ -253,7 +253,7 @@ class TestPeekFollowMode:
         mock_find.return_value = Path("/tmp/fake-session.jsonl")
         mock_read_detail.return_value = _detail()
 
-        def _emit(path, *, json_mode, render, include_thinking):
+        def _emit(path, *, json_mode, render, include_thinking, **kwargs):
             assert path == Path("/tmp/fake-session.jsonl")
             assert not json_mode
             assert include_thinking is False
@@ -291,7 +291,7 @@ class TestPeekFollowMode:
         mock_find.return_value = Path("/tmp/fake-session.jsonl")
         mock_read_detail.return_value = _detail()
 
-        def _emit(path, *, json_mode, render, include_thinking):
+        def _emit(path, *, json_mode, render, include_thinking, **kwargs):
             assert not json_mode
             assert include_thinking is False
             render(_follow_event())
@@ -312,7 +312,7 @@ class TestPeekFollowMode:
         mock_find.return_value = Path("/tmp/fake-session.jsonl")
         mock_read_detail.side_effect = lambda path, last_n, include_thinking: _detail(include_thinking=include_thinking)
 
-        def _emit(path, *, json_mode, render, include_thinking):
+        def _emit(path, *, json_mode, render, include_thinking, **kwargs):
             assert not json_mode
             assert include_thinking is True
             render(_follow_event(include_thinking=True))

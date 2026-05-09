@@ -513,3 +513,30 @@ def test_follow_session_json_output(tmp_path):
     serialized = json.dumps(payload, separators=(",", ":"))
     roundtripped = json.loads(serialized)
     assert roundtripped == payload
+
+
+def test_follow_session_with_timeout(tmp_path):
+    """Verify timeout causes follow_session to exit after specified duration."""
+    path = tmp_path / "session.jsonl"
+    path.write_text("")
+    events: list[FollowEvent] = []
+
+    # Start follow with 1 second timeout
+    start = time.time()
+    follow_session(
+        path,
+        poll_interval=0.05,
+        on_turn=events.append,
+        timeout=1.0,
+    )
+    elapsed = time.time() - start
+
+    # Should exit after ~1 second (with some tolerance for overhead)
+    assert elapsed >= 1.0
+    assert elapsed < 1.5
+
+    # Clean up the file so _stop_follow can unlink it without errors
+    try:
+        path.unlink()
+    except OSError:
+        pass

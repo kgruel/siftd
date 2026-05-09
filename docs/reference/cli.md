@@ -696,8 +696,9 @@ examples:
 ```
 usage: siftd peek [-h] [-w SUBSTR] [--branch SUBSTR] [--all] [-n N]
                   [--exchanges N] [-b] [-F] [--chars N] [--thinking] [--tools]
-                  [-f] [--tail] [--tail-lines N] [--json] [--main-only]
-                  [--children ID] [--last-response] [--last-prompt]
+                  [-f] [--timeout SECONDS] [--tail] [--tail-lines N] [--json]
+                  [--main-only] [--children ID] [--last-response]
+                  [--last-prompt]
                   [session_id]
 
 positional arguments:
@@ -718,6 +719,8 @@ options:
                         available
   --tools               Show tool inputs/results inline when available
   -f, --follow          Follow a live session in real time (like tail -f)
+  --timeout SECONDS     Exit after SECONDS of wall-clock time (for use with
+                        --follow)
   --tail                Raw JSONL tail (last 20 records)
   --tail-lines N        Number of records for --tail (default: 20)
   --json                Output as structured JSON

@@ -221,6 +221,7 @@ def follow_session(
     render: Callable[[FollowEvent], None] | None = None,
     on_turn: Callable[[FollowEvent], None] | None = None,
     include_thinking: bool = False,
+    timeout: float | None = None,
 ) -> None:
     """Follow a live session file, emitting events as they arrive.
 
@@ -231,11 +232,14 @@ def follow_session(
         render: Callback to render an event (text mode).  If None, events
                 are silently consumed (useful with on_turn for testing).
         on_turn: Optional callback for testing (receives each FollowEvent).
+        include_thinking: If True, include thinking blocks in output.
+        timeout: If set, exit after this many seconds of wall-clock time.
     """
     # Resolve adapter for tool_aliases and hint_keys
     tool_aliases, hint_keys = _resolve_adapter_config(path)
 
     f = None
+    start_time = time.time() if timeout is not None else None
     try:
         f = path.open("r", encoding="utf-8")
         stat = path.stat()
@@ -246,6 +250,11 @@ def follow_session(
         buf = ""
 
         while True:
+            if timeout is not None and start_time is not None:
+                elapsed = time.time() - start_time
+                if elapsed >= timeout:
+                    break
+
             try:
                 time.sleep(poll_interval)
             except KeyboardInterrupt:

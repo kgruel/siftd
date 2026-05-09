@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--timeout SECONDS` for `siftd peek --follow`** — Exit the follow loop after a wall-clock duration, even if the session remains active. Useful for integration tests and polling loops. Example: `siftd peek --follow --timeout 5` monitors a live session for 5 seconds then exits cleanly.
 - **`--latest` alias for `--last`** — Both `siftd tag` and `siftd export` now accept `--latest` as an alias for the existing `--last` flag, providing an alternative ergonomic name for the same functionality.
 - **`siftd id <ULID>` classification command** — Resolves a ULID to either a conversation or event, emits a one-line summary with context (workspace, started date for conversations; conversation ID for events) and a view hint. Supports `--json` for structured classification. Exit codes: 0 (hit), 1 (miss), 2 (ambiguous).
 - **`--dry-run` for `siftd db restore` and `siftd db receive`** — preview destructive operations before applying. `db restore --dry-run` prints source path, target path, schema version direction-of-change (upgrade / DOWNGRADE / no change), and per-table row counts for both source and target without touching the target file. `db receive --dry-run` drains stdin, runs the preflight integrity check, prints per-table row counts from the incoming payload and the would-be action (create / merge), then exits 0 without writing to the database.
