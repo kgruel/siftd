@@ -26,8 +26,6 @@ class Finding:
             a specific entity (e.g., a conversation id) rather than the whole
             result set or DB. Used by the caveats producer registry to thread
             row-level annotations through dispatch into renderers.
-        field: Reserved for future column-binding (cell-tier caveats). No
-            consumer today.
         channel: Controls output-format visibility. "text" findings are excluded
             from --json output; "json" findings are excluded from text/TTY
             output; "both" (default) appears everywhere.
@@ -40,7 +38,6 @@ class Finding:
     fix_command: str | None = None
     context: dict | None = None
     target: str | None = None
-    field: str | None = None
     channel: Literal["text", "json", "both"] = "both"
 
 

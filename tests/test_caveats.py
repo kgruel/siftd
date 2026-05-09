@@ -862,28 +862,28 @@ class TestFreshCorpusProducer:
 
     def test_applies_to_requires_list_conversations(self):
         """Predicate is False for ops calling other functions."""
-        from siftd.api.caveats import _is_list_conversations_list_render
+        from siftd.api.caveats import _is_list_conversations_list
 
         op = _make_op(fn=lambda: [], render_method="list")
-        assert _is_list_conversations_list_render(op) is False
+        assert _is_list_conversations_list(op) is False
 
     def test_applies_to_requires_render_method_list(self):
-        from siftd.api.caveats import _is_list_conversations_list_render
+        from siftd.api.caveats import _is_list_conversations_list
         from siftd.api.conversations import list_conversations
 
         op = _make_op(fn=list_conversations, render_method="detail")
-        assert _is_list_conversations_list_render(op) is False
+        assert _is_list_conversations_list(op) is False
 
     def test_applies_to_satisfied(self):
-        from siftd.api.caveats import _is_list_conversations_list_render
+        from siftd.api.caveats import _is_list_conversations_list
         from siftd.api.conversations import list_conversations
 
         op = _make_op(fn=list_conversations, render_method="list")
-        assert _is_list_conversations_list_render(op) is True
+        assert _is_list_conversations_list(op) is True
 
     def test_applies_to_satisfied_at_depth_1(self):
         """Predicate should be true at any depth."""
-        from siftd.api.caveats import _is_list_conversations_list_render
+        from siftd.api.caveats import _is_list_conversations_list
         from siftd.api.conversations import list_conversations
 
         op = _make_op(
@@ -891,7 +891,7 @@ class TestFreshCorpusProducer:
             render_method="list",
             fidelity=Fidelity(depth=1),
         )
-        assert _is_list_conversations_list_render(op) is True
+        assert _is_list_conversations_list(op) is True
 
     def test_large_result_short_circuits(self, monkeypatch):
         """Result with 10+ items → no DB call, no finding."""
@@ -1031,7 +1031,7 @@ class TestFreshCorpusProducer:
         db_file = tmp_path / "db.sqlite"
         db_file.touch()
         ctx = ProducerContext(db_path=db_file)
-        result = []
+        result = ["item"]
         findings = _fresh_corpus_caveats(op, result, ctx)
         assert len(findings) == 1
         assert "1 conversation" in findings[0].message
@@ -1302,24 +1302,24 @@ class TestPendingTagsProducer:
 
     def test_applies_to_requires_list_conversations(self):
         """Predicate is False for ops calling other functions."""
-        from siftd.api.caveats import _is_list_conversations_simple
+        from siftd.api.caveats import _is_list_conversations_list
 
         op = _make_op(fn=lambda: [], render_method="list")
-        assert _is_list_conversations_simple(op) is False
+        assert _is_list_conversations_list(op) is False
 
     def test_applies_to_requires_render_method_list(self):
-        from siftd.api.caveats import _is_list_conversations_simple
+        from siftd.api.caveats import _is_list_conversations_list
         from siftd.api.conversations import list_conversations
 
         op = _make_op(fn=list_conversations, render_method="detail")
-        assert _is_list_conversations_simple(op) is False
+        assert _is_list_conversations_list(op) is False
 
     def test_applies_to_satisfied(self):
-        from siftd.api.caveats import _is_list_conversations_simple
+        from siftd.api.caveats import _is_list_conversations_list
         from siftd.api.conversations import list_conversations
 
         op = _make_op(fn=list_conversations, render_method="list")
-        assert _is_list_conversations_simple(op) is True
+        assert _is_list_conversations_list(op) is True
 
     def test_nonexistent_db_returns_empty(self):
         """Path(ctx.db_path) doesn't exist → no finding."""
@@ -1423,24 +1423,24 @@ class TestIngestStatusProducer:
 
     def test_applies_to_requires_list_conversations(self):
         """Predicate is False for ops calling other functions."""
-        from siftd.api.caveats import _is_list_conversations_list_render_for_ingest
+        from siftd.api.caveats import _is_list_conversations_list
 
         op = _make_op(fn=lambda: [], render_method="list")
-        assert _is_list_conversations_list_render_for_ingest(op) is False
+        assert _is_list_conversations_list(op) is False
 
     def test_applies_to_requires_render_method_list(self):
-        from siftd.api.caveats import _is_list_conversations_list_render_for_ingest
+        from siftd.api.caveats import _is_list_conversations_list
         from siftd.api.conversations import list_conversations
 
         op = _make_op(fn=list_conversations, render_method="detail")
-        assert _is_list_conversations_list_render_for_ingest(op) is False
+        assert _is_list_conversations_list(op) is False
 
     def test_applies_to_satisfied(self):
-        from siftd.api.caveats import _is_list_conversations_list_render_for_ingest
+        from siftd.api.caveats import _is_list_conversations_list
         from siftd.api.conversations import list_conversations
 
         op = _make_op(fn=list_conversations, render_method="list")
-        assert _is_list_conversations_list_render_for_ingest(op) is True
+        assert _is_list_conversations_list(op) is True
 
     def test_nonexistent_db_returns_empty(self):
         """Path doesn't exist → no findings."""

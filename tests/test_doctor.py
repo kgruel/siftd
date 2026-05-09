@@ -1580,10 +1580,6 @@ class TestFindingSubstrate:
         f = Finding(check="x", severity="info", message="m", fix_available=False)
         assert f.channel == "both"
 
-    def test_field_default_is_none(self):
-        f = Finding(check="x", severity="info", message="m", fix_available=False)
-        assert f.field is None
-
     def test_channel_text_excludes_from_json(self, monkeypatch, capsys):
         """channel="text" findings are dropped from --json doctor output."""
         import json

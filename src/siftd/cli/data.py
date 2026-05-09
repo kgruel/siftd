@@ -878,6 +878,14 @@ _FIX_REGISTRY = {
 }
 
 
+def _filter_findings(findings, *, json_mode: bool, drop_hints: bool = False):
+    exclude = "text" if json_mode else "json"
+    out = [f for f in findings if f.channel != exclude]
+    if drop_hints:
+        out = [f for f in out if f.severity != "hint"]
+    return out
+
+
 def _doctor_run(args, check_names: list[str] | None = None, show_fixes: bool = False) -> int:
     """Run doctor checks and display findings."""
     db = Path(args.db) if args.db else None
@@ -908,9 +916,7 @@ def _doctor_run_json(args, check_names, show_fixes, db, deep=False, fast=False) 
         print(f"Error: {e}")
         return 1
 
-    findings = [f for f in findings if f.channel != "text"]
-    if getattr(args, "no_hints", False):
-        findings = [f for f in findings if f.severity != "hint"]
+    findings = _filter_findings(findings, json_mode=True, drop_hints=getattr(args, "no_hints", False))
 
     severity_order = {"error": 0, "warning": 1, "info": 2}
     findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
@@ -960,9 +966,7 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False)
         print(f"Error: {e}")
         return 1
 
-    findings = [f for f in findings if f.channel != "json"]
-    if getattr(args, "no_hints", False):
-        findings = [f for f in findings if f.severity != "hint"]
+    findings = _filter_findings(findings, json_mode=False, drop_hints=getattr(args, "no_hints", False))
 
     if not findings:
         print("No issues found.")
@@ -1053,9 +1057,7 @@ def _doctor_run_painted(args, check_names, show_fixes, db, deep=False, fast=Fals
         final_block = render_progress_block(check_names_ordered, completed, len(completed))
         renderer.finalize(final_block)
 
-    findings = [f for f in findings if f.channel != "json"]
-    if getattr(args, "no_hints", False):
-        findings = [f for f in findings if f.severity != "hint"]
+    findings = _filter_findings(findings, json_mode=False, drop_hints=getattr(args, "no_hints", False))
 
     # Cache fixable findings for `doctor fix`
     from siftd.doctor.fixes import save_findings_cache

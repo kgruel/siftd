@@ -109,7 +109,10 @@ def run_producers(op: Operation, result: Any, ctx: ProducerContext) -> list[Find
     raw: list[Finding] = []
     for spec in _producers:
         if spec.applies_to(op):
-            raw.extend(spec.fn(op, result, ctx))
+            try:
+                raw.extend(spec.fn(op, result, ctx))
+            except Exception:
+                pass  # producers are advisory; don't break the primary result
 
     errors = [f for f in raw if f.severity == "error"]
     warnings = [f for f in raw if f.severity == "warning"]
@@ -313,26 +316,22 @@ def _workspace_identity_caveats(op, summaries, ctx: ProducerContext) -> list[Fin
 # Fresh-corpus producer (slice 1)
 # ---------------------------------------------------------------------------
 
-def _is_list_conversations_list_render(op) -> bool:
-    """Predicate: list_conversations rendered as a list.
-
-    Useful at any depth — warns when the result is a thin slice of
-    the corpus.
-    """
+def _is_list_conversations_list(op) -> bool:
+    """Predicate: list_conversations rendered as a list."""
     from siftd.api.conversations import list_conversations
-    return (
-        op.fn is list_conversations
-        and op.render_method == "list"
-    )
+    return op.fn is list_conversations and op.render_method == "list"
 
 
-@caveat_producer(kind="fresh-corpus", applies_to=_is_list_conversations_list_render)
+@caveat_producer(kind="fresh-corpus", applies_to=_is_list_conversations_list)
 def _fresh_corpus_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
     """Caveat: result is a thin slice of the corpus.
 
     Emitted when result < 10 items and the total corpus is also < 10.
     If result >= 10, short-circuit to avoid the DB call.
     """
+    if not result:
+        return []
+
     if len(result) >= 10:
         return []
 
@@ -421,16 +420,7 @@ def _embeddings_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]
 # Pending tags producer (B3)
 # ---------------------------------------------------------------------------
 
-def _is_list_conversations_simple(op) -> bool:
-    """Predicate: list_conversations rendered as a list."""
-    from siftd.api.conversations import list_conversations
-    return (
-        op.fn is list_conversations
-        and op.render_method == "list"
-    )
-
-
-@caveat_producer(kind="pending-tags", applies_to=_is_list_conversations_simple)
+@caveat_producer(kind="pending-tags", applies_to=_is_list_conversations_list)
 def _pending_tags_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
     """Caveat: pending tag intents not yet applied.
 
@@ -460,19 +450,7 @@ def _pending_tags_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
 # Ingest-status producer (B4)
 # ---------------------------------------------------------------------------
 
-def _is_list_conversations_list_render_for_ingest(op) -> bool:
-    """Predicate: list_conversations rendered as a list.
-
-    Ingest-status findings are relevant at any depth and filter state.
-    """
-    from siftd.api.conversations import list_conversations
-    return (
-        op.fn is list_conversations
-        and op.render_method == "list"
-    )
-
-
-@caveat_producer(kind="ingest-status", applies_to=_is_list_conversations_list_render_for_ingest)
+@caveat_producer(kind="ingest-status", applies_to=_is_list_conversations_list)
 def _ingest_status_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
     """Caveats for ingest state: errors in ingested_files or stale last-ingest time.
 
