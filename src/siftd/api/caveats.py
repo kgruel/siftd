@@ -434,6 +434,12 @@ def _pending_tags_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
     if not Path(ctx.db_path).exists():
         return []
 
+    row = ctx.db().execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pending_tags'"
+    ).fetchone()
+    if row is None:
+        return []
+
     count = ctx.db().execute("SELECT COUNT(*) FROM pending_tags").fetchone()[0]
     if count == 0:
         return []

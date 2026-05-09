@@ -8,6 +8,7 @@ Supports three modes:
 
 import argparse
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ from siftd.output._id_format import short_id
 from siftd.paths import embeddings_db_path
 
 
-def _print_empty_json_results(args, query: str, db: Path) -> None:
+def _print_empty_json_results(args, query: str, db: Path, caveats: list | None = None) -> None:
     """Emit empty JSON results for --json output modes."""
     import json
 
@@ -26,7 +27,7 @@ def _print_empty_json_results(args, query: str, db: Path) -> None:
     from siftd.output.format_registry import select_format
 
     fmt = select_format(json_mode=True, is_tty=False)
-    result = fmt.render_search([], Fidelity(), query=query, mode="chunks")
+    result = fmt.render_search([], Fidelity(), query=query, mode="chunks", caveats=caveats or [])
     if isinstance(result, dict):
         print(json.dumps(result, indent=2))
     else:
@@ -288,9 +289,11 @@ def cmd_search(args) -> int:
 
     if not chunks:
         if args.json:
-            _print_empty_json_results(args, query, db)
+            _print_empty_json_results(args, query, db, caveats=caveats)
         else:
             print(f"No results for: {query}")
+            for c in caveats:
+                print(f"note: {c.message}")
         return 0
 
     # Apply threshold filter if specified
@@ -298,9 +301,11 @@ def cmd_search(args) -> int:
         chunks = filter_by_threshold(chunks, threshold=args.threshold)
         if not chunks:
             if args.json:
-                _print_empty_json_results(args, query, db)
+                _print_empty_json_results(args, query, db, caveats=caveats)
             else:
                 print(f"No results above threshold {args.threshold} for: {query}")
+                for c in caveats:
+                    print(f"note: {c.message}")
             return 0
 
     # Post-processing: --first (earliest match above threshold)
@@ -310,9 +315,11 @@ def cmd_search(args) -> int:
         earliest = first_mention(chunks, threshold=effective_threshold, db_path=db)
         if not earliest:
             if args.json:
-                _print_empty_json_results(args, query, db)
+                _print_empty_json_results(args, query, db, caveats=caveats)
             else:
                 print(f"No results above relevance threshold for: {query}")
+                for c in caveats:
+                    print(f"note: {c.message}")
             return 0
         chunks = _chunks_from_rows([earliest])
 
@@ -519,6 +526,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
                 "query": query,
                 "mode": "fts5",
                 "results": [],
+                "caveats": [asdict(c) for c in caveats],
             }
             if unsupported_flags:
                 out["warnings"] = [
@@ -528,6 +536,8 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             print(json.dumps(out, indent=2))
         else:
             print(f"No results for: {query}")
+            for c in caveats:
+                print(f"note: {c.message}")
         return 0
 
     # Enrich with metadata and render via unified formatter system

@@ -1412,6 +1412,24 @@ class TestPendingTagsProducer:
         assert len(findings) == 1
         assert findings[0].message == "1 pending tag intent — run 'siftd ingest' to apply"
 
+    def test_missing_pending_tags_table(self, tmp_path):
+        """DB exists but pending_tags table missing → no finding."""
+        import sqlite3
+        from siftd.api.caveats import _pending_tags_caveats
+        from siftd.api.conversations import list_conversations
+
+        # Create a real SQLite db without the pending_tags table
+        db_file = tmp_path / "partial.db"
+        conn = sqlite3.connect(db_file)
+        conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+
+        op = _make_op(fn=list_conversations)
+        ctx = ProducerContext(db_path=db_file)
+        findings = _pending_tags_caveats(op, [], ctx)
+        assert findings == []
+
 class TestIngestStatusProducer:
     """Tests for the ingest-status producer.
 
