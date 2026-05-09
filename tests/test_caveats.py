@@ -17,6 +17,7 @@ from painted import Fidelity
 from siftd.api import caveats as caveats_mod
 from siftd.api.caveats import (
     Caveat,
+    ProducerContext,
     ProducerSpec,
     caveat_producer,
     run_producers,
@@ -58,6 +59,11 @@ def _make_op(
     )
 
 
+def _make_ctx() -> ProducerContext:
+    """Minimal ProducerContext for tests that don't exercise the DB."""
+    return ProducerContext(db_path=Path("/nonexistent.db"))
+
+
 class TestCaveatAlias:
     def test_caveat_is_finding_alias(self):
         assert Caveat is Finding
@@ -76,27 +82,27 @@ class TestCaveatAlias:
 class TestProducerRegistry:
     def test_decorator_registers_producer(self):
         @caveat_producer(kind="test-kind", applies_to=lambda op: True)
-        def producer(op, result):
+        def producer(op, result, ctx):
             return [Finding(check="test-kind", severity="info", message="m", fix_available=False)]
 
         op = _make_op()
-        findings = run_producers(op, [])
+        findings = run_producers(op, [], _make_ctx())
         assert any(f.check == "test-kind" for f in findings)
 
     def test_applies_to_false_skips_producer(self):
         called = []
 
         @caveat_producer(kind="never", applies_to=lambda op: False)
-        def producer(op, result):
+        def producer(op, result, ctx):
             called.append(True)
             return []
 
-        run_producers(_make_op(), [])
+        run_producers(_make_op(), [], _make_ctx())
         assert called == []
 
     def test_producer_spec_shape(self):
         @caveat_producer(kind="shape-test", applies_to=lambda op: True)
-        def producer(op, result):
+        def producer(op, result, ctx):
             return []
 
         # Find the spec we just registered
@@ -111,7 +117,7 @@ class TestProducerRegistry:
         before = list(caveats_mod._producers)
 
         @caveat_producer(kind="leak-check", applies_to=lambda op: True)
-        def producer(op, result):
+        def producer(op, result, ctx):
             return []
 
         assert len(caveats_mod._producers) == len(before) + 1
@@ -122,7 +128,7 @@ class TestProducerRegistry:
 class TestExecuteForRender:
     def test_returns_result_and_findings_tuple(self):
         @caveat_producer(kind="ef-test", applies_to=lambda op: True)
-        def producer(op, result):
+        def producer(op, result, ctx):
             return [Finding(
                 check="ef-test", severity="info", message="m", fix_available=False,
             )]
@@ -185,7 +191,7 @@ class TestDispatchThreading:
 
     def test_dispatch_runs_producers_and_renders(self):
         @caveat_producer(kind="d-test", applies_to=lambda op: True)
-        def producer(op, result):
+        def producer(op, result, ctx):
             return [Finding(
                 check="d-test", severity="info", message="m", fix_available=False,
             )]
@@ -204,6 +210,123 @@ class TestDispatchThreading:
         assert seen["result"] == ["a"]
         assert len(seen["caveats"]) == 1
         assert seen["caveats"][0].check == "d-test"
+
+
+class TestCapPolicy:
+    """Cap logic in run_producers: infos capped at 3, hints at 1, errors/warnings uncapped."""
+
+    def test_infos_capped_at_3_with_overflow(self):
+        @caveat_producer(kind="info-cap-test", applies_to=lambda op: True)
+        def producer(op, result, ctx):
+            return [
+                Finding(check="info-cap-test", severity="info", message=f"info {i}", fix_available=False)
+                for i in range(4)
+            ]
+
+        findings = run_producers(_make_op(), [], _make_ctx())
+        info_findings = [f for f in findings if f.check == "info-cap-test"]
+        overflow = [f for f in findings if f.check == "findings-truncated"]
+        assert len(info_findings) == 3
+        assert len(overflow) == 1
+        assert overflow[0].severity == "info"
+        assert "+1 more" in overflow[0].message
+
+    def test_overflow_message_pluralises(self):
+        @caveat_producer(kind="info-plural-test", applies_to=lambda op: True)
+        def producer(op, result, ctx):
+            return [
+                Finding(check="info-plural-test", severity="info", message=f"info {i}", fix_available=False)
+                for i in range(6)
+            ]
+
+        findings = run_producers(_make_op(), [], _make_ctx())
+        overflow = [f for f in findings if f.check == "findings-truncated"]
+        assert len(overflow) == 1
+        assert "+3 more" in overflow[0].message
+        assert "findings" in overflow[0].message
+
+    def test_hints_capped_at_1(self):
+        @caveat_producer(kind="hint-cap-test", applies_to=lambda op: True)
+        def producer(op, result, ctx):
+            return [
+                Finding(check="hint-cap-test", severity="hint", message=f"hint {i}", fix_available=False)
+                for i in range(3)
+            ]
+
+        findings = run_producers(_make_op(), [], _make_ctx())
+        hint_findings = [f for f in findings if f.check == "hint-cap-test"]
+        assert len(hint_findings) == 1
+
+    def test_warnings_uncapped(self):
+        @caveat_producer(kind="warn-cap-test", applies_to=lambda op: True)
+        def producer(op, result, ctx):
+            return [
+                Finding(check="warn-cap-test", severity="warning", message=f"w {i}", fix_available=False)
+                for i in range(5)
+            ]
+
+        findings = run_producers(_make_op(), [], _make_ctx())
+        assert len([f for f in findings if f.check == "warn-cap-test"]) == 5
+
+    def test_errors_uncapped(self):
+        @caveat_producer(kind="err-cap-test", applies_to=lambda op: True)
+        def producer(op, result, ctx):
+            return [
+                Finding(check="err-cap-test", severity="error", message=f"e {i}", fix_available=False)
+                for i in range(5)
+            ]
+
+        findings = run_producers(_make_op(), [], _make_ctx())
+        assert len([f for f in findings if f.check == "err-cap-test"]) == 5
+
+    def test_unknown_severity_passes_through_uncapped(self):
+        @caveat_producer(kind="unknown-severity-test", applies_to=lambda op: True)
+        def producer(op, result, ctx):
+            return [
+                Finding(
+                    check="unknown-severity-test",
+                    severity="unknown-future",
+                    message="future severity should pass through",
+                    fix_available=False,
+                ),
+            ]
+
+        findings = run_producers(_make_op(), [], _make_ctx())
+        unknown = [f for f in findings if f.check == "unknown-severity-test"]
+        assert len(unknown) == 1
+        assert unknown[0].severity == "unknown-future"
+
+    def test_assembly_order(self):
+        """errors → warnings → infos+overflow → hints."""
+        @caveat_producer(kind="order-test", applies_to=lambda op: True)
+        def producer(op, result, ctx):
+            return [
+                Finding(check="order-hint", severity="hint", message="h", fix_available=False),
+                Finding(check="order-warning", severity="warning", message="w", fix_available=False),
+                Finding(check="order-error", severity="error", message="e", fix_available=False),
+                Finding(check="order-info", severity="info", message="i", fix_available=False),
+            ]
+
+        findings = run_producers(_make_op(), [], _make_ctx())
+        severities = [f.severity for f in findings]
+        # error before warning before info before hint
+        error_idx = next(i for i, f in enumerate(findings) if f.check == "order-error")
+        warning_idx = next(i for i, f in enumerate(findings) if f.check == "order-warning")
+        info_idx = next(i for i, f in enumerate(findings) if f.check == "order-info")
+        hint_idx = next(i for i, f in enumerate(findings) if f.check == "order-hint")
+        assert error_idx < warning_idx < info_idx < hint_idx
+
+    def test_no_overflow_when_exactly_at_cap(self):
+        @caveat_producer(kind="exact-cap-test", applies_to=lambda op: True)
+        def producer(op, result, ctx):
+            return [
+                Finding(check="exact-cap-test", severity="info", message=f"i{i}", fix_available=False)
+                for i in range(3)
+            ]
+
+        findings = run_producers(_make_op(), [], _make_ctx())
+        overflow = [f for f in findings if f.check == "findings-truncated"]
+        assert overflow == []
 
 
 class TestPricingProducer:
@@ -255,16 +378,15 @@ class TestPricingProducer:
         from siftd.api.conversations import list_conversations
 
         op = _make_op(fn=list_conversations, fidelity=Fidelity(depth=3))
-        assert _pricing_caveats(op, []) == []
+        assert _pricing_caveats(op, [], _make_ctx()) == []
 
     def test_all_rows_priced_short_circuits(self, monkeypatch):
-        """If no row has cost=None, the DB is never opened."""
-        from siftd.api import caveats as cv
-
+        """If no row has cost=None, ctx.db() is never called."""
         def boom(*a, **kw):
             raise AssertionError("open_database should not be called")
 
         monkeypatch.setattr("siftd.api.database.open_database", boom)
+        from siftd.api.caveats import _pricing_caveats
         from siftd.api.conversations import list_conversations
 
         op = _make_op(fn=list_conversations, fidelity=Fidelity(depth=3))
@@ -274,11 +396,11 @@ class TestPricingProducer:
                 prompt_count=0, response_count=0, total_tokens=0, cost=0.05,
             ),
         ]
-        assert cv._pricing_caveats(op, priced) == []
+        assert _pricing_caveats(op, priced, _make_ctx()) == []
 
     def test_unpriced_row_produces_finding(self, monkeypatch):
         """When cost is None and the model is in the unpriced set, a Finding is produced."""
-        from siftd.api import caveats as cv
+        from siftd.api.caveats import _pricing_caveats
         from siftd.api.conversations import list_conversations
 
         class FakeConn:
@@ -306,7 +428,7 @@ class TestPricingProducer:
                 total_tokens=0, cost=None,
             ),
         ]
-        findings = cv._pricing_caveats(op, summaries)
+        findings = _pricing_caveats(op, summaries, _make_ctx())
         assert len(findings) == 1
         assert findings[0].check == "pricing-missing"
         assert findings[0].target == "01A"
@@ -315,7 +437,7 @@ class TestPricingProducer:
 
     def test_priced_row_skipped_even_if_model_unpriced(self, monkeypatch):
         """Row with computed cost is treated as priced regardless of pricing table state."""
-        from siftd.api import caveats as cv
+        from siftd.api.caveats import _pricing_caveats
         from siftd.api.conversations import list_conversations
 
         class FakeConn:
@@ -341,6 +463,6 @@ class TestPricingProducer:
                 prompt_count=0, response_count=0, total_tokens=0, cost=0.01,
             ),
         ]
-        findings = cv._pricing_caveats(op, summaries)
+        findings = _pricing_caveats(op, summaries, _make_ctx())
         assert len(findings) == 1
         assert findings[0].target == "01A"

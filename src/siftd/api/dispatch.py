@@ -98,10 +98,16 @@ def execute_for_render(op: Operation) -> tuple[Any, list[Any]]:
     For CLI paths that bypass `dispatch.dispatch()` (e.g. cli/query.py
     has serve-fallback branching) but still want to surface caveats.
     """
-    from siftd.api.caveats import run_producers
+    from siftd.api.caveats import ProducerContext, run_producers
+    from siftd.paths import db_path as default_db_path
 
     result = execute(op)
-    return result, run_producers(op, result)
+    ctx = ProducerContext(db_path=op.params.get("db_path") or default_db_path())
+    try:
+        findings = run_producers(op, result, ctx)
+    finally:
+        ctx.close()
+    return result, findings
 
 
 def dispatch(op: Operation, *, fmt: Any) -> Any:
@@ -112,10 +118,15 @@ def dispatch(op: Operation, *, fmt: Any) -> Any:
     producers run between execute and render; their findings are threaded
     into render_context["caveats"] for the renderer to consume.
     """
-    from siftd.api.caveats import run_producers
+    from siftd.api.caveats import ProducerContext, run_producers
+    from siftd.paths import db_path as default_db_path
 
     result = execute(op)
-    findings = run_producers(op, result)
+    ctx = ProducerContext(db_path=op.params.get("db_path") or default_db_path())
+    try:
+        findings = run_producers(op, result, ctx)
+    finally:
+        ctx.close()
     return render(result, op, fmt=fmt, findings=findings)
 
 
