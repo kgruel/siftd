@@ -379,6 +379,30 @@ def cmd_ingest(args) -> int:
     else:
         renderer.print_summary(stats)
 
+    # Adapter health: zero-discovery and drop-in import failures.
+    zero_discovery = sorted(set(result.adapters) - set(stats.by_harness))
+    if json_mode:
+        for name in zero_discovery:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "zero_discovery",
+                "adapter": name,
+                "message": f"Adapter '{name}' found nothing to ingest — check scan paths or adapter config",
+            })
+        for path, error in result.dropin_failures:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "failed_import",
+                "path": str(path),
+                "message": f"Drop-in adapter at '{path}' failed to load: {error}",
+            })
+    else:
+        if not quiet:
+            for name in zero_discovery:
+                print(f"  note: Adapter '{name}' found nothing to ingest — check scan paths or adapter config")
+        for path, error in result.dropin_failures:
+            print(f"  warning: Drop-in adapter at '{path}' failed to load: {error}")
+
     return 0
 
 

@@ -763,7 +763,7 @@ class TestDataDirectBranches:
 
     def test_ingest_and_backfill_remaining_branches(self, test_db, monkeypatch, capsys):
         # cmd_ingest: unmatched adapter in json mode
-        monkeypatch.setattr("siftd.api.ingest.load_all_adapters", lambda: [])
+        monkeypatch.setattr("siftd.api.ingest.load_all_adapters", lambda **_kw: [])
         monkeypatch.setattr("siftd.paths.ensure_dirs", lambda: None)
         rc = main(["--db", str(test_db), "ingest", "--json", "--adapter", "nope"])
         assert rc == 1
@@ -836,7 +836,7 @@ class TestDataDirectBranches:
         # ingest stats cache exception branch
         monkeypatch.setattr(
             "siftd.api.ingest.load_all_adapters",
-            lambda: [SimpleNamespace(name="ok", module="m")],
+            lambda **_kw: [SimpleNamespace(name="ok", module="m")],
         )
         monkeypatch.setattr("siftd.api.ingest.wrap_adapter_paths", lambda m, p: m)
         monkeypatch.setattr(
