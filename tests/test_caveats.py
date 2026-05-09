@@ -1833,6 +1833,86 @@ class TestFtsStaleProducer:
         assert "1 orphaned FTS entry" in findings[0].message
 
 
+class TestSearchModeDegradedProducer:
+    """Tests for the search-mode-degraded producer (B8).
+
+    Producer fires when op.params["mode"] == "fts" and result is non-empty.
+    Predicate is shared with embeddings-stale: fn is search_chunks + render_method=="search".
+    """
+
+    def test_applies_to_predicate(self):
+        """Predicate matches search_chunks + render_method=='search'."""
+        from siftd.api.caveats import _is_search_chunks_for_search_render
+        from siftd.api.search import search_chunks
+
+        op_match = _make_op(fn=search_chunks, render_method="search")
+        assert _is_search_chunks_for_search_render(op_match) is True
+
+        op_wrong_method = _make_op(fn=search_chunks, render_method="list")
+        assert _is_search_chunks_for_search_render(op_wrong_method) is False
+
+    def test_empty_result_no_finding(self):
+        """Empty result → no finding."""
+        from siftd.api.caveats import _search_mode_degraded_caveats
+        from siftd.api.search import search_chunks
+
+        op = _make_op(fn=search_chunks, render_method="search", params={"mode": "fts"})
+        findings = _search_mode_degraded_caveats(op, [], _make_ctx())
+        assert findings == []
+
+    def test_non_fts_mode_no_finding(self):
+        """mode='hybrid' → no finding even with results."""
+        from siftd.api.caveats import _search_mode_degraded_caveats
+        from siftd.api.search import search_chunks
+        from siftd.domain.search_types import SearchChunk
+
+        chunk = SearchChunk(conversation_id="abc", score=0.9, text="x", chunk_type="prompt")
+        op = _make_op(fn=search_chunks, render_method="search", params={"mode": "hybrid"})
+        findings = _search_mode_degraded_caveats(op, [chunk], _make_ctx())
+        assert findings == []
+
+    def test_missing_mode_param_no_finding(self):
+        """No mode param → no finding (params default to {})."""
+        from siftd.api.caveats import _search_mode_degraded_caveats
+        from siftd.api.search import search_chunks
+        from siftd.domain.search_types import SearchChunk
+
+        chunk = SearchChunk(conversation_id="abc", score=0.9, text="x", chunk_type="prompt")
+        op = _make_op(fn=search_chunks, render_method="search", params={})
+        findings = _search_mode_degraded_caveats(op, [chunk], _make_ctx())
+        assert findings == []
+
+    def test_fts_mode_emits_hint(self):
+        """mode='fts' with non-empty result → one hint finding."""
+        from siftd.api.caveats import _search_mode_degraded_caveats
+        from siftd.api.search import search_chunks
+        from siftd.domain.search_types import SearchChunk
+
+        chunk = SearchChunk(conversation_id="abc", score=0.8, text="y", chunk_type="fts5")
+        op = _make_op(fn=search_chunks, render_method="search", params={"mode": "fts"})
+        findings = _search_mode_degraded_caveats(op, [chunk], _make_ctx())
+        assert len(findings) == 1
+
+    def test_hint_fields(self):
+        """Finding has correct check, severity, channel, message, fix_available."""
+        from siftd.api.caveats import _search_mode_degraded_caveats
+        from siftd.api.search import search_chunks
+        from siftd.domain.search_types import SearchChunk
+
+        chunk = SearchChunk(conversation_id="abc", score=0.8, text="y", chunk_type="fts5")
+        op = _make_op(fn=search_chunks, render_method="search", params={"mode": "fts"})
+        findings = _search_mode_degraded_caveats(op, [chunk], _make_ctx())
+
+        f = findings[0]
+        assert f.check == "search-mode-degraded"
+        assert f.severity == "hint"
+        assert f.channel == "both"
+        assert f.message == (
+            "Search running in keyword-only mode — install embeddings for semantic ranking: siftd install embed"
+        )
+        assert f.fix_available is False
+
+
 class TestAmbiguousIdProducer:
     """Tests for the ambiguous-id producer (B9).
 

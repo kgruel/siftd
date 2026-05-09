@@ -573,6 +573,32 @@ def _fts_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
     )]
 
 
+# Search-mode-degraded producer (B8)
+# ---------------------------------------------------------------------------
+
+@caveat_producer(kind="search-mode-degraded", applies_to=_is_search_chunks_for_search_render)
+def _search_mode_degraded_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
+    """Hint: search ran in FTS-only (keyword) mode because embeddings are unavailable.
+
+    op.params["mode"] is set to "fts" by the CLI when embeddings are not installed
+    or the embeddings index doesn't exist. The mode="fts" branch of hybrid_search
+    returns SearchChunks with breakdown=None, so chunk-level fts5_mode inference
+    is not reliable — the params signal is authoritative.
+    """
+    if not result:
+        return []
+    if op.params.get("mode") != "fts":
+        return []
+
+    return [Finding(
+        check="search-mode-degraded",
+        severity="hint",
+        channel="both",
+        message="Search running in keyword-only mode — install embeddings for semantic ranking: siftd install embed",
+        fix_available=False,
+    )]
+
+
 # ---------------------------------------------------------------------------
 # Ambiguous ID producer (B9)
 # ---------------------------------------------------------------------------
