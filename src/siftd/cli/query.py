@@ -388,6 +388,16 @@ def cmd_query(args) -> int:
                 print("Tip: Run 'siftd doctor' to check database health.", file=sys.stderr)
             return 1
 
+    view_convs = len(conversations)
+    view_tokens = sum(c.total_tokens for c in conversations)
+    corpus = None
+    corpus_tokens = 0
+    if args.stats:
+        from siftd.api.stats import get_usage_summary
+
+        corpus = get_usage_summary(db_path=db)
+        corpus_tokens = corpus.total_input_tokens + corpus.total_output_tokens
+
     if not conversations:
         if args.json:
             # Preserve envelope shape on empty result so consumers don't
@@ -415,6 +425,12 @@ def cmd_query(args) -> int:
                     "\nTip: Run 'siftd ingest' to import recent sessions, or 'siftd peek' to check live sessions.",
                     file=sys.stderr,
                 )
+        if args.stats and corpus is not None:
+            print()
+            print(
+                f"View: {view_convs:,} / {corpus.total_conversations:,} corpus"
+                f" | view tokens: {fmt_tokens(view_tokens)} / {fmt_tokens(corpus_tokens)} corpus"
+            )
         return 0
 
     # Render list via formatter (fidelity already includes -v; reuse op.fidelity)
@@ -425,17 +441,12 @@ def cmd_query(args) -> int:
     emit_output(output)
 
     # Stats summary (shown after list when --stats flag is set)
-    if args.stats:
-        total_convs = len(conversations)
-        total_prompts = sum(c.prompt_count for c in conversations)
-        total_responses = sum(c.response_count for c in conversations)
-        total_tokens = sum(c.total_tokens for c in conversations)
+    if args.stats and corpus is not None:
         print()
-        print("--- Stats ---")
-        print(f"Conversations: {total_convs}")
-        print(f"Total prompts: {total_prompts}")
-        print(f"Total responses: {total_responses}")
-        print(f"Total tokens: {fmt_tokens(total_tokens)}")
+        print(
+            f"View: {view_convs:,} / {corpus.total_conversations:,} corpus"
+            f" | view tokens: {fmt_tokens(view_tokens)} / {fmt_tokens(corpus_tokens)} corpus"
+        )
 
     return 0
 
