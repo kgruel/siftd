@@ -677,6 +677,182 @@ class TestWorkspaceIdentityProducer:
         assert len(findings) == 2
         workspace_ids = {f.context["workspace_id"] for f in findings}
         assert workspace_ids == {"ws-orphaned1", "ws-orphaned2"}
+
+
+class TestActiveSessionsProducer:
+    """Tests for the active-sessions producer.
+
+    The producer's applies_to predicate gates on (fn is list_conversations,
+    render_method=='list', workspace filter present). The producer lazily
+    imports peek layer and counts sessions not in the result set.
+    """
+
+    def test_predicate_requires_workspace_filter(self):
+        """Predicate is False when workspace param is missing."""
+        from siftd.api.caveats import _is_list_conversations_with_workspace_filter
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, render_method="list", params={})
+        assert _is_list_conversations_with_workspace_filter(op) is False
+
+    def test_predicate_requires_list_conversations(self):
+        """Predicate is False for ops calling other functions."""
+        from siftd.api.caveats import _is_list_conversations_with_workspace_filter
+
+        op = _make_op(
+            fn=lambda: [],
+            render_method="list",
+            params={"workspace": "proj"},
+        )
+        assert _is_list_conversations_with_workspace_filter(op) is False
+
+    def test_predicate_requires_render_method_list(self):
+        """Predicate is False when render_method is 'detail'."""
+        from siftd.api.caveats import _is_list_conversations_with_workspace_filter
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(
+            fn=list_conversations,
+            render_method="detail",
+            params={"workspace": "proj"},
+        )
+        assert _is_list_conversations_with_workspace_filter(op) is False
+
+    def test_predicate_satisfied(self):
+        """Predicate is True when all conditions met."""
+        from siftd.api.caveats import _is_list_conversations_with_workspace_filter
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(
+            fn=list_conversations,
+            render_method="list",
+            params={"workspace": "proj"},
+        )
+        assert _is_list_conversations_with_workspace_filter(op) is True
+
+    def test_no_workspace_filter_short_circuits(self):
+        """Op with no workspace param → no findings."""
+        from siftd.api.caveats import _active_sessions_caveats
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, render_method="list", params={})
+        assert _active_sessions_caveats(op, [], _make_ctx()) == []
+
+    def test_empty_summaries_short_circuits(self):
+        """Empty result set → no findings."""
+        from siftd.api.caveats import _active_sessions_caveats
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(
+            fn=list_conversations,
+            render_method="list",
+            params={"workspace": "proj"},
+        )
+        assert _active_sessions_caveats(op, [], _make_ctx()) == []
+
+    def test_no_active_sessions_no_finding(self, monkeypatch):
+        """No active sessions in workspace → no findings."""
+        from siftd.api.caveats import _active_sessions_caveats
+        from siftd.api.conversations import list_conversations
+
+        monkeypatch.setattr("siftd.peek.list_active_sessions", lambda workspace: [])
+
+        op = _make_op(
+            fn=list_conversations,
+            render_method="list",
+            params={"workspace": "proj"},
+        )
+        summaries = [
+            FakeSummary(
+                id="01A", workspace_path=None, model="m", started_at=None,
+                prompt_count=0, response_count=0, total_tokens=0, cost=None,
+            ),
+        ]
+        assert _active_sessions_caveats(op, summaries, _make_ctx()) == []
+
+    def test_active_sessions_produces_finding(self, monkeypatch):
+        """Active sessions produce finding with count."""
+        from siftd.api.caveats import _active_sessions_caveats
+        from siftd.api.conversations import list_conversations
+        from siftd.peek.types import SessionInfo
+        from pathlib import Path
+
+        def mock_list_active(workspace):
+            return [
+                SessionInfo(
+                    session_id="session-001",
+                    file_path=Path("/fake/session1.jsonl"),
+                    workspace_path="/proj",
+                    workspace_name="proj",
+                    model="claude-sonnet-4-20250514",
+                ),
+                SessionInfo(
+                    session_id="session-002",
+                    file_path=Path("/fake/session2.jsonl"),
+                    workspace_path="/proj",
+                    workspace_name="proj",
+                    model="claude-opus-4-7",
+                ),
+            ]
+
+        monkeypatch.setattr("siftd.peek.list_active_sessions", mock_list_active)
+
+        op = _make_op(
+            fn=list_conversations,
+            render_method="list",
+            params={"workspace": "proj"},
+        )
+        summaries = [
+            FakeSummary(
+                id="01A", workspace_path=None, model="m", started_at=None,
+                prompt_count=0, response_count=0, total_tokens=0, cost=None,
+            ),
+        ]
+        findings = _active_sessions_caveats(op, summaries, _make_ctx())
+        assert len(findings) == 1
+        assert findings[0].check == "active-sessions"
+        assert findings[0].severity == "info"
+        assert findings[0].message == "2 active sessions in this workspace not yet ingested"
+        assert findings[0].fix_available is True
+        assert findings[0].fix_command == "siftd ingest"
+        assert findings[0].context == {"count": 2, "workspace": "proj"}
+
+    def test_active_sessions_singular_message(self, monkeypatch):
+        """Message pluralizes correctly for 1 session."""
+        from siftd.api.caveats import _active_sessions_caveats
+        from siftd.api.conversations import list_conversations
+        from siftd.peek.types import SessionInfo
+        from pathlib import Path
+
+        def mock_list_active(workspace):
+            return [
+                SessionInfo(
+                    session_id="session-001",
+                    file_path=Path("/fake/session1.jsonl"),
+                    workspace_path="/proj",
+                    workspace_name="proj",
+                    model="claude-sonnet-4-20250514",
+                ),
+            ]
+
+        monkeypatch.setattr("siftd.peek.list_active_sessions", mock_list_active)
+
+        op = _make_op(
+            fn=list_conversations,
+            render_method="list",
+            params={"workspace": "proj"},
+        )
+        summaries = [
+            FakeSummary(
+                id="01A", workspace_path=None, model="m", started_at=None,
+                prompt_count=0, response_count=0, total_tokens=0, cost=None,
+            ),
+        ]
+        findings = _active_sessions_caveats(op, summaries, _make_ctx())
+        assert len(findings) == 1
+        assert findings[0].message == "1 active session in this workspace not yet ingested"
+
+
 class TestFreshCorpusProducer:
     """Tests for the fresh-corpus producer.
 

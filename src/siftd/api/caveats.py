@@ -190,6 +190,57 @@ def _pricing_caveats(op, summaries, ctx: ProducerContext) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# Active sessions producer (B7)
+# ---------------------------------------------------------------------------
+
+def _is_list_conversations_with_workspace_filter(op) -> bool:
+    """Predicate: list_conversations rendered as list with workspace filter.
+
+    Producer fires only when filtering by workspace — prevents noise from
+    running against unscoped results.
+    """
+    from siftd.api.conversations import list_conversations
+    return (
+        op.fn is list_conversations
+        and op.render_method == "list"
+        and op.params.get("workspace") is not None
+    )
+
+
+@caveat_producer(kind="active-sessions", applies_to=_is_list_conversations_with_workspace_filter)
+def _active_sessions_caveats(op, summaries, ctx: ProducerContext) -> list[Finding]:
+    """Aggregated finding: active sessions not yet ingested in this workspace.
+
+    Active sessions are by definition not yet ingested (still being written).
+    Reports count of live sessions for awareness.
+    """
+    if not summaries:
+        return []
+
+    workspace = op.params.get("workspace")
+    if not workspace:
+        return []
+
+    from siftd.peek import list_active_sessions
+
+    active = list_active_sessions(workspace=workspace)
+    if not active:
+        return []
+
+    n = len(active)
+    return [
+        Finding(
+            check="active-sessions",
+            severity="info",
+            message=f"{n} active session{'s' if n != 1 else ''} in this workspace not yet ingested",
+            fix_available=True,
+            fix_command="siftd ingest",
+            context={"count": n, "workspace": workspace},
+        )
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Workspace identity producer (slice 1)
 # ---------------------------------------------------------------------------
 
