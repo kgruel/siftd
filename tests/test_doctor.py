@@ -234,6 +234,29 @@ class TestRunChecks:
         findings = run_checks(checks=["drop-ins-valid"], db_path=test_db, on_check_done=None)
         assert isinstance(findings, list)
 
+    def test_fast_flag_filters_to_fast_checks(self, test_db):
+        """run_checks with fast=True runs only fast checks, skipping slow and deep."""
+        from siftd.api import list_checks
+
+        findings = run_checks(db_path=test_db, fast=True)
+        assert isinstance(findings, list)
+
+        checks = list_checks()
+        fast_check_names = {c.name for c in checks if c.cost == "fast"}
+        slow_check_names = {c.name for c in checks if c.cost == "slow"}
+        deep_check_names = {c.name for c in checks if c.cost == "deep"}
+
+        # All findings should be from fast checks
+        finding_check_names = {f.check for f in findings}
+        assert finding_check_names.issubset(fast_check_names), \
+            f"Found non-fast checks: {finding_check_names - fast_check_names}"
+
+        # Verify that slow and deep checks are not included
+        assert not finding_check_names.intersection(slow_check_names), \
+            f"Found slow checks when using fast=True: {finding_check_names & slow_check_names}"
+        assert not finding_check_names.intersection(deep_check_names), \
+            f"Found deep checks when using fast=True: {finding_check_names & deep_check_names}"
+
 
 class TestIngestPendingCheck:
     """Tests for the ingest-pending check."""

@@ -474,7 +474,7 @@ examples:
 
 ```
 usage: siftd doctor [-h] [--json] [--strict] [--pending-tags] [--deep]
-                    [--blob-refcount] [--triggers]
+                    [--fast] [--blob-refcount] [--triggers]
                     [subcommand ...]
 
 positional arguments:
@@ -487,6 +487,7 @@ options:
   --pending-tags   Clean up stale sessions and orphaned pending tags (use with
                    'fix')
   --deep           Include deep integrity checks (slower).
+  --fast           Run only fast checks (skips slow and deep).
   --blob-refcount  Re-derive blob ref counts and sweep orphans (use with
                    'fix').
   --triggers       Recreate blob ref-count triggers (use with 'fix').

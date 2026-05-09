@@ -95,7 +95,7 @@ def list_checks() -> list[CheckInfo]
 Run health checks and return findings.
 
 ```python
-def run_checks(*, checks: list[str] | None = ..., db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., deep: bool = ..., on_check_done: object | None = ...) -> list[Finding]
+def run_checks(*, checks: list[str] | None = ..., db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., deep: bool = ..., fast: bool = ..., on_check_done: object | None = ...) -> list[Finding]
 ```
 
 **Parameters:**
@@ -103,6 +103,7 @@ def run_checks(*, checks: list[str] | None = ..., db_path: pathlib._local.Path |
 - `checks`: Specific check names to run, or None for all.
 - `db_path`: Main database path. Uses default if not specified.
 - `embed_db_path`: Embeddings database path. Uses default if not specified.
+- `deep`: Include checks with cost="deep". Default False.
 
 **Returns:** List of Finding objects from all checks.
 

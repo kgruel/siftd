@@ -844,24 +844,25 @@ def _doctor_run(args, check_names: list[str] | None = None, show_fixes: bool = F
     """Run doctor checks and display findings."""
     db = Path(args.db) if args.db else None
     deep = getattr(args, "deep", False)
+    fast = getattr(args, "fast", False)
 
     # JSON output — no progress, no painted rendering
     if args.json:
-        return _doctor_run_json(args, check_names, show_fixes, db, deep)
+        return _doctor_run_json(args, check_names, show_fixes, db, deep, fast)
 
     # TTY — painted progress + themed findings
     if sys.stdout.isatty():
-        return _doctor_run_painted(args, check_names, show_fixes, db, deep)
+        return _doctor_run_painted(args, check_names, show_fixes, db, deep, fast)
 
     # Non-TTY (piped) — plain text, no progress
-    return _doctor_run_plain(args, check_names, show_fixes, db, deep)
+    return _doctor_run_plain(args, check_names, show_fixes, db, deep, fast)
 
 
-def _doctor_run_json(args, check_names, show_fixes, db, deep=False) -> int:
+def _doctor_run_json(args, check_names, show_fixes, db, deep=False, fast=False) -> int:
     from siftd.api import run_checks
 
     try:
-        findings = run_checks(checks=check_names or None, db_path=db, deep=deep)
+        findings = run_checks(checks=check_names or None, db_path=db, deep=deep, fast=fast)
     except FileNotFoundError as e:
         print(str(e))
         return 1
@@ -905,11 +906,11 @@ def _doctor_run_json(args, check_names, show_fixes, db, deep=False) -> int:
     return 1 if fail_count > 0 else 0
 
 
-def _doctor_run_plain(args, check_names, show_fixes, db, deep=False) -> int:
+def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False) -> int:
     from siftd.api import run_checks
 
     try:
-        findings = run_checks(checks=check_names or None, db_path=db, deep=deep)
+        findings = run_checks(checks=check_names or None, db_path=db, deep=deep, fast=fast)
     except FileNotFoundError as e:
         print(str(e))
         return 1
@@ -956,7 +957,7 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False) -> int:
     return 1 if fail_count > 0 else 0
 
 
-def _doctor_run_painted(args, check_names, show_fixes, db, deep=False) -> int:
+def _doctor_run_painted(args, check_names, show_fixes, db, deep=False, fast=False) -> int:
     from painted import InPlaceRenderer, use_theme
 
     from siftd.api import list_checks, run_checks
@@ -966,7 +967,9 @@ def _doctor_run_painted(args, check_names, show_fixes, db, deep=False) -> int:
     all_checks = list_checks()
     if check_names:
         all_checks = [c for c in all_checks if c.name in check_names]
-    if not deep:
+    if fast:
+        all_checks = [c for c in all_checks if c.cost == "fast"]
+    elif not deep:
         all_checks = [c for c in all_checks if getattr(c, "cost", "") != "deep"]
     check_names_ordered = [c.name for c in all_checks]
 
@@ -988,6 +991,7 @@ def _doctor_run_painted(args, check_names, show_fixes, db, deep=False) -> int:
                 checks=check_names or None,
                 db_path=db,
                 deep=deep,
+                fast=fast,
                 on_check_done=on_done,
             )
         except FileNotFoundError as e:
@@ -1202,6 +1206,7 @@ exit codes:
     p_doctor.add_argument("--strict", action="store_true", help="Exit 1 on warnings (not just errors). Useful for CI.")
     p_doctor.add_argument("--pending-tags", action="store_true", help="Clean up stale sessions and orphaned pending tags (use with 'fix')")
     p_doctor.add_argument("--deep", action="store_true", help="Include deep integrity checks (slower).")
+    p_doctor.add_argument("--fast", action="store_true", help="Run only fast checks (skips slow and deep).")
     p_doctor.add_argument("--blob-refcount", action="store_true", dest="blob_refcount", help="Re-derive blob ref counts and sweep orphans (use with 'fix').")
     p_doctor.add_argument("--triggers", action="store_true", help="Recreate blob ref-count triggers (use with 'fix').")
     p_doctor.set_defaults(func=cmd_doctor)
