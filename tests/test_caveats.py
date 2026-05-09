@@ -466,3 +466,199 @@ class TestPricingProducer:
         findings = _pricing_caveats(op, summaries, _make_ctx())
         assert len(findings) == 1
         assert findings[0].target == "01A"
+
+
+class TestFreshCorpusProducer:
+    """Tests for the fresh-corpus producer.
+
+    The producer's applies_to predicate is gated on (fn is list_conversations,
+    render_method=='list'). No depth gate — this caveat is useful at any depth.
+    """
+
+    def test_applies_to_requires_list_conversations(self):
+        """Predicate is False for ops calling other functions."""
+        from siftd.api.caveats import _is_list_conversations_list_render
+
+        op = _make_op(fn=lambda: [], render_method="list")
+        assert _is_list_conversations_list_render(op) is False
+
+    def test_applies_to_requires_render_method_list(self):
+        from siftd.api.caveats import _is_list_conversations_list_render
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, render_method="detail")
+        assert _is_list_conversations_list_render(op) is False
+
+    def test_applies_to_satisfied(self):
+        from siftd.api.caveats import _is_list_conversations_list_render
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, render_method="list")
+        assert _is_list_conversations_list_render(op) is True
+
+    def test_applies_to_satisfied_at_depth_1(self):
+        """Predicate should be true at any depth."""
+        from siftd.api.caveats import _is_list_conversations_list_render
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(
+            fn=list_conversations,
+            render_method="list",
+            fidelity=Fidelity(depth=1),
+        )
+        assert _is_list_conversations_list_render(op) is True
+
+    def test_large_result_short_circuits(self, monkeypatch):
+        """Result with 10+ items → no DB call, no finding."""
+        def boom(*a, **kw):
+            raise AssertionError("open_database should not be called")
+
+        monkeypatch.setattr("siftd.api.database.open_database", boom)
+        from siftd.api.caveats import _fresh_corpus_caveats
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations)
+        result = ["item"] * 10
+        assert _fresh_corpus_caveats(op, result, _make_ctx()) == []
+
+    def test_small_corpus_produces_finding(self, monkeypatch, tmp_path):
+        """Result < 10 items, corpus count < 10 → finding emitted."""
+        from siftd.api.caveats import _fresh_corpus_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeCursor:
+            def execute(self, sql):
+                return self
+
+            def fetchone(self):
+                return [5]
+
+        class FakeConn:
+            def cursor(self):
+                return FakeCursor()
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+
+        op = _make_op(fn=list_conversations)
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        result = ["item"] * 3
+        findings = _fresh_corpus_caveats(op, result, ctx)
+        assert len(findings) == 1
+        assert findings[0].check == "fresh-corpus"
+        assert findings[0].severity == "info"
+        assert "5" in findings[0].message
+        assert findings[0].context == {"total": 5}
+        assert findings[0].fix_available is False
+
+    def test_corpus_at_threshold_no_finding(self, monkeypatch, tmp_path):
+        """Corpus with exactly 10 items → no finding."""
+        from siftd.api.caveats import _fresh_corpus_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeCursor:
+            def execute(self, sql):
+                return self
+
+            def fetchone(self):
+                return [10]
+
+        class FakeConn:
+            def cursor(self):
+                return FakeCursor()
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+
+        op = _make_op(fn=list_conversations)
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        result = ["item"] * 3
+        findings = _fresh_corpus_caveats(op, result, ctx)
+        assert findings == []
+
+    def test_large_corpus_no_finding(self, monkeypatch, tmp_path):
+        """Corpus with 100+ items → no finding even if result is small."""
+        from siftd.api.caveats import _fresh_corpus_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeCursor:
+            def execute(self, sql):
+                return self
+
+            def fetchone(self):
+                return [100]
+
+        class FakeConn:
+            def cursor(self):
+                return FakeCursor()
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+
+        op = _make_op(fn=list_conversations)
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        result = ["item"] * 2
+        findings = _fresh_corpus_caveats(op, result, ctx)
+        assert findings == []
+
+    def test_singular_plural_message(self, monkeypatch, tmp_path):
+        """Message uses 'conversation' singular for count=1."""
+        from siftd.api.caveats import _fresh_corpus_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeCursor:
+            def execute(self, sql):
+                return self
+
+            def fetchone(self):
+                return [1]
+
+        class FakeConn:
+            def cursor(self):
+                return FakeCursor()
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+
+        op = _make_op(fn=list_conversations)
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        result = []
+        findings = _fresh_corpus_caveats(op, result, ctx)
+        assert len(findings) == 1
+        assert "1 conversation" in findings[0].message
+        assert "conversations" not in findings[0].message
+
+    def test_nonexistent_db_returns_empty(self):
+        """Nonexistent database path → no DB call, no finding."""
+        from siftd.api.caveats import _fresh_corpus_caveats
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations)
+        ctx = ProducerContext(db_path=Path("/nonexistent/path/db.sqlite"))
+        result = ["item"] * 3
+        findings = _fresh_corpus_caveats(op, result, ctx)
+        assert findings == []

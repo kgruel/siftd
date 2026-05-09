@@ -187,3 +187,50 @@ def _pricing_caveats(op, summaries, ctx: ProducerContext) -> list[Finding]:
         for s in summaries
         if s.model and s.model in unpriced_models and s.cost is None
     ]
+
+
+# ---------------------------------------------------------------------------
+# Fresh-corpus producer (slice 1)
+# ---------------------------------------------------------------------------
+
+def _is_list_conversations_list_render(op) -> bool:
+    """Predicate: list_conversations rendered as a list.
+
+    Useful at any depth — warns when the result is a thin slice of
+    the corpus.
+    """
+    from siftd.api.conversations import list_conversations
+    return (
+        op.fn is list_conversations
+        and op.render_method == "list"
+    )
+
+
+@caveat_producer(kind="fresh-corpus", applies_to=_is_list_conversations_list_render)
+def _fresh_corpus_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
+    """Caveat: result is a thin slice of the corpus.
+
+    Emitted when result < 10 items and the total corpus is also < 10.
+    If result >= 10, short-circuit to avoid the DB call.
+    """
+    if len(result) >= 10:
+        return []
+
+    if not Path(ctx.db_path).exists():
+        return []
+
+    cursor = ctx.db().cursor()
+    total = cursor.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+
+    if total >= 10:
+        return []
+
+    return [
+        Finding(
+            check="fresh-corpus",
+            severity="info",
+            message=f"Corpus contains {total} conversation{'s' if total != 1 else ''} — results reflect a narrow slice",
+            fix_available=False,
+            context={"total": total},
+        )
+    ]
