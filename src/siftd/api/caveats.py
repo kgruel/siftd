@@ -414,3 +414,42 @@ def _embeddings_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]
         fix_command="siftd search --index",
         context={"count": n},
     )]
+
+
+# ---------------------------------------------------------------------------
+# Pending tags producer (B3)
+# ---------------------------------------------------------------------------
+
+def _is_list_conversations_simple(op) -> bool:
+    """Predicate: list_conversations rendered as a list."""
+    from siftd.api.conversations import list_conversations
+    return (
+        op.fn is list_conversations
+        and op.render_method == "list"
+    )
+
+
+@caveat_producer(kind="pending-tags", applies_to=_is_list_conversations_simple)
+def _pending_tags_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
+    """Caveat: pending tag intents not yet applied.
+
+    Checks pending_tags table and reports count of queued tagging actions
+    awaiting the next ingest.
+    """
+    if not Path(ctx.db_path).exists():
+        return []
+
+    count = ctx.db().execute("SELECT COUNT(*) FROM pending_tags").fetchone()[0]
+    if count == 0:
+        return []
+
+    return [
+        Finding(
+            check="pending-tags",
+            severity="info",
+            message=f"{count} pending tag intent{'s' if count != 1 else ''} — run 'siftd ingest' to apply",
+            fix_available=True,
+            fix_command="siftd ingest",
+            context={"count": count},
+        )
+    ]

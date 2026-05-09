@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--dry-run` for `siftd db restore` and `siftd db receive`** — preview destructive operations before applying. `db restore --dry-run` prints source path, target path, schema version direction-of-change (upgrade / DOWNGRADE / no change), and per-table row counts for both source and target without touching the target file. `db receive --dry-run` drains stdin, runs the preflight integrity check, prints per-table row counts from the incoming payload and the would-be action (create / merge), then exits 0 without writing to the database.
 - **`siftd query --stats` corpus-aware** — Stats line now shows view count against corpus total and view tokens against corpus tokens: `View: 10 / 12,438 corpus | view tokens: 8.2K / 142M corpus`. With filters (`-w`, `--tag`, etc.) the view reflects the filtered set while corpus totals remain unfiltered.
 - **`fresh-corpus` caveat producer** — Emits an info finding when query results show a thin slice of a young corpus (< 10 conversations). Short-circuits on result size >= 10 to avoid unnecessary database queries. Applies to all `list-conversations` list views regardless of depth.
+- **`pending-tags` caveat producer** — Emits an info finding on `siftd query` when there are queued tag intents in the database awaiting the next `siftd ingest`. Includes count with correct pluralization ("1 pending tag intent" vs "N pending tag intents") and offers `siftd ingest` as the fix command.
 
 ### Removed
 

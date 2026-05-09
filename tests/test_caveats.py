@@ -1290,3 +1290,124 @@ class TestEmbeddingsStaleProducer:
 
         op = _make_op(fn=search_chunks, render_method="list")
         assert _is_search_chunks_for_search_render(op) is False
+
+
+class TestPendingTagsProducer:
+    """Tests for the pending-tags producer.
+
+    The producer's applies_to predicate is gated on (fn is list_conversations,
+    render_method=='list'). The producer checks pending_tags table count and
+    emits an info finding with fix_command if count > 0.
+    """
+
+    def test_applies_to_requires_list_conversations(self):
+        """Predicate is False for ops calling other functions."""
+        from siftd.api.caveats import _is_list_conversations_simple
+
+        op = _make_op(fn=lambda: [], render_method="list")
+        assert _is_list_conversations_simple(op) is False
+
+    def test_applies_to_requires_render_method_list(self):
+        from siftd.api.caveats import _is_list_conversations_simple
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, render_method="detail")
+        assert _is_list_conversations_simple(op) is False
+
+    def test_applies_to_satisfied(self):
+        from siftd.api.caveats import _is_list_conversations_simple
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, render_method="list")
+        assert _is_list_conversations_simple(op) is True
+
+    def test_nonexistent_db_returns_empty(self):
+        """Path(ctx.db_path) doesn't exist → no finding."""
+        from siftd.api.caveats import _pending_tags_caveats
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations)
+        ctx = ProducerContext(db_path=Path("/nonexistent/path/db.sqlite"))
+        assert _pending_tags_caveats(op, [], ctx) == []
+
+    def test_no_pending_tags_no_finding(self, monkeypatch):
+        """mock COUNT returns 0 → no finding."""
+        from siftd.api.caveats import _pending_tags_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeConn:
+            def execute(self, sql):
+                return self
+
+            def fetchone(self):
+                return [0]
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+
+        op = _make_op(fn=list_conversations)
+        ctx = ProducerContext(db_path=Path("/exists.db"))
+        assert _pending_tags_caveats(op, [], ctx) == []
+
+    def test_pending_tags_produces_finding(self, monkeypatch, tmp_path):
+        """mock COUNT returns 3 → info finding, count=3, fix_command="siftd ingest"."""
+        from siftd.api.caveats import _pending_tags_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeConn:
+            def execute(self, sql):
+                return self
+
+            def fetchone(self):
+                return [3]
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+
+        op = _make_op(fn=list_conversations)
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        findings = _pending_tags_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert findings[0].check == "pending-tags"
+        assert findings[0].severity == "info"
+        assert findings[0].message == "3 pending tag intents — run 'siftd ingest' to apply"
+        assert findings[0].fix_available is True
+        assert findings[0].fix_command == "siftd ingest"
+        assert findings[0].context == {"count": 3}
+
+    def test_singular_message(self, monkeypatch, tmp_path):
+        """count=1 → message uses singular "intent" not "intents"."""
+        from siftd.api.caveats import _pending_tags_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeConn:
+            def execute(self, sql):
+                return self
+
+            def fetchone(self):
+                return [1]
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+
+        op = _make_op(fn=list_conversations)
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        findings = _pending_tags_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert findings[0].message == "1 pending tag intent — run 'siftd ingest' to apply"
