@@ -395,6 +395,101 @@ def list_tags(
     return rows
 
 
+def list_tags_by_workspace(
+    conn: sqlite3.Connection,
+    *,
+    target_kinds: tuple[str, ...] | None = None,
+    prefix: str | None = None,
+    workspace_filter: str | None = None,
+    owner: str | None = None,
+    all_tags: tuple[str, ...] | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Tag counts grouped by workspace, resolved through events.
+
+    target_kinds filters to specific event kinds (tool_call, prompt, response,
+    exchange). Conversation-level tags are excluded — they are not event-backed.
+    all_tags restricts the count to events whose target_id carries every
+    listed tag (AND filter). Workspaces are ranked by total count descending
+    and capped at `limit` (default 20; pass 0 or negative for no cap).
+    """
+    if owner and not has_conversation_owners_table(conn):
+        return []
+
+    where: list[str] = []
+    params: list[object] = []
+
+    if prefix:
+        where.append("t.name LIKE ?")
+        params.append(f"{prefix}%")
+    if target_kinds:
+        placeholders = ", ".join("?" * len(target_kinds))
+        where.append(f"ta.target_kind IN ({placeholders})")
+        params.extend(target_kinds)
+    if workspace_filter:
+        where.append("w.path LIKE ?")
+        params.append(f"%{workspace_filter}%")
+    if owner:
+        where.append(owner_predicate("e.conversation_id"))
+        params.append(owner)
+    if all_tags:
+        placeholders = ", ".join("?" * len(all_tags))
+        where.append(
+            "ta.target_id IN (SELECT ta2.target_id FROM tag_assignments ta2 "
+            f"JOIN tags t2 ON t2.id = ta2.tag_id WHERE t2.name IN ({placeholders}) "
+            "GROUP BY ta2.target_id HAVING COUNT(DISTINCT t2.name) = ?)"
+        )
+        params.extend(all_tags)
+        params.append(len(all_tags))
+
+    where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+
+    rows = conn.execute(
+        f"""
+        SELECT
+            COALESCE(w.path, '(no workspace)') as workspace,
+            t.name as tag,
+            ta.target_kind as target_kind,
+            COUNT(ta.id) as count
+        FROM tag_assignments ta
+        JOIN tags t ON t.id = ta.tag_id
+        JOIN events e ON e.id = ta.target_id
+        JOIN conversations c ON c.id = e.conversation_id
+        LEFT JOIN workspaces w ON w.id = c.workspace_id
+        {where_clause}
+        GROUP BY w.id, t.id, ta.target_kind
+        ORDER BY workspace, count DESC
+        """,
+        params,
+    ).fetchall()
+
+    seen: list[str] = []
+    by_workspace: dict[str, list[dict]] = {}
+    for row in rows:
+        ws = row["workspace"]
+        if ws not in by_workspace:
+            seen.append(ws)
+            by_workspace[ws] = []
+        by_workspace[ws].append({
+            "name": row["tag"],
+            "count": row["count"],
+            "target_kind": row["target_kind"],
+        })
+
+    result = []
+    for ws in seen:
+        tags = by_workspace[ws]
+        result.append({
+            "workspace": ws,
+            "total": sum(t["count"] for t in tags),
+            "tags": tags,
+        })
+    result.sort(key=lambda r: r["total"], reverse=True)
+    if limit > 0:
+        result = result[:limit]
+    return result
+
+
 def tag_shell_command(
     conn: sqlite3.Connection,
     tool_call_id: str,

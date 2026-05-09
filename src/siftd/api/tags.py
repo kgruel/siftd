@@ -498,3 +498,33 @@ def delete_tag(
         Count of entity associations removed, or -1 if tag not found.
     """
     return _delete_tag(conn, name, commit=commit)
+
+
+def list_tags_by_workspace(
+    conn: sqlite3.Connection,
+    *,
+    target_kinds: tuple[str, ...] | None = None,
+    prefix: str | None = None,
+    workspace_filter: str | None = None,
+    owner: str | None = None,
+    all_tags: tuple[str, ...] | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Tag counts grouped by workspace, resolved through events.
+
+    target_kinds filters to specific event kinds (tool_call, prompt, response,
+    exchange). Conversation-level tags are excluded — they are not event-backed.
+    all_tags restricts the count to events whose target_id carries every
+    listed tag. Workspaces ranked by total descending; cap defaults to 20.
+    """
+    from siftd.storage.tags import list_tags_by_workspace as _list_tags_by_workspace
+
+    return _list_tags_by_workspace(
+        conn,
+        target_kinds=target_kinds,
+        prefix=prefix,
+        workspace_filter=workspace_filter,
+        owner=owner,
+        all_tags=all_tags,
+        limit=limit,
+    )

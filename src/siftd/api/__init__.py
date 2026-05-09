@@ -143,12 +143,6 @@ from siftd.api.tags import (
     rename_tag,
     rename_tag_safe,
 )
-from siftd.api.tools import (
-    TagUsage,
-    WorkspaceTagUsage,
-    get_tool_tag_summary,
-    get_tool_tags_by_workspace,
-)
 
 # Search symbols are lazy-imported to avoid pulling numpy into non-search commands.
 # Access via siftd.api.SearchResult etc. triggers __getattr__ below.
@@ -322,11 +316,6 @@ __all__ = [
     "SyncError",
     "SyncRemote",
     "sync_push",
-    # tools
-    "TagUsage",
-    "WorkspaceTagUsage",
-    "get_tool_tag_summary",
-    "get_tool_tags_by_workspace",
     # export
     "ExportArtifact",
     "ExportedConversation",

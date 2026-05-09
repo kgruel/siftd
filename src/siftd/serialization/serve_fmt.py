@@ -43,32 +43,6 @@ def render_tags(tags: list, fidelity: Fidelity) -> dict:
     }
 
 
-def render_tools(tags: list, fidelity: Fidelity) -> dict:
-    """Serialize tool tag summary to JSON-safe dict."""
-    total = sum(t.count for t in tags)
-    return {
-        "total": total,
-        "tags": [
-            {"name": t.name, "count": t.count, "percentage": round((t.count / total) * 100, 1) if total else 0}
-            for t in tags
-        ],
-    }
-
-
-def render_tools_by_workspace(results: list, fidelity: Fidelity) -> dict:
-    """Serialize per-workspace tool tag usage to JSON-safe dict."""
-    return {
-        "workspaces": [
-            {
-                "workspace": ws.workspace,
-                "total": ws.total,
-                "tags": [{"name": t.name, "count": t.count} for t in ws.tags],
-            }
-            for ws in results
-        ]
-    }
-
-
 def render_search(results: list, fidelity: Fidelity, debug_ids: bool = True) -> dict:
     """Serialize SearchResult list to JSON-safe dict.
 

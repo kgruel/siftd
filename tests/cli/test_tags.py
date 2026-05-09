@@ -3,6 +3,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import siftd.cli.tags as tags_cli
 from siftd.cli import main
 from siftd.cli.tags import _parse_tag_args
@@ -601,3 +603,162 @@ class TestTagsEdgeBranches:
         monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
         args3 = SimpleNamespace(positional=["list"], since="2024-01-01", before=None, prefix=None)
         assert tags_cli._cmd_tag_list(args3, Path(test_db)) == 0
+
+
+class TestCmdTagListByWorkspace:
+    """Tests for siftd tag list --by-workspace."""
+
+    def test_basic_output(self, test_db_with_tool_tags, capsys):
+        rc = main(["--db", str(test_db_with_tool_tags), "tag", "list", "--by-workspace"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "/test/project" in out
+        assert "/other/project" in out
+        assert "shell:test" in out
+        assert "shell:vcs" in out
+
+    def test_missing_db(self, tmp_path, capsys):
+        rc = main(["--db", str(tmp_path / "missing.db"), "tag", "list", "--by-workspace"])
+        assert rc == 1
+        assert "not found" in capsys.readouterr().out
+
+    def test_json_output(self, test_db_with_tool_tags, capsys):
+        import json
+        rc = main(["--db", str(test_db_with_tool_tags), "tag", "list", "--by-workspace", "--json"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        data = json.loads(out)
+        assert "workspaces" in data
+        assert len(data["workspaces"]) == 2
+        workspaces_by_path = {w["workspace"]: w for w in data["workspaces"]}
+        assert "/test/project" in workspaces_by_path
+        assert "/other/project" in workspaces_by_path
+        test_ws = workspaces_by_path["/test/project"]
+        assert test_ws["total"] == 2
+        tag_names = {t["name"] for t in test_ws["tags"]}
+        assert "shell:test" in tag_names
+        assert "shell:vcs" in tag_names
+
+    def test_compose_with_on_kind(self, test_db_with_tool_tags, capsys):
+        rc = main(["--db", str(test_db_with_tool_tags), "tag", "list", "--by-workspace", "--on", "tool_call"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "shell:test" in out
+        assert "tool_calls" in out
+
+    def test_compose_with_prefix(self, test_db_with_tool_tags, capsys):
+        rc = main(["--db", str(test_db_with_tool_tags), "tag", "list", "--by-workspace", "--prefix", "shell:"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "shell:test" in out
+        assert "shell:vcs" in out
+
+    def test_compose_with_workspace_filter(self, test_db_with_tool_tags, capsys):
+        rc = main(["--db", str(test_db_with_tool_tags), "tag", "list", "--by-workspace", "-w", "/test/"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "/test/project" in out
+        assert "/other/project" not in out
+
+    def test_compose_prefix_no_match(self, test_db_with_tool_tags, capsys):
+        rc = main(["--db", str(test_db_with_tool_tags), "tag", "list", "--by-workspace", "--prefix", "zzz:"])
+        assert rc == 0
+        assert "No tag data found" in capsys.readouterr().out
+
+    def test_compose_on_and_prefix(self, test_db_with_tool_tags, capsys):
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace", "--on", "tool_call", "--prefix", "shell:",
+        ])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "/test/project" in out
+
+    def test_json_schema_structure(self, test_db_with_tool_tags, capsys):
+        import json
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace", "--json", "--on", "tool_call", "--prefix", "shell:",
+        ])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        ws = data["workspaces"][0]
+        assert "workspace" in ws
+        assert "total" in ws
+        assert "tags" in ws
+        tag = ws["tags"][0]
+        assert "name" in tag
+        assert "count" in tag
+        assert "target_kind" in tag
+
+    def test_workspaces_ranked_by_total_desc(self, test_db_with_tool_tags, capsys):
+        """Top workspace by total comes first (fixture: /test/project=2, /other/project=1)."""
+        import json
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace", "--json",
+        ])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["workspaces"][0]["workspace"] == "/test/project"
+        assert data["workspaces"][0]["total"] == 2
+        assert data["workspaces"][1]["workspace"] == "/other/project"
+
+    def test_compose_with_limit_cap(self, test_db_with_tool_tags, capsys):
+        """--limit caps the number of workspaces returned."""
+        import json
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace", "--json", "--limit", "1",
+        ])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert len(data["workspaces"]) == 1
+        assert data["workspaces"][0]["workspace"] == "/test/project"
+
+    def test_compose_with_all_tags(self, test_db_with_tool_tags, capsys):
+        """--all-tags restricts to entities carrying every listed tag."""
+        import json
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace", "--json", "--all-tags", "shell:test",
+        ])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        # Two tool_calls carry shell:test (tc1 in /test/project, tc3 in /other/project).
+        ws_paths = {w["workspace"] for w in data["workspaces"]}
+        assert ws_paths == {"/test/project", "/other/project"}
+        # Each workspace should report exactly one shell:test count.
+        for w in data["workspaces"]:
+            assert w["total"] == 1
+            assert any(t["name"] == "shell:test" for t in w["tags"])
+
+    def test_compose_with_all_tags_no_match(self, test_db_with_tool_tags, capsys):
+        """--all-tags with two tags no entity carries returns empty."""
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace",
+            "--all-tags", "shell:test", "--all-tags", "shell:vcs",
+        ])
+        assert rc == 0
+        # No tool_call carries both tags in fixture.
+        assert "No tag data found" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "extra_args",
+        [
+            ["--since", "2024-01-01"],
+            ["--before", "2025-01-01"],
+            ["--no-tag", "shell:test"],
+            ["-l", "shell:test"],
+            ["-m", "claude"],
+        ],
+    )
+    def test_rejects_non_composing_flags(self, test_db_with_tool_tags, capsys, extra_args):
+        """Non-composing filters error with exit 2."""
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace", *extra_args,
+        ])
+        assert rc == 2
+        assert "does not support" in capsys.readouterr().err

@@ -1,4 +1,4 @@
-"""CLI handlers for query commands (query, tools)."""
+"""CLI handlers for query commands (query)."""
 
 import argparse
 import sqlite3
@@ -9,144 +9,6 @@ from siftd.cli._common import apply_config_defaults, fidelity_from_args, resolve
 from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, print_table
 from siftd.output.painted_bridge import emit_output
 from siftd.paths import queries_dir
-
-
-def cmd_tools(args) -> int:
-    """Show tool usage summary by category."""
-    import json
-
-    from painted import Fidelity
-
-    from siftd.api import get_tool_tag_summary, get_tool_tags_by_workspace
-    from siftd.api.dispatch import Operation, execute
-    from siftd.config import get_tools_defaults
-    from siftd.serve.delegation import try_serve
-
-    apply_config_defaults(args, get_tools_defaults, {"limit": 20})
-
-    db = resolve_db(args)
-    prefix = args.prefix or "shell:"
-
-    # Build Operation based on mode
-    if args.by_workspace:
-        op = Operation(
-            path="/api/v1/tools/workspaces",
-            method="GET",
-            fn=get_tool_tags_by_workspace,
-            params={"db_path": db, "prefix": prefix, "n": args.limit},
-            render_method="raw",
-            fidelity=Fidelity(),
-            db=db,
-        )
-    else:
-        op = Operation(
-            path="/api/v1/tools",
-            method="GET",
-            fn=get_tool_tag_summary,
-            params={"db_path": db, "prefix": prefix},
-            render_method="raw",
-            fidelity=Fidelity(),
-            db=db,
-        )
-
-    # Try serve delegation
-    result = try_serve(op)
-
-    if result is not None and isinstance(result, dict):
-        if args.json:
-            print(json.dumps(result, indent=2))
-        elif args.by_workspace and "workspaces" in result:
-            for ws in result["workspaces"]:
-                ws_display = fmt_workspace(ws["workspace"])
-                print(f"\n{ws_display} ({ws['total']} total)")
-                for tag in ws["tags"]:
-                    category = tag["name"][len(prefix):] if tag["name"].startswith(prefix) else tag["name"]
-                    print(f"  {category}: {tag['count']}")
-        elif "tags" in result:
-            total = result.get("total", 0)
-            print(f"Tool call tags ({prefix}*): {total} total\n")
-            for tag in result["tags"]:
-                category = tag["name"][len(prefix):] if tag["name"].startswith(prefix) else tag["name"]
-                print(f"  {category}: {tag['count']} ({tag.get('percentage', 0)}%)")
-        return 0
-
-    # Local execution
-    try:
-        data = execute(op)
-    except FileNotFoundError as e:
-        if args.json:
-            print("[]")
-            return 0
-        print(str(e))
-        if not args.by_workspace:
-            print("Run 'siftd ingest' to create it.")
-        return 1
-
-    # By-workspace rendering
-    if args.by_workspace:
-        if not data:
-            if args.json:
-                print("[]")
-                return 0
-            print(f"No tool calls with '{prefix}*' tags found.")
-            return 0
-
-        if args.json:
-            out = [
-                {
-                    "workspace": ws_usage.workspace,
-                    "total": ws_usage.total,
-                    "tags": [
-                        {"name": tag.name, "count": tag.count}
-                        for tag in ws_usage.tags
-                    ],
-                }
-                for ws_usage in data
-            ]
-            print(json.dumps(out, indent=2))
-            return 0
-
-        for ws_usage in data:
-            ws_display = fmt_workspace(ws_usage.workspace)
-            print(f"\n{ws_display} ({ws_usage.total} total)")
-            for tag in ws_usage.tags:
-                category = tag.name[len(prefix):] if tag.name.startswith(prefix) else tag.name
-                print(f"  {category}: {tag.count}")
-
-        return 0
-
-    # Summary rendering
-    if not data:
-        if args.json:
-            print("[]")
-            return 0
-        print(f"No tool calls with '{prefix}*' tags found.")
-        print("Run 'siftd backfill --shell-tags' to categorize shell commands.")
-        return 0
-
-    if args.json:
-        total = sum(t.count for t in data)
-        out = [
-            {
-                "name": tag.name,
-                "count": tag.count,
-                "percentage": round((tag.count / total) * 100, 1) if total > 0 else 0,
-            }
-            for tag in data
-        ]
-        print(json.dumps(out, indent=2))
-        return 0
-
-    total = sum(t.count for t in data)
-    print(f"Tool call tags ({prefix}*): {total} total\n")
-
-    for tag in data:
-        category = tag.name[len(prefix):] if tag.name.startswith(prefix) else tag.name
-        pct = (tag.count / total) * 100 if total > 0 else 0
-        print(f"  {category}: {tag.count} ({pct:.1f}%)")
-
-    return 0
-
 
 
 def _dispatch_detail(args) -> int:
@@ -579,23 +441,7 @@ def cmd_query(args) -> int:
 
 
 def build_query_parser(subparsers) -> None:
-    """Add 'query' and 'tools' subparsers."""
-    # tools
-    p_tools = subparsers.add_parser(
-        "tools",
-        help="Summarize tool usage by category",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""examples:
-  siftd tools                    # shell command categories summary
-  siftd tools --by-workspace     # breakdown by workspace
-  siftd tools --prefix shell:    # filter by tag prefix""",
-    )
-    p_tools.add_argument("--by-workspace", action="store_true", help="Show breakdown by workspace")
-    p_tools.add_argument("--prefix", metavar="PREFIX", help="Tag prefix to filter (default: shell:)")
-    p_tools.add_argument("-n", "--limit", type=int, default=None, help="Max workspaces for --by-workspace (default: 20)")
-    p_tools.add_argument("--json", action="store_true", help="Output as JSON")
-    p_tools.set_defaults(func=cmd_tools)
-
+    """Add 'query' subparser."""
     # query
     p_query = subparsers.add_parser(
         "query",

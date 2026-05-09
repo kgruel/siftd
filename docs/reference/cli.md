@@ -6,12 +6,13 @@ _Auto-generated from `--help` output._
 
 ```
 usage: siftd [-h] [--version] [--db PATH]
-             {register,session-id,config,adapters,db,tag,id,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade} ...
+             {register,session-id,config,adapters,db,tag,id,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
+             ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {register,session-id,config,adapters,db,tag,id,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
+  {register,session-id,config,adapters,db,tag,id,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
     register            Register an active session for live tagging
     session-id          Print the session ID for the current workspace
     config              View or modify config settings
@@ -21,7 +22,6 @@ positional arguments:
                         push, pull)
     tag                 Manage tags: apply, remove, list, rename, delete
     id                  Classify a ULID and show its type and context
-    tools               Summarize tool usage by category
     query               List and filter conversations by metadata
     ingest              Ingest logs from all sources
     backfill            Backfill derived data from existing records
@@ -50,9 +50,11 @@ usage: siftd register [-h] --session ID --adapter NAME [--workspace PATH]
 
 options:
   -h, --help            show this help message and exit
-  --session, -s ID      Harness session ID
-  --adapter, -a NAME    Adapter name (e.g., claude_code)
-  --workspace, -w PATH  Workspace path (default: current directory)
+  --session ID, -s ID   Harness session ID
+  --adapter NAME, -a NAME
+                        Adapter name (e.g., claude_code)
+  --workspace PATH, -w PATH
+                        Workspace path (default: current directory)
 
 examples:
   siftd register --session abc123 --adapter claude_code
@@ -66,7 +68,8 @@ usage: siftd session-id [-h] [--workspace PATH]
 
 options:
   -h, --help            show this help message and exit
-  --workspace, -w PATH  Workspace path (default: current directory)
+  --workspace PATH, -w PATH
+                        Workspace path (default: current directory)
 
 examples:
   siftd session-id                    # print session ID for current directory
@@ -116,7 +119,8 @@ options:
 
 ```
 usage: siftd db [-h]
-                {info,schema-version,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull} ...
+                {info,schema-version,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull}
+                ...
 
 positional arguments:
   {info,schema-version,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull}
@@ -177,11 +181,11 @@ Sync remotes:
 
 ```
 usage: siftd tag [-h] [-n [N]] [-r] [--session ID] [--current]
-                 [--exchange INDEX | --last-prompt | --last-response |
-                 --last-exchange | --last-tool-call] [--prefix PREFIX]
-                 [--limit LIMIT] [--force] [-w SUBSTR] [-m NAME]
-                 [--since DATE] [--before DATE] [-l NAME] [--all-tags NAME]
-                 [--no-tag NAME] [--on KIND] [--owner USER]
+                 [--exchange INDEX | --last-prompt | --last-response | --last-exchange | --last-tool-call]
+                 [--prefix PREFIX] [--limit LIMIT] [--force] [--by-workspace]
+                 [--json] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
+                 [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
+                 [--owner USER]
                  [positional ...]
 
 Apply, remove, list, rename, or delete tags.
@@ -192,7 +196,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  -n, --last, --latest [N]
+  -n [N], --last [N], --latest [N]
                         Tag N most recent conversations (default: 1 if flag
                         used without N)
   -r, --remove          Remove tag instead of applying
@@ -208,15 +212,22 @@ options:
   --last-tool-call      Tag the last tool_call of the session (requires
                         --session/--current)
   --prefix PREFIX       Filter tag list by prefix (use with 'tag list')
-  --limit LIMIT         Max conversations in drill-down (default: 10, use with
-                        'tag list <name>')
+  --limit LIMIT         Result cap (drill-down: default 10, --by-workspace:
+                        default 20 workspaces)
   --force               Force delete even if tag has associations (use with
                         'tag delete')
+  --by-workspace        Group tag counts by workspace (use with 'tag list').
+                        Counts only event-backed tags (tool_call, prompt,
+                        response, exchange); conversation-level tags are
+                        excluded. Composes with --on, --prefix, -w, --owner,
+                        --all-tags, --limit only.
+  --json                Output as JSON (use with 'tag list --by-workspace')
 
 filtering:
-  -w, --workspace SUBSTR
+  -w SUBSTR, --workspace SUBSTR
                         Filter by workspace path substring
-  -m, --model NAME      Filter by model name
+  -m NAME, --model NAME
+                        Filter by model name
   --since DATE          Conversations started after this date (YYYY-MM-DD, 7d,
                         1w, yesterday, today)
   --before DATE         Conversations started before this date (YYYY-MM-DD,
@@ -224,7 +235,7 @@ filtering:
   --owner USER          Filter to conversations owned by this user
 
 tag filtering:
-  -l, --tag NAME        Filter by tag (repeatable, OR logic)
+  -l NAME, --tag NAME   Filter by tag (repeatable, OR logic)
   --all-tags NAME       Require all specified tags (AND logic)
   --no-tag NAME         Exclude conversations with this tag (NOT logic)
   --on KIND             Scope tag filters to a specific target kind
@@ -274,24 +285,6 @@ examples:
   siftd id 01HX4G7K9 --json            # structured classification
 ```
 
-## siftd tools
-
-```
-usage: siftd tools [-h] [--by-workspace] [--prefix PREFIX] [-n LIMIT] [--json]
-
-options:
-  -h, --help         show this help message and exit
-  --by-workspace     Show breakdown by workspace
-  --prefix PREFIX    Tag prefix to filter (default: shell:)
-  -n, --limit LIMIT  Max workspaces for --by-workspace (default: 20)
-  --json             Output as JSON
-
-examples:
-  siftd tools                    # shell command categories summary
-  siftd tools --by-workspace     # breakdown by workspace
-  siftd tools --prefix shell:    # filter by tag prefix
-```
-
 ## siftd query
 
 ```
@@ -313,18 +306,19 @@ options:
   -h, --help            show this help message and exit
 
 filtering:
-  -w, --workspace SUBSTR
+  -w SUBSTR, --workspace SUBSTR
                         Filter by workspace path substring
-  -m, --model NAME      Filter by model name
+  -m NAME, --model NAME
+                        Filter by model name
   --since DATE          Conversations started after this date (YYYY-MM-DD, 7d,
                         1w, yesterday, today)
   --before DATE         Conversations started before this date (YYYY-MM-DD,
                         7d, 1w, yesterday, today)
-  -t, --tool NAME       Filter by canonical tool name (e.g. shell.execute)
+  -t NAME, --tool NAME  Filter by canonical tool name (e.g. shell.execute)
   --owner USER          Filter to conversations owned by this user
 
 tag filtering:
-  -l, --tag NAME        Filter by tag (repeatable, OR logic)
+  -l NAME, --tag NAME   Filter by tag (repeatable, OR logic)
   --all-tags NAME       Require all specified tags (AND logic)
   --no-tag NAME         Exclude conversations with this tag (NOT logic)
   --on KIND             Scope tag filters to a specific target kind
@@ -333,7 +327,8 @@ tag filtering:
   --tool-tag NAME       Filter by tool call tag (e.g. shell:test)
 
 output:
-  -n, --limit LIMIT     Number of conversations to show (0=all, default: 10)
+  -n LIMIT, --limit LIMIT
+                        Number of conversations to show (0=all, default: 10)
   -v, --verbose         Full table with all columns
   --oldest              Sort by oldest first (default: newest first)
   --json                Output as JSON array
@@ -389,13 +384,14 @@ examples:
 usage: siftd ingest [-h] [-q | -v] [-p DIR] [-a NAME] [--json] [--rebuild-fts]
 
 options:
-  -h, --help          show this help message and exit
-  -q, --quiet         Only show totals line
-  -v, --verbose       Show per-adapter skip breakdowns
-  -p, --path DIR      Additional directories to scan (can be repeated)
-  -a, --adapter NAME  Only run specific adapter(s) (can be repeated)
-  --json              Output newline-delimited JSON events
-  --rebuild-fts       Rebuild FTS index from existing data (skips ingestion)
+  -h, --help            show this help message and exit
+  -q, --quiet           Only show totals line
+  -v, --verbose         Show per-adapter skip breakdowns
+  -p DIR, --path DIR    Additional directories to scan (can be repeated)
+  -a NAME, --adapter NAME
+                        Only run specific adapter(s) (can be repeated)
+  --json                Output newline-delimited JSON events
+  --rebuild-fts         Rebuild FTS index from existing data (skips ingestion)
 
 examples:
   siftd ingest                      # ingest from all adapters
@@ -536,9 +532,10 @@ options:
   -h, --help            show this help message and exit
 
 filtering:
-  -w, --workspace SUBSTR
+  -w SUBSTR, --workspace SUBSTR
                         Filter by workspace path substring
-  -m, --model NAME      Filter by model name
+  -m NAME, --model NAME
+                        Filter by model name
   --since DATE          Conversations started after this date (YYYY-MM-DD, 7d,
                         1w, yesterday, today)
   --before DATE         Conversations started before this date (YYYY-MM-DD,
@@ -546,7 +543,7 @@ filtering:
   --owner USER          Filter to conversations owned by this user
 
 tag filtering:
-  -l, --tag NAME        Filter by tag (repeatable, OR logic)
+  -l NAME, --tag NAME   Filter by tag (repeatable, OR logic)
   --all-tags NAME       Require all specified tags (AND logic)
   --no-tag NAME         Exclude conversations with this tag (NOT logic)
   --on KIND             Scope tag filters to a specific target kind
@@ -554,7 +551,8 @@ tag filtering:
                         (conversation, prompt, response, tool_call, exchange).
 
 output:
-  -n, --limit LIMIT     Max results (default: 10)
+  -n LIMIT, --limit LIMIT
+                        Max results (default: 10)
   -v, --verbose         Show full chunk text
   --full                Show complete prompt+response exchange
   --context N           Show ±N exchanges around match
@@ -706,11 +704,11 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  -w, --workspace SUBSTR
+  -w SUBSTR, --workspace SUBSTR
                         Filter by workspace name substring
   --branch SUBSTR       Filter by worktree branch substring
   --all                 Include inactive sessions (not just last 2 hours)
-  -n, --limit N         Maximum number of sessions to list (default: 10)
+  -n N, --limit N       Maximum number of sessions to list (default: 10)
   --exchanges N         Detail mode: number of exchanges to show (default: 5)
   -b, --brief           Compact detail/follow view (80 char truncation)
   -F, --full            Show full text (no truncation)
@@ -773,22 +771,23 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  -n, --last, --latest [N]
+  -n [N], --last [N], --latest [N]
                         Export N most recent sessions (default: 1 if no ID
                         given)
 
 filtering:
-  -w, --workspace SUBSTR
+  -w SUBSTR, --workspace SUBSTR
                         Filter by workspace path substring
   --since DATE          Conversations started after this date (YYYY-MM-DD, 7d,
                         1w, yesterday, today)
   --before DATE         Conversations started before this date (YYYY-MM-DD,
                         7d, 1w, yesterday, today)
-  -s, --search QUERY    Full-text search filter
+  -s QUERY, --search QUERY
+                        Full-text search filter
   --owner USER          Filter to conversations owned by this user
 
 tag filtering:
-  -l, --tag NAME        Filter by tag (repeatable, OR logic)
+  -l NAME, --tag NAME   Filter by tag (repeatable, OR logic)
   --no-tag NAME         Exclude conversations with this tag (NOT logic)
   --on KIND             Scope tag filters to a specific target kind
                         (repeatable). Default: match tags on any kind
@@ -802,7 +801,8 @@ rendering:
   -F, --full            Full output: thinking + tools, no truncation
   --json                Structured JSON output
   --no-header           Omit session metadata header
-  -o, --output FILE     Write to file instead of stdout
+  -o FILE, --output FILE
+                        Write to file instead of stdout
 
 examples:
   siftd export --last                   # export most recent session

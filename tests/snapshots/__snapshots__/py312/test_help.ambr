@@ -36,13 +36,13 @@
 # name: TestHelpSnapshots.test_root_help
   '''
   usage: siftd [-h] [--version] [--db PATH]
-               {register,session-id,config,adapters,db,tag,id,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
+               {register,session-id,config,adapters,db,tag,id,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
                ...
   
   Aggregate and query LLM conversation logs
   
   positional arguments:
-    {register,session-id,config,adapters,db,tag,id,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
+    {register,session-id,config,adapters,db,tag,id,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
       register            Register an active session for live tagging
       session-id          Print the session ID for the current workspace
       config              View or modify config settings
@@ -52,7 +52,6 @@
                           push, pull)
       tag                 Manage tags: apply, remove, list, rename, delete
       id                  Classify a ULID and show its type and context
-      tools               Summarize tool usage by category
       query               List and filter conversations by metadata
       ingest              Ingest logs from all sources
       backfill            Backfill derived data from existing records
@@ -223,7 +222,7 @@
 # name: TestHelpSnapshots.test_subcommand_help[doctor]
   '''
   usage: siftd doctor [-h] [--json] [--strict] [--pending-tags] [--deep]
-                      [--blob-refcount] [--triggers]
+                      [--fast] [--blob-refcount] [--triggers]
                       [subcommand ...]
   
   positional arguments:
@@ -236,6 +235,7 @@
     --pending-tags   Clean up stale sessions and orphaned pending tags (use with
                      'fix')
     --deep           Include deep integrity checks (slower).
+    --fast           Run only fast checks (skips slow and deep).
     --blob-refcount  Re-derive blob ref counts and sweep orphans (use with
                      'fix').
     --triggers       Recreate blob ref-count triggers (use with 'fix').
@@ -402,8 +402,9 @@
   '''
   usage: siftd peek [-h] [-w SUBSTR] [--branch SUBSTR] [--all] [-n N]
                     [--exchanges N] [-b] [-F] [--chars N] [--thinking] [--tools]
-                    [-f] [--tail] [--tail-lines N] [--json] [--main-only]
-                    [--children ID] [--last-response] [--last-prompt]
+                    [-f] [--timeout SECONDS] [--tail] [--tail-lines N] [--json]
+                    [--main-only] [--children ID] [--last-response]
+                    [--last-prompt]
                     [session_id]
   
   positional arguments:
@@ -424,6 +425,8 @@
                           available
     --tools               Show tool inputs/results inline when available
     -f, --follow          Follow a live session in real time (like tail -f)
+    --timeout SECONDS     Exit after SECONDS of wall-clock time (for use with
+                          --follow)
     --tail                Raw JSONL tail (last 20 records)
     --tail-lines N        Number of records for --tail (default: 20)
     --json                Output as structured JSON
@@ -745,9 +748,10 @@
   '''
   usage: siftd tag [-h] [-n [N]] [-r] [--session ID] [--current]
                    [--exchange INDEX | --last-prompt | --last-response | --last-exchange | --last-tool-call]
-                   [--prefix PREFIX] [--limit LIMIT] [--force] [-w SUBSTR]
-                   [-m NAME] [--since DATE] [--before DATE] [-l NAME]
-                   [--all-tags NAME] [--no-tag NAME] [--on KIND] [--owner USER]
+                   [--prefix PREFIX] [--limit LIMIT] [--force] [--by-workspace]
+                   [--json] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
+                   [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
+                   [--owner USER]
                    [positional ...]
   
   Apply, remove, list, rename, or delete tags.
@@ -774,10 +778,16 @@
     --last-tool-call      Tag the last tool_call of the session (requires
                           --session/--current)
     --prefix PREFIX       Filter tag list by prefix (use with 'tag list')
-    --limit LIMIT         Max conversations in drill-down (default: 10, use with
-                          'tag list <name>')
+    --limit LIMIT         Result cap (drill-down: default 10, --by-workspace:
+                          default 20 workspaces)
     --force               Force delete even if tag has associations (use with
                           'tag delete')
+    --by-workspace        Group tag counts by workspace (use with 'tag list').
+                          Counts only event-backed tags (tool_call, prompt,
+                          response, exchange); conversation-level tags are
+                          excluded. Composes with --on, --prefix, -w, --owner,
+                          --all-tags, --limit only.
+    --json                Output as JSON (use with 'tag list --by-workspace')
   
   filtering:
     -w SUBSTR, --workspace SUBSTR
@@ -822,25 +832,6 @@
     siftd tag --current decision:auth              # auto-detect session, queue tag
     siftd tag --session abc123 decision:auth       # queue tag for session
     siftd tag --session abc123 --exchange 5 key    # queue tag for exchange 5
-  
-  '''
-# ---
-# name: TestHelpSnapshots.test_subcommand_help[tools]
-  '''
-  usage: siftd tools [-h] [--by-workspace] [--prefix PREFIX] [-n LIMIT] [--json]
-  
-  options:
-    -h, --help            show this help message and exit
-    --by-workspace        Show breakdown by workspace
-    --prefix PREFIX       Tag prefix to filter (default: shell:)
-    -n LIMIT, --limit LIMIT
-                          Max workspaces for --by-workspace (default: 20)
-    --json                Output as JSON
-  
-  examples:
-    siftd tools                    # shell command categories summary
-    siftd tools --by-workspace     # breakdown by workspace
-    siftd tools --prefix shell:    # filter by tag prefix
   
   '''
 # ---

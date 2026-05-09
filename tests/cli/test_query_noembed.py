@@ -2,15 +2,13 @@
 
 from types import SimpleNamespace
 
-from siftd.cli.query import _query_detail, _query_sql, cmd_query, cmd_tools
+from siftd.cli.query import _query_detail, _query_sql, cmd_query
 
 
 def _args(**kwargs):
     base = {
         "db": None,
         "json": False,
-        "by_workspace": False,
-        "prefix": None,
         "limit": 10,
         "conversation_id": None,
         "sql_name": None,
@@ -38,46 +36,6 @@ def _args(**kwargs):
     }
     base.update(kwargs)
     return SimpleNamespace(**base)
-
-
-def test_cmd_tools_serve_and_local_branches(monkeypatch, capsys, tmp_path):
-    # serve summary path
-    monkeypatch.setattr(
-        "siftd.serve.delegation.try_serve",
-        lambda op: {"total": 2, "tags": [{"name": "shell:test", "count": 2, "percentage": 100}]},
-    )
-    assert cmd_tools(_args(json=False, db=str(tmp_path / "db.sqlite"))) == 0
-    assert cmd_tools(_args(json=True, db=str(tmp_path / "db.sqlite"))) == 0
-
-    # serve by-workspace path
-    monkeypatch.setattr(
-        "siftd.serve.delegation.try_serve",
-        lambda op: {"workspaces": [{"workspace": "/w", "total": 1, "tags": [{"name": "shell:git", "count": 1}]}]},
-    )
-    assert cmd_tools(_args(by_workspace=True, db=str(tmp_path / "db.sqlite"))) == 0
-
-    # local FileNotFound (json and non-json)
-    monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: (_ for _ in ()).throw(FileNotFoundError("missing")))
-    assert cmd_tools(_args(json=True, db=str(tmp_path / "db.sqlite"))) == 0
-    assert cmd_tools(_args(json=False, db=str(tmp_path / "db.sqlite"))) == 1
-
-    # by-workspace local empty and json output
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
-    assert cmd_tools(_args(by_workspace=True, json=False, db=str(tmp_path / "db.sqlite"))) == 0
-    assert cmd_tools(_args(by_workspace=True, json=True, db=str(tmp_path / "db.sqlite"))) == 0
-
-    ws = [SimpleNamespace(workspace="/w", total=2, tags=[SimpleNamespace(name="shell:git", count=2)])]
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: ws)
-    assert cmd_tools(_args(by_workspace=True, json=True, db=str(tmp_path / "db.sqlite"))) == 0
-
-    # summary local empty then json render
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
-    assert cmd_tools(_args(json=False, db=str(tmp_path / "db.sqlite"))) == 0
-
-    tags = [SimpleNamespace(name="shell:test", count=3)]
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: tags)
-    assert cmd_tools(_args(json=True, db=str(tmp_path / "db.sqlite"))) == 0
 
 
 def test_query_detail_branches(monkeypatch, capsys, tmp_path):

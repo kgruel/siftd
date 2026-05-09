@@ -9,10 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`siftd tag list --by-workspace`** — group tag counts by workspace. Counts only event-backed tags (`tool_call`, `prompt`, `response`, `exchange`); conversation-level tags are excluded by design. Composes with `--on`, `--prefix`, `-w/--workspace`, `--owner`, `--all-tags`, and `--limit` (default cap: 20 workspaces, ranked by total count descending). Other filters (`--since`, `--before`, `--no-tag`, `-l/--tag`, `-m/--model`, `--tool`, `--tool-tag`) error with exit 2 when combined with `--by-workspace`. Replaces the per-workspace view previously available only via `siftd tools --by-workspace`.
+
 - **`--timeout SECONDS` for `siftd peek --follow`** — Exit the follow loop after a wall-clock duration, even if the session remains active. Useful for integration tests and polling loops. Example: `siftd peek --follow --timeout 5` monitors a live session for 5 seconds then exits cleanly.
 - **`--latest` alias for `--last`** — Both `siftd tag` and `siftd export` now accept `--latest` as an alias for the existing `--last` flag, providing an alternative ergonomic name for the same functionality.
 - **`siftd id <ULID>` classification command** — Resolves a ULID to either a conversation or event, emits a one-line summary with context (workspace, started date for conversations; conversation ID for events) and a view hint. Supports `--json` for structured classification. Exit codes: 0 (hit), 1 (miss), 2 (ambiguous).
 - **`--dry-run` for `siftd db restore` and `siftd db receive`** — preview destructive operations before applying. `db restore --dry-run` prints source path, target path, schema version direction-of-change (upgrade / DOWNGRADE / no change), and per-table row counts for both source and target without touching the target file. `db receive --dry-run` drains stdin, runs the preflight integrity check, prints per-table row counts from the incoming payload and the would-be action (create / merge), then exits 0 without writing to the database.
+
+### Removed
+
+- **`siftd tools` command and `siftd.api.tools` module.** Tool-call tag analytics are now expressible via the events substrate: use `siftd tag list --on tool_call --prefix shell:` for category counts, or add `--by-workspace` for the per-workspace breakdown. Capability lost: percentage display in the old output format. HTTP routes `/api/v1/tools` and `/api/v1/tools/workspaces` return 404. If you had `[tools]` in your `~/.config/siftd/config.toml`, those keys are now silently ignored.
+- **`?tools=true` query parameter on the serve UI `/query?id=…` view.** Removed alongside the `siftd tools` command. Tool-call content rendering at depth=2 no longer reads this URL knob; pass `?full=true` to see tool inputs/outputs (also enables thinking and depth=3).
 
 ### Changed
 

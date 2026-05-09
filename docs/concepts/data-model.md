@@ -133,9 +133,9 @@ siftd search "how to handle tokens"       # semantic search (requires embeddings
 
 **Aggregate and analyze:**
 ```bash
-siftd db stats                        # totals across everything
-siftd tools --by-workspace            # tool usage patterns per project
-siftd query sql cost                  # custom SQL queries
+siftd db stats                                                   # totals across everything
+siftd tag list --on tool_call --prefix shell: --by-workspace     # tool usage patterns per project
+siftd query sql cost                                             # custom SQL queries
 ```
 
 **Tag for retrieval:**

@@ -64,7 +64,6 @@ SUBCOMMANDS = [
     "session-id",
     "tag",
     "id",
-    "tools",
     "query",
     "backfill",
     "path",
