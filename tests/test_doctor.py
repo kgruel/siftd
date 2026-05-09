@@ -1567,3 +1567,67 @@ class TestFixFunctions:
         check_conn.close()
         assert "tr_event_tool_call_delete_release_blob" in triggers
         assert "tr_event_tool_call_update_release_blob" in triggers
+
+
+class TestFindingSubstrate:
+    """Tests for Finding dataclass extensions: hint severity, field, channel."""
+
+    def test_hint_severity_valid(self):
+        f = Finding(check="x", severity="hint", message="m", fix_available=False)
+        assert f.severity == "hint"
+
+    def test_channel_default_is_both(self):
+        f = Finding(check="x", severity="info", message="m", fix_available=False)
+        assert f.channel == "both"
+
+    def test_field_default_is_none(self):
+        f = Finding(check="x", severity="info", message="m", fix_available=False)
+        assert f.field is None
+
+    def test_channel_text_excludes_from_json(self, monkeypatch, capsys):
+        """channel="text" findings are dropped from --json doctor output."""
+        import json
+        from types import SimpleNamespace
+
+        from siftd.cli.data import _doctor_run_json
+
+        monkeypatch.setattr(
+            "siftd.api.run_checks",
+            lambda **_k: [
+                Finding(check="a", severity="info", message="visible", fix_available=False, channel="both"),
+                Finding(check="b", severity="info", message="tty-only", fix_available=False, channel="text"),
+            ],
+        )
+        monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda _: None)
+
+        args = SimpleNamespace(db=None, strict=False, no_hints=False)
+        rc = _doctor_run_json(args, None, False, None)
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        messages = [f["message"] for f in data["findings"]]
+        assert "visible" in messages
+        assert "tty-only" not in messages
+
+    def test_no_hints_flag_filters_hints(self, monkeypatch, capsys):
+        """--no-hints drops severity="hint" findings before rendering."""
+        import json
+        from types import SimpleNamespace
+
+        from siftd.cli.data import _doctor_run_json
+
+        monkeypatch.setattr(
+            "siftd.api.run_checks",
+            lambda **_k: [
+                Finding(check="a", severity="info", message="keep", fix_available=False),
+                Finding(check="b", severity="hint", message="drop", fix_available=False),
+            ],
+        )
+        monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda _: None)
+
+        args = SimpleNamespace(db=None, strict=False, no_hints=True)
+        rc = _doctor_run_json(args, None, False, None)
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        messages = [f["message"] for f in data["findings"]]
+        assert "keep" in messages
+        assert "drop" not in messages

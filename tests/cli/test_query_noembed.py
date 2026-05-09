@@ -25,6 +25,7 @@ def _args(**kwargs):
         "oldest": False,
         "verbose": False,
         "stats": False,
+        "no_hints": False,
         "exchanges": None,
         "brief": False,
         "summary": False,
@@ -272,3 +273,47 @@ def test_stats_corpus_aware_empty_view_shows_stats(monkeypatch, capsys, tmp_path
     assert "No conversations found." in out
     assert "View: 0 / 12,438 corpus" in out
     assert "view tokens: 0 /" in out
+
+
+def test_no_hints_suppresses_hint_caveats(monkeypatch, capsys, tmp_path):
+    """--no-hints drops severity="hint" caveats before render."""
+    from siftd.doctor.checks import Finding
+
+    hint_finding = Finding(check="c", severity="hint", message="hint-msg", fix_available=False)
+    info_finding = Finding(check="d", severity="info", message="info-msg", fix_available=False)
+
+    class _F:
+        depth = 0
+
+        def with_depth(self, d):
+            return self
+
+    monkeypatch.setattr("siftd.cli.query.fidelity_from_args", lambda args: _F())
+    monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
+
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "siftd.api.dispatch.execute_for_render",
+        lambda op: (
+            [SimpleNamespace(prompt_count=1, response_count=1, total_tokens=3)],
+            [hint_finding, info_finding],
+        ),
+    )
+
+    captured_caveats = []
+
+    def _mock_render_list(convs, fidelity, **ctx):
+        captured_caveats.extend(ctx.get("caveats", []))
+        return ""
+
+    monkeypatch.setattr(
+        "siftd.output.format_registry.select_format",
+        lambda **k: SimpleNamespace(render_list=_mock_render_list),
+    )
+    monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
+
+    rc = cmd_query(_args(no_hints=True, db=str(tmp_path / "db.sqlite")))
+    assert rc == 0
+    assert all(f.severity != "hint" for f in captured_caveats)
+    assert any(f.severity == "info" for f in captured_caveats)

@@ -290,8 +290,8 @@ examples:
 usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                    [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
                    [-t NAME] [--tool-tag NAME] [--owner USER] [-n LIMIT] [-v]
-                   [--oldest] [--json] [--stats] [--exchanges N] [-b]
-                   [--summary] [-F] [--chars N] [--thinking]
+                   [--oldest] [--json] [--stats] [--no-hints] [--exchanges N]
+                   [-b] [--summary] [-F] [--chars N] [--thinking]
                    [--tools [FILTER]] [--tool-chars N] [--neighbors]
                    [--var KEY=VALUE]
                    [conversation_id] [sql_name]
@@ -330,6 +330,7 @@ output:
   --oldest              Sort by oldest first (default: newest first)
   --json                Output as JSON array
   --stats               Show summary totals after list
+  --no-hints            Suppress hint-severity caveat findings.
 
 detail view:
   --exchanges N         Number of turns to show (default: all)
@@ -466,7 +467,7 @@ examples:
 
 ```
 usage: siftd doctor [-h] [--json] [--strict] [--pending-tags] [--deep]
-                    [--fast] [--blob-refcount] [--triggers]
+                    [--fast] [--blob-refcount] [--triggers] [--no-hints]
                     [subcommand ...]
 
 positional arguments:
@@ -483,6 +484,7 @@ options:
   --blob-refcount  Re-derive blob ref counts and sweep orphans (use with
                    'fix').
   --triggers       Recreate blob ref-count triggers (use with 'fix').
+  --no-hints       Suppress hint-severity findings.
 
 examples:
   siftd doctor                          # run all checks

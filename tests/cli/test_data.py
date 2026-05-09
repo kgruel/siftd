@@ -870,7 +870,7 @@ class TestDataDirectBranches:
         monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda findings: None)
         assert data_cli._doctor_run_plain(SimpleNamespace(strict=False), None, False, Path(test_db)) == 0
 
-        f = SimpleNamespace(severity="warning", check="c", message="m", fix_available=True, fix_command="siftd ingest", context={})
+        f = SimpleNamespace(severity="warning", check="c", message="m", fix_available=True, fix_command="siftd ingest", context={}, channel="both")
         monkeypatch.setattr("siftd.api.run_checks", lambda **k: [f])
         assert data_cli._doctor_run_plain(SimpleNamespace(strict=False), None, True, Path(test_db)) == 0
 

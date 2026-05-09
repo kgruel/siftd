@@ -884,6 +884,10 @@ def _doctor_run_json(args, check_names, show_fixes, db, deep=False, fast=False) 
         print(f"Error: {e}")
         return 1
 
+    findings = [f for f in findings if f.channel != "text"]
+    if getattr(args, "no_hints", False):
+        findings = [f for f in findings if f.severity != "hint"]
+
     severity_order = {"error": 0, "warning": 1, "info": 2}
     findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
 
@@ -931,6 +935,10 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False)
     except ValueError as e:
         print(f"Error: {e}")
         return 1
+
+    findings = [f for f in findings if f.channel != "json"]
+    if getattr(args, "no_hints", False):
+        findings = [f for f in findings if f.severity != "hint"]
 
     if not findings:
         print("No issues found.")
@@ -1020,6 +1028,10 @@ def _doctor_run_painted(args, check_names, show_fixes, db, deep=False, fast=Fals
         # Finalize progress in place — it already shows the full layout
         final_block = render_progress_block(check_names_ordered, completed, len(completed))
         renderer.finalize(final_block)
+
+    findings = [f for f in findings if f.channel != "json"]
+    if getattr(args, "no_hints", False):
+        findings = [f for f in findings if f.severity != "hint"]
 
     # Cache fixable findings for `doctor fix`
     from siftd.doctor.fixes import save_findings_cache
@@ -1224,4 +1236,5 @@ exit codes:
     p_doctor.add_argument("--fast", action="store_true", help="Run only fast checks (skips slow and deep).")
     p_doctor.add_argument("--blob-refcount", action="store_true", dest="blob_refcount", help="Re-derive blob ref counts and sweep orphans (use with 'fix').")
     p_doctor.add_argument("--triggers", action="store_true", help="Recreate blob ref-count triggers (use with 'fix').")
+    p_doctor.add_argument("--no-hints", action="store_true", dest="no_hints", help="Suppress hint-severity findings.")
     p_doctor.set_defaults(func=cmd_doctor)

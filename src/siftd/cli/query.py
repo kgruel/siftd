@@ -433,6 +433,9 @@ def cmd_query(args) -> int:
             )
         return 0
 
+    if getattr(args, "no_hints", False):
+        caveats = [f for f in caveats if f.severity != "hint"]
+
     # Render list via formatter (fidelity already includes -v; reuse op.fidelity)
     from siftd.output.format_registry import select_format
 
@@ -501,6 +504,7 @@ examples:
     output_group.add_argument("--oldest", action="store_true", help="Sort by oldest first (default: newest first)")
     output_group.add_argument("--json", action="store_true", help="Output as JSON array")
     output_group.add_argument("--stats", action="store_true", help="Show summary totals after list")
+    output_group.add_argument("--no-hints", action="store_true", dest="no_hints", help="Suppress hint-severity caveat findings.")
 
     # Detail view options (when conversation_id is provided)
     detail_group = p_query.add_argument_group("detail view")
