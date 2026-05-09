@@ -1421,6 +1421,33 @@ class TestIngestStatusProducer:
     render_method=='list') — fires at any depth or filter state.
     """
 
+    def test_missing_ingested_files_table(self, tmp_path):
+        """Producer handles missing ingested_files table without raising.
+
+        When the table doesn't exist, fetch_last_ingest_time returns None,
+        causing the producer to emit ingest-never-run finding.
+        """
+        import sqlite3
+        from siftd.api.caveats import _ingest_status_caveats
+        from siftd.api.conversations import list_conversations
+
+        # Create a real SQLite db without the ingested_files table
+        db_file = tmp_path / "partial.db"
+        conn = sqlite3.connect(db_file)
+        # Create conversations table but not ingested_files
+        conn.execute(
+            "CREATE TABLE conversations (id TEXT PRIMARY KEY, workspace_id TEXT)"
+        )
+        conn.commit()
+        conn.close()
+
+        op = _make_op(fn=list_conversations)
+        ctx = ProducerContext(db_path=db_file)
+        findings = _ingest_status_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert findings[0].check == "ingest-never-run"
+        assert findings[0].severity == "info"
+
     def test_applies_to_requires_list_conversations(self):
         """Predicate is False for ops calling other functions."""
         from siftd.api.caveats import _is_list_conversations_list

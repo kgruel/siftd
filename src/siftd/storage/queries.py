@@ -754,6 +754,11 @@ def fetch_last_ingest_time(conn: sqlite3.Connection, *, owner: str | None = None
     """Fetch the most recent ingest timestamp, optionally scoped to an owner."""
     if owner and not has_conversation_owners_table(conn):
         return None
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ingested_files'"
+    ).fetchone()
+    if row is None:
+        return None
     sql = "SELECT MAX(ingested_at) AS last_ingest FROM ingested_files f"
     params: tuple[object, ...] = ()
     if owner:

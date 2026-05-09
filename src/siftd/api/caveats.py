@@ -13,6 +13,7 @@ names so renderer code reads naturally.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -21,6 +22,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from siftd.doctor.checks import Finding
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from siftd.api.dispatch import Operation
@@ -112,6 +115,7 @@ def run_producers(op: Operation, result: Any, ctx: ProducerContext) -> list[Find
             try:
                 raw.extend(spec.fn(op, result, ctx))
             except Exception:
+                _log.debug("caveat producer %r failed", spec.kind, exc_info=True)
                 pass  # producers are advisory; don't break the primary result
 
     errors = [f for f in raw if f.severity == "error"]
