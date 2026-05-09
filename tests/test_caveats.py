@@ -1047,3 +1047,246 @@ class TestFreshCorpusProducer:
         result = ["item"] * 3
         findings = _fresh_corpus_caveats(op, result, ctx)
         assert findings == []
+
+
+class TestEmbeddingsStaleProducer:
+    """Tests for the embeddings-stale producer.
+
+    The producer's applies_to predicate is gated on (fn is search_chunks,
+    render_method=='search'). The producer checks embeddings availability,
+    opens the embeddings db separately, and compares indexed conversation IDs.
+    """
+
+    def test_applies_to_requires_search_chunks(self):
+        """Predicate is False for ops calling other functions."""
+        from siftd.api.caveats import _is_search_chunks_for_search_render
+
+        op = _make_op(fn=lambda: [], render_method="search")
+        assert _is_search_chunks_for_search_render(op) is False
+
+    def test_applies_to_requires_search_render_method(self):
+        from siftd.api.caveats import _is_search_chunks_for_search_render
+        from siftd.api.search import search_chunks
+
+        op = _make_op(fn=search_chunks, render_method="list")
+        assert _is_search_chunks_for_search_render(op) is False
+
+    def test_applies_to_satisfied(self):
+        from siftd.api.caveats import _is_search_chunks_for_search_render
+        from siftd.api.search import search_chunks
+
+        op = _make_op(fn=search_chunks, render_method="search")
+        assert _is_search_chunks_for_search_render(op) is True
+
+    def test_embeddings_unavailable_short_circuits(self, monkeypatch):
+        """If embeddings_available() is False, no DB work occurs."""
+        from siftd.api.caveats import _embeddings_stale_caveats
+        from siftd.api.search import search_chunks
+
+        monkeypatch.setattr(
+            "siftd.embeddings.availability.embeddings_available", lambda: False
+        )
+
+        op = _make_op(fn=search_chunks, render_method="search")
+        assert _embeddings_stale_caveats(op, [], _make_ctx()) == []
+
+    def test_embed_db_missing_returns_empty(self, monkeypatch, tmp_path):
+        """If embed db path doesn't exist, return empty list (no error)."""
+        from siftd.api.caveats import _embeddings_stale_caveats
+        from siftd.api.search import search_chunks
+
+        monkeypatch.setattr(
+            "siftd.embeddings.availability.embeddings_available", lambda: True
+        )
+        monkeypatch.setattr(
+            "siftd.paths.embeddings_db_path",
+            lambda: "/nonexistent/embed.db",
+        )
+
+        db_file = tmp_path / "main.db"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        op = _make_op(fn=search_chunks, render_method="search")
+        assert _embeddings_stale_caveats(op, [], ctx) == []
+
+    def test_main_db_missing_returns_empty(self, monkeypatch, tmp_path):
+        """If main db path doesn't exist, return empty list (no error)."""
+        from siftd.api.caveats import _embeddings_stale_caveats
+        from siftd.api.search import search_chunks
+
+        monkeypatch.setattr(
+            "siftd.embeddings.availability.embeddings_available", lambda: True
+        )
+        embed_file = tmp_path / "embed.db"
+        embed_file.touch()
+        monkeypatch.setattr(
+            "siftd.paths.embeddings_db_path",
+            lambda: str(embed_file),
+        )
+
+        ctx = ProducerContext(db_path="/nonexistent/main.db")
+        op = _make_op(fn=search_chunks, render_method="search")
+        assert _embeddings_stale_caveats(op, [], ctx) == []
+
+    @pytest.mark.embeddings
+    def test_all_indexed_no_finding(self, monkeypatch, tmp_path):
+        """All conversations indexed → no finding."""
+        from siftd.api.caveats import _embeddings_stale_caveats
+        from siftd.api.search import search_chunks
+
+        # Create dummy DB files
+        db_file = tmp_path / "main.db"
+        db_file.touch()
+        embed_file = tmp_path / "embed.db"
+        embed_file.touch()
+
+        monkeypatch.setattr(
+            "siftd.embeddings.availability.embeddings_available", lambda: True
+        )
+        monkeypatch.setattr(
+            "siftd.paths.embeddings_db_path", lambda: str(embed_file)
+        )
+
+        # Mock indexed_ids to return the same set as main IDs
+        indexed_ids_set = {"conv-001", "conv-002"}
+        monkeypatch.setattr(
+            "siftd.storage.embeddings.get_indexed_conversation_ids",
+            lambda conn: indexed_ids_set,
+        )
+
+        class FakeConn:
+            def execute(self, sql, params=None):
+                return self
+
+            def fetchall(self):
+                return [("conv-001",), ("conv-002",)]
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn()
+        )
+        monkeypatch.setattr(
+            "siftd.api.caveats.ProducerContext.db",
+            lambda self: FakeConn(),
+        )
+
+        ctx = ProducerContext(db_path=db_file)
+        op = _make_op(fn=search_chunks, render_method="search")
+        findings = _embeddings_stale_caveats(op, [], ctx)
+        assert findings == []
+
+    @pytest.mark.embeddings
+    def test_missing_conversations_produces_warning(self, monkeypatch, tmp_path):
+        """Missing conversations produce warning with count and fix command."""
+        from siftd.api.caveats import _embeddings_stale_caveats
+        from siftd.api.search import search_chunks
+
+        # Create dummy DB files
+        db_file = tmp_path / "main.db"
+        db_file.touch()
+        embed_file = tmp_path / "embed.db"
+        embed_file.touch()
+
+        monkeypatch.setattr(
+            "siftd.embeddings.availability.embeddings_available", lambda: True
+        )
+        monkeypatch.setattr(
+            "siftd.paths.embeddings_db_path", lambda: str(embed_file)
+        )
+
+        # Mock indexed_ids to return only 1 conversation
+        indexed_ids_set = {"conv-001"}
+        monkeypatch.setattr(
+            "siftd.storage.embeddings.get_indexed_conversation_ids",
+            lambda conn: indexed_ids_set,
+        )
+
+        class FakeConn:
+            def execute(self, sql, params=None):
+                return self
+
+            def fetchall(self):
+                # Return 3 conversations in main db
+                return [("conv-001",), ("conv-002",), ("conv-003",)]
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn()
+        )
+        monkeypatch.setattr(
+            "siftd.api.caveats.ProducerContext.db",
+            lambda self: FakeConn(),
+        )
+
+        ctx = ProducerContext(db_path=db_file)
+        op = _make_op(fn=search_chunks, render_method="search")
+        findings = _embeddings_stale_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert findings[0].check == "embeddings-stale"
+        assert findings[0].severity == "warning"
+        assert findings[0].fix_available is True
+        assert findings[0].fix_command == "siftd search --index"
+        assert findings[0].context == {"count": 2}
+        assert "2 conversations not indexed" in findings[0].message
+
+    @pytest.mark.embeddings
+    def test_singular_conversation_message(self, monkeypatch, tmp_path):
+        """Message uses singular 'conversation' when count=1."""
+        from siftd.api.caveats import _embeddings_stale_caveats
+        from siftd.api.search import search_chunks
+
+        db_file = tmp_path / "main.db"
+        db_file.touch()
+        embed_file = tmp_path / "embed.db"
+        embed_file.touch()
+
+        monkeypatch.setattr(
+            "siftd.embeddings.availability.embeddings_available", lambda: True
+        )
+        monkeypatch.setattr(
+            "siftd.paths.embeddings_db_path", lambda: str(embed_file)
+        )
+
+        # Mock indexed_ids to return empty set
+        monkeypatch.setattr(
+            "siftd.storage.embeddings.get_indexed_conversation_ids",
+            lambda conn: set(),
+        )
+
+        class FakeConn:
+            def execute(self, sql, params=None):
+                return self
+
+            def fetchall(self):
+                # Return 1 conversation in main db
+                return [("conv-001",)]
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn()
+        )
+        monkeypatch.setattr(
+            "siftd.api.caveats.ProducerContext.db",
+            lambda self: FakeConn(),
+        )
+
+        ctx = ProducerContext(db_path=db_file)
+        op = _make_op(fn=search_chunks, render_method="search")
+        findings = _embeddings_stale_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert "1 conversation not indexed" in findings[0].message
+        assert "conversations" not in findings[0].message.split("not indexed")[0]
+
+    def test_predicate_false_for_list_render_method(self):
+        """Predicate is False when render_method is 'list'."""
+        from siftd.api.caveats import _is_search_chunks_for_search_render
+        from siftd.api.search import search_chunks
+
+        op = _make_op(fn=search_chunks, render_method="list")
+        assert _is_search_chunks_for_search_render(op) is False

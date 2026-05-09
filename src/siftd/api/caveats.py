@@ -353,3 +353,64 @@ def _fresh_corpus_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
             context={"total": total},
         )
     ]
+
+
+# ---------------------------------------------------------------------------
+# Embeddings staleness producer (B2)
+# ---------------------------------------------------------------------------
+
+def _is_search_chunks_for_search_render(op) -> bool:
+    """Predicate: search_chunks rendered as search.
+
+    Embeddings staleness matters most when the user is searching.
+    """
+    from siftd.api.search import search_chunks
+    return (
+        op.fn is search_chunks
+        and op.render_method == "search"
+    )
+
+
+@caveat_producer(kind="embeddings-stale", applies_to=_is_search_chunks_for_search_render)
+def _embeddings_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
+    """Caveat: conversations in main db not indexed in embeddings db.
+
+    When embeddings are not available or the embeddings db is missing,
+    search results may be incomplete. Alerts users to index conversations.
+    """
+    from siftd.embeddings.availability import embeddings_available
+    if not embeddings_available():
+        return []
+
+    from siftd.paths import embeddings_db_path
+    embed_path = op.params.get("embed_db_path") or embeddings_db_path()
+    if not Path(ctx.db_path).exists() or not Path(embed_path).exists():
+        return []
+
+    from siftd.api.database import open_database
+    embed_conn = open_database(Path(embed_path), read_only=True)
+    try:
+        from siftd.storage.embeddings import get_indexed_conversation_ids
+        indexed_ids = get_indexed_conversation_ids(embed_conn)
+    finally:
+        embed_conn.close()
+
+    # Compare against conversations in main db
+    conn = ctx.db()
+    main_ids = {row[0] for row in conn.execute(
+        "SELECT DISTINCT conversation_id FROM events WHERE kind = 'prompt'"
+    ).fetchall()}
+
+    missing = main_ids - indexed_ids
+    if not missing:
+        return []
+
+    n = len(missing)
+    return [Finding(
+        check="embeddings-stale",
+        severity="warning",
+        message=f"{n} conversation{'s' if n != 1 else ''} not indexed — search results may be incomplete",
+        fix_available=True,
+        fix_command="siftd search --index",
+        context={"count": n},
+    )]
