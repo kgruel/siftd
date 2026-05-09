@@ -1958,6 +1958,63 @@ class TestSearchModeDegradedProducer:
         assert f.fix_available is False
 
 
+class TestSearchTaggingTipProducer:
+    """Tests for the search-tagging-tip producer (H1).
+
+    Fires after a search returns results; suppressed on empty results, on JSON
+    output (channel="text"), and via --no-hints.
+    """
+
+    def test_empty_result_no_finding(self):
+        """Empty result → no finding."""
+        from siftd.api.caveats import _search_tagging_tip_caveats
+        from siftd.api.search import search_chunks
+
+        op = _make_op(fn=search_chunks, render_method="search")
+        findings = _search_tagging_tip_caveats(op, [], _make_ctx())
+        assert findings == []
+
+    def test_result_with_conv_id_emits_hint(self):
+        """Non-empty result → one hint finding containing conversation_id."""
+        from siftd.api.caveats import _search_tagging_tip_caveats
+        from siftd.api.search import search_chunks
+        from siftd.domain.search_types import SearchChunk
+
+        chunk = SearchChunk(conversation_id="01JABCDEF", score=0.9, text="x", chunk_type="prompt")
+        op = _make_op(fn=search_chunks, render_method="search")
+        findings = _search_tagging_tip_caveats(op, [chunk], _make_ctx())
+        assert len(findings) == 1
+        assert "01JABCDEF" in findings[0].message or "01JABCD" in findings[0].message
+
+    def test_hint_fields(self):
+        """Finding has channel='text', severity='hint', fix_available=False."""
+        from siftd.api.caveats import _search_tagging_tip_caveats
+        from siftd.api.search import search_chunks
+        from siftd.domain.search_types import SearchChunk
+
+        chunk = SearchChunk(conversation_id="01JABCDEF", score=0.9, text="x", chunk_type="prompt")
+        op = _make_op(fn=search_chunks, render_method="search")
+        findings = _search_tagging_tip_caveats(op, [chunk], _make_ctx())
+
+        f = findings[0]
+        assert f.check == "search-tagging-tip"
+        assert f.severity == "hint"
+        assert f.channel == "text"
+        assert f.fix_available is False
+        assert "siftd tag" in f.message
+
+    def test_empty_conversation_id_no_finding(self):
+        """Chunk with empty conversation_id → no finding."""
+        from siftd.api.caveats import _search_tagging_tip_caveats
+        from siftd.api.search import search_chunks
+        from siftd.domain.search_types import SearchChunk
+
+        chunk = SearchChunk(conversation_id="", score=0.9, text="x", chunk_type="prompt")
+        op = _make_op(fn=search_chunks, render_method="search")
+        findings = _search_tagging_tip_caveats(op, [chunk], _make_ctx())
+        assert findings == []
+
+
 class TestAmbiguousIdProducer:
     """Tests for the ambiguous-id producer (B9).
 

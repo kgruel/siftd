@@ -587,6 +587,30 @@ def _search_mode_degraded_caveats(op, result, ctx: ProducerContext) -> list[Find
     )]
 
 
+@caveat_producer(kind="search-tagging-tip", applies_to=_is_search_chunks_for_search_render)
+def _search_tagging_tip_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
+    """Hint: tag useful search results for future retrieval.
+
+    channel="text" so the tip is suppressed in --json output and silenceable
+    via --no-hints.
+    """
+    if not result:
+        return []
+    first = result[0]
+    conv_id = first.conversation_id if hasattr(first, "conversation_id") else first.get("conversation_id", "")
+    if not conv_id:
+        return []
+    from siftd.output._id_format import short_id
+    sid = short_id(conv_id)
+    return [Finding(
+        check="search-tagging-tip",
+        severity="hint",
+        channel="text",
+        message=f"Tag useful results for future retrieval: siftd tag {sid} research:<topic>",
+        fix_available=False,
+    )]
+
+
 # ---------------------------------------------------------------------------
 # Ambiguous ID producer (B9)
 # ---------------------------------------------------------------------------

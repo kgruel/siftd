@@ -107,11 +107,11 @@ def test_search_semantic_requires_embeddings(test_db, monkeypatch, capsys):
 
 
 def test_search_falls_back_to_fts_mode(test_db, monkeypatch, capsys):
+    # FTS5 mode fallback is now surfaced via the search-mode-degraded caveat producer
+    # (channel="text", only fires on non-empty results). Empty-result path: silent fallback.
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: False)
     args = make_args(query=["needle"], db=str(test_db))
     assert cmd_search(args) == 0
-    out = capsys.readouterr()
-    assert "[FTS5 mode" in out.err
 
 
 def test_print_empty_json_results_dict_and_str(monkeypatch, capsys, tmp_path):

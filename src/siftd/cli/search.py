@@ -14,7 +14,6 @@ from typing import Any
 
 from siftd.cli._common import resolve_db
 from siftd.cli._filters import extract_filter_args
-from siftd.output._id_format import short_id
 from siftd.paths import embeddings_db_path
 
 
@@ -195,11 +194,6 @@ def cmd_search(args) -> int:
             return 1
         search_mode = "semantic"
     elif not has_embeddings:
-        # Auto-fallback to FTS with hint
-        if embeddings_available() and not embed_db.exists():
-            print("[FTS5 mode - embeddings index not built: siftd search --index]", file=sys.stderr)
-        else:
-            print("[FTS5 mode - for semantic search: siftd install embed]", file=sys.stderr)
         search_mode = "fts"
     else:
         search_mode = "hybrid"
@@ -421,10 +415,6 @@ def cmd_search(args) -> int:
                 filter_basenames = [b.strip() for b in args.refs.split(",") if b.strip()]
             print_refs_content(all_refs, filter_basenames)
 
-        # Tagging hint (skip for JSON output)
-        if not args.json and render_results:
-            first_id = short_id(render_results[0]["conversation_id"])
-            print(f"Tip: Tag useful results for future retrieval: siftd tag {first_id} research:<topic>", file=sys.stderr)
     finally:
         main_conn.close()
 
@@ -572,11 +562,6 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         from siftd.output.painted_bridge import emit_output
 
         emit_output(output)
-
-    # Tagging hint (skip for JSON output)
-    if not args.json and results:
-        first_id = short_id(results[0]["conversation_id"])
-        print(f"Tip: Tag useful results: siftd tag {first_id} research:<topic>", file=sys.stderr)
 
     return 0
 
