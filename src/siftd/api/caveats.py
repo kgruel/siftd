@@ -190,6 +190,74 @@ def _pricing_caveats(op, summaries, ctx: ProducerContext) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# Workspace identity producer (slice 1)
+# ---------------------------------------------------------------------------
+
+def _is_list_conversations_with_workspace(op) -> bool:
+    """Predicate: list_conversations rendered as a list, depth>=2.
+
+    Workspace column appears at depth>=2. Restricted to render_method == "list"
+    for list-typed iteration.
+    """
+    from siftd.api.conversations import list_conversations
+    return (
+        op.fn is list_conversations
+        and op.render_method == "list"
+        and op.fidelity.depth >= 2
+    )
+
+
+@caveat_producer(kind="workspace-identity", applies_to=_is_list_conversations_with_workspace)
+def _workspace_identity_caveats(op, summaries, ctx: ProducerContext) -> list[Finding]:
+    """Per-workspace caveat: workspace_id is unresolvable (no entry in workspaces table).
+
+    A conversation with workspace_id = NULL or orphaned to a missing workspace
+    cannot be filtered or grouped by workspace. One query identifies unresolvable
+    workspace_ids across the whole result set.
+    """
+    if not summaries:
+        return []
+
+    conv_ids = [s.id for s in summaries]
+
+    conn = ctx.db()
+
+    # Find workspace_ids referenced by these conversations
+    placeholders = ",".join("?" * len(conv_ids))
+    workspace_rows = conn.execute(
+        f"""SELECT DISTINCT c.workspace_id FROM conversations c
+           WHERE c.id IN ({placeholders}) AND c.workspace_id IS NOT NULL""",
+        conv_ids,
+    ).fetchall()
+
+    if not workspace_rows:
+        return []
+
+    workspace_ids = {r["workspace_id"] for r in workspace_rows}
+
+    # Find which workspace_ids don't exist in the workspaces table
+    ws_placeholders = ",".join("?" * len(workspace_ids))
+    existing_rows = conn.execute(
+        f"""SELECT id FROM workspaces WHERE id IN ({ws_placeholders})""",
+        list(workspace_ids),
+    ).fetchall()
+    existing_ids = {r["id"] for r in existing_rows}
+
+    unresolvable_ids = workspace_ids - existing_ids
+
+    return [
+        Finding(
+            check="workspace-identity",
+            severity="info",
+            message=f"Workspace {wid[:8]} has no entry in workspaces table — workspace filter may not resolve correctly",
+            fix_available=False,
+            context={"workspace_id": wid},
+        )
+        for wid in sorted(unresolvable_ids)
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Fresh-corpus producer (slice 1)
 # ---------------------------------------------------------------------------
 

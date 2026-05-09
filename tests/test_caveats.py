@@ -468,6 +468,215 @@ class TestPricingProducer:
         assert findings[0].target == "01A"
 
 
+class MockResult:
+    """Helper for mocking SQLite cursor results."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def fetchall(self):
+        return self.rows
+
+
+class TestWorkspaceIdentityProducer:
+    """Tests for the workspace-identity producer.
+
+    The producer checks if workspace_ids referenced by conversations have
+    entries in the workspaces table. Unresolvable workspaces (orphaned refs)
+    indicate that workspace filtering will not work correctly.
+    """
+
+    def test_applies_to_requires_list_conversations(self):
+        """Predicate is False for ops calling other functions."""
+        from siftd.api.caveats import _is_list_conversations_with_workspace
+
+        op = _make_op(fn=lambda: [], fidelity=Fidelity(depth=2))
+        assert _is_list_conversations_with_workspace(op) is False
+
+    def test_applies_to_requires_depth_2(self):
+        from siftd.api.caveats import _is_list_conversations_with_workspace
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, fidelity=Fidelity(depth=1))
+        assert _is_list_conversations_with_workspace(op) is False
+
+    def test_applies_to_requires_render_method_list(self):
+        from siftd.api.caveats import _is_list_conversations_with_workspace
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(
+            fn=list_conversations,
+            render_method="detail",
+            fidelity=Fidelity(depth=2),
+        )
+        assert _is_list_conversations_with_workspace(op) is False
+
+    def test_applies_to_satisfied(self):
+        from siftd.api.caveats import _is_list_conversations_with_workspace
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(
+            fn=list_conversations,
+            render_method="list",
+            fidelity=Fidelity(depth=2),
+        )
+        assert _is_list_conversations_with_workspace(op) is True
+
+    def test_empty_result_short_circuits(self):
+        """Empty result returns empty list without DB call."""
+        from siftd.api.caveats import _workspace_identity_caveats
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, fidelity=Fidelity(depth=2))
+        assert _workspace_identity_caveats(op, [], _make_ctx()) == []
+
+    def test_all_workspaces_resolved_no_finding(self, monkeypatch):
+        """All workspace_ids have entries in workspaces table — no findings."""
+        from siftd.api.caveats import _workspace_identity_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeConn:
+            def execute(self, sql, params=None):
+                # First query: SELECT workspace_ids from conversations
+                if "SELECT DISTINCT c.workspace_id" in sql:
+                    return MockResult([
+                        {"workspace_id": "ws-001"},
+                        {"workspace_id": "ws-002"},
+                    ])
+                # Second query: SELECT ids from workspaces
+                if "SELECT id FROM workspaces" in sql:
+                    return MockResult([
+                        {"id": "ws-001"},
+                        {"id": "ws-002"},
+                    ])
+                return MockResult([])
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.caveats.ProducerContext.db",
+            lambda self: FakeConn(),
+        )
+
+        op = _make_op(fn=list_conversations, fidelity=Fidelity(depth=2))
+        summaries = [
+            FakeSummary(
+                id="01A", workspace_path="/home/user/proj1", model="m",
+                started_at=None, prompt_count=0, response_count=0,
+                total_tokens=0, cost=0.1,
+            ),
+            FakeSummary(
+                id="02B", workspace_path="/home/user/proj2", model="m",
+                started_at=None, prompt_count=0, response_count=0,
+                total_tokens=0, cost=0.1,
+            ),
+        ]
+        findings = _workspace_identity_caveats(op, summaries, _make_ctx())
+        assert findings == []
+
+    def test_unresolvable_workspace_produces_finding(self, monkeypatch):
+        """Workspace_id with no entry in workspaces table produces a Finding."""
+        from siftd.api.caveats import _workspace_identity_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeConn:
+            def execute(self, sql, params=None):
+                # First query: SELECT workspace_ids from conversations
+                if "SELECT DISTINCT c.workspace_id" in sql:
+                    return MockResult([
+                        {"workspace_id": "ws-001"},
+                        {"workspace_id": "ws-orphaned"},
+                    ])
+                # Second query: SELECT ids from workspaces
+                if "SELECT id FROM workspaces" in sql:
+                    return MockResult([
+                        {"id": "ws-001"},
+                    ])
+                return MockResult([])
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.caveats.ProducerContext.db",
+            lambda self: FakeConn(),
+        )
+
+        op = _make_op(fn=list_conversations, fidelity=Fidelity(depth=2))
+        summaries = [
+            FakeSummary(
+                id="01A", workspace_path="/home/user/proj1", model="m",
+                started_at=None, prompt_count=0, response_count=0,
+                total_tokens=0, cost=0.1,
+            ),
+            FakeSummary(
+                id="02B", workspace_path=None, model="m",
+                started_at=None, prompt_count=0, response_count=0,
+                total_tokens=0, cost=0.1,
+            ),
+        ]
+        findings = _workspace_identity_caveats(op, summaries, _make_ctx())
+        assert len(findings) == 1
+        assert findings[0].check == "workspace-identity"
+        assert findings[0].severity == "info"
+        assert findings[0].context == {"workspace_id": "ws-orphaned"}
+        assert "ws-orph" in findings[0].message
+        assert findings[0].fix_available is False
+
+    def test_predicate_depth_gate(self):
+        """Producer is not called when depth < 2."""
+        from siftd.api.caveats import _is_list_conversations_with_workspace
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(
+            fn=list_conversations,
+            render_method="list",
+            fidelity=Fidelity(depth=1),
+        )
+        assert _is_list_conversations_with_workspace(op) is False
+
+    def test_multiple_unresolvable_workspaces(self, monkeypatch):
+        """Multiple unresolvable workspace_ids produce multiple findings."""
+        from siftd.api.caveats import _workspace_identity_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeConn:
+            def execute(self, sql, params=None):
+                # First query: SELECT workspace_ids from conversations
+                if "SELECT DISTINCT c.workspace_id" in sql:
+                    return MockResult([
+                        {"workspace_id": "ws-001"},
+                        {"workspace_id": "ws-orphaned1"},
+                        {"workspace_id": "ws-orphaned2"},
+                    ])
+                # Second query: SELECT ids from workspaces
+                if "SELECT id FROM workspaces" in sql:
+                    return MockResult([
+                        {"id": "ws-001"},
+                    ])
+                return MockResult([])
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.caveats.ProducerContext.db",
+            lambda self: FakeConn(),
+        )
+
+        op = _make_op(fn=list_conversations, fidelity=Fidelity(depth=2))
+        summaries = [
+            FakeSummary(
+                id="01A", workspace_path="/home/user/proj1", model="m",
+                started_at=None, prompt_count=0, response_count=0,
+                total_tokens=0, cost=0.1,
+            ),
+        ]
+        findings = _workspace_identity_caveats(op, summaries, _make_ctx())
+        assert len(findings) == 2
+        workspace_ids = {f.context["workspace_id"] for f in findings}
+        assert workspace_ids == {"ws-orphaned1", "ws-orphaned2"}
 class TestFreshCorpusProducer:
     """Tests for the fresh-corpus producer.
 
