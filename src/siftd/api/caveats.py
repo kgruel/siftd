@@ -16,6 +16,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -353,9 +354,6 @@ def _fresh_corpus_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
             context={"total": total},
         )
     ]
-
-
-# ---------------------------------------------------------------------------
 # Embeddings staleness producer (B2)
 # ---------------------------------------------------------------------------
 
@@ -415,7 +413,6 @@ def _embeddings_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]
         context={"count": n},
     )]
 
-
 # ---------------------------------------------------------------------------
 # Pending tags producer (B3)
 # ---------------------------------------------------------------------------
@@ -453,3 +450,76 @@ def _pending_tags_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
             context={"count": count},
         )
     ]
+
+
+# ---------------------------------------------------------------------------
+# Ingest-status producer (B4)
+# ---------------------------------------------------------------------------
+
+def _is_list_conversations_list_render_for_ingest(op) -> bool:
+    """Predicate: list_conversations rendered as a list.
+
+    Ingest-status findings are relevant at any depth and filter state.
+    """
+    from siftd.api.conversations import list_conversations
+    return (
+        op.fn is list_conversations
+        and op.render_method == "list"
+    )
+
+
+@caveat_producer(kind="ingest-status", applies_to=_is_list_conversations_list_render_for_ingest)
+def _ingest_status_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
+    """Caveats for ingest state: errors in ingested_files or stale last-ingest time.
+
+    Two findings emitted if applicable:
+    - ingest-errors: files failed ingestion (warning severity)
+    - ingest-never-run: no ingest recorded (info severity)
+    - ingest-stale: last ingest > 7 days ago (info severity)
+    """
+    if not Path(ctx.db_path).exists():
+        return []
+
+    conn = ctx.db()
+    findings = []
+
+    # Part 1: ingestion errors
+    from siftd.storage.sqlite import get_ingest_errors
+    errors = get_ingest_errors(conn)
+    if errors:
+        n = len(errors)
+        findings.append(Finding(
+            check="ingest-errors",
+            severity="warning",
+            message=f"{n} file{'s' if n != 1 else ''} failed ingestion — run 'siftd doctor' for details",
+            fix_available=True,
+            fix_command="siftd doctor",
+            context={"count": n},
+        ))
+
+    # Part 2: stale last-ingest (>7 days or never)
+    from siftd.storage.queries import fetch_last_ingest_time
+    last = fetch_last_ingest_time(conn)
+    if last is None:
+        findings.append(Finding(
+            check="ingest-never-run",
+            severity="info",
+            message="No ingest recorded — run 'siftd ingest' to populate the database",
+            fix_available=True,
+            fix_command="siftd ingest",
+        ))
+    else:
+        from datetime import datetime
+        last_dt = datetime.fromisoformat(last).replace(tzinfo=UTC)
+        age_days = (datetime.now(UTC) - last_dt).days
+        if age_days > 7:
+            findings.append(Finding(
+                check="ingest-stale",
+                severity="info",
+                message=f"Last ingest was {age_days} days ago — run 'siftd ingest' to catch up",
+                fix_available=True,
+                fix_command="siftd ingest",
+                context={"age_days": age_days},
+            ))
+
+    return findings

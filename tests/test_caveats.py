@@ -1048,7 +1048,6 @@ class TestFreshCorpusProducer:
         findings = _fresh_corpus_caveats(op, result, ctx)
         assert findings == []
 
-
 class TestEmbeddingsStaleProducer:
     """Tests for the embeddings-stale producer.
 
@@ -1292,6 +1291,7 @@ class TestEmbeddingsStaleProducer:
         assert _is_search_chunks_for_search_render(op) is False
 
 
+
 class TestPendingTagsProducer:
     """Tests for the pending-tags producer.
 
@@ -1411,3 +1411,270 @@ class TestPendingTagsProducer:
         findings = _pending_tags_caveats(op, [], ctx)
         assert len(findings) == 1
         assert findings[0].message == "1 pending tag intent — run 'siftd ingest' to apply"
+
+class TestIngestStatusProducer:
+    """Tests for the ingest-status producer.
+
+    The producer emits findings about ingestion state: errors in ingested_files
+    (warning), never-ingested (info), or stale last-ingest (info).
+    The applies_to predicate is gated on (fn is list_conversations,
+    render_method=='list') — fires at any depth or filter state.
+    """
+
+    def test_applies_to_requires_list_conversations(self):
+        """Predicate is False for ops calling other functions."""
+        from siftd.api.caveats import _is_list_conversations_list_render_for_ingest
+
+        op = _make_op(fn=lambda: [], render_method="list")
+        assert _is_list_conversations_list_render_for_ingest(op) is False
+
+    def test_applies_to_requires_render_method_list(self):
+        from siftd.api.caveats import _is_list_conversations_list_render_for_ingest
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, render_method="detail")
+        assert _is_list_conversations_list_render_for_ingest(op) is False
+
+    def test_applies_to_satisfied(self):
+        from siftd.api.caveats import _is_list_conversations_list_render_for_ingest
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, render_method="list")
+        assert _is_list_conversations_list_render_for_ingest(op) is True
+
+    def test_nonexistent_db_returns_empty(self):
+        """Path doesn't exist → no findings."""
+        from siftd.api.caveats import _ingest_status_caveats
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations)
+        ctx = ProducerContext(db_path=Path("/nonexistent/path/db.sqlite"))
+        findings = _ingest_status_caveats(op, [], ctx)
+        assert findings == []
+
+    def test_no_errors_no_stale_returns_empty(self, monkeypatch):
+        """No errors, recent ingest → no findings."""
+        from siftd.api.caveats import _ingest_status_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeConn:
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+        monkeypatch.setattr(
+            "siftd.storage.sqlite.get_ingest_errors",
+            lambda conn: [],
+        )
+        monkeypatch.setattr(
+            "siftd.storage.queries.fetch_last_ingest_time",
+            lambda conn: "2026-05-07T10:00:00+00:00",
+        )
+
+        op = _make_op(fn=list_conversations)
+        findings = _ingest_status_caveats(op, [], _make_ctx())
+        assert findings == []
+
+    def test_ingest_errors_produce_warning(self, monkeypatch, tmp_path):
+        """Ingest errors → warning finding with count."""
+        from siftd.api.caveats import _ingest_status_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeConn:
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+        monkeypatch.setattr(
+            "siftd.storage.sqlite.get_ingest_errors",
+            lambda conn: [
+                {"path": "/f1.json", "error": "parse error", "harness_name": "claude-code"},
+                {"path": "/f2.json", "error": "io error", "harness_name": "aider"},
+            ],
+        )
+        monkeypatch.setattr(
+            "siftd.storage.queries.fetch_last_ingest_time",
+            lambda conn: "2026-05-07T10:00:00+00:00",
+        )
+
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        op = _make_op(fn=list_conversations)
+        findings = _ingest_status_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert findings[0].check == "ingest-errors"
+        assert findings[0].severity == "warning"
+        assert findings[0].message == "2 files failed ingestion — run 'siftd doctor' for details"
+        assert findings[0].fix_available is True
+        assert findings[0].fix_command == "siftd doctor"
+        assert findings[0].context == {"count": 2}
+
+    def test_ingest_errors_singular_message(self, monkeypatch, tmp_path):
+        """Ingest errors with count=1 → singular message."""
+        from siftd.api.caveats import _ingest_status_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeConn:
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+        monkeypatch.setattr(
+            "siftd.storage.sqlite.get_ingest_errors",
+            lambda conn: [{"path": "/f1.json", "error": "parse error", "harness_name": "claude-code"}],
+        )
+        monkeypatch.setattr(
+            "siftd.storage.queries.fetch_last_ingest_time",
+            lambda conn: "2026-05-07T10:00:00+00:00",
+        )
+
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        op = _make_op(fn=list_conversations)
+        findings = _ingest_status_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert "1 file failed" in findings[0].message
+
+    def test_never_ingested_produces_info(self, monkeypatch, tmp_path):
+        """No ingest recorded → info finding check='ingest-never-run'."""
+        from siftd.api.caveats import _ingest_status_caveats
+        from siftd.api.conversations import list_conversations
+
+        class FakeConn:
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+        monkeypatch.setattr(
+            "siftd.storage.sqlite.get_ingest_errors",
+            lambda conn: [],
+        )
+        monkeypatch.setattr(
+            "siftd.storage.queries.fetch_last_ingest_time",
+            lambda conn: None,
+        )
+
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        op = _make_op(fn=list_conversations)
+        findings = _ingest_status_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert findings[0].check == "ingest-never-run"
+        assert findings[0].severity == "info"
+        assert "No ingest recorded" in findings[0].message
+        assert findings[0].fix_available is True
+        assert findings[0].fix_command == "siftd ingest"
+
+    def test_stale_ingest_produces_info(self, monkeypatch, tmp_path):
+        """Last ingest > 7 days ago → info finding check='ingest-stale', age_days=10."""
+        from siftd.api.caveats import _ingest_status_caveats
+        from siftd.api.conversations import list_conversations
+        from datetime import datetime, timezone, timedelta
+
+        class FakeConn:
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+        monkeypatch.setattr(
+            "siftd.storage.sqlite.get_ingest_errors",
+            lambda conn: [],
+        )
+        # 10 days ago
+        ten_days_ago = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        monkeypatch.setattr(
+            "siftd.storage.queries.fetch_last_ingest_time",
+            lambda conn: ten_days_ago,
+        )
+
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        op = _make_op(fn=list_conversations)
+        findings = _ingest_status_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert findings[0].check == "ingest-stale"
+        assert findings[0].severity == "info"
+        assert "10 days ago" in findings[0].message
+        assert findings[0].fix_available is True
+        assert findings[0].fix_command == "siftd ingest"
+        assert findings[0].context == {"age_days": 10}
+
+    def test_fresh_ingest_no_stale_finding(self, monkeypatch, tmp_path):
+        """Last ingest 3 days ago → no stale finding."""
+        from siftd.api.caveats import _ingest_status_caveats
+        from siftd.api.conversations import list_conversations
+        from datetime import datetime, timezone, timedelta
+
+        class FakeConn:
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+        monkeypatch.setattr(
+            "siftd.storage.sqlite.get_ingest_errors",
+            lambda conn: [],
+        )
+        # 3 days ago
+        three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        monkeypatch.setattr(
+            "siftd.storage.queries.fetch_last_ingest_time",
+            lambda conn: three_days_ago,
+        )
+
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        op = _make_op(fn=list_conversations)
+        findings = _ingest_status_caveats(op, [], ctx)
+        assert findings == []
+
+    def test_multiple_findings_together(self, monkeypatch, tmp_path):
+        """Errors + stale → both findings emitted."""
+        from siftd.api.caveats import _ingest_status_caveats
+        from siftd.api.conversations import list_conversations
+        from datetime import datetime, timezone, timedelta
+
+        class FakeConn:
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "siftd.api.database.open_database", lambda *a, **kw: FakeConn(),
+        )
+        monkeypatch.setattr(
+            "siftd.storage.sqlite.get_ingest_errors",
+            lambda conn: [{"path": "/f1.json", "error": "error", "harness_name": "claude-code"}],
+        )
+        # 10 days ago
+        ten_days_ago = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        monkeypatch.setattr(
+            "siftd.storage.queries.fetch_last_ingest_time",
+            lambda conn: ten_days_ago,
+        )
+
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        ctx = ProducerContext(db_path=db_file)
+        op = _make_op(fn=list_conversations)
+        findings = _ingest_status_caveats(op, [], ctx)
+        assert len(findings) == 2
+        checks = {f.check for f in findings}
+        assert checks == {"ingest-errors", "ingest-stale"}
+        assert findings[0].severity == "warning"  # Errors first
+        assert findings[1].severity == "info"  # Then staleness
