@@ -73,12 +73,14 @@ A single issue detected by a check.
 | Field | Type | Description |
 |-------|------|-------------|
 | `check` | `str` | Check name that produced this finding (e.g., "ingest-pending"). |
-| `severity` | `str` | One of "info", "warning", or "error". |
+| `severity` | `Literal[info, warning, error, hint]` | One of "info", "warning", "error", or "hint". |
 | `message` | `str` | Human-readable description of the issue. |
 | `fix_available` | `bool` | Whether a fix suggestion exists. |
 | `fix_command` | `str \| None` | CLI command to fix the issue (advisory only, not executed automatically). User must run this command manually. |
 | `context` | `dict \| None` | Optional structured data for programmatic consumers. |
 | `target` | `str \| None` | Optional row-scope identifier — when set, the finding refers to a specific entity (e.g., a conversation id) rather than the whole result set or DB. Used by the caveats producer registry to thread row-level annotations through dispatch into renderers. |
+| `field` | `str \| None` | Reserved for future column-binding (cell-tier caveats). No consumer today. |
+| `channel` | `Literal[text, json, both]` | Controls output-format visibility. "text" findings are excluded from --json output; "json" findings are excluded from text/TTY output; "both" (default) appears everywhere. |
 
 ### Functions
 

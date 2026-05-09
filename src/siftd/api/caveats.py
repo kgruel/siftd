@@ -571,3 +571,52 @@ def _fts_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
         fix_command="siftd db vacuum",
         context={"missing_count": missing, "orphaned_count": orphaned},
     )]
+
+
+# ---------------------------------------------------------------------------
+# Ambiguous ID producer (B9)
+# ---------------------------------------------------------------------------
+
+def _is_detail_render(op) -> bool:
+    """Predicate: conversation detail render."""
+    from siftd.api.conversations import get_conversation
+    return (
+        op.fn is get_conversation
+        and op.render_method == "detail"
+    )
+
+
+@caveat_producer(kind="ambiguous-id", applies_to=_is_detail_render)
+def _ambiguous_id_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
+    """Caveat: conversation ID prefix matched multiple conversations.
+
+    When a user queries with a short prefix that matches multiple IDs,
+    alerts them that the first match was shown and suggests a longer prefix.
+    """
+    if not Path(ctx.db_path).exists():
+        return []
+
+    queried_id = op.params.get("id")
+    if not queried_id:
+        return []
+
+    if len(queried_id) >= 26:
+        return []
+
+    conn = ctx.db()
+    count = conn.execute(
+        "SELECT count(*) FROM conversations WHERE id = ? OR id LIKE ?",
+        (queried_id, f"{queried_id}%"),
+    ).fetchone()[0]
+
+    if count <= 1:
+        return []
+
+    return [
+        Finding(
+            check="ambiguous-id",
+            severity="warning",
+            message=f"ID prefix '{queried_id}' matched {count} conversations — showing first. Use a longer prefix to disambiguate.",
+            fix_available=False,
+        )
+    ]
