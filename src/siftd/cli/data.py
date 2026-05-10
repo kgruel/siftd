@@ -306,7 +306,13 @@ def cmd_ingest(args) -> int:
     is_new = not db.exists()
     json_mode = getattr(args, "json", False)
 
-    quiet = getattr(args, "quiet", False)
+    quiet_explicit = getattr(args, "quiet", None)
+    auto_quiet = (
+        quiet_explicit is None
+        and not args.verbose
+        and not sys.stdout.isatty()
+    )
+    quiet = bool(quiet_explicit) or auto_quiet
 
     if json_mode:
         renderer: _IngestJsonRenderer | _IngestTextRenderer = _IngestJsonRenderer()
@@ -319,6 +325,13 @@ def cmd_ingest(args) -> int:
             else:
                 print(f"Using database: {db}")
 
+    if not json_mode and auto_quiet:
+        print(
+            "Note: ingest output quieted (not a TTY). "
+            "Pass -v to force verbose output, or -q to silence this hint.",
+            file=sys.stderr,
+        )
+
     # Handle --rebuild-fts flag
     if args.rebuild_fts:
         if json_mode:
@@ -326,20 +339,21 @@ def cmd_ingest(args) -> int:
             run_rebuild_fts(db_path=db)
             renderer._emit({"type": "fts_rebuild", "status": "done"})
         else:
-            print("Rebuilding FTS index...")
+            if not quiet:
+                print("Rebuilding FTS index...")
             run_rebuild_fts(db_path=db)
-            print("FTS index rebuilt.")
+            if not quiet:
+                print("FTS index rebuilt.")
         return 0
 
     if args.path:
         if json_mode:
             renderer._emit({"type": "scan_paths", "paths": args.path})
         else:
-            print(f"Scanning: {', '.join(args.path)}")
+            if not quiet:
+                print(f"Scanning: {', '.join(args.path)}")
 
     if not json_mode:
-        if not quiet and not sys.stdout.isatty():
-            print("Tip: use --json for newline-delimited JSON output.", file=sys.stderr)
         if not quiet:
             print("\nIngesting...")
     try:
@@ -364,6 +378,30 @@ def cmd_ingest(args) -> int:
         renderer.handle_summary(stats)
     else:
         renderer.print_summary(stats)
+
+    # Adapter health: zero-discovery and drop-in import failures.
+    zero_discovery = sorted(set(result.adapters) - set(stats.by_harness))
+    if json_mode:
+        for name in zero_discovery:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "zero_discovery",
+                "adapter": name,
+                "message": f"Adapter '{name}' found nothing to ingest — check scan paths or adapter config",
+            })
+        for path, error in result.dropin_failures:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "failed_import",
+                "path": str(path),
+                "message": f"Drop-in adapter at '{path}' failed to load: {error}",
+            })
+    else:
+        if not quiet:
+            for name in zero_discovery:
+                print(f"  note: Adapter '{name}' found nothing to ingest — check scan paths or adapter config")
+        for path, error in result.dropin_failures:
+            print(f"  warning: Drop-in adapter at '{path}' failed to load: {error}")
 
     return 0
 
@@ -840,34 +878,45 @@ _FIX_REGISTRY = {
 }
 
 
+def _filter_findings(findings, *, json_mode: bool, drop_hints: bool = False):
+    exclude = "text" if json_mode else "json"
+    out = [f for f in findings if f.channel != exclude]
+    if drop_hints:
+        out = [f for f in out if f.severity != "hint"]
+    return out
+
+
 def _doctor_run(args, check_names: list[str] | None = None, show_fixes: bool = False) -> int:
     """Run doctor checks and display findings."""
     db = Path(args.db) if args.db else None
     deep = getattr(args, "deep", False)
+    fast = getattr(args, "fast", False)
 
     # JSON output — no progress, no painted rendering
     if args.json:
-        return _doctor_run_json(args, check_names, show_fixes, db, deep)
+        return _doctor_run_json(args, check_names, show_fixes, db, deep, fast)
 
     # TTY — painted progress + themed findings
     if sys.stdout.isatty():
-        return _doctor_run_painted(args, check_names, show_fixes, db, deep)
+        return _doctor_run_painted(args, check_names, show_fixes, db, deep, fast)
 
     # Non-TTY (piped) — plain text, no progress
-    return _doctor_run_plain(args, check_names, show_fixes, db, deep)
+    return _doctor_run_plain(args, check_names, show_fixes, db, deep, fast)
 
 
-def _doctor_run_json(args, check_names, show_fixes, db, deep=False) -> int:
+def _doctor_run_json(args, check_names, show_fixes, db, deep=False, fast=False) -> int:
     from siftd.api import run_checks
 
     try:
-        findings = run_checks(checks=check_names or None, db_path=db, deep=deep)
+        findings = run_checks(checks=check_names or None, db_path=db, deep=deep, fast=fast)
     except FileNotFoundError as e:
         print(str(e))
         return 1
     except ValueError as e:
         print(f"Error: {e}")
         return 1
+
+    findings = _filter_findings(findings, json_mode=True, drop_hints=getattr(args, "no_hints", False))
 
     severity_order = {"error": 0, "warning": 1, "info": 2}
     findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
@@ -883,6 +932,7 @@ def _doctor_run_json(args, check_names, show_fixes, db, deep=False) -> int:
                 "fix_available": f.fix_available,
                 "fix_command": f.fix_command,
                 "context": f.context,
+                "target": f.target,
             }
             for f in findings
         ],
@@ -904,17 +954,19 @@ def _doctor_run_json(args, check_names, show_fixes, db, deep=False) -> int:
     return 1 if fail_count > 0 else 0
 
 
-def _doctor_run_plain(args, check_names, show_fixes, db, deep=False) -> int:
+def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False) -> int:
     from siftd.api import run_checks
 
     try:
-        findings = run_checks(checks=check_names or None, db_path=db, deep=deep)
+        findings = run_checks(checks=check_names or None, db_path=db, deep=deep, fast=fast)
     except FileNotFoundError as e:
         print(str(e))
         return 1
     except ValueError as e:
         print(f"Error: {e}")
         return 1
+
+    findings = _filter_findings(findings, json_mode=False, drop_hints=getattr(args, "no_hints", False))
 
     if not findings:
         print("No issues found.")
@@ -955,7 +1007,7 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False) -> int:
     return 1 if fail_count > 0 else 0
 
 
-def _doctor_run_painted(args, check_names, show_fixes, db, deep=False) -> int:
+def _doctor_run_painted(args, check_names, show_fixes, db, deep=False, fast=False) -> int:
     from painted import InPlaceRenderer, use_theme
 
     from siftd.api import list_checks, run_checks
@@ -965,7 +1017,9 @@ def _doctor_run_painted(args, check_names, show_fixes, db, deep=False) -> int:
     all_checks = list_checks()
     if check_names:
         all_checks = [c for c in all_checks if c.name in check_names]
-    if not deep:
+    if fast:
+        all_checks = [c for c in all_checks if c.cost == "fast"]
+    elif not deep:
         all_checks = [c for c in all_checks if getattr(c, "cost", "") != "deep"]
     check_names_ordered = [c.name for c in all_checks]
 
@@ -987,6 +1041,7 @@ def _doctor_run_painted(args, check_names, show_fixes, db, deep=False) -> int:
                 checks=check_names or None,
                 db_path=db,
                 deep=deep,
+                fast=fast,
                 on_check_done=on_done,
             )
         except FileNotFoundError as e:
@@ -1001,6 +1056,8 @@ def _doctor_run_painted(args, check_names, show_fixes, db, deep=False) -> int:
         # Finalize progress in place — it already shows the full layout
         final_block = render_progress_block(check_names_ordered, completed, len(completed))
         renderer.finalize(final_block)
+
+    findings = _filter_findings(findings, json_mode=False, drop_hints=getattr(args, "no_hints", False))
 
     # Cache fixable findings for `doctor fix`
     from siftd.doctor.fixes import save_findings_cache
@@ -1098,6 +1155,7 @@ def build_data_parser(subparsers) -> None:
         "-q",
         "--quiet",
         action="store_true",
+        default=None,
         help="Only show totals line",
     )
     _verbosity.add_argument(
@@ -1201,6 +1259,8 @@ exit codes:
     p_doctor.add_argument("--strict", action="store_true", help="Exit 1 on warnings (not just errors). Useful for CI.")
     p_doctor.add_argument("--pending-tags", action="store_true", help="Clean up stale sessions and orphaned pending tags (use with 'fix')")
     p_doctor.add_argument("--deep", action="store_true", help="Include deep integrity checks (slower).")
+    p_doctor.add_argument("--fast", action="store_true", help="Run only fast checks (skips slow and deep).")
     p_doctor.add_argument("--blob-refcount", action="store_true", dest="blob_refcount", help="Re-derive blob ref counts and sweep orphans (use with 'fix').")
     p_doctor.add_argument("--triggers", action="store_true", help="Recreate blob ref-count triggers (use with 'fix').")
+    p_doctor.add_argument("--no-hints", action="store_true", dest="no_hints", help="Suppress hint-severity findings.")
     p_doctor.set_defaults(func=cmd_doctor)

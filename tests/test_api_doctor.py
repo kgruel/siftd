@@ -64,3 +64,20 @@ def test_run_checks_invalid_name_raises():
 
     with pytest.raises(ValueError, match="Unknown"):
         run_checks(checks=["nonexistent-check-xyz"])
+
+
+def test_run_checks_fast_flag(test_db):
+    """run_checks with fast=True runs only fast checks."""
+    findings = run_checks(db_path=test_db, fast=True)
+    assert isinstance(findings, list)
+    # Verify all findings are from fast checks
+    checks = list_checks()
+    fast_check_names = {c.name for c in checks if c.cost == "fast"}
+    for f in findings:
+        assert f.check in fast_check_names, f"Check {f.check} is not a fast check"
+    # Verify that slow and deep checks are not included
+    all_finding_names = {f.check for f in findings}
+    slow_check_names = {c.name for c in checks if c.cost == "slow"}
+    deep_check_names = {c.name for c in checks if c.cost == "deep"}
+    assert not all_finding_names.intersection(slow_check_names), "Found slow checks when using fast=True"
+    assert not all_finding_names.intersection(deep_check_names), "Found deep checks when using fast=True"

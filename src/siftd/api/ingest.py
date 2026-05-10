@@ -6,7 +6,7 @@ Provides API-level write primitives for ingestion and FTS rebuild operations.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
 from typing import Literal
@@ -37,6 +37,7 @@ class IngestRunResult:
     scan_paths: list[str]
     stats: IngestStats | None
     elapsed_ms: int
+    dropin_failures: list[tuple[Path, str]] = field(default_factory=list)
 
 
 __all__ = [
@@ -51,9 +52,10 @@ def _resolve_adapters(
     *,
     adapter_names: list[str] | None,
     scan_paths: list[str] | None,
+    failures_out: list[tuple[Path, str]] | None = None,
 ) -> tuple[list, list[str]]:
     """Resolve discovered adapter modules with optional filtering/overrides."""
-    plugins = load_all_adapters()
+    plugins = load_all_adapters(failures_out=failures_out)
 
     if adapter_names:
         requested = set(adapter_names)
@@ -85,11 +87,13 @@ def run_ingest(
     db_created = not path.exists()
     started = perf_counter()
 
+    dropin_failures: list[tuple[Path, str]] = []
     conn = create_database(path)
     try:
         adapters, selected_names = _resolve_adapters(
             adapter_names=adapter_names,
             scan_paths=scan_paths,
+            failures_out=dropin_failures,
         )
         stats = ingest_all(
             conn,
@@ -117,6 +121,7 @@ def run_ingest(
         scan_paths=list(scan_paths or []),
         stats=stats,
         elapsed_ms=elapsed_ms,
+        dropin_failures=dropin_failures,
     )
 
 

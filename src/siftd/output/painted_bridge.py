@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from siftd.output._id_format import short_id
 from siftd.output.common import fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
 
 if TYPE_CHECKING:
@@ -673,9 +674,54 @@ def _styled_table(
     return table(state, columns, rows, visible_height=len(rows), selected_style=PStyle())
 
 
+def _fmt_cost(c, missing_pricing_ids: frozenset[str]) -> str:
+    """Cost cell — '?' when this row's model has no pricing data, else dollar amount."""
+    if c.id in missing_pricing_ids:
+        return "?"
+    if c.cost:
+        return f"${c.cost:.4f}"
+    return "$0.0000"
+
+
+def _caveat_footer_block(caveats: list, fidelity: Fidelity) -> Block | None:
+    """One-line footer summarizing caveat kinds present in the result.
+
+    Row-scope caveats (target set) get a count line; query-scope caveats
+    (target=None) get a single line per kind. Rendered muted below the table.
+    """
+    if not caveats:
+        return None
+
+    from painted import current_palette
+
+    p = current_palette()
+
+    by_kind_rows: dict[str, int] = {}
+    by_kind_query: list[str] = []
+    for c in caveats:
+        if c.target:
+            by_kind_rows[c.check] = by_kind_rows.get(c.check, 0) + 1
+        else:
+            by_kind_query.append(c.message)
+
+    lines: list[Line] = []
+    for kind, count in sorted(by_kind_rows.items()):
+        lines.append(_line(
+            (f"{count} row(s) with {kind}", p.muted),
+        ))
+    for msg in by_kind_query:
+        lines.append(_line((msg, p.muted)))
+
+    if not lines:
+        return None
+    return _lines_to_block(lines)
+
+
 def render_list_block(
     summaries: list,
     fidelity: Fidelity,
+    *,
+    caveats: list | None = None,
 ) -> Block | None:
     """Render conversation list as a styled painted table.
 
@@ -684,12 +730,16 @@ def render_list_block(
         1-2 (default): + model, turns, tokens, cost
         3+ (full): + prompts, responses, tags
 
+    `caveats`, when provided, drives a `?` cost cell for rows whose id
+    matches a `pricing-missing` caveat's target, and a per-kind footer
+    summarizing the caveats below the table.
+
     Returns None for empty lists (emit_output no-ops on None).
     """
     if not summaries:
         return None
 
-    from painted import Align, current_palette
+    from painted import Align, current_palette, join_vertical
     from painted import Style as PStyle
 
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
@@ -697,8 +747,13 @@ def render_list_block(
     p = current_palette()
     depth = fidelity.depth
 
+    missing_pricing_ids = frozenset(
+        c.target for c in (caveats or [])
+        if c.check == "pricing-missing" and c.target
+    )
+
     col_defs: list[tuple[str, Callable, PStyle, Align]] = [
-        ("id", lambda c: c.id[:12] if c.id else "", p.accent, Align.START),
+        ("id", lambda c: short_id(c.id) if c.id else "", p.accent, Align.START),
         ("started_at", lambda c: fmt_timestamp(c.started_at), p.muted, Align.START),
         ("workspace", lambda c: fmt_workspace(c.workspace_path), PStyle(), Align.START),
     ]
@@ -707,16 +762,20 @@ def render_list_block(
             ("model", lambda c: fmt_model(c.model) if c.model else "", PStyle(), Align.START),
             ("turns", lambda c: f"{c.prompt_count}p/{c.response_count}r", p.muted, Align.END),
             ("tokens", lambda c: fmt_tokens(c.total_tokens), p.muted, Align.END),
-            ("cost", lambda c: f"${c.cost:.4f}" if c.cost else "$0.0000", p.muted, Align.END),
         ])
     if depth >= 3:
         col_defs.extend([
+            ("cost", lambda c: _fmt_cost(c, missing_pricing_ids), p.muted, Align.END),
             ("prompts", lambda c: str(c.prompt_count), p.muted, Align.END),
             ("responses", lambda c: str(c.response_count), p.muted, Align.END),
             ("tags", lambda c: ", ".join(c.tags) if c.tags else "", p.accent, Align.START),
         ])
 
-    return _styled_table(col_defs, summaries)
+    table_block = _styled_table(col_defs, summaries)
+    footer = _caveat_footer_block(caveats or [], fidelity)
+    if footer is None:
+        return table_block
+    return join_vertical(table_block, footer)
 
 
 def render_peek_list_block(

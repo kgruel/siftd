@@ -15,10 +15,11 @@ from siftd.api import (
 from siftd.api.sessions import is_session_registered
 from siftd.api.sessions import queue_tag as queue_pending_tag
 from siftd.cli._common import resolve_db
+from siftd.output._id_format import short_id
 from siftd.paths import ensure_dirs, session_id_file
 
 # Subcommand names that can never collide with ULIDs (26-char base32).
-_TAG_SUBCOMMANDS = frozenset({"list", "rename", "delete"})
+_TAG_SUBCOMMANDS = frozenset({"apply", "remove", "list", "rename", "delete"})
 
 
 def _detect_current_session() -> str | None:
@@ -235,6 +236,10 @@ def _cmd_tag_list(args, db: Path) -> int:
             print(f"\nTip: show more with `siftd query -l {tag_name} -n 0`", file=sys.stderr)
         return 0
 
+    # --by-workspace: group tag counts by workspace
+    if getattr(args, "by_workspace", False):
+        return _cmd_tag_list_by_workspace(args, db)
+
     # Default: list tags
     since = getattr(args, "since", None)
     before = getattr(args, "before", None)
@@ -309,6 +314,78 @@ def _cmd_tag_list(args, db: Path) -> int:
         count_str = f" ({', '.join(counts)})" if counts else ""
         desc = f" - {tag.description}" if tag.description else ""
         print(f"  {tag.name}{desc}{count_str}")
+
+    return 0
+
+
+_BY_WORKSPACE_REJECTED_FLAGS = (
+    ("since", "--since"),
+    ("before", "--before"),
+    ("no_tag", "--no-tag"),
+    ("tag", "-l/--tag"),
+    ("model", "-m/--model"),
+    ("tool", "--tool"),
+    ("tool_tag", "--tool-tag"),
+)
+
+
+def _cmd_tag_list_by_workspace(args, db: Path) -> int:
+    """List tag counts grouped by workspace."""
+    import json as _json
+
+    from siftd.api.tags import list_tags_by_workspace
+
+    rejected = [
+        flag for attr, flag in _BY_WORKSPACE_REJECTED_FLAGS
+        if getattr(args, attr, None)
+    ]
+    if rejected:
+        print(
+            f"Error: --by-workspace does not support: {', '.join(rejected)}.\n"
+            "Supported filters: --on, --prefix, -w/--workspace, --owner, "
+            "--all-tags, --limit.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if not db.exists():
+        print(f"Database not found: {db}")
+        print("Run 'siftd ingest' to create it.")
+        return 1
+
+    conn = open_database(db, read_only=True)
+    target_kinds = tuple(getattr(args, "tag_kind", None) or ())
+    prefix = getattr(args, "prefix", None)
+    workspace_filter = getattr(args, "workspace", None)
+    owner = getattr(args, "owner", None)
+    all_tags = tuple(getattr(args, "all_tags", None) or ())
+    limit_arg = getattr(args, "limit", None)
+    limit = limit_arg if limit_arg is not None else 20
+
+    workspaces = list_tags_by_workspace(
+        conn,
+        target_kinds=target_kinds or None,
+        prefix=prefix,
+        workspace_filter=workspace_filter,
+        owner=owner,
+        all_tags=all_tags or None,
+        limit=limit,
+    )
+    conn.close()
+
+    if not workspaces:
+        print("No tag data found for the given filters.")
+        return 0
+
+    if getattr(args, "json", False):
+        print(_json.dumps({"workspaces": workspaces}, indent=2))
+        return 0
+
+    for ws_data in workspaces:
+        print(f"{ws_data['workspace']} ({ws_data['total']} total)")
+        for tag in ws_data["tags"]:
+            print(f"  {tag['name']} ({tag['count']} {tag['target_kind']}s)")
+        print()
 
     return 0
 
@@ -485,7 +562,7 @@ def cmd_tag(args) -> int:
     """Apply, remove, list, rename, or delete tags."""
     db = resolve_db(args)
 
-    # Check for subcommands (list, rename, delete) via positional args.
+    # Check for subcommands (apply, remove, list, rename, delete) via positional args.
     # Safe: these words can never be ULIDs (26-char base32).
     positional = args.positional or []
     if positional and positional[0] in _TAG_SUBCOMMANDS:
@@ -496,6 +573,13 @@ def cmd_tag(args) -> int:
             return _cmd_tag_rename(args, db)
         if subcmd == "delete":
             return _cmd_tag_delete(args, db)
+        # apply/remove: strip the subcommand and fall through to the legacy logic.
+        # args.positional is updated so that _tag_session (which reads it directly)
+        # sees the right tag names.
+        args.positional = positional[1:]
+        positional = args.positional
+        if subcmd == "remove":
+            args.remove = True
 
     # --- Original tag apply/remove logic below ---
 
@@ -573,7 +657,7 @@ def cmd_tag(args) -> int:
                     remove=removing,
                 )
             except FileNotFoundError:
-                print(f"{_target_kind} not found: {_target_id[:12]}")
+                print(f"{_target_kind} not found: {short_id(_target_id)}")
                 return 1
             except ValueError as e:
                 print(f"Error: {e}")
@@ -584,15 +668,15 @@ def cmd_tag(args) -> int:
                     if _row.status == "not_found":
                         print(f"Tag '{_row.tag}' not found")
                     elif _row.status == "removed":
-                        print(f"Removed tag '{_row.tag}' from {_target_kind} {_resolved_id[:12]}")
+                        print(f"Removed tag '{_row.tag}' from {_target_kind} {short_id(_resolved_id)}")
                     else:
-                        print(f"Tag '{_row.tag}' not applied to {_target_kind} {_resolved_id[:12]}")
+                        print(f"Tag '{_row.tag}' not applied to {_target_kind} {short_id(_resolved_id)}")
             else:
                 for _row in _result.results:
                     if _row.status == "applied":
-                        print(f"Applied tag '{_row.tag}' to {_target_kind} {_resolved_id[:12]}")
+                        print(f"Applied tag '{_row.tag}' to {_target_kind} {short_id(_resolved_id)}")
                     else:
-                        print(f"Tag '{_row.tag}' already applied to {_target_kind} {_resolved_id[:12]}")
+                        print(f"Tag '{_row.tag}' already applied to {_target_kind} {short_id(_resolved_id)}")
             return 0
 
     # Normalize args into a POST body for delegation
@@ -710,6 +794,8 @@ def cmd_tag(args) -> int:
     parsed = _parse_tag_args(positional)
     if not parsed:
         print("Usage: siftd tag <id> <tag> [tag2 ...]")
+        print("       siftd tag apply <id> <tag> [tag2 ...]")
+        print("       siftd tag remove <id> <tag> [tag2 ...]")
         print("       siftd tag <entity_type> <id> <tag> [tag2 ...]")
         print("       siftd tag <conv>:<kind>:<n> <tag> [tag2 ...]")
         print("       siftd tag --last [N] <tag> [tag2 ...]")
@@ -748,17 +834,17 @@ def cmd_tag(args) -> int:
             if status == "not_found":
                 print(f"Tag '{tag_name}' not found")
             elif status == "removed":
-                print(f"Removed tag '{tag_name}' from {entity_type} {resolved_id[:12]}")
+                print(f"Removed tag '{tag_name}' from {entity_type} {short_id(resolved_id)}")
             else:
-                print(f"Tag '{tag_name}' not applied to {entity_type} {resolved_id[:12]}")
+                print(f"Tag '{tag_name}' not applied to {entity_type} {short_id(resolved_id)}")
     else:
         for row in result_local.results:
             tag_name = row.tag
             status = row.status
             if status == "applied":
-                print(f"Applied tag '{tag_name}' to {entity_type} {resolved_id[:12]}")
+                print(f"Applied tag '{tag_name}' to {entity_type} {short_id(resolved_id)}")
             else:
-                print(f"Tag '{tag_name}' already applied to {entity_type} {resolved_id[:12]}")
+                print(f"Tag '{tag_name}' already applied to {entity_type} {short_id(resolved_id)}")
     return 0
 
 
@@ -783,6 +869,10 @@ def build_tags_parser(subparsers) -> None:
   siftd tag -r workspace 01HY... proj      # remove from workspace
 
 subcommands:
+  siftd tag apply 01HX... important         # explicit apply (same as positional)
+  siftd tag apply --last important          # apply to most recent via subcommand
+  siftd tag remove 01HX... important        # explicit remove (same as --remove)
+  siftd tag remove --last important         # remove from most recent via subcommand
   siftd tag list                            # list all tags
   siftd tag list --prefix research:         # filter by prefix
   siftd tag list research:auth              # show conversations with tag
@@ -795,10 +885,15 @@ live session tagging:
   siftd tag --session abc123 decision:auth       # queue tag for session
   siftd tag --session abc123 --exchange 5 key    # queue tag for exchange 5""",
     )
-    p_tag.add_argument("positional", nargs="*", help="[entity_type] entity_id tag [tag2 ...] | list | rename | delete")
+    p_tag.add_argument(
+        "positional",
+        nargs="*",
+        help="[entity_type] entity_id tag [tag2 ...] | apply | remove | list | rename | delete",
+    )
     p_tag.add_argument(
         "-n",
         "--last",
+        "--latest",
         nargs="?",
         const=1,
         default=None,
@@ -832,8 +927,18 @@ live session tagging:
 
     # Flags for subcommands (list, delete)
     p_tag.add_argument("--prefix", metavar="PREFIX", help="Filter tag list by prefix (use with 'tag list')")
-    p_tag.add_argument("--limit", type=int, default=10, help="Max conversations in drill-down (default: 10, use with 'tag list <name>')")
+    p_tag.add_argument("--limit", type=int, default=None, help="Result cap (drill-down: default 10, --by-workspace: default 20 workspaces)")
     p_tag.add_argument("--force", action="store_true", help="Force delete even if tag has associations (use with 'tag delete')")
+    p_tag.add_argument(
+        "--by-workspace", action="store_true", dest="by_workspace",
+        help=(
+            "Group tag counts by workspace (use with 'tag list'). "
+            "Counts only event-backed tags (tool_call, prompt, response, exchange); "
+            "conversation-level tags are excluded. Composes with --on, --prefix, "
+            "-w, --owner, --all-tags, --limit only."
+        ),
+    )
+    p_tag.add_argument("--json", action="store_true", help="Output as JSON (use with 'tag list --by-workspace')")
 
     from siftd.cli._filters import add_filter_args
 

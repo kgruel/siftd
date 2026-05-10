@@ -23,13 +23,18 @@ def load_builtin_adapters() -> list[PluginInfo]:
     ]
 
 
-def load_dropin_adapters(path: Path) -> list[PluginInfo]:
+def load_dropin_adapters(
+    path: Path,
+    *,
+    failures_out: list[tuple[Path, str]] | None = None,
+) -> list[PluginInfo]:
     """Scan a directory for .py adapter files, import and validate them."""
     return load_dropin_modules(
         path,
         module_name_prefix="siftd_dropin_adapter_",
         validate=_validate_adapter,
         get_name=lambda m: getattr(m, "NAME", "unknown"),
+        failures_out=failures_out,
     )
 
 
@@ -89,7 +94,11 @@ def wrap_adapter_paths(adapter, paths: list[str]):
     return _AdapterPathOverride(adapter, paths)
 
 
-def load_all_adapters(dropin_path: Path | None = None) -> list[PluginInfo]:
+def load_all_adapters(
+    dropin_path: Path | None = None,
+    *,
+    failures_out: list[tuple[Path, str]] | None = None,
+) -> list[PluginInfo]:
     """Load adapters from all sources, deduplicated by NAME.
 
     Priority: drop-in > entry point > built-in (drop-ins can override built-ins).
@@ -109,6 +118,7 @@ def load_all_adapters(dropin_path: Path | None = None) -> list[PluginInfo]:
         entrypoint_group="siftd.adapters",
         validate=_validate_adapter,
         get_name=lambda m: getattr(m, "NAME", "unknown"),
+        failures_out=failures_out,
     )
 
     # Apply adapter-specific config location overrides

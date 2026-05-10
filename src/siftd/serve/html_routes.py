@@ -322,7 +322,6 @@ async def ui_query(
     n: int = Parameter(query="n", default=50),
     id: str | None = Parameter(query="id", default=None),
     # Fidelity controls (detail view)
-    tools: bool = Parameter(query="tools", default=False),
     thinking: bool = Parameter(query="thinking", default=False),
     full: bool = Parameter(query="full", default=False),
     brief: bool = Parameter(query="brief", default=False),
@@ -351,7 +350,7 @@ async def ui_query(
         elif brief:
             fidelity = _fidelity(depth=0, chars=80)
         else:
-            fidelity = _fidelity(depth=2, chars=0, tools=tools, thinking=thinking)
+            fidelity = _fidelity(depth=2, chars=0, thinking=thinking)
 
         op = Operation(
             path=f"/api/v1/conversations/{id}",
@@ -370,7 +369,7 @@ async def ui_query(
             render_context={
                 **ctx,
                 "tool_chars": _tool_chars(fidelity),
-                "controls": {"id": id, "tools": tools, "thinking": thinking,
+                "controls": {"id": id, "thinking": thinking,
                              "full": full, "brief": brief},
                 "interactive_tags": True,
                 "tag_action_url": "/tag",

@@ -100,8 +100,6 @@ async def index() -> dict:
             {"method": "GET", "path": "/api/v1/search", "description": "Semantic + FTS search"},
             {"method": "GET", "path": "/api/v1/stats", "description": "Database statistics"},
             {"method": "GET", "path": "/api/v1/workspaces", "description": "List workspaces"},
-            {"method": "GET", "path": "/api/v1/tools", "description": "Tool tag usage summary"},
-            {"method": "GET", "path": "/api/v1/tools/workspaces", "description": "Tool tags by workspace"},
             {"method": "GET", "path": "/api/v1/tags", "description": "List tags with counts"},
             {"method": "GET", "path": "/api/v1/export", "description": "Export full conversations"},
             {"method": "POST", "path": "/api/v1/tag", "description": "Apply, remove, rename, or delete tags"},
@@ -143,39 +141,6 @@ async def workspaces_route(
         "/api/v1/workspaces", "GET", list_workspaces,
         {"db_path": db_path, "n": n, "owner": owner},
         "workspaces", db_path,
-    )
-
-
-@get("/api/v1/tools")
-async def tools_route(
-    request: Request,
-    db_path: Path,
-    prefix: str = Parameter(query="prefix", default="shell:"),
-) -> dict | Response:
-    """Tool tag usage summary."""
-    from siftd.api.tools import get_tool_tag_summary
-
-    owner = _effective_owner(request, None)
-    return _dispatch(
-        "/api/v1/tools", "GET", get_tool_tag_summary,
-        {"db_path": db_path, "prefix": prefix, "owner": owner}, "tools", db_path,
-    )
-
-
-@get("/api/v1/tools/workspaces")
-async def tools_by_workspace_route(
-    request: Request,
-    db_path: Path,
-    prefix: str = Parameter(query="prefix", default="shell:"),
-    n: int = Parameter(query="n", default=20),
-) -> dict | Response:
-    """Tool tag usage broken down by workspace."""
-    from siftd.api.tools import get_tool_tags_by_workspace
-
-    owner = _effective_owner(request, None)
-    return _dispatch(
-        "/api/v1/tools/workspaces", "GET", get_tool_tags_by_workspace,
-        {"db_path": db_path, "prefix": prefix, "n": n, "owner": owner}, "tools_by_workspace", db_path,
     )
 
 

@@ -59,15 +59,28 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> dict:
 
 
 def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
-    """Render conversation list as JSON array.
+    """Render conversation list as a JSON envelope.
 
-    Always includes all fields regardless of fidelity depth.
+    Shape (always): ``{"result": [...summaries...], "caveats": [...]}``.
+    The envelope is unconditional — empty caveats render as ``[]`` —
+    so downstream pipelines don't have to branch on shape. This is a
+    one-time break from the prior bare-array shape; consumers that
+    used ``siftd query --json | jq '.[]'`` should switch to ``.result[]``.
+
+    Context keys:
+        caveats: list[Finding] — threaded from dispatch.
     """
     import json
+    from dataclasses import asdict
 
     from siftd.serialization.conversations import serialize_conversation_list
 
-    return json.dumps(serialize_conversation_list(summaries), indent=2)
+    caveats = context.get("caveats") or []
+    envelope = {
+        "result": serialize_conversation_list(summaries),
+        "caveats": [asdict(c) for c in caveats],
+    }
+    return json.dumps(envelope, indent=2)
 
 
 def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
@@ -78,17 +91,22 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
         mode: str — "chunks", "conversations", or "thread"
         tier1: list — expanded results (thread mode)
         tier2: list — compact results (thread mode)
+        caveats: list[Finding] — threaded from dispatch; serialized as
+            ``"caveats": [...]`` in the envelope (empty list when absent).
     """
+    from dataclasses import asdict
     from datetime import UTC, datetime
 
     query = context.get("query", "")
     mode = context.get("mode", "chunks")
+    caveats = context.get("caveats") or []
 
     output: dict[str, Any] = {
         "query": query,
         "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "mode": mode,
         "result_count": len(results),
+        "caveats": [asdict(c) for c in caveats],
     }
 
     if mode == "conversations":

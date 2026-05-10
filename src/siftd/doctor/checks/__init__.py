@@ -16,20 +16,29 @@ class Finding:
 
     Attributes:
         check: Check name that produced this finding (e.g., "ingest-pending").
-        severity: One of "info", "warning", or "error".
+        severity: One of "info", "warning", "error", or "hint".
         message: Human-readable description of the issue.
         fix_available: Whether a fix suggestion exists.
         fix_command: CLI command to fix the issue (advisory only, not executed
             automatically). User must run this command manually.
         context: Optional structured data for programmatic consumers.
+        target: Optional row-scope identifier — when set, the finding refers to
+            a specific entity (e.g., a conversation id) rather than the whole
+            result set or DB. Used by the caveats producer registry to thread
+            row-level annotations through dispatch into renderers.
+        channel: Controls output-format visibility. "text" findings are excluded
+            from --json output; "json" findings are excluded from text/TTY
+            output; "both" (default) appears everywhere.
     """
 
     check: str
-    severity: str
+    severity: Literal["info", "warning", "error", "hint"]
     message: str
     fix_available: bool
     fix_command: str | None = None
     context: dict | None = None
+    target: str | None = None
+    channel: Literal["text", "json", "both"] = "both"
 
 
 @dataclass
@@ -133,7 +142,6 @@ from siftd.doctor.checks.ingest_errors import IngestErrorsCheck  # noqa: E402
 from siftd.doctor.checks.ingest_pending import IngestPendingCheck  # noqa: E402
 from siftd.doctor.checks.orphaned_chunks import OrphanedChunksCheck  # noqa: E402
 from siftd.doctor.checks.pending_tags import PendingTagsCheck  # noqa: E402
-from siftd.doctor.checks.pricing_gaps import PricingGapsCheck  # noqa: E402
 from siftd.doctor.checks.schema_current import SchemaCurrentCheck  # noqa: E402
 from siftd.doctor.checks.workspace_identity import WorkspaceIdentityCheck  # noqa: E402
 
@@ -145,7 +153,6 @@ BUILTIN_CHECKS: list[Check] = [
     EmbeddingsCompatCheck(),
     EmbeddingsStaleCheck(),
     OrphanedChunksCheck(),
-    PricingGapsCheck(),
     CostCoverageCheck(),
     DropInsValidCheck(),
     FreelistCheck(),

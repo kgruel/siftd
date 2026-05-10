@@ -27,7 +27,7 @@ def test_run_ingest_returns_result_and_writes_stats_cache(tmp_path, monkeypatch)
     monkeypatch.setattr(
         ingest_api,
         "load_all_adapters",
-        lambda: [SimpleNamespace(name="claude_code", module="mod:claude")],
+        lambda **_kw: [SimpleNamespace(name="claude_code", module="mod:claude")],
     )
     monkeypatch.setattr(
         ingest_api,
@@ -62,7 +62,7 @@ def test_run_ingest_with_scan_paths_wraps_adapters(tmp_path, monkeypatch):
     monkeypatch.setattr(
         ingest_api,
         "load_all_adapters",
-        lambda: [SimpleNamespace(name="aider", module="mod:aider")],
+        lambda **_kw: [SimpleNamespace(name="aider", module="mod:aider")],
     )
     monkeypatch.setattr(
         ingest_api,
@@ -94,7 +94,7 @@ def test_run_ingest_unknown_adapter_raises_and_closes_connection(tmp_path, monke
     monkeypatch.setattr(
         ingest_api,
         "load_all_adapters",
-        lambda: [SimpleNamespace(name="claude_code", module="mod")],
+        lambda **_kw: [SimpleNamespace(name="claude_code", module="mod")],
     )
 
     with pytest.raises(ingest_api.AdapterSelectionError) as exc:

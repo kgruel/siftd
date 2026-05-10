@@ -121,6 +121,8 @@ def cmd_peek(args) -> int:
         from siftd.peek import follow_session, read_session_detail
         from siftd.peek.follow import FollowEvent, event_to_json
 
+        timeout = getattr(args, "timeout", None)
+
         # Resolve session: use provided ID or default to most recent active
         if args.session_id:
             try:
@@ -177,6 +179,7 @@ def cmd_peek(args) -> int:
                 json_mode=False,
                 render=_render_follow_event,
                 include_thinking=include_thinking,
+                timeout=timeout,
             )
         else:
             # JSON mode: initial context as NDJSON
@@ -199,7 +202,7 @@ def cmd_peek(args) -> int:
                         )
                         print(_json.dumps(event_to_json(asst_ev), separators=(",", ":")))
 
-            follow_session(path, json_mode=True, include_thinking=include_thinking)
+            follow_session(path, json_mode=True, include_thinking=include_thinking, timeout=timeout)
 
         return 0
 
@@ -411,6 +414,7 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
     p_peek.add_argument("--thinking", action="store_true", help="Show model thinking/reasoning blocks inline when available")
     p_peek.add_argument("--tools", action="store_true", help="Show tool inputs/results inline when available")
     p_peek.add_argument("-f", "--follow", action="store_true", help="Follow a live session in real time (like tail -f)")
+    p_peek.add_argument("--timeout", type=float, metavar="SECONDS", help="Exit after SECONDS of wall-clock time (for use with --follow)")
     p_peek.add_argument("--tail", action="store_true", help="Raw JSONL tail (last 20 records)")
     p_peek.add_argument("--tail-lines", type=int, default=20, metavar="N", dest="tail_lines", help="Number of records for --tail (default: 20)")
     p_peek.add_argument("--json", action="store_true", help="Output as structured JSON")

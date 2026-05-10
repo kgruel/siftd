@@ -11,8 +11,6 @@ from siftd.serialization.serve_fmt import (
     render_search,
     render_stats,
     render_tags,
-    render_tools,
-    render_tools_by_workspace,
     render_workspaces,
 )
 
@@ -46,19 +44,6 @@ def test_tags():
     payload = render_tags([t], _F)["tags"][0]
     assert payload["name"] == "b"
     assert set(payload) == {f.name for f in dataclass_fields(TagInfo)}
-
-
-def test_tools():
-    assert render_tools([NS(name="r", count=5)], _F)["total"] == 5
-
-
-def test_tools_empty():
-    assert render_tools([], _F)["total"] == 0
-
-
-def test_tools_by_workspace():
-    ws = NS(workspace="/w", total=3, tags=[NS(name="x", count=3)])
-    assert render_tools_by_workspace([ws], _F)["workspaces"][0]["total"] == 3
 
 
 def test_search_empty():

@@ -345,6 +345,19 @@ class TestExportCLI:
         result = main(["--db", str(test_db), "export", "--last", "2"])
         assert result == 0
 
+    def test_export_latest_and_last_parity(self, test_db, capsys):
+        from siftd.cli import main
+
+        rc_last = main(["--db", str(test_db), "export", "--last", "2"])
+        out_last = capsys.readouterr().out
+
+        rc_latest = main(["--db", str(test_db), "export", "--latest", "2"])
+        out_latest = capsys.readouterr().out
+
+        assert rc_last == 0
+        assert rc_latest == 0
+        assert out_last == out_latest
+
     def test_export_json(self, test_db, capsys):
         from siftd.cli import main
 

@@ -24,7 +24,6 @@ from siftd.doctor.checks import (
     FtsStaleCheck,
     IngestPendingCheck,
     OrphanedChunksCheck,
-    PricingGapsCheck,
     SchemaCurrentCheck,
     WorkspaceIdentityCheck,
 )
@@ -69,8 +68,11 @@ class TestListChecks:
         assert "ingest-pending" in names
         assert "embeddings-stale" in names
         assert "orphaned-chunks" in names
-        assert "pricing-gaps" in names
         assert "drop-ins-valid" in names
+        # pricing-gaps was dissolved into the caveats producer registry
+        # (siftd.api.caveats._pricing_caveats); verify the check is GONE so
+        # the check list and caveats layer don't both surface the same fact.
+        assert "pricing-gaps" not in names
         assert "freelist" in names
         assert "schema-current" in names
         # New P1 checks
@@ -94,7 +96,6 @@ class TestListChecks:
         assert by_name["ingest-errors"] is False
         assert by_name["embeddings-stale"] is True
         assert by_name["orphaned-chunks"] is True
-        assert by_name["pricing-gaps"] is False
         assert by_name["drop-ins-valid"] is False
 
     def test_check_info_has_required_fields(self):
@@ -123,7 +124,6 @@ class TestListChecks:
         assert by_name["ingest-errors"] is True
         assert by_name["embeddings-stale"] is True
         assert by_name["orphaned-chunks"] is True
-        assert by_name["pricing-gaps"] is True
         assert by_name["freelist"] is True
         assert by_name["schema-current"] is True
         # Checks that don't need the database
@@ -140,7 +140,6 @@ class TestListChecks:
         # Checks that don't need the embeddings database
         assert by_name["ingest-pending"] is False
         assert by_name["ingest-errors"] is False
-        assert by_name["pricing-gaps"] is False
         assert by_name["drop-ins-valid"] is False
         assert by_name["embeddings-available"] is False
         assert by_name["freelist"] is False
@@ -156,7 +155,6 @@ class TestListChecks:
         assert by_name["ingest-errors"] == "fast"
         assert by_name["embeddings-stale"] == "fast"
         assert by_name["orphaned-chunks"] == "fast"
-        assert by_name["pricing-gaps"] == "fast"
         assert by_name["drop-ins-valid"] == "fast"
         assert by_name["embeddings-available"] == "fast"
         assert by_name["freelist"] == "fast"
@@ -236,6 +234,29 @@ class TestRunChecks:
         findings = run_checks(checks=["drop-ins-valid"], db_path=test_db, on_check_done=None)
         assert isinstance(findings, list)
 
+    def test_fast_flag_filters_to_fast_checks(self, test_db):
+        """run_checks with fast=True runs only fast checks, skipping slow and deep."""
+        from siftd.api import list_checks
+
+        findings = run_checks(db_path=test_db, fast=True)
+        assert isinstance(findings, list)
+
+        checks = list_checks()
+        fast_check_names = {c.name for c in checks if c.cost == "fast"}
+        slow_check_names = {c.name for c in checks if c.cost == "slow"}
+        deep_check_names = {c.name for c in checks if c.cost == "deep"}
+
+        # All findings should be from fast checks
+        finding_check_names = {f.check for f in findings}
+        assert finding_check_names.issubset(fast_check_names), \
+            f"Found non-fast checks: {finding_check_names - fast_check_names}"
+
+        # Verify that slow and deep checks are not included
+        assert not finding_check_names.intersection(slow_check_names), \
+            f"Found slow checks when using fast=True: {finding_check_names & slow_check_names}"
+        assert not finding_check_names.intersection(deep_check_names), \
+            f"Found deep checks when using fast=True: {finding_check_names & deep_check_names}"
+
 
 class TestIngestPendingCheck:
     """Tests for the ingest-pending check."""
@@ -292,26 +313,6 @@ class TestEmbeddingsStaleCheck:
         assert "conversation" in findings[0].message
         assert "not indexed" in findings[0].message
         assert findings[0].fix_available is True
-
-
-class TestPricingGapsCheck:
-    """Tests for the pricing-gaps check."""
-
-    def test_returns_list(self, check_context):
-        """Returns a list of findings (may be empty or have items)."""
-        check = PricingGapsCheck()
-        findings = check.run(check_context)
-        assert isinstance(findings, list)
-        assert all(isinstance(f, Finding) for f in findings)
-
-    def test_finding_structure(self, check_context):
-        """Findings have correct structure when there are gaps."""
-        check = PricingGapsCheck()
-        findings = check.run(check_context)
-        for f in findings:
-            assert f.check == "pricing-gaps"
-            assert f.severity == "warning"
-            assert f.fix_available is False
 
 
 class TestCostCoverageCheck:
@@ -1566,3 +1567,63 @@ class TestFixFunctions:
         check_conn.close()
         assert "tr_event_tool_call_delete_release_blob" in triggers
         assert "tr_event_tool_call_update_release_blob" in triggers
+
+
+class TestFindingSubstrate:
+    """Tests for Finding dataclass extensions: hint severity, field, channel."""
+
+    def test_hint_severity_valid(self):
+        f = Finding(check="x", severity="hint", message="m", fix_available=False)
+        assert f.severity == "hint"
+
+    def test_channel_default_is_both(self):
+        f = Finding(check="x", severity="info", message="m", fix_available=False)
+        assert f.channel == "both"
+
+    def test_channel_text_excludes_from_json(self, monkeypatch, capsys):
+        """channel="text" findings are dropped from --json doctor output."""
+        import json
+        from types import SimpleNamespace
+
+        from siftd.cli.data import _doctor_run_json
+
+        monkeypatch.setattr(
+            "siftd.api.run_checks",
+            lambda **_k: [
+                Finding(check="a", severity="info", message="visible", fix_available=False, channel="both"),
+                Finding(check="b", severity="info", message="tty-only", fix_available=False, channel="text"),
+            ],
+        )
+        monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda _: None)
+
+        args = SimpleNamespace(db=None, strict=False, no_hints=False)
+        rc = _doctor_run_json(args, None, False, None)
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        messages = [f["message"] for f in data["findings"]]
+        assert "visible" in messages
+        assert "tty-only" not in messages
+
+    def test_no_hints_flag_filters_hints(self, monkeypatch, capsys):
+        """--no-hints drops severity="hint" findings before rendering."""
+        import json
+        from types import SimpleNamespace
+
+        from siftd.cli.data import _doctor_run_json
+
+        monkeypatch.setattr(
+            "siftd.api.run_checks",
+            lambda **_k: [
+                Finding(check="a", severity="info", message="keep", fix_available=False),
+                Finding(check="b", severity="hint", message="drop", fix_available=False),
+            ],
+        )
+        monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda _: None)
+
+        args = SimpleNamespace(db=None, strict=False, no_hints=True)
+        rc = _doctor_run_json(args, None, False, None)
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        messages = [f["message"] for f in data["findings"]]
+        assert "keep" in messages
+        assert "drop" not in messages

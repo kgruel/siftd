@@ -13,6 +13,8 @@ from __future__ import annotations
 from html import escape
 from typing import TYPE_CHECKING, Any
 
+from siftd.output._id_format import short_id
+
 if TYPE_CHECKING:
     from painted import Fidelity
 
@@ -117,7 +119,7 @@ def _render_tag_section(
     The section has a stable ID for htmx fragment swaps.
     Route URLs are passed via parameters — formatters must not hardcode routes.
     """
-    section_id = f"tags-{conv_id[:12]}"
+    section_id = f"tags-{short_id(conv_id)}"
     parts = [f'<div class="tag-section" id="{escape(section_id)}">']
 
     for tag in tags:
@@ -137,8 +139,8 @@ def _render_tag_section(
             parts.append(f'<span class="tag">{escape(tag)}</span>')
 
     if interactive and tag_action_url:
-        input_id = f"tag-input-{conv_id[:12]}"
-        list_id = f"tag-suggest-{conv_id[:12]}"
+        input_id = f"tag-input-{short_id(conv_id)}"
+        list_id = f"tag-suggest-{short_id(conv_id)}"
         parts.append(
             f'<form class="tag-add" hx-post="{escape(tag_action_url)}"'
             f' hx-target="#{escape(section_id)}"'
@@ -236,7 +238,7 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
             meta.append(
                 f'<span class="metric">{escape(fmt_tokens(total_tokens))} tokens</span>'
             )
-        meta.append(f'<span class="identifier">{escape(detail_id[:12])}</span>')
+        meta.append(f'<span class="identifier">{escape(detail_id)}</span>')
 
         parts.append(f'<div class="detail-info-bar">{" ".join(meta)}</div>')
 
@@ -331,6 +333,9 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
         detail_base: str — URL prefix for detail links (e.g., "/query").
             Rows get hx-get="{detail_base}?id=..." when provided,
             otherwise they're static (no htmx navigation).
+        caveats: list[Finding] — drives '?' Cost cells (with class
+            "metric missing") for rows targeted by pricing-missing caveats
+            at depth>=3.
     """
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
 
@@ -340,6 +345,11 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     detail_base = context.get("detail_base", "")
     shell_base = context.get("shell_base", "")
     depth = fidelity.depth
+    caveats = context.get("caveats") or []
+    missing_pricing_ids = frozenset(
+        c.target for c in caveats
+        if c.check == "pricing-missing" and c.target
+    )
 
     parts: list[str] = ['<table class="conversation-list">']
     parts.append("<thead><tr>")
@@ -350,14 +360,14 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
         parts.append('<th class="model">Model</th>')
         parts.append('<th class="metric">Turns</th>')
         parts.append('<th class="metric">Tokens</th>')
-        parts.append('<th class="metric">Cost</th>')
     if depth >= 3:
+        parts.append('<th class="metric">Cost</th>')
         parts.append('<th class="tag">Tags</th>')
     parts.append("</tr></thead>")
 
     parts.append("<tbody>")
     for c in summaries:
-        cid = c.id[:12] if c.id else ""
+        cid = short_id(c.id) if c.id else ""
         parts.append(f"<tr{_hx_detail(detail_base, c.id, shell_base)}>")
         parts.append(f'<td class="identifier">{escape(cid)}</td>')
         parts.append(f'<td class="temporal">{escape(fmt_timestamp(c.started_at))}</td>')
@@ -367,9 +377,12 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
             parts.append(f'<td class="model">{escape(model)}</td>')
             parts.append(f'<td class="metric">{c.prompt_count}p/{c.response_count}r</td>')
             parts.append(f'<td class="metric">{escape(fmt_tokens(c.total_tokens))}</td>')
-            cost = f"${c.cost:.4f}" if c.cost else "$0.0000"
-            parts.append(f'<td class="metric">{escape(cost)}</td>')
         if depth >= 3:
+            if c.id in missing_pricing_ids:
+                parts.append('<td class="metric missing">?</td>')
+            else:
+                cost = f"${c.cost:.4f}" if c.cost else "$0.0000"
+                parts.append(f'<td class="metric">{escape(cost)}</td>')
             tags = ", ".join(c.tags) if c.tags else ""
             parts.append(f'<td class="tag">{escape(tags)}</td>')
         parts.append("</tr>")
@@ -385,6 +398,8 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         query: str — the search query
         mode: str — "chunks", "conversations", or "thread"
         detail_base: str — URL prefix for detail links
+        caveats: list[Finding] — threaded from dispatch; appended as an
+            ``<aside class="caveats">`` fragment after the results section.
     """
     from siftd.output.common import truncate_text
 
@@ -392,6 +407,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
     mode = context.get("mode", "chunks")
     detail_base = context.get("detail_base", "")
     shell_base = context.get("shell_base", "")
+    caveats = context.get("caveats") or []
 
     parts: list[str] = []
 
@@ -410,7 +426,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         for r in results:
             conv_id = r.get("conversation_id", "")
             parts.append(f"<tr{_hx_detail(detail_base, conv_id, shell_base)}>")
-            parts.append(f'<td class="identifier">{escape(conv_id[:12])}</td>')
+            parts.append(f'<td class="identifier">{escape(short_id(conv_id))}</td>')
             parts.append(f'<td class="metric">{r.get("max_score", 0.0):.3f}</td>')
             parts.append(f'<td class="metric">{r.get("mean_score", 0.0):.3f}</td>')
             parts.append(f'<td class="metric">{r.get("chunk_count", 0)}</td>')
@@ -418,9 +434,8 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             parts.append(f'<td class="workspace">{escape(r.get("_workspace", ""))}</td>')
             parts.append("</tr>")
         parts.append("</tbody></table></section>")
-        return "\n".join(parts)
 
-    if mode == "thread":
+    elif mode == "thread":
         tier1 = context.get("tier1", [])
         tier2 = context.get("tier2", [])
         parts.append('<section class="search-results thread">')
@@ -461,7 +476,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
                 parts.append(
                     f'<div class="search-hit compact"'
                     f'{_hx_detail(detail_base, conv_id, shell_base)}>'
-                    f'<span class="identifier">{escape(conv_id[:12])}</span>'
+                    f'<span class="identifier">{escape(short_id(conv_id))}</span>'
                     f' <span class="metric">{score:.3f}</span>'
                     f' <span class="workspace">{escape(ws)}</span>'
                     f' <span class="temporal">{escape(started)}</span>'
@@ -471,42 +486,49 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             parts.append("</div>")
 
         parts.append("</section>")
-        return "\n".join(parts)
 
-    # Chunks mode
-    parts.append('<section class="search-results chunks">')
-    parts.append(f"<h2>Results for: {escape(query)}</h2>")
-    for r in results:
-        conv_id = r.get("conversation_id", "")
-        chunk_type = r.get("chunk_type", "").upper()[:8]
-        score = r.get("score", 0.0)
-        ws = r.get("_workspace", "")
-        started = r.get("_started_at", "")
+    else:
+        # Chunks mode
+        parts.append('<section class="search-results chunks">')
+        parts.append(f"<h2>Results for: {escape(query)}</h2>")
+        for r in results:
+            conv_id = r.get("conversation_id", "")
+            chunk_type = r.get("chunk_type", "").upper()[:8]
+            score = r.get("score", 0.0)
+            ws = r.get("_workspace", "")
+            started = r.get("_started_at", "")
 
-        parts.append(
-            f'<article class="search-hit"'
-            f'{_hx_detail(detail_base, conv_id, shell_base)}>'
-        )
-        parts.append(
-            f'<header>'
-            f'<span class="identifier">{escape(conv_id[:12])}</span>'
-            f' <span class="metric">{score:.3f}</span>'
-            f' <span class="adapter">[{escape(chunk_type)}]</span>'
-            f' <span class="temporal">{escape(started)}</span>'
-            f' <span class="workspace">{escape(ws)}</span>'
-            f"</header>"
-        )
+            parts.append(
+                f'<article class="search-hit"'
+                f'{_hx_detail(detail_base, conv_id, shell_base)}>'
+            )
+            parts.append(
+                f'<header>'
+                f'<span class="identifier">{escape(short_id(conv_id))}</span>'
+                f' <span class="metric">{score:.3f}</span>'
+                f' <span class="adapter">[{escape(chunk_type)}]</span>'
+                f' <span class="temporal">{escape(started)}</span>'
+                f' <span class="workspace">{escape(ws)}</span>'
+                f"</header>"
+            )
 
-        chars = fidelity.chars
-        if chars == 0 and fidelity.depth < 2:
-            chars = 200
-        text = r.get("text", "")
-        if chars > 0:
-            text = truncate_text(text, chars)
-        parts.append(f'<div class="excerpt">{escape(text)}</div>')
-        parts.append("</article>")
+            chars = fidelity.chars
+            if chars == 0 and fidelity.depth < 2:
+                chars = 200
+            text = r.get("text", "")
+            if chars > 0:
+                text = truncate_text(text, chars)
+            parts.append(f'<div class="excerpt">{escape(text)}</div>')
+            parts.append("</article>")
 
-    parts.append("</section>")
+        parts.append("</section>")
+
+    if caveats:
+        parts.append('<aside class="caveats">')
+        for c in caveats:
+            parts.append(f'<p class="caveat">{escape(c.message)}</p>')
+        parts.append("</aside>")
+
     return "\n".join(parts)
 
 

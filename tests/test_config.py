@@ -29,7 +29,6 @@ from siftd.config import (
     get_sync_remote,
     get_sync_remotes,
     get_sync_timeouts,
-    get_tools_defaults,
     load_config,
     remove_config_list,
     remove_sync_remote,
@@ -215,13 +214,6 @@ class TestDefaultsAndLookups:
         assert get_query_defaults() == {"limit": 25, "chars": 300, "tool_chars": 80}
         _w(config_dir, '[query]\nlimit = "abc"\nchars = 200\n')
         assert "limit" not in get_query_defaults() and get_query_defaults()["chars"] == 200
-
-    def test_tools_defaults(self, config_dir):
-        assert get_tools_defaults() == {}
-        _w(config_dir, "[tools]\nlimit = 50\n")
-        assert get_tools_defaults() == {"limit": 50}
-        _w(config_dir, '[tools]\nlimit = "all"\n')
-        assert get_tools_defaults() == {}
 
     def test_tag_prefixes_defaults(self, config_dir):
         """No config file → built-in defaults are returned."""
@@ -446,16 +438,6 @@ class TestCLIConfigIntegration:
         args = argparse.Namespace(limit=None, chars=None, tool_chars=None)
         apply_config_defaults(args, get_query_defaults, self._Q)
         assert (args.limit, args.chars, args.tool_chars) == (10, 200, 120)  # fallback
-
-    def test_tools(self, config_dir):
-        _w(config_dir, "[tools]\nlimit = 50\n")
-        args = argparse.Namespace(limit=None)
-        apply_config_defaults(args, get_tools_defaults, {"limit": 20})
-        assert args.limit == 50
-        args = argparse.Namespace(limit=10)
-        apply_config_defaults(args, get_tools_defaults, {"limit": 20})
-        assert args.limit == 10
-
 
 class TestConfigPermissions:
     def test_set_config_creates_file_with_0600(self, config_dir):

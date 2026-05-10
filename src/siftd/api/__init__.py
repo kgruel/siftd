@@ -4,6 +4,7 @@ This module provides programmatic access to siftd functionality.
 CLI commands are thin wrappers over these functions.
 """
 
+from siftd.api import caveats as _caveats  # noqa: F401  — registers producers at import time
 from siftd.api.adapters import (
     AdapterInfo,
     list_adapters,
@@ -26,6 +27,7 @@ from siftd.api.conversations import (
     ToolCallSummary,
     Turn,
     get_conversation,
+    get_conversation_metadata,
     get_recent_conversation_ids,
     list_conversations,
     list_query_files,
@@ -141,12 +143,6 @@ from siftd.api.tags import (
     rename_tag,
     rename_tag_safe,
 )
-from siftd.api.tools import (
-    TagUsage,
-    WorkspaceTagUsage,
-    get_tool_tag_summary,
-    get_tool_tags_by_workspace,
-)
 
 # Search symbols are lazy-imported to avoid pulling numpy into non-search commands.
 # Access via siftd.api.SearchResult etc. triggers __getattr__ below.
@@ -241,6 +237,7 @@ __all__ = [
     "get_recent_conversation_ids",
     "list_conversations",
     "get_conversation",
+    "get_conversation_metadata",
     "resolve_entity_id",
     # events
     "EventDetail",
@@ -319,11 +316,6 @@ __all__ = [
     "SyncError",
     "SyncRemote",
     "sync_push",
-    # tools
-    "TagUsage",
-    "WorkspaceTagUsage",
-    "get_tool_tag_summary",
-    "get_tool_tags_by_workspace",
     # export
     "ExportArtifact",
     "ExportedConversation",

@@ -783,8 +783,6 @@ class TestQueries:
         assert len(q.fetch_token_coverage_by_harness(conn)) >= 1
         assert q.has_pricing_table(conn)
         assert isinstance(q.fetch_top_conversation_tags(conn), list)
-        assert isinstance(q.fetch_tool_tags_by_prefix(conn, "shell:"), list)
-        assert isinstance(q.fetch_tool_tags_by_workspace(conn, "shell:"), list)
 
     def test_ids_and_timestamps(self, populated_db):
         conn, cid = populated_db

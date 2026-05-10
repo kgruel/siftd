@@ -73,11 +73,13 @@ A single issue detected by a check.
 | Field | Type | Description |
 |-------|------|-------------|
 | `check` | `str` | Check name that produced this finding (e.g., "ingest-pending"). |
-| `severity` | `str` | One of "info", "warning", or "error". |
+| `severity` | `Literal[info, warning, error, hint]` | One of "info", "warning", "error", or "hint". |
 | `message` | `str` | Human-readable description of the issue. |
 | `fix_available` | `bool` | Whether a fix suggestion exists. |
 | `fix_command` | `str \| None` | CLI command to fix the issue (advisory only, not executed automatically). User must run this command manually. |
 | `context` | `dict \| None` | Optional structured data for programmatic consumers. |
+| `target` | `str \| None` | Optional row-scope identifier — when set, the finding refers to a specific entity (e.g., a conversation id) rather than the whole result set or DB. Used by the caveats producer registry to thread row-level annotations through dispatch into renderers. |
+| `channel` | `Literal[text, json, both]` | Controls output-format visibility. "text" findings are excluded from --json output; "json" findings are excluded from text/TTY output; "both" (default) appears everywhere. |
 
 ### Functions
 
@@ -94,7 +96,7 @@ def list_checks() -> list[CheckInfo]
 Run health checks and return findings.
 
 ```python
-def run_checks(*, checks: list[str] | None = ..., db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., deep: bool = ..., on_check_done: object | None = ...) -> list[Finding]
+def run_checks(*, checks: list[str] | None = ..., db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., deep: bool = ..., fast: bool = ..., on_check_done: object | None = ...) -> list[Finding]
 ```
 
 **Parameters:**
@@ -102,6 +104,7 @@ def run_checks(*, checks: list[str] | None = ..., db_path: pathlib._local.Path |
 - `checks`: Specific check names to run, or None for all.
 - `db_path`: Main database path. Uses default if not specified.
 - `embed_db_path`: Embeddings database path. Uses default if not specified.
+- `deep`: Include checks with cost="deep". Default False.
 
 **Returns:** List of Finding objects from all checks.
 
@@ -388,6 +391,20 @@ def get_conversation(id: str, *, db_path: pathlib._local.Path | None = ..., incl
 **Raises:**
 
 - `FileNotFoundError`: If database does not exist.
+
+### get_conversation_metadata
+
+Get conversation metadata (workspace, started_at) by ID or prefix.
+
+```python
+def get_conversation_metadata(conn: Connection, conversation_id: str) -> dict | None
+```
+
+**Parameters:**
+
+- `conn`: Database connection.
+
+**Returns:** Dict with keys 'id', 'workspace', 'started_at', or None if not found.
 
 ### resolve_entity_id
 
@@ -1015,68 +1032,6 @@ Read cached stats if the cache exists and is fresh.
 def read_stats_cache(*, db_path: pathlib._local.Path | None = ...) -> siftd.api.stats.DatabaseStats | None
 ```
 
-## Tools
-
-### Data Types
-
-### TagUsage
-
-Tag with usage count.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | `str` |  |
-| `count` | `int` |  |
-
-### WorkspaceTagUsage
-
-Per-workspace breakdown of tool tag usage.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `workspace` | `str` |  |
-| `tags` | `list[TagUsage]` |  |
-| `total` | `int` |  |
-
-### Functions
-
-### get_tool_tag_summary
-
-Get summary of tool call tags by category.
-
-```python
-def get_tool_tag_summary(*, db_path: pathlib._local.Path | None = ..., prefix: str = ..., owner: str | None = ...) -> list[TagUsage]
-```
-
-**Parameters:**
-
-- `db_path`: Path to database. Uses default if not specified.
-
-**Returns:** List of TagUsage sorted by count descending.
-
-**Raises:**
-
-- `FileNotFoundError`: If database does not exist.
-
-### get_tool_tags_by_workspace
-
-Get tool tag usage broken down by workspace.
-
-```python
-def get_tool_tags_by_workspace(*, db_path: pathlib._local.Path | None = ..., prefix: str = ..., n: int = ..., owner: str | None = ...) -> list[WorkspaceTagUsage]
-```
-
-**Parameters:**
-
-- `db_path`: Path to database. Uses default if not specified.
-- `prefix`: Tag prefix to filter by (default: "shell:").
-
-**Returns:** List of WorkspaceTagUsage sorted by total count descending.
-
-**Raises:**
-
-- `FileNotFoundError`: If database does not exist.
-
 ## Export
 
 ### Data Types
@@ -1229,6 +1184,7 @@ Result metadata for an ingest API run.
 | `scan_paths` | `list[str]` |  |
 | `stats` | `siftd.ingestion.orchestration.IngestStats \| None` |  |
 | `elapsed_ms` | `int` |  |
+| `dropin_failures` | `list[tuple[Path, str]]` |  |
 
 ### HealthStatus
 

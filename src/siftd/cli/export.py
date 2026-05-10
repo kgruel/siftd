@@ -101,7 +101,7 @@ def build_export_parser(subparsers) -> None:
     )
     p.add_argument("conversation_id", nargs="?", help="Conversation ID (prefix match)")
     p.add_argument(
-        "-n", "--last", type=int, nargs="?", const=1, metavar="N",
+        "-n", "--last", "--latest", type=int, nargs="?", const=1, metavar="N",
         help="Export N most recent sessions (default: 1 if no ID given)",
     )
 

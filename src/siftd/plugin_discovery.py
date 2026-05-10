@@ -81,6 +81,7 @@ def load_dropin_modules(
     validate: Validator,
     *,
     get_name: Callable[[ModuleType], str] | None = None,
+    failures_out: list[tuple[Path, str]] | None = None,
 ) -> list[PluginInfo]:
     """Load .py files from a directory as drop-in plugin modules.
 
@@ -117,6 +118,8 @@ def load_dropin_modules(
             spec = importlib.util.spec_from_file_location(module_name, py_file)
             if spec is None or spec.loader is None:
                 print(f"Warning: {origin}: could not create module spec", file=sys.stderr)
+                if failures_out is not None:
+                    failures_out.append((py_file, "could not create module spec"))
                 continue
 
             module = importlib.util.module_from_spec(spec)
@@ -125,6 +128,8 @@ def load_dropin_modules(
             error = validate(module, origin)
             if error:
                 print(f"Warning: {error}", file=sys.stderr)
+                if failures_out is not None:
+                    failures_out.append((py_file, error))
                 continue
 
             name = get_name(module) if get_name else py_file.stem
@@ -139,6 +144,9 @@ def load_dropin_modules(
 
         except Exception as e:
             print(f"Warning: {origin}: import failed: {e}", file=sys.stderr)
+            if failures_out is not None:
+                failures_out.append((py_file, f"import failed: {e}"))
+
 
     return plugins
 
@@ -254,6 +262,7 @@ def load_all_extensions(
     entrypoint_group: str,
     validate: Validator,
     get_name: Callable[[ModuleType], str] | None = None,
+    failures_out: list[tuple[Path, str]] | None = None,
 ) -> list[PluginInfo]:
     """Load extensions from all sources, deduplicated by name.
 
@@ -271,7 +280,7 @@ def load_all_extensions(
         Deduplicated list of PluginInfo, highest-priority source wins.
     """
     dropins = load_dropin_modules(
-        dropin_path, dropin_prefix, validate, get_name=get_name,
+        dropin_path, dropin_prefix, validate, get_name=get_name, failures_out=failures_out,
     )
     entrypoints = load_entrypoint_modules(
         entrypoint_group, validate, get_name=get_name,

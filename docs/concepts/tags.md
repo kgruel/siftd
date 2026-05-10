@@ -165,14 +165,14 @@ Every `shell.execute` tool call gets categorized:
 | `shell:file` | ls, cat, mv, cp, rm, mkdir, sed, awk |
 | `shell:package` | pip, brew, apt, cargo, uv |
 
-Additional categories include `remote`, `db`, `infra`, `ai`, `python`, `node`, and `shell`. Run `siftd tools` to see the full breakdown.
+Additional categories include `remote`, `db`, `infra`, `ai`, `python`, `node`, and `shell`. Run `siftd tag list --on tool_call --prefix shell:` to see the full breakdown.
 
 Query by shell category:
 
 ```bash
-siftd query --tool-tag shell:test     # conversations that ran tests
-siftd query --tool-tag shell:vcs      # conversations that used git
-siftd tools --by-workspace            # see patterns per project
+siftd query --tool-tag shell:test                                # conversations that ran tests
+siftd query --tool-tag shell:vcs                                 # conversations that used git
+siftd tag list --on tool_call --prefix shell: --by-workspace     # see patterns per project
 ```
 
 ### Derivative conversations

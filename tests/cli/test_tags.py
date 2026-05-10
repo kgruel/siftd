@@ -3,10 +3,28 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import siftd.cli.tags as tags_cli
 from siftd.cli import main
 from siftd.cli.tags import _parse_tag_args
 from siftd.storage.sqlite import open_database
+
+
+def _conversation_has_tag(db: Path, conversation_id: str, tag_name: str) -> bool:
+    """Return True when a conversation has a named tag assignment."""
+    conn = open_database(db)
+    try:
+        row = conn.execute(
+            "SELECT 1 "
+            "FROM tag_assignments ta JOIN tags t ON t.id = ta.tag_id "
+            "WHERE ta.target_kind = 'conversation' AND ta.target_id = ? AND t.name = ?",
+            (conversation_id, tag_name),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
 
 # ---------------------------------------------------------------------------
 # _parse_tag_args
@@ -120,6 +138,35 @@ class TestCmdTag:
         out = capsys.readouterr().out
         assert "Applied tag 'multi-a'" in out
         assert "Applied tag 'multi-b'" in out
+
+    def test_tag_latest_alias_single(self, test_db, capsys):
+        """--latest as alias for --last (single conversation)."""
+        rc = main(["--db", str(test_db), "tag", "--latest", "latest-tag"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Applied tag 'latest-tag'" in out
+
+    def test_tag_latest_alias_n(self, test_db, capsys):
+        """--latest N as alias for --last N."""
+        rc = main(["--db", str(test_db), "tag", "--latest", "2", "batch-latest"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "2 conversation" in out
+        assert "Applied tag 'batch-latest'" in out
+
+    def test_tag_latest_and_last_both_work(self, test_db, capsys):
+        """Both --latest and --last apply tags successfully (identical argument parsing)."""
+        # Tag with --last
+        rc1 = main(["--db", str(test_db), "tag", "--last", "2", "last-batch"])
+        assert rc1 == 0
+        out1 = capsys.readouterr().out
+        assert "2 conversation" in out1
+
+        # Tag with --latest
+        rc2 = main(["--db", str(test_db), "tag", "--latest", "2", "latest-batch"])
+        assert rc2 == 0
+        out2 = capsys.readouterr().out
+        assert "2 conversation" in out2
 
     def test_tag_last_n_multiple_tags(self, test_db, capsys):
         """--last N with multiple tags."""
@@ -254,6 +301,103 @@ class TestCmdTag:
         rc = main(["--db", str(test_db), "tag", "--current", "fallback-tag"])
         assert rc == 0
         assert "Applied tag 'fallback-tag'" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# tag apply / tag remove subcommands
+# ---------------------------------------------------------------------------
+
+
+class TestCmdTagApplyRemoveSubcommands:
+    def test_apply_subcommand(self, test_db, capsys):
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+
+        rc = main(["--db", str(test_db), "tag", "apply", conv_id, "apply-tag"])
+        assert rc == 0
+        assert "Applied tag 'apply-tag'" in capsys.readouterr().out
+
+    def test_remove_subcommand(self, test_db, capsys):
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+
+        main(["--db", str(test_db), "tag", conv_id, "remove-me"])
+        capsys.readouterr()
+
+        rc = main(["--db", str(test_db), "tag", "remove", conv_id, "remove-me"])
+        assert rc == 0
+        assert "Removed tag 'remove-me'" in capsys.readouterr().out
+
+    def test_apply_subcommand_last(self, test_db, capsys):
+        rc = main(["--db", str(test_db), "tag", "apply", "--last", "apply-last-tag"])
+        assert rc == 0
+        assert "Applied tag 'apply-last-tag'" in capsys.readouterr().out
+
+    def test_remove_subcommand_last(self, test_db, capsys):
+        main(["--db", str(test_db), "tag", "--last", "remove-last-tag"])
+        capsys.readouterr()
+
+        rc = main(["--db", str(test_db), "tag", "remove", "--last", "remove-last-tag"])
+        assert rc == 0
+        assert "Removed tag 'remove-last-tag'" in capsys.readouterr().out
+
+    def test_apply_and_legacy_produce_identical_state(self, test_db, capsys):
+        conn = open_database(test_db)
+        ids = [r["id"] for r in conn.execute("SELECT id FROM conversations LIMIT 2").fetchall()]
+        conn.close()
+
+        tag_name = "apply-state-parity"
+
+        assert main(["--db", str(test_db), "tag", ids[0], tag_name]) == 0
+        capsys.readouterr()
+        assert main(["--db", str(test_db), "tag", "apply", ids[1], tag_name]) == 0
+        capsys.readouterr()
+
+        assert _conversation_has_tag(test_db, ids[0], tag_name)
+        assert _conversation_has_tag(test_db, ids[1], tag_name)
+
+    def test_remove_and_legacy_produce_identical_state(self, test_db, capsys):
+        conn = open_database(test_db)
+        ids = [r["id"] for r in conn.execute("SELECT id FROM conversations LIMIT 2").fetchall()]
+        conn.close()
+
+        tag_name = "remove-state-parity"
+
+        assert main(["--db", str(test_db), "tag", ids[0], tag_name]) == 0
+        assert main(["--db", str(test_db), "tag", ids[1], tag_name]) == 0
+        capsys.readouterr()
+        assert _conversation_has_tag(test_db, ids[0], tag_name)
+        assert _conversation_has_tag(test_db, ids[1], tag_name)
+
+        assert main(["--db", str(test_db), "tag", "--remove", ids[0], tag_name]) == 0
+        assert main(["--db", str(test_db), "tag", "remove", ids[1], tag_name]) == 0
+        capsys.readouterr()
+        assert not _conversation_has_tag(test_db, ids[0], tag_name)
+        assert not _conversation_has_tag(test_db, ids[1], tag_name)
+
+    def test_apply_subcommand_already_applied(self, test_db, capsys):
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+
+        main(["--db", str(test_db), "tag", "apply", conv_id, "dupe-apply"])
+        capsys.readouterr()
+
+        rc = main(["--db", str(test_db), "tag", "apply", conv_id, "dupe-apply"])
+        assert rc == 0
+        assert "already applied" in capsys.readouterr().out
+
+    def test_remove_subcommand_nonexistent_tag(self, test_db, capsys):
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+
+        rc = main(["--db", str(test_db), "tag", "remove", conv_id, "never-existed"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "not found" in out.lower() or "not applied" in out.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +559,29 @@ class TestSubcommandDisambiguation:
         assert rc == 1  # fails due to missing args, but dispatched correctly
         assert "Usage:" in capsys.readouterr().out
 
+    def test_apply_dispatches_to_subcommand(self, test_db, capsys):
+        """'apply' is recognized as a subcommand, not a conversation ID."""
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+
+        rc = main(["--db", str(test_db), "tag", "apply", conv_id, "disambig-tag"])
+        assert rc == 0
+        assert "Applied tag" in capsys.readouterr().out
+
+    def test_remove_dispatches_to_subcommand(self, test_db, capsys):
+        """'remove' is recognized as a subcommand, not a conversation ID."""
+        conn = open_database(test_db)
+        conv_id = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+        conn.close()
+
+        main(["--db", str(test_db), "tag", conv_id, "disambig-rm"])
+        capsys.readouterr()
+
+        rc = main(["--db", str(test_db), "tag", "remove", conv_id, "disambig-rm"])
+        assert rc == 0
+        assert "Removed tag" in capsys.readouterr().out
+
 
 class TestTagsEdgeBranches:
     def test_detect_current_session_fallback_and_exception(self, tmp_path, monkeypatch):
@@ -572,3 +739,162 @@ class TestTagsEdgeBranches:
         monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
         args3 = SimpleNamespace(positional=["list"], since="2024-01-01", before=None, prefix=None)
         assert tags_cli._cmd_tag_list(args3, Path(test_db)) == 0
+
+
+class TestCmdTagListByWorkspace:
+    """Tests for siftd tag list --by-workspace."""
+
+    def test_basic_output(self, test_db_with_tool_tags, capsys):
+        rc = main(["--db", str(test_db_with_tool_tags), "tag", "list", "--by-workspace"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "/test/project" in out
+        assert "/other/project" in out
+        assert "shell:test" in out
+        assert "shell:vcs" in out
+
+    def test_missing_db(self, tmp_path, capsys):
+        rc = main(["--db", str(tmp_path / "missing.db"), "tag", "list", "--by-workspace"])
+        assert rc == 1
+        assert "not found" in capsys.readouterr().out
+
+    def test_json_output(self, test_db_with_tool_tags, capsys):
+        import json
+        rc = main(["--db", str(test_db_with_tool_tags), "tag", "list", "--by-workspace", "--json"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        data = json.loads(out)
+        assert "workspaces" in data
+        assert len(data["workspaces"]) == 2
+        workspaces_by_path = {w["workspace"]: w for w in data["workspaces"]}
+        assert "/test/project" in workspaces_by_path
+        assert "/other/project" in workspaces_by_path
+        test_ws = workspaces_by_path["/test/project"]
+        assert test_ws["total"] == 2
+        tag_names = {t["name"] for t in test_ws["tags"]}
+        assert "shell:test" in tag_names
+        assert "shell:vcs" in tag_names
+
+    def test_compose_with_on_kind(self, test_db_with_tool_tags, capsys):
+        rc = main(["--db", str(test_db_with_tool_tags), "tag", "list", "--by-workspace", "--on", "tool_call"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "shell:test" in out
+        assert "tool_calls" in out
+
+    def test_compose_with_prefix(self, test_db_with_tool_tags, capsys):
+        rc = main(["--db", str(test_db_with_tool_tags), "tag", "list", "--by-workspace", "--prefix", "shell:"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "shell:test" in out
+        assert "shell:vcs" in out
+
+    def test_compose_with_workspace_filter(self, test_db_with_tool_tags, capsys):
+        rc = main(["--db", str(test_db_with_tool_tags), "tag", "list", "--by-workspace", "-w", "/test/"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "/test/project" in out
+        assert "/other/project" not in out
+
+    def test_compose_prefix_no_match(self, test_db_with_tool_tags, capsys):
+        rc = main(["--db", str(test_db_with_tool_tags), "tag", "list", "--by-workspace", "--prefix", "zzz:"])
+        assert rc == 0
+        assert "No tag data found" in capsys.readouterr().out
+
+    def test_compose_on_and_prefix(self, test_db_with_tool_tags, capsys):
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace", "--on", "tool_call", "--prefix", "shell:",
+        ])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "/test/project" in out
+
+    def test_json_schema_structure(self, test_db_with_tool_tags, capsys):
+        import json
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace", "--json", "--on", "tool_call", "--prefix", "shell:",
+        ])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        ws = data["workspaces"][0]
+        assert "workspace" in ws
+        assert "total" in ws
+        assert "tags" in ws
+        tag = ws["tags"][0]
+        assert "name" in tag
+        assert "count" in tag
+        assert "target_kind" in tag
+
+    def test_workspaces_ranked_by_total_desc(self, test_db_with_tool_tags, capsys):
+        """Top workspace by total comes first (fixture: /test/project=2, /other/project=1)."""
+        import json
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace", "--json",
+        ])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["workspaces"][0]["workspace"] == "/test/project"
+        assert data["workspaces"][0]["total"] == 2
+        assert data["workspaces"][1]["workspace"] == "/other/project"
+
+    def test_compose_with_limit_cap(self, test_db_with_tool_tags, capsys):
+        """--limit caps the number of workspaces returned."""
+        import json
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace", "--json", "--limit", "1",
+        ])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert len(data["workspaces"]) == 1
+        assert data["workspaces"][0]["workspace"] == "/test/project"
+
+    def test_compose_with_all_tags(self, test_db_with_tool_tags, capsys):
+        """--all-tags restricts to entities carrying every listed tag."""
+        import json
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace", "--json", "--all-tags", "shell:test",
+        ])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        # Two tool_calls carry shell:test (tc1 in /test/project, tc3 in /other/project).
+        ws_paths = {w["workspace"] for w in data["workspaces"]}
+        assert ws_paths == {"/test/project", "/other/project"}
+        # Each workspace should report exactly one shell:test count.
+        for w in data["workspaces"]:
+            assert w["total"] == 1
+            assert any(t["name"] == "shell:test" for t in w["tags"])
+
+    def test_compose_with_all_tags_no_match(self, test_db_with_tool_tags, capsys):
+        """--all-tags with two tags no entity carries returns empty."""
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace",
+            "--all-tags", "shell:test", "--all-tags", "shell:vcs",
+        ])
+        assert rc == 0
+        # No tool_call carries both tags in fixture.
+        assert "No tag data found" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "extra_args",
+        [
+            ["--since", "2024-01-01"],
+            ["--before", "2025-01-01"],
+            ["--no-tag", "shell:test"],
+            ["-l", "shell:test"],
+            ["-m", "claude"],
+        ],
+    )
+    def test_rejects_non_composing_flags(self, test_db_with_tool_tags, capsys, extra_args):
+        """Non-composing filters error with exit 2."""
+        rc = main([
+            "--db", str(test_db_with_tool_tags), "tag", "list",
+            "--by-workspace", *extra_args,
+        ])
+        assert rc == 2
+        assert "does not support" in capsys.readouterr().err

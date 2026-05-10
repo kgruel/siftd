@@ -2,15 +2,13 @@
 
 from types import SimpleNamespace
 
-from siftd.cli.query import _query_detail, _query_sql, cmd_query, cmd_tools
+from siftd.cli.query import _query_detail, _query_sql, cmd_query
 
 
 def _args(**kwargs):
     base = {
         "db": None,
         "json": False,
-        "by_workspace": False,
-        "prefix": None,
         "limit": 10,
         "conversation_id": None,
         "sql_name": None,
@@ -27,6 +25,7 @@ def _args(**kwargs):
         "oldest": False,
         "verbose": False,
         "stats": False,
+        "no_hints": False,
         "exchanges": None,
         "brief": False,
         "summary": False,
@@ -38,46 +37,6 @@ def _args(**kwargs):
     }
     base.update(kwargs)
     return SimpleNamespace(**base)
-
-
-def test_cmd_tools_serve_and_local_branches(monkeypatch, capsys, tmp_path):
-    # serve summary path
-    monkeypatch.setattr(
-        "siftd.serve.delegation.try_serve",
-        lambda op: {"total": 2, "tags": [{"name": "shell:test", "count": 2, "percentage": 100}]},
-    )
-    assert cmd_tools(_args(json=False, db=str(tmp_path / "db.sqlite"))) == 0
-    assert cmd_tools(_args(json=True, db=str(tmp_path / "db.sqlite"))) == 0
-
-    # serve by-workspace path
-    monkeypatch.setattr(
-        "siftd.serve.delegation.try_serve",
-        lambda op: {"workspaces": [{"workspace": "/w", "total": 1, "tags": [{"name": "shell:git", "count": 1}]}]},
-    )
-    assert cmd_tools(_args(by_workspace=True, db=str(tmp_path / "db.sqlite"))) == 0
-
-    # local FileNotFound (json and non-json)
-    monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: (_ for _ in ()).throw(FileNotFoundError("missing")))
-    assert cmd_tools(_args(json=True, db=str(tmp_path / "db.sqlite"))) == 0
-    assert cmd_tools(_args(json=False, db=str(tmp_path / "db.sqlite"))) == 1
-
-    # by-workspace local empty and json output
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
-    assert cmd_tools(_args(by_workspace=True, json=False, db=str(tmp_path / "db.sqlite"))) == 0
-    assert cmd_tools(_args(by_workspace=True, json=True, db=str(tmp_path / "db.sqlite"))) == 0
-
-    ws = [SimpleNamespace(workspace="/w", total=2, tags=[SimpleNamespace(name="shell:git", count=2)])]
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: ws)
-    assert cmd_tools(_args(by_workspace=True, json=True, db=str(tmp_path / "db.sqlite"))) == 0
-
-    # summary local empty then json render
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
-    assert cmd_tools(_args(json=False, db=str(tmp_path / "db.sqlite"))) == 0
-
-    tags = [SimpleNamespace(name="shell:test", count=3)]
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: tags)
-    assert cmd_tools(_args(json=True, db=str(tmp_path / "db.sqlite"))) == 0
 
 
 def test_query_detail_branches(monkeypatch, capsys, tmp_path):
@@ -167,11 +126,22 @@ def test_query_sql_and_cmd_query_list_branches(monkeypatch, capsys, tmp_path):
         "siftd.serve.delegation.try_serve",
         lambda op: {"conversations": [{"id": "c1", "workspace": "/w", "model": "m", "started_at": "2024", "prompts": 1, "responses": 1, "tokens": 5, "cost": None, "tags": []}]},
     )
-    monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: SimpleNamespace(render_list=lambda convs, fidelity: "LIST"))
+    monkeypatch.setattr(
+        "siftd.output.format_registry.select_format",
+        lambda **k: SimpleNamespace(render_list=lambda convs, fidelity, **ctx: "LIST"),
+    )
     monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
+    monkeypatch.setattr(
+        "siftd.api.stats.get_usage_summary",
+        lambda db_path=None: SimpleNamespace(total_conversations=500, total_input_tokens=1000, total_output_tokens=500, total_cost=0.0),
+    )
     assert cmd_query(_args(stats=True, db=str(tmp_path / "db.sqlite"))) == 0
 
     class _F:
+        # Depth=0 keeps caveat producers' applies_to predicates False so
+        # they don't run against the SimpleNamespace fixtures below.
+        depth = 0
+
         def with_depth(self, d):
             return self
 
@@ -202,3 +172,148 @@ def test_query_sql_and_cmd_query_list_branches(monkeypatch, capsys, tmp_path):
     assert cmd_query(_args(workspace="/w", db=str(tmp_path / "db.sqlite"))) == 0
     assert cmd_query(_args(tool="bash", db=str(tmp_path / "db.sqlite"))) == 0
     assert cmd_query(_args(db=str(tmp_path / "db.sqlite"))) == 0
+
+
+def test_stats_corpus_aware(monkeypatch, capsys, tmp_path):
+    """--stats line shows view count / corpus total and token comparison."""
+    view_convs = [
+        SimpleNamespace(prompt_count=1, response_count=1, total_tokens=500),
+        SimpleNamespace(prompt_count=2, response_count=2, total_tokens=1000),
+    ]
+    monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: view_convs)
+    monkeypatch.setattr(
+        "siftd.output.format_registry.select_format",
+        lambda **k: SimpleNamespace(render_list=lambda convs, fidelity, **ctx: ""),
+    )
+    monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
+    monkeypatch.setattr(
+        "siftd.api.stats.get_usage_summary",
+        lambda db_path=None: SimpleNamespace(
+            total_conversations=12438,
+            total_input_tokens=100_000_000,
+            total_output_tokens=42_000_000,
+            total_cost=0.0,
+        ),
+    )
+
+    class _F:
+        depth = 0
+
+        def with_depth(self, d):
+            return self
+
+    monkeypatch.setattr("siftd.cli.query.fidelity_from_args", lambda args: _F())
+
+    rc = cmd_query(_args(stats=True, db=str(tmp_path / "db.sqlite")))
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    # view count / corpus count
+    assert "View: 2 / 12,438 corpus" in out
+    # token totals present (exact formatting via fmt_tokens)
+    assert "corpus" in out
+    assert "view tokens:" in out
+
+
+def test_stats_corpus_aware_workspace_filter(monkeypatch, capsys, tmp_path):
+    """--stats with -w shows filtered view count against unfiltered corpus."""
+    view_convs = [SimpleNamespace(prompt_count=1, response_count=1, total_tokens=500)]
+    monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: view_convs)
+    monkeypatch.setattr(
+        "siftd.output.format_registry.select_format",
+        lambda **k: SimpleNamespace(render_list=lambda convs, fidelity, **ctx: ""),
+    )
+    monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
+    monkeypatch.setattr(
+        "siftd.api.stats.get_usage_summary",
+        lambda db_path=None: SimpleNamespace(
+            total_conversations=12438,
+            total_input_tokens=100_000_000,
+            total_output_tokens=42_000_000,
+            total_cost=0.0,
+        ),
+    )
+
+    class _F:
+        depth = 0
+
+        def with_depth(self, d):
+            return self
+
+    monkeypatch.setattr("siftd.cli.query.fidelity_from_args", lambda args: _F())
+
+    rc = cmd_query(_args(stats=True, workspace="/w", db=str(tmp_path / "db.sqlite")))
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    assert "View: 1 / 12,438 corpus" in out
+    assert "view tokens:" in out
+
+
+def test_stats_corpus_aware_empty_view_shows_stats(monkeypatch, capsys, tmp_path):
+    """--stats still prints view/corpus comparison when filtered view is empty."""
+    monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
+    monkeypatch.setattr(
+        "siftd.api.stats.get_usage_summary",
+        lambda db_path=None: SimpleNamespace(
+            total_conversations=12438,
+            total_input_tokens=100_000_000,
+            total_output_tokens=42_000_000,
+            total_cost=0.0,
+        ),
+    )
+
+    rc = cmd_query(_args(stats=True, workspace="/w", db=str(tmp_path / "db.sqlite")))
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    assert "No conversations found." in out
+    assert "View: 0 / 12,438 corpus" in out
+    assert "view tokens: 0 /" in out
+
+
+def test_no_hints_suppresses_hint_caveats(monkeypatch, capsys, tmp_path):
+    """--no-hints drops severity="hint" caveats before render."""
+    from siftd.doctor.checks import Finding
+
+    hint_finding = Finding(check="c", severity="hint", message="hint-msg", fix_available=False)
+    info_finding = Finding(check="d", severity="info", message="info-msg", fix_available=False)
+
+    class _F:
+        depth = 0
+
+        def with_depth(self, d):
+            return self
+
+    monkeypatch.setattr("siftd.cli.query.fidelity_from_args", lambda args: _F())
+    monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
+
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "siftd.api.dispatch.execute_for_render",
+        lambda op: (
+            [SimpleNamespace(prompt_count=1, response_count=1, total_tokens=3)],
+            [hint_finding, info_finding],
+        ),
+    )
+
+    captured_caveats = []
+
+    def _mock_render_list(convs, fidelity, **ctx):
+        captured_caveats.extend(ctx.get("caveats", []))
+        return ""
+
+    monkeypatch.setattr(
+        "siftd.output.format_registry.select_format",
+        lambda **k: SimpleNamespace(render_list=_mock_render_list),
+    )
+    monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
+
+    rc = cmd_query(_args(no_hints=True, db=str(tmp_path / "db.sqlite")))
+    assert rc == 0
+    assert all(f.severity != "hint" for f in captured_caveats)
+    assert any(f.severity == "info" for f in captured_caveats)

@@ -34,6 +34,21 @@ def pytest_configure(config: pytest.Config) -> None:
     ver = f"py{sys.version_info.major}{sys.version_info.minor}"
     config.option.snapshot_dirname = f"__snapshots__/{ver}"
 
+
+@pytest.fixture(autouse=True)
+def _reset_caveat_producers():
+    """Snapshot and restore the caveat producer registry around each test.
+
+    `_producers` is module-scope and mutated at import time by
+    `@caveat_producer`. Without this, tests that register their own
+    producers leak into siblings and import order becomes load-bearing.
+    """
+    from siftd.api import caveats as _caveats_mod
+
+    snapshot = list(_caveats_mod._producers)
+    yield
+    _caveats_mod._producers[:] = snapshot
+
 from siftd.domain.models import (
     ContentBlock,
     Conversation,

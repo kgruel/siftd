@@ -1,14 +1,48 @@
 # serializer version: 1
+# name: TestHelpSnapshots.test_db_receive_help
+  '''
+  usage: siftd db receive [-h] [--no-fts] [--stage] [--no-preflight] [--dry-run]
+  
+  options:
+    -h, --help      show this help message and exit
+    --no-fts        Skip FTS5 index rebuild
+    --stage         Stage payload in inbox for deferred merge (fast ACK)
+    --no-preflight  Skip structural integrity checks on source database
+    --dry-run       Preview incoming payload without writing to database
+  
+  Designed for SSH pipe usage — reads a slice DB from stdin and
+  creates or merges it into the target database.
+  
+  examples:
+    ssh host siftd --db /path/team.db db receive < slice.db
+    ssh host siftd --db /path/team.db db receive --no-fts < slice.db
+  
+  '''
+# ---
+# name: TestHelpSnapshots.test_db_restore_help
+  '''
+  usage: siftd db restore [-h] [--force] [--dry-run] input
+  
+  positional arguments:
+    input       Backup file path
+  
+  options:
+    -h, --help  show this help message and exit
+    --force     Overwrite existing database
+    --dry-run   Preview restore without modifying database
+  
+  '''
+# ---
 # name: TestHelpSnapshots.test_root_help
   '''
   usage: siftd [-h] [--version] [--db PATH]
-               {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
+               {register,session-id,config,adapters,db,tag,id,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
                ...
   
   Aggregate and query LLM conversation logs
   
   positional arguments:
-    {register,session-id,config,adapters,db,tag,tools,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
+    {register,session-id,config,adapters,db,tag,id,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
       register            Register an active session for live tagging
       session-id          Print the session ID for the current workspace
       config              View or modify config settings
@@ -17,7 +51,7 @@
                           restore, vacuum, slice, merge, send, receive, remote,
                           push, pull)
       tag                 Manage tags: apply, remove, list, rename, delete
-      tools               Summarize tool usage by category
+      id                  Classify a ULID and show its type and context
       query               List and filter conversations by metadata
       ingest              Ingest logs from all sources
       backfill            Backfill derived data from existing records
@@ -123,10 +157,72 @@
   
   '''
 # ---
+# name: TestHelpSnapshots.test_subcommand_help[db]
+  '''
+  usage: siftd db [-h]
+                  {info,schema-version,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull}
+                  ...
+  
+  positional arguments:
+    {info,schema-version,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull}
+      info                Show database file metadata and schema info
+      schema-version      Show migration triage info: current version, target,
+                          pending migrations
+      stats               Show database statistics
+      workspaces          List workspaces with conversation counts
+      path                Show XDG paths
+      vacuum              Compact database and optimize indexes
+      backup              Create a consistent online backup
+      restore             Restore database from a backup file
+      slice               Export filtered conversations into a standalone
+                          database
+      merge               Merge an external database (slice) into the main
+                          database
+      receive             Receive a database from stdin and create-or-merge into
+                          the local database
+      process             Merge staged inbox payloads into the database
+      sync-status         Report sync capabilities and inbox status (JSON)
+      send                Slice the database and write binary SQLite to stdout
+      remote              Manage sync remotes (add, list, remove)
+      push                Push conversations to a sync remote
+      pull                Pull conversations from a sync remote
+  
+  options:
+    -h, --help            show this help message and exit
+  
+  Container-level operations on the siftd database.
+  
+  Inspection:
+    siftd db info                          # database file metadata
+    siftd db schema-version                # migration triage info
+    siftd db stats                         # full statistics
+    siftd db workspaces                    # list workspaces
+    siftd db path                          # show XDG paths
+    siftd db sync-status                   # sync capabilities and inbox state
+  
+  Maintenance:
+    siftd db vacuum                        # compact database
+    siftd db backup /tmp/siftd.db          # online backup
+    siftd db restore /tmp/siftd.db         # restore from backup
+  
+  Sync:
+    siftd db slice out.db -w project       # export filtered subset
+    siftd db merge laptop-slice.db         # merge slice into main DB
+    siftd db send > slice.db               # send via stdout (SSH pipe)
+    siftd db push alcove                   # push delta to remote
+    siftd db pull alcove                   # pull delta from remote
+  
+  Sync remotes:
+    siftd db remote add alcove host:path   # register sync remote
+    siftd db receive < slice.db            # receive via stdin (SSH pipe)
+    siftd db process                       # process staged inbox payloads
+  
+  '''
+# ---
 # name: TestHelpSnapshots.test_subcommand_help[doctor]
   '''
   usage: siftd doctor [-h] [--json] [--strict] [--pending-tags] [--deep]
-                      [--blob-refcount] [--triggers]
+                      [--fast] [--blob-refcount] [--triggers] [--no-hints]
                       [subcommand ...]
   
   positional arguments:
@@ -139,9 +235,11 @@
     --pending-tags   Clean up stale sessions and orphaned pending tags (use with
                      'fix')
     --deep           Include deep integrity checks (slower).
+    --fast           Run only fast checks (skips slow and deep).
     --blob-refcount  Re-derive blob ref counts and sweep orphans (use with
                      'fix').
     --triggers       Recreate blob ref-count triggers (use with 'fix').
+    --no-hints       Suppress hint-severity findings.
   
   examples:
     siftd doctor                          # run all checks
@@ -178,7 +276,8 @@
   
   options:
     -h, --help            show this help message and exit
-    -n [N], --last [N]    Export N most recent sessions (default: 1 if no ID
+    -n [N], --last [N], --latest [N]
+                          Export N most recent sessions (default: 1 if no ID
                           given)
   
   filtering:
@@ -220,6 +319,23 @@
     siftd export --last --brief           # condensed output
     siftd export --last --json            # structured JSON output
     siftd export --last -o context.md     # write to file
+  
+  '''
+# ---
+# name: TestHelpSnapshots.test_subcommand_help[id]
+  '''
+  usage: siftd id [-h] [--json] ulid
+  
+  positional arguments:
+    ulid        ULID or ULID prefix to classify
+  
+  options:
+    -h, --help  show this help message and exit
+    --json      Output as JSON
+  
+  examples:
+    siftd id 01HX4G7K9                   # identify a conversation or event
+    siftd id 01HX4G7K9 --json            # structured classification
   
   '''
 # ---
@@ -287,8 +403,9 @@
   '''
   usage: siftd peek [-h] [-w SUBSTR] [--branch SUBSTR] [--all] [-n N]
                     [--exchanges N] [-b] [-F] [--chars N] [--thinking] [--tools]
-                    [-f] [--tail] [--tail-lines N] [--json] [--main-only]
-                    [--children ID] [--last-response] [--last-prompt]
+                    [-f] [--timeout SECONDS] [--tail] [--tail-lines N] [--json]
+                    [--main-only] [--children ID] [--last-response]
+                    [--last-prompt]
                     [session_id]
   
   positional arguments:
@@ -309,6 +426,8 @@
                           available
     --tools               Show tool inputs/results inline when available
     -f, --follow          Follow a live session in real time (like tail -f)
+    --timeout SECONDS     Exit after SECONDS of wall-clock time (for use with
+                          --follow)
     --tail                Raw JSONL tail (last 20 records)
     --tail-lines N        Number of records for --tail (default: 20)
     --json                Output as structured JSON
@@ -353,8 +472,8 @@
   usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                      [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
                      [-t NAME] [--tool-tag NAME] [--owner USER] [-n LIMIT] [-v]
-                     [--oldest] [--json] [--stats] [--exchanges N] [-b]
-                     [--summary] [-F] [--chars N] [--thinking]
+                     [--oldest] [--json] [--stats] [--no-hints] [--exchanges N]
+                     [-b] [--summary] [-F] [--chars N] [--thinking]
                      [--tools [FILTER]] [--tool-chars N] [--neighbors]
                      [--var KEY=VALUE]
                      [conversation_id] [sql_name]
@@ -395,6 +514,7 @@
     --oldest              Sort by oldest first (default: newest first)
     --json                Output as JSON array
     --stats               Show summary totals after list
+    --no-hints            Suppress hint-severity caveat findings.
   
   detail view:
     --exchanges N         Number of turns to show (default: all)
@@ -415,6 +535,9 @@
   
   List and filter conversations by metadata (workspace, model, date, tags).
   For semantic content search, use: siftd search <query>
+  
+  Conversation IDs displayed in lists are truncated to 8 characters; use the full 26-character ID
+  to query a specific conversation.
   
   examples:
     siftd query                         # list recent conversations
@@ -627,20 +750,22 @@
   '''
   usage: siftd tag [-h] [-n [N]] [-r] [--session ID] [--current]
                    [--exchange INDEX | --last-prompt | --last-response | --last-exchange | --last-tool-call]
-                   [--prefix PREFIX] [--limit LIMIT] [--force] [-w SUBSTR]
-                   [-m NAME] [--since DATE] [--before DATE] [-l NAME]
-                   [--all-tags NAME] [--no-tag NAME] [--on KIND] [--owner USER]
+                   [--prefix PREFIX] [--limit LIMIT] [--force] [--by-workspace]
+                   [--json] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
+                   [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
+                   [--owner USER]
                    [positional ...]
   
   Apply, remove, list, rename, or delete tags.
   
   positional arguments:
-    positional            [entity_type] entity_id tag [tag2 ...] | list | rename
-                          | delete
+    positional            [entity_type] entity_id tag [tag2 ...] | apply |
+                          remove | list | rename | delete
   
   options:
     -h, --help            show this help message and exit
-    -n [N], --last [N]    Tag N most recent conversations (default: 1 if flag
+    -n [N], --last [N], --latest [N]
+                          Tag N most recent conversations (default: 1 if flag
                           used without N)
     -r, --remove          Remove tag instead of applying
     --session ID          Queue tag for a live session (applied at ingest)
@@ -655,10 +780,16 @@
     --last-tool-call      Tag the last tool_call of the session (requires
                           --session/--current)
     --prefix PREFIX       Filter tag list by prefix (use with 'tag list')
-    --limit LIMIT         Max conversations in drill-down (default: 10, use with
-                          'tag list <name>')
+    --limit LIMIT         Result cap (drill-down: default 10, --by-workspace:
+                          default 20 workspaces)
     --force               Force delete even if tag has associations (use with
                           'tag delete')
+    --by-workspace        Group tag counts by workspace (use with 'tag list').
+                          Counts only event-backed tags (tool_call, prompt,
+                          response, exchange); conversation-level tags are
+                          excluded. Composes with --on, --prefix, -w, --owner,
+                          --all-tags, --limit only.
+    --json                Output as JSON (use with 'tag list --by-workspace')
   
   filtering:
     -w SUBSTR, --workspace SUBSTR
@@ -692,6 +823,10 @@
     siftd tag -r workspace 01HY... proj      # remove from workspace
   
   subcommands:
+    siftd tag apply 01HX... important         # explicit apply (same as positional)
+    siftd tag apply --last important          # apply to most recent via subcommand
+    siftd tag remove 01HX... important        # explicit remove (same as --remove)
+    siftd tag remove --last important         # remove from most recent via subcommand
     siftd tag list                            # list all tags
     siftd tag list --prefix research:         # filter by prefix
     siftd tag list research:auth              # show conversations with tag
@@ -703,25 +838,6 @@
     siftd tag --current decision:auth              # auto-detect session, queue tag
     siftd tag --session abc123 decision:auth       # queue tag for session
     siftd tag --session abc123 --exchange 5 key    # queue tag for exchange 5
-  
-  '''
-# ---
-# name: TestHelpSnapshots.test_subcommand_help[tools]
-  '''
-  usage: siftd tools [-h] [--by-workspace] [--prefix PREFIX] [-n LIMIT] [--json]
-  
-  options:
-    -h, --help            show this help message and exit
-    --by-workspace        Show breakdown by workspace
-    --prefix PREFIX       Tag prefix to filter (default: shell:)
-    -n LIMIT, --limit LIMIT
-                          Max workspaces for --by-workspace (default: 20)
-    --json                Output as JSON
-  
-  examples:
-    siftd tools                    # shell command categories summary
-    siftd tools --by-workspace     # breakdown by workspace
-    siftd tools --prefix shell:    # filter by tag prefix
   
   '''
 # ---

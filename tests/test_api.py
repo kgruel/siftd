@@ -10,13 +10,9 @@ from siftd.api import (
     ConversationSummary,
     CostCoverage,
     DatabaseStats,
-    TagUsage,
-    WorkspaceTagUsage,
     get_conversation,
     get_cost_coverage,
     get_stats,
-    get_tool_tag_summary,
-    get_tool_tags_by_workspace,
     list_conversations,
 )
 from siftd.api.conversations import (
@@ -817,61 +813,6 @@ class TestDebugIdsBackcompat:
         # --debug-ids is suppressed in --help but still accepts and sets the flag
         args = root.parse_args(["search", "q", "--debug-ids"])
         assert args.debug_ids is True
-
-
-class TestGetToolTagSummary:
-    def test_returns_tag_counts(self, test_db_with_tool_tags):
-        tags = get_tool_tag_summary(db_path=test_db_with_tool_tags)
-
-        assert len(tags) == 2
-        assert all(isinstance(t, TagUsage) for t in tags)
-
-    def test_sorted_by_count_descending(self, test_db_with_tool_tags):
-        tags = get_tool_tag_summary(db_path=test_db_with_tool_tags)
-
-        assert tags[0].name == "shell:test"
-        assert tags[0].count == 2
-        assert tags[1].name == "shell:vcs"
-        assert tags[1].count == 1
-
-    def test_respects_prefix_filter(self, test_db_with_tool_tags):
-        tags = get_tool_tag_summary(db_path=test_db_with_tool_tags, prefix="other:")
-
-        assert len(tags) == 0
-
-    def test_raises_for_missing_db(self, tmp_path):
-        with pytest.raises(FileNotFoundError):
-            get_tool_tag_summary(db_path=tmp_path / "nonexistent.db")
-
-
-class TestGetToolTagsByWorkspace:
-    def test_returns_workspace_breakdown(self, test_db_with_tool_tags):
-        results = get_tool_tags_by_workspace(db_path=test_db_with_tool_tags)
-
-        assert len(results) == 2
-        assert all(isinstance(r, WorkspaceTagUsage) for r in results)
-
-    def test_sorted_by_total_descending(self, test_db_with_tool_tags):
-        results = get_tool_tags_by_workspace(db_path=test_db_with_tool_tags)
-
-        assert results[0].total >= results[1].total
-
-    def test_includes_tag_breakdown(self, test_db_with_tool_tags):
-        results = get_tool_tags_by_workspace(db_path=test_db_with_tool_tags)
-
-        ws_with_both = [r for r in results if r.total == 2][0]
-        tag_names = [t.name for t in ws_with_both.tags]
-        assert "shell:test" in tag_names
-        assert "shell:vcs" in tag_names
-
-    def test_respects_limit(self, test_db_with_tool_tags):
-        results = get_tool_tags_by_workspace(db_path=test_db_with_tool_tags, n=1)
-
-        assert len(results) == 1
-
-    def test_raises_for_missing_db(self, tmp_path):
-        with pytest.raises(FileNotFoundError):
-            get_tool_tags_by_workspace(db_path=tmp_path / "nonexistent.db")
 
 
 class TestIngestTimeShellTagging:

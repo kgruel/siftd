@@ -8,6 +8,7 @@ Supports three modes:
 
 import argparse
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ from siftd.cli._filters import extract_filter_args
 from siftd.paths import embeddings_db_path
 
 
-def _print_empty_json_results(args, query: str, db: Path) -> None:
+def _print_empty_json_results(args, query: str, db: Path, caveats: list | None = None) -> None:
     """Emit empty JSON results for --json output modes."""
     import json
 
@@ -25,7 +26,7 @@ def _print_empty_json_results(args, query: str, db: Path) -> None:
     from siftd.output.format_registry import select_format
 
     fmt = select_format(json_mode=True, is_tty=False)
-    result = fmt.render_search([], Fidelity(), query=query, mode="chunks")
+    result = fmt.render_search([], Fidelity(), query=query, mode="chunks", caveats=caveats or [])
     if isinstance(result, dict):
         print(json.dumps(result, indent=2))
     else:
@@ -193,11 +194,6 @@ def cmd_search(args) -> int:
             return 1
         search_mode = "semantic"
     elif not has_embeddings:
-        # Auto-fallback to FTS with hint
-        if embeddings_available() and not embed_db.exists():
-            print("[FTS5 mode - embeddings index not built: siftd search --index]", file=sys.stderr)
-        else:
-            print("[FTS5 mode - for semantic search: siftd install embed]", file=sys.stderr)
         search_mode = "fts"
     else:
         search_mode = "hybrid"
@@ -209,7 +205,7 @@ def cmd_search(args) -> int:
     elif args.first or args.conversations:
         widened_limit = max(args.limit * 10, 100)
 
-    from siftd.api.dispatch import Operation, execute
+    from siftd.api.dispatch import Operation, execute_for_render
     from siftd.api.search import (
         enrich_file_refs,
         filter_by_threshold,
@@ -263,13 +259,14 @@ def cmd_search(args) -> int:
     # Try serve delegation (warm caches, embeddings loaded)
     # Skip for FTS mode (serve does hybrid/semantic) and custom --embed-db
     raw_results: Any | None = None
+    caveats: list = []
     if search_mode != "fts" and _can_delegate_to_serve(args, db=db, embed_db=embed_db):
         raw_results = try_serve(op)
 
     # Local execution
     if raw_results is None:
         try:
-            raw_results = execute(op)
+            raw_results, caveats = execute_for_render(op)
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
@@ -286,9 +283,11 @@ def cmd_search(args) -> int:
 
     if not chunks:
         if args.json:
-            _print_empty_json_results(args, query, db)
+            _print_empty_json_results(args, query, db, caveats=caveats)
         else:
             print(f"No results for: {query}")
+            for c in caveats:
+                print(f"note: {c.message}")
         return 0
 
     # Apply threshold filter if specified
@@ -296,9 +295,11 @@ def cmd_search(args) -> int:
         chunks = filter_by_threshold(chunks, threshold=args.threshold)
         if not chunks:
             if args.json:
-                _print_empty_json_results(args, query, db)
+                _print_empty_json_results(args, query, db, caveats=caveats)
             else:
                 print(f"No results above threshold {args.threshold} for: {query}")
+                for c in caveats:
+                    print(f"note: {c.message}")
             return 0
 
     # Post-processing: --first (earliest match above threshold)
@@ -308,9 +309,11 @@ def cmd_search(args) -> int:
         earliest = first_mention(chunks, threshold=effective_threshold, db_path=db)
         if not earliest:
             if args.json:
-                _print_empty_json_results(args, query, db)
+                _print_empty_json_results(args, query, db, caveats=caveats)
             else:
                 print(f"No results above relevance threshold for: {query}")
+                for c in caveats:
+                    print(f"note: {c.message}")
             return 0
         chunks = _chunks_from_rows([earliest])
 
@@ -395,6 +398,8 @@ def cmd_search(args) -> int:
             _enrich_context(main_conn, results, context_n)
             render_results = results
 
+        if caveats:
+            ctx_kwargs["caveats"] = caveats
         output = fmt.render_search(render_results, op.fidelity, **ctx_kwargs)
         from siftd.output.painted_bridge import emit_output
 
@@ -410,10 +415,6 @@ def cmd_search(args) -> int:
                 filter_basenames = [b.strip() for b in args.refs.split(",") if b.strip()]
             print_refs_content(all_refs, filter_basenames)
 
-        # Tagging hint (skip for JSON output)
-        if not args.json and render_results:
-            first_id = render_results[0]["conversation_id"][:12]
-            print(f"Tip: Tag useful results for future retrieval: siftd tag {first_id} research:<topic>", file=sys.stderr)
     finally:
         main_conn.close()
 
@@ -427,7 +428,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     from painted import Fidelity
 
     from siftd.api import open_database
-    from siftd.api.dispatch import Operation, execute
+    from siftd.api.dispatch import Operation, execute_for_render
     from siftd.api.search import search_chunks
     from siftd.cli._common import fidelity_from_args
 
@@ -489,8 +490,9 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         db=db,
     )
 
+    caveats: list = []
     try:
-        raw_results = execute(op)
+        raw_results, caveats = execute_for_render(op)
     except sqlite3.OperationalError as e:
         err_msg = str(e).lower()
         if "no such table" in err_msg and "fts" in err_msg:
@@ -514,6 +516,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
                 "query": query,
                 "mode": "fts5",
                 "results": [],
+                "caveats": [asdict(c) for c in caveats],
             }
             if unsupported_flags:
                 out["warnings"] = [
@@ -523,6 +526,8 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             print(json.dumps(out, indent=2))
         else:
             print(f"No results for: {query}")
+            for c in caveats:
+                print(f"note: {c.message}")
         return 0
 
     # Enrich with metadata and render via unified formatter system
@@ -543,7 +548,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         is_tty=sys.stdout.isatty(),
     )
 
-    output = fmt.render_search(results, fidelity, query=query, mode="chunks", debug_ids=getattr(args, "debug_ids", False))
+    output = fmt.render_search(results, fidelity, query=query, mode="chunks", debug_ids=getattr(args, "debug_ids", False), caveats=caveats)
     if isinstance(output, dict):
         # Preserve FTS5-specific fields for JSON
         if unsupported_flags:
@@ -557,11 +562,6 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         from siftd.output.painted_bridge import emit_output
 
         emit_output(output)
-
-    # Tagging hint (skip for JSON output)
-    if not args.json and results:
-        first_id = results[0]["conversation_id"][:12]
-        print(f"Tip: Tag useful results: siftd tag {first_id} research:<topic>", file=sys.stderr)
 
     return 0
 

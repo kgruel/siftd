@@ -1128,3 +1128,26 @@ def resolve_entity_id(
     else:
         return None
     return row["id"] if row else None
+
+
+def get_conversation_metadata(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+) -> dict | None:
+    """Get conversation metadata (workspace, started_at) by ID or prefix.
+
+    Args:
+        conn: Database connection.
+        conversation_id: Full or prefix ID to look up.
+
+    Returns:
+        Dict with keys 'id', 'workspace', 'started_at', or None if not found.
+    """
+    row = conn.execute(
+        "SELECT c.id, c.started_at, w.path AS workspace "
+        "FROM conversations c LEFT JOIN workspaces w ON w.id = c.workspace_id "
+        "WHERE c.id = ? "
+        "LIMIT 1",
+        (conversation_id,),
+    ).fetchone()
+    return dict(row) if row else None

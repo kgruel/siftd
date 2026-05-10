@@ -155,9 +155,8 @@ class TestNoEmbeddingsInstalled:
         captured = capsys.readouterr()
 
         assert result == 0
-        # Should show FTS5 mode hint
-        assert "FTS5 mode" in captured.err
-        assert "siftd install embed" in captured.err
+        # FTS5 mode fallback hint is now the search-mode-degraded caveat (channel="text"),
+        # which fires only on non-empty results. Empty-result path: silent fallback.
 
     def test_fts_flag_works_without_embeddings(self, fts_db, capsys, monkeypatch):
         """--fts flag works when embeddings unavailable."""
@@ -505,9 +504,10 @@ class TestAutoSelectionHints:
         captured = capsys.readouterr()
 
         assert result == 0
-        # Should hint at building index, not installing deps
-        assert "siftd search --index" in captured.err
-        assert "siftd install embed" not in captured.err
+        # Old inline "siftd search --index" hint is gone; the embeddings-stale
+        # caveat producer surfaces this via stdout ("not indexed" note).
+        assert "siftd search --index" not in captured.err
+        assert "not indexed" in captured.out
 
     def test_deps_not_installed_shows_install_hint(self, fts_db, capsys, monkeypatch):
         """When deps not installed, hints at installing."""
@@ -527,8 +527,8 @@ class TestAutoSelectionHints:
         captured = capsys.readouterr()
 
         assert result == 0
-        # Should hint at installing deps
-        assert "siftd install embed" in captured.err
+        # The install-embed hint is now the search-mode-degraded caveat (channel="text",
+        # fires on non-empty results only). With no results, no embed hint fires on stderr.
 
 
 class TestFtsOnlyModeWarnings:

@@ -107,11 +107,11 @@ def test_search_semantic_requires_embeddings(test_db, monkeypatch, capsys):
 
 
 def test_search_falls_back_to_fts_mode(test_db, monkeypatch, capsys):
+    # FTS5 mode fallback is now surfaced via the search-mode-degraded caveat producer
+    # (channel="text", only fires on non-empty results). Empty-result path: silent fallback.
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: False)
     args = make_args(query=["needle"], db=str(test_db))
     assert cmd_search(args) == 0
-    out = capsys.readouterr()
-    assert "[FTS5 mode" in out.err
 
 
 def test_print_empty_json_results_dict_and_str(monkeypatch, capsys, tmp_path):
@@ -464,3 +464,73 @@ def test_cmd_search_first_result_kept_branch(test_db, tmp_path, monkeypatch):
     monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: SimpleNamespace(render_search=lambda *a, **k2: "OUT"))
     monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
     assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), first=True)) == 0
+
+
+def test_empty_search_json_results_with_caveats(test_db, monkeypatch, capsys):
+    """Empty JSON results include caveats key in output."""
+    from siftd.doctor.checks import Finding
+
+    stub_caveat = Finding(
+        check="test-caveat",
+        severity="info",
+        message="Test caveat message",
+        fix_available=False,
+    )
+
+    monkeypatch.setattr("siftd.api.dispatch.execute_for_render", lambda op: ([], [stub_caveat]))
+
+    args = make_args(query=["nonexistent"], db=str(test_db), json=True)
+    assert cmd_search(args) == 0
+
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert "caveats" in data
+    assert len(data["caveats"]) == 1
+    assert data["caveats"][0]["message"] == "Test caveat message"
+
+
+def test_empty_search_text_results_with_caveats(test_db, monkeypatch, capsys):
+    """Empty text results append caveats as 'note:' lines."""
+    from siftd.doctor.checks import Finding
+
+    stub_caveat = Finding(
+        check="test-caveat",
+        severity="warning",
+        message="Index is stale",
+        fix_available=False,
+    )
+
+    monkeypatch.setattr("siftd.api.dispatch.execute_for_render", lambda op: ([], [stub_caveat]))
+
+    args = make_args(query=["nonexistent"], db=str(test_db), json=False)
+    assert cmd_search(args) == 0
+
+    captured = capsys.readouterr()
+    assert "No results for: nonexistent" in captured.out
+    assert "note: Index is stale" in captured.out
+
+
+def test_fts_only_empty_results_with_caveats(test_db, monkeypatch, capsys):
+    """FTS-only empty results include caveats in JSON output."""
+    from siftd.doctor.checks import Finding
+
+    stub_caveat = Finding(
+        check="fts-stale",
+        severity="warning",
+        message="FTS index out of sync",
+        fix_available=False,
+    )
+
+    monkeypatch.setattr("siftd.api.dispatch.execute_for_render", lambda op: ([], [stub_caveat]))
+    monkeypatch.setattr("siftd.api.search.fts5_search_content", lambda *a, **k: [])
+
+    args = make_args(query=["nonexistent"], db=str(test_db), json=True, fts=True)
+    assert _search_fts_only(args, Path(test_db), "nonexistent") == 0
+
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert data["mode"] == "fts5"
+    assert data["results"] == []
+    assert "caveats" in data
+    assert len(data["caveats"]) == 1
+    assert data["caveats"][0]["message"] == "FTS index out of sync"

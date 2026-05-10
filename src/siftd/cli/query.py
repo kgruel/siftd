@@ -1,4 +1,4 @@
-"""CLI handlers for query commands (query, tools)."""
+"""CLI handlers for query commands (query)."""
 
 import argparse
 import sqlite3
@@ -9,144 +9,6 @@ from siftd.cli._common import apply_config_defaults, fidelity_from_args, resolve
 from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, print_table
 from siftd.output.painted_bridge import emit_output
 from siftd.paths import queries_dir
-
-
-def cmd_tools(args) -> int:
-    """Show tool usage summary by category."""
-    import json
-
-    from painted import Fidelity
-
-    from siftd.api import get_tool_tag_summary, get_tool_tags_by_workspace
-    from siftd.api.dispatch import Operation, execute
-    from siftd.config import get_tools_defaults
-    from siftd.serve.delegation import try_serve
-
-    apply_config_defaults(args, get_tools_defaults, {"limit": 20})
-
-    db = resolve_db(args)
-    prefix = args.prefix or "shell:"
-
-    # Build Operation based on mode
-    if args.by_workspace:
-        op = Operation(
-            path="/api/v1/tools/workspaces",
-            method="GET",
-            fn=get_tool_tags_by_workspace,
-            params={"db_path": db, "prefix": prefix, "n": args.limit},
-            render_method="raw",
-            fidelity=Fidelity(),
-            db=db,
-        )
-    else:
-        op = Operation(
-            path="/api/v1/tools",
-            method="GET",
-            fn=get_tool_tag_summary,
-            params={"db_path": db, "prefix": prefix},
-            render_method="raw",
-            fidelity=Fidelity(),
-            db=db,
-        )
-
-    # Try serve delegation
-    result = try_serve(op)
-
-    if result is not None and isinstance(result, dict):
-        if args.json:
-            print(json.dumps(result, indent=2))
-        elif args.by_workspace and "workspaces" in result:
-            for ws in result["workspaces"]:
-                ws_display = fmt_workspace(ws["workspace"])
-                print(f"\n{ws_display} ({ws['total']} total)")
-                for tag in ws["tags"]:
-                    category = tag["name"][len(prefix):] if tag["name"].startswith(prefix) else tag["name"]
-                    print(f"  {category}: {tag['count']}")
-        elif "tags" in result:
-            total = result.get("total", 0)
-            print(f"Tool call tags ({prefix}*): {total} total\n")
-            for tag in result["tags"]:
-                category = tag["name"][len(prefix):] if tag["name"].startswith(prefix) else tag["name"]
-                print(f"  {category}: {tag['count']} ({tag.get('percentage', 0)}%)")
-        return 0
-
-    # Local execution
-    try:
-        data = execute(op)
-    except FileNotFoundError as e:
-        if args.json:
-            print("[]")
-            return 0
-        print(str(e))
-        if not args.by_workspace:
-            print("Run 'siftd ingest' to create it.")
-        return 1
-
-    # By-workspace rendering
-    if args.by_workspace:
-        if not data:
-            if args.json:
-                print("[]")
-                return 0
-            print(f"No tool calls with '{prefix}*' tags found.")
-            return 0
-
-        if args.json:
-            out = [
-                {
-                    "workspace": ws_usage.workspace,
-                    "total": ws_usage.total,
-                    "tags": [
-                        {"name": tag.name, "count": tag.count}
-                        for tag in ws_usage.tags
-                    ],
-                }
-                for ws_usage in data
-            ]
-            print(json.dumps(out, indent=2))
-            return 0
-
-        for ws_usage in data:
-            ws_display = fmt_workspace(ws_usage.workspace)
-            print(f"\n{ws_display} ({ws_usage.total} total)")
-            for tag in ws_usage.tags:
-                category = tag.name[len(prefix):] if tag.name.startswith(prefix) else tag.name
-                print(f"  {category}: {tag.count}")
-
-        return 0
-
-    # Summary rendering
-    if not data:
-        if args.json:
-            print("[]")
-            return 0
-        print(f"No tool calls with '{prefix}*' tags found.")
-        print("Run 'siftd backfill --shell-tags' to categorize shell commands.")
-        return 0
-
-    if args.json:
-        total = sum(t.count for t in data)
-        out = [
-            {
-                "name": tag.name,
-                "count": tag.count,
-                "percentage": round((tag.count / total) * 100, 1) if total > 0 else 0,
-            }
-            for tag in data
-        ]
-        print(json.dumps(out, indent=2))
-        return 0
-
-    total = sum(t.count for t in data)
-    print(f"Tool call tags ({prefix}*): {total} total\n")
-
-    for tag in data:
-        category = tag.name[len(prefix):] if tag.name.startswith(prefix) else tag.name
-        pct = (tag.count / total) * 100 if total > 0 else 0
-        print(f"  {category}: {tag.count} ({pct:.1f}%)")
-
-    return 0
-
 
 
 def _dispatch_detail(args) -> int:
@@ -456,13 +318,18 @@ def cmd_query(args) -> int:
     from dataclasses import asdict
 
     from siftd.api import list_conversations
-    from siftd.api.dispatch import Operation, execute
+    from siftd.api.dispatch import Operation, execute_for_render
     from siftd.cli._filters import extract_filter_args
     from siftd.serve.delegation import try_serve
 
     db = resolve_db(args)
     filters = extract_filter_args(args)
     fidelity = fidelity_from_args(args)
+    # Apply -v before Operation is built so caveat producers' applies_to
+    # predicates see the full depth and fire when the user actually wants
+    # the verbose surface (cost column, etc.).
+    if args.verbose:
+        fidelity = fidelity.with_depth(3)
 
     op = Operation(
         path="/api/v1/conversations",
@@ -479,10 +346,13 @@ def cmd_query(args) -> int:
         db=db,
     )
 
+    caveats: list = []
+
     # Try serve, fall back to local execution
     conversations = try_serve(op)
     if conversations is not None and isinstance(conversations, dict):
-        # Server returned serialized list — deserialize back to domain objects
+        # Server returned serialized list — deserialize back to domain objects.
+        # Caveats are not threaded across the serve boundary in slice 1.
         from siftd.api.conversations import ConversationSummary
 
         conversations = [
@@ -501,7 +371,7 @@ def cmd_query(args) -> int:
         ]
     else:
         try:
-            conversations = execute(op)
+            conversations, caveats = execute_for_render(op)
         except FileNotFoundError as e:
             print(str(e))
             print("Run 'siftd ingest' to create it.")
@@ -518,78 +388,58 @@ def cmd_query(args) -> int:
                 print("Tip: Run 'siftd doctor' to check database health.", file=sys.stderr)
             return 1
 
+    view_convs = len(conversations)
+    view_tokens = sum(c.total_tokens for c in conversations)
+    corpus = None
+    corpus_tokens = 0
+    if args.stats:
+        from siftd.api.stats import get_usage_summary
+
+        corpus = get_usage_summary(db_path=db)
+        corpus_tokens = corpus.total_input_tokens + corpus.total_output_tokens
+
+    if getattr(args, "no_hints", False):
+        caveats = [c for c in caveats if c.severity != "hint"]
+
     if not conversations:
         if args.json:
-            print("[]")
+            import json as _json
+            from dataclasses import asdict
+            json_caveats = [asdict(c) for c in caveats if c.channel != "text"]
+            print(_json.dumps({"result": [], "caveats": json_caveats}, indent=2))
         else:
             print("No conversations found.")
-            # Provide helpful hints based on filters used
-            has_filters = any([
-                args.workspace, args.model, args.since, args.before,
-                args.tool, args.tag,
-                getattr(args, "all_tags", None),
-                getattr(args, "no_tag", None),
-                getattr(args, "tool_tag", None),
-            ])
-            if args.workspace:
-                print("\nTip: Try 'siftd peek' for active sessions not yet ingested.", file=sys.stderr)
-            elif has_filters:
-                print(
-                    "\nTip: No matches for current filters. Try broadening your search or run 'siftd query' without filters.",
-                    file=sys.stderr,
-                )
-            else:
-                print(
-                    "\nTip: Run 'siftd ingest' to import recent sessions, or 'siftd peek' to check live sessions.",
-                    file=sys.stderr,
-                )
+            for c in caveats:
+                if c.channel != "json":
+                    print(f"note: {c.message}")
+        if args.stats and corpus is not None:
+            print()
+            print(
+                f"View: {view_convs:,} / {corpus.total_conversations:,} corpus"
+                f" | view tokens: {fmt_tokens(view_tokens)} / {fmt_tokens(corpus_tokens)} corpus"
+            )
         return 0
 
-    # Render list via formatter
+    # Render list via formatter (fidelity already includes -v; reuse op.fidelity)
     from siftd.output.format_registry import select_format
 
-    fidelity = fidelity_from_args(args)
-    if args.verbose:
-        fidelity = fidelity.with_depth(3)
-
     fmt = select_format(json_mode=args.json, is_tty=sys.stdout.isatty())
-    output = fmt.render_list(conversations, fidelity)
+    output = fmt.render_list(conversations, op.fidelity, caveats=caveats)
     emit_output(output)
 
     # Stats summary (shown after list when --stats flag is set)
-    if args.stats:
-        total_convs = len(conversations)
-        total_prompts = sum(c.prompt_count for c in conversations)
-        total_responses = sum(c.response_count for c in conversations)
-        total_tokens = sum(c.total_tokens for c in conversations)
+    if args.stats and corpus is not None:
         print()
-        print("--- Stats ---")
-        print(f"Conversations: {total_convs}")
-        print(f"Total prompts: {total_prompts}")
-        print(f"Total responses: {total_responses}")
-        print(f"Total tokens: {fmt_tokens(total_tokens)}")
+        print(
+            f"View: {view_convs:,} / {corpus.total_conversations:,} corpus"
+            f" | view tokens: {fmt_tokens(view_tokens)} / {fmt_tokens(corpus_tokens)} corpus"
+        )
 
     return 0
 
 
 def build_query_parser(subparsers) -> None:
-    """Add 'query' and 'tools' subparsers."""
-    # tools
-    p_tools = subparsers.add_parser(
-        "tools",
-        help="Summarize tool usage by category",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""examples:
-  siftd tools                    # shell command categories summary
-  siftd tools --by-workspace     # breakdown by workspace
-  siftd tools --prefix shell:    # filter by tag prefix""",
-    )
-    p_tools.add_argument("--by-workspace", action="store_true", help="Show breakdown by workspace")
-    p_tools.add_argument("--prefix", metavar="PREFIX", help="Tag prefix to filter (default: shell:)")
-    p_tools.add_argument("-n", "--limit", type=int, default=None, help="Max workspaces for --by-workspace (default: 20)")
-    p_tools.add_argument("--json", action="store_true", help="Output as JSON")
-    p_tools.set_defaults(func=cmd_tools)
-
+    """Add 'query' subparser."""
     # query
     p_query = subparsers.add_parser(
         "query",
@@ -597,6 +447,9 @@ def build_query_parser(subparsers) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""List and filter conversations by metadata (workspace, model, date, tags).
 For semantic content search, use: siftd search <query>
+
+Conversation IDs displayed in lists are truncated to 8 characters; use the full 26-character ID
+to query a specific conversation.
 
 examples:
   siftd query                         # list recent conversations
@@ -635,6 +488,7 @@ examples:
     output_group.add_argument("--oldest", action="store_true", help="Sort by oldest first (default: newest first)")
     output_group.add_argument("--json", action="store_true", help="Output as JSON array")
     output_group.add_argument("--stats", action="store_true", help="Show summary totals after list")
+    output_group.add_argument("--no-hints", action="store_true", dest="no_hints", help="Suppress hint-severity caveat findings.")
 
     # Detail view options (when conversation_id is provided)
     detail_group = p_query.add_argument_group("detail view")
