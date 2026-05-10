@@ -398,33 +398,20 @@ def cmd_query(args) -> int:
         corpus = get_usage_summary(db_path=db)
         corpus_tokens = corpus.total_input_tokens + corpus.total_output_tokens
 
+    if getattr(args, "no_hints", False):
+        caveats = [c for c in caveats if c.severity != "hint"]
+
     if not conversations:
         if args.json:
-            # Preserve envelope shape on empty result so consumers don't
-            # need to branch on shape between empty and non-empty runs.
-            print('{\n  "result": [],\n  "caveats": []\n}')
+            import json as _json
+            from dataclasses import asdict
+            json_caveats = [asdict(c) for c in caveats if c.channel != "text"]
+            print(_json.dumps({"result": [], "caveats": json_caveats}, indent=2))
         else:
             print("No conversations found.")
-            # Provide helpful hints based on filters used
-            has_filters = any([
-                args.workspace, args.model, args.since, args.before,
-                args.tool, args.tag,
-                getattr(args, "all_tags", None),
-                getattr(args, "no_tag", None),
-                getattr(args, "tool_tag", None),
-            ])
-            if args.workspace:
-                print("\nTip: Try 'siftd peek' for active sessions not yet ingested.", file=sys.stderr)
-            elif has_filters:
-                print(
-                    "\nTip: No matches for current filters. Try broadening your search or run 'siftd query' without filters.",
-                    file=sys.stderr,
-                )
-            else:
-                print(
-                    "\nTip: Run 'siftd ingest' to import recent sessions, or 'siftd peek' to check live sessions.",
-                    file=sys.stderr,
-                )
+            for c in caveats:
+                if c.channel != "json":
+                    print(f"note: {c.message}")
         if args.stats and corpus is not None:
             print()
             print(
@@ -432,9 +419,6 @@ def cmd_query(args) -> int:
                 f" | view tokens: {fmt_tokens(view_tokens)} / {fmt_tokens(corpus_tokens)} corpus"
             )
         return 0
-
-    if getattr(args, "no_hints", False):
-        caveats = [f for f in caveats if f.severity != "hint"]
 
     # Render list via formatter (fidelity already includes -v; reuse op.fidelity)
     from siftd.output.format_registry import select_format

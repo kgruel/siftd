@@ -1725,6 +1725,67 @@ class TestIngestStatusProducer:
         assert findings[1].severity == "info"  # Then staleness
 
 
+class TestQueryEmptyTipProducer:
+    """Tests for the query-empty-tip producer (H2).
+
+    Fires when siftd query returns no conversations; the message varies based
+    on which filters are active. channel="text" means it's suppressed in JSON.
+    """
+
+    def test_non_empty_result_no_finding(self):
+        """Non-empty result → no finding."""
+        from siftd.api.caveats import _query_empty_tip_caveats
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, render_method="list")
+        fake_conv = object()
+        findings = _query_empty_tip_caveats(op, [fake_conv], _make_ctx())
+        assert findings == []
+
+    def test_no_filters_ingest_tip(self):
+        """No filters, empty result → ingest/peek tip."""
+        from siftd.api.caveats import _query_empty_tip_caveats
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, render_method="list", params={})
+        findings = _query_empty_tip_caveats(op, [], _make_ctx())
+        assert len(findings) == 1
+        assert "siftd ingest" in findings[0].message or "siftd peek" in findings[0].message
+
+    def test_workspace_filter_peek_tip(self):
+        """Workspace filter active, empty result → peek tip."""
+        from siftd.api.caveats import _query_empty_tip_caveats
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, render_method="list", params={"workspace": "myproject"})
+        findings = _query_empty_tip_caveats(op, [], _make_ctx())
+        assert len(findings) == 1
+        assert "siftd peek" in findings[0].message
+
+    def test_other_filter_broaden_tip(self):
+        """Non-workspace filter active, empty result → broaden filters tip."""
+        from siftd.api.caveats import _query_empty_tip_caveats
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, render_method="list", params={"model": "claude-3-5-sonnet"})
+        findings = _query_empty_tip_caveats(op, [], _make_ctx())
+        assert len(findings) == 1
+        assert "broadening" in findings[0].message.lower() or "filters" in findings[0].message
+
+    def test_hint_channel_text_fields(self):
+        """Finding has severity=hint, channel=text, fix_available=False."""
+        from siftd.api.caveats import _query_empty_tip_caveats
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, render_method="list", params={})
+        findings = _query_empty_tip_caveats(op, [], _make_ctx())
+        f = findings[0]
+        assert f.check == "query-empty-tip"
+        assert f.severity == "hint"
+        assert f.channel == "text"
+        assert f.fix_available is False
+
+
 class TestFtsStaleProducer:
     """Tests for the fts-stale producer.
 

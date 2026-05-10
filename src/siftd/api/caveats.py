@@ -518,6 +518,45 @@ def _ingest_status_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# Query empty-result tips (H2)
+# ---------------------------------------------------------------------------
+
+@caveat_producer(kind="query-empty-tip", applies_to=_is_list_conversations_list)
+def _query_empty_tip_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
+    """Hint: contextual tip when siftd query returns no conversations.
+
+    Three cases based on what filters are active:
+    - workspace filter → suggest siftd peek (live sessions in that workspace)
+    - any other filter active → suggest broadening the search
+    - no filters → suggest siftd ingest / siftd peek to populate the DB
+
+    channel="text" so the tip is excluded from --json output.
+    Only fires on empty result to avoid noise on non-empty runs.
+    """
+    if result:
+        return []
+
+    workspace = op.params.get("workspace")
+    filter_keys = ["workspace", "model", "since", "before", "tool", "tag", "all_tags", "no_tag", "tool_tag", "search"]
+    has_filters = any(op.params.get(k) for k in filter_keys)
+
+    if workspace:
+        msg = "Try 'siftd peek' for active sessions not yet ingested."
+    elif has_filters:
+        msg = "No matches for current filters. Try broadening your search or run 'siftd query' without filters."
+    else:
+        msg = "Run 'siftd ingest' to import recent sessions, or 'siftd peek' to check live sessions."
+
+    return [Finding(
+        check="query-empty-tip",
+        severity="hint",
+        channel="text",
+        message=msg,
+        fix_available=False,
+    )]
+
+
+# ---------------------------------------------------------------------------
 # FTS stale producer (B5)
 # ---------------------------------------------------------------------------
 
