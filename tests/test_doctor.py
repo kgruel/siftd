@@ -1180,7 +1180,7 @@ class TestWorkspaceIdentityCheck:
         assert len(findings) == 1
         assert findings[0].severity == "info"
         assert "2 workspace" in findings[0].message
-        assert findings[0].fix_command == "siftd backfill git-remote"
+        assert findings[0].fix_command == "siftd backfill --git-remote"
 
     def test_duplicates(self, check_context, monkeypatch):
         """Reports manual-only warning for duplicate workspace groups."""

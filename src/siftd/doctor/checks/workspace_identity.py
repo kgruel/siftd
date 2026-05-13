@@ -24,7 +24,7 @@ class WorkspaceIdentityCheck:
                     severity="info",
                     message=f"{info['without_remote']} workspace(s) without git remote identity",
                     fix_available=True,
-                    fix_command="siftd backfill git-remote",
+                    fix_command="siftd backfill --git-remote",
                     context=info,
                 )
             )

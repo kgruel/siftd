@@ -412,9 +412,11 @@ def cmd_backfill(args) -> int:
 
     db = resolve_db(args)
 
-    # Warn about --dry-run without --filter-binary
-    if getattr(args, "dry_run", False) and not getattr(args, "filter_binary", False):
-        print("Note: --dry-run ignored without --filter-binary", file=sys.stderr)
+    # --dry-run is only meaningful for --filter-binary and --git-remote
+    if getattr(args, "dry_run", False) and not (
+        getattr(args, "filter_binary", False) or getattr(args, "git_remote", False)
+    ):
+        print("Note: --dry-run ignored without --filter-binary or --git-remote", file=sys.stderr)
 
     if not db.exists():
         print(f"Database not found: {db}")
@@ -453,6 +455,30 @@ def cmd_backfill(args) -> int:
             print(f"  Errors: {result.errors}")
         if dry_run and result.filtered:
             print("\nRun without --dry-run to apply changes.")
+    elif args.git_remote:
+        from siftd.api.migrations import backfill_git_remotes
+
+        dry_run = getattr(args, "dry_run", False)
+        conn = open_database(db)
+        try:
+            if dry_run:
+                print("Scanning for workspaces without git remote (dry run)...")
+            else:
+                print("Backfilling git remote URLs for workspaces missing them...")
+
+            def on_progress(msg):
+                if getattr(args, "verbose", False):
+                    print(msg)
+
+            stats = backfill_git_remotes(conn, on_progress=on_progress, dry_run=dry_run)
+            print(f"  Checked: {stats['checked']}")
+            print(f"  Updated: {stats['updated']}")
+            print(f"  Skipped (path missing): {stats['skipped_missing']}")
+            print(f"  Skipped (no git remote): {stats['skipped_no_git']}")
+            if dry_run and stats["updated"]:
+                print("\nRun without --dry-run to apply changes.")
+        finally:
+            conn.close()
     else:
         # Default: backfill response attributes (original behavior)
         print("Backfilling response attributes (cache tokens)...")
@@ -871,7 +897,7 @@ _FIX_REGISTRY = {
     "siftd ingest --rebuild-fts": ("Rebuilding FTS index", _fix_rebuild_fts),
     "siftd search --index": ("Indexing embeddings", _fix_search_index),
     "siftd search --rebuild": ("Rebuilding embeddings index", _fix_search_rebuild),
-    "siftd backfill git-remote": ("Backfilling git remote URLs", _fix_backfill_git_remote),
+    "siftd backfill --git-remote": ("Backfilling git remote URLs", _fix_backfill_git_remote),
     "siftd doctor fix --pending-tags": ("Cleaning up stale sessions", _fix_pending_tags),
     "siftd doctor fix --blob-refcount": ("Repairing content blob ref counts", _fix_blob_refcount),
     "siftd doctor fix --triggers": ("Recreating blob ref-count triggers", _fix_blob_triggers),
@@ -1180,12 +1206,14 @@ def build_data_parser(subparsers) -> None:
   siftd backfill --shell-tags       # categorize shell commands as shell:git, shell:test, etc.
   siftd backfill --derivative-tags  # mark siftd-generated conversations
   siftd backfill --filter-binary    # filter binary content from existing blobs
-  siftd backfill --filter-binary --dry-run  # preview what would be filtered""",
+  siftd backfill --filter-binary --dry-run  # preview what would be filtered
+  siftd backfill --git-remote       # backfill git remote URLs for workspaces missing them""",
     )
     p_backfill.add_argument("--shell-tags", action="store_true", help="Tag shell.execute calls with shell:* categories")
     p_backfill.add_argument("--derivative-tags", action="store_true", help="Tag conversations containing siftd search/query as siftd:derivative")
     p_backfill.add_argument("--filter-binary", action="store_true", help="Filter binary content (images, base64) from existing blobs")
-    p_backfill.add_argument("--dry-run", action="store_true", help="Preview changes without applying (use with --filter-binary)")
+    p_backfill.add_argument("--git-remote", action="store_true", help="Backfill git remote URLs for workspaces missing them (use 'siftd migrate --merge-workspaces' to also collapse duplicates)")
+    p_backfill.add_argument("--dry-run", action="store_true", help="Preview changes without applying (use with --filter-binary or --git-remote)")
     p_backfill.set_defaults(func=cmd_backfill)
 
     # migrate
