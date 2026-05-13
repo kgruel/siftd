@@ -317,6 +317,45 @@ def _workspace_identity_caveats(op, summaries, ctx: ProducerContext) -> list[Fin
 
 
 # ---------------------------------------------------------------------------
+# Workspace duplicates producer — surfaces doctor finding into ambient flow
+# ---------------------------------------------------------------------------
+
+@caveat_producer(kind="workspace-duplicates", applies_to=_is_list_conversations_with_workspace)
+def _workspace_duplicates_caveats(op, summaries, ctx: ProducerContext) -> list[Finding]:
+    """Caveat: workspaces share a git remote (legacy duplicates pre-dating
+    preventive dedup at storage/sqlite.py:get_or_create_workspace).
+
+    New ingests cannot accrete duplicates because the upsert path reuses
+    rows by git_remote. This producer surfaces the legacy condition into
+    `siftd query` so users don't have to run `siftd doctor` to discover it.
+    """
+    if not Path(ctx.db_path).exists():
+        return []
+
+    from siftd.storage.migrate_workspaces import find_duplicate_workspaces
+
+    duplicates = find_duplicate_workspaces(ctx.db())
+    if not duplicates:
+        return []
+
+    n_groups = len(duplicates)
+    n_extras = sum(len(d["workspace_ids"]) - 1 for d in duplicates)
+
+    return [Finding(
+        check="workspace-duplicates",
+        severity="warning",
+        message=(
+            f"{n_groups} workspace group{'s' if n_groups != 1 else ''} "
+            f"share a git remote ({n_extras} duplicate row{'s' if n_extras != 1 else ''}) — "
+            "run 'siftd migrate --merge-workspaces' to collapse"
+        ),
+        fix_available=True,
+        fix_command="siftd migrate --merge-workspaces",
+        context={"groups": n_groups, "duplicates": n_extras},
+    )]
+
+
+# ---------------------------------------------------------------------------
 # Fresh-corpus producer (slice 1)
 # ---------------------------------------------------------------------------
 

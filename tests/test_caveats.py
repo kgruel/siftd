@@ -679,6 +679,111 @@ class TestWorkspaceIdentityProducer:
         assert workspace_ids == {"ws-orphaned1", "ws-orphaned2"}
 
 
+class TestWorkspaceDuplicatesProducer:
+    """Tests for the workspace-duplicates producer.
+
+    Surfaces legacy duplicate workspaces (multiple rows sharing the same
+    git_remote) into ambient `siftd query` flow so users don't have to run
+    `siftd doctor` to discover the condition. Severity=warning;
+    fix_command='siftd migrate --merge-workspaces'.
+    """
+
+    def test_nonexistent_db_returns_empty(self):
+        from siftd.api.caveats import _workspace_duplicates_caveats
+        from siftd.api.conversations import list_conversations
+
+        op = _make_op(fn=list_conversations, fidelity=Fidelity(depth=2))
+        ctx = ProducerContext(db_path=Path("/nonexistent/path/db.sqlite"))
+        assert _workspace_duplicates_caveats(op, [], ctx) == []
+
+    def test_no_duplicates_no_finding(self, monkeypatch, tmp_path):
+        from siftd.api.caveats import _workspace_duplicates_caveats
+        from siftd.api.conversations import list_conversations
+
+        monkeypatch.setattr(
+            "siftd.storage.migrate_workspaces.find_duplicate_workspaces",
+            lambda conn: [],
+        )
+        monkeypatch.setattr(
+            "siftd.api.caveats.ProducerContext.db",
+            lambda self: object(),
+        )
+
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        op = _make_op(fn=list_conversations, fidelity=Fidelity(depth=2))
+        ctx = ProducerContext(db_path=db_file)
+        assert _workspace_duplicates_caveats(op, [], ctx) == []
+
+    def test_duplicates_produce_warning(self, monkeypatch, tmp_path):
+        from siftd.api.caveats import _workspace_duplicates_caveats
+        from siftd.api.conversations import list_conversations
+
+        monkeypatch.setattr(
+            "siftd.storage.migrate_workspaces.find_duplicate_workspaces",
+            lambda conn: [
+                {
+                    "git_remote": "git@github.com:user/repo.git",
+                    "workspace_ids": ["ws-001", "ws-002"],
+                    "workspace_paths": ["/a", "/b"],
+                },
+                {
+                    "git_remote": "git@github.com:user/other.git",
+                    "workspace_ids": ["ws-003", "ws-004", "ws-005"],
+                    "workspace_paths": ["/c", "/d", "/e"],
+                },
+            ],
+        )
+        monkeypatch.setattr(
+            "siftd.api.caveats.ProducerContext.db",
+            lambda self: object(),
+        )
+
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        op = _make_op(fn=list_conversations, fidelity=Fidelity(depth=2))
+        ctx = ProducerContext(db_path=db_file)
+        findings = _workspace_duplicates_caveats(op, [], ctx)
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.check == "workspace-duplicates"
+        assert f.severity == "warning"
+        assert "2 workspace groups" in f.message
+        assert "3 duplicate rows" in f.message
+        assert f.fix_available is True
+        assert f.fix_command == "siftd migrate --merge-workspaces"
+        assert f.context == {"groups": 2, "duplicates": 3}
+
+    def test_singular_message(self, monkeypatch, tmp_path):
+        from siftd.api.caveats import _workspace_duplicates_caveats
+        from siftd.api.conversations import list_conversations
+
+        monkeypatch.setattr(
+            "siftd.storage.migrate_workspaces.find_duplicate_workspaces",
+            lambda conn: [
+                {
+                    "git_remote": "git@github.com:user/repo.git",
+                    "workspace_ids": ["ws-001", "ws-002"],
+                    "workspace_paths": ["/a", "/b"],
+                },
+            ],
+        )
+        monkeypatch.setattr(
+            "siftd.api.caveats.ProducerContext.db",
+            lambda self: object(),
+        )
+
+        db_file = tmp_path / "db.sqlite"
+        db_file.touch()
+        op = _make_op(fn=list_conversations, fidelity=Fidelity(depth=2))
+        ctx = ProducerContext(db_path=db_file)
+        findings = _workspace_duplicates_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert "1 workspace group " in findings[0].message
+        assert "1 duplicate row" in findings[0].message
+        assert " rows" not in findings[0].message
+
+
 class TestActiveSessionsProducer:
     """Tests for the active-sessions producer.
 
