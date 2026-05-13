@@ -333,9 +333,11 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
         detail_base: str — URL prefix for detail links (e.g., "/query").
             Rows get hx-get="{detail_base}?id=..." when provided,
             otherwise they're static (no htmx navigation).
-        caveats: list[Finding] — drives '?' Cost cells (with class
-            "metric missing") for rows targeted by pricing-missing caveats
-            at depth>=3.
+
+    Cost rendering: `None` → "?" (class "metric missing"), `0` → "$0.0000"
+    (truly free), otherwise the dollar amount. The caveat layer explains
+    *why* a cost is unknown; the renderer is only responsible for not
+    lying about it.
     """
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
 
@@ -345,11 +347,6 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     detail_base = context.get("detail_base", "")
     shell_base = context.get("shell_base", "")
     depth = fidelity.depth
-    caveats = context.get("caveats") or []
-    missing_pricing_ids = frozenset(
-        c.target for c in caveats
-        if c.check == "pricing-missing" and c.target
-    )
 
     parts: list[str] = ['<table class="conversation-list">']
     parts.append("<thead><tr>")
@@ -378,11 +375,10 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
             parts.append(f'<td class="metric">{c.prompt_count}p/{c.response_count}r</td>')
             parts.append(f'<td class="metric">{escape(fmt_tokens(c.total_tokens))}</td>')
         if depth >= 3:
-            if c.id in missing_pricing_ids:
+            if c.cost is None:
                 parts.append('<td class="metric missing">?</td>')
             else:
-                cost = f"${c.cost:.4f}" if c.cost else "$0.0000"
-                parts.append(f'<td class="metric">{escape(cost)}</td>')
+                parts.append(f'<td class="metric">${c.cost:.4f}</td>')
             tags = ", ".join(c.tags) if c.tags else ""
             parts.append(f'<td class="tag">{escape(tags)}</td>')
         parts.append("</tr>")

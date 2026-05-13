@@ -122,7 +122,7 @@ class TestTerminalRenderList:
         output = render_list([], Fidelity(depth=1))
         assert output is None
 
-    def test_none_cost_shows_zero_at_full_depth(self, summaries):
+    def test_none_cost_renders_question_mark_at_full_depth(self, summaries):
         from siftd.output.terminal_fmt import render_list
 
         fidelity = Fidelity(depth=3)
@@ -130,29 +130,11 @@ class TestTerminalRenderList:
         output = self._block_to_text(block)
 
         lines = output.strip().split("\n")
-        # gpt-4o row has cost=None — depth>=3 surfaces $0.0000 (no caveat = no '?')
-        assert "$0.0000" in lines[3]
-
-    def test_pricing_caveat_renders_question_mark_for_targeted_row(self, summaries):
-        from siftd.doctor.checks import Finding
-        from siftd.output.terminal_fmt import render_list
-
-        caveat = Finding(
-            check="pricing-missing",
-            severity="warning",
-            message="No pricing data for gpt-4o",
-            fix_available=False,
-            context={"model": "gpt-4o"},
-            target="02XYZABC789012",
-        )
-        block = render_list(summaries, Fidelity(depth=3), caveats=[caveat])
-        output = self._block_to_text(block)
-
-        lines = output.strip().split("\n")
-        # First data row keeps its computed cost; second row swaps to '?'
+        # gpt-4o row has cost=None — renderer is honest, no caveat required
         assert "$0.0340" in lines[2]
         cost_cell_present = any("?" in cell for cell in lines[3].split())
         assert cost_cell_present, lines[3]
+        assert "$0.0000" not in lines[3]
 
     def test_caveat_footer_summarizes_kinds(self, summaries):
         from siftd.doctor.checks import Finding
@@ -224,24 +206,16 @@ class TestMarkdownRenderList:
         assert "review, bug" in lines[2]
         assert "$0.0340" in lines[2]
 
-    def test_pricing_caveat_renders_question_mark(self, summaries):
-        from siftd.doctor.checks import Finding
+    def test_none_cost_renders_question_mark(self, summaries):
         from siftd.output.markdown_fmt import render_list
 
-        caveat = Finding(
-            check="pricing-missing",
-            severity="warning",
-            message="No pricing data for gpt-4o",
-            fix_available=False,
-            context={"model": "gpt-4o"},
-            target="02XYZABC789012",
-        )
-        output = render_list(summaries, Fidelity(depth=3), caveats=[caveat])
+        output = render_list(summaries, Fidelity(depth=3))
         lines = output.strip().split("\n")
-        # First row keeps cost; second row swaps to '?'
+        # First row has cost=0.034, second has cost=None
         assert "$0.0340" in lines[2]
         cells = [cell.strip() for cell in lines[3].split("|")]
         assert "?" in cells
+        assert "$0.0000" not in lines[3]
 
     def test_empty_list_returns_empty_string(self):
         from siftd.output.markdown_fmt import render_list
@@ -268,21 +242,15 @@ class TestHtmlRenderList:
         assert "<th class=\"metric\">Cost</th>" in output
         assert "$0.0340" in output
 
-    def test_pricing_caveat_renders_question_mark(self, summaries):
-        from siftd.doctor.checks import Finding
+    def test_none_cost_renders_question_mark(self, summaries):
         from siftd.output.html_fmt import render_list
 
-        caveat = Finding(
-            check="pricing-missing",
-            severity="warning",
-            message="No pricing data for gpt-4o",
-            fix_available=False,
-            context={"model": "gpt-4o"},
-            target="02XYZABC789012",
-        )
-        output = render_list(summaries, Fidelity(depth=3), caveats=[caveat])
+        output = render_list(summaries, Fidelity(depth=3))
+        # First row has cost=0.034 (keeps the dollar amount),
+        # second row has cost=None (renders '?')
         assert '<td class="metric missing">?</td>' in output
-        assert "$0.0340" in output  # untargeted row keeps its cost
+        assert "$0.0340" in output
+        assert "$0.0000" not in output
 
 
 class TestJsonRenderList:

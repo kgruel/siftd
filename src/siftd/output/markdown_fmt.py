@@ -104,9 +104,9 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
         1-2 (default): adds Model, Turns, Tokens
         3+ (full): adds Cost, Tags
 
-    Context keys:
-        caveats: list[Finding] — drives '?' Cost cells for rows targeted by
-            pricing-missing caveats (depth>=3 only).
+    Cost rendering: `None` → "?" (unknown), `0` → "$0.0000" (truly free),
+    otherwise the dollar amount. The caveat layer explains *why* a cost is
+    unknown; the renderer is only responsible for not lying about it.
     """
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
 
@@ -114,11 +114,6 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
         return ""
 
     depth = fidelity.depth
-    caveats = context.get("caveats") or []
-    missing_pricing_ids = frozenset(
-        c.target for c in caveats
-        if c.check == "pricing-missing" and c.target
-    )
 
     headers = ["ID", "Started", "Workspace"]
     if depth >= 1:
@@ -140,13 +135,7 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
                 fmt_tokens(c.total_tokens),
             ]
         if depth >= 3:
-            if c.id in missing_pricing_ids:
-                cost_cell = "?"
-            elif c.cost:
-                cost_cell = f"${c.cost:.4f}"
-            else:
-                cost_cell = "$0.0000"
-            row.append(cost_cell)
+            row.append("?" if c.cost is None else f"${c.cost:.4f}")
             row.append(", ".join(c.tags) if c.tags else "")
         rows.append(row)
 

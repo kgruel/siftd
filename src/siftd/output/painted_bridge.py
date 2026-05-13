@@ -674,13 +674,16 @@ def _styled_table(
     return table(state, columns, rows, visible_height=len(rows), selected_style=PStyle())
 
 
-def _fmt_cost(c, missing_pricing_ids: frozenset[str]) -> str:
-    """Cost cell — '?' when this row's model has no pricing data, else dollar amount."""
-    if c.id in missing_pricing_ids:
+def _fmt_cost(c) -> str:
+    """Cost cell — '?' when cost is unknown, else dollar amount.
+
+    Cost of 0 renders as "$0.0000" (truly free); None renders as "?". The
+    caveat layer explains *why* a cost is unknown; the renderer just
+    doesn't lie about it.
+    """
+    if c.cost is None:
         return "?"
-    if c.cost:
-        return f"${c.cost:.4f}"
-    return "$0.0000"
+    return f"${c.cost:.4f}"
 
 
 def _caveat_footer_block(caveats: list, fidelity: Fidelity) -> Block | None:
@@ -730,9 +733,9 @@ def render_list_block(
         1-2 (default): + model, turns, tokens, cost
         3+ (full): + prompts, responses, tags
 
-    `caveats`, when provided, drives a `?` cost cell for rows whose id
-    matches a `pricing-missing` caveat's target, and a per-kind footer
-    summarizing the caveats below the table.
+    `caveats`, when provided, drives a per-kind footer summarizing the
+    caveats below the table. Cost cells render `None` as "?" and `0` as
+    "$0.0000" purely from the row's value — independent of caveats.
 
     Returns None for empty lists (emit_output no-ops on None).
     """
@@ -747,11 +750,6 @@ def render_list_block(
     p = current_palette()
     depth = fidelity.depth
 
-    missing_pricing_ids = frozenset(
-        c.target for c in (caveats or [])
-        if c.check == "pricing-missing" and c.target
-    )
-
     col_defs: list[tuple[str, Callable, PStyle, Align]] = [
         ("id", lambda c: short_id(c.id) if c.id else "", p.accent, Align.START),
         ("started_at", lambda c: fmt_timestamp(c.started_at), p.muted, Align.START),
@@ -765,7 +763,7 @@ def render_list_block(
         ])
     if depth >= 3:
         col_defs.extend([
-            ("cost", lambda c: _fmt_cost(c, missing_pricing_ids), p.muted, Align.END),
+            ("cost", lambda c: _fmt_cost(c), p.muted, Align.END),
             ("prompts", lambda c: str(c.prompt_count), p.muted, Align.END),
             ("responses", lambda c: str(c.response_count), p.muted, Align.END),
             ("tags", lambda c: ", ".join(c.tags) if c.tags else "", p.accent, Align.START),

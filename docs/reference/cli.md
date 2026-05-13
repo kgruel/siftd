@@ -403,7 +403,7 @@ examples:
 
 ```
 usage: siftd backfill [-h] [--shell-tags] [--derivative-tags]
-                      [--filter-binary] [--dry-run]
+                      [--filter-binary] [--git-remote] [--dry-run]
 
 options:
   -h, --help         show this help message and exit
@@ -412,8 +412,11 @@ options:
                      siftd:derivative
   --filter-binary    Filter binary content (images, base64) from existing
                      blobs
+  --git-remote       Backfill git remote URLs for workspaces missing them (use
+                     'siftd migrate --merge-workspaces' to also collapse
+                     duplicates)
   --dry-run          Preview changes without applying (use with --filter-
-                     binary)
+                     binary or --git-remote)
 
 examples:
   siftd backfill                    # backfill response attributes (cache tokens)
@@ -421,6 +424,7 @@ examples:
   siftd backfill --derivative-tags  # mark siftd-generated conversations
   siftd backfill --filter-binary    # filter binary content from existing blobs
   siftd backfill --filter-binary --dry-run  # preview what would be filtered
+  siftd backfill --git-remote       # backfill git remote URLs for workspaces missing them
 ```
 
 ## siftd migrate
