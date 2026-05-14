@@ -99,6 +99,79 @@ def tool_chars_from_args(args, fidelity) -> int:
     return 120
 
 
+def add_fidelity_args(
+    parser,
+    *,
+    full: bool = False,
+    brief: bool = False,
+    chars: bool = False,
+    thinking: bool = False,
+    tools: bool = False,
+    tool_chars: bool = False,
+) -> None:
+    """Add the standard fidelity argument group to a parser.
+
+    Opt-in switches for each fidelity-shape flag. Callers enable only
+    the axes each verb supports. Mirrors the opt-in composition pattern
+    of _filters.add_filter_args.
+
+    tools=True registers --tools as nargs="?" (optional filter string).
+    For boolean-only tools (peek, export), leave --tools inline.
+    """
+    if not any([full, brief, chars, thinking, tools, tool_chars]):
+        return
+    g = parser.add_argument_group("fidelity")
+    if full:
+        g.add_argument("-F", "--full", action="store_true", help="Full text (no truncation)")
+    if brief:
+        g.add_argument("-b", "--brief", action="store_true", help="Compact view (80 char truncation)")
+    if chars:
+        g.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters")
+    if thinking:
+        g.add_argument("--thinking", action="store_true", help="Show model thinking/reasoning blocks")
+    if tools:
+        g.add_argument(
+            "--tools", nargs="?", const="all", metavar="FILTER",
+            help="Show tool inputs/results (optional filter: tool name prefix or 'errors')",
+        )
+    if tool_chars:
+        g.add_argument(
+            "--tool-chars", type=int, metavar="N", default=None,
+            help="Truncate tool input/result at N characters (default: 120)",
+        )
+
+
+def add_output_args(
+    parser,
+    *,
+    json: bool = False,
+    limit: bool = False,
+    limit_default: int | None = 10,
+    no_hints: bool = False,
+) -> None:
+    """Add the standard output argument group to a parser.
+
+    Opt-in switches for common output controls. Mirrors the opt-in
+    composition pattern of _filters.add_filter_args.
+    """
+    if not any([json, limit, no_hints]):
+        return
+    g = parser.add_argument_group("output")
+    if json:
+        g.add_argument("--json", action="store_true", help="Output as JSON")
+    if limit:
+        default_hint = f" (default: {limit_default})" if limit_default is not None else ""
+        g.add_argument(
+            "-n", "--limit", type=int, default=limit_default,
+            help=f"Number of results to show{default_hint}",
+        )
+    if no_hints:
+        g.add_argument(
+            "--no-hints", action="store_true", dest="no_hints",
+            help="Suppress hint-severity caveat findings.",
+        )
+
+
 def _get_version() -> str:
     """Get package version from metadata."""
     try:

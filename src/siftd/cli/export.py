@@ -102,31 +102,19 @@ def build_export_parser(subparsers) -> None:
         help="Export N most recent sessions (default: 1 if no ID given)",
     )
 
+    from siftd.cli._common import add_fidelity_args, add_output_args
     from siftd.cli._filters import add_filter_args
 
     add_filter_args(p, include_model=False, include_search=True, include_all_tags=False)
+    add_output_args(p, json=True)
+    add_fidelity_args(p, full=True, brief=True, thinking=True)
 
-    rendering = p.add_argument_group("rendering")
-    rendering.add_argument(
-        "--thinking", action="store_true",
-        help="Expand thinking/reasoning blocks (default: placeholder)",
-    )
-    rendering.add_argument(
+    # export-specific rendering options
+    export_opts = p.add_argument_group("export options")
+    export_opts.add_argument(
         "--tools", action="store_true",
         help="Expand tool inputs and results (default: summary)",
     )
-    rendering.add_argument(
-        "-b", "--brief", action="store_true",
-        help="Condensed output (truncate long text)",
-    )
-    rendering.add_argument(
-        "-F", "--full", action="store_true",
-        help="Full output: thinking + tools, no truncation",
-    )
-    rendering.add_argument(
-        "--json", action="store_true",
-        help="Structured JSON output",
-    )
-    rendering.add_argument("--no-header", action="store_true", help="Omit session metadata header")
-    rendering.add_argument("-o", "--output", metavar="FILE", help="Write to file instead of stdout")
+    export_opts.add_argument("--no-header", action="store_true", help="Omit session metadata header")
+    export_opts.add_argument("-o", "--output", metavar="FILE", help="Write to file instead of stdout")
     p.set_defaults(func=cmd_export)

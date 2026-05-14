@@ -289,10 +289,10 @@ examples:
 ```
 usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                    [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
-                   [-t NAME] [--tool-tag NAME] [--owner USER] [-n LIMIT] [-v]
-                   [--oldest] [--json] [--stats] [--no-hints] [--exchanges N]
-                   [-b] [--summary] [-F] [--chars N] [--thinking]
-                   [--tools [FILTER]] [--tool-chars N] [--neighbors]
+                   [-t NAME] [--tool-tag NAME] [--owner USER] [--json]
+                   [-n LIMIT] [--no-hints] [-F] [-b] [--chars N] [--thinking]
+                   [--tools [FILTER]] [--tool-chars N] [-v] [--oldest]
+                   [--stats] [--exchanges N] [--summary] [--neighbors]
                    [--var KEY=VALUE]
                    [conversation_id] [sql_name]
 
@@ -325,24 +325,28 @@ tag filtering:
   --tool-tag NAME       Filter by tool call tag (e.g. shell:test)
 
 output:
-  -n, --limit LIMIT     Number of conversations to show (0=all, default: 10)
-  -v, --verbose         Full table with all columns
-  --oldest              Sort by oldest first (default: newest first)
-  --json                Output as JSON array
-  --stats               Show summary totals after list
+  --json                Output as JSON
+  -n, --limit LIMIT     Number of results to show
   --no-hints            Suppress hint-severity caveat findings.
 
-detail view:
-  --exchanges N         Number of turns to show (default: all)
-  -b, --brief           Compact detail view (80 char truncation)
-  --summary             Summary only (metadata, no turns)
+fidelity:
   -F, --full            Full text (no truncation)
-  --chars N             Truncate text at N characters (default: no truncation)
+  -b, --brief           Compact view (80 char truncation)
+  --chars N             Truncate text at N characters
   --thinking            Show model thinking/reasoning blocks
   --tools [FILTER]      Show tool inputs/results (optional filter: tool name
                         prefix or 'errors')
   --tool-chars N        Truncate tool input/result at N characters (default:
                         120)
+
+list options:
+  -v, --verbose         Full table with all columns
+  --oldest              Sort by oldest first (default: newest first)
+  --stats               Show summary totals after list
+
+detail view:
+  --exchanges N         Number of turns to show (default: all)
+  --summary             Summary only (metadata, no turns)
   --neighbors           Include prev_event_id/next_event_id in event detail
                         output
 
@@ -516,15 +520,14 @@ exit codes:
 ```
 usage: siftd search [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                     [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
-                    [--owner USER] [-n LIMIT] [-v] [--full] [--context N]
-                    [--json] [--format NAME] [--select SELECTOR]
-                    [--sort ORDER] [--mode MODE] [--refs [FILES]] [--fts]
-                    [--semantic] [--embeddings-only] [--recall N]
-                    [--threshold SCORE] [--raw-fts] [--no-diversity]
-                    [--lambda FLOAT] [--recency] [--recency-half-life DAYS]
-                    [--recency-max-boost MULT] [--no-exclude-active]
-                    [--include-derivative] [--index] [--rebuild]
-                    [--backend NAME] [--embed-db PATH]
+                    [--owner USER] [--json] [-n LIMIT] [-F] [-v] [--context N]
+                    [--format NAME] [--select SELECTOR] [--sort ORDER]
+                    [--mode MODE] [--refs [FILES]] [--fts] [--semantic]
+                    [--embeddings-only] [--recall N] [--threshold SCORE]
+                    [--raw-fts] [--no-diversity] [--lambda FLOAT] [--recency]
+                    [--recency-half-life DAYS] [--recency-max-boost MULT]
+                    [--no-exclude-active] [--include-derivative] [--index]
+                    [--rebuild] [--backend NAME] [--embed-db PATH]
                     [query ...]
 
 positional arguments:
@@ -552,11 +555,15 @@ tag filtering:
                         (conversation, prompt, response, tool_call, exchange).
 
 output:
-  -n, --limit LIMIT     Max results (default: 10)
+  --json                Output as JSON
+  -n, --limit LIMIT     Number of results to show (default: 10)
+
+fidelity:
+  -F, --full            Full text (no truncation)
+
+search display:
   -v, --verbose         Show full chunk text
-  --full                Show complete prompt+response exchange
   --context N           Show ±N exchanges around match
-  --json                Output as structured JSON
   --format NAME         Use named formatter (built-in or drop-in plugin)
 
 result modes:
@@ -693,11 +700,11 @@ examples:
 ## siftd peek
 
 ```
-usage: siftd peek [-h] [-w SUBSTR] [--branch SUBSTR] [--all] [-n N]
-                  [--exchanges N] [-b] [-F] [--chars N] [--thinking] [--tools]
-                  [-f] [--timeout SECONDS] [--tail] [--tail-lines N] [--json]
-                  [--main-only] [--children ID] [--last-response]
-                  [--last-prompt]
+usage: siftd peek [-h] [--json] [-n LIMIT] [-F] [-b] [--chars N] [--thinking]
+                  [-w SUBSTR] [--branch SUBSTR] [--all] [--main-only]
+                  [--children ID] [--exchanges N] [--tools] [-f]
+                  [--timeout SECONDS] [--tail] [--tail-lines N]
+                  [--last-response] [--last-prompt]
                   [session_id]
 
 positional arguments:
@@ -705,26 +712,33 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
+
+output:
+  --json                Output as JSON
+  -n, --limit LIMIT     Number of results to show
+
+fidelity:
+  -F, --full            Full text (no truncation)
+  -b, --brief           Compact view (80 char truncation)
+  --chars N             Truncate text at N characters
+  --thinking            Show model thinking/reasoning blocks
+
+session filters:
   -w, --workspace SUBSTR
                         Filter by workspace name substring
   --branch SUBSTR       Filter by worktree branch substring
   --all                 Include inactive sessions (not just last 2 hours)
-  -n, --limit N         Maximum number of sessions to list (default: 10)
+  --main-only           Only show main sessions (exclude subagents)
+  --children ID         Show only children of the specified parent session
+
+detail and follow:
   --exchanges N         Detail mode: number of exchanges to show (default: 5)
-  -b, --brief           Compact detail/follow view (80 char truncation)
-  -F, --full            Show full text (no truncation)
-  --chars N             Truncate text at N characters (default: no truncation)
-  --thinking            Show model thinking/reasoning blocks inline when
-                        available
   --tools               Show tool inputs/results inline when available
   -f, --follow          Follow a live session in real time (like tail -f)
   --timeout SECONDS     Exit after SECONDS of wall-clock time (for use with
                         --follow)
   --tail                Raw JSONL tail (last 20 records)
   --tail-lines N        Number of records for --tail (default: 20)
-  --json                Output as structured JSON
-  --main-only           Only show main sessions (exclude subagents)
-  --children ID         Show only children of the specified parent session
   --last-response       Output only the last assistant response (raw text, no
                         formatting)
   --last-prompt         Output only the last user prompt (raw text, no
@@ -763,7 +777,7 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
 ```
 usage: siftd export [-h] [-n [N]] [-w SUBSTR] [--since DATE] [--before DATE]
                     [-l NAME] [--no-tag NAME] [--on KIND] [-s QUERY]
-                    [--owner USER] [--thinking] [--tools] [-b] [-F] [--json]
+                    [--owner USER] [--json] [-F] [-b] [--thinking] [--tools]
                     [--no-header] [-o FILE]
                     [conversation_id]
 
@@ -793,13 +807,16 @@ tag filtering:
                         (repeatable). Default: match tags on any kind
                         (conversation, prompt, response, tool_call, exchange).
 
-rendering:
-  --thinking            Expand thinking/reasoning blocks (default:
-                        placeholder)
+output:
+  --json                Output as JSON
+
+fidelity:
+  -F, --full            Full text (no truncation)
+  -b, --brief           Compact view (80 char truncation)
+  --thinking            Show model thinking/reasoning blocks
+
+export options:
   --tools               Expand tool inputs and results (default: summary)
-  -b, --brief           Condensed output (truncate long text)
-  -F, --full            Full output: thinking + tools, no truncation
-  --json                Structured JSON output
   --no-header           Omit session metadata header
   -o, --output FILE     Write to file instead of stdout
 

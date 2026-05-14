@@ -667,15 +667,17 @@ examples:
     add_filter_args(p_search)
 
     # Output options
-    output_group = p_search.add_argument_group("output")
-    output_group.add_argument("-n", "--limit", type=int, default=10, help="Max results (default: 10)")
-    output_group.add_argument("-v", "--verbose", action="store_true", help="Show full chunk text")
-    output_group.add_argument("--full", action="store_true", help="Show complete prompt+response exchange")
-    output_group.add_argument("--context", type=int, metavar="N", help="Show ±N exchanges around match")
-    output_group.add_argument("--json", action="store_true", help="Output as structured JSON")
+    from siftd.cli._common import add_fidelity_args, add_output_args
+
+    add_output_args(p_search, json=True, limit=True, limit_default=10)
+    add_fidelity_args(p_search, full=True)
+
+    search_display = p_search.add_argument_group("search display")
+    search_display.add_argument("-v", "--verbose", action="store_true", help="Show full chunk text")
+    search_display.add_argument("--context", type=int, metavar="N", help="Show ±N exchanges around match")
     # --debug-ids: deprecated no-op; chunk_id/source_ids ship by default. Accepted through v0.9.x, removed in v0.10.0.
-    output_group.add_argument("--debug-ids", action="store_true", dest="debug_ids", help=argparse.SUPPRESS)
-    output_group.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
+    search_display.add_argument("--debug-ids", action="store_true", dest="debug_ids", help=argparse.SUPPRESS)
+    search_display.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
 
     # Result modes — three orthogonal axes
     mode_group = p_search.add_argument_group("result modes")

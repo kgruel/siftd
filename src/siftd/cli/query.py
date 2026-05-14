@@ -475,31 +475,23 @@ examples:
     p_query.add_argument("sql_name", nargs="?", help="SQL query name (when using 'sql' subcommand)")
 
     # Filtering options
+    from siftd.cli._common import add_fidelity_args, add_output_args
     from siftd.cli._filters import add_filter_args
 
     add_filter_args(p_query, include_tool=True, include_tool_tag=True)
+    add_output_args(p_query, json=True, limit=True, limit_default=None, no_hints=True)
+    add_fidelity_args(p_query, full=True, brief=True, chars=True, thinking=True, tools=True, tool_chars=True)
 
-    # Output options
-    output_group = p_query.add_argument_group("output")
-    output_group.add_argument("-n", "--limit", type=int, default=None, help="Number of conversations to show (0=all, default: 10)")
-    output_group.add_argument("-v", "--verbose", action="store_true", help="Full table with all columns")
-    output_group.add_argument("--oldest", action="store_true", help="Sort by oldest first (default: newest first)")
-    output_group.add_argument("--json", action="store_true", help="Output as JSON array")
-    output_group.add_argument("--stats", action="store_true", help="Show summary totals after list")
-    output_group.add_argument("--no-hints", action="store_true", dest="no_hints", help="Suppress hint-severity caveat findings.")
+    # List options
+    list_group = p_query.add_argument_group("list options")
+    list_group.add_argument("-v", "--verbose", action="store_true", help="Full table with all columns")
+    list_group.add_argument("--oldest", action="store_true", help="Sort by oldest first (default: newest first)")
+    list_group.add_argument("--stats", action="store_true", help="Show summary totals after list")
 
     # Detail view options (when conversation_id is provided)
     detail_group = p_query.add_argument_group("detail view")
     detail_group.add_argument("--exchanges", type=int, metavar="N", help="Number of turns to show (default: all)")
-    detail_group.add_argument("-b", "--brief", action="store_true", help="Compact detail view (80 char truncation)")
     detail_group.add_argument("--summary", action="store_true", help="Summary only (metadata, no turns)")
-    detail_group.add_argument("-F", "--full", action="store_true", help="Full text (no truncation)")
-    detail_group.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: no truncation)")
-    detail_group.add_argument("--thinking", action="store_true", help="Show model thinking/reasoning blocks")
-    detail_group.add_argument("--tools", nargs="?", const="all", metavar="FILTER",
-        help="Show tool inputs/results (optional filter: tool name prefix or 'errors')")
-    detail_group.add_argument("--tool-chars", type=int, metavar="N", default=None,
-        help="Truncate tool input/result at N characters (default: 120)")
     detail_group.add_argument("--neighbors", action="store_true",
         help="Include prev_event_id/next_event_id in event detail output")
 

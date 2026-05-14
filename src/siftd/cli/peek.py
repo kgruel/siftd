@@ -402,24 +402,30 @@ def build_peek_parser(subparsers) -> None:
 
 NOTE: Session content may contain sensitive information (API keys, credentials, etc.).""",
     )
+    from siftd.cli._common import add_fidelity_args, add_output_args
+
     p_peek.add_argument("session_id", nargs="?", help="Session ID prefix for detail view")
-    p_peek.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace name substring")
-    p_peek.add_argument("--branch", metavar="SUBSTR", help="Filter by worktree branch substring")
-    p_peek.add_argument("--all", action="store_true", help="Include inactive sessions (not just last 2 hours)")
-    p_peek.add_argument("-n", "--limit", type=int, metavar="N", help="Maximum number of sessions to list (default: 10)")
-    p_peek.add_argument("--exchanges", type=int, metavar="N", help="Detail mode: number of exchanges to show (default: 5)")
-    p_peek.add_argument("-b", "--brief", action="store_true", help="Compact detail/follow view (80 char truncation)")
-    p_peek.add_argument("-F", "--full", action="store_true", help="Show full text (no truncation)")
-    p_peek.add_argument("--chars", type=int, metavar="N", help="Truncate text at N characters (default: no truncation)")
-    p_peek.add_argument("--thinking", action="store_true", help="Show model thinking/reasoning blocks inline when available")
-    p_peek.add_argument("--tools", action="store_true", help="Show tool inputs/results inline when available")
-    p_peek.add_argument("-f", "--follow", action="store_true", help="Follow a live session in real time (like tail -f)")
-    p_peek.add_argument("--timeout", type=float, metavar="SECONDS", help="Exit after SECONDS of wall-clock time (for use with --follow)")
-    p_peek.add_argument("--tail", action="store_true", help="Raw JSONL tail (last 20 records)")
-    p_peek.add_argument("--tail-lines", type=int, default=20, metavar="N", dest="tail_lines", help="Number of records for --tail (default: 20)")
-    p_peek.add_argument("--json", action="store_true", help="Output as structured JSON")
-    p_peek.add_argument("--main-only", action="store_true", help="Only show main sessions (exclude subagents)")
-    p_peek.add_argument("--children", metavar="ID", help="Show only children of the specified parent session")
-    p_peek.add_argument("--last-response", action="store_true", help="Output only the last assistant response (raw text, no formatting)")
-    p_peek.add_argument("--last-prompt", action="store_true", help="Output only the last user prompt (raw text, no formatting)")
+
+    add_output_args(p_peek, json=True, limit=True, limit_default=None)
+    add_fidelity_args(p_peek, full=True, brief=True, chars=True, thinking=True)
+
+    # peek-specific session filters
+    session_group = p_peek.add_argument_group("session filters")
+    session_group.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace name substring")
+    session_group.add_argument("--branch", metavar="SUBSTR", help="Filter by worktree branch substring")
+    session_group.add_argument("--all", action="store_true", help="Include inactive sessions (not just last 2 hours)")
+    session_group.add_argument("--main-only", action="store_true", help="Only show main sessions (exclude subagents)")
+    session_group.add_argument("--children", metavar="ID", help="Show only children of the specified parent session")
+
+    # peek-specific detail/follow controls
+    detail_group = p_peek.add_argument_group("detail and follow")
+    detail_group.add_argument("--exchanges", type=int, metavar="N", help="Detail mode: number of exchanges to show (default: 5)")
+    detail_group.add_argument("--tools", action="store_true", help="Show tool inputs/results inline when available")
+    detail_group.add_argument("-f", "--follow", action="store_true", help="Follow a live session in real time (like tail -f)")
+    detail_group.add_argument("--timeout", type=float, metavar="SECONDS", help="Exit after SECONDS of wall-clock time (for use with --follow)")
+    detail_group.add_argument("--tail", action="store_true", help="Raw JSONL tail (last 20 records)")
+    detail_group.add_argument("--tail-lines", type=int, default=20, metavar="N", dest="tail_lines", help="Number of records for --tail (default: 20)")
+    detail_group.add_argument("--last-response", action="store_true", help="Output only the last assistant response (raw text, no formatting)")
+    detail_group.add_argument("--last-prompt", action="store_true", help="Output only the last user prompt (raw text, no formatting)")
+
     p_peek.set_defaults(func=cmd_peek)
