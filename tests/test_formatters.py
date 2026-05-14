@@ -58,6 +58,7 @@ def sample_results(formatter_db):
             "conversation_id": conv_id,
             "score": 0.85,
             "chunk_type": "prompt",
+            "display_label": "USER",
             "text": "How do I implement caching?",
             "source_ids": ["src1"],
         },
@@ -66,6 +67,7 @@ def sample_results(formatter_db):
             "conversation_id": conv_id,
             "score": 0.72,
             "chunk_type": "response",
+            "display_label": "ASSISTANT",
             "text": "You can use Redis or in-memory caching...",
             "source_ids": ["src1"],
         },
@@ -82,6 +84,7 @@ def enriched_results(formatter_db):
             "conversation_id": conv_id,
             "score": 0.85,
             "chunk_type": "prompt",
+            "display_label": "USER",
             "text": "How do I implement caching?",
             "source_ids": ["src1"],
             "_workspace": "project",
@@ -92,6 +95,7 @@ def enriched_results(formatter_db):
             "conversation_id": conv_id,
             "score": 0.72,
             "chunk_type": "response",
+            "display_label": "ASSISTANT",
             "text": "You can use Redis or in-memory caching...",
             "source_ids": ["src1"],
             "_workspace": "project",
@@ -213,8 +217,8 @@ class TestTerminalRenderSearch:
         # Score
         assert "0.850" in output
         # Chunk type
-        assert "PROMPT" in output
-        assert "RESPONSE" in output
+        assert "USER" in output
+        assert "ASSISTAN" in output
         # Workspace
         assert "project" in output
 
@@ -239,6 +243,7 @@ class TestTerminalRenderSearch:
             "conversation_id": "abc123",
             "score": 0.8,
             "chunk_type": "prompt",
+            "display_label": "USER",
             "text": long_text,
             "_workspace": "test",
             "_started_at": "2024-01-15",
@@ -287,8 +292,10 @@ class TestTerminalRenderSearch:
 
         results = [
             {"conversation_id": "conv-high", "score": 0.95, "chunk_type": "prompt",
+             "display_label": "USER",
              "text": "High relevance", "_workspace": "high", "_started_at": "2024-01-15"},
             {"conversation_id": "conv-low", "score": 0.45, "chunk_type": "prompt",
+             "display_label": "USER",
              "text": "Low relevance", "_workspace": "low", "_started_at": "2024-01-16"},
         ]
         from siftd.cli.search import _compute_thread_tiers
@@ -336,6 +343,7 @@ class TestTerminalRenderSearch:
             "conversation_id": "abc123",
             "score": 0.8,
             "chunk_type": "prompt",
+            "display_label": "USER",
             "text": multiline_text,
             "_workspace": "project",
             "_started_at": "2024-01-15",
@@ -358,6 +366,7 @@ class TestTerminalRenderSearch:
             "conversation_id": "abc123",
             "score": 0.8,
             "chunk_type": "prompt",
+            "display_label": "USER",
             "text": "No workspace",
             "_workspace": "",
             "_started_at": "2024-01-15",
@@ -377,6 +386,7 @@ class TestTerminalRenderSearch:
             "conversation_id": "abc123",
             "score": 0.8,
             "chunk_type": "prompt",
+            "display_label": "USER",
             "text": "original chunk",
             "_workspace": "project",
             "_started_at": "2024-01-15",
@@ -401,6 +411,7 @@ class TestTerminalRenderSearch:
             "conversation_id": "abc123",
             "score": 0.8,
             "chunk_type": "prompt",
+            "display_label": "USER",
             "text": "original chunk",
             "_workspace": "project",
             "_started_at": "2024-01-15",
@@ -453,8 +464,10 @@ class TestMarkdownRenderSearch:
 
         results = [
             {"conversation_id": "conv-high", "score": 0.95, "chunk_type": "prompt",
+             "display_label": "USER",
              "text": "High relevance", "_workspace": "high", "_started_at": "2024-01-15"},
             {"conversation_id": "conv-low", "score": 0.45, "chunk_type": "prompt",
+             "display_label": "USER",
              "text": "Low relevance", "_workspace": "low", "_started_at": "2024-01-16"},
         ]
         tier1, tier2 = _compute_thread_tiers(results)
@@ -675,8 +688,10 @@ class TestSearchHelpers:
 
         results = [
             {"conversation_id": "high", "score": 0.95, "chunk_type": "prompt",
+             "display_label": "USER",
              "text": "high", "_workspace": "ws", "_started_at": "2024-01-15"},
             {"conversation_id": "low", "score": 0.45, "chunk_type": "prompt",
+             "display_label": "USER",
              "text": "low", "_workspace": "ws", "_started_at": "2024-01-16"},
         ]
 
@@ -693,6 +708,7 @@ class TestSearchHelpers:
 
         results = [
             {"conversation_id": "only", "score": 0.8, "chunk_type": "prompt",
+             "display_label": "USER",
              "text": "only result", "_workspace": "ws", "_started_at": "2024-01-15"},
         ]
 

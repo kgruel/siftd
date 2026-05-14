@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
+
+# Conversational role presentation labels — canonical across api.Turn and output renderers.
+ROLE_USER: str = "user"
+ROLE_ASSISTANT: str = "assistant"
 
 
 @dataclass
@@ -71,9 +75,22 @@ class SearchChunk:
     exchanges: list[tuple[str, str, str]] | None = None
     context_window: list[tuple[str, str, str, bool]] | None = None
 
+    _DISPLAY_LABELS: ClassVar[dict[str, str]] = {
+        "prompt": "USER",
+        "response": "ASSISTANT",
+        "tool_call": "TOOL",
+        "exchange": "EXCHANGE",
+        "tool_summary": "SUMMARY",
+    }
+
     def __post_init__(self) -> None:
         if self.source_ids is None:
             self.source_ids = []
+
+    @property
+    def display_label(self) -> str:
+        """Presentation label derived from chunk_type; stable across renderers."""
+        return self._DISPLAY_LABELS.get(self.chunk_type, self.chunk_type.upper())
 
     def __getitem__(self, key: str) -> Any:
         """Compatibility access for legacy dict-style callers."""
@@ -135,6 +152,7 @@ class SearchChunk:
             "conversation_id": self.conversation_id,
             "score": self.score,
             "chunk_type": self.chunk_type,
+            "display_label": self.display_label,
             "text": self.text,
             "_workspace": self.workspace_path or "",
             "_started_at": (self.started_at or "")[:10] if self.started_at else "",

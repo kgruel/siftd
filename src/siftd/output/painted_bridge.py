@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from siftd.domain.search_types import ROLE_ASSISTANT, ROLE_USER
 from siftd.output._id_format import short_id
 from siftd.output.common import fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
 
@@ -431,9 +432,11 @@ def render_query_detail_block(
     for turn in turns:
         ts = fmt_timestamp(turn.timestamp, time_only=True)
         turn_lines: list[Line] = []
+        prompt_role_label = getattr(turn, "PROMPT_ROLE_LABEL", ROLE_USER)
+        response_role_label = getattr(turn, "RESPONSE_ROLE_LABEL", ROLE_ASSISTANT)
 
         if turn.prompt_text:
-            turn_lines.append(_line(("[prompt] ", ds.prompt), (ts, ds.temporal)))
+            turn_lines.append(_line((f"[{prompt_role_label}] ", ds.prompt), (ts, ds.temporal)))
             _append_multiline(turn_lines, "  ", ds.assistant, turn.prompt_text, ds.assistant, fidelity.chars)
             turn_lines.append(_line())
 
@@ -447,7 +450,7 @@ def render_query_detail_block(
         tok = turn.total_input_tokens + turn.total_output_tokens
         turn_lines.append(
             _line(
-                ("[response] ", ds.prompt),
+                (f"[{response_role_label}] ", ds.prompt),
                 (ts, ds.temporal),
                 (f" ({fmt_tokens(tok)} tok)", ds.metric),
             )
@@ -519,9 +522,11 @@ def render_peek_detail_block(
     for exchange in exchanges:
         ts = fmt_timestamp(exchange.timestamp, time_only=True)
         ex_lines: list[Line] = []
+        prompt_role_label = getattr(exchange, "PROMPT_ROLE_LABEL", ROLE_USER)
+        response_role_label = getattr(exchange, "RESPONSE_ROLE_LABEL", ROLE_ASSISTANT)
 
         if exchange.prompt_text:
-            ex_lines.append(_line(("[prompt] ", ds.prompt), (ts, ds.temporal)))
+            ex_lines.append(_line((f"[{prompt_role_label}] ", ds.prompt), (ts, ds.temporal)))
             _append_multiline(ex_lines, "  ", ds.assistant, exchange.prompt_text, ds.assistant, fidelity.chars)
             ex_lines.append(_line())
 
@@ -540,7 +545,7 @@ def render_peek_detail_block(
         total_tokens = exchange.input_tokens + exchange.output_tokens
         ex_lines.append(
             _line(
-                ("[response] ", ds.prompt),
+                (f"[{response_role_label}] ", ds.prompt),
                 (ts, ds.temporal),
                 (f" ({fmt_tokens(total_tokens)} tok)", ds.metric),
             )
@@ -589,7 +594,7 @@ def render_follow_event_block(
 
     if getattr(event, "is_user", False):
         lines: list[Line] = []
-        lines.append(_line(("[prompt] ", ds.prompt), (ts, ds.temporal)))
+        lines.append(_line((f"[{ROLE_USER}] ", ds.prompt), (ts, ds.temporal)))
         text = getattr(event, "text", None)
         if text:
             _append_multiline(lines, "  ", ds.assistant, text, ds.assistant, fidelity.chars)
@@ -597,7 +602,7 @@ def render_follow_event_block(
 
     total_tokens = getattr(event, "input_tokens", 0) + getattr(event, "output_tokens", 0)
     header_parts: list[tuple[str, Style]] = [
-        ("[response] ", ds.prompt),
+        (f"[{ROLE_ASSISTANT}] ", ds.prompt),
         (ts, ds.temporal),
     ]
     if total_tokens:

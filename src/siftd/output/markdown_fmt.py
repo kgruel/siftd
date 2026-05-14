@@ -231,12 +231,12 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         lines.append("")
         for r in results:
             conv_id = r.get("conversation_id", "")
-            chunk_type = r.get("chunk_type", "").upper()[:8]
+            display_label = r["display_label"]
             score = r.get("score", 0.0)
             ws = r.get("_workspace", "")
             started = r.get("_started_at", "")
 
-            lines.append(f"#### {short_id(conv_id)} — {score:.3f} [{chunk_type}] {started} {ws}")
+            lines.append(f"#### {short_id(conv_id)} — {score:.3f} [{display_label}] {started} {ws}")
             lines.append("")
 
             exchanges = r.get("_exchanges")

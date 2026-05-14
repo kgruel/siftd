@@ -124,8 +124,8 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
                         rt = truncate_text(response_text, 800)
                         lines.append(f"  [asst] {rt}")
             else:
-                chunk_type = r.get("chunk_type", "")
-                side = "[user]" if chunk_type == "prompt" else "[asst]"
+                label = r["display_label"]
+                side = f"[{label.lower()}]"
                 text = truncate_text(r.get("text", "").strip(), 600)
                 lines.append(f"  {side} {text}")
 
@@ -160,11 +160,11 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             conv_id = r.get("conversation_id", "")
             ws = r.get("_workspace", "")
             started = r.get("_started_at", "")
-            chunk_type = r.get("chunk_type", "").upper()[:8]
+            display_label = r["display_label"][:8]
             score = r.get("score", 0.0)
 
             lines.append(
-                f"  {short_id(conv_id)}  {score:.3f}  [{chunk_type:8s}]  {started}  {ws}"
+                f"  {short_id(conv_id)}  {score:.3f}  [{display_label:8s}]  {started}  {ws}"
             )
 
             exchanges = r.get("_exchanges")

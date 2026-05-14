@@ -6,9 +6,11 @@ import json
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import ClassVar
 
 from painted import Fidelity
 
+from siftd.domain.search_types import ROLE_ASSISTANT, ROLE_USER
 from siftd.paths import db_path as default_db_path
 from siftd.safecall import parse_json
 from siftd.safecall import read_text as _safe_read_text
@@ -71,6 +73,9 @@ class NarrativeBlock:
 @dataclass
 class Turn:
     """A prompt and its full response narrative."""
+
+    PROMPT_ROLE_LABEL: ClassVar[str] = ROLE_USER
+    RESPONSE_ROLE_LABEL: ClassVar[str] = ROLE_ASSISTANT
 
     timestamp: str | None
     prompt_text: str | None

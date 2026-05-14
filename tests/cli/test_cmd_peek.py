@@ -183,8 +183,8 @@ class TestPeekDetailMode:
 
         assert "Session: abc123" in out
         assert f"Started: {expected_started}" in out
-        assert f"[prompt] {expected_turn}" in out
-        assert f"[response] {expected_turn} (30 tok)" in out
+        assert f"[user] {expected_turn}" in out
+        assert f"[assistant] {expected_turn} (30 tok)" in out
         assert "Doing it." in out
         assert "shell.execute" in out
         assert "$ git status" in out
@@ -272,9 +272,9 @@ class TestPeekFollowMode:
 
         assert "Session: abc123" in out
         assert f"Started: {expected_started}" in out
-        assert f"[prompt] {expected_initial_turn}" in out
-        assert f"[response] {expected_initial_turn} (30 tok)" in out
-        assert f"[response] {expected_live_turn} (11 tok)" in out
+        assert f"[user] {expected_initial_turn}" in out
+        assert f"[assistant] {expected_initial_turn} (30 tok)" in out
+        assert f"[assistant] {expected_live_turn} (11 tok)" in out
         assert "Doing it." in out
         assert "Still working." in out
         assert "→ shell.execute" in out

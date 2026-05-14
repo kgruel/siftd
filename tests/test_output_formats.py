@@ -337,6 +337,7 @@ def _chunk_result(**overrides):
         "chunk_id": "chunk001",
         "score": 0.85,
         "chunk_type": "response",
+        "display_label": "ASSISTANT",
         "text": "The answer is 42.",
         "source_ids": [],
         "_started_at": "2026-03-15",
@@ -1188,8 +1189,8 @@ class TestRenderQueryDetailBlock:
         assert "Conversation:" in text
         assert "01DETAIL" in text
         assert "project" in text
-        assert "[prompt]" in text
-        assert "[response]" in text
+        assert "[user]" in text
+        assert "[assistant]" in text
 
     def test_turn_with_tool_summaries(self):
         from siftd.output.painted_bridge import render_query_detail_block
@@ -1232,7 +1233,7 @@ class TestRenderQueryDetailBlock:
             detail, turns=[turn], fidelity=Fidelity(depth=1)
         )
         text = _block_to_text(result)
-        assert "[prompt]" in text
+        assert "[user]" in text
 
     def test_empty_turns(self):
         from siftd.output.painted_bridge import render_query_detail_block
@@ -1290,7 +1291,7 @@ class TestRenderPeekDetailBlock:
         assert "Session:" in text
         assert "sess001" in text
         assert "my-project" in text
-        assert "[prompt]" in text
+        assert "[user]" in text
 
     def test_exchange_with_response_text(self):
         from siftd.output.painted_bridge import render_peek_detail_block
@@ -1335,7 +1336,7 @@ class TestRenderPeekDetailBlock:
             detail, exchanges=[exchange], fidelity=Fidelity(depth=1)
         )
         text = _block_to_text(result)
-        assert "[prompt]" in text
+        assert "[user]" in text
 
     def test_parent_session_shown(self):
         from siftd.output.painted_bridge import render_peek_detail_block
@@ -1368,7 +1369,7 @@ class TestRenderFollowEventBlock:
         event = FakeFollowEvent(is_user=True, text="How do I fix this?")
         result = render_follow_event_block(event, fidelity=Fidelity(depth=1))
         text = _block_to_text(result)
-        assert "[prompt]" in text
+        assert "[user]" in text
         assert "How do I fix" in text
 
     def test_assistant_event_with_text(self):
@@ -1377,7 +1378,7 @@ class TestRenderFollowEventBlock:
         event = FakeFollowEvent(text="Here's the fix.", input_tokens=100, output_tokens=200)
         result = render_follow_event_block(event, fidelity=Fidelity(depth=1))
         text = _block_to_text(result)
-        assert "[response]" in text
+        assert "[assistant]" in text
         assert "Here's the fix" in text
         assert "tok" in text
 
@@ -1396,7 +1397,7 @@ class TestRenderFollowEventBlock:
         event = FakeFollowEvent(input_tokens=10, output_tokens=20)
         result = render_follow_event_block(event, fidelity=Fidelity(depth=1))
         text = _block_to_text(result)
-        assert "[response]" in text
+        assert "[assistant]" in text
 
     def test_assistant_event_with_narrative(self):
         from siftd.output.painted_bridge import render_follow_event_block
@@ -1458,7 +1459,7 @@ class TestTerminalRenderDetail:
         result = render_detail([turn], Fidelity(depth=1), detail=detail)
         text = _block_to_text(result)
         assert "01DETAIL" in text
-        assert "[prompt]" in text
+        assert "[user]" in text
 
 
 class TestSelectFormat:

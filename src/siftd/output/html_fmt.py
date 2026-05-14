@@ -489,7 +489,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         parts.append(f"<h2>Results for: {escape(query)}</h2>")
         for r in results:
             conv_id = r.get("conversation_id", "")
-            chunk_type = r.get("chunk_type", "").upper()[:8]
+            display_label = r["display_label"]
             score = r.get("score", 0.0)
             ws = r.get("_workspace", "")
             started = r.get("_started_at", "")
@@ -502,7 +502,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
                 f'<header>'
                 f'<span class="identifier">{escape(short_id(conv_id))}</span>'
                 f' <span class="metric">{score:.3f}</span>'
-                f' <span class="adapter">[{escape(chunk_type)}]</span>'
+                f' <span class="adapter">[{escape(display_label)}]</span>'
                 f' <span class="temporal">{escape(started)}</span>'
                 f' <span class="workspace">{escape(ws)}</span>'
                 f"</header>"
