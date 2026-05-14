@@ -253,9 +253,16 @@ def format_function(name: str, func: Any) -> str:
     return "\n".join(lines)
 
 
-def generate_api_docs() -> str:
-    """Generate API reference documentation."""
+def generate_api_docs() -> str | None:
+    """Generate API reference documentation.
+
+    Returns None when any symbol could not be resolved (e.g. missing optional
+    deps like numpy) so the caller skips writing api.md and leaves the
+    committed version canonical.
+    """
     from siftd import api
+
+    skipped: list[str] = []
 
     lines = [
         "# API Reference",
@@ -291,7 +298,11 @@ def generate_api_docs() -> str:
     # Map names to categories based on their source module
     name_to_category = {}
     for name in api.__all__:
-        obj = getattr(api, name)
+        try:
+            obj = getattr(api, name)
+        except ModuleNotFoundError as exc:
+            skipped.append(f"{name} ({exc.name} not installed)")
+            continue
         module = getattr(obj, "__module__", "")
         if "adapters" in module:
             name_to_category[name] = "Adapters"
@@ -339,7 +350,11 @@ def generate_api_docs() -> str:
         exceptions = []
 
         for name in names:
-            obj = getattr(api, name)
+            try:
+                obj = getattr(api, name)
+            except ModuleNotFoundError as exc:
+                skipped.append(f"{name} ({exc.name} not installed)")
+                continue
             if isinstance(obj, type):
                 if issubclass(obj, Exception):
                     exceptions.append((name, obj))
@@ -387,6 +402,13 @@ def generate_api_docs() -> str:
             for name, func in functions:
                 lines.append(format_function(name, func))
 
+    if skipped:
+        print(
+            "warning: api.md not regenerated — skipped symbols: "
+            + ", ".join(skipped),
+            file=sys.stderr,
+        )
+        return None
     return "\n".join(lines)
 
 
@@ -762,8 +784,11 @@ def main() -> None:
         elif target == "api":
             content = generate_api_docs()
             out_path = DOCS_DIR / "api.md"
-            out_path.write_text(content)
-            print(f"Generated: {out_path}")
+            if content is None:
+                print(f"Skipped: {out_path} (keeping existing version)")
+            else:
+                out_path.write_text(content)
+                print(f"Generated: {out_path}")
 
         elif target == "schema":
             content = generate_schema_docs()
