@@ -588,8 +588,8 @@
   usage: siftd search [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                       [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
                       [--owner USER] [-n LIMIT] [-v] [--full] [--context N]
-                      [--thread] [--by-time] [--json] [--format NAME]
-                      [--conversations] [--first] [--refs [FILES]] [--fts]
+                      [--json] [--format NAME] [--select SELECTOR]
+                      [--sort ORDER] [--mode MODE] [--refs [FILES]] [--fts]
                       [--semantic] [--embeddings-only] [--recall N]
                       [--threshold SCORE] [--raw-fts] [--no-diversity]
                       [--lambda FLOAT] [--recency] [--recency-half-life DAYS]
@@ -629,16 +629,17 @@
     -v, --verbose         Show full chunk text
     --full                Show complete prompt+response exchange
     --context N           Show ±N exchanges around match
-    --thread              Narrative thread: top conversations expanded, rest as
-                          shortlist
-    --by-time             Sort results by time instead of score
     --json                Output as structured JSON
     --format NAME         Use named formatter (built-in or drop-in plugin)
   
   result modes:
-    --conversations       Aggregate scores per conversation, return ranked
-                          conversations
-    --first               Return chronologically earliest match above threshold
+    --select SELECTOR     Result selector: all (default) or first
+                          (chronologically earliest match above threshold)
+    --sort ORDER          Sort order: score (default, relevance) or time
+                          (chronological). Incompatible with
+                          --mode=thread/conversations.
+    --mode MODE           Render mode: chunks (default), thread (narrative
+                          drill-down), or conversations (aggregated ranking)
     --refs [FILES]        Show file references; optionally filter by comma-
                           separated basenames
   
@@ -695,10 +696,10 @@
     siftd search --semantic "auth flow"                  # force semantic search
   
     # refine
-    siftd search "design decision" --thread              # narrative: top conversations expanded
+    siftd search "design decision" --mode=thread         # narrative: top conversations expanded
     siftd search "why we chose X" --context 2            # ±2 surrounding exchanges
-    siftd search "event sourcing" --conversations        # rank whole conversations, not chunks
-    siftd search "when first discussed Y" --first        # earliest match above threshold
+    siftd search "event sourcing" --mode=conversations   # rank whole conversations, not chunks
+    siftd search "when first discussed Y" --select=first # earliest match above threshold
     siftd search --threshold 0.7 "architecture"          # only high-relevance results
   
     # inspect
@@ -721,7 +722,7 @@
     # tuning
     siftd search --embeddings-only "chunking"            # skip FTS5, pure embeddings
     siftd search --recall 200 "error"                    # widen FTS5 candidate pool
-    siftd search --by-time "chunking"                     # sort by time instead of score
+    siftd search --sort=time "chunking"                   # sort by time instead of score
   
     # diversity vs relevance (MMR reranking)
     siftd search --no-diversity "chunking"               # pure relevance order (deterministic)

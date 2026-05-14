@@ -28,7 +28,9 @@ def make_args(**kwargs):
         "verbose": False,
         "full": False,
         "context": None,
-        "by_time": False,
+        "select": "all",
+        "sort": "score",
+        "mode": "chunks",
         "workspace": None,
         "model": None,
         "since": None,
@@ -36,12 +38,9 @@ def make_args(**kwargs):
         "index": False,
         "rebuild": False,
         "backend": None,
-        "thread": False,
         "embeddings_only": False,
         "recall": 80,
         "role": None,
-        "first": False,
-        "conversations": False,
         "refs": None,
         "threshold": None,
         "json": False,
@@ -223,9 +222,9 @@ def test_search_fts_only_branches(monkeypatch, tmp_path, capsys):
     db = tmp_path / "db.sqlite"
     db.write_text("x")
     args = make_args(
-        query=["q"], db=str(db), json=True, thread=True, context=1,
-        full=True, verbose=True, conversations=True, first=True,
-        refs=True, by_time=True, format="x",
+        query=["q"], db=str(db), json=True, mode="thread", context=1,
+        full=True, verbose=True, select="first",
+        refs=True, sort="time", format="x",
     )
 
     class _Conn:
@@ -285,7 +284,7 @@ def test_cmd_search_threshold_and_first_json_empty(test_db, tmp_path, monkeypatc
     assert called
 
     monkeypatch.setattr("siftd.api.first_mention", lambda *a, **k: None)
-    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), json=True, first=True)) == 0
+    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), json=True, select="first")) == 0
 
 
 def test_cmd_search_mode_processing_and_refs(test_db, tmp_path, monkeypatch):
@@ -309,15 +308,15 @@ def test_cmd_search_mode_processing_and_refs(test_db, tmp_path, monkeypatch):
     refs_called = []
     monkeypatch.setattr("siftd.output.common.print_refs_content", lambda refs, filt: refs_called.append((refs, filt)))
 
-    # chunks mode: by-time + full + context + refs path
-    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), by_time=True, full=True, context=1, refs="a.py,b.py")) == 0
+    # chunks mode: sort=time + full + context + refs path
+    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), sort="time", full=True, context=1, refs="a.py,b.py")) == 0
     assert refs_called
 
     # thread mode branch
-    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), thread=True, by_time=True)) == 0
+    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), mode="thread")) == 0
 
     # conversations mode branch
-    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), conversations=True)) == 0
+    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), mode="conversations")) == 0
 
 
 def test_misc_remaining_helper_branches(monkeypatch):
@@ -361,10 +360,10 @@ def test_cmd_search_index_semantic_and_output_edges(test_db, tmp_path, monkeypat
     assert cmd_search(args) == 1
     assert "No embeddings index found" in capsys.readouterr().out
 
-    # line 224: json+thread warning
+    # json+mode=thread warning
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: False)
-    assert cmd_search(make_args(query=["x"], db=str(test_db), json=True, thread=True)) == 0
+    assert cmd_search(make_args(query=["x"], db=str(test_db), json=True, mode="thread")) == 0
     assert "ignored with --json output" in capsys.readouterr().err
 
     # line 342: empty json result helper in cmd_search
@@ -381,7 +380,7 @@ def test_cmd_search_index_semantic_and_output_edges(test_db, tmp_path, monkeypat
     assert "No results above threshold" in capsys.readouterr().out
 
     monkeypatch.setattr("siftd.api.first_mention", lambda *a, **k: None)
-    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), first=True)) == 0
+    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), select="first")) == 0
     assert "No results above relevance threshold" in capsys.readouterr().out
 
 
@@ -401,6 +400,38 @@ def test_cmd_search_delegate_and_format_error(test_db, tmp_path, monkeypatch, ca
 
     assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed))) == 1
     assert "bad fmt" in capsys.readouterr().err
+
+
+def test_search_fts_only_sort_time_orders_results(monkeypatch, tmp_path, capsys):
+    db = tmp_path / "db.sqlite"
+    db.write_text("x")
+
+    class _Conn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("siftd.api.open_database", lambda *a, **k: _Conn())
+    monkeypatch.setattr("siftd.search.resolve_candidates", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "siftd.api.search.fts5_search_content",
+        lambda *a, **k: [
+            {"conversation_id": "c2", "rank": -0.9, "snippet": "later", "kind": "prompt"},
+            {"conversation_id": "c1", "rank": -0.8, "snippet": "earlier", "kind": "prompt"},
+        ],
+    )
+    monkeypatch.setattr(
+        "siftd.cli.search._fetch_search_metadata",
+        lambda conn, rows: [r.update({"_started_at": "2024-01-02" if r["conversation_id"] == "c2" else "2024-01-01"}) for r in rows],
+    )
+    monkeypatch.setattr(
+        "siftd.output.format_registry.select_format",
+        lambda **k: SimpleNamespace(render_search=lambda results, *_a, **_k: {"results": results}),
+    )
+
+    args = make_args(query=["q"], db=str(db), json=True, sort="time")
+    assert _search_fts_only(args, db, "q") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert [r["conversation_id"] for r in out["results"]] == ["c1", "c2"]
 
 
 def test_search_fts_only_additional_error_and_warning_branches(monkeypatch, tmp_path, capsys):
@@ -427,7 +458,7 @@ def test_search_fts_only_additional_error_and_warning_branches(monkeypatch, tmp_
     assert "Database error" in capsys.readouterr().err
 
     # warning injection in dict output branch (607)
-    args = make_args(query=["q"], db=str(db), json=True, thread=True)
+    args = make_args(query=["q"], db=str(db), json=True, mode="thread")
     monkeypatch.setattr(
         "siftd.api.search.fts5_search_content",
         lambda *a, **k: [{"conversation_id": "c1", "rank": -0.3, "snippet": "x", "kind": "prompt"}],
@@ -463,7 +494,7 @@ def test_cmd_search_first_result_kept_branch(test_db, tmp_path, monkeypatch):
     monkeypatch.setattr("siftd.cli.search._fetch_search_metadata", lambda conn, results: None)
     monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: SimpleNamespace(render_search=lambda *a, **k2: "OUT"))
     monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
-    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), first=True)) == 0
+    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), select="first")) == 0
 
 
 def test_empty_search_json_results_with_caveats(test_db, monkeypatch, capsys):

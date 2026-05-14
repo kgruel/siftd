@@ -61,7 +61,9 @@ def make_args(**kwargs):
         "verbose": False,
         "full": False,
         "context": None,
-        "by_time": False,
+        "select": "all",
+        "sort": "score",
+        "mode": "chunks",
         "workspace": None,
         "model": None,
         "since": None,
@@ -69,12 +71,9 @@ def make_args(**kwargs):
         "index": False,
         "rebuild": False,
         "backend": None,
-        "thread": False,
         "embeddings_only": False,
         "recall": 80,
         "role": None,
-        "first": False,
-        "conversations": False,
         "refs": None,
         "threshold": None,
         "json": False,
@@ -457,20 +456,20 @@ class TestSearchFlagValidation:
         assert "--refs is not supported with --json" in captured.err
 
     def test_json_with_thread_warns_but_succeeds(self, indexed_db, capsys):
-        """--json with --thread warns to stderr but outputs valid JSON."""
+        """--json with --mode=thread warns to stderr but outputs valid JSON."""
         args = make_args(
             query=["error"],
             db=str(indexed_db["db_path"]),
             embed_db=str(indexed_db["embed_db_path"]),
             json=True,
-            thread=True,
+            mode="thread",
         )
 
         result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
-        assert "--thread is ignored with --json output" in captured.err
+        assert "--mode=thread is ignored with --json output" in captured.err
         # Output should still be valid JSON
         import json
         data = json.loads(captured.out)
@@ -560,13 +559,13 @@ class TestSearchEdgeCases:
         assert result == 0
 
     def test_first_respects_custom_threshold(self, indexed_db, capsys):
-        """--first with --threshold uses the user-specified threshold, not hardcoded 0.65."""
-        # First, verify default (implicit 0.65) behavior with --first
+        """--select=first with --threshold uses the user-specified threshold, not hardcoded 0.65."""
+        # First, verify default (implicit 0.65) behavior with --select=first
         args_default = make_args(
             query=["error"],
             db=str(indexed_db["db_path"]),
             embed_db=str(indexed_db["embed_db_path"]),
-            first=True,
+            select="first",
             json=True,
         )
         cmd_search(args_default)
@@ -577,7 +576,7 @@ class TestSearchEdgeCases:
             query=["error"],
             db=str(indexed_db["db_path"]),
             embed_db=str(indexed_db["embed_db_path"]),
-            first=True,
+            select="first",
             threshold=0.1,  # Very low threshold
             json=True,
         )
@@ -642,7 +641,7 @@ class TestSearchThreadMode:
         return {"db_path": db_path, "embed_db_path": embed_db_path}
 
     def test_thread_mode_returns_more_than_limit(self, multi_chunk_db, capsys):
-        """--thread mode should not trim results to --limit.
+        """--mode=thread should not trim results to --limit.
 
         The widened candidate pool (40+) should be preserved for the thread
         formatter to group by conversation, rather than being trimmed early.
@@ -652,7 +651,7 @@ class TestSearchThreadMode:
             db=str(multi_chunk_db["db_path"]),
             embed_db=str(multi_chunk_db["embed_db_path"]),
             limit=3,  # Request only 3, but thread mode should get more
-            thread=True,
+            mode="thread",
             json=True,  # JSON for easy counting
         )
 
@@ -676,7 +675,7 @@ class TestSearchThreadMode:
             db=str(multi_chunk_db["db_path"]),
             embed_db=str(multi_chunk_db["embed_db_path"]),
             limit=3,
-            thread=False,
+            mode="chunks",
             json=True,
         )
 
@@ -742,48 +741,48 @@ class TestSearchPrivacyWarning:
         assert "Showing full content which may contain sensitive information" not in captured.err
 
 
-class TestByTimeWarning:
-    """Tests for --by-time warning when used with incompatible modes."""
+class TestSortAxisValidation:
+    """Tests for --sort axis: parser-time rejection of invalid combinations."""
 
-    def test_by_time_with_conversations_warns(self, indexed_db, capsys):
-        """--by-time with --conversations prints warning to stderr."""
+    def test_sort_time_with_mode_conversations_rejected(self, indexed_db, capsys):
+        """--sort=time with --mode=conversations is rejected before execution."""
         args = make_args(
             query=["error"],
             db=str(indexed_db["db_path"]),
             embed_db=str(indexed_db["embed_db_path"]),
-            by_time=True,
-            conversations=True,
+            sort="time",
+            mode="conversations",
         )
 
         result = cmd_search(args)
         captured = capsys.readouterr()
 
-        assert result == 0
-        assert "--by-time has no effect in conversations mode" in captured.err
+        assert result == 1
+        assert "--mode=conversations is incompatible with --sort=time" in captured.err
 
-    def test_by_time_with_thread_warns(self, indexed_db, capsys):
-        """--by-time with --thread prints warning to stderr."""
+    def test_sort_time_with_mode_thread_rejected(self, indexed_db, capsys):
+        """--sort=time with --mode=thread is rejected before execution."""
         args = make_args(
             query=["error"],
             db=str(indexed_db["db_path"]),
             embed_db=str(indexed_db["embed_db_path"]),
-            by_time=True,
-            thread=True,
+            sort="time",
+            mode="thread",
         )
 
         result = cmd_search(args)
         captured = capsys.readouterr()
 
-        assert result == 0
-        assert "--by-time has no effect in thread mode" in captured.err
+        assert result == 1
+        assert "--mode=thread is incompatible with --sort=time" in captured.err
 
-    def test_by_time_with_json_no_warning(self, indexed_db, capsys):
-        """--by-time with --json sorts chunks by time (compatible, no warning)."""
+    def test_sort_time_with_json_chunks_valid(self, indexed_db, capsys):
+        """--sort=time with --json and default --mode=chunks is valid."""
         args = make_args(
             query=["error"],
             db=str(indexed_db["db_path"]),
             embed_db=str(indexed_db["embed_db_path"]),
-            by_time=True,
+            sort="time",
             json=True,
         )
 
@@ -791,54 +790,21 @@ class TestByTimeWarning:
         captured = capsys.readouterr()
 
         assert result == 0
-        assert "--by-time has no effect" not in captured.err
+        assert "incompatible" not in captured.err
 
-    def test_by_time_with_verbose_no_warning(self, indexed_db, capsys):
-        """--by-time with --verbose (compatible mode) has no warning."""
-        args = make_args(
-            query=["error"],
-            db=str(indexed_db["db_path"]),
-            embed_db=str(indexed_db["embed_db_path"]),
-            by_time=True,
-            verbose=True,
-        )
-
-        result = cmd_search(args)
-        captured = capsys.readouterr()
-
-        assert result == 0
-        assert "--by-time has no effect" not in captured.err
-
-    def test_by_time_with_full_no_warning(self, indexed_db, capsys):
-        """--by-time with --full (compatible mode) has no warning."""
-        args = make_args(
-            query=["error"],
-            db=str(indexed_db["db_path"]),
-            embed_db=str(indexed_db["embed_db_path"]),
-            by_time=True,
-            full=True,
-        )
-
-        result = cmd_search(args)
-        captured = capsys.readouterr()
-
-        assert result == 0
-        assert "--by-time has no effect" not in captured.err
-
-    def test_by_time_default_mode_no_warning(self, indexed_db, capsys, monkeypatch):
-        """--by-time with default chunk list mode has no warning."""
-        # Isolate from user config
+    def test_sort_time_chunks_mode_valid(self, indexed_db, capsys, monkeypatch):
+        """--sort=time with default --mode=chunks succeeds without any warning."""
         monkeypatch.setenv("XDG_CONFIG_HOME", str(indexed_db["db_path"].parent / "empty_config"))
 
         args = make_args(
             query=["error"],
             db=str(indexed_db["db_path"]),
             embed_db=str(indexed_db["embed_db_path"]),
-            by_time=True,
+            sort="time",
         )
 
         result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
-        assert "--by-time has no effect" not in captured.err
+        assert "incompatible" not in captured.err

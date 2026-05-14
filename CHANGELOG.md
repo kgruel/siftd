@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`siftd search` flags refactored into three orthogonal axes** — Phase 2 of the read-surface catchup. `--first`, `--by-time`, `--thread`, and `--conversations` are **removed**; replaced by `--select={all,first}` (result selector), `--sort={score,time}` (sort order), and `--mode={chunks,thread,conversations}` (render mode). Invalid axis combinations (`--mode=thread --sort=time`, `--mode=conversations --sort=time`) are rejected at parse time with exit code 1 instead of the previous runtime warning. **Breaking change**: scripts and agents using the old flags must migrate to the new axes.
+
 - **`Fidelity` is now a required parameter on `list_conversations` and `get_conversation`** — Phase 1 of the read-surface catchup. The CLI-local `include_thinking` / `include_tool_content` boolean translation is removed; CLI and serve callers pass the cross-stage `Fidelity` contract directly into the fetch layer. `list_conversations` only evaluates the cost SQL subquery when `fidelity.depth >= 3` (matching the renderer's cost-column rung); the fast-path read from `conversation_stats.cost` is unchanged. `get_conversation` derives content-block and tool-content gating from `fidelity.shows("thinking")` / `fidelity.shows("tools")`. `export_conversations` and `export_document` now require `fidelity` instead of the two booleans; the export fetch always augments `visible` with `"thinking"` so the renderer can emit `*[thinking]*` placeholders independent of the caller's outer fidelity. HTTP wire contract on `/api/v1/conversations/{id}` is unchanged (still accepts `include_thinking` / `include_tool_content` query params, translated to `Fidelity` inside the route).
 
 ### Added

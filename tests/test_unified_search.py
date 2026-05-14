@@ -76,7 +76,9 @@ def make_search_args(**kwargs):
         "verbose": False,
         "full": False,
         "context": None,
-        "by_time": False,
+        "select": "all",
+        "sort": "score",
+        "mode": "chunks",
         "workspace": None,
         "model": None,
         "since": None,
@@ -84,12 +86,9 @@ def make_search_args(**kwargs):
         "index": False,
         "rebuild": False,
         "backend": None,
-        "thread": False,
         "embeddings_only": False,
         "recall": 80,
         "role": None,
-        "first": False,
-        "conversations": False,
         "refs": None,
         "threshold": None,
         "json": False,
@@ -104,7 +103,6 @@ def make_search_args(**kwargs):
         "tag": None,
         "all_tags": None,
         "no_tag": None,
-        # New unified search flags
         "fts": False,
         "semantic": False,
     }
@@ -545,9 +543,9 @@ class TestFtsOnlyModeWarnings:
             query=["error"],
             db=str(fts_db["db_path"]),
             fts=True,
-            thread=True,  # Unsupported
-            context=2,    # Unsupported
-            full=True,    # Unsupported
+            mode="thread",  # Unsupported in FTS mode
+            context=2,      # Unsupported
+            full=True,      # Unsupported
         )
 
         result = cmd_search(args)
@@ -555,7 +553,7 @@ class TestFtsOnlyModeWarnings:
 
         assert result == 0
         assert "ignored in FTS5 mode" in captured.err
-        assert "--thread" in captured.err
+        assert "--mode=thread" in captured.err
         assert "--context" in captured.err
         assert "--full" in captured.err
 

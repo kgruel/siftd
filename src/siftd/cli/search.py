@@ -117,6 +117,13 @@ def _enrich_context(conn, results, n):
             results[i].update(row)
 
 
+def _validate_search_axes(args) -> str | None:
+    """Return an error string if the axis combination is invalid, else None."""
+    if args.mode in ("thread", "conversations") and args.sort == "time":
+        return f"--mode={args.mode} is incompatible with --sort=time ({args.mode} mode imposes its own ordering)"
+    return None
+
+
 def cmd_search(args) -> int:
     """Unified search over conversations — auto-selects FTS5 or semantic based on availability."""
     from siftd.api import embeddings_available, open_database
@@ -147,14 +154,20 @@ def cmd_search(args) -> int:
         print("       siftd search --rebuild   (rebuild index from scratch)")
         return 1
 
+    # Validate axis combinations before any execution
+    axis_err = _validate_search_axes(args)
+    if axis_err:
+        print(f"siftd: error: {axis_err}", file=sys.stderr)
+        return 1
+
     # --refs with --json is not supported (refs dump would break JSON validity)
     if args.json and args.refs:
         print("Error: --refs is not supported with --json", file=sys.stderr)
         return 1
 
-    # --thread with --json: warn and ignore (JSON formatter doesn't use thread grouping)
-    if args.json and args.thread:
-        print("Note: --thread is ignored with --json output", file=sys.stderr)
+    # --mode=thread with --json: warn and ignore (JSON formatter doesn't use thread grouping)
+    if args.json and args.mode == "thread":
+        print("Note: --mode=thread is ignored with --json output", file=sys.stderr)
 
     # Extract standard filters once for delegation and candidate resolution
     filters = extract_filter_args(args)
@@ -200,9 +213,9 @@ def cmd_search(args) -> int:
 
     # Widen limit for modes that aggregate or filter post-hoc
     widened_limit = args.limit
-    if args.thread:
+    if args.mode == "thread":
         widened_limit = max(args.limit, 40)
-    elif args.first or args.conversations:
+    elif args.select == "first" or args.mode == "conversations":
         widened_limit = max(args.limit * 10, 100)
 
     from siftd.api.dispatch import Operation, execute_for_render
@@ -302,8 +315,8 @@ def cmd_search(args) -> int:
                     print(f"note: {c.message}")
             return 0
 
-    # Post-processing: --first (earliest match above threshold)
-    if args.first:
+    # Post-processing: --select=first (earliest match above threshold)
+    if args.select == "first":
         from siftd.api.search import first_mention
         effective_threshold = args.threshold if args.threshold is not None else 0.65
         earliest = first_mention(chunks, threshold=effective_threshold, db_path=db)
@@ -319,17 +332,17 @@ def cmd_search(args) -> int:
 
     # Trim to requested limit after post-processing
     # Skip for modes that manage their own candidate pools:
-    # - --conversations: aggregates per conversation, handles own limit
-    # - --thread: widened pool for grouping, formatter handles presentation
-    if not args.conversations and not args.thread:
+    # - conversations: aggregates per conversation, handles own limit
+    # - thread: widened pool for grouping, formatter handles presentation
+    if args.mode == "chunks":
         chunks = chunks[:args.limit]
     results = _rows_from_chunks(chunks)
 
     # Enrich results with metadata from main DB
     main_conn = open_database(db, read_only=True)
 
-    # Enrich results with file refs (skip for --conversations mode)
-    if not args.conversations:
+    # Enrich results with file refs (skip for conversations mode)
+    if args.mode != "conversations":
         file_ref_chunks = _chunks_from_rows(results)
         enrich_file_refs(main_conn, file_ref_chunks)
         results = _rows_from_chunks(file_ref_chunks)
@@ -354,22 +367,14 @@ def cmd_search(args) -> int:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    mode = "chunks"
-    if args.conversations:
-        mode = "conversations"
-    elif args.thread:
-        mode = "thread"
+    mode = args.mode
 
     try:
         # Metadata enrichment
         _fetch_search_metadata(main_conn, results)
 
-        # Warn if --by-time is used with a mode that ignores it
-        if args.by_time and mode in ("conversations", "thread"):
-            print(f"Note: --by-time has no effect in {mode} mode", file=sys.stderr)
-
-        # Sort by time if requested
-        if args.by_time and mode == "chunks":
+        # Sort by time if requested (only valid for chunks mode; other modes rejected at validation)
+        if args.sort == "time":
             results = _rows_from_chunks(sort_chunks_by_time(results))
 
         # Mode-specific data processing
@@ -406,7 +411,7 @@ def cmd_search(args) -> int:
         emit_output(output)
 
         # --refs content dump (post-processor, not part of formatter)
-        if args.refs and not args.conversations:
+        if args.refs and args.mode != "conversations":
             all_refs = []
             for r in render_results:
                 all_refs.extend(r.get("file_refs") or [])
@@ -434,22 +439,20 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
 
     # Warn about flags that are ignored in FTS5-only mode
     unsupported_flags = []
-    if args.thread:
-        unsupported_flags.append("--thread")
+    if args.mode == "thread":
+        unsupported_flags.append("--mode=thread")
+    if args.mode == "conversations":
+        unsupported_flags.append("--mode=conversations")
     if args.context:
         unsupported_flags.append("--context")
     if args.full:
         unsupported_flags.append("--full")
     if args.verbose:
         unsupported_flags.append("--verbose/-v")
-    if args.conversations:
-        unsupported_flags.append("--conversations")
-    if args.first:
-        unsupported_flags.append("--first")
+    if args.select == "first":
+        unsupported_flags.append("--select=first")
     if args.refs:
         unsupported_flags.append("--refs")
-    if args.by_time:
-        unsupported_flags.append("--by-time")
     if args.format:
         unsupported_flags.append("--format")
 
@@ -541,6 +544,11 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     finally:
         conn.close()
 
+    if args.sort == "time":
+        from siftd.api.search import sort_chunks_by_time
+
+        results = _rows_from_chunks(sort_chunks_by_time(results))
+
     fidelity = Fidelity()
     fmt = select_format(
         name=getattr(args, "format", None),
@@ -616,10 +624,10 @@ examples:
   siftd search --semantic "auth flow"                  # force semantic search
 
   # refine
-  siftd search "design decision" --thread              # narrative: top conversations expanded
+  siftd search "design decision" --mode=thread         # narrative: top conversations expanded
   siftd search "why we chose X" --context 2            # ±2 surrounding exchanges
-  siftd search "event sourcing" --conversations        # rank whole conversations, not chunks
-  siftd search "when first discussed Y" --first        # earliest match above threshold
+  siftd search "event sourcing" --mode=conversations   # rank whole conversations, not chunks
+  siftd search "when first discussed Y" --select=first # earliest match above threshold
   siftd search --threshold 0.7 "architecture"          # only high-relevance results
 
   # inspect
@@ -642,7 +650,7 @@ examples:
   # tuning
   siftd search --embeddings-only "chunking"            # skip FTS5, pure embeddings
   siftd search --recall 200 "error"                    # widen FTS5 candidate pool
-  siftd search --by-time "chunking"                     # sort by time instead of score
+  siftd search --sort=time "chunking"                   # sort by time instead of score
 
   # diversity vs relevance (MMR reranking)
   siftd search --no-diversity "chunking"               # pure relevance order (deterministic)
@@ -664,17 +672,34 @@ examples:
     output_group.add_argument("-v", "--verbose", action="store_true", help="Show full chunk text")
     output_group.add_argument("--full", action="store_true", help="Show complete prompt+response exchange")
     output_group.add_argument("--context", type=int, metavar="N", help="Show ±N exchanges around match")
-    output_group.add_argument("--thread", action="store_true", help="Narrative thread: top conversations expanded, rest as shortlist")
-    output_group.add_argument("--by-time", action="store_true", help="Sort results by time instead of score")
     output_group.add_argument("--json", action="store_true", help="Output as structured JSON")
     # --debug-ids: deprecated no-op; chunk_id/source_ids ship by default. Accepted through v0.9.x, removed in v0.10.0.
     output_group.add_argument("--debug-ids", action="store_true", dest="debug_ids", help=argparse.SUPPRESS)
     output_group.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
 
-    # Result modes
+    # Result modes — three orthogonal axes
     mode_group = p_search.add_argument_group("result modes")
-    mode_group.add_argument("--conversations", action="store_true", help="Aggregate scores per conversation, return ranked conversations")
-    mode_group.add_argument("--first", action="store_true", help="Return chronologically earliest match above threshold")
+    mode_group.add_argument(
+        "--select",
+        choices=["all", "first"],
+        default="all",
+        metavar="SELECTOR",
+        help="Result selector: all (default) or first (chronologically earliest match above threshold)",
+    )
+    mode_group.add_argument(
+        "--sort",
+        choices=["score", "time"],
+        default="score",
+        metavar="ORDER",
+        help="Sort order: score (default, relevance) or time (chronological). Incompatible with --mode=thread/conversations.",
+    )
+    mode_group.add_argument(
+        "--mode",
+        choices=["chunks", "thread", "conversations"],
+        default="chunks",
+        metavar="MODE",
+        help="Render mode: chunks (default), thread (narrative drill-down), or conversations (aggregated ranking)",
+    )
     mode_group.add_argument("--refs", nargs="?", const=True, metavar="FILES", help="Show file references; optionally filter by comma-separated basenames")
 
     # Search mode selection
