@@ -499,4 +499,12 @@ examples:
     sql_group = p_query.add_argument_group("sql queries")
     sql_group.add_argument("--var", action="append", metavar="KEY=VALUE", help="Substitute $KEY with VALUE in SQL")
 
-    p_query.set_defaults(func=cmd_query)
+    _SEARCH_HINT_FLAGS = frozenset(["-s", "--search", "--fts", "--semantic"])
+
+    def _query_unknown_hint(unknowns):
+        for u in unknowns:
+            if u in _SEARCH_HINT_FLAGS:
+                return 'Did you mean: siftd search "<query>"?'
+        return None
+
+    p_query.set_defaults(func=cmd_query, _unknown_hint=_query_unknown_hint)

@@ -151,7 +151,7 @@ class TestDoctorChecks:
         assert findings == []
 
     def test_embeddings_available_check_reports_when_db_exists(self, tmp_path, monkeypatch):
-        """EmbeddingsAvailableCheck reports info when DB exists but deps missing."""
+        """EmbeddingsAvailableCheck reports warning when DB exists but deps missing."""
         import siftd.embeddings.availability as avail
         from siftd.doctor.checks import CheckContext, EmbeddingsAvailableCheck
 
@@ -173,7 +173,7 @@ class TestDoctorChecks:
         findings = check.run(ctx)
 
         assert len(findings) == 1
-        assert findings[0].severity == "info"
+        assert findings[0].severity == "warning"
         assert "not installed" in findings[0].message
 
     def test_embeddings_available_check_silent_when_no_db(self, tmp_path, monkeypatch):

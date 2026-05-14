@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`embeddings-available` doctor finding is now `warning` severity** — when the embeddings database exists but the `[embed]` extra is not installed, the finding renders as `[!]` (warning) instead of `[i]` (info). The previous severity implied the condition was optional; it indicates partial breakage (a capability that existed is now unavailable).
+- **`siftd query -s` hints toward `siftd search`** — passing `-s`, `--search`, `--fts`, or `--semantic` to `siftd query` now appends `Did you mean: siftd search "<query>"?` to the argparse error. Exit code remains 2; the original `unrecognized arguments` message is preserved.
+
 ### Changed
 
 - **Turn headers now use conversational role labels** — Phase 4 of the read-surface catchup. `[prompt]` / `[response]` are replaced by `[user]` / `[assistant]` in all human-facing output (query detail, peek detail, follow mode). Search chunk badges use role-first labels: `prompt → USER`, `response → ASSISTANT`, `tool_call → TOOL`; non-role chunk classes (`exchange`, `tool_summary`) now have stable presentation labels instead of raw uppercased storage tokens. **Breaking change**: scripts or pipelines that scrape `[prompt]` / `[response]` from human-readable output must migrate to `[user]` / `[assistant]`. Machine-readable fields (`kind`, `chunk_type` in `--json` output) are unchanged.

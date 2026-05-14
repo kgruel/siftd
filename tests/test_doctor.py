@@ -1569,6 +1569,39 @@ class TestFixFunctions:
         assert "tr_event_tool_call_update_release_blob" in triggers
 
 
+class TestEmbeddingsAvailableCheck:
+    """Tests for the embeddings-available check."""
+
+    def test_no_embed_db_no_findings(self, check_context, monkeypatch):
+        """No findings when embeddings are unavailable and no DB exists."""
+        import siftd.embeddings.availability as avail
+        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+
+        check_context.embed_db_path.unlink(missing_ok=True)
+
+        from siftd.doctor.checks.embeddings_available import EmbeddingsAvailableCheck
+        check = EmbeddingsAvailableCheck()
+        findings = check.run(check_context)
+        assert findings == []
+
+    def test_embed_db_exists_without_extra_is_warning(self, check_context, monkeypatch):
+        """Warning (not info) when embed DB exists but embed extra is not installed."""
+        import siftd.embeddings.availability as avail
+        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+
+        embed_db = check_context.embed_db_path
+        embed_db.touch()
+
+        from siftd.doctor.checks.embeddings_available import EmbeddingsAvailableCheck
+        check = EmbeddingsAvailableCheck()
+        findings = check.run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].check == "embeddings-available"
+        assert findings[0].severity == "warning"
+        assert findings[0].fix_available is False
+
+
 class TestFindingSubstrate:
     """Tests for Finding dataclass extensions: hint severity, field, channel."""
 

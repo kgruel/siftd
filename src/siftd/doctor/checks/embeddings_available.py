@@ -21,7 +21,7 @@ class EmbeddingsAvailableCheck:
             return [
                 Finding(
                     check=self.name,
-                    severity="info",
+                    severity="warning",
                     message="Embeddings database exists but embedding support not installed",
                     fix_available=False,
                     context={"install_hint": "siftd install embed"},

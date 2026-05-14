@@ -72,7 +72,14 @@ def main(argv=None) -> int:
     build_serve_parser(subparsers)
     build_upgrade_parser(subparsers)
 
-    args = parser.parse_args(argv)
+    args, unknowns = parser.parse_known_args(argv)
+    if unknowns:
+        hint_fn = getattr(args, "_unknown_hint", None)
+        suffix = hint_fn(unknowns) if hint_fn is not None else None
+        msg = f"unrecognized arguments: {' '.join(unknowns)}"
+        if suffix:
+            msg = f"{msg}\n{suffix}"
+        parser.error(msg)
     if not hasattr(args, "func") or args.func is None:
         parser.print_help()
         return 0
