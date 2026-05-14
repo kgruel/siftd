@@ -24,7 +24,6 @@ def cmd_export(args) -> int:
         last = 1
 
     fidelity = fidelity_from_args(args)
-    include_tools = fidelity.shows("tools")
     fmt = "json" if getattr(args, "json", False) else "md"
 
     op = Operation(
@@ -45,8 +44,6 @@ def cmd_export(args) -> int:
             "before": args.before,
             "search": args.search,
             "db_path": db,
-            "include_thinking": True,
-            "include_tool_content": include_tools,
         },
         render_method="raw",
         fidelity=fidelity,

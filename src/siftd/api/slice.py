@@ -44,6 +44,8 @@ def slice_database(
     Raises:
         FileNotFoundError: If source database does not exist.
     """
+    from painted import Fidelity
+
     from siftd.api.conversations import list_conversations
 
     if not source_db.exists():
@@ -65,6 +67,7 @@ def slice_database(
 
     # Step 1: Resolve conversation IDs using existing filter infrastructure
     conversations = list_conversations(
+        fidelity=Fidelity(),
         db_path=source_db,
         workspace=workspace,
         model=model,

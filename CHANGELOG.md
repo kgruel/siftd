@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`Fidelity` is now a required parameter on `list_conversations` and `get_conversation`** — Phase 1 of the read-surface catchup. The CLI-local `include_thinking` / `include_tool_content` boolean translation is removed; CLI and serve callers pass the cross-stage `Fidelity` contract directly into the fetch layer. `list_conversations` only evaluates the cost SQL subquery when `fidelity.depth >= 3` (matching the renderer's cost-column rung); the fast-path read from `conversation_stats.cost` is unchanged. `get_conversation` derives content-block and tool-content gating from `fidelity.shows("thinking")` / `fidelity.shows("tools")`. `export_conversations` and `export_document` now require `fidelity` instead of the two booleans; the export fetch always augments `visible` with `"thinking"` so the renderer can emit `*[thinking]*` placeholders independent of the caller's outer fidelity. HTTP wire contract on `/api/v1/conversations/{id}` is unchanged (still accepts `include_thinking` / `include_tool_content` query params, translated to `Fidelity` inside the route).
+
 ### Added
 
 - **Adapter health warnings on `siftd ingest`** — Two new warnings printed after ingestion completes: (1) **zero-discovery** (info): if an adapter was loaded but found no files to ingest, prints "Adapter '<name>' found nothing to ingest — check scan paths or adapter config"; suppressed in quiet mode. (2) **failed-import** (warning): if a drop-in adapter at `~/.config/siftd/adapters/` failed to load, prints "Drop-in adapter at '<path>' failed to load: <error>"; always visible even in quiet mode. JSON mode emits structured `{"type": "adapter_warning", ...}` events for both. Failure information is captured via a new `failures_out` kwarg on `load_dropin_modules` (additive, existing callers unaffected) and surfaced through `IngestRunResult.dropin_failures`.

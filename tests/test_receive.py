@@ -10,6 +10,7 @@ import pytest
 from conftest import make_db as _make_db
 
 from siftd.api.receive import receive_database
+from painted import Fidelity
 from siftd.cli import main
 
 
@@ -346,19 +347,19 @@ class TestOwnershipQueryScoping:
         receive_database(bob_source, target, user_id="bob@co.com")
 
         # Unfiltered: all 3
-        all_convs = list_conversations(db_path=target, n=0)
+        all_convs = list_conversations(fidelity=Fidelity(), db_path=target, n=0)
         assert len(all_convs) == 3
 
         # Alice's conversations only
-        alice_convs = list_conversations(db_path=target, n=0, owner="alice@co.com")
+        alice_convs = list_conversations(fidelity=Fidelity(), db_path=target, n=0, owner="alice@co.com")
         assert len(alice_convs) == 2
 
         # Bob's conversations only
-        bob_convs = list_conversations(db_path=target, n=0, owner="bob@co.com")
+        bob_convs = list_conversations(fidelity=Fidelity(), db_path=target, n=0, owner="bob@co.com")
         assert len(bob_convs) == 1
 
         # Unknown user: empty
-        nobody_convs = list_conversations(db_path=target, n=0, owner="nobody@co.com")
+        nobody_convs = list_conversations(fidelity=Fidelity(), db_path=target, n=0, owner="nobody@co.com")
         assert len(nobody_convs) == 0
 
 

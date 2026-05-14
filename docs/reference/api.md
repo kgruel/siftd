@@ -345,11 +345,12 @@ def get_recent_conversation_ids(conn: Connection, limit: int, *, owner: str | No
 List conversations with optional filtering.
 
 ```python
-def list_conversations(*, db_path: pathlib._local.Path | None = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., tool: str | None = ..., tag: str | list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., tool_tag: str | None = ..., n: int = ..., oldest: bool = ..., owner: str | None = ...) -> list[ConversationSummary]
+def list_conversations(*, fidelity: Fidelity, db_path: pathlib._local.Path | None = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., tool: str | None = ..., tag: str | list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., tool_tag: str | None = ..., n: int = ..., oldest: bool = ..., owner: str | None = ...) -> list[ConversationSummary]
 ```
 
 **Parameters:**
 
+- `fidelity`: Cross-stage rendering contract. ``fidelity.depth`` gates expensive fetches — the cost subquery is only evaluated at ``depth >= 3`` (the rung at which the renderer emits a cost column). The fast-path stats table read is unaffected because its cost column is precomputed.
 - `db_path`: Path to database. Uses default if not specified.
 - `workspace`: Filter by workspace path substring.
 - `model`: Filter by model name substring.
@@ -376,15 +377,14 @@ def list_conversations(*, db_path: pathlib._local.Path | None = ..., workspace: 
 Get full conversation detail by ID.
 
 ```python
-def get_conversation(id: str, *, db_path: pathlib._local.Path | None = ..., include_thinking: bool = ..., include_tool_content: bool = ..., tool_filter: str | None = ..., owner: str | None = ...) -> siftd.api.conversations.ConversationDetail | None
+def get_conversation(id: str, *, fidelity: Fidelity, db_path: pathlib._local.Path | None = ..., tool_filter: str | None = ..., owner: str | None = ...) -> siftd.api.conversations.ConversationDetail | None
 ```
 
 **Parameters:**
 
 - `id`: Full or prefix of conversation ULID.
+- `fidelity`: Cross-stage rendering contract. ``fidelity.shows("thinking")`` decides whether thinking blocks appear in turns; ``fidelity.shows("tools")`` decides whether tool inputs/results are fetched and inlined.
 - `db_path`: Path to database. Uses default if not specified.
-- `include_thinking`: Include thinking/reasoning blocks in turns.
-- `include_tool_content`: Include tool input/result in turns.
 
 **Returns:** ConversationDetail with timeline, or None if not found.
 
@@ -1069,17 +1069,21 @@ A conversation prepared for export.
 Export conversations matching the specified criteria.
 
 ```python
-def export_conversations(*, id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib._local.Path | None = ..., include_thinking: bool = ..., include_tool_content: bool = ..., owner: str | None = ...) -> list[ExportedConversation]
+def export_conversations(*, fidelity: Fidelity, id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib._local.Path | None = ..., owner: str | None = ...) -> list[ExportedConversation]
 ```
 
 ### export_document
 
 Export conversations as a complete document.
 
+```python
+def export_document(*, fidelity: Fidelity, format: str = ..., no_header: bool = ..., id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib._local.Path | None = ..., owner: str | None = ...) -> ExportArtifact
+```
+
 **Parameters:**
 
+- `fidelity`: Cross-stage rendering contract. Drives both fetch (via ``shows("tools")``) and render (placeholder vs. expanded thinking/tool blocks). Thinking blocks are always fetched so placeholders can render — see ``export_conversations``.
 - `format`: Output format — "md" (markdown) or "json".
-- `fidelity`: Rendering fidelity. Defaults to full (show everything).
 - `no_header`: Omit per-conversation metadata headers.
 - `last`: Export N most recent conversations (takes precedence over n).
 

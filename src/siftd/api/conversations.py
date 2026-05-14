@@ -1,9 +1,13 @@
 """Conversation listing and detail API."""
 
+from __future__ import annotations
+
 import json
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from painted import Fidelity
 
 from siftd.paths import db_path as default_db_path
 from siftd.safecall import parse_json
@@ -157,6 +161,7 @@ def _turns_to_exchanges(turns: list[Turn]) -> list[Exchange]:
 
 def list_conversations(
     *,
+    fidelity: Fidelity,
     db_path: Path | None = None,
     workspace: str | None = None,
     model: str | None = None,
@@ -176,6 +181,11 @@ def list_conversations(
     """List conversations with optional filtering.
 
     Args:
+        fidelity: Cross-stage rendering contract. ``fidelity.depth`` gates
+            expensive fetches — the cost subquery is only evaluated at
+            ``depth >= 3`` (the rung at which the renderer emits a cost
+            column). The fast-path stats table read is unaffected because
+            its cost column is precomputed.
         db_path: Path to database. Uses default if not specified.
         workspace: Filter by workspace path substring.
         model: Filter by model name substring.
@@ -208,7 +218,7 @@ def list_conversations(
 
     conn = open_database(db, read_only=True)
     try:
-        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest, owner, tag_kind)
+        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest, fidelity, owner, tag_kind)
     finally:
         conn.close()
 
@@ -227,6 +237,7 @@ def _list_conversations_impl(
     tool_tag: str | None,
     n: int,
     oldest: bool,
+    fidelity: Fidelity,
     owner: str | None = None,
     tag_kind: list[str] | None = None,
 ) -> list[ConversationSummary]:
@@ -340,6 +351,9 @@ def _list_conversations_impl(
         # the stats table, or if the table was dropped).
         # r2 alias: expose event_id as id so cost_expr_sql's {r}.id works against
         # the polymorphic attributes table (target_id = event_id for responses).
+        # Cost subquery is only evaluated at the depth rung where the renderer
+        # actually emits a cost column (matches painted_bridge.render_list).
+        wants_cost = fidelity.depth >= 3
         cost_subquery = (
             f"""(SELECT ROUND(SUM({cost_expr_sql('r2', 'pr', coalesce_pricing=True)}) / 1000000.0, 4)
             FROM events e2
@@ -349,7 +363,7 @@ def _list_conversations_impl(
             LEFT JOIN pricing pr ON pr.model_id = r2.model_id
                                  AND pr.provider_id = r2.provider_id
             WHERE e2.kind = 'response' AND e2.conversation_id = c.id)"""
-            if has_pricing
+            if (has_pricing and wants_cost)
             else "NULL"
         )
         rows = conn.execute(
@@ -432,9 +446,8 @@ def _extract_text(raw: str) -> str:
 def get_conversation(
     id: str,
     *,
+    fidelity: Fidelity,
     db_path: Path | None = None,
-    include_thinking: bool = False,
-    include_tool_content: bool = False,
     tool_filter: str | None = None,
     owner: str | None = None,
 ) -> ConversationDetail | None:
@@ -444,9 +457,11 @@ def get_conversation(
 
     Args:
         id: Full or prefix of conversation ULID.
+        fidelity: Cross-stage rendering contract. ``fidelity.shows("thinking")``
+            decides whether thinking blocks appear in turns;
+            ``fidelity.shows("tools")`` decides whether tool inputs/results
+            are fetched and inlined.
         db_path: Path to database. Uses default if not specified.
-        include_thinking: Include thinking/reasoning blocks in turns.
-        include_tool_content: Include tool input/result in turns.
         tool_filter: Filter tool calls — 'errors' for failed only,
             or a tool name prefix (e.g. 'shell', 'file.read').
 
@@ -456,6 +471,8 @@ def get_conversation(
     Raises:
         FileNotFoundError: If database does not exist.
     """
+    include_thinking = fidelity.shows("thinking")
+    include_tool_content = fidelity.shows("tools")
     db = db_path or default_db_path()
 
     if not db.exists():
@@ -501,8 +518,15 @@ def get_conversation(
     responses = fetch_responses_for_conversation(conn, conv_id)
     response_ids = [r["id"] for r in responses]
 
-    # Fetch all content blocks for all responses
-    all_content_blocks = fetch_response_content_blocks(conn, response_ids)
+    # Always fetch text blocks for narrative; gate extra block kinds by fidelity.
+    block_types: list[str] = ["text", "tool_use"]
+    if include_thinking:
+        block_types.append("thinking")
+    if include_tool_content:
+        block_types.extend(["tool_result", "tool_output"])
+    all_content_blocks = fetch_response_content_blocks(
+        conn, response_ids, tuple(block_types),
+    )
 
     # Fetch tool calls grouped by response
     tool_calls = fetch_tool_calls_for_conversation(
@@ -574,8 +598,8 @@ def get_conversation(
             )
         )
 
-    # Fetch tags
-    tags = fetch_conversation_tags(conn, conv_id)
+    # Tags render in list/detail at depth >= 3.
+    tags = fetch_conversation_tags(conn, conv_id) if fidelity.depth >= 3 else []
 
     conn.close()
 

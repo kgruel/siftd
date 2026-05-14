@@ -449,6 +449,7 @@ def fetch_tool_calls_for_conversation(
 def fetch_response_content_blocks(
     conn: sqlite3.Connection,
     response_ids: list[str],
+    block_types: tuple[str, ...] | None = None,
 ) -> dict[str, list[sqlite3.Row]]:
     """Fetch all content blocks for responses, ordered by block_index.
 
@@ -458,13 +459,16 @@ def fetch_response_content_blocks(
     if not response_ids:
         return {}
 
-    rows = batched_in_query(
-        conn,
+    sql = (
         "SELECT event_id AS response_id, block_type, content, block_index "
         "FROM event_content "
-        "WHERE event_id IN ({placeholders}) "
-        "ORDER BY event_id, block_index",
-        response_ids,
+        "WHERE event_id IN ({placeholders})"
+    )
+    if block_types:
+        sql += " AND block_type IN (" + ",".join("?" * len(block_types)) + ")"
+    sql += " ORDER BY event_id, block_index"
+    rows = batched_in_query(
+        conn, sql, response_ids, suffix_params=list(block_types or ()),
     )
 
     result: dict[str, list[sqlite3.Row]] = {}

@@ -151,8 +151,6 @@ def _query_detail(args) -> int:
     fidelity = fidelity_from_args(args)
     tool_chars = tool_chars_from_args(args, fidelity)
 
-    include_thinking = fidelity.shows("thinking")
-    include_tool_content = fidelity.shows("tools")
     tools_flag = getattr(args, "tools", None)
     tool_filter = None
     if tools_flag is not None and tools_flag != "all":
@@ -164,9 +162,8 @@ def _query_detail(args) -> int:
         fn=get_conversation,
         params={
             "id": args.conversation_id,
+            "fidelity": fidelity,
             "db_path": db,
-            "include_thinking": include_thinking,
-            "include_tool_content": include_tool_content,
             "tool_filter": tool_filter,
         },
         render_method="detail",
@@ -336,6 +333,7 @@ def cmd_query(args) -> int:
         method="GET",
         fn=list_conversations,
         params={
+            "fidelity": fidelity,
             "db_path": db,
             **{k: v for k, v in asdict(filters).items() if v is not None},
             "n": args.limit,

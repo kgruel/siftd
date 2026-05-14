@@ -4,6 +4,7 @@ import json
 
 import pytest
 from conftest import make_conversation
+from painted import Fidelity
 
 from siftd.api import (
     ConversationDetail,
@@ -190,53 +191,53 @@ class TestGetCostCoverage:
 
 class TestListConversations:
     def test_returns_conversations(self, test_db):
-        conversations = list_conversations(db_path=test_db)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db)
 
         assert len(conversations) == 2
         assert all(isinstance(c, ConversationSummary) for c in conversations)
 
     def test_default_sort_newest_first(self, test_db):
-        conversations = list_conversations(db_path=test_db)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db)
 
         # Should be sorted by started_at descending
         assert conversations[0].started_at > conversations[1].started_at
 
     def test_oldest_first_sort(self, test_db):
-        conversations = list_conversations(db_path=test_db, oldest=True)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, oldest=True)
 
         assert conversations[0].started_at < conversations[1].started_at
 
     def test_limit_parameter(self, test_db):
-        conversations = list_conversations(db_path=test_db, n=1)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, n=1)
 
         assert len(conversations) == 1
 
     def test_workspace_filter(self, test_db):
-        conversations = list_conversations(db_path=test_db, workspace="project")
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, workspace="project")
         assert len(conversations) == 2
 
-        conversations = list_conversations(db_path=test_db, workspace="nonexistent")
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, workspace="nonexistent")
         assert len(conversations) == 0
 
     def test_model_filter(self, test_db):
-        conversations = list_conversations(db_path=test_db, model="opus")
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, model="opus")
         assert len(conversations) == 2
 
-        conversations = list_conversations(db_path=test_db, model="haiku")
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, model="haiku")
         assert len(conversations) == 0
 
     def test_since_filter(self, test_db):
-        conversations = list_conversations(db_path=test_db, since="2024-01-16")
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, since="2024-01-16")
         assert len(conversations) == 1
         assert "2024-01-16" in conversations[0].started_at
 
     def test_before_filter(self, test_db):
-        conversations = list_conversations(db_path=test_db, before="2024-01-16")
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, before="2024-01-16")
         assert len(conversations) == 1
         assert "2024-01-15" in conversations[0].started_at
 
     def test_conversation_summary_fields(self, test_db):
-        conversations = list_conversations(db_path=test_db, n=1)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, n=1)
         conv = conversations[0]
 
         assert conv.id is not None
@@ -249,53 +250,53 @@ class TestListConversations:
 
     def test_raises_for_missing_db(self, tmp_path):
         with pytest.raises(FileNotFoundError):
-            list_conversations(db_path=tmp_path / "nonexistent.db")
+            list_conversations(fidelity=Fidelity(), db_path=tmp_path / "nonexistent.db")
 
 
 class TestGetConversation:
     def test_returns_conversation_detail(self, test_db):
         # First get a conversation ID
-        conversations = list_conversations(db_path=test_db, n=1)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, n=1)
         conv_id = conversations[0].id
 
-        detail = get_conversation(conv_id, db_path=test_db)
+        detail = get_conversation(conv_id, fidelity=Fidelity(), db_path=test_db)
 
         assert isinstance(detail, ConversationDetail)
         assert detail.id == conv_id
 
     def test_supports_prefix_match(self, test_db):
-        conversations = list_conversations(db_path=test_db, n=1)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, n=1)
         conv_id = conversations[0].id
         # Use enough prefix characters to be unique
         prefix = conv_id[:12]
 
-        detail = get_conversation(prefix, db_path=test_db)
+        detail = get_conversation(prefix, fidelity=Fidelity(), db_path=test_db)
 
         assert detail is not None
         assert detail.id == conv_id
 
     def test_returns_none_for_missing(self, test_db):
-        detail = get_conversation("nonexistent_id", db_path=test_db)
+        detail = get_conversation("nonexistent_id", fidelity=Fidelity(), db_path=test_db)
         assert detail is None
 
     def test_detail_has_exchanges(self, test_db):
-        conversations = list_conversations(db_path=test_db, n=1)
-        detail = get_conversation(conversations[0].id, db_path=test_db)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, n=1)
+        detail = get_conversation(conversations[0].id, fidelity=Fidelity(), db_path=test_db)
 
         assert len(detail.exchanges) > 0
         exchange = detail.exchanges[0]
         assert exchange.prompt_text is not None or exchange.response_text is not None
 
     def test_detail_token_counts(self, test_db):
-        conversations = list_conversations(db_path=test_db, n=1)
-        detail = get_conversation(conversations[0].id, db_path=test_db)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, n=1)
+        detail = get_conversation(conversations[0].id, fidelity=Fidelity(), db_path=test_db)
 
         assert detail.total_input_tokens > 0
         assert detail.total_output_tokens > 0
 
     def test_raises_for_missing_db(self, tmp_path):
         with pytest.raises(FileNotFoundError):
-            get_conversation("some_id", db_path=tmp_path / "nonexistent.db")
+            get_conversation("some_id", fidelity=Fidelity(), db_path=tmp_path / "nonexistent.db")
 
 
 class TestAggregateByConversation:
@@ -370,7 +371,7 @@ class TestAggregateByConversation:
 
 class TestFirstMention:
     def test_returns_earliest_above_threshold(self, test_db):
-        conversations = list_conversations(db_path=test_db)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db)
         results = [
             SearchResult(conversations[0].id, 0.9, "text1", "prompt", "/ws", conversations[0].started_at),
             SearchResult(conversations[1].id, 0.8, "text2", "prompt", "/ws", conversations[1].started_at),
@@ -383,7 +384,7 @@ class TestFirstMention:
         assert earliest.conversation_id == conversations[1].id
 
     def test_returns_none_below_threshold(self, test_db):
-        conversations = list_conversations(db_path=test_db)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db)
         results = [
             SearchResult(conversations[0].id, 0.5, "text1", "prompt", "/ws", "2024-01-01"),
         ]
@@ -398,7 +399,7 @@ class TestFirstMention:
 
     def test_respects_custom_threshold(self, test_db):
         """Test that lower threshold includes results that default 0.65 would exclude."""
-        conversations = list_conversations(db_path=test_db)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db)
         results = [
             SearchResult(conversations[0].id, 0.4, "text1", "prompt", "/ws", conversations[0].started_at),
         ]
@@ -483,7 +484,7 @@ class TestFirstMentionPromptTimestamp:
 
     def test_falls_back_to_conversation_time_when_no_source_ids(self, test_db):
         """When source_ids is empty, falls back to conversation start time."""
-        conversations = list_conversations(db_path=test_db)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db)
         # Results without source_ids
         results = [
             SearchResult(conversations[0].id, 0.9, "text1", "prompt", "/ws", conversations[0].started_at),
@@ -525,23 +526,22 @@ class TestFirstMentionPromptTimestamp:
 
 class TestListConversationsToolTag:
     def test_filter_by_tool_tag(self, test_db_with_tool_tags):
-        conversations = list_conversations(db_path=test_db_with_tool_tags, tool_tag="shell:test")
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db_with_tool_tags, tool_tag="shell:test")
 
         assert len(conversations) == 2  # conv1 and conv3 have shell:test
 
     def test_filter_by_different_tool_tag(self, test_db_with_tool_tags):
-        conversations = list_conversations(db_path=test_db_with_tool_tags, tool_tag="shell:vcs")
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db_with_tool_tags, tool_tag="shell:vcs")
 
         assert len(conversations) == 1  # only conv2 has shell:vcs
 
     def test_no_matches_for_unknown_tag(self, test_db_with_tool_tags):
-        conversations = list_conversations(db_path=test_db_with_tool_tags, tool_tag="shell:unknown")
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db_with_tool_tags, tool_tag="shell:unknown")
 
         assert len(conversations) == 0
 
     def test_tool_tag_combines_with_workspace_filter(self, test_db_with_tool_tags):
-        conversations = list_conversations(
-            db_path=test_db_with_tool_tags,
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db_with_tool_tags,
             tool_tag="shell:test",
             workspace="other",
         )
@@ -549,12 +549,12 @@ class TestListConversationsToolTag:
         assert len(conversations) == 1  # only conv3 matches both
 
     def test_filter_by_tool_tag_prefix(self, test_db_with_tool_tags):
-        conversations = list_conversations(db_path=test_db_with_tool_tags, tool_tag="shell:")
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db_with_tool_tags, tool_tag="shell:")
 
         assert len(conversations) == 3  # all conversations have shell:* tags
 
     def test_tool_tag_prefix_no_matches(self, test_db_with_tool_tags):
-        conversations = list_conversations(db_path=test_db_with_tool_tags, tool_tag="other:")
+        conversations = list_conversations(fidelity=Fidelity(), db_path=test_db_with_tool_tags, tool_tag="other:")
 
         assert len(conversations) == 0
 
@@ -626,47 +626,42 @@ class TestListConversationsPolymorphicTags:
 
     def test_default_matches_all_kinds(self, db_with_polymorphic_tags):
         db, a, b, c, _d = db_with_polymorphic_tags
-        ids = {c.id for c in list_conversations(db_path=db, tag=["review"], n=0)}
+        ids = {c.id for c in list_conversations(fidelity=Fidelity(), db_path=db, tag=["review"], n=0)}
         assert ids == {a, b, c}
 
     def test_scoped_to_conversation(self, db_with_polymorphic_tags):
         db, a, _b, _c, _d = db_with_polymorphic_tags
-        ids = {c.id for c in list_conversations(
-            db_path=db, tag=["review"], tag_kind=["conversation"], n=0,
+        ids = {c.id for c in list_conversations(fidelity=Fidelity(), db_path=db, tag=["review"], tag_kind=["conversation"], n=0,
         )}
         assert ids == {a}
 
     def test_scoped_to_response(self, db_with_polymorphic_tags):
         db, _a, b, _c, _d = db_with_polymorphic_tags
-        ids = {c.id for c in list_conversations(
-            db_path=db, tag=["review"], tag_kind=["response"], n=0,
+        ids = {c.id for c in list_conversations(fidelity=Fidelity(), db_path=db, tag=["review"], tag_kind=["response"], n=0,
         )}
         assert ids == {b}
 
     def test_scoped_to_tool_call(self, db_with_polymorphic_tags):
         db, _a, _b, c, _d = db_with_polymorphic_tags
-        ids = {row.id for row in list_conversations(
-            db_path=db, tag=["review"], tag_kind=["tool_call"], n=0,
+        ids = {row.id for row in list_conversations(fidelity=Fidelity(), db_path=db, tag=["review"], tag_kind=["tool_call"], n=0,
         )}
         assert ids == {c}
 
     def test_scoped_to_multiple_kinds(self, db_with_polymorphic_tags):
         db, _a, b, c, _d = db_with_polymorphic_tags
-        ids = {row.id for row in list_conversations(
-            db_path=db, tag=["review"], tag_kind=["response", "tool_call"], n=0,
+        ids = {row.id for row in list_conversations(fidelity=Fidelity(), db_path=db, tag=["review"], tag_kind=["response", "tool_call"], n=0,
         )}
         assert ids == {b, c}
 
     def test_no_tag_excludes_polymorphically(self, db_with_polymorphic_tags):
         db, _a, _b, _c, d = db_with_polymorphic_tags
-        ids = {row.id for row in list_conversations(db_path=db, no_tag=["review"], n=0)}
+        ids = {row.id for row in list_conversations(fidelity=Fidelity(), db_path=db, no_tag=["review"], n=0)}
         assert ids == {d}
 
     def test_all_tags_polymorphic(self, db_with_polymorphic_tags):
         db, a, b, c, _d = db_with_polymorphic_tags
         # Default kinds: 'review' present at any granularity satisfies all_tags=['review']
-        ids = {row.id for row in list_conversations(
-            db_path=db, all_tags=["review"], n=0,
+        ids = {row.id for row in list_conversations(fidelity=Fidelity(), db_path=db, all_tags=["review"], n=0,
         )}
         assert ids == {a, b, c}
 
@@ -712,7 +707,7 @@ class TestGetConversationEventIds:
 
     def test_turn_carries_event_ids(self, db_with_event_ids):
         db, _c, p1, r1, tc1, p2 = db_with_event_ids
-        detail = get_conversation(_c, db_path=db, include_tool_content=True)
+        detail = get_conversation(_c, fidelity=Fidelity(visible=frozenset({"tools"})), db_path=db, )
         assert detail is not None
         assert len(detail.turns) == 2
 
@@ -729,7 +724,7 @@ class TestGetConversationEventIds:
 
     def test_narrative_blocks_carry_event_id(self, db_with_event_ids):
         db, _c, _p1, r1, _tc1, _p2 = db_with_event_ids
-        detail = get_conversation(_c, db_path=db, include_tool_content=True)
+        detail = get_conversation(_c, fidelity=Fidelity(visible=frozenset({"tools"})), db_path=db, )
         t1 = detail.turns[0]
         # Every block in turn 1 came from r1
         for blk in t1.narrative:
@@ -737,7 +732,7 @@ class TestGetConversationEventIds:
 
     def test_tool_call_detail_has_id(self, db_with_event_ids):
         db, _c, _p1, _r1, tc1, _p2 = db_with_event_ids
-        detail = get_conversation(_c, db_path=db, include_tool_content=True)
+        detail = get_conversation(_c, fidelity=Fidelity(visible=frozenset({"tools"})), db_path=db, )
         # Find the tool_calls block in turn 1
         tool_blocks = [b for b in detail.turns[0].narrative if b.block_type == "tool_calls"]
         assert tool_blocks, "expected at least one tool_calls block"
@@ -770,7 +765,7 @@ class TestSerializeConversationDetailEventIds:
         conn.commit()
         conn.close()
 
-        detail = get_conversation(c, db_path=db_path)
+        detail = get_conversation(c, fidelity=Fidelity(), db_path=db_path)
         d = serialize_conversation_detail(detail)
         assert d["turns"][0]["prompt_id"] == p
         assert d["turns"][0]["response_ids"] == [r]
@@ -1306,7 +1301,7 @@ class TestBuildNarrative:
             {"r1": blocks},
             {"r1": tool_calls},
             include_thinking=False,
-            include_tool_content=True,
+            include_tool_content=False,
             tool_filter=None,
         )
         # First tool_use matches tu1 by ID
@@ -1340,14 +1335,34 @@ class TestFetchOwnersEdgeCases:
         result = _list_conversations_impl(
             conn, workspace=None, model=None, since=None, before=None,
             search=None, tool=None, tag=None, all_tags=None, no_tag=None,
-            tool_tag=None, n=50, oldest=False, owner="alice",
+            tool_tag=None, n=50, oldest=False, owner="alice", fidelity=Fidelity(),
         )
         assert result == []
         conn.close()
+
+    def test_list_cost_expr_not_evaluated_below_depth_3(self, monkeypatch, test_db):
+        """Fallback list query must not evaluate cost expression at depth<3."""
+        from siftd.api import conversations as conv_api
+
+        monkeypatch.setattr(conv_api, "has_conversation_stats_table", lambda _conn: False)
+        monkeypatch.setattr(conv_api, "has_pricing_table", lambda _conn: True)
+
+        def _boom(*_args, **_kwargs):
+            raise AssertionError("cost_expr_sql should not be evaluated at depth<3")
+
+        monkeypatch.setattr(conv_api, "cost_expr_sql", _boom)
+
+        rows = conv_api.list_conversations(
+            fidelity=Fidelity(depth=1),
+            db_path=test_db,
+            n=1,
+        )
+        assert rows
+        assert rows[0].cost is None
 
 
 class TestListConversationsFilters:
     def test_tool_filter(self, test_db):
         """L239: tool filter adds SQL clause."""
-        result = list_conversations(db_path=test_db, tool="nonexistent_tool")
+        result = list_conversations(fidelity=Fidelity(), db_path=test_db, tool="nonexistent_tool")
         assert result == []  # no conversations match this tool

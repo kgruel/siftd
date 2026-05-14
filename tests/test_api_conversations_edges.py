@@ -1,6 +1,7 @@
 import sqlite3
 
 from siftd.api import conversations as conv
+from painted import Fidelity
 
 
 def test_get_conversation_includes_prompt_with_no_response(tmp_path, monkeypatch):
@@ -18,11 +19,11 @@ def test_get_conversation_includes_prompt_with_no_response(tmp_path, monkeypatch
     monkeypatch.setattr("siftd.api.conversations.fetch_prompts_for_conversation", lambda conn, cid: [{"id": "p1", "timestamp": "2024-01-01"}])
     monkeypatch.setattr("siftd.api.conversations.fetch_prompt_text_contents", lambda conn, pids: {})
     monkeypatch.setattr("siftd.api.conversations.fetch_responses_for_conversation", lambda conn, cid: [])
-    monkeypatch.setattr("siftd.api.conversations.fetch_response_content_blocks", lambda conn, ids: {})
+    monkeypatch.setattr("siftd.api.conversations.fetch_response_content_blocks", lambda conn, ids, block_types=None: {})
     monkeypatch.setattr("siftd.api.conversations.fetch_tool_calls_for_conversation", lambda conn, cid, include_content=False: [])
     monkeypatch.setattr("siftd.api.conversations.fetch_conversation_tags", lambda conn, cid: [])
 
-    detail = conv.get_conversation("c1", db_path=db)
+    detail = conv.get_conversation("c1", fidelity=Fidelity(), db_path=db)
     assert detail is not None and len(detail.turns) == 1 and detail.turns[0].total_input_tokens == 0
 
 

@@ -7,6 +7,7 @@ Each test creates an isolated database and runs real adapters.
 from conftest import FIXTURES_DIR, make_conversation, make_session_adapter, make_test_adapter
 
 from siftd.adapters import claude_code, gemini_cli
+from painted import Fidelity
 from siftd.api import get_conversation, get_stats, list_conversations
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall, Usage
 from siftd.domain.source import Source
@@ -65,14 +66,14 @@ class TestIngestToQueryFlow:
         conn.close()
 
         # list_conversations should find the ingested conversation
-        conversations = list_conversations(db_path=db_path)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=db_path)
         assert len(conversations) == 1
         conv_summary = conversations[0]
         assert conv_summary.prompt_count >= 1
         assert conv_summary.response_count >= 1
 
         # get_conversation should return exchanges
-        detail = get_conversation(conv_summary.id, db_path=db_path)
+        detail = get_conversation(conv_summary.id, fidelity=Fidelity(), db_path=db_path)
         assert detail is not None
         assert len(detail.exchanges) > 0
         assert detail.total_input_tokens > 0 or detail.total_output_tokens > 0
@@ -203,9 +204,9 @@ class TestIngestEdgeCases:
         assert second.files_replaced == 1
         conn.close()
 
-        summaries = list_conversations(db_path=db_path)
+        summaries = list_conversations(fidelity=Fidelity(), db_path=db_path)
         assert len(summaries) == 1
-        detail = get_conversation(summaries[0].id, db_path=db_path)
+        detail = get_conversation(summaries[0].id, fidelity=Fidelity(), db_path=db_path)
         assert detail.exchanges[0].response_text == "new"
 
     def test_session_dedup_hash_drift_preserves_conversation_and_tags(self, tmp_path):
@@ -379,7 +380,7 @@ class TestStoreConversationRoundTrip:
         conn.close()
 
         # Read back via API
-        conversations = list_conversations(db_path=db_path)
+        conversations = list_conversations(fidelity=Fidelity(), db_path=db_path)
         assert len(conversations) == 1
 
         summary = conversations[0]
@@ -388,7 +389,7 @@ class TestStoreConversationRoundTrip:
         assert summary.response_count == 2
         assert summary.total_tokens == 500 + 1200 + 800 + 600
 
-        detail = get_conversation(summary.id, db_path=db_path)
+        detail = get_conversation(summary.id, fidelity=Fidelity(), db_path=db_path)
         assert len(detail.exchanges) == 2
         assert detail.total_input_tokens == 1300
         assert detail.total_output_tokens == 1800

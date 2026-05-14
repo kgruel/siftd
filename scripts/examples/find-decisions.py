@@ -54,7 +54,9 @@ def main():
 
     if args.drill:
         # Drill-down mode: show conversation timeline
-        detail = get_conversation(args.drill)
+        from painted import Fidelity
+
+        detail = get_conversation(args.drill, fidelity=Fidelity(depth=3))
         if not detail:
             print(f"Conversation not found: {args.drill}", file=sys.stderr)
             return 1

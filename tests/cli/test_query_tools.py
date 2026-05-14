@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from siftd.api import list_conversations
+from painted import Fidelity
 from siftd.cli import main
 from siftd.storage.sqlite import (
     create_database,
@@ -65,7 +66,7 @@ def _build_db(tmp_path: Path, *, response_text: str = "Working on it.") -> Path:
 
 def test_query_detail_plain_output(capsys, tmp_path):
     db = _build_db(tmp_path)
-    conv_id = list_conversations(db_path=db, n=1)[0].id
+    conv_id = list_conversations(fidelity=Fidelity(), db_path=db, n=1)[0].id
 
     rc = main(["--db", str(db), "query", conv_id])
     assert rc == 0
@@ -81,7 +82,7 @@ def test_query_detail_plain_output(capsys, tmp_path):
 
 def test_query_tools_formats_input_and_result(capsys, tmp_path):
     db = _build_db(tmp_path)
-    conv_id = list_conversations(db_path=db, n=1)[0].id
+    conv_id = list_conversations(fidelity=Fidelity(), db_path=db, n=1)[0].id
 
     rc = main(["--db", str(db), "query", conv_id, "--tools", "all"])
     assert rc == 0
@@ -94,7 +95,7 @@ def test_query_tools_formats_input_and_result(capsys, tmp_path):
 
 def test_query_thinking_shows_thinking_without_tool_payloads(capsys, tmp_path):
     db = _build_db(tmp_path)
-    conv_id = list_conversations(db_path=db, n=1)[0].id
+    conv_id = list_conversations(fidelity=Fidelity(), db_path=db, n=1)[0].id
 
     rc = main(["--db", str(db), "query", conv_id, "--thinking"])
     assert rc == 0
@@ -109,7 +110,7 @@ def test_query_thinking_shows_thinking_without_tool_payloads(capsys, tmp_path):
 def test_query_default_detail_does_not_truncate_text(capsys, tmp_path):
     long_text = "Working on it. " * 30
     db = _build_db(tmp_path, response_text=long_text)
-    conv_id = list_conversations(db_path=db, n=1)[0].id
+    conv_id = list_conversations(fidelity=Fidelity(), db_path=db, n=1)[0].id
 
     rc = main(["--db", str(db), "query", conv_id])
     assert rc == 0
@@ -121,7 +122,7 @@ def test_query_default_detail_does_not_truncate_text(capsys, tmp_path):
 def test_query_brief_alias_truncates_text(capsys, tmp_path):
     long_text = "Working on it. " * 30
     db = _build_db(tmp_path, response_text=long_text)
-    conv_id = list_conversations(db_path=db, n=1)[0].id
+    conv_id = list_conversations(fidelity=Fidelity(), db_path=db, n=1)[0].id
 
     rc = main(["--db", str(db), "query", conv_id, "-b"])
     assert rc == 0
@@ -132,7 +133,7 @@ def test_query_brief_alias_truncates_text(capsys, tmp_path):
 
 def test_query_full_alias_implies_tool_content(capsys, tmp_path):
     db = _build_db(tmp_path)
-    conv_id = list_conversations(db_path=db, n=1)[0].id
+    conv_id = list_conversations(fidelity=Fidelity(), db_path=db, n=1)[0].id
 
     rc = main(["--db", str(db), "query", conv_id, "-F"])
     assert rc == 0

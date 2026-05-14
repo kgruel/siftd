@@ -358,9 +358,8 @@ async def ui_query(
             fn=get_conversation,
             params={
                 "id": id,
+                "fidelity": fidelity,
                 "db_path": db_path,
-                "include_thinking": fidelity.shows("thinking"),
-                "include_tool_content": fidelity.shows("tools"),
                 "owner": owner,
             },
             render_method="detail",
@@ -382,11 +381,13 @@ async def ui_query(
             return _html_response(f'<p class="empty">Not found: {id[:12]}</p>')
         return _html_response(fmt.render_detail(detail, op.fidelity, **op.render_context))
 
+    list_fidelity = _fidelity()
     op = Operation(
         path="/api/v1/conversations",
         method="GET",
         fn=list_conversations,
         params={
+            "fidelity": list_fidelity,
             "db_path": db_path,
             "workspace": workspace,
             "model": model,
@@ -398,7 +399,7 @@ async def ui_query(
             "n": n,
         },
         render_method="list",
-        fidelity=_fidelity(),
+        fidelity=list_fidelity,
         db=db_path,
         render_context=ctx,
     )
@@ -497,13 +498,14 @@ async def ui_search(
     # FTS5 fallback (always available)
     from siftd.api.conversations import list_conversations
 
+    fts_fidelity = _fidelity()
     op = Operation(
         path="/api/v1/conversations",
         method="GET",
         fn=list_conversations,
-        params={"db_path": db_path, "search": q, "n": 20, "owner": owner},
+        params={"fidelity": fts_fidelity, "db_path": db_path, "search": q, "n": 20, "owner": owner},
         render_method="list",
-        fidelity=_fidelity(),
+        fidelity=fts_fidelity,
         db=db_path,
         render_context=ctx,
     )
@@ -787,13 +789,12 @@ async def ui_export(
         params={
             "format": format,
             "id": [id],
+            "fidelity": _fidelity(depth=3, chars=0, tools=True, thinking=True),
             "db_path": db_path,
-            "include_thinking": True,
-            "include_tool_content": True,
             "owner": _effective_owner(request, None),
         },
         render_method="raw",
-        fidelity=_fidelity(),
+        fidelity=_fidelity(depth=3, chars=0, tools=True, thinking=True),
         db=db_path,
     )
 

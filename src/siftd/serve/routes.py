@@ -38,6 +38,8 @@ def _dispatch(
     path: str, method: str, fn: Callable, params: dict[str, Any],
     render_method: str, db: Path,
     render_context: dict | None = None,
+    *,
+    fidelity: Any | None = None,
 ) -> Any:
     """Build an Operation and dispatch it through the format protocol.
 
@@ -59,7 +61,7 @@ def _dispatch(
     try:
         op = Operation(
             path=path, method=method, fn=fn, params=params,
-            render_method=render_method, fidelity=Fidelity(), db=db,
+            render_method=render_method, fidelity=fidelity or Fidelity(), db=db,
             render_context=render_context or {},
         )
         result = execute(op)
@@ -361,15 +363,22 @@ async def export_route(
     owner: str | None = Parameter(query="owner", default=None),
 ) -> dict | Response:
     """Export full conversation data."""
+    from painted import Fidelity
+
     from siftd.api.export import export_conversations
+
+    fidelity = Fidelity(
+        depth=3, visible=frozenset({"text", "thinking", "tools"}),
+    )
 
     owner = _effective_owner(request, owner)
     return _dispatch(
         "/api/v1/export", "GET", export_conversations,
-        {"id": id, "workspace": workspace, "since": since, "before": before,
-         "tag": tag, "no_tag": no_tag, "tag_kind": tag_kind, "n": n, "db_path": db_path,
-         "owner": owner},
+        {"fidelity": fidelity, "id": id, "workspace": workspace, "since": since,
+         "before": before, "tag": tag, "no_tag": no_tag, "tag_kind": tag_kind,
+         "n": n, "db_path": db_path, "owner": owner},
         "export", db_path,
+        fidelity=fidelity,
     )
 
 
@@ -456,9 +465,13 @@ async def pull(
 
     if dry_run:
         # Count-only path — never creates a slice file.
+        from painted import Fidelity
+
         from siftd.api.conversations import list_conversations
 
+        count_fidelity = Fidelity()
         convs = list_conversations(
+            fidelity=count_fidelity,
             db_path=db_path,
             workspace=workspace,
             model=model,
@@ -475,7 +488,7 @@ async def pull(
         estimated_size = 0
         try:
             db_size = db_path.stat().st_size
-            total_count = len(list_conversations(db_path=db_path, n=0))
+            total_count = len(list_conversations(fidelity=count_fidelity, db_path=db_path, n=0))
             if total_count > 0:
                 estimated_size = (db_size * conversations) // total_count
         except Exception:
@@ -577,14 +590,24 @@ async def conversation_detail(
     tool_filter: str | None = Parameter(query="tool_filter", default=None),
 ) -> dict | Response:
     """Get a single conversation by ID (supports prefix match)."""
+    from painted import Fidelity
+
     from siftd.api.conversations import get_conversation
+
+    visible: set[str] = {"text"}
+    if include_thinking:
+        visible.add("thinking")
+    if include_tool_content:
+        visible.add("tools")
+    fidelity = Fidelity(depth=3, visible=frozenset(visible))
 
     owner = _effective_owner(request, None)
     return _dispatch(
         "/api/v1/conversations", "GET", get_conversation,
-        {"id": id, "db_path": db_path, "include_thinking": include_thinking,
-         "include_tool_content": include_tool_content, "tool_filter": tool_filter, "owner": owner},
+        {"id": id, "fidelity": fidelity, "db_path": db_path,
+         "tool_filter": tool_filter, "owner": owner},
         "detail", db_path,
+        fidelity=fidelity,
     )
 
 
@@ -608,17 +631,22 @@ async def conversation_list(
     owner: str | None = Parameter(query="owner", default=None),
 ) -> dict | Response:
     """List conversations with filtering."""
+    from painted import Fidelity
+
     from siftd.api.conversations import list_conversations
+
+    fidelity = Fidelity(depth=3)
 
     owner = _effective_owner(request, owner)
     return _dispatch(
         "/api/v1/conversations", "GET", list_conversations,
-        {"db_path": db_path, "workspace": workspace, "model": model,
+        {"fidelity": fidelity, "db_path": db_path, "workspace": workspace, "model": model,
          "since": since, "before": before, "search": search, "tool": tool,
          "tag": tag, "all_tags": all_tags, "no_tag": no_tag,
          "tag_kind": tag_kind, "tool_tag": tool_tag,
          "n": n, "oldest": oldest, "owner": owner},
         "list", db_path,
+        fidelity=fidelity,
     )
 
 

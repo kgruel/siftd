@@ -200,7 +200,7 @@ class TestCmdExport:
         assert "Exported 2 session(s)" in capsys.readouterr().out
 
     def test_full_flag_enables_tools_in_fidelity(self, monkeypatch, tmp_path):
-        """--full should set include_tool_content=True in params."""
+        """--full should put 'tools' into the fidelity visible set."""
         captured = {}
 
         def fake_execute(op):
@@ -212,4 +212,4 @@ class TestCmdExport:
 
         args = _make_args(full=True, db=str(tmp_path / "db.db"))
         cmd_export(args)
-        assert captured["op"].params["include_tool_content"] is True
+        assert captured["op"].params["fidelity"].shows("tools")

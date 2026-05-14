@@ -60,50 +60,50 @@ def _default_fidelity():
 
 class TestExportConversations:
     def test_export_by_last(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
+        conversations = export_conversations(fidelity=Fidelity(), last=1, db_path=test_db)
         assert len(conversations) == 1
         assert isinstance(conversations[0], ExportedConversation)
 
     def test_export_by_id(self, test_db):
-        summaries = list_conversations(db_path=test_db, n=1)
+        summaries = list_conversations(fidelity=Fidelity(), db_path=test_db, n=1)
         conv_id = summaries[0].id
-        conversations = export_conversations(
+        conversations = export_conversations(fidelity=Fidelity(), 
             id=[conv_id], db_path=test_db
         )
         assert len(conversations) == 1
         assert conversations[0].id == conv_id
 
     def test_export_by_id_prefix(self, test_db):
-        summaries = list_conversations(db_path=test_db, n=1)
+        summaries = list_conversations(fidelity=Fidelity(), db_path=test_db, n=1)
         prefix = summaries[0].id[:8]
-        conversations = export_conversations(
+        conversations = export_conversations(fidelity=Fidelity(), 
             id=[prefix], db_path=test_db
         )
         assert len(conversations) == 1
 
     def test_export_has_turns(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
+        conversations = export_conversations(fidelity=Fidelity(), last=1, db_path=test_db)
         assert len(conversations[0].turns) > 0
         assert conversations[0].turns[0].prompt_text is not None
 
     def test_export_workspace_filter(self, test_db):
-        conversations = export_conversations(
+        conversations = export_conversations(fidelity=Fidelity(), 
             last=10, workspace="project", db_path=test_db
         )
         assert len(conversations) == 2
 
-        conversations = export_conversations(
+        conversations = export_conversations(fidelity=Fidelity(), 
             last=10, workspace="nonexistent", db_path=test_db
         )
         assert len(conversations) == 0
 
     def test_export_workspace_name_populated(self, test_db):
-        conversations = export_conversations(last=1, db_path=test_db)
+        conversations = export_conversations(fidelity=Fidelity(), last=1, db_path=test_db)
         assert conversations[0].workspace_name == "project"
 
     def test_raises_for_missing_db(self, tmp_path):
         with pytest.raises(FileNotFoundError):
-            export_conversations(last=1, db_path=tmp_path / "nonexistent.db")
+            export_conversations(fidelity=Fidelity(), last=1, db_path=tmp_path / "nonexistent.db")
 
 
 class TestMarkdownRenderDetail:
@@ -228,7 +228,7 @@ class TestMarkdownRenderDetail:
     def test_from_db(self, test_db):
         from siftd.output.markdown_fmt import render_detail
 
-        conversations = export_conversations(last=1, db_path=test_db)
+        conversations = export_conversations(fidelity=Fidelity(), last=1, db_path=test_db)
         output = render_detail(
             conversations[0].turns, _default_fidelity(), detail=conversations[0],
         )
@@ -325,7 +325,7 @@ class TestJsonRenderDetail:
     def test_from_db(self, test_db):
         from siftd.output.json_fmt import render_detail
 
-        conversations = export_conversations(last=1, db_path=test_db)
+        conversations = export_conversations(fidelity=Fidelity(), last=1, db_path=test_db)
         c = render_detail(
             conversations[0].turns, _default_fidelity(), detail=conversations[0],
         )

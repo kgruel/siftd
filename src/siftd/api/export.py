@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+from painted import Fidelity
 
 from siftd.api.conversations import (
     ConversationDetail,
@@ -19,9 +20,6 @@ from siftd.api.conversations import (
     list_conversations,
 )
 from siftd.output._id_format import short_id
-
-if TYPE_CHECKING:
-    from painted import Fidelity
 
 
 @dataclass
@@ -40,6 +38,7 @@ class ExportedConversation:
 
 def export_conversations(
     *,
+    fidelity: Fidelity,
     id: list[str] | None = None,
     last: int | None = None,
     n: int = 0,
@@ -51,24 +50,28 @@ def export_conversations(
     before: str | None = None,
     search: str | None = None,
     db_path: Path | None = None,
-    include_thinking: bool = True,
-    include_tool_content: bool = False,
     owner: str | None = None,
 ) -> list[ExportedConversation]:
     """Export conversations matching the specified criteria.
 
-    Always fetches with include_thinking=True so thinking block presence
-    is known (for placeholder rendering). Tool content is fetched only
-    when include_tool_content=True (for --tools/--full).
+    The fetch fidelity always carries "thinking" in its visible set so the
+    renderer can emit ``*[thinking]*`` placeholders even when the caller's
+    fidelity omits it; expanded vs. placeholder is then a render-time
+    decision against the caller-supplied fidelity.
     """
+    from dataclasses import replace
+
+    fetch_fidelity = replace(
+        fidelity, visible=fidelity.visible | frozenset({"thinking"}),
+    )
+
     if id:
         results = []
         for cid in id:
             detail = get_conversation(
                 cid,
+                fidelity=fetch_fidelity,
                 db_path=db_path,
-                include_thinking=include_thinking,
-                include_tool_content=include_tool_content,
                 owner=owner,
             )
             if detail:
@@ -77,6 +80,7 @@ def export_conversations(
 
     n = last if last else (n if n > 0 else 10)
     summaries = list_conversations(
+        fidelity=fidelity,
         db_path=db_path,
         workspace=workspace,
         tag=tag,
@@ -93,9 +97,8 @@ def export_conversations(
     for summary in summaries:
         detail = get_conversation(
             summary.id,
+            fidelity=fetch_fidelity,
             db_path=db_path,
-            include_thinking=include_thinking,
-            include_tool_content=include_tool_content,
             owner=owner,
         )
         if detail:
@@ -136,8 +139,8 @@ class ExportArtifact:
 
 def export_document(
     *,
+    fidelity: Fidelity,
     format: str = "md",
-    fidelity: Fidelity | None = None,
     no_header: bool = False,
     id: list[str] | None = None,
     last: int | None = None,
@@ -150,8 +153,6 @@ def export_document(
     before: str | None = None,
     search: str | None = None,
     db_path: Path | None = None,
-    include_thinking: bool = True,
-    include_tool_content: bool = False,
     owner: str | None = None,
 ) -> ExportArtifact:
     """Export conversations as a complete document.
@@ -161,8 +162,11 @@ def export_document(
     parameter, not a render-time decision.
 
     Args:
+        fidelity: Cross-stage rendering contract. Drives both fetch (via
+            ``shows("tools")``) and render (placeholder vs. expanded
+            thinking/tool blocks). Thinking blocks are always fetched so
+            placeholders can render — see ``export_conversations``.
         format: Output format — "md" (markdown) or "json".
-        fidelity: Rendering fidelity. Defaults to full (show everything).
         no_header: Omit per-conversation metadata headers.
         last: Export N most recent conversations (takes precedence over n).
         n: Max conversations when neither id nor last is given. Passed through
@@ -173,16 +177,11 @@ def export_document(
     Returns:
         ExportArtifact with serialized content, media_type, and filename.
     """
-    if fidelity is None:
-        from painted import Fidelity as F
-
-        fidelity = F(visible={"text", "thinking", "tools"}, depth=3, chars=0)
-
     conversations = export_conversations(
+        fidelity=fidelity,
         id=id, last=last, n=n, workspace=workspace, tag=tag,
         no_tag=no_tag, tag_kind=tag_kind, since=since, before=before,
-        search=search, db_path=db_path, include_thinking=include_thinking,
-        include_tool_content=include_tool_content, owner=owner,
+        search=search, db_path=db_path, owner=owner,
     )
 
     if format == "json":

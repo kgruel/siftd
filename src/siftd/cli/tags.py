@@ -190,6 +190,7 @@ def _cmd_tag_list(args, db: Path) -> int:
         from dataclasses import asdict
 
         from siftd.api import list_conversations
+        from siftd.cli._common import fidelity_from_args
         from siftd.cli._filters import extract_filter_args
 
         tag_name = name
@@ -203,12 +204,13 @@ def _cmd_tag_list(args, db: Path) -> int:
         filters.tag = filter_tags
 
         limit = getattr(args, "limit", None) or 10
+        fidelity = fidelity_from_args(args)
 
         try:
             filter_kwargs = asdict(filters)
             filter_kwargs.pop("tag")  # pass explicitly below
             conversations = list_conversations(
-                db_path=db, tag=filters.tag, n=limit, **filter_kwargs,
+                fidelity=fidelity, db_path=db, tag=filters.tag, n=limit, **filter_kwargs,
             )
         except FileNotFoundError as e:
             print(str(e))
@@ -218,11 +220,9 @@ def _cmd_tag_list(args, db: Path) -> int:
             print(f"No conversations found for tag: {tag_name}")
             return 0
 
-        from siftd.cli._common import fidelity_from_args
         from siftd.output.format_registry import select_format
 
         print(f"Conversations tagged '{tag_name}' (showing {len(conversations)}):")
-        fidelity = fidelity_from_args(args)
         fmt = select_format(
             json_mode=getattr(args, "json", False),
             is_tty=sys.stdout.isatty(),
