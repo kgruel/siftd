@@ -1194,10 +1194,11 @@ class TestEmbeddingsStaleProducer:
         op = _make_op(fn=search_chunks, render_method="search")
         assert _embeddings_stale_caveats(op, [], _make_ctx()) == []
 
-    def test_embed_db_missing_returns_empty(self, monkeypatch, tmp_path):
-        """If embed db path doesn't exist, return empty list (no error)."""
+    def test_embed_db_missing_no_conversations_returns_empty(self, monkeypatch, tmp_path):
+        """If embed db missing and main db has no conversations, return empty list."""
         from siftd.api.caveats import _embeddings_stale_caveats
         from siftd.api.search import search_chunks
+        from siftd.storage.sqlite import create_database
 
         monkeypatch.setattr(
             "siftd.embeddings.availability.embeddings_available", lambda: True
@@ -1208,10 +1209,48 @@ class TestEmbeddingsStaleProducer:
         )
 
         db_file = tmp_path / "main.db"
-        db_file.touch()
+        conn = create_database(db_file)
+        conn.close()
         ctx = ProducerContext(db_path=db_file)
         op = _make_op(fn=search_chunks, render_method="search")
         assert _embeddings_stale_caveats(op, [], ctx) == []
+
+    def test_embed_db_missing_with_conversations_returns_finding(self, monkeypatch, tmp_path):
+        """If embed db missing and main db has conversations, all are flagged as unindexed."""
+        from siftd.api.caveats import _embeddings_stale_caveats
+        from siftd.api.search import search_chunks
+        from siftd.storage.sqlite import (
+            create_database,
+            get_or_create_harness,
+            get_or_create_model,
+            get_or_create_workspace,
+            insert_conversation,
+            insert_prompt,
+        )
+
+        monkeypatch.setattr(
+            "siftd.embeddings.availability.embeddings_available", lambda: True
+        )
+        monkeypatch.setattr(
+            "siftd.paths.embeddings_db_path",
+            lambda: "/nonexistent/embed.db",
+        )
+
+        db_file = tmp_path / "main.db"
+        conn = create_database(db_file)
+        harness_id = get_or_create_harness(conn, "h", source="test", log_format="jsonl")
+        model_id = get_or_create_model(conn, "m")
+        ws_id = get_or_create_workspace(conn, "/w", "2024-01-01T00:00:00Z")
+        conv_id = insert_conversation(conn, external_id="c1", harness_id=harness_id, workspace_id=ws_id, started_at="2024-01-01T00:00:00Z")
+        insert_prompt(conn, conv_id, "p1", "2024-01-01T00:00:01Z")
+        conn.commit()
+        conn.close()
+
+        ctx = ProducerContext(db_path=db_file)
+        op = _make_op(fn=search_chunks, render_method="search")
+        findings = _embeddings_stale_caveats(op, [], ctx)
+        assert len(findings) == 1
+        assert "not indexed" in findings[0].message
 
     def test_main_db_missing_returns_empty(self, monkeypatch, tmp_path):
         """If main db path doesn't exist, return empty list (no error)."""

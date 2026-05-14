@@ -132,18 +132,91 @@ def _query_event_detail(args, *, conn=None) -> int:
     return 0
 
 
+def _parse_turns_range(s: str) -> tuple[int, int]:
+    """Parse a turns range string like '-2:+2' or '5:10' into (start, end) offsets.
+
+    Returns (window_start, window_end) as signed integers.
+    Raises SystemExit(2) on invalid format or if end < start.
+    """
+    parts = s.split(":")
+    if len(parts) != 2:
+        print(f"error: --turns must be in A:B format (e.g. -2:+2, 5:10), got: {s!r}", file=sys.stderr)
+        sys.exit(2)
+    try:
+        start = int(parts[0].lstrip("+"))
+        end = int(parts[1].lstrip("+"))
+    except ValueError:
+        print(f"error: --turns values must be integers, got: {s!r}", file=sys.stderr)
+        sys.exit(2)
+    if end < start:
+        print(f"error: --turns end ({end}) must be >= start ({start})", file=sys.stderr)
+        sys.exit(2)
+    return start, end
+
+
 def _query_detail(args) -> int:
     """Show conversation detail timeline."""
     from siftd.api import get_conversation
+    from siftd.api.conversations import AnchorNotFound, AnchorOutOfRange, AnchorPhraseInvalid
     from siftd.api.dispatch import Operation, execute
     from siftd.cli._common import fidelity_from_args, tool_chars_from_args
     from siftd.serve.delegation import try_serve
 
-    # Validate --exchanges
     exchanges_n = getattr(args, "exchanges", None)
+    turns_range = getattr(args, "turns_range", None)
+
+    # Detect which anchor (if any) was specified.
+    from_start = getattr(args, "from_start", False)
+    from_end = getattr(args, "from_end", False)
+    at_turn = getattr(args, "at_turn", None)
+    around = getattr(args, "around", None)
+    has_anchor = from_start or from_end or (at_turn is not None) or (around is not None)
+    has_window = (exchanges_n is not None) or (turns_range is not None)
+
+    # Window without anchor is a hard error (exit 2, argparse convention).
+    _ANCHOR_HINT = "use one of: --from-start, --from-end, --at-turn N, --around PHRASE"
+    if has_window and not has_anchor:
+        flag = "--exchanges" if exchanges_n is not None else "--turns"
+        print(
+            f"error: {flag} requires an anchor; {_ANCHOR_HINT}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     if exchanges_n is not None and exchanges_n < 1:
-        print("Error: --exchanges must be at least 1")
-        return 1
+        print("error: --exchanges must be at least 1", file=sys.stderr)
+        sys.exit(2)
+
+    # Resolve anchor type and value.
+    anchor: str | None = None
+    anchor_value: int | str | None = None
+    if from_start:
+        anchor = "from_start"
+    elif from_end:
+        anchor = "from_end"
+    elif at_turn is not None:
+        anchor = "at_turn"
+        anchor_value = at_turn
+    elif around is not None:
+        anchor = "around"
+        anchor_value = around
+
+    # Translate --exchanges N to window offsets (direction depends on anchor).
+    window_start: int | None = None
+    window_end: int | None = None
+    if exchanges_n is not None:
+        if anchor == "from_end":
+            # tail window: N turns back from end
+            window_start = -(exchanges_n - 1)
+            window_end = 0
+        else:
+            # forward window: N turns from anchor
+            window_start = 0
+            window_end = exchanges_n - 1
+
+    # Parse --turns A:B into window offsets.
+    if turns_range is not None:
+        window_start, window_end = _parse_turns_range(turns_range)
 
     db = Path(args.db) if args.db else None
     effective_db = db or resolve_db(args)
@@ -165,14 +238,17 @@ def _query_detail(args) -> int:
             "fidelity": fidelity,
             "db_path": db,
             "tool_filter": tool_filter,
+            "anchor": anchor,
+            "anchor_value": anchor_value,
+            "window_start": window_start,
+            "window_end": window_end,
         },
         render_method="detail",
         fidelity=fidelity,
         db=effective_db,
     )
 
-    # For --json output, delegate to serve if available (avoids cold-open
-    # entirely — server returns the canonical JSON shape directly)
+    # For --json output, delegate to serve if available.
     if getattr(args, "json", False) and not getattr(args, "summary", False):
         result = try_serve(op)
         if result is not None and isinstance(result, dict) and "conversation" in result:
@@ -187,12 +263,21 @@ def _query_detail(args) -> int:
         print(str(e))
         print("Run 'siftd ingest' to create it.")
         return 1
+    except AnchorOutOfRange as e:
+        print(f"error: --at-turn {at_turn} is out of range (conversation has {e.turn_count} turns)", file=sys.stderr)
+        sys.exit(2)
+    except AnchorNotFound as e:
+        print(f'error: --around {e.phrase!r} not found in conversation', file=sys.stderr)
+        sys.exit(2)
+    except AnchorPhraseInvalid as e:
+        print(f"error: --around {e.phrase!r} is not a valid FTS5 phrase", file=sys.stderr)
+        sys.exit(2)
 
     if not detail:
         print(f"Conversation not found: {args.conversation_id}")
         return 1
 
-    # Summary mode: just metadata, no exchanges
+    # Summary mode: just metadata, no turns.
     if getattr(args, "summary", False):
         ws_name = fmt_workspace(detail.workspace_path)
         started = fmt_timestamp(detail.started_at)
@@ -209,11 +294,6 @@ def _query_detail(args) -> int:
         print(f"Turns: {len(detail.turns)}")
         return 0
 
-    # Determine which turns to show
-    show_turns = detail.turns
-    if exchanges_n is not None:
-        show_turns = show_turns[-exchanges_n:] if exchanges_n < len(show_turns) else show_turns
-
     from siftd.output.format_registry import select_format
 
     fmt = select_format(
@@ -221,7 +301,7 @@ def _query_detail(args) -> int:
         is_tty=sys.stdout.isatty(),
     )
     result = fmt.render_detail(
-        show_turns, fidelity, detail=detail, tool_chars=tool_chars,
+        detail.turns, fidelity, detail=detail, tool_chars=tool_chars,
     )
     emit_output(result)
     return 0
@@ -449,25 +529,31 @@ For semantic content search, use: siftd search <query>
 Conversation IDs displayed in lists are truncated to 8 characters; use the full 26-character ID
 to query a specific conversation.
 
+Navigation: --exchanges and --turns require an anchor flag. No anchor shows the whole conversation.
+
 examples:
-  siftd query                         # list recent conversations
-  siftd query -n 20                   # list 20 conversations
-  siftd query -w myproject            # filter by workspace
-  siftd query -l research:auth        # conversations tagged research:auth
-  siftd query -l research: -l useful: # OR — any research: or useful: tag
+  siftd query                                   # list recent conversations
+  siftd query -n 20                             # list 20 conversations
+  siftd query -w myproject                      # filter by workspace
+  siftd query -l research:auth                  # conversations tagged research:auth
+  siftd query -l research: -l useful:           # OR — any research: or useful: tag
   siftd query --all-tags important --all-tags reviewed  # AND — must have both
-  siftd query -l research: --no-tag archived            # combine OR + NOT
-  siftd query --tool-tag shell:test   # conversations with test commands
-  siftd query <id>                    # show conversation detail
-  siftd query <id> --summary          # metadata only, no exchanges
-  siftd query <id> --exchanges 5      # last 5 exchanges
-  siftd query <id> --brief            # compact detail view (80 char truncation)
-  siftd query <id> -b                 # short alias for --brief
-  siftd query <id> --full             # full text, no truncation
-  siftd query <id> -F                 # short alias for --full
-  siftd query sql                     # list available .sql files
-  siftd query sql cost                # run the 'cost' query
-  siftd query sql cost --var ws=proj  # run with variable substitution""",
+  siftd query -l research: --no-tag archived    # combine OR + NOT
+  siftd query --tool-tag shell:test             # conversations with test commands
+  siftd query <id>                              # show full conversation
+  siftd query <id> --summary                   # metadata only, no turns
+  siftd query <id> --from-start --exchanges 3  # first 3 turns
+  siftd query <id> --from-end --exchanges 5    # last 5 turns (replaces bare --exchanges)
+  siftd query <id> --at-turn 4                 # show only turn 4
+  siftd query <id> --at-turn 4 --turns -1:+2  # turns 3-6 (relative to turn 4)
+  siftd query <id> --around "error message" --turns -2:+2  # context around phrase match
+  siftd query <id> --brief                     # compact view (80 char truncation)
+  siftd query <id> -b                          # short alias for --brief
+  siftd query <id> --full                      # full text, no truncation
+  siftd query <id> -F                          # short alias for --full
+  siftd query sql                              # list available .sql files
+  siftd query sql cost                         # run the 'cost' query
+  siftd query sql cost --var ws=proj           # run with variable substitution""",
     )
 
     # Positional arguments
@@ -475,12 +561,15 @@ examples:
     p_query.add_argument("sql_name", nargs="?", help="SQL query name (when using 'sql' subcommand)")
 
     # Filtering options
-    from siftd.cli._common import add_fidelity_args, add_output_args
+    from siftd.cli._common import add_anchor_window_args, add_fidelity_args, add_output_args
     from siftd.cli._filters import add_filter_args
 
     add_filter_args(p_query, include_tool=True, include_tool_tag=True)
     add_output_args(p_query, json=True, limit=True, limit_default=None, no_hints=True)
     add_fidelity_args(p_query, full=True, brief=True, chars=True, thinking=True, tools=True, tool_chars=True)
+
+    # Anchor + window flags for detail view (Slice 1: query <id>; Slice 2: search)
+    add_anchor_window_args(p_query)
 
     # List options
     list_group = p_query.add_argument_group("list options")
@@ -490,7 +579,6 @@ examples:
 
     # Detail view options (when conversation_id is provided)
     detail_group = p_query.add_argument_group("detail view")
-    detail_group.add_argument("--exchanges", type=int, metavar="N", help="Number of turns to show (default: all)")
     detail_group.add_argument("--summary", action="store_true", help="Summary only (metadata, no turns)")
     detail_group.add_argument("--neighbors", action="store_true",
         help="Include prev_event_id/next_event_id in event detail output")

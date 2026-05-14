@@ -291,9 +291,10 @@ usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                    [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
                    [-t NAME] [--tool-tag NAME] [--owner USER] [--json]
                    [-n LIMIT] [--no-hints] [-F] [-b] [--chars N] [--thinking]
-                   [--tools [FILTER]] [--tool-chars N] [-v] [--oldest]
-                   [--stats] [--exchanges N] [--summary] [--neighbors]
-                   [--var KEY=VALUE]
+                   [--tools [FILTER]] [--tool-chars N] [--from-start |
+                   --from-end | --at-turn N | --around PHRASE]
+                   [--exchanges N | --turns A:B] [-v] [--oldest] [--stats]
+                   [--summary] [--neighbors] [--var KEY=VALUE]
                    [conversation_id] [sql_name]
 
 positional arguments:
@@ -339,13 +340,23 @@ fidelity:
   --tool-chars N        Truncate tool input/result at N characters (default:
                         120)
 
+navigation:
+  --from-start          Anchor at the start of the conversation (turn 0)
+  --from-end            Anchor at the end of the conversation (last turn)
+  --at-turn N           Anchor at the N-th turn (0-indexed)
+  --around PHRASE       Anchor at the first FTS5 phrase match in the
+                        conversation
+  --exchanges N         Number of turns to show from anchor (requires an
+                        anchor flag)
+  --turns A:B           Turn range relative to anchor, e.g. -2:+2 or 5:10
+                        (requires an anchor flag)
+
 list options:
   -v, --verbose         Full table with all columns
   --oldest              Sort by oldest first (default: newest first)
   --stats               Show summary totals after list
 
 detail view:
-  --exchanges N         Number of turns to show (default: all)
   --summary             Summary only (metadata, no turns)
   --neighbors           Include prev_event_id/next_event_id in event detail
                         output
@@ -359,25 +370,31 @@ For semantic content search, use: siftd search <query>
 Conversation IDs displayed in lists are truncated to 8 characters; use the full 26-character ID
 to query a specific conversation.
 
+Navigation: --exchanges and --turns require an anchor flag. No anchor shows the whole conversation.
+
 examples:
-  siftd query                         # list recent conversations
-  siftd query -n 20                   # list 20 conversations
-  siftd query -w myproject            # filter by workspace
-  siftd query -l research:auth        # conversations tagged research:auth
-  siftd query -l research: -l useful: # OR — any research: or useful: tag
+  siftd query                                   # list recent conversations
+  siftd query -n 20                             # list 20 conversations
+  siftd query -w myproject                      # filter by workspace
+  siftd query -l research:auth                  # conversations tagged research:auth
+  siftd query -l research: -l useful:           # OR — any research: or useful: tag
   siftd query --all-tags important --all-tags reviewed  # AND — must have both
-  siftd query -l research: --no-tag archived            # combine OR + NOT
-  siftd query --tool-tag shell:test   # conversations with test commands
-  siftd query <id>                    # show conversation detail
-  siftd query <id> --summary          # metadata only, no exchanges
-  siftd query <id> --exchanges 5      # last 5 exchanges
-  siftd query <id> --brief            # compact detail view (80 char truncation)
-  siftd query <id> -b                 # short alias for --brief
-  siftd query <id> --full             # full text, no truncation
-  siftd query <id> -F                 # short alias for --full
-  siftd query sql                     # list available .sql files
-  siftd query sql cost                # run the 'cost' query
-  siftd query sql cost --var ws=proj  # run with variable substitution
+  siftd query -l research: --no-tag archived    # combine OR + NOT
+  siftd query --tool-tag shell:test             # conversations with test commands
+  siftd query <id>                              # show full conversation
+  siftd query <id> --summary                   # metadata only, no turns
+  siftd query <id> --from-start --exchanges 3  # first 3 turns
+  siftd query <id> --from-end --exchanges 5    # last 5 turns (replaces bare --exchanges)
+  siftd query <id> --at-turn 4                 # show only turn 4
+  siftd query <id> --at-turn 4 --turns -1:+2  # turns 3-6 (relative to turn 4)
+  siftd query <id> --around "error message" --turns -2:+2  # context around phrase match
+  siftd query <id> --brief                     # compact view (80 char truncation)
+  siftd query <id> -b                          # short alias for --brief
+  siftd query <id> --full                      # full text, no truncation
+  siftd query <id> -F                          # short alias for --full
+  siftd query sql                              # list available .sql files
+  siftd query sql cost                         # run the 'cost' query
+  siftd query sql cost --var ws=proj           # run with variable substitution
 ```
 
 ## siftd ingest

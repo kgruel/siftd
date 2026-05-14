@@ -1,5 +1,6 @@
 """Additional no-embed tests for siftd.cli.query branches."""
 
+import pytest
 from types import SimpleNamespace
 
 from siftd.cli.query import _query_detail, _query_sql, cmd_query
@@ -26,7 +27,14 @@ def _args(**kwargs):
         "verbose": False,
         "stats": False,
         "no_hints": False,
+        # anchor axis
+        "from_start": False,
+        "from_end": False,
+        "at_turn": None,
+        "around": None,
+        # window axis
         "exchanges": None,
+        "turns_range": None,
         "brief": False,
         "summary": False,
         "full": False,
@@ -40,8 +48,15 @@ def _args(**kwargs):
 
 
 def test_query_detail_branches(monkeypatch, capsys, tmp_path):
-    # invalid exchanges
-    assert _query_detail(_args(conversation_id="c1", exchanges=0, db=str(tmp_path / "db.sqlite"))) == 1
+    # --exchanges without anchor exits 2
+    with pytest.raises(SystemExit) as exc:
+        _query_detail(_args(conversation_id="c1", exchanges=0, db=str(tmp_path / "db.sqlite")))
+    assert exc.value.code == 2
+
+    # --exchanges < 1 with anchor also exits 2
+    with pytest.raises(SystemExit) as exc:
+        _query_detail(_args(conversation_id="c1", exchanges=0, from_end=True, db=str(tmp_path / "db.sqlite")))
+    assert exc.value.code == 2
 
     detail = SimpleNamespace(
         id="c1",
@@ -73,8 +88,8 @@ def test_query_detail_branches(monkeypatch, capsys, tmp_path):
 
     monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: SimpleNamespace(render_detail=lambda *a, **k2: "OUT"))
     monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
-    assert _query_detail(_args(conversation_id="c1", exchanges=1, db=str(tmp_path / "db.sqlite"))) == 0
-    assert _query_detail(_args(conversation_id="c1", exchanges=1, tools="shell", db=str(tmp_path / "db.sqlite"))) == 0
+    assert _query_detail(_args(conversation_id="c1", exchanges=1, from_end=True, db=str(tmp_path / "db.sqlite"))) == 0
+    assert _query_detail(_args(conversation_id="c1", exchanges=1, from_end=True, tools="shell", db=str(tmp_path / "db.sqlite"))) == 0
 
 
 def test_query_sql_and_cmd_query_list_branches(monkeypatch, capsys, tmp_path):

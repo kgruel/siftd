@@ -17,6 +17,7 @@ from siftd.safecall import read_text as _safe_read_text
 from siftd.storage.conversation_stats import has_conversation_stats_table
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.filters import tag_condition as _tag_condition
+from siftd.storage.fts import fts5_first_event_in_conversation
 from siftd.storage.queries import (
     fetch_conversation_by_id_or_prefix,
     fetch_conversation_model,
@@ -37,6 +38,34 @@ from siftd.storage.sql_helpers import (
     owner_predicate,
 )
 from siftd.storage.sqlite import open_database
+
+
+class AnchorError(Exception):
+    """Raised when an anchor cannot be resolved during get_conversation."""
+
+
+class AnchorOutOfRange(AnchorError):
+    """--at-turn N is out of range for this conversation."""
+
+    def __init__(self, turn_count: int) -> None:
+        self.turn_count = turn_count
+        super().__init__(f"turn index out of range (conversation has {turn_count} turns)")
+
+
+class AnchorNotFound(AnchorError):
+    """--around PHRASE matched nothing in this conversation."""
+
+    def __init__(self, phrase: str) -> None:
+        self.phrase = phrase
+        super().__init__(f"phrase not found in conversation: {phrase!r}")
+
+
+class AnchorPhraseInvalid(AnchorError):
+    """--around PHRASE could not be parsed by FTS5."""
+
+    def __init__(self, phrase: str) -> None:
+        self.phrase = phrase
+        super().__init__(f"invalid FTS5 phrase: {phrase!r}")
 
 
 @dataclass
@@ -448,6 +477,50 @@ def _extract_text(raw: str) -> str:
     return raw
 
 
+def _resolve_anchor(
+    turns: list,
+    anchor: str,
+    anchor_value: int | str | None,
+    conn,
+    conv_id: str,
+) -> int:
+    """Map an anchor spec to a turn index.
+
+    Raises:
+        AnchorOutOfRange: For 'at_turn' when N >= len(turns).
+        AnchorNotFound: For 'around' when phrase has no match.
+        AnchorPhraseInvalid: For 'around' when phrase fails FTS5 parsing.
+    """
+    if anchor == "from_start":
+        return 0
+    if anchor == "from_end":
+        return max(0, len(turns) - 1)
+    if anchor == "at_turn":
+        n = int(anchor_value)  # type: ignore[arg-type]
+        if n < 0 or n >= len(turns):
+            raise AnchorOutOfRange(len(turns))
+        return n
+    if anchor == "around":
+        phrase = str(anchor_value)
+        try:
+            event_id = fts5_first_event_in_conversation(conn, phrase, conversation_id=conv_id)
+        except sqlite3.OperationalError as e:
+            raise AnchorPhraseInvalid(phrase) from e
+        if event_id is None:
+            raise AnchorNotFound(phrase)
+        # Map event_id to turn index via Turn.prompt_id / Turn.response_ids.
+        for idx, turn in enumerate(turns):
+            if turn.prompt_id == event_id:
+                return idx
+            if event_id in turn.response_ids:
+                return idx
+            if event_id in turn.tool_call_ids:
+                return idx
+        # Event found in FTS but not in any turn (e.g. orphaned event).
+        raise AnchorNotFound(phrase)
+    raise ValueError(f"unknown anchor: {anchor!r}")
+
+
 def get_conversation(
     id: str,
     *,
@@ -455,6 +528,10 @@ def get_conversation(
     db_path: Path | None = None,
     tool_filter: str | None = None,
     owner: str | None = None,
+    anchor: str | None = None,
+    anchor_value: int | str | None = None,
+    window_start: int | None = None,
+    window_end: int | None = None,
 ) -> ConversationDetail | None:
     """Get full conversation detail by ID.
 
@@ -469,12 +546,21 @@ def get_conversation(
         db_path: Path to database. Uses default if not specified.
         tool_filter: Filter tool calls — 'errors' for failed only,
             or a tool name prefix (e.g. 'shell', 'file.read').
+        anchor: Anchor axis — one of 'from_start', 'from_end', 'at_turn',
+            'around'. None means no anchor (whole conversation returned).
+        anchor_value: Value for the anchor: int for 'at_turn', str for
+            'around'. Ignored for 'from_start' and 'from_end'.
+        window_start: Turn offset from anchor (inclusive). None = anchor only.
+        window_end: Turn offset from anchor (inclusive). None = anchor only.
 
     Returns:
         ConversationDetail with timeline, or None if not found.
 
     Raises:
         FileNotFoundError: If database does not exist.
+        AnchorOutOfRange: If ``anchor='at_turn'`` and N >= turn count.
+        AnchorNotFound: If ``anchor='around'`` and phrase has no match.
+        AnchorPhraseInvalid: If ``anchor='around'`` phrase cannot be parsed by FTS5.
     """
     include_thinking = fidelity.shows("thinking")
     include_tool_content = fidelity.shows("tools")
@@ -484,140 +570,147 @@ def get_conversation(
         raise FileNotFoundError(f"Database not found: {db}")
 
     conn = open_database(db, read_only=True)
-
-    # Find conversation (support prefix match)
-    conv = fetch_conversation_by_id_or_prefix(conn, id)
-    if not conv:
-        conn.close()
-        return None
-
-    conv_id = conv["id"]
-
-    if owner:
-        if not has_conversation_owners_table(conn):
-            conn.close()
-            return None
-        row = conn.execute(
-            f"SELECT 1 FROM conversations c WHERE c.id = ? AND {owner_predicate('c.id')} LIMIT 1",
-            (conv_id, owner),
-        ).fetchone()
-        if not row:
-            conn.close()
+    try:
+        # Find conversation (support prefix match)
+        conv = fetch_conversation_by_id_or_prefix(conn, id)
+        if not conv:
             return None
 
-    # Model (most frequent) and token totals
-    model_name = fetch_conversation_model(conn, conv_id)
-    total_input, total_output = fetch_conversation_token_totals(conn, conv_id)
+        conv_id = conv["id"]
 
-    # Fetch prompts and their text content (bulk)
-    prompts = fetch_prompts_for_conversation(conn, conv_id)
-    prompt_ids = [p["id"] for p in prompts]
-    all_prompt_blocks = fetch_prompt_text_contents(conn, prompt_ids)
-    prompt_texts: dict[str, str] = {}
-    for pid in prompt_ids:
-        blocks = all_prompt_blocks.get(pid, [])
-        parts = [_extract_text(b["content"]) for b in blocks]
-        prompt_texts[pid] = " ".join(parts).strip()
+        if owner:
+            if not has_conversation_owners_table(conn):
+                return None
+            row = conn.execute(
+                f"SELECT 1 FROM conversations c WHERE c.id = ? AND {owner_predicate('c.id')} LIMIT 1",
+                (conv_id, owner),
+            ).fetchone()
+            if not row:
+                return None
 
-    # Fetch responses
-    responses = fetch_responses_for_conversation(conn, conv_id)
-    response_ids = [r["id"] for r in responses]
+        # Model (most frequent) and token totals
+        model_name = fetch_conversation_model(conn, conv_id)
+        total_input, total_output = fetch_conversation_token_totals(conn, conv_id)
 
-    # Always fetch text blocks for narrative; gate extra block kinds by fidelity.
-    block_types: list[str] = ["text", "tool_use"]
-    if include_thinking:
-        block_types.append("thinking")
-    if include_tool_content:
-        block_types.extend(["tool_result", "tool_output"])
-    all_content_blocks = fetch_response_content_blocks(
-        conn, response_ids, tuple(block_types),
-    )
+        # Fetch prompts and their text content (bulk)
+        prompts = fetch_prompts_for_conversation(conn, conv_id)
+        prompt_ids = [p["id"] for p in prompts]
+        all_prompt_blocks = fetch_prompt_text_contents(conn, prompt_ids)
+        prompt_texts: dict[str, str] = {}
+        for pid in prompt_ids:
+            blocks = all_prompt_blocks.get(pid, [])
+            parts = [_extract_text(b["content"]) for b in blocks]
+            prompt_texts[pid] = " ".join(parts).strip()
 
-    # Fetch tool calls grouped by response
-    tool_calls = fetch_tool_calls_for_conversation(
-        conn, conv_id, include_content=include_tool_content,
-    )
-    tc_by_response: dict[str, list] = {}
-    for tc in tool_calls:
-        tc_by_response.setdefault(tc["response_id"], []).append(tc)
+        # Fetch responses
+        responses = fetch_responses_for_conversation(conn, conv_id)
+        response_ids = [r["id"] for r in responses]
 
-    # Group responses by prompt_id
-    responses_by_prompt: dict[str, list] = {}
-    for r in responses:
-        if r["prompt_id"]:
-            responses_by_prompt.setdefault(r["prompt_id"], []).append(r)
+        # Always fetch text blocks for narrative; gate extra block kinds by fidelity.
+        block_types: list[str] = ["text", "tool_use"]
+        if include_thinking:
+            block_types.append("thinking")
+        if include_tool_content:
+            block_types.extend(["tool_result", "tool_output"])
+        all_content_blocks = fetch_response_content_blocks(
+            conn, response_ids, tuple(block_types),
+        )
 
-    # Build turns (exchanges are derived via property)
-    turns = []
+        # Fetch tool calls grouped by response
+        tool_calls = fetch_tool_calls_for_conversation(
+            conn, conv_id, include_content=include_tool_content,
+        )
+        tc_by_response: dict[str, list] = {}
+        for tc in tool_calls:
+            tc_by_response.setdefault(tc["response_id"], []).append(tc)
 
-    for p in prompts:
-        prompt_id = p["id"]
-        prompt_text = prompt_texts.get(prompt_id, "")
+        # Group responses by prompt_id
+        responses_by_prompt: dict[str, list] = {}
+        for r in responses:
+            if r["prompt_id"]:
+                responses_by_prompt.setdefault(r["prompt_id"], []).append(r)
 
-        prompt_responses = responses_by_prompt.get(prompt_id, [])
-        if not prompt_responses:
-            # Prompt with no response yet
+        # Build turns (exchanges are derived via property)
+        turns = []
+
+        for p in prompts:
+            prompt_id = p["id"]
+            prompt_text = prompt_texts.get(prompt_id, "")
+
+            prompt_responses = responses_by_prompt.get(prompt_id, [])
+            if not prompt_responses:
+                # Prompt with no response yet
+                turns.append(
+                    Turn(
+                        timestamp=p["timestamp"],
+                        prompt_text=prompt_text or None,
+                        total_input_tokens=0,
+                        total_output_tokens=0,
+                        prompt_id=prompt_id,
+                    )
+                )
+                continue
+
+            turn_input = sum(r["input_tokens"] or 0 for r in prompt_responses)
+            turn_output = sum(r["output_tokens"] or 0 for r in prompt_responses)
+
+            narrative = _build_narrative(
+                prompt_responses,
+                all_content_blocks,
+                tc_by_response,
+                include_thinking=include_thinking,
+                include_tool_content=include_tool_content,
+                tool_filter=tool_filter,
+            )
+
+            # Build tool call summaries from DB data (independent of narrative)
+            all_tcs = []
+            for r in prompt_responses:
+                all_tcs.extend(tc_by_response.get(r["id"], []))
+            tool_summaries = _collapse_tool_call_rows(all_tcs)
+
+            turn_response_ids = [r["id"] for r in prompt_responses]
+            turn_tool_call_ids = [tc["tool_call_id"] for tc in all_tcs]
+
             turns.append(
                 Turn(
                     timestamp=p["timestamp"],
                     prompt_text=prompt_text or None,
-                    total_input_tokens=0,
-                    total_output_tokens=0,
+                    total_input_tokens=turn_input,
+                    total_output_tokens=turn_output,
+                    narrative=narrative,
+                    _tool_call_summaries=tool_summaries,
                     prompt_id=prompt_id,
+                    response_ids=turn_response_ids,
+                    tool_call_ids=turn_tool_call_ids,
                 )
             )
-            continue
 
-        turn_input = sum(r["input_tokens"] or 0 for r in prompt_responses)
-        turn_output = sum(r["output_tokens"] or 0 for r in prompt_responses)
+        # Tags render in list/detail at depth >= 3.
+        tags = fetch_conversation_tags(conn, conv_id) if fidelity.depth >= 3 else []
 
-        narrative = _build_narrative(
-            prompt_responses,
-            all_content_blocks,
-            tc_by_response,
-            include_thinking=include_thinking,
-            include_tool_content=include_tool_content,
-            tool_filter=tool_filter,
+        # Anchor + window resolution (fetch-layer concern per fidelity-as-contract).
+        # All turns are fetched above; we slice here to return only the requested window.
+        if anchor is not None:
+            anchor_idx = _resolve_anchor(turns, anchor, anchor_value, conn, conv_id)
+            start = anchor_idx + (window_start or 0)
+            end = anchor_idx + (window_end or 0)
+            start = max(0, start)
+            end = min(len(turns) - 1, end)
+            turns = turns[start : end + 1]
+
+        return ConversationDetail(
+            id=conv_id,
+            workspace_path=conv["workspace"],
+            model=model_name,
+            started_at=conv["started_at"],
+            total_input_tokens=total_input,
+            total_output_tokens=total_output,
+            turns=turns,
+            tags=tags,
         )
-
-        # Build tool call summaries from DB data (independent of narrative)
-        all_tcs = []
-        for r in prompt_responses:
-            all_tcs.extend(tc_by_response.get(r["id"], []))
-        tool_summaries = _collapse_tool_call_rows(all_tcs)
-
-        turn_response_ids = [r["id"] for r in prompt_responses]
-        turn_tool_call_ids = [tc["tool_call_id"] for tc in all_tcs]
-
-        turns.append(
-            Turn(
-                timestamp=p["timestamp"],
-                prompt_text=prompt_text or None,
-                total_input_tokens=turn_input,
-                total_output_tokens=turn_output,
-                narrative=narrative,
-                _tool_call_summaries=tool_summaries,
-                prompt_id=prompt_id,
-                response_ids=turn_response_ids,
-                tool_call_ids=turn_tool_call_ids,
-            )
-        )
-
-    # Tags render in list/detail at depth >= 3.
-    tags = fetch_conversation_tags(conn, conv_id) if fidelity.depth >= 3 else []
-
-    conn.close()
-
-    return ConversationDetail(
-        id=conv_id,
-        workspace_path=conv["workspace"],
-        model=model_name,
-        started_at=conv["started_at"],
-        total_input_tokens=total_input,
-        total_output_tokens=total_output,
-        turns=turns,
-        tags=tags,
-    )
+    finally:
+        conn.close()
 
 
 def _matches_tool_filter(tool_name: str, status: str, tool_filter: str | None) -> bool:

@@ -172,6 +172,44 @@ def add_output_args(
         )
 
 
+def add_anchor_window_args(parser) -> None:
+    """Add the standard anchor + window argument group to a parser.
+
+    Registers a mutually-exclusive anchor group (--from-start, --from-end,
+    --at-turn, --around) and two window flags (--exchanges, --turns).
+
+    Designed for reuse across query <id> (Slice 1) and search (Slice 2).
+    Neither the group name nor any help text assumes a specific command.
+    """
+    g = parser.add_argument_group("navigation")
+    anchor = g.add_mutually_exclusive_group()
+    anchor.add_argument(
+        "--from-start", action="store_true", dest="from_start",
+        help="Anchor at the start of the conversation (turn 0)",
+    )
+    anchor.add_argument(
+        "--from-end", action="store_true", dest="from_end",
+        help="Anchor at the end of the conversation (last turn)",
+    )
+    anchor.add_argument(
+        "--at-turn", type=int, dest="at_turn", metavar="N",
+        help="Anchor at the N-th turn (0-indexed)",
+    )
+    anchor.add_argument(
+        "--around", dest="around", metavar="PHRASE",
+        help="Anchor at the first FTS5 phrase match in the conversation",
+    )
+    window = g.add_mutually_exclusive_group()
+    window.add_argument(
+        "--exchanges", type=int, metavar="N",
+        help="Number of turns to show from anchor (requires an anchor flag)",
+    )
+    window.add_argument(
+        "--turns", dest="turns_range", metavar="A:B",
+        help="Turn range relative to anchor, e.g. -2:+2 or 5:10 (requires an anchor flag)",
+    )
+
+
 def _get_version() -> str:
     """Get package version from metadata."""
     try:

@@ -425,18 +425,12 @@ def _embeddings_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]
     if not embeddings_available():
         return []
 
-    from siftd.paths import embeddings_db_path
-    embed_path = op.params.get("embed_db_path") or embeddings_db_path()
-    if not Path(ctx.db_path).exists() or not Path(embed_path).exists():
+    if not Path(ctx.db_path).exists():
         return []
 
-    from siftd.api.database import open_database
-    embed_conn = open_database(Path(embed_path), read_only=True)
-    try:
-        from siftd.storage.embeddings import get_indexed_conversation_ids
-        indexed_ids = get_indexed_conversation_ids(embed_conn)
-    finally:
-        embed_conn.close()
+    from siftd.paths import embeddings_db_path
+    # CLI keys the param as "embed_db"; "embed_db_path" is a legacy alias
+    embed_path = op.params.get("embed_db") or op.params.get("embed_db_path") or embeddings_db_path()
 
     # Compare against conversations in main db
     conn = ctx.db()
@@ -444,7 +438,19 @@ def _embeddings_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]
         "SELECT DISTINCT conversation_id FROM events WHERE kind = 'prompt'"
     ).fetchall()}
 
-    missing = main_ids - indexed_ids
+    if not Path(embed_path).exists():
+        # Index has never been built — all conversations are unindexed
+        missing = main_ids
+    else:
+        from siftd.api.database import open_database
+        embed_conn = open_database(Path(embed_path), read_only=True)
+        try:
+            from siftd.storage.embeddings import get_indexed_conversation_ids
+            indexed_ids = get_indexed_conversation_ids(embed_conn)
+        finally:
+            embed_conn.close()
+        missing = main_ids - indexed_ids
+
     if not missing:
         return []
 

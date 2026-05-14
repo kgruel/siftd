@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`siftd query <id>` anchor + window navigation axes** — Three orthogonal axes now compose on `query <id>` detail views. Anchor flags (mutually exclusive): `--from-start` (first turn), `--from-end` (last turn), `--at-turn N` (N-th turn, 0-indexed), `--around PHRASE` (first FTS5 phrase match in the conversation). Window flags: `--exchanges N` (N turns from anchor), `--turns A:B` (signed offset range, e.g. `-2:+2`, `5:10`). `--around PHRASE` uses the existing FTS5 index filtered to the conversation; phrase lookup is by document order (chronological), not relevance rank. The shared `add_anchor_window_args()` helper is extracted to `cli/_common.py` for reuse in Slice 2 (`search`).
+
+### Changed
+
+- **`siftd query <id> --exchanges N` without an anchor flag is now an error (exit 2)** — Previously `--exchanges N` implicitly anchored at the end of the conversation. That implicit tail behavior is removed. Migrate with `--from-end --exchanges N`. **Breaking change**: any script or agent invoking `siftd query <id> --exchanges N` must add `--from-end` (for tail behavior) or another anchor flag.
+
 ### Fixed
 
 - **`embeddings-available` doctor finding is now `warning` severity** — when the embeddings database exists but the `[embed]` extra is not installed, the finding renders as `[!]` (warning) instead of `[i]` (info). The previous severity implied the condition was optional; it indicates partial breakage (a capability that existed is now unavailable).

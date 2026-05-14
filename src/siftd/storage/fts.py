@@ -336,3 +336,40 @@ def fts5_best_hit_for_conversation(
     if not row:
         return None
     return {"kind": row["kind"], "snippet": row["snippet"], "rank": row["rank"]}
+
+
+def fts5_first_event_in_conversation(
+    conn: sqlite3.Connection,
+    phrase: str,
+    *,
+    conversation_id: str,
+) -> str | None:
+    """Return the event_id of the first (chronological) FTS5 phrase match.
+
+    Sorts by rowid (insertion order) rather than relevance rank so 'first'
+    means the earliest occurrence in the conversation timeline.
+
+    Args:
+        conn: Database connection.
+        phrase: Literal phrase text to match. Internally wrapped as an FTS5
+            phrase query with embedded quotes escaped.
+        conversation_id: Scope match to this conversation.
+
+    Returns:
+        event_id string, or None if no match.
+    """
+    escaped = phrase.replace('"', '""')
+    phrase_query = f'"{escaped}"'
+    cur = conn.execute(
+        """
+        SELECT content_fts.event_id
+        FROM content_fts
+        WHERE content_fts MATCH ?
+          AND content_fts.conversation_id = ?
+        ORDER BY content_fts.rowid
+        LIMIT 1
+        """,
+        (phrase_query, conversation_id),
+    )
+    row = cur.fetchone()
+    return row["event_id"] if row else None
