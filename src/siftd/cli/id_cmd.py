@@ -121,33 +121,25 @@ def _resolve_and_classify(conn, raw_id: str) -> dict | None:
 
 
 def _event_turn_number(conn, event_row) -> int | None:
-    """Compute 1-based turn index for an event by its prompt anchor."""
+    """Compute 1-based turn index for an event by walking parent chain to prompt anchor."""
     if not event_row:
         return None
 
-    kind = event_row["kind"]
-    prompt_id = None
+    # Walk parent chain until we reach a prompt
+    current_row = event_row
+    while current_row["kind"] != "prompt":
+        parent_id = current_row["parent_id"]
+        if not parent_id:
+            return None
 
-    if kind == "prompt":
-        prompt_id = event_row["id"]
-    elif kind == "response":
-        prompt_id = event_row["parent_id"]
-    elif kind == "tool_call":
-        response_row = conn.execute(
-            "SELECT parent_id FROM events WHERE id = ?",
-            (event_row["parent_id"],),
+        current_row = conn.execute(
+            "SELECT id, kind, parent_id, timestamp, conversation_id FROM events WHERE id = ?",
+            (parent_id,),
         ).fetchone()
-        prompt_id = response_row["parent_id"] if response_row else None
+        if not current_row:
+            return None
 
-    if not prompt_id:
-        return None
-
-    prompt_row = conn.execute(
-        "SELECT id, timestamp, conversation_id FROM events WHERE id = ? AND kind = 'prompt'",
-        (prompt_id,),
-    ).fetchone()
-    if not prompt_row:
-        return None
+    prompt_row = current_row
 
     count_row = conn.execute(
         "SELECT COUNT(*) AS n FROM events"

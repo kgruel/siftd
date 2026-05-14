@@ -54,6 +54,55 @@ def id_test_db(tmp_path):
     return db_path, c, p, r, tc
 
 
+@pytest.fixture
+def id_test_db_multi_turn(tmp_path):
+    """Database with multiple turns to validate parent-anchor turn resolution."""
+    db_path = tmp_path / "id_test_multi_turn.db"
+    conn = create_database(db_path)
+    h = get_or_create_harness(conn, "h", source="t", log_format="jsonl")
+    ws = get_or_create_workspace(conn, "/code/test", "2024-01-01T00:00:00Z")
+    m = get_or_create_model(conn, "claude-3-opus")
+    t = get_or_create_tool(conn, "shell.execute")
+
+    c = insert_conversation(
+        conn, external_id="c-multi", harness_id=h,
+        workspace_id=ws, started_at="2024-01-15T10:00:00Z"
+    )
+
+    p1 = insert_prompt(conn, c, "p1", "2024-01-15T10:00:00Z")
+    insert_prompt_content(conn, p1, 0, "text", '{"text": "q1"}')
+    r1 = insert_response(
+        conn, c, p1, m, None, "r1",
+        "2024-01-15T10:00:01Z", input_tokens=1, output_tokens=1
+    )
+    insert_response_content(conn, r1, 0, "text", '{"text": "a1"}')
+
+    p2 = insert_prompt(conn, c, "p2", "2024-01-15T10:00:02Z")
+    insert_prompt_content(conn, p2, 0, "text", '{"text": "q2"}')
+    r2 = insert_response(
+        conn, c, p2, m, None, "r2",
+        "2024-01-15T10:00:03Z", input_tokens=1, output_tokens=1
+    )
+    insert_response_content(conn, r2, 0, "text", '{"text": "a2"}')
+
+    p3 = insert_prompt(conn, c, "p3", "2024-01-15T10:00:04Z")
+    insert_prompt_content(conn, p3, 0, "text", '{"text": "q3"}')
+    r3 = insert_response(
+        conn, c, p3, m, None, "r3",
+        "2024-01-15T10:00:05Z", input_tokens=1, output_tokens=1
+    )
+    insert_response_content(conn, r3, 0, "text", '{"text": "a3"}')
+    tc3 = insert_tool_call(
+        conn, r3, c, t, "tc3",
+        '{"command": "pwd"}', '"ok"', "success",
+        "2024-01-15T10:00:06Z"
+    )
+
+    conn.commit()
+    conn.close()
+    return db_path, r2, tc3
+
+
 class TestIdClassification:
     """Test ID classification for conversations and events."""
 
@@ -69,8 +118,21 @@ class TestIdClassification:
         assert "workspace:" in output
         assert "siftd query" in output
 
+    def test_prompt_event_classification(self, id_test_db, capsys):
+        """siftd id <prompt_id> classifies as event with correct turn number."""
+        db, _c, p, _r, _tc = id_test_db
+        rc = main(["--db", str(db), "id", p])
+        assert rc == 0
+
+        output = capsys.readouterr().out
+        assert "event" in output
+        assert p[:8] in output
+        assert "conversation:" in output
+        assert "turn 1" in output
+        assert "siftd query" in output
+
     def test_response_event_classification(self, id_test_db, capsys):
-        """siftd id <response_id> classifies as event."""
+        """siftd id <response_id> classifies as event with correct turn number."""
         db, _c, _p, r, _tc = id_test_db
         rc = main(["--db", str(db), "id", r])
         assert rc == 0
@@ -79,11 +141,11 @@ class TestIdClassification:
         assert "event" in output
         assert r[:8] in output
         assert "conversation:" in output
-        assert "turn " in output
+        assert "turn 1" in output
         assert "siftd query" in output
 
     def test_tool_call_event_classification(self, id_test_db, capsys):
-        """siftd id <tool_call_id> classifies as event."""
+        """siftd id <tool_call_id> classifies as event with correct turn number."""
         db, *_, tc = id_test_db
         rc = main(["--db", str(db), "id", tc])
         assert rc == 0
@@ -91,6 +153,7 @@ class TestIdClassification:
         output = capsys.readouterr().out
         assert "event" in output
         assert tc[:8] in output
+        assert "turn 1" in output
 
     def test_conversation_prefix_classification(self, id_test_db, capsys):
         """siftd id <conversation_prefix> classifies as conversation."""
@@ -165,6 +228,66 @@ class TestIdClassification:
         assert data["id"] == r
         assert "context" in data
         assert "conversation_id" in data["context"]
+
+    def test_json_output_prompt_with_turn(self, id_test_db, capsys):
+        """siftd id --json outputs correct turn for prompt."""
+        db, _c, p, _r, _tc = id_test_db
+        rc = main(["--db", str(db), "id", p, "--json"])
+        assert rc == 0
+
+        out = capsys.readouterr().out.strip()
+        data = json.loads(out)
+        assert data["kind"] == "event"
+        assert data["id"] == p
+        assert data["context"]["turn"] == 1
+
+    def test_json_output_response_with_turn(self, id_test_db, capsys):
+        """siftd id --json outputs correct turn for response (walks parent chain)."""
+        db, _c, _p, r, _tc = id_test_db
+        rc = main(["--db", str(db), "id", r, "--json"])
+        assert rc == 0
+
+        out = capsys.readouterr().out.strip()
+        data = json.loads(out)
+        assert data["kind"] == "event"
+        assert data["id"] == r
+        assert data["context"]["turn"] == 1
+
+    def test_json_output_tool_call_with_turn(self, id_test_db, capsys):
+        """siftd id --json outputs correct turn for tool_call (walks full parent chain)."""
+        db, _c, _p, _r, tc = id_test_db
+        rc = main(["--db", str(db), "id", tc, "--json"])
+        assert rc == 0
+
+        out = capsys.readouterr().out.strip()
+        data = json.loads(out)
+        assert data["kind"] == "event"
+        assert data["id"] == tc
+        assert data["context"]["turn"] == 1
+
+    def test_json_output_response_with_turn_in_multi_turn_conversation(self, id_test_db_multi_turn, capsys):
+        """siftd id --json resolves response turn from its parent prompt when turn > 1."""
+        db, r2, _tc3 = id_test_db_multi_turn
+        rc = main(["--db", str(db), "id", r2, "--json"])
+        assert rc == 0
+
+        out = capsys.readouterr().out.strip()
+        data = json.loads(out)
+        assert data["kind"] == "event"
+        assert data["id"] == r2
+        assert data["context"]["turn"] == 2
+
+    def test_json_output_tool_call_with_turn_in_multi_turn_conversation(self, id_test_db_multi_turn, capsys):
+        """siftd id --json resolves tool_call turn through response->prompt chain when turn > 1."""
+        db, _r2, tc3 = id_test_db_multi_turn
+        rc = main(["--db", str(db), "id", tc3, "--json"])
+        assert rc == 0
+
+        out = capsys.readouterr().out.strip()
+        data = json.loads(out)
+        assert data["kind"] == "event"
+        assert data["id"] == tc3
+        assert data["context"]["turn"] == 3
 
 
 class TestIdHelp:
