@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`siftd query <id>` anchor + window navigation axes** — Three orthogonal axes now compose on `query <id>` detail views. Anchor flags (mutually exclusive): `--from-start` (first turn), `--from-end` (last turn), `--at-turn N` (N-th turn, 0-indexed), `--around PHRASE` (first FTS5 phrase match in the conversation). Window flags: `--exchanges N` (N turns from anchor), `--turns A:B` (signed offset range, e.g. `-2:+2`, `5:10`). `--around PHRASE` uses the existing FTS5 index filtered to the conversation; phrase lookup is by document order (chronological), not relevance rank. The shared `add_anchor_window_args()` helper is extracted to `cli/_common.py` for reuse in Slice 2 (`search`).
+- **`siftd query <id>` anchor + window navigation axes** — Three orthogonal axes now compose on `query <id>` detail views. Anchor flags (mutually exclusive): `--from-start` (first turn), `--from-end` (last turn), `--at-turn N` (N-th turn, 0-indexed), `--around PHRASE` (first FTS5 phrase match in the conversation). Window flags: `--exchanges N` (N turns from anchor), `--turns A:B` (signed offset range, e.g. `-2:+2`, `5:10`). For negative offsets, use the `=` form: `--turns=-2:+2` — argparse treats bare `-2:+2` as a flag. `--around PHRASE` uses the existing FTS5 index filtered to the conversation; phrase lookup is by document order (chronological), not relevance rank. The shared `add_anchor_window_args()` helper is extracted to `cli/_common.py` for reuse in Slice 2 (`search`).
 
 ### Changed
 

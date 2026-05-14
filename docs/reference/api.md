@@ -377,7 +377,7 @@ def list_conversations(*, fidelity: Fidelity, db_path: pathlib._local.Path | Non
 Get full conversation detail by ID.
 
 ```python
-def get_conversation(id: str, *, fidelity: Fidelity, db_path: pathlib._local.Path | None = ..., tool_filter: str | None = ..., owner: str | None = ...) -> siftd.api.conversations.ConversationDetail | None
+def get_conversation(id: str, *, fidelity: Fidelity, db_path: pathlib._local.Path | None = ..., tool_filter: str | None = ..., owner: str | None = ..., anchor: str | None = ..., anchor_value: int | str | None = ..., window_start: int | None = ..., window_end: int | None = ...) -> siftd.api.conversations.ConversationDetail | None
 ```
 
 **Parameters:**
@@ -385,12 +385,19 @@ def get_conversation(id: str, *, fidelity: Fidelity, db_path: pathlib._local.Pat
 - `id`: Full or prefix of conversation ULID.
 - `fidelity`: Cross-stage rendering contract. ``fidelity.shows("thinking")`` decides whether thinking blocks appear in turns; ``fidelity.shows("tools")`` decides whether tool inputs/results are fetched and inlined.
 - `db_path`: Path to database. Uses default if not specified.
+- `tool_filter`: Filter tool calls — 'errors' for failed only, or a tool name prefix (e.g. 'shell', 'file.read').
+- `anchor`: Anchor axis — one of 'from_start', 'from_end', 'at_turn', 'around'. None means no anchor (whole conversation returned).
+- `anchor_value`: Value for the anchor: int for 'at_turn', str for 'around'. Ignored for 'from_start' and 'from_end'.
+- `window_start`: Turn offset from anchor (inclusive). None = anchor only.
 
 **Returns:** ConversationDetail with timeline, or None if not found.
 
 **Raises:**
 
 - `FileNotFoundError`: If database does not exist.
+- `AnchorOutOfRange`: If ``anchor='at_turn'`` and N >= turn count.
+- `AnchorNotFound`: If ``anchor='around'`` and phrase has no match.
+- `AnchorPhraseInvalid`: If ``anchor='around'`` phrase cannot be parsed by FTS5.
 
 ### get_conversation_metadata
 

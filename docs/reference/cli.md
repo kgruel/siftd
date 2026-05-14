@@ -371,6 +371,7 @@ Conversation IDs displayed in lists are truncated to 8 characters; use the full 
 to query a specific conversation.
 
 Navigation: --exchanges and --turns require an anchor flag. No anchor shows the whole conversation.
+Note: --turns values starting with a minus sign require '=' syntax (e.g. --turns=-1:+2).
 
 examples:
   siftd query                                   # list recent conversations
@@ -382,12 +383,12 @@ examples:
   siftd query -l research: --no-tag archived    # combine OR + NOT
   siftd query --tool-tag shell:test             # conversations with test commands
   siftd query <id>                              # show full conversation
-  siftd query <id> --summary                   # metadata only, no turns
-  siftd query <id> --from-start --exchanges 3  # first 3 turns
-  siftd query <id> --from-end --exchanges 5    # last 5 turns (replaces bare --exchanges)
-  siftd query <id> --at-turn 4                 # show only turn 4
-  siftd query <id> --at-turn 4 --turns -1:+2  # turns 3-6 (relative to turn 4)
-  siftd query <id> --around "error message" --turns -2:+2  # context around phrase match
+  siftd query <id> --summary                    # metadata only, no turns
+  siftd query <id> --from-start --exchanges 3   # first 3 turns
+  siftd query <id> --from-end --exchanges 5     # last 5 turns (replaces bare --exchanges)
+  siftd query <id> --at-turn 4                  # show only turn 4
+  siftd query <id> --at-turn 4 --turns=-1:+2    # turns 3-6 (relative to turn 4)
+  siftd query <id> --around "error message" --turns=-2:+2  # context around phrase match
   siftd query <id> --brief                     # compact view (80 char truncation)
   siftd query <id> -b                          # short alias for --brief
   siftd query <id> --full                      # full text, no truncation
