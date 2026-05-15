@@ -9,7 +9,6 @@ from siftd.cli.search import (
     _aggregate_conversations,
     _can_delegate_to_serve,
     _compute_thread_tiers,
-    _enrich_context,
     _enrich_exchanges,
     _fetch_search_metadata,
     _print_empty_json_results,
@@ -27,7 +26,6 @@ def make_args(**kwargs):
         "limit": 10,
         "verbose": False,
         "full": False,
-        "context": None,
         "select": "all",
         "sort": "score",
         "mode": "chunks",
@@ -186,8 +184,6 @@ def test_enrich_exchanges_and_context(monkeypatch):
     _enrich_exchanges(_Conn(), rs)
     assert rs[0]["_exchanges"]
 
-    _enrich_context(_Conn(), rs, 1)
-    assert rs[0]["_context"]
 
 
 def test_search_build_index_error_paths(monkeypatch, tmp_path, capsys):
@@ -222,7 +218,7 @@ def test_search_fts_only_branches(monkeypatch, tmp_path, capsys):
     db = tmp_path / "db.sqlite"
     db.write_text("x")
     args = make_args(
-        query=["q"], db=str(db), json=True, mode="thread", context=1,
+        query=["q"], db=str(db), json=True, mode="thread",
         full=True, verbose=True, select="first",
         refs=True, sort="time", format="x",
     )
@@ -301,15 +297,14 @@ def test_cmd_search_mode_processing_and_refs(test_db, tmp_path, monkeypatch):
     monkeypatch.setattr("siftd.api.fetch_file_refs", lambda conn, ids: {"p1": [{"basename": "a.py"}]})
     monkeypatch.setattr("siftd.cli.search._fetch_search_metadata", lambda conn, results: [r.update({"_started_at": "2024-01-01"}) for r in results])
     monkeypatch.setattr("siftd.cli.search._enrich_exchanges", lambda conn, results: [r.update({"_exchanges": []}) for r in results])
-    monkeypatch.setattr("siftd.cli.search._enrich_context", lambda conn, results, n: [r.update({"_context": []}) for r in results])
     monkeypatch.setattr("siftd.cli.search._compute_thread_tiers", lambda results: (results, []))
     monkeypatch.setattr("siftd.output.format_registry.select_format", lambda **k: SimpleNamespace(render_search=lambda *a, **k2: "OUT"))
     monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda out: None)
     refs_called = []
     monkeypatch.setattr("siftd.output.common.print_refs_content", lambda refs, filt: refs_called.append((refs, filt)))
 
-    # chunks mode: sort=time + full + context + refs path
-    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), sort="time", full=True, context=1, refs="a.py,b.py")) == 0
+    # chunks mode: sort=time + full + refs path
+    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), sort="time", full=True, refs="a.py,b.py")) == 0
     assert refs_called
 
     # thread mode branch
@@ -331,20 +326,6 @@ def test_misc_remaining_helper_branches(monkeypatch):
 
     _fetch_search_metadata(_Conn(), [])
 
-    # _enrich_context: source ids not found in prompt order
-    monkeypatch.setattr("siftd.api.search.fetch_prompt_response_texts", lambda conn, ids: [])
-
-    class _Cur:
-        def fetchall(self):
-            return [("p1",), ("p2",)]
-
-    class _Conn2:
-        def execute(self, *_a, **_k):
-            return _Cur()
-
-    rows = [{"conversation_id": "c1", "source_ids": ["not-present"]}]
-    _enrich_context(_Conn2(), rows, 1)
-    assert "_context" not in rows[0]
 
 
 def test_cmd_search_index_semantic_and_output_edges(test_db, tmp_path, monkeypatch, capsys):

@@ -175,7 +175,10 @@ def _json_chunk_list(results: list) -> list[dict]:
             },
             "chunk_id": r.get("chunk_id"),
             "source_ids": r.get("source_ids", []),
+            "turn_index": r.get("turn_index"),
         }
+        if r.get("event_id") is not None:
+            chunk["event_id"] = r.get("event_id")
 
         breakdown = r.get("breakdown")
         if breakdown and isinstance(breakdown, ScoreBreakdown):

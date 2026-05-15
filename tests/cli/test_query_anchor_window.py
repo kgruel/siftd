@@ -250,6 +250,7 @@ class TestAnchorErrorPropagation:
         err = capsys.readouterr().err
         assert "not found" in err
         assert "missing phrase" in err
+        assert "siftd search" in err
 
     def test_around_invalid_phrase_exits_2(self, monkeypatch, capsys):
         from siftd.api.conversations import AnchorPhraseInvalid
@@ -448,3 +449,86 @@ class TestGetConversationConnectionSafety:
                 anchor_value="missing phrase",
             )
         assert fake_conn.closed is True
+
+
+# ---------------------------------------------------------------------------
+# Ambiguous-match pre-pass: matched N turns emitted to stderr
+# ---------------------------------------------------------------------------
+
+
+class TestAroundAmbiguousMatchPrePass:
+    """Verify that the pre-pass emits the matched-turns message when --around
+    finds more than one match, and is silent when there's exactly one match."""
+
+    def _make_fake_conn(self):
+        class _FakeConn:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        return _FakeConn()
+
+    def _setup_stubs(self, monkeypatch, fake_conn, all_events, turn_indices):
+        monkeypatch.setattr("siftd.api.open_database", lambda *a, **k: fake_conn)
+        monkeypatch.setattr(
+            "siftd.api.conversations.resolve_entity_id",
+            lambda conn, kind, _id, **kw: "conv1",
+        )
+        monkeypatch.setattr(
+            "siftd.api.search.phrase_events_in_conversation",
+            lambda conn, phrase, conversation_id: all_events,
+        )
+        monkeypatch.setattr(
+            "siftd.api.search._events_to_turn_indices",
+            lambda conn, eids, conv_id: turn_indices,
+        )
+        monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: _detail_stub())
+        monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
+        monkeypatch.setattr(
+            "siftd.output.format_registry.select_format",
+            lambda **k: SimpleNamespace(render_detail=lambda *a, **k2: ""),
+        )
+        monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda _: None)
+
+    def test_multiple_matches_emits_message(self, monkeypatch, capsys):
+        fake_conn = self._make_fake_conn()
+        self._setup_stubs(
+            monkeypatch,
+            fake_conn,
+            all_events=["e1", "e2", "e3"],
+            turn_indices=[2, 5, 8],
+        )
+        rc = _query_detail(_args(around="common phrase"))
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "matched 3 turns" in err
+        assert "showing first (turn 2)" in err
+        assert "[5, 8]" in err
+
+    def test_single_match_no_message(self, monkeypatch, capsys):
+        fake_conn = self._make_fake_conn()
+        self._setup_stubs(
+            monkeypatch,
+            fake_conn,
+            all_events=["e1"],
+            turn_indices=[2],
+        )
+        rc = _query_detail(_args(around="rare phrase"))
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "matched" not in err
+
+    def test_no_around_skips_pre_pass(self, monkeypatch, capsys):
+        """Pre-pass should not run when --around is not set."""
+        monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: _detail_stub())
+        monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
+        monkeypatch.setattr(
+            "siftd.output.format_registry.select_format",
+            lambda **k: SimpleNamespace(render_detail=lambda *a, **k2: ""),
+        )
+        monkeypatch.setattr("siftd.output.painted_bridge.emit_output", lambda _: None)
+        rc = _query_detail(_args())  # no around
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "matched" not in err

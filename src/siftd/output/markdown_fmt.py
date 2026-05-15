@@ -268,6 +268,11 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
                 lines.append(text)
                 lines.append("")
 
+            turn_index = r.get("turn_index")
+            if turn_index is not None:
+                lines.append(f"→ `siftd query {short_id(conv_id)} --at-turn {turn_index}`")
+                lines.append("")
+
     if caveats:
         lines.append("")
         lines.append("---")

@@ -74,6 +74,8 @@ class SearchChunk:
     file_refs: list[Any] | None = None
     exchanges: list[tuple[str, str, str]] | None = None
     context_window: list[tuple[str, str, str, bool]] | None = None
+    turn_index: int | None = None
+    event_id: str | None = None
 
     _DISPLAY_LABELS: ClassVar[dict[str, str]] = {
         "prompt": "USER",
@@ -127,6 +129,8 @@ class SearchChunk:
         if not isinstance(source_ids, list):
             source_ids = list(source_ids)
 
+        raw_turn_index = data.get("turn_index")
+        turn_index: int | None = int(raw_turn_index) if raw_turn_index is not None else None
         return cls(
             conversation_id=str(data.get("conversation_id", "")),
             score=float(data.get("score", 0.0)),
@@ -140,6 +144,8 @@ class SearchChunk:
             file_refs=data.get("file_refs"),
             exchanges=data.get("exchanges") or data.get("_exchanges"),
             context_window=data.get("context_window") or data.get("_context"),
+            turn_index=turn_index,
+            event_id=data.get("event_id"),
         )
 
     def to_render_dict(self, debug_ids: bool = True) -> dict[str, Any]:
@@ -160,6 +166,9 @@ class SearchChunk:
         if debug_ids:
             out["chunk_id"] = self.chunk_id
             out["source_ids"] = self.source_ids
+        out["turn_index"] = self.turn_index
+        if self.event_id is not None:
+            out["event_id"] = self.event_id
         if self.breakdown is not None:
             out["breakdown"] = self.breakdown
         if self.file_refs is not None:

@@ -12,7 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from siftd.cli._common import resolve_db
+from siftd.cli._common import _parse_turns_range, add_anchor_window_args, resolve_db
 from siftd.cli._filters import extract_filter_args
 from siftd.paths import embeddings_db_path
 
@@ -105,22 +105,16 @@ def _enrich_exchanges(conn, results):
             results[i].update(row)
 
 
-def _enrich_context(conn, results, n):
-    """Fetch +/-N surrounding exchanges via API primitive."""
-    from siftd.api.search import enrich_context_window
-
-    chunks = _chunks_from_rows(results)
-    enrich_context_window(conn, chunks, n)
-    if results and isinstance(results[0], dict):
-        rendered = _rows_from_chunks(chunks)
-        for i, row in enumerate(rendered):
-            results[i].update(row)
-
 
 def _validate_search_axes(args) -> str | None:
     """Return an error string if the axis combination is invalid, else None."""
     if args.mode in ("thread", "conversations") and args.sort == "time":
         return f"--mode={args.mode} is incompatible with --sort=time ({args.mode} mode imposes its own ordering)"
+    if getattr(args, "turns_range", None) is not None and getattr(args, "around", None) is None:
+        return (
+            "--turns requires --around PHRASE on search; "
+            "use 'siftd query <id> --turns A:B' for conversation-detail navigation"
+        )
     return None
 
 
@@ -263,6 +257,7 @@ def cmd_search(args) -> int:
             "embeddings_only": search_mode == "semantic",
             "raw_fts": getattr(args, "raw_fts", False),
             "debug_ids": getattr(args, "debug_ids", False),
+            "around": getattr(args, "around", None),
         },
         render_method="search",
         fidelity=fidelity,
@@ -397,10 +392,15 @@ def cmd_search(args) -> int:
             _enrich_exchanges(main_conn, results)
             render_results = results
 
-        # Context enrichment for --context N
-        context_n = getattr(args, "context", None)
-        if context_n is not None and mode == "chunks":
-            _enrich_context(main_conn, results, context_n)
+        # Phrase-anchored window for --around + --turns
+        if getattr(args, "around", None) is not None and getattr(args, "turns_range", None) is not None and mode == "chunks":
+            window_start, window_end = _parse_turns_range(args.turns_range)
+            around_chunks = _chunks_from_rows(results)
+            from siftd.api.search import enrich_around_window
+            around_chunks, n_skipped = enrich_around_window(main_conn, around_chunks, args.around, window_start, window_end)
+            if n_skipped > 0:
+                print(f"note: filtered {n_skipped} result(s) without --around phrase '{args.around}' in conversation", file=sys.stderr)
+            results = _rows_from_chunks(around_chunks)
             render_results = results
 
         if caveats:
@@ -443,8 +443,6 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         unsupported_flags.append("--mode=thread")
     if args.mode == "conversations":
         unsupported_flags.append("--mode=conversations")
-    if args.context:
-        unsupported_flags.append("--context")
     if args.full:
         unsupported_flags.append("--full")
     if args.verbose:
@@ -487,6 +485,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             "embeddings_only": False,
             "raw_fts": getattr(args, "raw_fts", False),
             "debug_ids": getattr(args, "debug_ids", False),
+            "around": getattr(args, "around", None),
         },
         render_method="search",
         fidelity=fidelity_from_args(args),
@@ -541,6 +540,15 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     conn = open_database(db, read_only=True)
     try:
         _fetch_search_metadata(conn, results)
+        # Phrase-anchored window for --around + --turns
+        if getattr(args, "around", None) is not None and getattr(args, "turns_range", None) is not None:
+            window_start, window_end = _parse_turns_range(args.turns_range)
+            around_chunks = _chunks_from_rows(results)
+            from siftd.api.search import enrich_around_window
+            around_chunks, n_skipped = enrich_around_window(conn, around_chunks, args.around, window_start, window_end)
+            if n_skipped > 0:
+                print(f"note: filtered {n_skipped} result(s) without --around phrase '{args.around}' in conversation", file=sys.stderr)
+            results = _rows_from_chunks(around_chunks)
     finally:
         conn.close()
 
@@ -625,7 +633,7 @@ examples:
 
   # refine
   siftd search "design decision" --mode=thread         # narrative: top conversations expanded
-  siftd search "why we chose X" --context 2            # ±2 surrounding exchanges
+  siftd search "why we chose X" --around "why" --turns -2:+2  # ±2 turns around phrase
   siftd search "event sourcing" --mode=conversations   # rank whole conversations, not chunks
   siftd search "when first discussed Y" --select=first # earliest match above threshold
   siftd search --threshold 0.7 "architecture"          # only high-relevance results
@@ -655,7 +663,11 @@ examples:
   # diversity vs relevance (MMR reranking)
   siftd search --no-diversity "chunking"               # pure relevance order (deterministic)
   siftd search --lambda 0.5 "design"                   # more diverse results (less redundancy)
-  siftd search --json "auth" | jq '.results[0].breakdown'  # score component breakdown""",
+  siftd search --json "auth" | jq '.results[0].breakdown'  # score component breakdown
+  siftd search --json "auth" | jq '.results[0].turn_index'  # turn index for drill-in
+
+note: --context N was removed in v0.9.x. Use --around PHRASE --turns -N:+N instead.
+  Example: --context 2 → --around "phrase" --turns -2:+2""",
     )
 
     # Positional argument
@@ -674,10 +686,13 @@ examples:
 
     search_display = p_search.add_argument_group("search display")
     search_display.add_argument("-v", "--verbose", action="store_true", help="Show full chunk text")
-    search_display.add_argument("--context", type=int, metavar="N", help="Show ±N exchanges around match")
     # --debug-ids: deprecated no-op; chunk_id/source_ids ship by default. Accepted through v0.9.x, removed in v0.10.0.
     search_display.add_argument("--debug-ids", action="store_true", dest="debug_ids", help=argparse.SUPPRESS)
     search_display.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
+
+    # Navigation: phrase-anchored window (--around + --turns only; query-specific anchors not on search)
+    # Note: --context was removed in v0.9.x; use --around PHRASE --turns -N:+N instead.
+    add_anchor_window_args(p_search, anchors=frozenset({"around"}), windows=frozenset({"turns"}))
 
     # Result modes — three orthogonal axes
     mode_group = p_search.add_argument_group("result modes")

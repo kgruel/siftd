@@ -75,7 +75,6 @@ def make_search_args(**kwargs):
         "limit": 10,
         "verbose": False,
         "full": False,
-        "context": None,
         "select": "all",
         "sort": "score",
         "mode": "chunks",
@@ -544,7 +543,6 @@ class TestFtsOnlyModeWarnings:
             db=str(fts_db["db_path"]),
             fts=True,
             mode="thread",  # Unsupported in FTS mode
-            context=2,      # Unsupported
             full=True,      # Unsupported
         )
 
@@ -554,7 +552,6 @@ class TestFtsOnlyModeWarnings:
         assert result == 0
         assert "ignored in FTS5 mode" in captured.err
         assert "--mode=thread" in captured.err
-        assert "--context" in captured.err
         assert "--full" in captured.err
 
     def test_supported_flags_no_warning(self, fts_db, capsys, monkeypatch):

@@ -6,7 +6,13 @@ import sys
 from pathlib import Path
 
 from siftd.api.conversations import AmbiguousPrefix as _AmbiguousPrefix
-from siftd.cli._common import apply_config_defaults, fidelity_from_args, print_ambiguous_error, resolve_db
+from siftd.cli._common import (
+    _parse_turns_range,
+    apply_config_defaults,
+    fidelity_from_args,
+    print_ambiguous_error,
+    resolve_db,
+)
 from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, print_table
 from siftd.output.painted_bridge import emit_output
 from siftd.paths import queries_dir
@@ -137,28 +143,6 @@ def _query_event_detail(args, *, conn=None) -> int:
     return 0
 
 
-def _parse_turns_range(s: str) -> tuple[int, int]:
-    """Parse a turns range string like '-2:+2' or '5:10' into (start, end) offsets.
-
-    Returns (window_start, window_end) as signed integers.
-    Raises SystemExit(2) on invalid format or if end < start.
-    """
-    parts = s.split(":")
-    if len(parts) != 2:
-        print(f"error: --turns must be in A:B format (e.g. -2:+2, 5:10), got: {s!r}", file=sys.stderr)
-        sys.exit(2)
-    try:
-        start = int(parts[0].lstrip("+"))
-        end = int(parts[1].lstrip("+"))
-    except ValueError:
-        print(f"error: --turns values must be integers, got: {s!r}", file=sys.stderr)
-        sys.exit(2)
-    if end < start:
-        print(f"error: --turns end ({end}) must be >= start ({start})", file=sys.stderr)
-        sys.exit(2)
-    return start, end
-
-
 def _query_detail(args) -> int:
     """Show conversation detail timeline."""
     from siftd.api import get_conversation
@@ -262,6 +246,31 @@ def _query_detail(args) -> int:
             print(json.dumps(result["conversation"], indent=2))
             return 0
 
+    # Ambiguous-match pre-pass: when --around is set, check for multiple matches
+    # and report them to stderr so the user can pick with --at-turn.
+    if around is not None:
+        from siftd.api import open_database
+        from siftd.api.conversations import resolve_entity_id
+        from siftd.api.search import _events_to_turn_indices, phrase_events_in_conversation
+        _pre_conn = open_database(effective_db, read_only=True)
+        try:
+            _conv_id = resolve_entity_id(_pre_conn, "conversation", args.conversation_id)
+            if _conv_id:
+                _all_events = phrase_events_in_conversation(_pre_conn, around, conversation_id=_conv_id)
+                if len(_all_events) > 1:
+                    _turn_indices = _events_to_turn_indices(_pre_conn, _all_events, _conv_id)
+                    first_turn = _turn_indices[0] if _turn_indices else "?"
+                    others = [t for t in _turn_indices[1:] if t is not None]
+                    print(
+                        f"matched {len(_all_events)} turns; showing first (turn {first_turn}). "
+                        f"Use --at-turn <N> for others: {others}",
+                        file=sys.stderr,
+                    )
+        except Exception:
+            pass
+        finally:
+            _pre_conn.close()
+
     try:
         detail = execute(op)
     except FileNotFoundError as e:
@@ -272,7 +281,12 @@ def _query_detail(args) -> int:
         print(f"error: --at-turn {at_turn} is out of range (conversation has {e.turn_count} turns)", file=sys.stderr)
         sys.exit(2)
     except AnchorNotFound as e:
-        print(f'error: --around {e.phrase!r} not found in conversation', file=sys.stderr)
+        print(
+            f"error: --around {e.phrase!r} not found in conversation\n"
+            f"Try 'siftd search \"{e.phrase}\"' to locate conversations containing this phrase, "
+            f"or shorten the phrase.",
+            file=sys.stderr,
+        )
         sys.exit(2)
     except AnchorPhraseInvalid as e:
         print(f"error: --around {e.phrase!r} is not a valid FTS5 phrase", file=sys.stderr)

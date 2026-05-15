@@ -208,6 +208,10 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
                 annotation = format_refs_annotation(file_refs)
                 lines.append(f"    {annotation}")
 
+            turn_index = r.get("turn_index")
+            if turn_index is not None:
+                lines.append(f"  → siftd query {short_id(conv_id)} --at-turn {turn_index}")
+
             lines.append("")
 
     if caveats:

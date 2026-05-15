@@ -673,6 +673,32 @@ def _search_mode_degraded_caveats(op, result, ctx: ProducerContext) -> list[Find
     )]
 
 
+@caveat_producer(kind="search-fts5-around-turn-index", applies_to=_is_search_chunks_for_search_render)
+def _search_fts5_around_turn_index_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
+    """Hint: --around turn positions derived from FTS5 match position (no embeddings).
+
+    Only fires when --around is used in FTS5 mode — plain FTS5 search without
+    --around is covered by search-mode-degraded. Emits once per result set.
+    """
+    if not result:
+        return []
+    if op.params.get("mode") != "fts":
+        return []
+    if op.params.get("around") is None:
+        return []
+
+    return [Finding(
+        check="search-fts5-around-turn-index",
+        severity="hint",
+        channel="both",
+        message=(
+            "Turn positions for --around derived from FTS5 match position (no embeddings). "
+            "In semantic mode these may differ — install embeddings for semantic ranking: siftd install embed"
+        ),
+        fix_available=False,
+    )]
+
+
 @caveat_producer(kind="search-tagging-tip", applies_to=_is_search_chunks_for_search_render)
 def _search_tagging_tip_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
     """Hint: tag useful search results for future retrieval.

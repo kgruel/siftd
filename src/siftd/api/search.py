@@ -476,6 +476,158 @@ def enrich_context_window(conn: sqlite3.Connection, results: list[SearchChunk], 
         r.context_window = [(pid, pt, rt, pid in source_set) for pid, pt, rt in exchanges]
 
 
+def _events_to_turn_indices(
+    conn: sqlite3.Connection,
+    event_ids: list[str],
+    conv_id: str,
+) -> list[int | None]:
+    """Map a list of event_ids to turn indices for a given conversation.
+
+    Batches the prompt-list lookup: fetches all prompts for conv_id once,
+    then maps each event_id to its ordinal. Called by both _annotate_turn_positions
+    and the query CLI ambiguous-match pre-pass.
+    """
+
+    prompt_rows = conn.execute(
+        "SELECT id, timestamp FROM events WHERE conversation_id = ? AND kind = 'prompt' ORDER BY timestamp",
+        (conv_id,),
+    ).fetchall()
+    prompt_id_to_idx = {row["id"]: i for i, row in enumerate(prompt_rows)}
+
+    result: list[int | None] = []
+    for eid in event_ids:
+        row = conn.execute(
+            "SELECT kind, timestamp FROM events WHERE id = ?",
+            (eid,),
+        ).fetchone()
+        if row is None:
+            result.append(None)
+            continue
+        kind = row["kind"]
+        ts = row["timestamp"]
+        if kind == "prompt":
+            result.append(prompt_id_to_idx.get(eid))
+        else:
+            prompt_row = conn.execute(
+                "SELECT id FROM events WHERE conversation_id = ? AND kind = 'prompt' AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1",
+                (conv_id, ts),
+            ).fetchone()
+            if prompt_row is None:
+                result.append(None)
+            else:
+                result.append(prompt_id_to_idx.get(prompt_row["id"]))
+    return result
+
+
+def _annotate_turn_positions(conn: sqlite3.Connection, chunks: list[SearchChunk]) -> None:
+    """Populate turn_index (and event_id for semantic) on each chunk, batched by conversation.
+
+    Runs in-place as a finalization pass inside hybrid_search() for all modes.
+    FTS5 chunks have event_id already set (from fts5_search_content result dict).
+    Semantic/hybrid chunks derive event_id from source_ids[0] and look up its ordinal.
+    """
+    from siftd.storage.fts import fts5_event_turn_index
+
+    by_conv: dict[str, list[SearchChunk]] = {}
+    for chunk in chunks:
+        by_conv.setdefault(chunk.conversation_id, []).append(chunk)
+
+    for conv_id, conv_chunks in by_conv.items():
+        try:
+            prompt_rows = conn.execute(
+                "SELECT id, timestamp FROM events WHERE conversation_id = ? AND kind = 'prompt' ORDER BY timestamp",
+                (conv_id,),
+            ).fetchall()
+        except Exception:
+            continue  # enrichment is non-fatal — turn_index stays None
+        prompt_id_to_idx = {row["id"]: i for i, row in enumerate(prompt_rows)}
+
+        for chunk in conv_chunks:
+            if chunk.source_ids:
+                # Semantic/hybrid chunk: use first source_id as the event anchor
+                first_src = chunk.source_ids[0]
+                chunk.event_id = first_src
+                turn_idx = prompt_id_to_idx.get(first_src)
+                if turn_idx is None:
+                    # Non-prompt source (e.g. tool_summary) — derive from event's surrounding prompt
+                    turn_idx = fts5_event_turn_index(conn, first_src, conv_id)
+                chunk.turn_index = turn_idx
+            elif chunk.event_id:
+                # FTS5 chunk: event_id already set; derive turn index
+                chunk.turn_index = fts5_event_turn_index(conn, chunk.event_id, conv_id)
+
+
+def phrase_events_in_conversation(
+    conn: sqlite3.Connection,
+    phrase: str,
+    *,
+    conversation_id: str,
+) -> list[str]:
+    """Return all event IDs in conversation that FTS5-match phrase, in order."""
+    from siftd.storage.fts import fts5_all_events_in_conversation
+
+    return fts5_all_events_in_conversation(conn, phrase, conversation_id=conversation_id)
+
+
+def enrich_around_window(
+    conn: sqlite3.Connection,
+    chunks: list,
+    phrase: str,
+    window_start: int,
+    window_end: int,
+) -> tuple[list, int]:
+    """Enrich search chunks with context window anchored on FTS5 phrase match.
+
+    For each chunk, finds the first FTS5 match of phrase in the conversation,
+    computes the turn index for that match, and fetches the window around it.
+    Updates chunk.turn_index to reflect the --around phrase anchor.
+
+    Returns (enriched_chunks, n_skipped) — chunks where phrase was not found
+    in the conversation are dropped (not silently carried through with stale
+    turn_index). Caller should warn the user when n_skipped > 0.
+    """
+    from siftd.storage.fts import fts5_event_turn_index, fts5_first_event_in_conversation
+
+    kept: list = []
+    n_skipped = 0
+
+    for chunk in chunks:
+        conv_id = chunk.conversation_id if hasattr(chunk, "conversation_id") else chunk.get("conversation_id")
+        if not conv_id:
+            n_skipped += 1
+            continue
+
+        event_id = fts5_first_event_in_conversation(conn, phrase, conversation_id=conv_id)
+        if not isinstance(event_id, str):
+            n_skipped += 1
+            continue
+
+        turn_idx = fts5_event_turn_index(conn, event_id, conv_id)
+        if turn_idx is None:
+            n_skipped += 1
+            continue
+
+        if hasattr(chunk, "turn_index"):
+            chunk.turn_index = turn_idx
+
+        all_prompts = conn.execute(
+            "SELECT e.id FROM events e WHERE e.conversation_id = ? AND e.kind = 'prompt' ORDER BY e.timestamp",
+            (conv_id,),
+        ).fetchall()
+        prompt_order = [row[0] for row in all_prompts]
+
+        start = max(0, turn_idx + window_start)
+        end = min(len(prompt_order), turn_idx + window_end + 1)
+        window_ids = prompt_order[start:end]
+        exchanges = fetch_prompt_response_texts(conn, window_ids)
+        anchor_prompt_id = prompt_order[turn_idx] if turn_idx < len(prompt_order) else None
+        if hasattr(chunk, "context_window"):
+            chunk.context_window = [(pid, pt, rt, pid == anchor_prompt_id) for pid, pt, rt in exchanges]
+        kept.append(chunk)
+
+    return kept, n_skipped
+
+
 def first_mention(
     results: list[SearchChunk] | list[dict[str, Any]],
     *,
@@ -725,7 +877,7 @@ def hybrid_search(
             if candidate_ids is not None:
                 raw = [r for r in raw if r["conversation_id"] in candidate_ids]
             raw = raw[:n]
-            return [
+            chunks = [
                 SearchChunk(
                     conversation_id=r["conversation_id"],
                     score=abs(r["rank"]),
@@ -733,9 +885,13 @@ def hybrid_search(
                     chunk_type=r["kind"],
                     source_ids=[],
                     file_refs=[],
+                    event_id=r.get("event_id"),
                 )
                 for r in raw
             ]
+            if chunks:
+                _annotate_turn_positions(conn, chunks)
+            return chunks
         finally:
             conn.close()
 
@@ -880,4 +1036,11 @@ def hybrid_search(
     if threshold > 0:
         results = [r for r in results if r.get("score", 0) >= threshold]
 
-    return [SearchChunk.from_mapping(r) for r in results]
+    final_chunks = [SearchChunk.from_mapping(r) for r in results]
+    if final_chunks:
+        _pos_conn = open_database(db_path, read_only=True)
+        try:
+            _annotate_turn_positions(_pos_conn, final_chunks)
+        finally:
+            _pos_conn.close()
+    return final_chunks
