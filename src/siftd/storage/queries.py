@@ -289,6 +289,11 @@ def fetch_conversation_by_id_or_prefix(
 ) -> dict | None:
     """Find conversation by exact ID or prefix match.
 
+    Uses fetchone() — silently returns the first matching row when multiple
+    conversations share a prefix. Callers passing a raw prefix (not yet
+    resolved to a full ID) must pre-resolve via api.resolve_entity_id at the
+    CLI boundary, which raises AmbiguousPrefix instead of silently first-matching.
+
     Returns dict with id, started_at, workspace or None if not found.
     """
     row = conn.execute(

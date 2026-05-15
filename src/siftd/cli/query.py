@@ -5,7 +5,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from siftd.cli._common import apply_config_defaults, fidelity_from_args, resolve_db
+from siftd.api.conversations import AmbiguousPrefix as _AmbiguousPrefix
+from siftd.cli._common import apply_config_defaults, fidelity_from_args, print_ambiguous_error, resolve_db
 from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, print_table
 from siftd.output.painted_bridge import emit_output
 from siftd.paths import queries_dir
@@ -30,6 +31,10 @@ def _dispatch_detail(args) -> int:
         return _query_detail(args)
     try:
         classified = _resolve_query_id(probe, args.conversation_id)
+    except _AmbiguousPrefix as exc:
+        probe.close()
+        print_ambiguous_error(exc)
+        return 2
     except Exception:
         probe.close()
         return _query_detail(args)
@@ -526,9 +531,9 @@ def build_query_parser(subparsers) -> None:
         epilog="""List and filter conversations by metadata (workspace, model, date, tags).
 For semantic content search, use: siftd search <query>
 
-Conversation IDs in lists are truncated for display; any unambiguous prefix works —
-e.g. 'siftd query 01ABCDEF --summary' resolves without a full 26-character ID.
-If a prefix matches multiple conversations, a warning identifies the ambiguity.
+Conversation IDs in lists are truncated to 12 characters for display; any unambiguous
+prefix works — e.g. 'siftd query 01ABCDEF01AB --summary' resolves without a full 26-character ID.
+If a prefix matches multiple conversations, the command exits with code 2 and lists the matched IDs.
 
 Navigation: --exchanges and --turns require an anchor flag. No anchor shows the whole conversation.
 

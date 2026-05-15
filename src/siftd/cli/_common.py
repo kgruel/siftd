@@ -3,7 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+
+def print_ambiguous_error(exc) -> None:
+    """Print a user-facing error for AmbiguousPrefix to stderr."""
+    print(f"Error: prefix {exc.prefix!r} matches {exc.total} conversations:", file=sys.stderr)
+    for mid in exc.matched_ids:
+        print(f"  {mid}", file=sys.stderr)
+    if exc.total > len(exc.matched_ids):
+        print(f"  ... and {exc.total - len(exc.matched_ids)} more", file=sys.stderr)
+    print("Disambiguate with a longer prefix or full ID.", file=sys.stderr)
 
 
 def resolve_db(args) -> Path:

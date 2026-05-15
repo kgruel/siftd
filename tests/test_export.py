@@ -66,20 +66,14 @@ class TestExportConversations:
 
     def test_export_by_id(self, test_db):
         summaries = list_conversations(fidelity=Fidelity(), db_path=test_db, n=1)
+        # Use the full ID — short prefixes can collide in test DBs where two
+        # conversations are inserted in the same millisecond.
         conv_id = summaries[0].id
-        conversations = export_conversations(fidelity=Fidelity(), 
+        conversations = export_conversations(fidelity=Fidelity(),
             id=[conv_id], db_path=test_db
         )
         assert len(conversations) == 1
         assert conversations[0].id == conv_id
-
-    def test_export_by_id_prefix(self, test_db):
-        summaries = list_conversations(fidelity=Fidelity(), db_path=test_db, n=1)
-        prefix = summaries[0].id[:8]
-        conversations = export_conversations(fidelity=Fidelity(), 
-            id=[prefix], db_path=test_db
-        )
-        assert len(conversations) == 1
 
     def test_export_has_turns(self, test_db):
         conversations = export_conversations(fidelity=Fidelity(), last=1, db_path=test_db)

@@ -81,6 +81,14 @@ def resolve_event_row(
     """Resolve a possibly-prefix event ID to its full row, or None.
 
     Skips prefix-LIKE entirely when the input is a full 26-char ULID.
+
+    Known future concern: the prefix path uses fetchone() and silently returns
+    the first matching row when multiple events share a prefix. This mirrors
+    the conversation-resolver bug killed in the id-resolution refactor. At
+    current DB scale event-level 8-char collisions are rare (random ULID
+    portion), but rerun a prefix-collision census on the events table when
+    the DB exceeds ~50k events and extend AmbiguousPrefix detection here if
+    collisions are confirmed.
     """
     if len(event_id) == _ULID_LEN:
         return conn.execute(

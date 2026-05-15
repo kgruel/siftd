@@ -401,7 +401,7 @@ def get_conversation(id: str, *, fidelity: Fidelity, db_path: pathlib._local.Pat
 
 ### get_conversation_metadata
 
-Get conversation metadata (workspace, started_at) by ID or prefix.
+Get conversation metadata (workspace, started_at) by fully-resolved conversation ID.
 
 ```python
 def get_conversation_metadata(conn: Connection, conversation_id: str) -> dict | None

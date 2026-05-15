@@ -811,14 +811,14 @@ def _apply_pending_tags(
             if dispatch is None:
                 logger.warning(
                     f"Unknown last_marker {pt.last_marker!r} for tag '{pt.tag_name}' "
-                    f"in session {session_id[:8]}; skipping"
+                    f"in session {session_id[:12]}; skipping"
                 )
                 continue
             target_kind, fetch_kind = dispatch
             event_id = _get_last_event_id(conn, conversation_id, fetch_kind)
             if event_id is None:
                 logger.warning(
-                    f"No {fetch_kind} found for session {session_id[:8]}; "
+                    f"No {fetch_kind} found for session {session_id[:12]}; "
                     f"tag '{pt.tag_name}' ({pt.last_marker}) not applied"
                 )
                 continue
@@ -842,7 +842,7 @@ def _apply_pending_tags(
                 prompt_id = _get_prompt_by_index(conn, conversation_id, pt.exchange_index)
             except ValueError as e:
                 logger.warning(
-                    f"Invalid exchange_index for tag '{pt.tag_name}' in session {session_id[:8]}: {e}"
+                    f"Invalid exchange_index for tag '{pt.tag_name}' in session {session_id[:12]}: {e}"
                 )
                 continue
             if prompt_id:
@@ -855,7 +855,7 @@ def _apply_pending_tags(
                     )
             else:
                 logger.warning(
-                    f"Exchange index {pt.exchange_index} not found for session {session_id[:8]}; "
+                    f"Exchange index {pt.exchange_index} not found for session {session_id[:12]}; "
                     f"tag '{pt.tag_name}' not applied"
                 )
 

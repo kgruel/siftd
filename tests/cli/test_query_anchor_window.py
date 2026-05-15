@@ -418,6 +418,7 @@ class TestGetConversationConnectionSafety:
         db.write_text("")
 
         monkeypatch.setattr("siftd.api.conversations.open_database", lambda *a, **k: fake_conn)
+        monkeypatch.setattr("siftd.api.conversations.resolve_entity_id", lambda conn, kind, _id, **kw: "conv1")
         monkeypatch.setattr(
             "siftd.api.conversations.fetch_conversation_by_id_or_prefix",
             lambda conn, cid: {"id": "conv1", "workspace": "/w", "started_at": "2024-01-01"},

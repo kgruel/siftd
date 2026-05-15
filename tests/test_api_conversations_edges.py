@@ -13,6 +13,7 @@ def test_get_conversation_includes_prompt_with_no_response(tmp_path, monkeypatch
             pass
 
     monkeypatch.setattr("siftd.api.conversations.open_database", lambda *a, **k: _Conn())
+    monkeypatch.setattr("siftd.api.conversations.resolve_entity_id", lambda conn, kind, _id, **kw: "c1")
     monkeypatch.setattr("siftd.api.conversations.fetch_conversation_by_id_or_prefix", lambda conn, _id: {"id": "c1", "workspace": "/w", "started_at": "2024-01-01"})
     monkeypatch.setattr("siftd.api.conversations.fetch_conversation_model", lambda conn, cid: "m")
     monkeypatch.setattr("siftd.api.conversations.fetch_conversation_token_totals", lambda conn, cid: (0, 0))

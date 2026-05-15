@@ -54,7 +54,7 @@ def _dispatch(
 
     from painted import Fidelity
 
-    from siftd.api.conversations import QueryError
+    from siftd.api.conversations import AmbiguousPrefix, QueryError
     from siftd.api.dispatch import Operation, execute, render
     from siftd.serialization import serve_fmt
 
@@ -75,7 +75,7 @@ def _dispatch(
         return Response(content={"error": f"{path} failed"}, status_code=500)
     except FileNotFoundError as e:
         return Response(content={"error": str(e)}, status_code=404)
-    except (ValueError, KeyError, QueryError) as e:
+    except (AmbiguousPrefix, ValueError, KeyError, QueryError) as e:
         return Response(content={"error": str(e)}, status_code=400)
     except Exception as e:
         if e.__class__.__name__ == "EmbeddingsNotAvailable":

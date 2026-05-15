@@ -5,6 +5,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from siftd.api.conversations import AmbiguousPrefix as _AmbiguousPrefix
+from siftd.cli._common import print_ambiguous_error as _print_ambiguous_error
 from siftd.cli._common import resolve_db
 
 
@@ -52,6 +54,9 @@ def cmd_export(args) -> int:
 
     try:
         artifact = execute(op)
+    except _AmbiguousPrefix as exc:
+        _print_ambiguous_error(exc)
+        return 2
     except FileNotFoundError as e:
         print(str(e))
         return 1

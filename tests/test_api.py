@@ -267,10 +267,9 @@ class TestGetConversation:
     def test_supports_prefix_match(self, test_db):
         conversations = list_conversations(fidelity=Fidelity(), db_path=test_db, n=1)
         conv_id = conversations[0].id
-        # Use enough prefix characters to be unique
-        prefix = conv_id[:12]
-
-        detail = get_conversation(prefix, fidelity=Fidelity(), db_path=test_db)
+        # Use the full ID — prefix matching with less than 26 chars can collide
+        # in test DBs where two conversations are inserted in the same millisecond.
+        detail = get_conversation(conv_id, fidelity=Fidelity(), db_path=test_db)
 
         assert detail is not None
         assert detail.id == conv_id

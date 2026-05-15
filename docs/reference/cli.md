@@ -367,9 +367,9 @@ sql queries:
 List and filter conversations by metadata (workspace, model, date, tags).
 For semantic content search, use: siftd search <query>
 
-Conversation IDs in lists are truncated for display; any unambiguous prefix works —
-e.g. 'siftd query 01ABCDEF --summary' resolves without a full 26-character ID.
-If a prefix matches multiple conversations, a warning identifies the ambiguity.
+Conversation IDs in lists are truncated to 12 characters for display; any unambiguous
+prefix works — e.g. 'siftd query 01ABCDEF01AB --summary' resolves without a full 26-character ID.
+If a prefix matches multiple conversations, the command exits with code 2 and lists the matched IDs.
 
 Navigation: --exchanges and --turns require an anchor flag. No anchor shows the whole conversation.
 

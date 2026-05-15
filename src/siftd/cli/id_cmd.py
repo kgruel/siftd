@@ -4,8 +4,11 @@ import argparse
 import json as _json
 import sys
 
+from siftd.api.conversations import AmbiguousPrefix as _AmbiguousPrefix
+from siftd.cli._common import print_ambiguous_error as _print_ambiguous_error
 from siftd.cli._common import resolve_db
 from siftd.output import fmt_timestamp, fmt_workspace
+from siftd.output._id_format import short_id
 
 
 def cmd_id(args) -> int:
@@ -25,6 +28,14 @@ def cmd_id(args) -> int:
 
     try:
         classified = _resolve_and_classify(conn, args.ulid)
+    except _AmbiguousPrefix as exc:
+        conn.close()
+        if args.json:
+            out = {"kind": "ambiguous_prefix", "prefix": exc.prefix, "matched_ids": exc.matched_ids, "total": exc.total}
+            print(_json.dumps(out, indent=2))
+            return 2
+        _print_ambiguous_error(exc)
+        return 2
     except Exception:
         print("Error: Failed to resolve ID", file=sys.stderr)
         return 1
@@ -35,6 +46,7 @@ def cmd_id(args) -> int:
         print(f"Error: ID not found: {args.ulid}", file=sys.stderr)
         return 1
     if classified["status"] == "ambiguous":
+        # conversation vs event ambiguity (not prefix collision — that's caught above)
         if args.json:
             out = {"kind": "ambiguous", "candidates": classified["candidates"]}
             print(_json.dumps(out, indent=2))
@@ -56,13 +68,13 @@ def cmd_id(args) -> int:
             started = fmt_timestamp(context.get("started_at")) if context.get("started_at") else None
             ws_str = f" (workspace: {ws_name}" if ws_name else " (workspace: unknown"
             started_str = f", started {started}" if started else ""
-            print(f"conversation {full_id[:8]}... {ws_str}{started_str})")
+            print(f"conversation {short_id(full_id)}... {ws_str}{started_str})")
             print(f"view:  siftd query {full_id}")
         elif kind == "event":
             conv_id = context.get("conversation_id", "")
             turn = context.get("turn")
             turn_str = f", turn {turn}" if turn is not None else ""
-            print(f"event {full_id[:8]}... (conversation: {conv_id[:8]}...{turn_str})")
+            print(f"event {short_id(full_id)}... (conversation: {short_id(conv_id)}...{turn_str})")
             print(f"view:  siftd query {full_id}")
         return 0
 
@@ -80,11 +92,12 @@ def _resolve_and_classify(conn, raw_id: str) -> dict | None:
     """Classify the ID as conversation or event and gather context.
 
     Returns a resolved classification dict, an ambiguous result dict, or None.
+    Raises AmbiguousPrefix if the prefix matches multiple conversations.
     """
-    from siftd.api import get_conversation_metadata, resolve_entity_id
+    from siftd.api import resolve_entity_id
     from siftd.api.events import resolve_event_row
 
-    conv_full = resolve_entity_id(conn, "conversation", raw_id)
+    conv_full = resolve_entity_id(conn, "conversation", raw_id)  # may raise AmbiguousPrefix
     row = resolve_event_row(conn, raw_id)
     event_full = row["id"] if row and row["kind"] in ("prompt", "response", "tool_call") else None
     event_conversation_id = row["conversation_id"] if event_full and row else None
@@ -98,6 +111,7 @@ def _resolve_and_classify(conn, raw_id: str) -> dict | None:
             ],
         }
     if conv_full:
+        from siftd.api import get_conversation_metadata
         conv_data = get_conversation_metadata(conn, conv_full)
         return {
             "status": "ok",

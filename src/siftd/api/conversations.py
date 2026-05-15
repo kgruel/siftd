@@ -68,6 +68,16 @@ class AnchorPhraseInvalid(AnchorError):
         super().__init__(f"invalid FTS5 phrase: {phrase!r}")
 
 
+class AmbiguousPrefix(Exception):
+    """Prefix matches multiple conversations — caller must use a longer prefix or full ID."""
+
+    def __init__(self, prefix: str, matched_ids: list[str], total: int) -> None:
+        self.prefix = prefix
+        self.matched_ids = matched_ids  # up to 5
+        self.total = total
+        super().__init__(f"prefix {prefix!r} matches {total} conversations")
+
+
 @dataclass
 class ToolCallSummary:
     """Collapsed tool call for timeline display."""
@@ -558,6 +568,9 @@ def get_conversation(
 
     Raises:
         FileNotFoundError: If database does not exist.
+        AmbiguousPrefix: If ``id`` is a prefix matching more than one conversation.
+            Programmatic callers should catch this; CLI callers print the matched IDs
+            and exit 2.
         AnchorOutOfRange: If ``anchor='at_turn'`` and N >= turn count.
         AnchorNotFound: If ``anchor='around'`` and phrase has no match.
         AnchorPhraseInvalid: If ``anchor='around'`` phrase cannot be parsed by FTS5.
@@ -571,22 +584,19 @@ def get_conversation(
 
     conn = open_database(db, read_only=True)
     try:
-        # Find conversation (support prefix match)
-        conv = fetch_conversation_by_id_or_prefix(conn, id)
-        if not conv:
+        # Resolve prefix → full ID; raises AmbiguousPrefix if multiple matches.
+        # Owner filter is applied inside resolve_entity_id, making the explicit
+        # owner check that was here redundant.
+        conv_id = resolve_entity_id(conn, "conversation", id, owner=owner)
+        if not conv_id:
             return None
 
-        conv_id = conv["id"]
-
-        if owner:
-            if not has_conversation_owners_table(conn):
-                return None
-            row = conn.execute(
-                f"SELECT 1 FROM conversations c WHERE c.id = ? AND {owner_predicate('c.id')} LIMIT 1",
-                (conv_id, owner),
-            ).fetchone()
-            if not row:
-                return None
+        # Fetch metadata (workspace, started_at) by the now-resolved full ID.
+        # conv_id was just resolved, so this is an exact match; None means a
+        # concurrent delete, which we treat as not found.
+        conv = fetch_conversation_by_id_or_prefix(conn, conv_id)
+        if not conv:
+            return None
 
         # Model (most frequent) and token totals
         model_name = fetch_conversation_model(conn, conv_id)
@@ -1207,13 +1217,22 @@ def resolve_entity_id(
 ) -> str | None:
     """Resolve an entity ID, supporting prefix match for conversations.
 
+    For the 'conversation' entity type, raises AmbiguousPrefix if the given
+    prefix matches more than one conversation. Callers at the CLI boundary
+    should catch AmbiguousPrefix and exit with code 2.
+
     Args:
         conn: Database connection.
-        entity_type: One of 'conversation', 'workspace', 'tool_call'.
+        entity_type: One of 'conversation', 'workspace', 'tool_call', 'prompt',
+            'response', or 'exchange'.
         entity_id: Full or prefix ID to look up.
 
     Returns:
         Resolved full ID, or None if not found.
+
+    Raises:
+        AmbiguousPrefix: If entity_type is 'conversation' and the prefix matches
+            more than one row.
     """
     if entity_type == "conversation":
         if owner and not has_conversation_owners_table(conn):
@@ -1225,10 +1244,22 @@ def resolve_entity_id(
             where.append(owner_predicate("c.id"))
             params.append(owner)
 
-        row = conn.execute(
-            f"SELECT c.id FROM conversations c WHERE {' AND '.join(where)}",
+        # Fetch at most 6 rows ordered by ID — 1 sentinel beyond the display cap.
+        # Avoids loading all N rows for a collision with hundreds of matches.
+        rows = conn.execute(
+            f"SELECT c.id FROM conversations c WHERE {' AND '.join(where)} ORDER BY c.id LIMIT 6",
+            params,
+        ).fetchall()
+        if not rows:
+            return None
+        if len(rows) == 1:
+            return rows[0]["id"]
+        # Ambiguous: COUNT separately to get the exact total without fetching all rows.
+        count_row = conn.execute(
+            f"SELECT COUNT(*) AS n FROM conversations c WHERE {' AND '.join(where)}",
             params,
         ).fetchone()
+        raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], count_row["n"])
     elif entity_type == "workspace":
         row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
     elif entity_type in ("tool_call", "prompt", "response"):
@@ -1256,20 +1287,15 @@ def get_conversation_metadata(
     conn: sqlite3.Connection,
     conversation_id: str,
 ) -> dict | None:
-    """Get conversation metadata (workspace, started_at) by ID or prefix.
+    """Fetch workspace and started_at for a fully-resolved conversation ID.
 
-    Args:
-        conn: Database connection.
-        conversation_id: Full or prefix ID to look up.
+    Delegates to the storage primitive, which uses `c.id = ? OR c.id LIKE ?`.
+    For a full ID (already resolved via resolve_entity_id), the equality arm
+    matches first and the LIKE expansion is never reached — behavior is
+    effectively exact-match. This wrapper exists because the CLI layer cannot
+    import storage directly (architecture boundary).
 
     Returns:
         Dict with keys 'id', 'workspace', 'started_at', or None if not found.
     """
-    row = conn.execute(
-        "SELECT c.id, c.started_at, w.path AS workspace "
-        "FROM conversations c LEFT JOIN workspaces w ON w.id = c.workspace_id "
-        "WHERE c.id = ? "
-        "LIMIT 1",
-        (conversation_id,),
-    ).fetchone()
-    return dict(row) if row else None
+    return fetch_conversation_by_id_or_prefix(conn, conversation_id)

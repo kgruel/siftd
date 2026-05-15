@@ -16,6 +16,7 @@ from siftd.api.backfill import (
     run_backfill,
 )
 from siftd.api.conversations import (
+    AmbiguousPrefix,
     ConversationDetail,
     ConversationSummary,
     Exchange,
@@ -227,6 +228,7 @@ __all__ = [
     "read_session_detail",
     "tail_session",
     # conversations
+    "AmbiguousPrefix",
     "ConversationSummary",
     "ConversationDetail",
     "Exchange",

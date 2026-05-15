@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from siftd.api import (
+    AmbiguousPrefix,
     apply_tags,
     create_database,
     delete_tag_safe,
@@ -14,7 +15,7 @@ from siftd.api import (
 )
 from siftd.api.sessions import is_session_registered
 from siftd.api.sessions import queue_tag as queue_pending_tag
-from siftd.cli._common import resolve_db
+from siftd.cli._common import print_ambiguous_error, resolve_db
 from siftd.output._id_format import short_id
 from siftd.paths import ensure_dirs, session_id_file
 
@@ -105,7 +106,7 @@ def _tag_session(args, db: Path, session_id: str) -> int:
 
     # Check if session is registered (warn but proceed)
     if not is_session_registered(conn, session_id):
-        print(f"Warning: Session {session_id[:8]}... not registered", file=sys.stderr)
+        print(f"Warning: Session {short_id(session_id)}... not registered", file=sys.stderr)
 
     # Argparse's mutually-exclusive group already enforced "at most one of
     # --exchange / --last-*"; this just maps the flag to (entity_type,
@@ -133,11 +134,11 @@ def _tag_session(args, db: Path, session_id: str) -> int:
             queued += 1
             if last_marker:
                 pretty = last_marker.replace("last_", "last ")
-                print(f"Queued tag '{tag_name}' for {pretty} of session {session_id[:8]}...")
+                print(f"Queued tag '{tag_name}' for {pretty} of session {short_id(session_id)}...")
             elif exchange_index is not None:
                 print(f"Queued tag '{tag_name}' for exchange {exchange_index}")
             else:
-                print(f"Queued tag '{tag_name}' for session {session_id[:8]}...")
+                print(f"Queued tag '{tag_name}' for session {short_id(session_id)}...")
         else:
             print(f"Tag '{tag_name}' already queued")
 
@@ -637,7 +638,11 @@ def cmd_tag(args) -> int:
             _conn = open_database(db)
             try:
                 from siftd.api.conversations import resolve_entity_id
-                _conv_id = resolve_entity_id(_conn, "conversation", _conv_ref)
+                try:
+                    _conv_id = resolve_entity_id(_conn, "conversation", _conv_ref)
+                except AmbiguousPrefix as _exc:
+                    print_ambiguous_error(_exc)
+                    return 2
                 if _conv_id is None:
                     print(f"conversation not found: {_conv_ref}")
                     return 1
@@ -818,6 +823,9 @@ def cmd_tag(args) -> int:
             entity_id=entity_id,
             remove=removing,
         )
+    except AmbiguousPrefix as exc:
+        print_ambiguous_error(exc)
+        return 2
     except FileNotFoundError:
         print(f"{entity_type} not found: {entity_id}")
         return 1

@@ -188,6 +188,31 @@ def test_ui_stats_exception_branches(monkeypatch, tmp_path):
     assert "<stats/>" in out.content
 
 
+def test_ui_query_and_export_ambiguous_prefix(monkeypatch, tmp_path):
+    from siftd.api.conversations import AmbiguousPrefix
+
+    db = tmp_path / "db.db"
+    amb = AmbiguousPrefix("01AMBPFX", ["01AMBPFXA1B2C3D4E5F6G7H8", "01AMBPFXB2C3D4E5F6G7H8I9"], 2)
+
+    monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
+    monkeypatch.setattr(
+        "siftd.api.dispatch.execute",
+        lambda _op: (_ for _ in ()).throw(amb),
+    )
+
+    query_resp = _run(hr.ui_query.fn(
+        SimpleNamespace(), db,
+        workspace=None, since=None, before=None, model=None, tag=None,
+        search=None, owner=None, n=50, id="01AMBPFX",
+        tools=False, thinking=False, full=False, brief=False,
+    ))
+    assert "Ambiguous prefix" in query_resp.content
+    assert "01AMBPFX" in query_resp.content
+
+    export_resp = _run(hr.ui_export.fn(SimpleNamespace(), db, id="01AMBPFX", format="md"))
+    assert "Ambiguous prefix" in export_resp.content
+
+
 def test_ui_tag_success(monkeypatch, tmp_path):
     db = tmp_path / "db.db"
 

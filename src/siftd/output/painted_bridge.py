@@ -817,7 +817,7 @@ def render_peek_list_block(
         return f"+{child_count} agents" if child_count > 0 else ""
 
     col_defs: list[tuple[str, Callable, PStyle, Align]] = [
-        ("session", lambda s: s.session_id[:8], p.accent, Align.START),
+        ("session", lambda s: short_id(s.session_id), p.accent, Align.START),
         ("workspace", _workspace, PStyle(), Align.START),
         ("activity", lambda s: fmt_ago(now - s.last_activity), p.muted, Align.START),
         ("exchanges", _exchanges, p.muted, Align.START),

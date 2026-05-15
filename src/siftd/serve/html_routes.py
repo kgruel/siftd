@@ -15,6 +15,7 @@ from litestar import Request, get, post
 from litestar.params import Parameter
 from litestar.response import Response
 
+from siftd.output._id_format import short_id
 from siftd.serve.routes import _effective_owner
 
 
@@ -327,7 +328,9 @@ async def ui_query(
     brief: bool = Parameter(query="brief", default=False),
 ) -> Response:
     """List or detail conversations as HTML fragments."""
-    from siftd.api.conversations import get_conversation, list_conversations
+    from html import escape
+
+    from siftd.api.conversations import AmbiguousPrefix, get_conversation, list_conversations
     from siftd.api.dispatch import Operation, dispatch, execute
     from siftd.output.format_registry import get_format
 
@@ -376,7 +379,13 @@ async def ui_query(
                 "export_base_url": "/export",
             },
         )
-        detail = execute(op)
+        try:
+            detail = execute(op)
+        except AmbiguousPrefix as exc:
+            return _html_response(
+                f'<p class="error">Ambiguous prefix {escape(exc.prefix)!r} — matched {exc.total} conversations.'
+                " Use a longer prefix or full ID.</p>"
+            )
         if detail is None:
             return _html_response(f'<p class="empty">Not found: {id[:12]}</p>')
         return _html_response(fmt.render_detail(detail, op.fidelity, **op.render_context))
@@ -552,7 +561,7 @@ async def ui_peek() -> Response:
             f'<tr hx-get="/follow?sid={escape(s.session_id)}"'
             f' hx-target="#detail" hx-swap="innerHTML"'
             f' hx-push-url="/?follow={escape(s.session_id)}">'
-            f'<td class="identifier">{escape(s.session_id[:8])}</td>'
+            f'<td class="identifier">{escape(short_id(s.session_id))}</td>'
             f'<td class="workspace">{escape(ws)}</td>'
             f'<td class="model">{escape(s.model or "")}</td>'
             f'<td class="metric">{s.exchange_count}</td>'
@@ -776,6 +785,9 @@ async def ui_export(
     format: str = Parameter(query="format", default="md"),
 ) -> Response:
     """Export a conversation as a downloadable file."""
+    from html import escape
+
+    from siftd.api.conversations import AmbiguousPrefix
     from siftd.api.dispatch import Operation, execute
     from siftd.api.export import export_document
 
@@ -798,7 +810,13 @@ async def ui_export(
         db=db_path,
     )
 
-    artifact = execute(op)
+    try:
+        artifact = execute(op)
+    except AmbiguousPrefix as exc:
+        return _html_response(
+            f'<p class="error">Ambiguous prefix {escape(exc.prefix)!r} — matched {exc.total} conversations.'
+            " Use a longer prefix or full ID.</p>"
+        )
     if artifact.count == 0:
         return _html_response(f'<p class="empty">Not found: {id[:12]}</p>')
 
