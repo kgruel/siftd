@@ -372,7 +372,7 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
         if depth >= 1:
             model = fmt_model(c.model) if c.model else ""
             parts.append(f'<td class="model">{escape(model)}</td>')
-            parts.append(f'<td class="metric">{c.prompt_count}p/{c.response_count}r</td>')
+            parts.append(f'<td class="metric">{c.prompt_count}</td>')
             parts.append(f'<td class="metric">{escape(fmt_tokens(c.total_tokens))}</td>')
         if depth >= 3:
             if c.cost is None:

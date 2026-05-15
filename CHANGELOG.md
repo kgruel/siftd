@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **`siftd query` list view `turns` column now shows prompt count** — The combined `Xp/Yr` format (e.g. `15p/34r`) is replaced by a single integer equal to the prompt count, consistent with `--at-turn N` semantics (0-indexed navigation). With `-v`, the `turns` column still shows the single prompt count while a separate `responses` column gives the response count. **Breaking change**: scripts or agents parsing the `Xp/Yr` format from list output must update to read the single integer. The same change applies to markdown and HTML renderers.
+
+### Fixed
+
+- **`siftd query` help text for conversation IDs** — The footer previously said "use the full 26-character ID to query a specific conversation." This was wrong: any unambiguous prefix works (e.g. `siftd query 01ABCDEF --summary`). If a prefix matches multiple conversations, the existing ambiguous-id caveat warns and shows the first match.
+- **`--turns -2:+2` (spaced form) now parses correctly** — argparse previously rejected the spaced form and required `--turns=-2:+2`. Both forms now parse identically. The `=` form continues to work unchanged.
+
 ### Added
 
-- **`siftd query <id>` anchor + window navigation axes** — Three orthogonal axes now compose on `query <id>` detail views. Anchor flags (mutually exclusive): `--from-start` (first turn), `--from-end` (last turn), `--at-turn N` (N-th turn, 0-indexed), `--around PHRASE` (first FTS5 phrase match in the conversation). Window flags: `--exchanges N` (N turns from anchor), `--turns A:B` (signed offset range, e.g. `-2:+2`, `5:10`). For negative offsets, use the `=` form: `--turns=-2:+2` — argparse treats bare `-2:+2` as a flag. `--around PHRASE` uses the existing FTS5 index filtered to the conversation; phrase lookup is by document order (chronological), not relevance rank. The shared `add_anchor_window_args()` helper is extracted to `cli/_common.py` for reuse in Slice 2 (`search`).
+- **`siftd query <id>` anchor + window navigation axes** — Three orthogonal axes now compose on `query <id>` detail views. Anchor flags (mutually exclusive): `--from-start` (first turn), `--from-end` (last turn), `--at-turn N` (N-th turn, 0-indexed), `--around PHRASE` (first FTS5 phrase match in the conversation). Window flags: `--exchanges N` (N turns from anchor), `--turns A:B` (signed offset range, e.g. `--turns -2:+2` or `--turns=-2:+2`). `--around PHRASE` uses the existing FTS5 index filtered to the conversation; phrase lookup is by document order (chronological), not relevance rank. The shared `add_anchor_window_args()` helper is extracted to `cli/_common.py` for reuse in Slice 2 (`search`).
 
 ### Changed
 

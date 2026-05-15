@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 
@@ -172,6 +173,23 @@ def add_output_args(
         )
 
 
+class _TurnsRangeAction(argparse.Action):
+    """Consume the next argv token unconditionally for --turns.
+
+    argparse's prefix-heuristic rejects '-2:+2' as a flag when spaced
+    (--turns -2:+2). nargs=1 forces the following token to be consumed
+    as the option's argument, bypassing the heuristic. The '=' form
+    (--turns=-2:+2) is unaffected.
+    """
+
+    def __init__(self, option_strings, dest, **kwargs):
+        kwargs.setdefault("nargs", 1)
+        super().__init__(option_strings, dest, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):  # noqa: ARG002
+        setattr(namespace, self.dest, values[0] if isinstance(values, list) else values)
+
+
 def add_anchor_window_args(parser) -> None:
     """Add the standard anchor + window argument group to a parser.
 
@@ -206,6 +224,7 @@ def add_anchor_window_args(parser) -> None:
     )
     window.add_argument(
         "--turns", dest="turns_range", metavar="A:B",
+        action=_TurnsRangeAction,
         help="Turn range relative to anchor, e.g. -2:+2 or 5:10 (requires an anchor flag)",
     )
 

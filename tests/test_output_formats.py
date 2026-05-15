@@ -95,7 +95,8 @@ class TestTerminalRenderList:
         assert "01ABCDEF" in line
         assert "my-project" in line
         assert "claude-opus-4-5" in line  # model with date stripped
-        assert "3p/5r" in line
+        assert "3p/5r" not in line  # old Xp/Yr format removed
+        assert "│    3│" in line    # turns = prompt_count, right-aligned
         assert "1.2k" in line
         # Cost lives at depth>=3; tags too
         assert "$" not in line
@@ -191,7 +192,8 @@ class TestMarkdownRenderList:
         assert "| ID | Started | Workspace | Model | Turns | Tokens |" == lines[0]
         assert lines[1].count("---") == 6
         assert "claude-opus-4-5" in lines[2]
-        assert "3p/5r" in lines[2]
+        assert "3p/5r" not in lines[2]  # old Xp/Yr format removed
+        assert "| 3 |" in lines[2]     # turns = prompt_count
         assert "Cost" not in lines[0]
 
     def test_full_depth_includes_cost_and_tags(self, summaries):

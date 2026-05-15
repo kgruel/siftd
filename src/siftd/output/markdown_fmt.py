@@ -131,7 +131,7 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
         if depth >= 1:
             row += [
                 fmt_model(c.model) if c.model else "",
-                f"{c.prompt_count}p/{c.response_count}r",
+                str(c.prompt_count),
                 fmt_tokens(c.total_tokens),
             ]
         if depth >= 3:

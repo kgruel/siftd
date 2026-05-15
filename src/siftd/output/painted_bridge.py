@@ -763,13 +763,12 @@ def render_list_block(
     if depth >= 1:
         col_defs.extend([
             ("model", lambda c: fmt_model(c.model) if c.model else "", PStyle(), Align.START),
-            ("turns", lambda c: f"{c.prompt_count}p/{c.response_count}r", p.muted, Align.END),
+            ("turns", lambda c: str(c.prompt_count), p.muted, Align.END),
             ("tokens", lambda c: fmt_tokens(c.total_tokens), p.muted, Align.END),
         ])
     if depth >= 3:
         col_defs.extend([
             ("cost", lambda c: _fmt_cost(c), p.muted, Align.END),
-            ("prompts", lambda c: str(c.prompt_count), p.muted, Align.END),
             ("responses", lambda c: str(c.response_count), p.muted, Align.END),
             ("tags", lambda c: ", ".join(c.tags) if c.tags else "", p.accent, Align.START),
         ])
