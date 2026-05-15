@@ -103,3 +103,49 @@ class TestWindowFlags:
         """Parser accepts this; dispatch layer enforces anchor requirement."""
         ns = parse(parser, ["--exchanges", "3"])
         assert ns.exchanges == 3
+
+
+# ---------------------------------------------------------------------------
+# Item 1: ambiguous-match turn list dedupe + sort
+# ---------------------------------------------------------------------------
+
+
+class TestAroundAmbiguousDedup:
+    """Verify the deduplication expression used in the --around ambiguous-match pre-pass.
+
+    The logic is: sorted({t for t in indices if t is not None} - ({first} if first is not None else set()))
+    This test exercises it directly to catch regressions without needing a live DB.
+    """
+
+    def _dedup(self, indices, first_turn):
+        return sorted(
+            {t for t in indices if t is not None}
+            - ({first_turn} if first_turn is not None else set())
+        )
+
+    def test_deduplicates(self):
+        # Two passes produce [4, 6, 7, 4, 6, 7]; dedupe → [4, 6, 7] minus first
+        indices = [0, 4, 6, 7, 4, 6, 7]
+        assert self._dedup(indices, 0) == [4, 6, 7]
+
+    def test_sorted_ascending(self):
+        indices = [0, 8, 2, 5, 2, 8]
+        assert self._dedup(indices, 0) == [2, 5, 8]
+
+    def test_excludes_first_turn(self):
+        indices = [3, 1, 2, 3, 1]
+        assert self._dedup(indices, 3) == [1, 2]
+
+    def test_none_entries_dropped(self):
+        indices = [0, None, 2, None, 2]
+        assert self._dedup(indices, 0) == [2]
+
+    def test_first_turn_none_sentinel(self):
+        # When first_turn is "?" (unreachable empty-list branch), int set is unchanged.
+        indices = [1, 2, 3]
+        assert self._dedup(indices, "?") == [1, 2, 3]
+
+    def test_all_same_turn(self):
+        # Every event in the same turn → others is empty after excluding first
+        indices = [5, 5, 5]
+        assert self._dedup(indices, 5) == []

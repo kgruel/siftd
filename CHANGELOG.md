@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **`siftd search --turns` without `--around` now exits 2 (was 1)** — The axis-validation error (missing `--around` when `--turns` is given) now exits with code 2, consistent with all other argparse-layer rejections. Scripts checking `exit code == 1` for this condition must update to `== 2`.
+
 - **Ambiguous 8-char prefix now exits 2 instead of silently resolving** — `siftd query <prefix>`, `siftd tag <prefix>`, and `siftd id <prefix>` previously resolved ambiguous prefixes by silently returning the first SQLite row (non-deterministic). They now exit with code 2 and list the matched IDs. Scripts or aliases using 8-char prefixes that happened to hit the right conversation by silent first-match must switch to a 12-char or full prefix. The error message lists matched IDs to aid migration.
 - **`siftd query` list view `turns` column now shows prompt count** — The combined `Xp/Yr` format (e.g. `15p/34r`) is replaced by a single integer equal to the prompt count, consistent with `--at-turn N` semantics (0-indexed navigation). With `-v`, the `turns` column still shows the single prompt count while a separate `responses` column gives the response count. **Breaking change**: scripts or agents parsing the `Xp/Yr` format from list output must update to read the single integer. The same change applies to markdown and HTML renderers.
 

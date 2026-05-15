@@ -183,3 +183,75 @@ class TestTurnsRequiresAround:
         # Axis validation should reject this combination
         err = _validate_search_axes(args)
         assert err is not None
+
+
+# ---------------------------------------------------------------------------
+# Item 3: --turns without --around exits 2 through main() dispatch path
+# ---------------------------------------------------------------------------
+
+
+class TestTurnsWithoutAroundExitCode:
+    """Verify that axis validation exits 2 (not 1) when --turns is given without --around.
+
+    Must go through main() so that sys.exit(2) inside cmd_search propagates correctly
+    (per cli-argparse-test-gap: direct cmd_search(args) calls can't verify exit codes).
+
+    A dummy DB file is required: db.exists() is checked before axis validation, so
+    without an existing DB the command exits 1 (DB not found) before reaching validation.
+    """
+
+    def test_turns_without_around_exits_2(self, tmp_path, capsys):
+        from siftd.cli import main
+
+        dummy_db = tmp_path / "siftd.db"
+        dummy_db.touch()
+        with pytest.raises(SystemExit) as exc:
+            main(["--db", str(dummy_db), "search", "test", "--turns", "-2:+2"])
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "--turns" in err
+        assert "--around" in err
+
+    def test_turns_equals_form_without_around_exits_2(self, tmp_path, capsys):
+        from siftd.cli import main
+
+        dummy_db = tmp_path / "siftd.db"
+        dummy_db.touch()
+        with pytest.raises(SystemExit) as exc:
+            main(["--db", str(dummy_db), "search", "test", "--turns=-2:+2"])
+        assert exc.value.code == 2
+        assert "--turns" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Item 2: --context migration hint surfaced via _unknown_hint in main() dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestContextMigrationHint:
+    """Verify that --context rejection appends the v0.9.x migration note to stderr.
+
+    The hint is wired via _unknown_hint on the search subparser; the dispatcher
+    in cli/__init__.py appends it and calls parser.error() (exit 2).
+    """
+
+    def test_context_space_form_shows_hint(self, capsys):
+        from siftd.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main(["search", "test", "--context", "2"])
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "--context" in err
+        assert "--around" in err
+        assert "--turns" in err
+
+    def test_context_equals_form_shows_hint(self, capsys):
+        from siftd.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main(["search", "test", "--context=2"])
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "--context" in err
+        assert "--around" in err

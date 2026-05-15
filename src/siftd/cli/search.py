@@ -152,7 +152,7 @@ def cmd_search(args) -> int:
     axis_err = _validate_search_axes(args)
     if axis_err:
         print(f"siftd: error: {axis_err}", file=sys.stderr)
-        return 1
+        sys.exit(2)
 
     # --refs with --json is not supported (refs dump would break JSON validity)
     if args.json and args.refs:
@@ -754,4 +754,10 @@ note: --context N was removed in v0.9.x. Use --around PHRASE --turns -N:+N inste
     index_group.add_argument("--backend", metavar="NAME", help="Embedding backend (ollama, fastembed)")
     index_group.add_argument("--embed-db", metavar="PATH", help="Alternate embeddings database path")
 
-    p_search.set_defaults(func=cmd_search)
+    def _search_unknown_hint(unknowns):
+        # Both "--context 2" (two tokens) and "--context=2" (one token) must match.
+        if any(u == "--context" or u.startswith("--context=") for u in unknowns):
+            return "note: --context N was removed in v0.9.x. Use --around PHRASE --turns -N:+N instead."
+        return None
+
+    p_search.set_defaults(func=cmd_search, _unknown_hint=_search_unknown_hint)

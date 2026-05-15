@@ -260,7 +260,10 @@ def _query_detail(args) -> int:
                 if len(_all_events) > 1:
                     _turn_indices = _events_to_turn_indices(_pre_conn, _all_events, _conv_id)
                     first_turn = _turn_indices[0] if _turn_indices else "?"
-                    others = [t for t in _turn_indices[1:] if t is not None]
+                    others = sorted(
+                        {t for t in _turn_indices if t is not None}
+                        - ({first_turn} if first_turn is not None else set())
+                    )
                     print(
                         f"matched {len(_all_events)} turns; showing first (turn {first_turn}). "
                         f"Use --at-turn <N> for others: {others}",
