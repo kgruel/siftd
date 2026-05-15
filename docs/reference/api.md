@@ -324,6 +324,12 @@ A prompt and its full response narrative.
 | `response_ids` | `list[str]` |  |
 | `tool_call_ids` | `list[str]` |  |
 
+### Exceptions
+
+#### AmbiguousPrefix
+
+Prefix matches multiple conversations — caller must use a longer prefix or full ID.
+
 ### Functions
 
 ### get_recent_conversation_ids
@@ -395,21 +401,18 @@ def get_conversation(id: str, *, fidelity: Fidelity, db_path: pathlib._local.Pat
 **Raises:**
 
 - `FileNotFoundError`: If database does not exist.
+- `AmbiguousPrefix`: If ``id`` is a prefix matching more than one conversation. Programmatic callers should catch this; CLI callers print the matched IDs and exit 2.
 - `AnchorOutOfRange`: If ``anchor='at_turn'`` and N >= turn count.
 - `AnchorNotFound`: If ``anchor='around'`` and phrase has no match.
 - `AnchorPhraseInvalid`: If ``anchor='around'`` phrase cannot be parsed by FTS5.
 
 ### get_conversation_metadata
 
-Get conversation metadata (workspace, started_at) by fully-resolved conversation ID.
+Fetch workspace and started_at for a fully-resolved conversation ID.
 
 ```python
 def get_conversation_metadata(conn: Connection, conversation_id: str) -> dict | None
 ```
-
-**Parameters:**
-
-- `conn`: Database connection.
 
 **Returns:** Dict with keys 'id', 'workspace', 'started_at', or None if not found.
 
@@ -424,9 +427,13 @@ def resolve_entity_id(conn: Connection, entity_type: str, entity_id: str, *, own
 **Parameters:**
 
 - `conn`: Database connection.
-- `entity_type`: One of 'conversation', 'workspace', 'tool_call'.
+- `entity_type`: One of 'conversation', 'workspace', 'tool_call', 'prompt', 'response', or 'exchange'.
 
 **Returns:** Resolved full ID, or None if not found.
+
+**Raises:**
+
+- `AmbiguousPrefix`: If entity_type is 'conversation' and the prefix matches more than one row.
 
 ### list_query_files
 
@@ -625,6 +632,8 @@ Canonical mutable search chunk result.
 | `file_refs` | `list[Any] \| None` |  |
 | `exchanges` | `list[tuple[str, str, str]] \| None` |  |
 | `context_window` | `list[tuple[str, str, str, bool]] \| None` |  |
+| `turn_index` | `int \| None` |  |
+| `event_id` | `str \| None` |  |
 
 ### SearchResult
 
@@ -644,6 +653,8 @@ Canonical mutable search chunk result.
 | `file_refs` | `list[Any] \| None` |  |
 | `exchanges` | `list[tuple[str, str, str]] \| None` |  |
 | `context_window` | `list[tuple[str, str, str, bool]] \| None` |  |
+| `turn_index` | `int \| None` |  |
+| `event_id` | `str \| None` |  |
 
 ### ScoreBreakdown
 

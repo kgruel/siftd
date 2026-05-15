@@ -2162,6 +2162,30 @@ class TestSearchModeDegradedProducer:
         )
         assert f.fix_available is False
 
+    def test_around_suppresses_finding(self):
+        """When --around is set in FTS mode, search-fts5-around-turn-index carries
+        the same install-embeddings nudge plus turn-position provenance, so this
+        producer suppresses itself to avoid hint-cap collision."""
+        from siftd.api.caveats import (
+            _search_fts5_around_turn_index_caveats,
+            _search_mode_degraded_caveats,
+        )
+        from siftd.api.search import search_chunks
+        from siftd.domain.search_types import SearchChunk
+
+        chunk = SearchChunk(conversation_id="abc", score=0.8, text="y", chunk_type="fts5")
+        op = _make_op(
+            fn=search_chunks,
+            render_method="search",
+            params={"mode": "fts", "around": "phrase"},
+        )
+
+        degraded = _search_mode_degraded_caveats(op, [chunk], _make_ctx())
+        around = _search_fts5_around_turn_index_caveats(op, [chunk], _make_ctx())
+
+        assert degraded == [], "search-mode-degraded must yield to search-fts5-around-turn-index"
+        assert len(around) == 1
+
 
 class TestSearchTaggingTipProducer:
     """Tests for the search-tagging-tip producer (H1).

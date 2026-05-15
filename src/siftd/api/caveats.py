@@ -658,10 +658,16 @@ def _search_mode_degraded_caveats(op, result, ctx: ProducerContext) -> list[Find
     or the embeddings index doesn't exist. The mode="fts" branch of hybrid_search
     returns SearchChunks with breakdown=None, so chunk-level fts5_mode inference
     is not reliable — the params signal is authoritative.
+
+    Suppressed when --around is in use: search-fts5-around-turn-index carries
+    the same install-embeddings nudge plus turn-position provenance, so they're
+    mutually exclusive at the producer level (avoids hint-cap collision).
     """
     if not result:
         return []
     if op.params.get("mode") != "fts":
+        return []
+    if op.params.get("around") is not None:
         return []
 
     return [Finding(
