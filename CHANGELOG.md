@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **OIDC: `iss` claim now required and validated** — `_validate_oidc` previously checked `aud` and signature but not `iss`. A signature-valid token bearing the configured `aud` but a different issuer would pass. Now `iss`/`aud`/`exp` are all required; `iss` is compared against the configured `serve.auth.issuer`.
+- **OIDC: `identity_claim` must be present and non-empty** — applies to both JWT and introspection paths. Previously the missing claim fell back to a synthetic `"unknown"` `sub`, collapsing distinct subjects under one owner in `conversation_owners`.
+- **OIDC: discovered `jwks_uri` must share the issuer's origin** (scheme + host + port). A misconfigured or compromised discovery endpoint can no longer redirect siftd to an attacker-controlled JWKS.
+
+### Added
+
+- **`siftd serve` thin-client delegation**: `siftd query`, `siftd query <id>` (JSON + non-JSON), `siftd search`, `siftd tag`, `siftd stats`, `siftd workspaces`, `siftd export` now delegate transparently to a configured remote `serve.url`. Local execute remains the fallback. See `docs/ops/homelab.md` for the operator runbook (DNS + TLS + OIDC + per-machine config).
+- **`/api/v1/export?format=md|json`** — format-aware path that returns a rendered `ExportArtifact` (`content` + `media_type` + `filename` + `count`). Legacy path (no `format`) still returns `{"conversations": [...]}` unchanged.
+- **`/api/v1/conversations/{id}` anchor + window query params** — `anchor`, `anchor_value`, `window_start`, `window_end`. Mirrors the CLI's axes so delegated `siftd query <id> --json --at-turn N` actually anchors.
+- **`docs/guides/delegation-contract.md`** — names the operation-has-local-and-wire-forms pattern (`local_kwargs`, `wire_query`, `from_wire`) and states the 8-rule contract every new delegated path must follow. The pattern is pinned by `tests/test_op_route_parity.py` (introspects Litestar routes vs CLI op params).
+
+### Fixed
+
+- **Anchor errors on delegated `query <id>` return 400, not 500** — `AnchorOutOfRange`, `AnchorNotFound`, and `AnchorPhraseInvalid` inherit `Exception` (not `ValueError`), so `_dispatch`'s catch ladder fell through to the generic 500 handler. Now caught explicitly.
+- **Fidelity, None, and local-only params no longer leak onto the wire** — `wire_query(op)` expands `Fidelity` into `include_thinking` + `include_tool_content`, drops `None` values (urlencode would have emitted literal `"None"` strings), and strips `db_path`/`embed_db`/`mode`/`around` (local-only / CLI-annotation keys the route ignores).
+- **Delegated reads now reach the homelab** — when `serve.url` is explicitly configured, the local-vs-server DB-path SHA256 comparison is skipped. The check was structurally incompatible with the documented homelab topology (laptop DB at `~/.local/share/...`, server DB at `/var/lib/siftd/...`); pre-fix, every delegated call silently fell back to local. Loopback delegation still enforces the check.
+- **Delegated responses tolerate schema drift** — every deserializer in `siftd.api.deserialize` returns `None` on schema mismatch (older/newer server, malformed body, non-numeric fields where ints expected) rather than raising. The CLI fallback path treats `None` as "fall back to local execute."
+
 ### Breaking Changes
 
 - **`siftd search --turns` without `--around` now exits 2 (was 1)** — The axis-validation error (missing `--around` when `--turns` is given) now exits with code 2, consistent with all other argparse-layer rejections. Scripts checking `exit code == 1` for this condition must update to `== 2`.
