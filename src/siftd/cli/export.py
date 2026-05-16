@@ -12,9 +12,10 @@ from siftd.cli._common import resolve_db
 
 def cmd_export(args) -> int:
     """Export conversations as readable markdown or structured JSON."""
-    from siftd.api.dispatch import Operation, execute
+    from siftd.api.dispatch import Operation, execute, from_wire
     from siftd.api.export import export_document
     from siftd.cli._common import fidelity_from_args
+    from siftd.serve.delegation import try_serve
 
     db = resolve_db(args)
 
@@ -47,28 +48,42 @@ def cmd_export(args) -> int:
             "search": args.search,
             "db_path": db,
         },
-        render_method="raw",
+        # "export-artifact" picks the ExportArtifact deserializer in from_wire.
+        # The local path doesn't use render_method (it calls op.fn directly via
+        # execute()), so this only affects the delegated response path.
+        render_method="export-artifact",
         fidelity=fidelity,
         db=db or Path(),
     )
 
-    try:
-        artifact = execute(op)
-    except _AmbiguousPrefix as exc:
-        _print_ambiguous_error(exc)
-        return 2
-    except FileNotFoundError as e:
-        print(str(e))
-        return 1
-    except sqlite3.OperationalError as e:
-        err_msg = str(e).lower()
-        if "no such table" in err_msg and "fts" in err_msg:
-            print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
-        elif "fts5" in err_msg or "syntax" in err_msg:
-            print(f"Invalid search query: {e}", file=sys.stderr)
-        else:
-            print(f"Database error: {e}", file=sys.stderr)
-        return 1
+    # Delegate to serve when configured; from_wire reconstructs the
+    # ExportArtifact so the rendering code below is shape-identical
+    # regardless of which path produced the artifact. Deserializers return
+    # None on schema mismatch (e.g. older server returning the legacy
+    # `{"conversations": [...]}` shape) — the fallback below covers that.
+    artifact = None
+    delegated = try_serve(op)
+    if delegated is not None and isinstance(delegated, dict):
+        artifact = from_wire(op, delegated)
+
+    if artifact is None:
+        try:
+            artifact = execute(op)
+        except _AmbiguousPrefix as exc:
+            _print_ambiguous_error(exc)
+            return 2
+        except FileNotFoundError as e:
+            print(str(e))
+            return 1
+        except sqlite3.OperationalError as e:
+            err_msg = str(e).lower()
+            if "no such table" in err_msg and "fts" in err_msg:
+                print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
+            elif "fts5" in err_msg or "syntax" in err_msg:
+                print(f"Invalid search query: {e}", file=sys.stderr)
+            else:
+                print(f"Database error: {e}", file=sys.stderr)
+            return 1
 
     if artifact.count == 0:
         print("No conversations found matching criteria.")

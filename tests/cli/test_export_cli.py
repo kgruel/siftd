@@ -104,7 +104,9 @@ class TestCmdExport:
         assert op.method == "GET"
         assert op.params["format"] == "md"
         assert op.params["last"] == 2
-        assert op.render_method == "raw"
+        # render_method "export-artifact" picks the ExportArtifact deserializer
+        # for the delegated path; local execute ignores render_method.
+        assert op.render_method == "export-artifact"
 
     def test_operation_construction_json(self, monkeypatch, tmp_path):
         """Verify --json flag sets format param."""

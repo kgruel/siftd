@@ -237,63 +237,69 @@ def _query_detail(args) -> int:
         db=effective_db,
     )
 
-    # For --json output, delegate to serve if available.
-    if getattr(args, "json", False) and not getattr(args, "summary", False):
-        result = try_serve(op)
-        if result is not None and isinstance(result, dict) and "conversation" in result:
-            import json
-
-            print(json.dumps(result["conversation"], indent=2))
-            return 0
+    # Delegate to serve when available, reconstructing ConversationDetail via
+    # from_wire so the local renderer below consumes the result identically
+    # to a local fetch. See docs/guides/delegation-contract.md.
+    detail = None
+    delegated_response = None if getattr(args, "summary", False) else try_serve(op)
+    if delegated_response is not None:
+        from siftd.api.dispatch import from_wire
+        # Deserializers return None on schema mismatch rather than raising;
+        # the local-execute fallback below handles that uniformly.
+        detail = from_wire(op, delegated_response)
 
     # Ambiguous-match pre-pass: when --around is set, check for multiple matches
-    # and report them to stderr so the user can pick with --at-turn.
+    # and report them to stderr so the user can pick with --at-turn. This is a
+    # local-DB-only UX nicety; on a true thin-client without a local DB it
+    # silently degrades to no hint.
     if around is not None:
-        from siftd.api import open_database
-        from siftd.api.conversations import resolve_entity_id
-        from siftd.api.search import _events_to_turn_indices, phrase_events_in_conversation
-        _pre_conn = open_database(effective_db, read_only=True)
         try:
-            _conv_id = resolve_entity_id(_pre_conn, "conversation", args.conversation_id)
-            if _conv_id:
-                _all_events = phrase_events_in_conversation(_pre_conn, around, conversation_id=_conv_id)
-                if len(_all_events) > 1:
-                    _turn_indices = _events_to_turn_indices(_pre_conn, _all_events, _conv_id)
-                    first_turn = _turn_indices[0] if _turn_indices else "?"
-                    others = sorted(
-                        {t for t in _turn_indices if t is not None}
-                        - ({first_turn} if first_turn is not None else set())
-                    )
-                    print(
-                        f"matched {len(_all_events)} turns; showing first (turn {first_turn}). "
-                        f"Use --at-turn <N> for others: {others}",
-                        file=sys.stderr,
-                    )
+            from siftd.api import open_database
+            from siftd.api.conversations import resolve_entity_id
+            from siftd.api.search import _events_to_turn_indices, phrase_events_in_conversation
+            _pre_conn = open_database(effective_db, read_only=True)
+            try:
+                _conv_id = resolve_entity_id(_pre_conn, "conversation", args.conversation_id)
+                if _conv_id:
+                    _all_events = phrase_events_in_conversation(_pre_conn, around, conversation_id=_conv_id)
+                    if len(_all_events) > 1:
+                        _turn_indices = _events_to_turn_indices(_pre_conn, _all_events, _conv_id)
+                        first_turn = _turn_indices[0] if _turn_indices else "?"
+                        others = sorted(
+                            {t for t in _turn_indices if t is not None}
+                            - ({first_turn} if first_turn is not None else set())
+                        )
+                        print(
+                            f"matched {len(_all_events)} turns; showing first (turn {first_turn}). "
+                            f"Use --at-turn <N> for others: {others}",
+                            file=sys.stderr,
+                        )
+            finally:
+                _pre_conn.close()
         except Exception:
-            pass
-        finally:
-            _pre_conn.close()
+            pass  # No local DB or other failure — skip the hint silently.
 
-    try:
-        detail = execute(op)
-    except FileNotFoundError as e:
-        print(str(e))
-        print("Run 'siftd ingest' to create it.")
-        return 1
-    except AnchorOutOfRange as e:
-        print(f"error: --at-turn {at_turn} is out of range (conversation has {e.turn_count} turns)", file=sys.stderr)
-        sys.exit(2)
-    except AnchorNotFound as e:
-        print(
-            f"error: --around {e.phrase!r} not found in conversation\n"
-            f"Try 'siftd search \"{e.phrase}\"' to locate conversations containing this phrase, "
-            f"or shorten the phrase.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    except AnchorPhraseInvalid as e:
-        print(f"error: --around {e.phrase!r} is not a valid FTS5 phrase", file=sys.stderr)
-        sys.exit(2)
+    if detail is None:
+        try:
+            detail = execute(op)
+        except FileNotFoundError as e:
+            print(str(e))
+            print("Run 'siftd ingest' to create it.")
+            return 1
+        except AnchorOutOfRange as e:
+            print(f"error: --at-turn {at_turn} is out of range (conversation has {e.turn_count} turns)", file=sys.stderr)
+            sys.exit(2)
+        except AnchorNotFound as e:
+            print(
+                f"error: --around {e.phrase!r} not found in conversation\n"
+                f"Try 'siftd search \"{e.phrase}\"' to locate conversations containing this phrase, "
+                f"or shorten the phrase.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        except AnchorPhraseInvalid as e:
+            print(f"error: --around {e.phrase!r} is not a valid FTS5 phrase", file=sys.stderr)
+            sys.exit(2)
 
     if not detail:
         print(f"Conversation not found: {args.conversation_id}")
@@ -417,7 +423,7 @@ def cmd_query(args) -> int:
     from dataclasses import asdict
 
     from siftd.api import list_conversations
-    from siftd.api.dispatch import Operation, execute_for_render
+    from siftd.api.dispatch import Operation, execute_for_render, from_wire
     from siftd.cli._filters import extract_filter_args
     from siftd.serve.delegation import try_serve
 
@@ -448,28 +454,17 @@ def cmd_query(args) -> int:
 
     caveats: list = []
 
-    # Try serve, fall back to local execution
-    conversations = try_serve(op)
-    if conversations is not None and isinstance(conversations, dict):
-        # Server returned serialized list — deserialize back to domain objects.
-        # Caveats are not threaded across the serve boundary in slice 1.
-        from siftd.api.conversations import ConversationSummary
-
-        conversations = [
-            ConversationSummary(
-                id=c["id"],
-                workspace_path=c.get("workspace"),
-                model=c.get("model"),
-                started_at=c.get("started_at"),
-                prompt_count=c.get("prompts", 0),
-                response_count=c.get("responses", 0),
-                total_tokens=c.get("tokens", 0),
-                cost=c.get("cost"),
-                tags=c.get("tags", []),
-            )
-            for c in conversations.get("conversations", [])
-        ]
-    else:
+    # Try serve, fall back to local execution. Use from_wire so the
+    # deserialization is canonical (preserves the owner field, applies
+    # type coercion uniformly with the rest of the wire-form contract).
+    # The list deserializer returns None on schema mismatch (sentinel for
+    # fallback) and [] for a legitimately empty list (not a fallback signal).
+    # Caveats aren't threaded across the serve boundary today.
+    conversations = None
+    delegated = try_serve(op)
+    if delegated is not None and isinstance(delegated, dict):
+        conversations = from_wire(op, delegated)
+    if conversations is None:
         try:
             conversations, caveats = execute_for_render(op)
         except FileNotFoundError as e:

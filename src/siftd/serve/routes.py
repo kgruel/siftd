@@ -54,7 +54,7 @@ def _dispatch(
 
     from painted import Fidelity
 
-    from siftd.api.conversations import AmbiguousPrefix, QueryError
+    from siftd.api.conversations import AmbiguousPrefix, AnchorError, QueryError
     from siftd.api.dispatch import Operation, execute, render
     from siftd.serialization import serve_fmt
 
@@ -75,6 +75,12 @@ def _dispatch(
         return Response(content={"error": f"{path} failed"}, status_code=500)
     except FileNotFoundError as e:
         return Response(content={"error": str(e)}, status_code=404)
+    except AnchorError as e:
+        # AnchorOutOfRange / AnchorNotFound / AnchorPhraseInvalid are all
+        # user-input errors (bad --at-turn N, --around PHRASE). The local CLI
+        # treats them as exit 2 with a friendly message; the wire equivalent
+        # is 400, not 500.
+        return Response(content={"error": str(e)}, status_code=400)
     except (AmbiguousPrefix, ValueError, KeyError, QueryError) as e:
         return Response(content={"error": str(e)}, status_code=400)
     except Exception as e:
@@ -356,22 +362,68 @@ async def export_route(
     workspace: str | None = Parameter(query="workspace", default=None),
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),
+    search: str | None = Parameter(query="search", default=None),
     tag: list[str] | None = Parameter(query="tag", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
     tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
     n: int = Parameter(query="n", default=0),
+    last: int | None = Parameter(query="last", default=None),
     owner: str | None = Parameter(query="owner", default=None),
+    # Format-aware path (added in Phase C of the wire-form dissolution).
+    # When `format` is set, dispatch through `export_document` and return
+    # the rendered ExportArtifact. When absent, retain legacy behavior
+    # (return conversation list — backward compat for any external clients).
+    format: str | None = Parameter(query="format", default=None),
+    no_header: bool = Parameter(query="no_header", default=False),
+    include_thinking: bool = Parameter(query="include_thinking", default=False),
+    include_tool_content: bool = Parameter(query="include_tool_content", default=False),
 ) -> dict | Response:
-    """Export full conversation data."""
+    """Export full conversation data.
+
+    Two shapes depending on the ``format`` query param:
+
+    - ``format`` set to ``"md"`` or ``"json"``: route dispatches through
+      :func:`siftd.api.export.export_document` and returns the rendered
+      ``ExportArtifact`` as ``{content, media_type, filename, count}``.
+      This is the path the CLI's ``siftd export`` delegation uses.
+    - ``format`` absent: legacy behavior — returns
+      ``{"conversations": [...]}`` of full conversation dicts.
+    """
     from painted import Fidelity
 
+    owner = _effective_owner(request, owner)
+
+    if format is not None:
+        from siftd.api.export import export_document
+
+        if format not in ("md", "json"):
+            return Response(
+                content={"error": f"format must be 'md' or 'json', got {format!r}"},
+                status_code=400,
+            )
+        visible: set[str] = {"text"}
+        if include_thinking:
+            visible.add("thinking")
+        if include_tool_content:
+            visible.add("tools")
+        fidelity = Fidelity(depth=3, visible=frozenset(visible))
+        return _dispatch(
+            "/api/v1/export", "GET", export_document,
+            {"format": format, "fidelity": fidelity, "no_header": no_header,
+             "id": id, "last": last, "n": n,
+             "workspace": workspace, "tag": tag, "no_tag": no_tag,
+             "tag_kind": tag_kind, "since": since, "before": before,
+             "search": search, "db_path": db_path, "owner": owner},
+            "export-artifact", db_path,
+            fidelity=fidelity,
+        )
+
+    # Legacy path: return conversation list.
     from siftd.api.export import export_conversations
 
     fidelity = Fidelity(
         depth=3, visible=frozenset({"text", "thinking", "tools"}),
     )
-
-    owner = _effective_owner(request, owner)
     return _dispatch(
         "/api/v1/export", "GET", export_conversations,
         {"fidelity": fidelity, "id": id, "workspace": workspace, "since": since,
@@ -588,8 +640,18 @@ async def conversation_detail(
     include_thinking: bool = Parameter(query="include_thinking", default=False),
     include_tool_content: bool = Parameter(query="include_tool_content", default=False),
     tool_filter: str | None = Parameter(query="tool_filter", default=None),
+    anchor: str | None = Parameter(query="anchor", default=None),
+    anchor_value: str | None = Parameter(query="anchor_value", default=None),
+    window_start: int | None = Parameter(query="window_start", default=None),
+    window_end: int | None = Parameter(query="window_end", default=None),
 ) -> dict | Response:
-    """Get a single conversation by ID (supports prefix match)."""
+    """Get a single conversation by ID (supports prefix match).
+
+    Anchor + window axes mirror the CLI's `query <id>` flags so the CLI can
+    delegate detail reads to a remote serve. `anchor_value` is carried as a
+    string on the wire (Litestar query params are scalar); the API layer
+    coerces to int for ``anchor='at_turn'``.
+    """
     from painted import Fidelity
 
     from siftd.api.conversations import get_conversation
@@ -601,11 +663,24 @@ async def conversation_detail(
         visible.add("tools")
     fidelity = Fidelity(depth=3, visible=frozenset(visible))
 
+    # Coerce anchor_value: int for at_turn, str for around, None otherwise.
+    coerced_value: int | str | None = anchor_value
+    if anchor == "at_turn" and anchor_value is not None:
+        try:
+            coerced_value = int(anchor_value)
+        except ValueError:
+            return Response(
+                content={"error": f"anchor_value must be an integer for anchor=at_turn, got {anchor_value!r}"},
+                status_code=400,
+            )
+
     owner = _effective_owner(request, None)
     return _dispatch(
         "/api/v1/conversations", "GET", get_conversation,
         {"id": id, "fidelity": fidelity, "db_path": db_path,
-         "tool_filter": tool_filter, "owner": owner},
+         "tool_filter": tool_filter, "owner": owner,
+         "anchor": anchor, "anchor_value": coerced_value,
+         "window_start": window_start, "window_end": window_end},
         "detail", db_path,
         fidelity=fidelity,
     )
@@ -629,12 +704,20 @@ async def conversation_list(
     n: int = Parameter(query="n", default=20),
     oldest: bool = Parameter(query="oldest", default=False),
     owner: str | None = Parameter(query="owner", default=None),
+    # Accepted but unused: the CLI's wire form expands Fidelity into these
+    # axes, but list rendering doesn't currently surface narrative content
+    # so the values are intentionally ignored. Declaring them on the route
+    # keeps the wire-form parity contract honest (see
+    # docs/guides/delegation-contract.md + tests/test_op_route_parity.py).
+    include_thinking: bool = Parameter(query="include_thinking", default=False),
+    include_tool_content: bool = Parameter(query="include_tool_content", default=False),
 ) -> dict | Response:
     """List conversations with filtering."""
     from painted import Fidelity
 
     from siftd.api.conversations import list_conversations
 
+    del include_thinking, include_tool_content  # accepted-but-unused; see signature comment
     fidelity = Fidelity(depth=3)
 
     owner = _effective_owner(request, owner)

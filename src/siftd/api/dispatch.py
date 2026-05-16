@@ -46,22 +46,56 @@ class Operation:
     render_context: dict[str, Any] = field(default_factory=dict)
 
 
-# Keys that are routing/annotation-only, not fn kwargs.
-# Filtered by execute() so the params dict can serve both contexts.
-# debug_ids: serve route passes it to render_context; CLI local path uses op.render_context directly.
-# around: CLI post-processing annotation; caveat producers read it from op.params, fn doesn't accept it.
-_SERVE_ONLY_KEYS = frozenset({"action", "embeddings_only", "debug_ids", "around"})
+# Annotation keys that travel in op.params but are NOT accepted by the local
+# fn. The wire form may still carry them (the server can declare a Parameter
+# to read them if it wants). See docs/guides/delegation-contract.md for the
+# pattern this implements.
+#
+# - debug_ids: serve route passes it to render_context; CLI local path uses
+#   op.render_context directly.
+# - around: CLI post-processing annotation; caveat producers read it from
+#   op.params; the local search fn doesn't accept it.
+# - action / embeddings_only: routing keys that pick which wire endpoint or
+#   wire shape; not local-fn kwargs.
+_LOCAL_FN_EXCLUDE = frozenset({"action", "embeddings_only", "debug_ids", "around"})
+
+# Deprecated alias — kept for any external readers; new code uses _LOCAL_FN_EXCLUDE.
+_SERVE_ONLY_KEYS = _LOCAL_FN_EXCLUDE
+
+
+def local_kwargs(op: Operation) -> dict[str, Any]:
+    """Return the kwargs to pass to ``op.fn`` for local execution.
+
+    The local form is ``op.params`` minus annotation keys that the fn
+    doesn't accept. This is one half of the operation-local-form +
+    operation-wire-form pair; see :func:`siftd.serve.delegation.wire_query`
+    for the other half and ``docs/guides/delegation-contract.md`` for the
+    contract.
+    """
+    return {k: v for k, v in op.params.items() if k not in _LOCAL_FN_EXCLUDE}
 
 
 def execute(op: Operation) -> Any:
-    """Call the API function with params.
+    """Call the API function with the operation's local kwargs."""
+    return op.fn(**local_kwargs(op))
 
-    Strips serve-only routing keys (e.g. ``action``) that the fn
-    doesn't accept.  These keys are used by try_serve for HTTP
-    dispatch but aren't API function kwargs.
+
+def from_wire(op: Operation, body: dict[str, Any]) -> Any:
+    """Reconstruct a typed result from an HTTP delegation response body.
+
+    The serve route returns a JSON-safe dict; this function maps it back to
+    the typed object that ``op.fn`` would have returned for local execution,
+    so downstream renderers don't need to know which path produced their
+    input.
+
+    Returns the body unchanged for render methods that don't have a typed
+    deserializer registered (search, stats, tags, raw) — the caller works
+    with the raw dict in those cases. See
+    :mod:`siftd.api.deserialize` for the per-render-method
+    deserializers.
     """
-    params = {k: v for k, v in op.params.items() if k not in _SERVE_ONLY_KEYS}
-    return op.fn(**params)
+    from siftd.api.deserialize import from_wire as _from_wire
+    return _from_wire(op.render_method, body)
 
 
 def render(

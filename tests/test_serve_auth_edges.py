@@ -101,12 +101,15 @@ def test_authenticate_request_delegates_to_mode_validators(monkeypatch):
 
 
 def test_validate_oidc_success_and_error(monkeypatch):
+    captured: dict = {}
+
     class _JWT:
         class PyJWTError(Exception):
             pass
 
         @staticmethod
-        def decode(token, jwks, algorithms, audience):
+        def decode(token, jwks, **kwargs):
+            captured.update(kwargs)
             if token == "bad":
                 raise _JWT.PyJWTError("bad token")
             return {"email": "x@y"}
@@ -117,8 +120,183 @@ def test_validate_oidc_success_and_error(monkeypatch):
     monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result={"k": 1}))
 
     assert _run(mw._validate_oidc("ok")).sub == "x@y"
+    # Verify the production code passes issuer + requires iss/exp/aud to jwt.decode
+    assert captured["audience"] == "siftd"
+    assert captured["issuer"] == "https://idp"
+    assert set(captured["options"]["require"]) >= {"exp", "iss", "aud"}
+
     with pytest.raises(NotAuthorizedException, match="Invalid token"):
         _run(mw._validate_oidc("bad"))
+
+
+def test_validate_oidc_rejects_missing_identity_claim(monkeypatch):
+    """A token that validates cryptographically but lacks the configured identity
+    claim must be rejected, not collapsed under a synthetic 'unknown' owner.
+
+    Otherwise multiple tokens with no identity_claim would all map to the same
+    `sub` in conversation_owners, conflating distinct subjects.
+    """
+
+    class _JWT:
+        class PyJWTError(Exception):
+            pass
+
+        @staticmethod
+        def decode(token, jwks, **kwargs):
+            # Valid signature, valid iss/aud — but missing the configured `email` claim.
+            return {"sub": "fallback-subject"}
+
+    monkeypatch.setitem(sys.modules, "jwt", _JWT)
+    MW = create_auth_middleware({
+        "issuer": "https://idp", "identity_claim": "email", "audience": "siftd",
+    })
+    mw = object.__new__(MW)
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result={"k": 1}))
+
+    with pytest.raises(NotAuthorizedException, match="identity claim"):
+        _run(mw._validate_oidc("token-missing-email-claim"))
+
+
+def test_validate_introspection_rejects_missing_identity_claim(monkeypatch):
+    """Introspection path mirrors OIDC: reject when configured claim missing.
+
+    Without this, two tokens introspecting active=true but without `username`
+    would both map to sub='unknown' and be conflated in conversation_owners.
+    """
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            # active token but missing the configured identity claim
+            return {"active": True, "scope": "siftd:read"}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, **kwargs):
+            return _Resp()
+
+    class _HTTPX:
+        AsyncClient = _Client
+
+    monkeypatch.setitem(sys.modules, "httpx", _HTTPX)
+    MW = create_auth_middleware({
+        "introspection_url": "https://idp/introspect",
+        "identity_claim": "username",
+    })
+    mw = object.__new__(MW)
+    with pytest.raises(NotAuthorizedException, match="identity claim"):
+        _run(mw._validate_introspection("tok"))
+
+
+def test_validate_introspection_cache_path_also_rejects_missing_claim():
+    """Cache-hit path must apply the same identity-claim check."""
+    from siftd.serve.auth import _identity_from_introspection
+
+    with pytest.raises(NotAuthorizedException, match="identity claim"):
+        _identity_from_introspection({"active": True}, "username")
+    # Empty string also rejected.
+    with pytest.raises(NotAuthorizedException, match="identity claim"):
+        _identity_from_introspection({"username": ""}, "username")
+
+
+def test_validate_oidc_rejects_empty_identity_claim(monkeypatch):
+    """An empty-string identity claim is also rejected."""
+
+    class _JWT:
+        class PyJWTError(Exception):
+            pass
+
+        @staticmethod
+        def decode(token, jwks, **kwargs):
+            return {"sub": ""}
+
+    monkeypatch.setitem(sys.modules, "jwt", _JWT)
+    MW = create_auth_middleware({"issuer": "https://idp", "audience": "siftd"})
+    mw = object.__new__(MW)
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result={"k": 1}))
+
+    with pytest.raises(NotAuthorizedException, match="identity claim"):
+        _run(mw._validate_oidc("token-with-empty-sub"))
+
+
+def test_jwks_origin_check_matches_issuer():
+    """JWKS URIs on the same scheme+host+port as the issuer are accepted."""
+    from siftd.serve.auth import _jwks_origin_matches_issuer
+
+    assert _jwks_origin_matches_issuer(
+        "https://idp.example.com/.well-known/jwks.json",
+        "https://idp.example.com",
+    )
+    # Explicit default port equivalence
+    assert _jwks_origin_matches_issuer(
+        "https://idp.example.com:443/keys",
+        "https://idp.example.com",
+    )
+    # Path under issuer
+    assert _jwks_origin_matches_issuer(
+        "https://idp.example.com/realms/main/protocol/openid-connect/certs",
+        "https://idp.example.com/realms/main",
+    )
+
+
+def test_jwks_origin_check_rejects_cross_origin():
+    """Cross-host, cross-scheme, and cross-port JWKS URIs are rejected."""
+    from siftd.serve.auth import _jwks_origin_matches_issuer
+
+    # Different host (attacker's JWKS)
+    assert not _jwks_origin_matches_issuer(
+        "https://evil.example.com/keys",
+        "https://idp.example.com",
+    )
+    # Different scheme (downgrade)
+    assert not _jwks_origin_matches_issuer(
+        "http://idp.example.com/keys",
+        "https://idp.example.com",
+    )
+    # Different port
+    assert not _jwks_origin_matches_issuer(
+        "https://idp.example.com:8443/keys",
+        "https://idp.example.com",
+    )
+    # Sibling subdomain — must NOT be allowed without explicit configuration
+    assert not _jwks_origin_matches_issuer(
+        "https://keys.example.com/jwks",
+        "https://idp.example.com",
+    )
+
+
+def test_validate_oidc_rejects_issuer_mismatch(monkeypatch):
+    """A token whose signature validates but iss claim mismatches must be rejected.
+
+    Simulates PyJWT's InvalidIssuerError when the configured issuer doesn't match
+    the token's iss claim. This is the security property the iss check exists for.
+    """
+
+    class _JWT:
+        class PyJWTError(Exception):
+            pass
+
+        @staticmethod
+        def decode(token, jwks, **kwargs):
+            # Production passes issuer=...; if a mismatched token reached PyJWT,
+            # PyJWT would raise InvalidIssuerError (subclass of PyJWTError).
+            if kwargs.get("issuer") != "https://idp":
+                raise _JWT.PyJWTError("unexpected issuer config")
+            raise _JWT.PyJWTError("InvalidIssuerError: iss claim does not match")
+
+    monkeypatch.setitem(sys.modules, "jwt", _JWT)
+    MW = create_auth_middleware({"issuer": "https://idp", "audience": "siftd"})
+    mw = object.__new__(MW)
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result={"k": 1}))
+
+    with pytest.raises(NotAuthorizedException, match="Invalid token"):
+        _run(mw._validate_oidc("token-from-rogue-issuer"))
 
 
 def test_validate_introspection_network_paths(monkeypatch):
@@ -321,7 +499,7 @@ def test_oidc_error_does_not_leak_jwt_details(monkeypatch):
             pass
 
         @staticmethod
-        def decode(token, jwks, algorithms, audience):
+        def decode(token, jwks, **kwargs):
             raise _JWT.PyJWTError("ExpiredSignatureError: token expired at 2026-01-01, claim aud=secret-app")
 
     monkeypatch.setitem(sys.modules, "jwt", _JWT)

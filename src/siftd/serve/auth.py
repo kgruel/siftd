@@ -66,6 +66,58 @@ def _parse_scope_string(scope_value: str | list | None) -> frozenset[str]:
     return frozenset(scope_value.split())
 
 
+def _jwks_origin_matches_issuer(jwks_uri: str, issuer: str) -> bool:
+    """Return True when jwks_uri is on the same origin as the issuer.
+
+    "Same origin" means scheme + host + port match exactly. We don't allow
+    cross-origin JWKS even when both URIs share a parent domain: the issuer
+    declares the trust boundary, and any redirection to a different host
+    expands that boundary in a way an OIDC client cannot reason about.
+
+    Returns False on any parsing failure — including malformed ports (which
+    ``urlparse().port`` raises ``ValueError`` for on access, not at parse
+    time) — so a hostile discovery document can't escape as a 500.
+    """
+    from urllib.parse import urlparse
+
+    try:
+        a = urlparse(jwks_uri)
+        b = urlparse(issuer)
+        if not a.scheme or not a.hostname:
+            return False
+        a_port = a.port or _default_port(a.scheme)
+        b_port = b.port or _default_port(b.scheme)
+    except (ValueError, Exception):
+        return False
+    return (
+        a.scheme == b.scheme
+        and a.hostname == b.hostname
+        and a_port == b_port
+    )
+
+
+def _default_port(scheme: str) -> int:
+    return 443 if scheme == "https" else 80
+
+
+def _identity_from_introspection(body: dict, identity_claim: str) -> UserIdentity:
+    """Build a UserIdentity from an introspection response.
+
+    Mirrors the OIDC-path policy: reject if the configured identity claim is
+    missing or empty, instead of collapsing distinct tokens under a synthetic
+    "unknown" owner.
+    """
+    identity = body.get(identity_claim)
+    if not isinstance(identity, str) or not identity:
+        raise NotAuthorizedException(
+            f"Introspection response missing identity claim: {identity_claim!r}",
+        )
+    return UserIdentity(
+        sub=identity,
+        scopes=_parse_scope_string(body.get("scope")),
+    )
+
+
 def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMiddleware]:
     """Create an auth middleware class bound to the given config.
 
@@ -148,15 +200,26 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
             jwks = await self._get_jwks()
             identity_claim = self._config.get("identity_claim", "sub")
             audience = self._config.get("audience", "siftd")
+            issuer = self._config["issuer"].rstrip("/")
 
             try:
                 payload = jwt.decode(
                     token, jwks,
                     algorithms=["RS256", "ES256"],
                     audience=audience,
+                    issuer=issuer,
+                    options={"require": ["exp", "iss", "aud"]},
                 )
+                # Reject if the configured identity claim is missing — collapsing
+                # multiple tokens under a synthetic "unknown" owner would conflate
+                # distinct subjects in conversation_owners.
+                identity = payload.get(identity_claim)
+                if not isinstance(identity, str) or not identity:
+                    raise NotAuthorizedException(
+                        f"Token missing required identity claim: {identity_claim!r}",
+                    )
                 return UserIdentity(
-                    sub=payload.get(identity_claim, payload.get("sub", "unknown")),
+                    sub=identity,
                     scopes=_parse_scope_string(payload.get("scope")),
                 )
             except jwt.PyJWTError as e:
@@ -172,10 +235,7 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
                 cached, expires_at = SiftdAuthMiddleware._introspection_cache[token]
                 if now < expires_at:
                     identity_claim = self._config.get("identity_claim", "username")
-                    return UserIdentity(
-                        sub=cached.get(identity_claim, "unknown"),
-                        scopes=_parse_scope_string(cached.get("scope")),
-                    )
+                    return _identity_from_introspection(cached, identity_claim)
 
             url = self._config["introspection_url"]
             client_id = self._config.get("client_id", "")
@@ -208,13 +268,17 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
                 cache_deadline = min(cache_deadline, float(token_exp))
             SiftdAuthMiddleware._introspection_cache[token] = (body, cache_deadline)
             identity_claim = self._config.get("identity_claim", "username")
-            return UserIdentity(
-                sub=body.get(identity_claim, "unknown"),
-                scopes=_parse_scope_string(body.get("scope")),
-            )
+            return _identity_from_introspection(body, identity_claim)
 
         async def _get_jwks(self):
-            """Fetch and cache JWKS from OIDC issuer."""
+            """Fetch and cache JWKS from OIDC issuer.
+
+            The discovered ``jwks_uri`` must live under the configured issuer's
+            origin (scheme + host[:port]); otherwise a compromised or misconfigured
+            issuer endpoint could redirect us to an attacker-controlled JWKS, and
+            issuer-claim validation on the JWT wouldn't help because the attacker
+            could mint tokens with the configured ``iss`` value.
+            """
             import httpx
             import jwt
 
@@ -229,6 +293,10 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
                 async with httpx.AsyncClient() as client:
                     disco = await client.get(f"{issuer}/.well-known/openid-configuration")
                     jwks_url = disco.json()["jwks_uri"]
+                if not _jwks_origin_matches_issuer(jwks_url, issuer):
+                    raise NotAuthorizedException(
+                        "Discovered jwks_uri origin does not match issuer",
+                    )
 
             async with httpx.AsyncClient() as client:
                 resp = await client.get(jwks_url)

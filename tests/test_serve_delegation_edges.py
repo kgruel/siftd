@@ -79,12 +79,56 @@ def test_try_delegate_success_and_failure_guards(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.serve.client._get_json", lambda *a, **k: {"ok": True})
     assert delegation.try_delegate("/api/v1/search", db=db) == {"ok": True}
 
+    # Explicit serve.url (the homelab topology) bypasses the DB-identity
+    # check, so a malformed/mismatched server health body should still allow
+    # the request to proceed — the user has named this remote on purpose.
     monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_path": 123})
-    assert delegation.try_delegate("/api/v1/search", db=db) is None
+    assert delegation.try_delegate("/api/v1/search", db=db) == {"ok": True}
 
     monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_id": db_id})
     monkeypatch.setattr("siftd.serve.client._get_json", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     assert delegation.try_delegate("/api/v1/search", db=db) is None
+
+
+def test_try_delegate_loopback_still_enforces_db_identity(monkeypatch, tmp_path):
+    """Auto-discovered (loopback) delegation keeps the DB-identity check.
+
+    Without it, a local sidecar pointed at a different DB could silently
+    serve cross-DB results. The check only relaxes when the user has
+    explicitly named a remote via ``serve.url``.
+    """
+    db = tmp_path / "siftd.db"
+    db.touch()
+    different_db_id = hashlib.sha256(b"/some/other/path").hexdigest()
+
+    monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: True)
+    # explicit=False → loopback / auto-discovered path
+    monkeypatch.setattr("siftd.serve.delegation.resolve_serve_url", lambda: ("http://127.0.0.1:8484", False))
+    monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_id": different_db_id})
+    monkeypatch.setattr("siftd.serve.client._get_json", lambda *a, **k: {"ok": True})
+    # Mismatched DB → must NOT delegate.
+    assert delegation.try_delegate("/api/v1/search", db=db) is None
+
+
+def test_try_delegate_explicit_bypasses_db_identity_for_homelab(monkeypatch, tmp_path):
+    """Explicit serve.url (homelab topology) delegates even when the server's
+    DB path differs from the client's local DB path.
+
+    This is the central thin-client topology: laptop has its own local DB
+    (used as ingest workspace), homelab has the canonical DB at a different
+    path. The DB-identity SHA256 check would otherwise block delegation
+    entirely because the paths can never match by design.
+    """
+    db = tmp_path / "client.db"
+    db.touch()
+    # Server's DB path is intentionally different (homelab convention).
+    server_db_id = hashlib.sha256(b"/var/lib/siftd/siftd.db").hexdigest()
+
+    monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: True)
+    monkeypatch.setattr("siftd.serve.delegation.resolve_serve_url", lambda: ("https://siftd.example.com", True))
+    monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_id": server_db_id})
+    monkeypatch.setattr("siftd.serve.client._get_json", lambda *a, **k: {"ok": True})
+    assert delegation.try_delegate("/api/v1/search", db=db) == {"ok": True}
 
 
 def test_try_delegate_post_guard_and_exception_paths(monkeypatch, tmp_path):

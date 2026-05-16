@@ -123,6 +123,27 @@ def can_delegate(*, db: Path) -> bool:
     return True
 
 
+def _db_identities_match(health: dict[str, Any], local_db: Path) -> bool:
+    """Compare the server's health-reported DB identity against the local DB.
+
+    Used as a safety check on auto-discovered (loopback) delegation — when the
+    user hasn't explicitly named a remote, we don't want to silently delegate
+    to a sidecar pointed at a different DB. For explicit `serve.url`
+    configuration this check is skipped (see :func:`try_delegate`).
+    """
+    served_db_id = health.get("db_id")
+    if isinstance(served_db_id, str):
+        import hashlib
+
+        local_db_id = hashlib.sha256(str(local_db.resolve()).encode("utf-8")).hexdigest()
+        return served_db_id == local_db_id
+    # Backward compat: older servers returned db_path.
+    served_db_path = health.get("db_path")
+    if not isinstance(served_db_path, str):
+        return False
+    return served_db_path == str(local_db.resolve())
+
+
 def try_delegate(
     endpoint: str,
     params: dict[str, Any] | None = None,
@@ -148,21 +169,14 @@ def try_delegate(
     except (ServeUnavailable, Exception):
         return None
 
-    # Verify DB identity match (avoid leaking absolute paths over health)
-    served_db_id = health.get("db_id")
-    if isinstance(served_db_id, str):
-        import hashlib
-
-        local_db_id = hashlib.sha256(str(db.resolve()).encode("utf-8")).hexdigest()
-        if served_db_id != local_db_id:
-            return None
-    else:
-        # Backward compat: older servers returned db_path.
-        served_db_path = health.get("db_path")
-        if not isinstance(served_db_path, str):
-            return None
-        if served_db_path != str(db.resolve()):
-            return None
+    # DB identity check: only applied for auto-discovered (loopback) delegation,
+    # where we don't want to silently delegate to a sidecar pointed at a
+    # different DB. For explicit `serve.url` configuration (the homelab
+    # thin-client topology), the user has named a specific remote — its DB
+    # path is *expected* to differ from the local DB path, so the SHA256
+    # comparison would always fail and block delegation entirely.
+    if not explicit and not _db_identities_match(health, db):
+        return None
 
     from siftd.serve.client import _get_json
 
@@ -196,19 +210,9 @@ def try_delegate_post(
     except (ServeUnavailable, Exception):
         return None
 
-    served_db_id = health.get("db_id")
-    if isinstance(served_db_id, str):
-        import hashlib
-
-        local_db_id = hashlib.sha256(str(db.resolve()).encode("utf-8")).hexdigest()
-        if served_db_id != local_db_id:
-            return None
-    else:
-        served_db_path = health.get("db_path")
-        if not isinstance(served_db_path, str):
-            return None
-        if served_db_path != str(db.resolve()):
-            return None
+    # See try_delegate's rationale for the explicit-bypass.
+    if not explicit and not _db_identities_match(health, db):
+        return None
 
     from siftd.serve.client import _post_json
 
@@ -226,9 +230,83 @@ _SERVE_PARAM_MAP: dict[str, str] = {
 }
 
 
+def _expand_for_wire(params: dict[str, Any]) -> dict[str, Any]:
+    """Translate non-scalar API params into wire-friendly query fields.
+
+    Fidelity objects are opaque to urlencode (they'd be str()'d into garbage
+    that serve routes ignore — historically leading to silent fidelity drift
+    on delegated reads). Expand them into the `include_thinking` /
+    `include_tool_content` boolean flags that serve routes accept.
+
+    Also drops keys whose value is ``None``: ``urlencode`` would otherwise
+    emit them as the literal string ``"None"``, which the route then parses
+    as a real value (e.g. ``tool_filter=None`` would be treated as the
+    pattern "None" by ``_matches_tool_filter`` and filter out every tool).
+    The CLI's intent for ``None`` is "param omitted," not "param literally
+    None." Litestar routes use their declared defaults when a key is absent.
+    """
+    out: dict[str, Any] = {}
+    for k, v in params.items():
+        if v is None:
+            continue
+        if k == "fidelity" and hasattr(v, "shows"):
+            # Expand Fidelity → wire axis fields. Drop the opaque object.
+            out["include_thinking"] = bool(v.shows("thinking"))
+            out["include_tool_content"] = bool(v.shows("tools"))
+            continue
+        out[k] = v
+    return out
+
+
 def _remap_params(params: dict[str, Any]) -> dict[str, Any]:
     """Remap API fn kwargs to serve route query param names."""
-    return {_SERVE_PARAM_MAP.get(k, k): v for k, v in params.items()}
+    expanded = _expand_for_wire(params)
+    return {_SERVE_PARAM_MAP.get(k, k): v for k, v in expanded.items()}
+
+
+# Keys in op.params that exist for local execution but must NOT travel on the
+# wire.
+#
+# - db_path / embed_db: local paths to SQLite files; the server uses its own
+#   configured DB. Sending these leaks local filesystem state to the remote
+#   and the server would ignore them anyway.
+# - mode: local search-engine selector. The wire form uses ``embeddings_only``
+#   for the same selection (legacy asymmetry — both keys carry the same
+#   information through different paths).
+# - around: pure CLI post-processing annotation. The server has no use for it
+#   today and the search route doesn't declare it; sending it would be
+#   silently dropped by Litestar.
+_WIRE_EXCLUDE = frozenset({"db_path", "embed_db", "mode", "around"})
+
+
+def wire_query(op: Any) -> dict[str, Any]:
+    """Return the query-params dict for HTTP delegation of this Operation.
+
+    This is the wire form of ``op.params`` — the result of:
+
+    1. Dropping local-only keys (``db_path``).
+    2. Dropping ``None`` values (urlencode would emit them as the literal
+       string "None", which Litestar would treat as a real value).
+    3. Expanding non-scalar types (``Fidelity`` →
+       ``include_thinking`` + ``include_tool_content``).
+    4. Applying Python-keyword renames (``lambda_`` → ``lambda``).
+
+    The output is ready for ``urlencode(..., doseq=True)`` and HTTP
+    transport. See ``docs/guides/delegation-contract.md`` for the contract
+    this implements and :func:`siftd.api.dispatch.local_kwargs` for the
+    sibling that produces the local-execution form.
+    """
+    raw = {k: v for k, v in op.params.items() if k not in _WIRE_EXCLUDE}
+    return _remap_params(raw)
+
+
+# POST bodies use API conventions (tags, entity_id) — no remapping, no
+# Fidelity expansion (POST routes in this codebase don't currently carry
+# Fidelity). The function exists so future POST routes have a named entry
+# point that can be extended without touching call sites.
+def wire_body(op: Any) -> dict[str, Any]:
+    """Return the JSON body dict for HTTP POST delegation of this Operation."""
+    return {k: v for k, v in op.params.items() if k not in _WIRE_EXCLUDE}
 
 
 def try_serve(op: Any) -> Any | None:
@@ -238,18 +316,14 @@ def try_serve(op: Any) -> Any | None:
     its path, method, params, and db. Returns the raw serve response
     on success, None on any failure.
 
-    Params are remapped from API fn kwargs to HTTP conventions
-    (e.g. limit→n, tags→tag) via _SERVE_PARAM_MAP.
+    Uses :func:`wire_query` / :func:`wire_body` to produce the wire
+    form from ``op.params``.
     """
     try:
-        raw = {k: v for k, v in op.params.items() if k != "db_path"}
-
         if op.method == "GET":
-            # GET query params use HTTP conventions (n, tag, id)
-            return try_delegate(op.path, _remap_params(raw), db=op.db)
+            return try_delegate(op.path, wire_query(op), db=op.db)
         elif op.method == "POST":
-            # POST bodies use API conventions (tags, entity_id) — no remapping
-            return try_delegate_post(op.path, raw, db=op.db)
+            return try_delegate_post(op.path, wire_body(op), db=op.db)
     except Exception as e:
         log.warning("try_serve unexpected error for %s %s: %s", op.method, op.path, e)
     return None

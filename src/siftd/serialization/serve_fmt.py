@@ -63,11 +63,32 @@ def render_search(results: list, fidelity: Fidelity, debug_ids: bool = True) -> 
 
 
 def render_export(conversations: list, fidelity: Fidelity) -> dict:
-    """Serialize exported conversations to JSON-safe dict."""
+    """Serialize exported conversations to JSON-safe dict.
+
+    Legacy export shape — returns the list of conversation dicts. Used by the
+    pre-Phase-C export route which dispatched through ``export_conversations``.
+    """
     from siftd.serialization.conversations import serialize_conversation_detail
 
     return {
         "conversations": [serialize_conversation_detail(c) for c in conversations],
+    }
+
+
+def render_export_artifact(artifact: Any, fidelity: Fidelity) -> dict:
+    """Serialize an ``ExportArtifact`` to JSON-safe dict.
+
+    Used by the format-aware export route which dispatches through
+    ``export_document`` and returns a fully-rendered artifact (markdown or
+    JSON content already in ``.content``). The CLI delegation client
+    reconstructs the dataclass via
+    :func:`siftd.api.deserialize.deserialize_export_artifact`.
+    """
+    return {
+        "content": artifact.content,
+        "media_type": artifact.media_type,
+        "filename": artifact.filename,
+        "count": artifact.count,
     }
 
 
