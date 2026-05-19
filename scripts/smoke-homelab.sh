@@ -57,6 +57,11 @@ test -f "$REPO_ROOT/pyproject.toml" || { log_error "not in siftd repo root"; exi
 test -d "$STACK_DIR" || { log_error "smoke/homelab/ missing"; exit 1; }
 export DOCKER_BUILDKIT=1
 
+# Ensure host venv has the [serve] extra (httpx) for `siftd db push`. Worker
+# worktrees default to `uv sync --extra dev` only; this catches that case
+# without surprising the user. Idempotent / fast when already installed.
+(cd "$REPO_ROOT" && uv sync --extra serve --extra dev --quiet 2>&1 | tail -3)
+
 # ---------------------------------------------------------------------------
 # Artifact dir + stack startup
 # ---------------------------------------------------------------------------
@@ -173,11 +178,15 @@ log_info "P1: push large DB (expecting 413 pre-#7)..."
 cp "$ARTIFACT_DIR/fixtures/large.db" "$CLIENT_HOME/data/siftd/siftd.db"
 LARGE_SIZE_MB=$(stat -f%z "$ARTIFACT_DIR/fixtures/large.db" 2>/dev/null || stat -c%s "$ARTIFACT_DIR/fixtures/large.db")
 LARGE_SIZE_MB=$((LARGE_SIZE_MB / 1024 / 1024))
+# All push probes use --all because cp'ing a fixture DB over siftd.db does NOT
+# reset the per-remote last_push receipt (stored in client config, separate from
+# the DB). Without --all, P3 sees fixture.db's 2024-dated convs as predating
+# P2's last_push wall-clock timestamp and pushes nothing.
 if run_probe_capture "$ARTIFACT_DIR/probe-01-push-large.md" \
     cp "$ARTIFACT_DIR/fixtures/large.db" "$CLIENT_HOME/data/siftd/siftd.db" \
     && run_probe_capture "$ARTIFACT_DIR/probe-01-push-large.md" \
     env SIFTD_DB="$CLIENT_HOME/data/siftd/siftd.db" \
-    uv run --frozen siftd db push homelab; then
+    uv run --frozen siftd db push homelab --all; then
     record_probe 1 "push large (${LARGE_SIZE_MB}MB)" PASS "succeeded — #7 may be fixed"
 else
     record_probe 1 "push large (${LARGE_SIZE_MB}MB)" FAIL "rejected — expected pre-#7 (Litestar 10MB cap)"
@@ -190,7 +199,7 @@ log_info "P2: push small DB (baseline)..."
 cp "$ARTIFACT_DIR/fixtures/small.db" "$CLIENT_HOME/data/siftd/siftd.db"
 if run_probe_capture "$ARTIFACT_DIR/probe-02-push-small.md" \
     env SIFTD_DB="$CLIENT_HOME/data/siftd/siftd.db" \
-    uv run --frozen siftd db push homelab; then
+    uv run --frozen siftd db push homelab --all; then
     record_probe 2 "push small" PASS "succeeded"
 else
     record_probe 2 "push small" FAIL "unexpected — baseline push should work"
@@ -203,8 +212,13 @@ log_info "P3: push fixture DB (anchor phrases)..."
 cp "$ARTIFACT_DIR/fixtures/fixture.db" "$CLIENT_HOME/data/siftd/siftd.db"
 if run_probe_capture "$ARTIFACT_DIR/probe-03-push-fixture.md" \
     env SIFTD_DB="$CLIENT_HOME/data/siftd/siftd.db" \
-    uv run --frozen siftd db push homelab; then
-    record_probe 3 "push fixture" PASS "succeeded"
+    uv run --frozen siftd db push homelab --all; then
+    # Verify the push actually moved data — exit 0 with "Nothing new" is a false PASS
+    if grep -qi "nothing new" "$ARTIFACT_DIR/probe-03-push-fixture.md"; then
+        record_probe 3 "push fixture" FAIL "client reported 'Nothing new' — fixture timestamps may not advance last_push"
+    else
+        record_probe 3 "push fixture" PASS "succeeded"
+    fi
 else
     record_probe 3 "push fixture" FAIL "unexpected — fixture push failed"
 fi
@@ -231,16 +245,26 @@ else
     record_probe 4 "query (list)" FAIL "no conversations returned"
 fi
 
-# Capture a real ULID from P4 output for later probes
+# Capture a real ULID from P4 output for later probes. siftd query expects a
+# ULID prefix; the c001-style external_ids used by the fixture are NOT what
+# `query <id>` resolves against. P5/P6 must consume this resolved prefix.
 FIRST_ID=$(grep -oE "^\| [0-9A-Z]{12}" "$ARTIFACT_DIR/probe-04-query-list.md" 2>/dev/null | head -1 | awk '{print $2}')
 log_info "  resolved first conversation ULID prefix: ${FIRST_ID:-<none>}"
 
+if [ -z "$FIRST_ID" ]; then
+    log_warn "FIRST_ID empty — P5/P6/P7 will be skipped (P4 must succeed first)"
+fi
+
 # ---------------------------------------------------------------------------
 # P5 — query --around (anchor phrase) — FAIL pre-#9 (FTS not rebuilt on push)
+# Anchor phrase lives in c001 turn 3 per _smoke_homelab_fixture.py. The
+# fixture builder writes 20 conversations; we use the first ULID resolved
+# from P4 and search for the anchor phrase, which should land in ONE of the
+# server's conversations if FTS is built correctly.
 # ---------------------------------------------------------------------------
 log_info "P5: query --around 'smoke-test-anchor-alpha' (expecting empty pre-#9)..."
-if run_probe_capture "$ARTIFACT_DIR/probe-05-around.md" \
-    uv run --frozen siftd query c001 --around "smoke-test-anchor-alpha" && \
+if [ -n "$FIRST_ID" ] && run_probe_capture "$ARTIFACT_DIR/probe-05-around.md" \
+    uv run --frozen siftd query "$FIRST_ID" --around "smoke-test-anchor-alpha" && \
    grep -qi "smoke-test-anchor-alpha\|turn 3\|turn-3" "$ARTIFACT_DIR/probe-05-around.md"; then
     record_probe 5 "query --around" PASS "anchor phrase found — #9 may be fixed"
 else
@@ -253,7 +277,7 @@ fi
 log_info "P6: query --around 'no-such-phrase' (expecting server 4xx pre-#10)..."
 PROBE_LOG="$ARTIFACT_DIR/probe-06-around-notfound.md"
 set +e
-uv run --frozen siftd query c001 --around "phrase-that-does-not-exist-anywhere" > "$PROBE_LOG" 2>&1
+uv run --frozen siftd query "${FIRST_ID:-MISSING}" --around "phrase-that-does-not-exist-anywhere" > "$PROBE_LOG" 2>&1
 RC=$?
 set -e
 # Expected: server returns 4xx and CLI surfaces it (post-#10).
