@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CI green recovery (test hygiene)** — three CI lanes had been red for 9 days: `ingest-stale` producer now fires alongside `ingest-errors` on stale+error DBs (tests updated to expect both); py312 snapshots regenerated after argparse drift from the read-surface catchup; `TestSortAxisValidation` updated to catch `SystemExit(2)` after Slice 2.5 changed the axis-error exit mechanism from `return 1` to `sys.exit(2)`.
 - **`serve` auth (OIDC): fix PyJWKSet → PEM key extraction** — `_validate_oidc` passed the cached `PyJWKSet` directly to `jwt.decode`, which only accepts a single key object. PyJWT raised `TypeError` (not a subclass of `jwt.PyJWTError`), surfacing as HTTP 500 on every OIDC-protected request. The fix extracts the matching `PyJWK` by `kid` before calling `jwt.decode`. OIDC auth has never worked end-to-end; caught by the ST-1 docker-compose smoke harness.
 - **Anchor errors on delegated `query <id>` return 400, not 500** — `AnchorOutOfRange`, `AnchorNotFound`, and `AnchorPhraseInvalid` inherit `Exception` (not `ValueError`), so `_dispatch`'s catch ladder fell through to the generic 500 handler. Now caught explicitly.
 - **Fidelity, None, and local-only params no longer leak onto the wire** — `wire_query(op)` expands `Fidelity` into `include_thinking` + `include_tool_content`, drops `None` values (urlencode would have emitted literal `"None"` strings), and strips `db_path`/`embed_db`/`mode`/`around` (local-only / CLI-annotation keys the route ignores).
