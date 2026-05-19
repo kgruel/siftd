@@ -1667,7 +1667,7 @@ class TestIngestStatusProducer:
         assert findings == []
 
     def test_ingest_errors_produce_warning(self, monkeypatch, tmp_path):
-        """Ingest errors → warning finding with count."""
+        """Ingest errors + stale db → both warning and stale info findings."""
         from siftd.api.caveats import _ingest_status_caveats
         from siftd.api.conversations import list_conversations
 
@@ -1695,16 +1695,19 @@ class TestIngestStatusProducer:
         ctx = ProducerContext(db_path=db_file)
         op = _make_op(fn=list_conversations)
         findings = _ingest_status_caveats(op, [], ctx)
-        assert len(findings) == 1
+        # Both ingest-errors and ingest-stale fire: distinct concerns, both useful.
+        assert len(findings) == 2
         assert findings[0].check == "ingest-errors"
         assert findings[0].severity == "warning"
         assert findings[0].message == "2 files failed ingestion — run 'siftd doctor' for details"
         assert findings[0].fix_available is True
         assert findings[0].fix_command == "siftd doctor"
         assert findings[0].context == {"count": 2}
+        assert findings[1].check == "ingest-stale"
+        assert findings[1].severity == "info"
 
     def test_ingest_errors_singular_message(self, monkeypatch, tmp_path):
-        """Ingest errors with count=1 → singular message."""
+        """Ingest errors with count=1 → singular message; stale also fires (stale mock date)."""
         from siftd.api.caveats import _ingest_status_caveats
         from siftd.api.conversations import list_conversations
 
@@ -1729,8 +1732,10 @@ class TestIngestStatusProducer:
         ctx = ProducerContext(db_path=db_file)
         op = _make_op(fn=list_conversations)
         findings = _ingest_status_caveats(op, [], ctx)
-        assert len(findings) == 1
+        assert len(findings) == 2
+        assert findings[0].check == "ingest-errors"
         assert "1 file failed" in findings[0].message
+        assert findings[1].check == "ingest-stale"
 
     def test_never_ingested_produces_info(self, monkeypatch, tmp_path):
         """No ingest recorded → info finding check='ingest-never-run'."""
