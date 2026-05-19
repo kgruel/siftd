@@ -19,6 +19,10 @@ siftd.smoke.local, localhost {
         # in production. See README.md "Known TODOs".
     }
 
+    # LOCKSTEP: this value must match serve.request_max_body_size in
+    # siftd-serve.config.toml. Both use SI/decimal MB (1 MB = 1 000 000 bytes).
+    # Caddy cannot read siftd's config at runtime, so the two must be changed
+    # together. Raising one without the other creates a silent gap.
     request_body {
         max_size 500MB
     }

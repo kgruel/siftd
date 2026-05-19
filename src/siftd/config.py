@@ -9,6 +9,7 @@ Example config:
 
 import contextlib
 import os
+import re
 import sys
 import tempfile
 from collections.abc import Callable, Iterable
@@ -90,6 +91,48 @@ def _is_str_list(value: object) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
+_SIZE_RE = re.compile(r"^(\d+)\s*(B|KB|MB|GB|TB)?$", re.IGNORECASE)
+# SI/decimal prefixes — deliberately matches Caddy's go-humanize convention
+# where 'MB' = 1_000_000 bytes (not 1024²). IEC names (MiB/GiB) are not
+# supported; they are not accepted by Caddy's request_body directive.
+_SIZE_SUFFIXES: dict[str, int] = {
+    "": 1,
+    "B": 1,
+    "KB": 1_000,
+    "MB": 1_000_000,
+    "GB": 1_000_000_000,
+    "TB": 1_000_000_000_000,
+}
+
+
+def _is_size_like(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value >= 0
+    if isinstance(value, str):
+        return bool(_SIZE_RE.match(value.strip()))
+    return False
+
+
+def parse_size_bytes(value: str | int) -> int:
+    """Parse a byte-count string with optional SI suffix into bytes.
+
+    Accepts plain non-negative integers or strings like '500MB', '1GB', '10240'.
+    Uses SI/decimal prefixes (1 MB = 1_000_000 bytes) to match Caddy's
+    go-humanize convention for request_body max_size.
+    """
+    if isinstance(value, int):
+        if value < 0:
+            raise ValueError(f"Size must be non-negative, got {value!r}")
+        return value
+    m = _SIZE_RE.match(value.strip())
+    if not m:
+        raise ValueError(f"Cannot parse size: {value!r}")
+    n, suffix = int(m.group(1)), (m.group(2) or "").upper()
+    return n * _SIZE_SUFFIXES[suffix]
+
+
 _CONFIG_SCHEMA: list[_SchemaEntry] = [
     # Database
     _SchemaEntry("db.path", "string", _is_str,
@@ -117,6 +160,8 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
                  "Listen port", "8484"),
     _SchemaEntry("serve.fts_rebuild", "string", _is_str,
                  "When to rebuild FTS index: on_push, scheduled, off", "on_push"),
+    _SchemaEntry("serve.request_max_body_size", "int or size string", _is_size_like,
+                 "Maximum request body size (e.g. '500MB', '1GB', bytes as int). Uses SI prefixes (1 MB = 1 000 000 bytes) matching Caddy. Must be changed in lockstep with Caddyfile request_body max_size.", "500MB"),
     # Serve auth — static_token, OIDC, or introspection
     _SchemaEntry("serve.auth.static_token", "string", _is_str,
                  "Static bearer token for auth (supports env:VAR syntax)", ""),

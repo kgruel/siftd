@@ -690,3 +690,61 @@ class TestAuthenticatedDelegationLoop:
         from siftd.api.deserialize import deserialize_conversation_list
         summaries = deserialize_conversation_list(resp.json())
         assert summaries is None
+
+
+# ---------------------------------------------------------------------------
+# request_max_body_size enforcement
+# ---------------------------------------------------------------------------
+
+
+class TestRequestBodySizeLimit:
+    """Verify that request_max_body_size is wired through to Litestar.
+
+    The push route reads via request.stream(); Litestar enforces the limit
+    before the handler runs, so a too-large body gets 413 without touching
+    application code.
+    """
+
+    def test_oversized_body_returns_413(self, tmp_path):
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None, request_max_body_size=100)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.post("/api/v1/push", content=b"x" * 200)
+        assert resp.status_code == 413
+
+    def test_within_limit_body_is_accepted(self, tmp_path):
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        # 1 MiB limit; 200-byte payload is well within it.
+        # The body is junk (not a valid SQLite DB), so the route will reject
+        # it after accepting the body — that's fine: the discriminator here
+        # is only "not 413".
+        app = create_app(db_path=db, auth_config=None, request_max_body_size=1 << 20)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.post("/api/v1/push", content=b"x" * 200)
+        assert resp.status_code != 413
+
+    def test_large_payload_within_limit_is_accepted(self, tmp_path):
+        """A 12 MB payload passes when the limit is above it."""
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None, request_max_body_size=50_000_000)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.post("/api/v1/push", content=b"\x00" * 12_000_000)
+        assert resp.status_code != 413
+
+    def test_payload_at_exact_limit_is_accepted(self, tmp_path):
+        """A payload of exactly limit bytes must not return 413."""
+        limit = 1000
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None, request_max_body_size=limit)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.post("/api/v1/push", content=b"x" * limit)
+        assert resp.status_code != 413
+
+    def test_payload_one_byte_over_limit_returns_413(self, tmp_path):
+        """A payload of limit+1 bytes must return 413."""
+        limit = 1000
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None, request_max_body_size=limit)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.post("/api/v1/push", content=b"x" * (limit + 1))
+        assert resp.status_code == 413

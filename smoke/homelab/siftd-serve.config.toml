@@ -3,6 +3,7 @@ host = "0.0.0.0"
 port = 8484
 db = "/var/lib/siftd/siftd.db"
 fts_rebuild = "on_push"
+request_max_body_size = "500MB"
 
 [serve.auth]
 # mock-oidc issuer — must match the `iss` claim in every accepted JWT.

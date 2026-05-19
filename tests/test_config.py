@@ -15,6 +15,7 @@ from siftd.config import (
     _get_parent_table,
     _is_bool_like,
     _is_int_like,
+    _is_size_like,
     _is_str,
     _is_str_list,
     _iter_config_items,
@@ -30,6 +31,7 @@ from siftd.config import (
     get_sync_remotes,
     get_sync_timeouts,
     load_config,
+    parse_size_bytes,
     remove_config_list,
     remove_sync_remote,
     set_config,
@@ -52,6 +54,43 @@ def config_dir(tmp_path, monkeypatch):
 def _w(config_dir, text):
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "config.toml").write_text(text)
+
+
+class TestParseSizeBytes:
+    # SI/decimal prefixes (1 MB = 1_000_000 bytes) matching Caddy's convention.
+    @pytest.mark.parametrize("value,expected", [
+        ("500MB", 500_000_000),
+        ("1GB", 1_000_000_000),
+        ("2TB", 2_000_000_000_000),
+        ("1024KB", 1_024_000),
+        ("100", 100),
+        ("0", 0),
+        (1024, 1024),
+        ("500 MB", 500_000_000),   # whitespace between number and suffix
+        ("1b", 1),                 # lowercase suffix
+        ("10mb", 10_000_000),
+    ])
+    def test_valid(self, value, expected):
+        assert parse_size_bytes(value) == expected
+
+    @pytest.mark.parametrize("value", ["", "abc", "500XB", "1.5GB", "-100MB", -1])
+    def test_invalid_raises(self, value):
+        with pytest.raises(ValueError):
+            parse_size_bytes(value)
+
+    @pytest.mark.parametrize("val,expected", [
+        (500, True), ("500MB", True), ("1GB", True), ("100", True), (0, True),
+        (-1, False), (-100, False),
+        (True, False), (False, False), ("1.5GB", False), ("abc", False),
+        (None, False), ([], False),
+    ])
+    def test_is_size_like(self, val, expected):
+        assert _is_size_like(val) is expected
+
+    def test_schema_entry_exists(self):
+        entry = _match_schema("serve.request_max_body_size")
+        assert entry is not None
+        assert entry.default == "500MB"
 
 
 class TestSchema:

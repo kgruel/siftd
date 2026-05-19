@@ -45,6 +45,7 @@ def create_app(
     db_path: Path,
     auth_config: dict | None = None,
     fts_rebuild: str = "on_push",
+    request_max_body_size: int = 500_000_000,  # 500 MB in SI bytes (matches Caddy default)
 ) -> Litestar:
     """Create the Litestar application.
 
@@ -52,6 +53,7 @@ def create_app(
         db_path: Path to the team SQLite database.
         auth_config: Auth config dict (None = no auth).
         fts_rebuild: FTS rebuild strategy ("on_push", "scheduled", "off").
+        request_max_body_size: Max request body in bytes; applies to streaming push.
     """
 
     async def provide_db_path() -> Path:
@@ -85,4 +87,5 @@ def create_app(
             "fts_rebuild": Provide(provide_fts_rebuild),
         },
         middleware=middleware,
+        request_max_body_size=request_max_body_size,
     )

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`/api/v1/export?format=md|json`** — format-aware path that returns a rendered `ExportArtifact` (`content` + `media_type` + `filename` + `count`). Legacy path (no `format`) still returns `{"conversations": [...]}` unchanged.
 - **`/api/v1/conversations/{id}` anchor + window query params** — `anchor`, `anchor_value`, `window_start`, `window_end`. Mirrors the CLI's axes so delegated `siftd query <id> --json --at-turn N` actually anchors.
 - **`docs/guides/delegation-contract.md`** — names the operation-has-local-and-wire-forms pattern (`local_kwargs`, `wire_query`, `from_wire`) and states the 8-rule contract every new delegated path must follow. The pattern is pinned by `tests/test_op_route_parity.py` (introspects Litestar routes vs CLI op params).
+- **`serve.request_max_body_size` config knob** — sets the maximum accepted request body (default `500MB`). Accepts bytes-as-int or a string with SI suffix (`KB`, `MB`, `GB`, `TB` — 1 MB = 1 000 000 bytes, matching Caddy's go-humanize convention). Fixes rejection of realistic `siftd db push` payloads by Litestar's default 10 MB cap. The reference Caddyfile `request_body { max_size 500MB }` directive defaults match; see the Caddyfile inline comment for the lockstep requirement.
 
 ### Fixed
 
