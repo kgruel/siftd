@@ -148,15 +148,15 @@ def _build_large(path: Path, *, n_convs: int = 4, blob_mb: int = 3) -> None:
         cid = insert_conversation(
             conn, external_id=f"c-large-{ci:02d}",
             harness_id=h, workspace_id=w,
-            started_at=f"2024-02-{ci + 1:02d}T10:00:00Z",
+            started_at=f"2023-12-{ci + 1:02d}T10:00:00Z",
         )
-        pid = insert_prompt(conn, cid, f"p-large-{ci}", f"2024-02-{ci + 1:02d}T10:00:00Z")
+        pid = insert_prompt(conn, cid, f"p-large-{ci}", f"2023-12-{ci + 1:02d}T10:00:00Z")
         insert_prompt_content(
             conn, pid, 0, "text",
             json.dumps({"text": f"large-content-blob-{ci} {blob_text}"}),
         )
         rid = insert_response(
-            conn, cid, pid, m, p, f"r-large-{ci}", f"2024-02-{ci + 1:02d}T10:00:05Z",
+            conn, cid, pid, m, p, f"r-large-{ci}", f"2023-12-{ci + 1:02d}T10:00:05Z",
             input_tokens=1000, output_tokens=500,
         )
         insert_response_content(
