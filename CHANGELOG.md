@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`serve` auth (OIDC): fix PyJWKSet → PEM key extraction** — `_validate_oidc` passed the cached `PyJWKSet` directly to `jwt.decode`, which only accepts a single key object. PyJWT raised `TypeError` (not a subclass of `jwt.PyJWTError`), surfacing as HTTP 500 on every OIDC-protected request. The fix extracts the matching `PyJWK` by `kid` before calling `jwt.decode`. OIDC auth has never worked end-to-end; caught by the ST-1 docker-compose smoke harness.
 - **Anchor errors on delegated `query <id>` return 400, not 500** — `AnchorOutOfRange`, `AnchorNotFound`, and `AnchorPhraseInvalid` inherit `Exception` (not `ValueError`), so `_dispatch`'s catch ladder fell through to the generic 500 handler. Now caught explicitly.
 - **Fidelity, None, and local-only params no longer leak onto the wire** — `wire_query(op)` expands `Fidelity` into `include_thinking` + `include_tool_content`, drops `None` values (urlencode would have emitted literal `"None"` strings), and strips `db_path`/`embed_db`/`mode`/`around` (local-only / CLI-annotation keys the route ignores).
 - **Delegated reads now reach the homelab** — when `serve.url` is explicitly configured, the local-vs-server DB-path SHA256 comparison is skipped. The check was structurally incompatible with the documented homelab topology (laptop DB at `~/.local/share/...`, server DB at `/var/lib/siftd/...`); pre-fix, every delegated call silently fell back to local. Loopback delegation still enforces the check.

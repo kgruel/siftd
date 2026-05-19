@@ -18,6 +18,14 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+class _MockJWKS:
+    """Minimal PyJWKSet-like for tests that don't exercise real key extraction."""
+    class _Key:
+        key_id = "test-kid"
+        key = "mock-key"
+    keys = [_Key()]
+
+
 def test_authenticate_request_allows_no_auth_opt_route():
     MW = create_auth_middleware({})
     mw = object.__new__(MW)
@@ -108,7 +116,11 @@ def test_validate_oidc_success_and_error(monkeypatch):
             pass
 
         @staticmethod
-        def decode(token, jwks, **kwargs):
+        def get_unverified_header(token):
+            return {"kid": "test-kid"}
+
+        @staticmethod
+        def decode(token, key, **kwargs):
             captured.update(kwargs)
             if token == "bad":
                 raise _JWT.PyJWTError("bad token")
@@ -117,7 +129,7 @@ def test_validate_oidc_success_and_error(monkeypatch):
     monkeypatch.setitem(sys.modules, "jwt", _JWT)
     MW = create_auth_middleware({"issuer": "https://idp", "identity_claim": "email", "audience": "siftd"})
     mw = object.__new__(MW)
-    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result={"k": 1}))
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result=_MockJWKS()))
 
     assert _run(mw._validate_oidc("ok")).sub == "x@y"
     # Verify the production code passes issuer + requires iss/exp/aud to jwt.decode
@@ -142,7 +154,11 @@ def test_validate_oidc_rejects_missing_identity_claim(monkeypatch):
             pass
 
         @staticmethod
-        def decode(token, jwks, **kwargs):
+        def get_unverified_header(token):
+            return {"kid": "test-kid"}
+
+        @staticmethod
+        def decode(token, key, **kwargs):
             # Valid signature, valid iss/aud — but missing the configured `email` claim.
             return {"sub": "fallback-subject"}
 
@@ -151,7 +167,7 @@ def test_validate_oidc_rejects_missing_identity_claim(monkeypatch):
         "issuer": "https://idp", "identity_claim": "email", "audience": "siftd",
     })
     mw = object.__new__(MW)
-    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result={"k": 1}))
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result=_MockJWKS()))
 
     with pytest.raises(NotAuthorizedException, match="identity claim"):
         _run(mw._validate_oidc("token-missing-email-claim"))
@@ -213,13 +229,17 @@ def test_validate_oidc_rejects_empty_identity_claim(monkeypatch):
             pass
 
         @staticmethod
-        def decode(token, jwks, **kwargs):
+        def get_unverified_header(token):
+            return {"kid": "test-kid"}
+
+        @staticmethod
+        def decode(token, key, **kwargs):
             return {"sub": ""}
 
     monkeypatch.setitem(sys.modules, "jwt", _JWT)
     MW = create_auth_middleware({"issuer": "https://idp", "audience": "siftd"})
     mw = object.__new__(MW)
-    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result={"k": 1}))
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result=_MockJWKS()))
 
     with pytest.raises(NotAuthorizedException, match="identity claim"):
         _run(mw._validate_oidc("token-with-empty-sub"))
@@ -283,7 +303,11 @@ def test_validate_oidc_rejects_issuer_mismatch(monkeypatch):
             pass
 
         @staticmethod
-        def decode(token, jwks, **kwargs):
+        def get_unverified_header(token):
+            return {"kid": "test-kid"}
+
+        @staticmethod
+        def decode(token, key, **kwargs):
             # Production passes issuer=...; if a mismatched token reached PyJWT,
             # PyJWT would raise InvalidIssuerError (subclass of PyJWTError).
             if kwargs.get("issuer") != "https://idp":
@@ -293,10 +317,35 @@ def test_validate_oidc_rejects_issuer_mismatch(monkeypatch):
     monkeypatch.setitem(sys.modules, "jwt", _JWT)
     MW = create_auth_middleware({"issuer": "https://idp", "audience": "siftd"})
     mw = object.__new__(MW)
-    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result={"k": 1}))
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result=_MockJWKS()))
 
     with pytest.raises(NotAuthorizedException, match="Invalid token"):
         _run(mw._validate_oidc("token-from-rogue-issuer"))
+
+
+def test_validate_oidc_rejects_kidless_token_against_keyed_jwks(monkeypatch):
+    """A token with no kid header must be rejected when the JWKS keys all have kids.
+
+    PyJWT's own PyJWKClient.match_kid() only accepts exact kid matches; accepting
+    kidless tokens against a keyed JWKS would silently widen the auth surface.
+    """
+
+    class _JWT:
+        class PyJWTError(Exception):
+            pass
+
+        @staticmethod
+        def get_unverified_header(token):
+            return {}  # no kid in header
+
+    monkeypatch.setitem(sys.modules, "jwt", _JWT)
+    MW = create_auth_middleware({"issuer": "https://idp", "audience": "siftd"})
+    mw = object.__new__(MW)
+    # JWKS has a key with kid="test-kid"; token has no kid — must not match
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result=_MockJWKS()))
+
+    with pytest.raises(NotAuthorizedException, match="No matching JWKS key"):
+        _run(mw._validate_oidc("kidless-token"))
 
 
 def test_validate_introspection_network_paths(monkeypatch):
@@ -499,13 +548,17 @@ def test_oidc_error_does_not_leak_jwt_details(monkeypatch):
             pass
 
         @staticmethod
-        def decode(token, jwks, **kwargs):
+        def get_unverified_header(token):
+            return {"kid": "test-kid"}
+
+        @staticmethod
+        def decode(token, key, **kwargs):
             raise _JWT.PyJWTError("ExpiredSignatureError: token expired at 2026-01-01, claim aud=secret-app")
 
     monkeypatch.setitem(sys.modules, "jwt", _JWT)
     MW = create_auth_middleware({"issuer": "https://idp", "audience": "siftd"})
     mw = object.__new__(MW)
-    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result={"k": 1}))
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result=_MockJWKS()))
 
     with pytest.raises(NotAuthorizedException, match="Invalid token") as exc_info:
         _run(mw._validate_oidc("expired"))
@@ -605,3 +658,64 @@ def test_introspection_cache_uses_60s_when_no_exp(monkeypatch):
 
     _, deadline = MW._introspection_cache["tok"]
     assert deadline >= before + 59  # ~60s from call time
+
+
+# --- OIDC key extraction integration (real PyJWT, no jwt.decode monkeypatch) ---
+
+
+def test_validate_oidc_real_pyjwt_key_extraction(monkeypatch):
+    """OIDC validation extracts the signing key from PyJWKSet by kid.
+
+    Uses real PyJWT with no monkeypatch on jwt.decode or jwt.get_unverified_header.
+    Before the fix, _validate_oidc passed the PyJWKSet directly to jwt.decode,
+    which raises TypeError (not a subclass of jwt.PyJWTError), producing a 500.
+    """
+    import datetime
+    import json
+
+    import jwt
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jwt.algorithms import RSAAlgorithm
+
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+        backend=default_backend(),
+    )
+    public_key = private_key.public_key()
+    kid = "test-key-1"
+
+    jwk_dict = json.loads(RSAAlgorithm.to_jwk(public_key))
+    jwk_dict["kid"] = kid
+    jwks = jwt.PyJWKSet.from_dict({"keys": [jwk_dict]})
+
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    token = jwt.encode(
+        {
+            "sub": "alice",
+            "iss": "https://idp",
+            "aud": "siftd",
+            "exp": now + datetime.timedelta(hours=1),
+            "iat": now,
+            "scope": "siftd:read",
+        },
+        private_pem,
+        algorithm="RS256",
+        headers={"kid": kid},
+    )
+
+    MW = create_auth_middleware({"issuer": "https://idp", "audience": "siftd"})
+    mw = object.__new__(MW)
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result=jwks))
+
+    identity = _run(mw._validate_oidc(token))
+    assert identity.sub == "alice"
+    assert "siftd:read" in identity.scopes

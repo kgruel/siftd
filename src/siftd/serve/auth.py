@@ -203,13 +203,25 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
             issuer = self._config["issuer"].rstrip("/")
 
             try:
-                payload = jwt.decode(
-                    token, jwks,
-                    algorithms=["RS256", "ES256"],
-                    audience=audience,
-                    issuer=issuer,
-                    options={"require": ["exp", "iss", "aud"]},
+                header = jwt.get_unverified_header(token)
+                kid = header.get("kid")
+                signing_key = next(
+                    (k for k in jwks.keys if k.key_id == kid),
+                    None,
                 )
+                if signing_key is None:
+                    raise NotAuthorizedException("No matching JWKS key for token")
+                try:
+                    payload = jwt.decode(
+                        token, signing_key.key,
+                        algorithms=["RS256", "ES256"],
+                        audience=audience,
+                        issuer=issuer,
+                        options={"require": ["exp", "iss", "aud"]},
+                    )
+                except TypeError as e:
+                    logging.getLogger(__name__).debug("OIDC key/decode type error: %s", e)
+                    raise NotAuthorizedException("Invalid token") from e
                 # Reject if the configured identity claim is missing — collapsing
                 # multiple tokens under a synthetic "unknown" owner would conflate
                 # distinct subjects in conversation_owners.
