@@ -63,8 +63,8 @@ export DOCKER_BUILDKIT=1
 rm -rf "$ARTIFACT_DIR"
 mkdir -p "$ARTIFACT_DIR" "$CLIENT_HOME/config/siftd" "$CLIENT_HOME/data/siftd"
 
-log_info "Bringing up docker-compose stack..."
-(cd "$STACK_DIR" && docker compose up -d --wait 2>&1 | tail -5)
+log_info "Bringing up docker-compose stack (build to pick up latest source)..."
+(cd "$STACK_DIR" && docker compose up -d --build --wait 2>&1 | tail -8)
 COMPOSE_UP=1
 log_success "Stack healthy"
 
@@ -225,11 +225,15 @@ create_database(p).close()
 log_info "P4: query (list recent — baseline read)..."
 if run_probe_capture "$ARTIFACT_DIR/probe-04-query-list.md" \
     uv run --frozen siftd query -n 5 && \
-   grep -q "c0" "$ARTIFACT_DIR/probe-04-query-list.md"; then
+   grep -qE "^\| [0-9A-Z]{12}" "$ARTIFACT_DIR/probe-04-query-list.md"; then
     record_probe 4 "query (list)" PASS "returns conversations"
 else
     record_probe 4 "query (list)" FAIL "no conversations returned"
 fi
+
+# Capture a real ULID from P4 output for later probes
+FIRST_ID=$(grep -oE "^\| [0-9A-Z]{12}" "$ARTIFACT_DIR/probe-04-query-list.md" 2>/dev/null | head -1 | awk '{print $2}')
+log_info "  resolved first conversation ULID prefix: ${FIRST_ID:-<none>}"
 
 # ---------------------------------------------------------------------------
 # P5 — query --around (anchor phrase) — FAIL pre-#9 (FTS not rebuilt on push)
@@ -276,11 +280,11 @@ fi
 # P8 — tag write delegation
 # ---------------------------------------------------------------------------
 log_info "P8: tag write delegation..."
-if run_probe_capture "$ARTIFACT_DIR/probe-08-tag.md" \
-    uv run --frozen siftd tag c001 smoke-tag; then
+if [ -n "${FIRST_ID:-}" ] && run_probe_capture "$ARTIFACT_DIR/probe-08-tag.md" \
+    uv run --frozen siftd tag "$FIRST_ID" smoke-tag; then
     record_probe 8 "tag write" PASS "tag write succeeded"
 else
-    record_probe 8 "tag write" FAIL "tag write failed"
+    record_probe 8 "tag write" FAIL "tag write failed (id=${FIRST_ID:-unset})"
 fi
 
 # ---------------------------------------------------------------------------
