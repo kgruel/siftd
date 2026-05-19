@@ -745,7 +745,7 @@ class TestSortAxisValidation:
     """Tests for --sort axis: parser-time rejection of invalid combinations."""
 
     def test_sort_time_with_mode_conversations_rejected(self, indexed_db, capsys):
-        """--sort=time with --mode=conversations is rejected before execution."""
+        """--sort=time with --mode=conversations exits 2 before execution."""
         args = make_args(
             query=["error"],
             db=str(indexed_db["db_path"]),
@@ -754,14 +754,15 @@ class TestSortAxisValidation:
             mode="conversations",
         )
 
-        result = cmd_search(args)
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_search(args)
         captured = capsys.readouterr()
 
-        assert result == 1
+        assert exc_info.value.code == 2
         assert "--mode=conversations is incompatible with --sort=time" in captured.err
 
     def test_sort_time_with_mode_thread_rejected(self, indexed_db, capsys):
-        """--sort=time with --mode=thread is rejected before execution."""
+        """--sort=time with --mode=thread exits 2 before execution."""
         args = make_args(
             query=["error"],
             db=str(indexed_db["db_path"]),
@@ -770,10 +771,11 @@ class TestSortAxisValidation:
             mode="thread",
         )
 
-        result = cmd_search(args)
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_search(args)
         captured = capsys.readouterr()
 
-        assert result == 1
+        assert exc_info.value.code == 2
         assert "--mode=thread is incompatible with --sort=time" in captured.err
 
     def test_sort_time_with_json_chunks_valid(self, indexed_db, capsys):
