@@ -37,7 +37,7 @@ def test_index_lists_core_endpoints():
 def test_dispatch_wrappers_forward_params(monkeypatch, tmp_path):
     seen = []
 
-    def fake_dispatch(path, method, fn, params, render_method, db):
+    def fake_dispatch(path, method, fn, params, render_method, db, render_context=None, *, fidelity=None):
         seen.append((path, method, render_method, params, db))
         return {"ok": True}
 
@@ -47,8 +47,6 @@ def test_dispatch_wrappers_forward_params(monkeypatch, tmp_path):
 
     _run(routes.stats_route.fn(req, db))
     _run(routes.workspaces_route.fn(req, db, n=7))
-    _run(routes.tools_route.fn(req, db, prefix="x:"))
-    _run(routes.tools_by_workspace_route.fn(req, db, prefix="x:", n=3))
     _run(routes.tags_route.fn(req, db, since="a", before="b"))
     _run(routes.export_route.fn(req, db, n=1))
     _run(routes.conversation_detail.fn(req, db, id="abc", include_thinking=True, include_tool_content=True, tool_filter="shell"))

@@ -32,18 +32,18 @@ class _Fmt:
 def test_ui_query_detail_none_and_success(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: None)
-    not_found = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", tools=False, thinking=False, full=False, brief=False))
+    not_found = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", thinking=False, full=False, brief=False))
     assert "Not found" in not_found.content
 
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: {"id": "abc"})
-    ok = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", tools=False, thinking=False, full=True, brief=False))
+    ok = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", thinking=False, full=True, brief=False))
     assert "<detail/>" in ok.content
 
 
 def test_ui_query_list_path(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
     monkeypatch.setattr("siftd.api.dispatch.dispatch", lambda _op, fmt: "<list/>")
-    out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace="", since=None, before=None, model="", tag=[""], search="", owner=None, n=5, id=None, tools=False, thinking=False, full=False, brief=False))
+    out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace="", since=None, before=None, model="", tag=[""], search="", owner=None, n=5, id=None, thinking=False, full=False, brief=False))
     assert "<list/>" in out.content
 
 
@@ -145,7 +145,7 @@ def test_ui_meta_populates_non_empty_options(monkeypatch, tmp_path):
 def test_ui_query_brief_fidelity_branch(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: {"id": "abc"})
-    out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", tools=False, thinking=False, full=False, brief=True))
+    out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", thinking=False, full=False, brief=True))
     assert "<detail/>" in out.content
 
 
@@ -204,7 +204,7 @@ def test_ui_query_and_export_ambiguous_prefix(monkeypatch, tmp_path):
         SimpleNamespace(), db,
         workspace=None, since=None, before=None, model=None, tag=None,
         search=None, owner=None, n=50, id="01AMBPFX",
-        tools=False, thinking=False, full=False, brief=False,
+        thinking=False, full=False, brief=False,
     ))
     assert "Ambiguous prefix" in query_resp.content
     assert "01AMBPFX" in query_resp.content
