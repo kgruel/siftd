@@ -1,0 +1,19 @@
+[serve]
+host = "0.0.0.0"
+port = 8484
+db = "/var/lib/siftd/siftd.db"
+fts_rebuild = "on_push"
+
+[serve.auth]
+# mock-oidc issuer — must match the `iss` claim in every accepted JWT.
+# mock-oauth2-server constructs `iss` from the Host header of discovery
+# requests; siftd-serve reaches it as http://mock-oidc:8080/default
+# (Docker internal DNS), so the URL here must match exactly.
+issuer = "http://mock-oidc:8080/default"
+audience = "siftd-smoke"
+identity_claim = "sub"
+# jwks_url must share the issuer's origin (scheme + host + port) per the
+# JWKS-origin-check in serve/auth.py:_jwks_origin_matches_issuer.
+jwks_url = "http://mock-oidc:8080/default/jwks"
+required_scopes = ["siftd:read"]
+write_scopes = ["siftd:write"]

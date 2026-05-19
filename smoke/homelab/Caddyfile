@@ -1,0 +1,27 @@
+siftd.smoke.local {
+    tls internal
+
+    log {
+        output file /data/caddy-access.log
+        format json
+        # TODO: scrub Authorization headers from access logs.
+        # Caddy's built-in `format filter` log encoder (caddy-filter module) can
+        # do this, but is not bundled in the stock caddy:2-alpine image:
+        #
+        #   format filter {
+        #       wrap json
+        #       fields {
+        #           request>headers>Authorization replace [REDACTED]
+        #       }
+        #   }
+        #
+        # Until that module is available, avoid enabling full header logging
+        # in production. See README.md "Known TODOs".
+    }
+
+    request_body {
+        max_size 500MB
+    }
+
+    reverse_proxy siftd-serve:8484
+}

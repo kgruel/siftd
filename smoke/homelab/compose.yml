@@ -1,0 +1,82 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    networks:
+      - smoke-net
+    depends_on:
+      siftd-serve:
+        condition: service_healthy
+    healthcheck:
+      # Caddy admin API (127.0.0.1:2019) — use explicit IPv4 address;
+      # Alpine's localhost may resolve to ::1 but Caddy only listens on IPv4.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  siftd-serve:
+    build:
+      context: ../..
+      dockerfile: smoke/homelab/Dockerfile.serve
+    environment:
+      # siftd reads $XDG_CONFIG_HOME/siftd/config.toml → /etc/siftd/config.toml
+      - XDG_CONFIG_HOME=/etc
+    volumes:
+      - ./siftd-serve.config.toml:/etc/siftd/config.toml:ro
+      - siftd-data:/var/lib/siftd
+    networks:
+      - smoke-net
+    depends_on:
+      mock-oidc:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8484/api/v1/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  mock-oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:2.1.10
+    environment:
+      # Point at the volume-mounted config file
+      - JSON_CONFIG_PATH=/etc/mock-oidc/config.json
+    volumes:
+      - ./mock-oidc.json:/etc/mock-oidc/config.json:ro
+      # Bind-mount the Java single-file healthcheck helper (JEP 330).
+      # The mock-oidc image is distroless (no shell, wget, or curl) so only
+      # java itself is available — this helper is the only way to HTTP-check
+      # the OIDC discovery endpoint from within the container.
+      # HealthCheck.java: filename matches the public class name (required by
+      # standard Java convention; JEP 330 source-file mode still compiles
+      # in-process without javac, but matching keeps the naming unambiguous).
+      - ./HealthCheck.java:/tmp/HealthCheck.java:ro
+    networks:
+      - smoke-net
+    healthcheck:
+      # java single-file source launcher (Java 11+, JEP 330) — distroless image
+      # has no shell or HTTP tools, so we compile+run this helper in-process.
+      test:
+        - "CMD"
+        - "java"
+        - "/tmp/HealthCheck.java"
+        - "http://localhost:8080/default/.well-known/openid-configuration"
+      interval: 5s
+      timeout: 10s
+      retries: 6
+      start_period: 20s
+
+networks:
+  smoke-net:
+    driver: bridge
+
+volumes:
+  caddy-data:
+  siftd-data:

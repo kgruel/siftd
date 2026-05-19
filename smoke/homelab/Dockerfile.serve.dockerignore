@@ -1,0 +1,13 @@
+.git
+.venv
+.subtask
+.claude
+tests
+docs
+smoke
+*.egg-info
+__pycache__
+.pytest_cache
+.ruff_cache
+*.pyc
+*.pyo

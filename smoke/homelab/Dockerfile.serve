@@ -1,0 +1,24 @@
+FROM python:3.13-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv
+
+WORKDIR /workspace
+COPY pyproject.toml uv.lock README.md /workspace/
+COPY src /workspace/src
+# plugin/ is a forced-include in pyproject.toml (hatch wheel target)
+COPY plugin /workspace/plugin
+
+# Install siftd with the [serve] extra into the system Python.
+# uv pip install handles "path[extra]" the same way pip does.
+RUN uv pip install --system --no-cache '/workspace[serve]'
+
+EXPOSE 8484
+
+# Config is read from $XDG_CONFIG_HOME/siftd/config.toml.
+# The compose file sets XDG_CONFIG_HOME=/etc, so this resolves to
+# /etc/siftd/config.toml — mounted read-only by the compose service.
+CMD ["siftd", "serve", "--host", "0.0.0.0", "--port", "8484"]
