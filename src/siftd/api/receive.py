@@ -54,6 +54,14 @@ def receive_database(
 
     if not target_db.exists():
         result = _create_from_source(source_path, target_db)
+        if rebuild_fts:
+            from siftd.storage.fts import rebuild_fts_index
+            from siftd.storage.sqlite import open_database
+            fts_conn = open_database(target_db)
+            try:
+                rebuild_fts_index(fts_conn, commit=True)
+            finally:
+                fts_conn.close()
         if user_id:
             conv_ids = _all_conversation_ids(target_db)
             _stamp_ownership(target_db, conv_ids, user_id, push_id)
