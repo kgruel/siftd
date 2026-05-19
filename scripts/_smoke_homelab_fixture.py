@@ -47,9 +47,14 @@ _WORKSPACES = ["/work/proj-a", "/work/proj-b", "/personal"]
 
 # These phrases land at exact turn positions so probes can assert them.
 # Key: (conv_index, turn_index) → phrase inserted into prompt text
+#
+# Anchor-alpha is placed in the LATEST conversation (highest ci) because
+# `siftd query -n 5` returns conversations sorted by started_at DESC. The
+# harness resolves FIRST_ID from that listing and uses it for P5; the
+# anchor must live in FIRST_ID's conversation for the probe to find it.
 _ANCHOR_PHRASES: dict[tuple[int, int], str] = {
-    (1, 3): "smoke-test-anchor-alpha",   # c001 turn 3 → P5
-    (7, 5): "smoke-test-anchor-bravo",   # c007 turn 5 → P6
+    (19, 3): "smoke-test-anchor-alpha",  # latest conv, turn 3 → P5
+    (15, 5): "smoke-test-anchor-bravo",  # 5th-most-recent, turn 5 → P7
 }
 
 
