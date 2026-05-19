@@ -1,4 +1,4 @@
-siftd.smoke.local {
+siftd.smoke.local, localhost {
     tls internal
 
     log {
