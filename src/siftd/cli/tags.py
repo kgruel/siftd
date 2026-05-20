@@ -248,7 +248,8 @@ def _cmd_tag_list(args, db: Path) -> int:
     from painted import Fidelity
 
     from siftd.api.dispatch import Operation, execute
-    from siftd.serve.delegation import try_serve
+    from siftd.serve.client import ServeRequest4xx
+    from siftd.serve.delegation import print_serve_4xx, try_serve
 
     op = Operation(
         path="/api/v1/tags",
@@ -263,7 +264,12 @@ def _cmd_tag_list(args, db: Path) -> int:
     tags = None
 
     # Try serve delegation
-    result = try_serve(op)
+    try:
+        result = try_serve(op)
+    except ServeRequest4xx as e:
+        conn.close()
+        print_serve_4xx(e)
+        return 1
     if result is not None and isinstance(result, dict) and "tags" in result:
         from siftd.api.tags import tag_info_list_from_dict
 
@@ -404,7 +410,8 @@ def _cmd_tag_rename(args, db: Path) -> int:
     from painted import Fidelity
 
     from siftd.api.dispatch import Operation
-    from siftd.serve.delegation import try_serve
+    from siftd.serve.client import ServeRequest4xx
+    from siftd.serve.delegation import print_serve_4xx, try_serve
 
     op = Operation(
         path="/api/v1/tag",
@@ -422,7 +429,11 @@ def _cmd_tag_rename(args, db: Path) -> int:
     )
 
     # Try serve delegation
-    result = try_serve(op)
+    try:
+        result = try_serve(op)
+    except ServeRequest4xx as e:
+        print_serve_4xx(e)
+        return 1
     if result is not None and isinstance(result, dict) and result.get("status") == "renamed":
         print(f"Renamed '{old_name}' \u2192 '{new_name}'")
         return 0
@@ -462,7 +473,8 @@ def _cmd_tag_delete(args, db: Path) -> int:
     from painted import Fidelity
 
     from siftd.api.dispatch import Operation
-    from siftd.serve.delegation import try_serve
+    from siftd.serve.client import ServeRequest4xx
+    from siftd.serve.delegation import print_serve_4xx, try_serve
 
     op = Operation(
         path="/api/v1/tag",
@@ -482,7 +494,11 @@ def _cmd_tag_delete(args, db: Path) -> int:
     # association counts over HTTP, so skip delegation without --force
     # to preserve the interactive confirmation guard).
     if force:
-        result = try_serve(op)
+        try:
+            result = try_serve(op)
+        except ServeRequest4xx as e:
+            print_serve_4xx(e)
+            return 1
         if result is not None and isinstance(result, dict) and result.get("status") == "deleted":
             print(f"Deleted tag '{tag_name}'")
             return 0
@@ -688,7 +704,8 @@ def cmd_tag(args) -> int:
     from painted import Fidelity
 
     from siftd.api.dispatch import Operation
-    from siftd.serve.delegation import try_serve
+    from siftd.serve.client import ServeRequest4xx
+    from siftd.serve.delegation import print_serve_4xx, try_serve
 
     body: dict = {"action": "remove" if removing else "apply"}
 
@@ -720,7 +737,11 @@ def cmd_tag(args) -> int:
             fidelity=Fidelity(),
             db=db,
         )
-        result = try_serve(op)
+        try:
+            result = try_serve(op)
+        except ServeRequest4xx as e:
+            print_serve_4xx(e)
+            return 1
         if result is not None and isinstance(result, dict) and "error" not in result:
             for r in result.get("results", []):
                 tag = r["tag"]

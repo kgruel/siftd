@@ -19,6 +19,21 @@ class ServeUnavailable(RuntimeError):
     """Raised when siftd-serve is unavailable or unhealthy."""
 
 
+class ServeRequest4xx(Exception):
+    """Raised when siftd-serve returns a 4xx response.
+
+    Distinct from ServeUnavailable (network/5xx/health failures), which signals
+    a legitimate local-fallback condition. A 4xx means the server received and
+    rejected the request — the client must surface this rather than retrying locally.
+    """
+
+    def __init__(self, status: int, message: str, url: str) -> None:
+        super().__init__(f"HTTP {status} from {url}: {message}")
+        self.status = status
+        self.message = message
+        self.url = url
+
+
 @dataclass(frozen=True)
 class ServeTarget:
     scheme: str
@@ -105,6 +120,13 @@ def _get_json(
     finally:
         conn.close()
 
+    if 400 <= resp.status <= 499:
+        try:
+            err_body = json.loads(raw.decode("utf-8"))
+            msg = err_body.get("error") or str(resp.status)
+        except Exception:
+            msg = str(resp.status)
+        raise ServeRequest4xx(resp.status, msg, f"{target.base_url}{path}")
     if resp.status != 200:
         raise ServeUnavailable(f"HTTP {resp.status} from {target.base_url}{path}")
 
@@ -146,6 +168,13 @@ def _post_json(
     finally:
         conn.close()
 
+    if 400 <= resp.status <= 499:
+        try:
+            err_body = json.loads(raw.decode("utf-8"))
+            msg = err_body.get("error") or str(resp.status)
+        except Exception:
+            msg = str(resp.status)
+        raise ServeRequest4xx(resp.status, msg, f"{target.base_url}{path}")
     if resp.status not in (200, 201):
         raise ServeUnavailable(f"HTTP {resp.status} from {target.base_url}{path}")
 

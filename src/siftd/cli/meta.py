@@ -16,7 +16,8 @@ def cmd_status(args) -> int:
     from siftd.api.dispatch import Operation, execute
     from siftd.api.stats import dict_to_stats, read_stats_cache
     from siftd.output import fmt_timestamp
-    from siftd.serve.delegation import try_serve
+    from siftd.serve.client import ServeRequest4xx
+    from siftd.serve.delegation import print_serve_4xx, try_serve
 
     db = Path(args.db) if args.db else None
     effective_db = db or db_path()
@@ -38,7 +39,11 @@ def cmd_status(args) -> int:
     stats = None
 
     # Tier 1: delegate to running server (DB already warm)
-    result = try_serve(op)
+    try:
+        result = try_serve(op)
+    except ServeRequest4xx as e:
+        print_serve_4xx(e)
+        return 1
     if result is not None:
         stats = dict_to_stats(result)
 
@@ -208,7 +213,8 @@ def cmd_workspaces(args) -> int:
 
     from siftd.api.dispatch import Operation, execute
     from siftd.output import fmt_timestamp, fmt_workspace
-    from siftd.serve.delegation import try_serve
+    from siftd.serve.client import ServeRequest4xx
+    from siftd.serve.delegation import print_serve_4xx, try_serve
 
     db = resolve_db(args)
     limit = args.limit if args.limit > 0 else 10000
@@ -226,7 +232,11 @@ def cmd_workspaces(args) -> int:
     rows = None
 
     # Try serve delegation
-    result = try_serve(op)
+    try:
+        result = try_serve(op)
+    except ServeRequest4xx as e:
+        print_serve_4xx(e)
+        return 1
     if result is not None and isinstance(result, dict) and "workspaces" in result:
         rows = [
             {"path": w["path"], "convs": w["conversations"], "last_activity": w.get("last_activity")}

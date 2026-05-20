@@ -282,10 +282,12 @@ RC=$?
 set -e
 # Expected: server returns 4xx and CLI surfaces it (post-#10).
 # Pre-#10: CLI silently falls back to local and returns success/empty.
-if [ "$RC" -ne 0 ] && grep -qi "not found\|4[0-9][0-9]\|error" "$PROBE_LOG"; then
-    record_probe 6 "query --around (not found)" PASS "server 4xx surfaced — #10 may be fixed"
+# Tightened from loose grep: must match the named-server marker emitted by
+# print_serve_4xx() in serve/delegation.py — "siftd-serve returned HTTP 4xx".
+if [ "$RC" -ne 0 ] && grep -q "siftd-serve returned HTTP 4" "$PROBE_LOG"; then
+    record_probe 6 "query --around (not found)" PASS "server 4xx surfaced with named-server marker"
 else
-    record_probe 6 "query --around (not found)" FAIL "silent fallback or unclear error — expected pre-#10"
+    record_probe 6 "query --around (not found)" FAIL "silent fallback or wrong error format — expected 'siftd-serve returned HTTP 4xx'"
 fi
 
 # ---------------------------------------------------------------------------

@@ -149,7 +149,8 @@ def _query_detail(args) -> int:
     from siftd.api.conversations import AnchorNotFound, AnchorOutOfRange, AnchorPhraseInvalid
     from siftd.api.dispatch import Operation, execute
     from siftd.cli._common import fidelity_from_args, tool_chars_from_args
-    from siftd.serve.delegation import try_serve
+    from siftd.serve.client import ServeRequest4xx
+    from siftd.serve.delegation import print_serve_4xx, try_serve
 
     exchanges_n = getattr(args, "exchanges", None)
     turns_range = getattr(args, "turns_range", None)
@@ -241,7 +242,13 @@ def _query_detail(args) -> int:
     # from_wire so the local renderer below consumes the result identically
     # to a local fetch. See docs/guides/delegation-contract.md.
     detail = None
-    delegated_response = None if getattr(args, "summary", False) else try_serve(op)
+    delegated_response = None
+    if not getattr(args, "summary", False):
+        try:
+            delegated_response = try_serve(op)
+        except ServeRequest4xx as e:
+            print_serve_4xx(e)
+            return 1
     if delegated_response is not None:
         from siftd.api.dispatch import from_wire
         # Deserializers return None on schema mismatch rather than raising;
@@ -425,7 +432,8 @@ def cmd_query(args) -> int:
     from siftd.api import list_conversations
     from siftd.api.dispatch import Operation, execute_for_render, from_wire
     from siftd.cli._filters import extract_filter_args
-    from siftd.serve.delegation import try_serve
+    from siftd.serve.client import ServeRequest4xx
+    from siftd.serve.delegation import print_serve_4xx, try_serve
 
     db = resolve_db(args)
     filters = extract_filter_args(args)
@@ -461,7 +469,11 @@ def cmd_query(args) -> int:
     # fallback) and [] for a legitimately empty list (not a fallback signal).
     # Caveats aren't threaded across the serve boundary today.
     conversations = None
-    delegated = try_serve(op)
+    try:
+        delegated = try_serve(op)
+    except ServeRequest4xx as e:
+        print_serve_4xx(e)
+        return 1
     if delegated is not None and isinstance(delegated, dict):
         conversations = from_wire(op, delegated)
     if conversations is None:

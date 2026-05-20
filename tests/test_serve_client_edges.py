@@ -111,6 +111,58 @@ def test_post_json_non_200_and_invalid_json(monkeypatch):
         client._post_json("http://127.0.0.1:8484", "/api/v1/x", body={})
 
 
+class TestServeRequest4xx:
+    """_get_json / _post_json raise ServeRequest4xx on 4xx, ServeUnavailable on 5xx."""
+
+    def test_get_json_404_raises_serve_request_4xx(self, monkeypatch):
+        body = json.dumps({"error": "conversation not found"}).encode()
+        c = _Conn(_Resp(status=404, body=body))
+        monkeypatch.setattr("siftd.serve.client._conn", lambda *_a, **_k: c)
+        with pytest.raises(client.ServeRequest4xx) as exc_info:
+            client._get_json("http://127.0.0.1:8484", "/api/v1/conversations/FAKE")
+        assert exc_info.value.status == 404
+        assert exc_info.value.message == "conversation not found"
+        assert "FAKE" in exc_info.value.url
+
+    def test_get_json_400_extracts_error_field(self, monkeypatch):
+        body = json.dumps({"error": "phrase not found in conversation: 'bogus'"}).encode()
+        c = _Conn(_Resp(status=400, body=body))
+        monkeypatch.setattr("siftd.serve.client._conn", lambda *_a, **_k: c)
+        with pytest.raises(client.ServeRequest4xx) as exc_info:
+            client._get_json("http://127.0.0.1:8484", "/api/v1/conversations/X")
+        assert exc_info.value.status == 400
+        assert "phrase not found" in exc_info.value.message
+
+    def test_get_json_503_raises_serve_unavailable(self, monkeypatch):
+        c = _Conn(_Resp(status=503, body=b"{}"))
+        monkeypatch.setattr("siftd.serve.client._conn", lambda *_a, **_k: c)
+        with pytest.raises(client.ServeUnavailable, match="HTTP 503"):
+            client._get_json("http://127.0.0.1:8484", "/api/v1/health")
+
+    def test_get_json_4xx_with_non_json_body_falls_back_to_status(self, monkeypatch):
+        c = _Conn(_Resp(status=403, body=b"Forbidden"))
+        monkeypatch.setattr("siftd.serve.client._conn", lambda *_a, **_k: c)
+        with pytest.raises(client.ServeRequest4xx) as exc_info:
+            client._get_json("http://127.0.0.1:8484", "/api/v1/x")
+        assert exc_info.value.status == 403
+        assert exc_info.value.message == "403"
+
+    def test_post_json_404_raises_serve_request_4xx(self, monkeypatch):
+        body = json.dumps({"error": "tag not found"}).encode()
+        c = _Conn(_Resp(status=404, body=body))
+        monkeypatch.setattr("siftd.serve.client._conn", lambda *_a, **_k: c)
+        with pytest.raises(client.ServeRequest4xx) as exc_info:
+            client._post_json("http://127.0.0.1:8484", "/api/v1/tag", body={"action": "delete"})
+        assert exc_info.value.status == 404
+        assert exc_info.value.message == "tag not found"
+
+    def test_post_json_503_raises_serve_unavailable(self, monkeypatch):
+        c = _Conn(_Resp(status=503, body=b"{}"))
+        monkeypatch.setattr("siftd.serve.client._conn", lambda *_a, **_k: c)
+        with pytest.raises(client.ServeUnavailable, match="HTTP 503"):
+            client._post_json("http://127.0.0.1:8484", "/api/v1/tag", body={})
+
+
 def test_probe_health_success_and_wrappers(monkeypatch):
     calls = []
 

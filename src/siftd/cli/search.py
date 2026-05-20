@@ -220,7 +220,8 @@ def cmd_search(args) -> int:
         sort_chunks_by_time,
     )
     from siftd.cli._common import fidelity_from_args
-    from siftd.serve.delegation import try_serve
+    from siftd.serve.client import ServeRequest4xx
+    from siftd.serve.delegation import print_serve_4xx, try_serve
 
     fidelity = fidelity_from_args(args)
     rerank = "mmr" if not args.no_diversity else "relevance"
@@ -269,7 +270,11 @@ def cmd_search(args) -> int:
     raw_results: Any | None = None
     caveats: list = []
     if _can_delegate_to_serve(args, db=db, embed_db=embed_db):
-        raw_results = try_serve(op)
+        try:
+            raw_results = try_serve(op)
+        except ServeRequest4xx as e:
+            print_serve_4xx(e)
+            return 1
 
     # Local execution
     if raw_results is None:
@@ -498,8 +503,13 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     _raw_embed_db = getattr(args, "embed_db", None)
     _embed_db = Path(_raw_embed_db).expanduser() if _raw_embed_db else embeddings_db_path()
     if _can_delegate_to_serve(args, db=db, embed_db=_embed_db):
-        from siftd.serve.delegation import try_serve
-        raw_results = try_serve(op)
+        from siftd.serve.client import ServeRequest4xx
+        from siftd.serve.delegation import print_serve_4xx, try_serve
+        try:
+            raw_results = try_serve(op)
+        except ServeRequest4xx as e:
+            print_serve_4xx(e)
+            return 1
 
     if raw_results is None:
         try:

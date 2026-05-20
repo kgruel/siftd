@@ -15,7 +15,8 @@ def cmd_export(args) -> int:
     from siftd.api.dispatch import Operation, execute, from_wire
     from siftd.api.export import export_document
     from siftd.cli._common import fidelity_from_args
-    from siftd.serve.delegation import try_serve
+    from siftd.serve.client import ServeRequest4xx
+    from siftd.serve.delegation import print_serve_4xx, try_serve
 
     db = resolve_db(args)
 
@@ -62,7 +63,11 @@ def cmd_export(args) -> int:
     # None on schema mismatch (e.g. older server returning the legacy
     # `{"conversations": [...]}` shape) — the fallback below covers that.
     artifact = None
-    delegated = try_serve(op)
+    try:
+        delegated = try_serve(op)
+    except ServeRequest4xx as e:
+        print_serve_4xx(e)
+        return 1
     if delegated is not None and isinstance(delegated, dict):
         artifact = from_wire(op, delegated)
 

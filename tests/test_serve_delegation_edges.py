@@ -2,6 +2,8 @@ import builtins
 import hashlib
 from types import SimpleNamespace
 
+import pytest
+
 from siftd.serve import delegation
 
 
@@ -150,6 +152,88 @@ def test_try_delegate_post_guard_and_exception_paths(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_id": db_id})
     monkeypatch.setattr("siftd.serve.client._post_json", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     assert delegation.try_delegate_post("/api/v1/tags", {}, db=db) is None
+
+
+class TestServeRequest4xxPropagation:
+    """try_delegate / try_serve must propagate ServeRequest4xx, not swallow it."""
+
+    def test_try_delegate_propagates_4xx_from_get_json(self, monkeypatch, tmp_path):
+        from siftd.serve.client import ServeRequest4xx
+
+        db = tmp_path / "siftd.db"
+        db.touch()
+
+        monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: True)
+        monkeypatch.setattr("siftd.serve.delegation.resolve_serve_url", lambda: ("http://127.0.0.1:8484", True))
+        monkeypatch.setattr(
+            "siftd.serve.client.probe_health",
+            lambda **k: {"db_id": "any"},
+        )
+        exc = ServeRequest4xx(404, "conversation not found", "http://127.0.0.1:8484/api/v1/conversations/X")
+        monkeypatch.setattr(
+            "siftd.serve.client._get_json",
+            lambda *a, **k: (_ for _ in ()).throw(exc),
+        )
+        with pytest.raises(ServeRequest4xx) as exc_info:
+            delegation.try_delegate("/api/v1/conversations/X", db=db)
+        assert exc_info.value.status == 404
+
+    def test_try_delegate_still_returns_none_on_serve_unavailable(self, monkeypatch, tmp_path):
+        from siftd.serve.client import ServeUnavailable
+
+        db = tmp_path / "siftd.db"
+        db.touch()
+
+        monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: True)
+        monkeypatch.setattr("siftd.serve.delegation.resolve_serve_url", lambda: ("http://127.0.0.1:8484", True))
+        monkeypatch.setattr(
+            "siftd.serve.client.probe_health",
+            lambda **k: {"db_id": "any"},
+        )
+        monkeypatch.setattr(
+            "siftd.serve.client._get_json",
+            lambda *a, **k: (_ for _ in ()).throw(ServeUnavailable("network down")),
+        )
+        assert delegation.try_delegate("/api/v1/conversations/X", db=db) is None
+
+    def test_try_delegate_propagates_4xx_from_probe_health(self, monkeypatch, tmp_path):
+        """A 4xx from /health (e.g. 401 auth failure) propagates rather than falling back."""
+        from siftd.serve.client import ServeRequest4xx
+
+        db = tmp_path / "siftd.db"
+        db.touch()
+
+        monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: True)
+        monkeypatch.setattr("siftd.serve.delegation.resolve_serve_url", lambda: ("http://127.0.0.1:8484", True))
+        exc = ServeRequest4xx(401, "Unauthorized", "http://127.0.0.1:8484/api/v1/health")
+        monkeypatch.setattr(
+            "siftd.serve.client.probe_health",
+            lambda **k: (_ for _ in ()).throw(exc),
+        )
+        with pytest.raises(ServeRequest4xx) as exc_info:
+            delegation.try_delegate("/api/v1/conversations/X", db=db)
+        assert exc_info.value.status == 401
+
+    def test_try_serve_propagates_4xx(self, monkeypatch, tmp_path):
+        from siftd.serve.client import ServeRequest4xx
+
+        db = tmp_path / "siftd.db"
+        db.touch()
+
+        exc = ServeRequest4xx(400, "phrase not found", "http://127.0.0.1:8484/api/v1/conversations/X")
+        monkeypatch.setattr(
+            "siftd.serve.delegation.try_delegate",
+            lambda *a, **k: (_ for _ in ()).throw(exc),
+        )
+        op = SimpleNamespace(
+            method="GET",
+            path="/api/v1/conversations/X",
+            params={"anchor": "around", "anchor_value": "bogus"},
+            db=db,
+        )
+        with pytest.raises(ServeRequest4xx) as exc_info:
+            delegation.try_serve(op)
+        assert exc_info.value.status == 400
 
 
 def test_resolve_serve_url_invalid_port_falls_back(monkeypatch, tmp_path):

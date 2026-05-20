@@ -161,11 +161,13 @@ def try_delegate(
 
     base_url, explicit = resolve_serve_url()
 
-    from siftd.serve.client import ServeUnavailable, probe_health
+    from siftd.serve.client import ServeRequest4xx, ServeUnavailable, probe_health
 
     try:
         probe_timeout = 0.5 if explicit else 0.02
         health = probe_health(base_url=base_url, timeout_s=probe_timeout)
+    except ServeRequest4xx:
+        raise  # 4xx from /health is a real error (e.g. 401 auth failure)
     except (ServeUnavailable, Exception):
         return None
 
@@ -182,6 +184,8 @@ def try_delegate(
 
     try:
         return _get_json(base_url, endpoint, params=params, timeout_s=timeout_s)
+    except ServeRequest4xx:
+        raise  # propagate — caller must surface this, not fall back locally
     except Exception:
         return None
 
@@ -202,11 +206,13 @@ def try_delegate_post(
 
     base_url, explicit = resolve_serve_url()
 
-    from siftd.serve.client import ServeUnavailable, probe_health
+    from siftd.serve.client import ServeRequest4xx, ServeUnavailable, probe_health
 
     try:
         probe_timeout = 0.5 if explicit else 0.02
         health = probe_health(base_url=base_url, timeout_s=probe_timeout)
+    except ServeRequest4xx:
+        raise  # 4xx from /health is a real error (e.g. 401 auth failure)
     except (ServeUnavailable, Exception):
         return None
 
@@ -218,6 +224,8 @@ def try_delegate_post(
 
     try:
         return _post_json(base_url, endpoint, body=body, timeout_s=timeout_s)
+    except ServeRequest4xx:
+        raise  # propagate — caller must surface this, not fall back locally
     except Exception:
         return None
 
@@ -318,14 +326,34 @@ def try_serve(op: Any) -> Any | None:
     its path, method, params, and db. Returns the raw serve response
     on success, None on any failure.
 
+    Raises:
+        ServeRequest4xx: If the server returns a 4xx response. Callers must
+            catch this and surface it — do not fall back to local execution.
+
     Uses :func:`wire_query` / :func:`wire_body` to produce the wire
     form from ``op.params``.
     """
+    from siftd.serve.client import ServeRequest4xx
+
     try:
         if op.method == "GET":
             return try_delegate(op.path, wire_query(op), db=op.db)
         elif op.method == "POST":
             return try_delegate_post(op.path, wire_body(op), db=op.db)
+    except ServeRequest4xx:
+        raise  # propagate — callers must surface, not swallow
     except Exception as e:
         log.warning("try_serve unexpected error for %s %s: %s", op.method, op.path, e)
     return None
+
+
+def print_serve_4xx(exc: Any) -> None:
+    """Print a uniform server-4xx error message to stderr.
+
+    Callers catch ServeRequest4xx and call this to produce a consistent
+    error surface: the server URL, the HTTP status, and the server's own
+    error message. The format is stable — the smoke probe asserts on it.
+    """
+    import sys
+
+    print(f"siftd-serve returned HTTP {exc.status}: {exc.message} ({exc.url})", file=sys.stderr)
