@@ -606,3 +606,87 @@ class TestFtsMissingTableError:
         assert result == 1
         assert "FTS index not found" in captured.err
         assert "siftd ingest" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# ST-4a: _search_fts_only delegation path (Important #2 from codex review)
+# ---------------------------------------------------------------------------
+
+
+class TestFtsOnlyDelegation:
+    """CLI-layer test: _search_fts_only attempts try_serve before local execution.
+
+    TestSearchModeWireContract in test_serve_e2e_smoke.py covers the server route
+    side. These tests cover the CLI side: that _search_fts_only builds an op with
+    mode='fts', attempts delegation when a serve is reachable, and correctly handles
+    the dict result shape that try_serve returns (vs the list that execute_for_render
+    returns).
+    """
+
+    def test_delegates_with_mode_fts_in_op(self, tmp_path, monkeypatch, capsys):
+        """try_serve is called with op.params['mode']=='fts'; dict result renders ok."""
+        import siftd.serve.delegation as delegation_mod
+        from siftd.cli.search import cmd_search
+
+        db_path = tmp_path / "test.db"
+        db_path.touch()
+
+        captured_ops: list = []
+
+        def mock_can_delegate(a, *, db, embed_db):
+            return True
+
+        def mock_try_serve(op):
+            captured_ops.append(op)
+            return {"results": []}
+
+        monkeypatch.setattr("siftd.cli.search._can_delegate_to_serve", mock_can_delegate)
+        monkeypatch.setattr(delegation_mod, "try_serve", mock_try_serve)
+
+        args = make_search_args(
+            query=["testquery"],
+            db=str(db_path),
+            fts=True,
+        )
+
+        result = cmd_search(args)
+
+        assert result == 0, "should succeed (empty results from serve)"
+        assert len(captured_ops) == 1, "try_serve must be called exactly once"
+        op = captured_ops[0]
+        assert op.params["mode"] == "fts", (
+            f"op must carry mode='fts' on the wire; got {op.params.get('mode')!r}"
+        )
+
+    def test_fts_delegation_does_not_fall_back_to_local_on_dict_result(
+        self, tmp_path, monkeypatch
+    ):
+        """When try_serve returns a dict, execute_for_render must not be called.
+
+        This pins the dict-vs-list normalization at cli/search.py:516: a dict from
+        the server is unwrapped via .get('results', []) and processed; execute_for_render
+        (which would hit the local SQLite DB) is skipped entirely.
+        """
+        import siftd.serve.delegation as delegation_mod
+        from siftd.api import dispatch as dispatch_mod
+        from siftd.cli.search import cmd_search
+
+        db_path = tmp_path / "test.db"
+        db_path.touch()
+
+        local_executed: list = []
+
+        monkeypatch.setattr("siftd.cli.search._can_delegate_to_serve", lambda *a, **kw: True)
+        monkeypatch.setattr(delegation_mod, "try_serve", lambda op: {"results": []})
+        monkeypatch.setattr(
+            dispatch_mod,
+            "execute_for_render",
+            lambda op: (local_executed.append(op), ([], []))[1],
+        )
+
+        args = make_search_args(query=["testquery"], db=str(db_path), fts=True)
+        cmd_search(args)
+
+        assert not local_executed, (
+            "execute_for_render must not be called when try_serve returns a dict"
+        )

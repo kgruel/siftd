@@ -270,13 +270,15 @@ def _remap_params(params: dict[str, Any]) -> dict[str, Any]:
 # - db_path / embed_db: local paths to SQLite files; the server uses its own
 #   configured DB. Sending these leaks local filesystem state to the remote
 #   and the server would ignore them anyway.
-# - mode: local search-engine selector. The wire form uses ``embeddings_only``
-#   for the same selection (legacy asymmetry — both keys carry the same
-#   information through different paths).
 # - around: pure CLI post-processing annotation. The server has no use for it
 #   today and the search route doesn't declare it; sending it would be
 #   silently dropped by Litestar.
-_WIRE_EXCLUDE = frozenset({"db_path", "embed_db", "mode", "around"})
+#
+# Note: `mode` was previously excluded here because the search route had no
+# matching Parameter — it derived mode from the `embeddings_only` bool instead.
+# ST-4a added `mode` to the route, so `mode` now travels on the wire.
+# ST-5 (wire-form-dissolution) will convert this frozenset to per-op declarations.
+_WIRE_EXCLUDE = frozenset({"db_path", "embed_db", "around"})
 
 
 def wire_query(op: Any) -> dict[str, Any]:

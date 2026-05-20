@@ -761,6 +761,9 @@ async def search_route(
     owner: str | None = Parameter(query="owner", default=None),
     debug_ids: bool = Parameter(query="debug_ids", default=False),
     raw_fts: bool = Parameter(query="raw_fts", default=False),
+    # Canonical mode selector — takes precedence over embeddings_only when provided.
+    # embeddings_only is a deprecated backward-compat alias (remove in a future slice).
+    mode: str | None = Parameter(query="mode", default=None),
 ) -> dict | Response:
     """Semantic + FTS search against team DB."""
     try:
@@ -772,7 +775,15 @@ async def search_route(
         )
 
     owner = _effective_owner(request, owner)
-    mode = "semantic" if embeddings_only else "hybrid"
+    if mode is not None:
+        if mode not in ("semantic", "hybrid", "fts"):
+            return Response(
+                content={"error": f"invalid mode: {mode!r}; expected semantic, hybrid, or fts"},
+                status_code=400,
+            )
+    else:
+        # Derive from deprecated embeddings_only alias.
+        mode = "semantic" if embeddings_only else "hybrid"
     try:
         return _dispatch(
             "/api/v1/search", "GET", search_chunks,

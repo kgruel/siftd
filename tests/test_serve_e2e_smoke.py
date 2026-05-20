@@ -748,3 +748,111 @@ class TestRequestBodySizeLimit:
         with TestClient(app, raise_server_exceptions=False) as client:
             resp = client.post("/api/v1/push", content=b"x" * (limit + 1))
         assert resp.status_code == 413
+
+
+# ---------------------------------------------------------------------------
+# Search mode wire contract (ST-4a)
+# ---------------------------------------------------------------------------
+
+
+class TestSearchModeWireContract:
+    """Verify the `mode` query param travels on the wire and is honoured by the route.
+
+    ST-4a: `mode` was previously in `_WIRE_EXCLUDE` and the search route had no
+    matching Parameter, making FTS-only mode unreachable via delegation. These
+    tests confirm that all three modes reach the route and that an invalid mode
+    returns 400 rather than silently being ignored.
+
+    FTS mode does not require the [embed] extra — `search_chunks` lazy-imports
+    embeddings only for semantic/hybrid paths. hybrid and semantic tests are
+    marked `embeddings` so they only run with `./dev test-all`.
+    """
+
+    def test_search_mode_fts_returns_results(self, tmp_path):
+        """mode=fts reaches the route, executes FTS-only search, returns results."""
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/api/v1/search",
+                params={"q": "alpha", "mode": "fts", "n": "5"},
+            )
+        # search_chunks is importable without embed — no 501.
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert isinstance(body, dict)
+        results = body.get("results", body) if isinstance(body, dict) else body
+        # The multi-turn fixture includes "turn-0-unique-marker-alpha" in turn 0.
+        assert len(results) > 0, f"Expected FTS results for 'alpha'; got empty: {body}"
+
+    def test_search_bad_mode_returns_400(self, tmp_path):
+        """An unrecognised mode value must return HTTP 400, not silently fall through."""
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.get(
+                "/api/v1/search",
+                params={"q": "alpha", "mode": "bogus"},
+            )
+        assert resp.status_code == 400, resp.text
+        body = resp.json()
+        assert "error" in body, f"400 response must include an 'error' key; got: {body}"
+
+    @pytest.mark.embeddings
+    def test_search_mode_hybrid_accepted(self, tmp_path):
+        """mode=hybrid is accepted by the route (backward-compat check)."""
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/api/v1/search",
+                params={"q": "alpha", "mode": "hybrid", "n": "5"},
+            )
+        assert resp.status_code == 200, resp.text
+
+    @pytest.mark.embeddings
+    def test_search_mode_semantic_accepted(self, tmp_path):
+        """mode=semantic is accepted by the route (backward-compat check)."""
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/api/v1/search",
+                params={"q": "alpha", "mode": "semantic", "n": "5"},
+            )
+        assert resp.status_code == 200, resp.text
+
+    def test_search_embeddings_only_alias_still_works(self, tmp_path):
+        """embeddings_only= continues to work when mode= is absent (backward compat)."""
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            # embeddings_only=false → mode="hybrid" via the deprecated alias path.
+            # In a no-embed test env this will 501 or 200 — either is acceptable;
+            # the key assertion is that the route doesn't 400 or 422.
+            resp = client.get(
+                "/api/v1/search",
+                params={"q": "alpha", "embeddings_only": "false"},
+            )
+        assert resp.status_code in (200, 501), (
+            f"embeddings_only alias should not cause 400/422; got {resp.status_code}: {resp.text}"
+        )
+
+    def test_mode_param_overrides_embeddings_only(self, tmp_path):
+        """mode=fts wins over embeddings_only=true at the route level (precedence pin).
+
+        If mode= is correctly checked first and embeddings_only= is only consulted as a
+        fallback, mode=fts with embeddings_only=true → FTS execution → 200 (no embed needed).
+        If the precedence were reversed, embeddings_only=true → mode='semantic' → embed
+        lookup → 501 in a no-embed test env. A 200 here proves mode= takes precedence.
+        """
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/api/v1/search",
+                params={"q": "alpha", "mode": "fts", "embeddings_only": "true"},
+            )
+        assert resp.status_code == 200, (
+            f"mode=fts must override embeddings_only=true; got {resp.status_code}: {resp.text}"
+        )

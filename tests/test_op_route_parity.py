@@ -159,10 +159,14 @@ def test_search_op_keys_accepted_by_route():
     """The CLI's `siftd search` op against /api/v1/search.
 
     Round-4 review found that this op was sending `embed_db` (local path,
-    info leak), `mode` (locally-used; wire uses `embeddings_only`), and
-    `around` (CLI annotation) — all silently dropped by Litestar. The fix
-    was to extend ``_WIRE_EXCLUDE`` with those keys; this test pins the
+    info leak) and `around` (CLI annotation) — silently dropped by Litestar.
+    The fix was to add those keys to ``_WIRE_EXCLUDE``; this test pins the
     contract so the bug class can't regress.
+
+    ST-4a update: `mode` was also in `_WIRE_EXCLUDE` (the route had no
+    matching Parameter), which meant FTS mode was unreachable on the wire.
+    ST-4a added ``mode`` to the route and removed it from ``_WIRE_EXCLUDE``,
+    so ``mode`` now travels on the wire. The assertion below reflects this.
     """
     from pathlib import Path as _Path
 
@@ -177,7 +181,7 @@ def test_search_op_keys_accepted_by_route():
             "db_path": _Path("/tmp/x"),
             "embed_db": _Path("/tmp/embed.db"),  # local-only — must not reach wire
             "n": 10,
-            "mode": "hybrid",                    # local-only — wire uses embeddings_only
+            "mode": "hybrid",                    # now travels on the wire (ST-4a)
             "workspace": None,
             "model": None,
             "since": None,
@@ -196,7 +200,7 @@ def test_search_op_keys_accepted_by_route():
             "recency_half_life": 30.0,
             "recency_max_boost": 1.15,
             "backend": None,
-            "embeddings_only": False,            # wire-only (in _LOCAL_FN_EXCLUDE)
+            "embeddings_only": False,            # deprecated alias; still sent for old-server compat
             "raw_fts": False,
             "debug_ids": False,                  # CLI annotation
             "around": None,                      # CLI annotation
@@ -212,15 +216,15 @@ def test_search_op_keys_accepted_by_route():
     leftover = wire_keys - route_keys
     assert not leftover, (
         f"CLI search op sends wire keys the route doesn't declare: "
-        f"{sorted(leftover)}. Round-4 caught this for embed_db/mode/around — "
+        f"{sorted(leftover)}. Round-4 caught this for embed_db/around — "
         f"any new addition needs either a Parameter() on the route or an "
         f"entry in _WIRE_EXCLUDE / _LOCAL_FN_EXCLUDE."
     )
-    # Specifically verify the round-4 fix: local paths and CLI annotations
-    # don't bleed to the wire.
+    # Local paths and CLI annotations must not bleed to the wire.
     assert "embed_db" not in wire_keys, "local embeddings DB path must not leak to the wire"
-    assert "mode" not in wire_keys, "wire form uses `embeddings_only`, not `mode`"
     assert "around" not in wire_keys, "around is a CLI-only post-processing annotation"
+    # mode now travels on the wire so the route can dispatch all three modes (ST-4a).
+    assert "mode" in wire_keys, "mode must travel to the route (ST-4a: fts/hybrid/semantic)"
 
 
 def test_export_op_format_aware_keys_accepted_by_route():

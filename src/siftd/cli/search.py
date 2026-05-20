@@ -253,7 +253,7 @@ def cmd_search(args) -> int:
             "recency_half_life": args.recency_half_life,
             "recency_max_boost": args.recency_max_boost,
             "backend": args.backend,
-            # Serve-only: route uses embeddings_only instead of mode
+            # Deprecated alias kept for old-server compat; route now uses mode= directly (ST-4a).
             "embeddings_only": search_mode == "semantic",
             "raw_fts": getattr(args, "raw_fts", False),
             "debug_ids": getattr(args, "debug_ids", False),
@@ -264,11 +264,11 @@ def cmd_search(args) -> int:
         db=db,
     )
 
-    # Try serve delegation (warm caches, embeddings loaded)
-    # Skip for FTS mode (serve does hybrid/semantic) and custom --embed-db
+    # Try serve delegation (warm caches, embeddings loaded).
+    # All three modes (fts/hybrid/semantic) now travel on the wire via op.params["mode"].
     raw_results: Any | None = None
     caveats: list = []
-    if search_mode != "fts" and _can_delegate_to_serve(args, db=db, embed_db=embed_db):
+    if _can_delegate_to_serve(args, db=db, embed_db=embed_db):
         raw_results = try_serve(op)
 
     # Local execution
@@ -493,20 +493,31 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     )
 
     caveats: list = []
-    try:
-        raw_results, caveats = execute_for_render(op)
-    except sqlite3.OperationalError as e:
-        err_msg = str(e).lower()
-        if "no such table" in err_msg and "fts" in err_msg:
-            print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
-        elif "fts5" in err_msg or "syntax" in err_msg:
-            print(f"Invalid search query: {e}", file=sys.stderr)
-            print("Tip: Check your search query for syntax errors.", file=sys.stderr)
-        else:
-            print(f"Database error: {e}", file=sys.stderr)
-        return 1
+    raw_results: Any | None = None
+    # Resolve embed_db same as cmd_search so the custom --embed-db guard fires correctly.
+    _raw_embed_db = getattr(args, "embed_db", None)
+    _embed_db = Path(_raw_embed_db).expanduser() if _raw_embed_db else embeddings_db_path()
+    if _can_delegate_to_serve(args, db=db, embed_db=_embed_db):
+        from siftd.serve.delegation import try_serve
+        raw_results = try_serve(op)
 
-    # Limit results
+    if raw_results is None:
+        try:
+            raw_results, caveats = execute_for_render(op)
+        except sqlite3.OperationalError as e:
+            err_msg = str(e).lower()
+            if "no such table" in err_msg and "fts" in err_msg:
+                print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
+            elif "fts5" in err_msg or "syntax" in err_msg:
+                print(f"Invalid search query: {e}", file=sys.stderr)
+                print("Tip: Check your search query for syntax errors.", file=sys.stderr)
+            else:
+                print(f"Database error: {e}", file=sys.stderr)
+            return 1
+
+    # Limit results — serve returns {results: [...]}, local returns list
+    if isinstance(raw_results, dict):
+        raw_results = raw_results.get("results", [])
     chunks = _chunks_from_rows(raw_results)[:args.limit]
     results = _rows_from_chunks(chunks)
 

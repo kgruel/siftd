@@ -289,15 +289,15 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# P7 — search "smoke-test-anchor-bravo" with --mode fts — #8 (no-embed delegation)
+# P7 — search "smoke-test-anchor-bravo" with --fts — #8 (no-embed delegation)
 # ---------------------------------------------------------------------------
-log_info "P7: search 'smoke-test-anchor-bravo' --mode fts (#8 territory)..."
+log_info "P7: search 'smoke-test-anchor-bravo' --fts (#8 territory)..."
 if run_probe_capture "$ARTIFACT_DIR/probe-07-search-fts.md" \
-    uv run --frozen siftd search "smoke-test-anchor-bravo" --mode fts && \
+    uv run --frozen siftd search "smoke-test-anchor-bravo" --fts && \
    grep -q "smoke-test-anchor-bravo\|c007" "$ARTIFACT_DIR/probe-07-search-fts.md"; then
-    record_probe 7 "search --mode fts" PASS "results returned"
+    record_probe 7 "search --fts" PASS "results returned"
 else
-    record_probe 7 "search --mode fts" FAIL "no results — likely #8 (short-circuit) or #9 (no FTS)"
+    record_probe 7 "search --fts" FAIL "no results — likely #8 (short-circuit) or #9 (no FTS)"
 fi
 
 # ---------------------------------------------------------------------------
