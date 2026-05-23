@@ -1,10 +1,29 @@
 import builtins
 import hashlib
-from types import SimpleNamespace
 
 import pytest
 
 from siftd.serve import delegation
+
+
+def _make_op(**kwargs):
+    """Construct an Operation with sensible defaults for delegation tests.
+
+    The new wire-form substrate (siftd.api.op_spec) requires Operation
+    instances rather than SimpleNamespace mocks — to_wire/to_wire_body
+    are methods on the dataclass.
+    """
+    from painted import Fidelity
+
+    from siftd.api.dispatch import Operation
+
+    defaults = {
+        "render_method": "raw",
+        "fidelity": Fidelity(),
+        "fn": lambda **kw: kw,
+    }
+    defaults.update(kwargs)
+    return Operation(**defaults)
 
 
 def test_try_delegate_post_success_and_try_serve_post(monkeypatch, tmp_path):
@@ -19,7 +38,7 @@ def test_try_delegate_post_success_and_try_serve_post(monkeypatch, tmp_path):
 
     assert delegation.try_delegate_post("/api/v1/tags", {"x": 1}, db=db) == {"ok": True}
 
-    op = SimpleNamespace(method="POST", path="/api/v1/tags", params={"db_path": db, "x": 1}, db=db)
+    op = _make_op(method="POST", path="/api/v1/tag", params={"db_path": db, "x": 1}, db=db)
     assert delegation.try_serve(op) == {"ok": True}
 
 
@@ -28,7 +47,7 @@ def test_try_serve_get_remaps_lambda_and_handles_errors(monkeypatch, tmp_path):
     db.touch()
 
     monkeypatch.setattr("siftd.serve.delegation.try_delegate", lambda p, params, **k: {"params": params})
-    op = SimpleNamespace(method="GET", path="/api/v1/search", params={"db_path": db, "lambda_": 0.7}, db=db)
+    op = _make_op(method="GET", path="/api/v1/search", params={"db_path": db, "lambda_": 0.7}, db=db)
     assert delegation.try_serve(op) == {"params": {"lambda": 0.7}}
 
     monkeypatch.setattr("siftd.serve.delegation.try_delegate", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
@@ -225,7 +244,7 @@ class TestServeRequest4xxPropagation:
             "siftd.serve.delegation.try_delegate",
             lambda *a, **k: (_ for _ in ()).throw(exc),
         )
-        op = SimpleNamespace(
+        op = _make_op(
             method="GET",
             path="/api/v1/conversations/X",
             params={"anchor": "around", "anchor_value": "bogus"},

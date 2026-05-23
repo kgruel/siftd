@@ -230,95 +230,6 @@ def try_delegate_post(
         return None
 
 
-# API fn kwarg → serve route query param.  Only non-identity mappings.
-# After param alignment (unified CLI/HTTP/API names), only lambda_
-# remains because `lambda` is a Python keyword.
-_SERVE_PARAM_MAP: dict[str, str] = {
-    "lambda_": "lambda",
-}
-
-
-def _expand_for_wire(params: dict[str, Any]) -> dict[str, Any]:
-    """Translate non-scalar API params into wire-friendly query fields.
-
-    Fidelity objects are opaque to urlencode (they'd be str()'d into garbage
-    that serve routes ignore — historically leading to silent fidelity drift
-    on delegated reads). Expand them into the `include_thinking` /
-    `include_tool_content` boolean flags that serve routes accept.
-
-    Also drops keys whose value is ``None``: ``urlencode`` would otherwise
-    emit them as the literal string ``"None"``, which the route then parses
-    as a real value (e.g. ``tool_filter=None`` would be treated as the
-    pattern "None" by ``_matches_tool_filter`` and filter out every tool).
-    The CLI's intent for ``None`` is "param omitted," not "param literally
-    None." Litestar routes use their declared defaults when a key is absent.
-    """
-    out: dict[str, Any] = {}
-    for k, v in params.items():
-        if v is None:
-            continue
-        if k == "fidelity" and hasattr(v, "shows"):
-            # Expand Fidelity → wire axis fields. Drop the opaque object.
-            out["include_thinking"] = bool(v.shows("thinking"))
-            out["include_tool_content"] = bool(v.shows("tools"))
-            continue
-        out[k] = v
-    return out
-
-
-def _remap_params(params: dict[str, Any]) -> dict[str, Any]:
-    """Remap API fn kwargs to serve route query param names."""
-    expanded = _expand_for_wire(params)
-    return {_SERVE_PARAM_MAP.get(k, k): v for k, v in expanded.items()}
-
-
-# Keys in op.params that exist for local execution but must NOT travel on the
-# wire.
-#
-# - db_path / embed_db: local paths to SQLite files; the server uses its own
-#   configured DB. Sending these leaks local filesystem state to the remote
-#   and the server would ignore them anyway.
-# - around: pure CLI post-processing annotation. The server has no use for it
-#   today and the search route doesn't declare it; sending it would be
-#   silently dropped by Litestar.
-#
-# Note: `mode` was previously excluded here because the search route had no
-# matching Parameter — it derived mode from the `embeddings_only` bool instead.
-# ST-4a added `mode` to the route, so `mode` now travels on the wire.
-# ST-5 (wire-form-dissolution) will convert this frozenset to per-op declarations.
-_WIRE_EXCLUDE = frozenset({"db_path", "embed_db", "around"})
-
-
-def wire_query(op: Any) -> dict[str, Any]:
-    """Return the query-params dict for HTTP delegation of this Operation.
-
-    This is the wire form of ``op.params`` — the result of:
-
-    1. Dropping local-only keys (``db_path``).
-    2. Dropping ``None`` values (urlencode would emit them as the literal
-       string "None", which Litestar would treat as a real value).
-    3. Expanding non-scalar types (``Fidelity`` →
-       ``include_thinking`` + ``include_tool_content``).
-    4. Applying Python-keyword renames (``lambda_`` → ``lambda``).
-
-    The output is ready for ``urlencode(..., doseq=True)`` and HTTP
-    transport. See ``docs/guides/delegation-contract.md`` for the contract
-    this implements and :func:`siftd.api.dispatch.local_kwargs` for the
-    sibling that produces the local-execution form.
-    """
-    raw = {k: v for k, v in op.params.items() if k not in _WIRE_EXCLUDE}
-    return _remap_params(raw)
-
-
-# POST bodies use API conventions (tags, entity_id) — no remapping, no
-# Fidelity expansion (POST routes in this codebase don't currently carry
-# Fidelity). The function exists so future POST routes have a named entry
-# point that can be extended without touching call sites.
-def wire_body(op: Any) -> dict[str, Any]:
-    """Return the JSON body dict for HTTP POST delegation of this Operation."""
-    return {k: v for k, v in op.params.items() if k not in _WIRE_EXCLUDE}
-
-
 def try_serve(op: Any) -> Any | None:
     """Try delegating an Operation to siftd-serve.
 
@@ -329,19 +240,26 @@ def try_serve(op: Any) -> Any | None:
     Raises:
         ServeRequest4xx: If the server returns a 4xx response. Callers must
             catch this and surface it — do not fall back to local execution.
+        MissingOpSpec: If the Operation has no registered OpSpec; this is
+            a substrate-level bug (a delegated path with no wire-form rules)
+            and must be fixed at construction time, not swallowed here.
 
-    Uses :func:`wire_query` / :func:`wire_body` to produce the wire
-    form from ``op.params``.
+    Uses :meth:`siftd.api.dispatch.Operation.to_wire` /
+    :meth:`siftd.api.dispatch.Operation.to_wire_body` to produce the wire
+    form from ``op.params``; see :mod:`siftd.api.op_spec` for the contract.
     """
+    from siftd.api.op_spec import MissingOpSpec
     from siftd.serve.client import ServeRequest4xx
 
     try:
         if op.method == "GET":
-            return try_delegate(op.path, wire_query(op), db=op.db)
+            return try_delegate(op.path, op.to_wire(), db=op.db)
         elif op.method == "POST":
-            return try_delegate_post(op.path, wire_body(op), db=op.db)
+            return try_delegate_post(op.path, op.to_wire_body(), db=op.db)
     except ServeRequest4xx:
         raise  # propagate — callers must surface, not swallow
+    except MissingOpSpec:
+        raise  # propagate — substrate-level bug, never silently fall back to local
     except Exception as e:
         log.warning("try_serve unexpected error for %s %s: %s", op.method, op.path, e)
     return None

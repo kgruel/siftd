@@ -11,10 +11,10 @@ class _Fidelity:
     visible: frozenset = frozenset({"text"})
 
 
-def _make_op(fn=None, render_method="raw", params=None):
+def _make_op(fn=None, render_method="raw", params=None, *, path="/test", method="GET"):
     return Operation(
-        path="/test",
-        method="GET",
+        path=path,
+        method=method,
         fn=fn or (lambda: "result"),
         params=params or {},
         render_method=render_method,
@@ -27,8 +27,17 @@ class TestExecute:
     def test_calls_fn(self):
         assert execute(_make_op(fn=lambda: 42)) == 42
 
-    def test_strips_serve_keys(self):
-        op = _make_op(fn=lambda x=1: x, params={"x": 5, "action": "ignored"})
+    def test_strips_local_excludes(self):
+        """execute() drops keys the spec marks as local-excluded.
+
+        Uses ``/api/v1/search`` because its OpSpec lists ``action`` in
+        ``local_excludes`` — a CLI routing key the local fn doesn't accept.
+        """
+        op = _make_op(
+            path="/api/v1/search",
+            fn=lambda x=1: x,
+            params={"x": 5, "action": "ignored"},
+        )
         assert execute(op) == 5
 
 

@@ -10,9 +10,9 @@ downstream renderers, the CLI needs to reconstruct the typed objects
 These functions are the inverse of the serializers in
 :mod:`siftd.serialization`. The pair is the response-side half of the
 operation-has-local-form-and-wire-form pattern (the request-side half is
-:func:`siftd.api.dispatch.local_kwargs` /
-:func:`siftd.serve.delegation.wire_query`). See
-``docs/guides/delegation-contract.md``.
+:meth:`siftd.api.dispatch.Operation.to_local` /
+:meth:`siftd.api.dispatch.Operation.to_wire`, with per-op rules in
+:mod:`siftd.api.op_spec`). See ``docs/guides/delegation-contract.md``.
 
 This module lives under ``api/`` (not ``serialization/``) because it must
 construct api-layer dataclasses at runtime; the architectural rule is

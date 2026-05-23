@@ -31,7 +31,6 @@ pytestmark = pytest.mark.serve
 
 from siftd.api.dispatch import Operation
 from siftd.serve import routes
-from siftd.serve.delegation import wire_query
 
 
 def _declared_query_names(route_fn) -> set[str]:
@@ -102,7 +101,7 @@ def test_conversation_detail_op_keys_accepted_by_route():
         db=Path("/tmp/x"),
     )
 
-    wire_keys = set(wire_query(op).keys())
+    wire_keys = set(op.to_wire().keys())
     route_keys = _declared_query_names(routes.conversation_detail)
     path_keys = _path_param_names("/api/v1/conversations/{id:str}")
 
@@ -111,7 +110,7 @@ def test_conversation_detail_op_keys_accepted_by_route():
     assert not leftover, (
         f"CLI op for /api/v1/conversations/{{id}} sends wire keys not declared on the route: "
         f"{sorted(leftover)}. Either add a Parameter(query=...) on the route or "
-        f"extend _LOCAL_FN_EXCLUDE/_WIRE_EXCLUDE in api/dispatch.py + serve/delegation.py."
+        f"extend the matching OpSpec's wire_excludes in siftd.api.op_spec.SPECS."
     )
 
 
@@ -145,7 +144,7 @@ def test_conversation_list_op_keys_accepted_by_route():
         db=Path("/tmp/x"),
     )
 
-    wire_keys = set(wire_query(op).keys())
+    wire_keys = set(op.to_wire().keys())
     route_keys = _declared_query_names(routes.conversation_list)
 
     leftover = wire_keys - route_keys
@@ -210,7 +209,7 @@ def test_search_op_keys_accepted_by_route():
         db=_Path("/tmp/x"),
     )
 
-    wire_keys = set(wire_query(op).keys())
+    wire_keys = set(op.to_wire().keys())
     route_keys = _declared_query_names(routes.search_route)
 
     leftover = wire_keys - route_keys
@@ -218,7 +217,7 @@ def test_search_op_keys_accepted_by_route():
         f"CLI search op sends wire keys the route doesn't declare: "
         f"{sorted(leftover)}. Round-4 caught this for embed_db/around — "
         f"any new addition needs either a Parameter() on the route or an "
-        f"entry in _WIRE_EXCLUDE / _LOCAL_FN_EXCLUDE."
+        f"entry in the search OpSpec's wire_excludes in siftd.api.op_spec.SPECS."
     )
     # Local paths and CLI annotations must not bleed to the wire.
     assert "embed_db" not in wire_keys, "local embeddings DB path must not leak to the wire"
@@ -255,7 +254,7 @@ def test_export_op_format_aware_keys_accepted_by_route():
         db=Path("/tmp/x"),
     )
 
-    wire_keys = set(wire_query(op).keys())
+    wire_keys = set(op.to_wire().keys())
     route_keys = _declared_query_names(routes.export_route)
 
     leftover = wire_keys - route_keys
@@ -281,3 +280,82 @@ def test_route_parameter_introspection_finds_expected_names():
     assert "include_thinking" in names
     assert "include_tool_content" in names
     assert "tool_filter" in names
+
+
+# ---------------------------------------------------------------------------
+# Registry-iteration parity: every OpSpec entry has a matching Litestar route
+# ---------------------------------------------------------------------------
+
+
+def _route_map() -> dict[tuple[str, str], object]:
+    """Build {(template_path, method): handler_fn} for every route in siftd.serve.routes.
+
+    Litestar's HTTPRouteHandler exposes ``paths`` (set of literal route paths,
+    with Litestar type suffixes like ``{id:str}``) and ``http_methods`` (set
+    of HTTP methods). This walker normalizes the paths to the SPECS template
+    form (stripping ``:str`` and friends) so the result is directly comparable
+    to keys in :data:`siftd.api.op_spec.SPECS`.
+    """
+    import re as _re
+
+    out: dict[tuple[str, str], object] = {}
+    for name in dir(routes):
+        handler = getattr(routes, name)
+        # Filter to actual Litestar handlers: they expose `.fn` (the wrapped
+        # async function). Class-level descriptors on imported types also
+        # satisfy `hasattr(..., "paths")` but aren't real route handlers.
+        if not callable(getattr(handler, "fn", None)):
+            continue
+        paths = getattr(handler, "paths", None)
+        methods = getattr(handler, "http_methods", None)
+        if not paths or not methods:
+            continue
+        for raw_path in paths:
+            template = _re.sub(r"\{(\w+):\w+\}", r"{\1}", str(raw_path))
+            for method in methods:
+                out[(template, str(method))] = handler
+    return out
+
+
+def test_every_op_spec_has_matching_route():
+    """Every entry in :data:`SPECS` must correspond to a real Litestar route.
+
+    Catches orphan specs (route removed without removing its spec) and typos
+    in spec keys. Combined with :func:`Operation.to_wire` raising
+    :class:`MissingOpSpec` for un-specced ops, this closes the "silent wire
+    drift" bug class declaratively.
+    """
+    from siftd.api.op_spec import SPECS
+
+    rmap = _route_map()
+    missing = [key for key in SPECS if key not in rmap]
+    assert not missing, (
+        f"OpSpec entries with no matching Litestar route: {missing}. "
+        f"Either remove the spec from siftd.api.op_spec.SPECS or add the route "
+        f"in siftd.serve.routes."
+    )
+
+
+def test_every_op_spec_wire_remap_lands_in_route():
+    """If a spec remaps ``foo`` → ``bar``, the route must declare ``bar`` as a query param.
+
+    Remaps exist because of Python-keyword collisions (``lambda_`` → ``lambda``).
+    A remap that doesn't land on a declared route param means the renamed key
+    is silently dropped — exactly the bug class this substrate dissolves.
+    """
+    from siftd.api.op_spec import SPECS
+
+    rmap = _route_map()
+    failures = []
+    for (template, method), spec in SPECS.items():
+        handler = rmap.get((template, method))
+        if handler is None:
+            continue  # covered by the previous test
+        declared = _declared_query_names(handler)
+        for src_name, wire_name in spec.wire_remaps.items():
+            if wire_name not in declared:
+                failures.append((template, method, src_name, wire_name))
+    assert not failures, (
+        f"OpSpec wire_remaps that don't land on a declared route param: {failures}. "
+        f"Either remove the remap or add a Parameter(query=...) on the route."
+    )

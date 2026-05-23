@@ -2,20 +2,26 @@
 
 Every CLI command in siftd that *can* be delegated to a remote `siftd-serve` exists in two forms, request and response:
 
-- **Local form**: `op.params` dict → `op.fn(**local_kwargs(op))` → typed result. Runs in the CLI process against a local SQLite.
-- **Wire form**: `wire_query(op)` → querystring → Litestar route handler → `op.fn` → serialized dict → `from_wire(op, body)` → typed result. Runs in the server process against the server's SQLite.
+- **Local form**: `op.params` dict → `op.fn(**op.to_local())` → typed result. Runs in the CLI process against a local SQLite.
+- **Wire form**: `op.to_wire()` → querystring → Litestar route handler → `op.fn` → serialized dict → `from_wire(op, body)` → typed result. Runs in the server process against the server's SQLite.
 
 Both forms must produce the same typed result for the same logical request — so downstream renderers don't need to know which path produced their input. This document is the contract new code must follow.
 
 ## The named substrate
 
-Four entry points name the local/wire seam. They live as close as practical to the code they pair with:
+The local/wire seam is named via methods on `Operation` plus a per-op rule registry in `siftd.api.op_spec`:
 
-### Request side
+### Request side — `Operation` methods
 
-- **`siftd.api.dispatch.local_kwargs(op) -> dict`** — kwargs for `op.fn(**...)` local execution. Strips annotation keys the local fn doesn't accept (`_LOCAL_FN_EXCLUDE` — `around`, `debug_ids`, `action`, `embeddings_only`). Lives next to `execute(op)`.
-- **`siftd.serve.delegation.wire_query(op) -> dict`** — query params dict for GET delegation. Drops local-only keys (`db_path`), drops `None` values (urlencode would emit them as literal `"None"`), expands non-scalar types (`Fidelity` → `include_thinking` + `include_tool_content`), applies Python-keyword renames (`lambda_` → `lambda`). Lives next to `try_serve(op)`.
-- **`siftd.serve.delegation.wire_body(op) -> dict`** — JSON body dict for POST delegation. Drops local-only keys; preserves `None` (JSON `null` is a legitimate body value).
+- **`Operation.to_local(self) -> dict`** — kwargs for `op.fn(**...)` local execution. Strips `OpSpec.local_excludes` for the op's `(path_template, method)` (e.g. for `/api/v1/search`: `around`, `debug_ids`, `action`, `embeddings_only`). Ops with no registered spec are valid local-only ops; their params pass through unchanged. Defined in `api/dispatch.py`; rules in `api/op_spec.py`.
+- **`Operation.to_wire(self) -> dict`** — query params dict for GET delegation. Drops `OpSpec.wire_excludes` (e.g. `db_path`, `embed_db`, `around`), drops `None` values (urlencode would emit them as literal `"None"`), expands non-scalar types (`Fidelity` → `include_thinking` + `include_tool_content` via `fidelity_to_wire`), applies `OpSpec.wire_remaps` (Python-keyword renames, e.g. `lambda_` → `lambda`). **Raises `MissingOpSpec` if no spec is registered** — wire serialization without a spec would silently leak local-only keys, so it fails loudly at delegation time.
+- **`Operation.to_wire_body(self) -> dict`** — JSON body dict for POST delegation. Drops `wire_excludes` but preserves `None` (JSON `null` is a legitimate body value).
+
+### Per-op rules — `siftd.api.op_spec`
+
+- **`OpSpec(local_excludes, wire_excludes, wire_remaps)`** — frozen dataclass; one per logical operation.
+- **`SPECS: dict[(path_template, method), OpSpec]`** — the registry. Eight entries today (one per delegated route). Keyed by template form (`/api/v1/conversations/{id}`); CLI sites that interpolate runtime IDs are normalized by `_normalize_path`.
+- **`fidelity_to_wire(f) -> dict[str, bool]`** — typed serializer for `painted.Fidelity` → `include_thinking` + `include_tool_content`.
 
 ### Response side
 
@@ -60,27 +66,29 @@ emit_output(fmt.render_detail(result.turns, op.fidelity, ...))
 
 When adding a new delegated route, or extending an existing route's accepted params:
 
-1. **Declare every CLI param on the route.** For every key the CLI op.params dict carries (other than `_LOCAL_FN_EXCLUDE` annotations and `_WIRE_EXCLUDE` local-only keys like `db_path`/`embed_db`/`mode`/`around`), the route must have a corresponding `Parameter(query="...")` declaration. Litestar silently drops unknown query params; this is the bug class to defend against. (Pinned by `tests/test_op_route_parity.py`, which introspects Litestar route signatures and asserts each Op's `wire_query()` is a subset of the route's declared Parameters. `tests/test_serve_e2e_smoke.py` exercises the wire path end-to-end via TestClient as a complementary check.)
+1. **Add an `OpSpec` entry for new delegated paths.** Every delegated `(path_template, method)` needs an entry in `siftd.api.op_spec.SPECS`. Without one, `Operation.to_wire()` raises `MissingOpSpec` at delegation time — by design, to prevent silent local-only-key leakage. The parity test `tests/test_op_route_parity.py::test_every_op_spec_has_matching_route` pins that every SPECS entry has a real Litestar route.
 
-2. **Handle non-scalars in `_expand_for_wire`.** If the CLI op carries a value that isn't `str`/`int`/`float`/`bool`/`list[str]`/`None`, add an explicit translation rule in `serve/delegation.py:_expand_for_wire`. Don't rely on `urlencode`'s `str()` coercion — the result will be opaque garbage the route can't parse.
+2. **Declare every CLI param on the route.** For every key the CLI op.params dict carries (other than `OpSpec.local_excludes` annotations and `OpSpec.wire_excludes` local-only keys like `db_path`/`embed_db`/`around`), the route must have a corresponding `Parameter(query="...")` declaration. Litestar silently drops unknown query params; this is the bug class to defend against. (Pinned by `tests/test_op_route_parity.py`, which introspects Litestar route signatures and asserts each Op's `to_wire()` is a subset of the route's declared Parameters. `tests/test_serve_e2e_smoke.py` exercises the wire path end-to-end via TestClient as a complementary check.)
 
-3. **Strip None values.** Already handled by `_expand_for_wire`. Don't add per-call workarounds; rely on the centralized rule.
+3. **Handle non-scalars in `apply_wire`.** If the CLI op carries a value that isn't `str`/`int`/`float`/`bool`/`list[str]`/`None`, add an explicit translation rule in `api/op_spec.py:apply_wire` (or `fidelity_to_wire`-style typed serializer). Don't rely on `urlencode`'s `str()` coercion — the result will be opaque garbage the route can't parse.
 
-4. **Coerce wire types in the route.** Litestar coerces simple types (str, int, bool) from query strings automatically. For union types like `int | str` (e.g. `anchor_value`, which is int for `at_turn` and str for `around`), the route receives a string and must coerce explicitly — see `routes.py:conversation_detail` for the pattern (try `int()`, return 400 on failure).
+4. **Strip None values.** Already handled by `apply_wire`. Don't add per-call workarounds; rely on the centralized rule.
 
-5. **Add an e2e smoke test.** In `tests/test_serve_e2e_smoke.py`, add a test that exercises the new wire path through Litestar's `TestClient`. This catches what unit tests via `.fn()` cannot:
+5. **Coerce wire types in the route.** Litestar coerces simple types (str, int, bool) from query strings automatically. For union types like `int | str` (e.g. `anchor_value`, which is int for `at_turn` and str for `around`), the route receives a string and must coerce explicitly — see `routes.py:conversation_detail` for the pattern (try `int()`, return 400 on failure).
+
+6. **Add an e2e smoke test.** In `tests/test_serve_e2e_smoke.py`, add a test that exercises the new wire path through Litestar's `TestClient`. This catches what unit tests via `.fn()` cannot:
    - URL encoding behavior (booleans → `"True"` / `"False"` strings)
    - Litestar query parsing + default-value resolution
    - Status code mapping for user-input errors
    - Auth middleware integration
 
-   Patterns to copy: `TestAnchorWindowOverHttp` (parity), `TestDelegationWireRoundTrip` (`_remap_params` → URL → route round-trip), `TestFullDelegationLoop` (route → from_wire → typed object).
+   Patterns to copy: `TestAnchorWindowOverHttp` (parity), `TestDelegationWireRoundTrip` (`apply_wire` → URL → route round-trip), `TestFullDelegationLoop` (route → from_wire → typed object).
 
-6. **Map user-input errors to 4xx, not 5xx.** Custom exceptions that represent bad user input must inherit `ValueError` OR be added to the explicit catch list in `routes.py:_dispatch`. Today `AnchorError` is caught explicitly. New input-validation exceptions need the same treatment.
+7. **Map user-input errors to 4xx, not 5xx.** Custom exceptions that represent bad user input must inherit `ValueError` OR be added to the explicit catch list in `routes.py:_dispatch`. Today `AnchorError` is caught explicitly. New input-validation exceptions need the same treatment.
 
-7. **Register a deserializer if the response is a typed object.** If the route returns more than a plain dict (e.g. a dataclass like `ConversationDetail`), add a `deserialize_X` function in `api/deserialize.py` and wire it into the `from_wire(render_method, body)` dispatch table. The deserializer should be the inverse of the matching serializer in `siftd/serialization/`. Round-trip tests in `tests/test_wire_form_roundtrip.py` pin the contract.
+8. **Register a deserializer if the response is a typed object.** If the route returns more than a plain dict (e.g. a dataclass like `ConversationDetail`), add a `deserialize_X` function in `api/deserialize.py` and wire it into the `from_wire(render_method, body)` dispatch table. The deserializer should be the inverse of the matching serializer in `siftd/serialization/`. Round-trip tests in `tests/test_wire_form_roundtrip.py` pin the contract.
 
-8. **Deserializers return `None` on schema mismatch — never raise.** The CLI fallback path treats `None` from `from_wire` as "fall back to local execute." A deserializer that raises (KeyError, AttributeError, TypeError, etc.) would crash the user with an opaque error instead. Always:
+9. **Deserializers return `None` on schema mismatch — never raise.** The CLI fallback path treats `None` from `from_wire` as "fall back to local execute." A deserializer that raises (KeyError, AttributeError, TypeError, etc.) would crash the user with an opaque error instead. Always:
    - validate the body is a `dict` before subscripting,
    - validate required fields exist before constructing the dataclass,
    - return `None` on any mismatch,
@@ -104,8 +112,16 @@ When extending the wire form, prefer round-trip preservation over compact serial
 
 ## Open questions
 
-- **Tighter `Fidelity` detection?** `_expand_for_wire` duck-types via `hasattr(v, "shows")`. An `isinstance(v, Fidelity)` check would be more precise; today's duck-typing is adequate because nothing else has a `.shows()` method, but the contract would be safer as the codebase grows.
+Both prior open questions (tighter `Fidelity` detection + per-op `_LOCAL_FN_EXCLUDE` declaration) were resolved by the ST-5 wire-form dissolution. Today:
 
-- **Should `_LOCAL_FN_EXCLUDE` move to a per-op declaration?** Today it's a module-level frozenset. A future refactor could let each Operation subclass declare its own exclusions, which would scale better if the set of annotation keys grows. The cost is more ceremony for ops that don't need any exclusion (the common case).
+- `apply_wire` uses `isinstance(v, Fidelity)` (typed check, runtime import).
+- Local + wire exclusions are per-op declarations in `siftd.api.op_spec.SPECS`.
+
+Outstanding architectural followups from ST-1.5–ST-4 review rounds (deferred, non-blocking):
+
+- Per-render-method wire projection (so `op.render_method` can influence response shape).
+- Split `render_method`'s two meanings (renderer dispatch vs. serializer dispatch).
+- Shared `stamp_owner` helper across routes.
+- Parity test coverage for raw delegated meta/tags responses.
 
 These are explicitly open. The contract above is the minimum discipline new code must follow.

@@ -227,11 +227,17 @@ class TestTryServeH10:
             "siftd.serve.delegation.try_delegate",
             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
         )
-        op = SimpleNamespace(
+        from painted import Fidelity
+
+        from siftd.api.dispatch import Operation
+        op = Operation(
             method="GET",
             path="/api/v1/search",
             params={"db_path": db, "q": "test"},
             db=db,
+            fn=lambda **kw: kw,
+            render_method="search",
+            fidelity=Fidelity(),
         )
         with caplog.at_level(logging.WARNING, logger="siftd.serve.delegation"):
             result = delegation.try_serve(op)
@@ -248,11 +254,17 @@ class TestTryServeH10:
             "siftd.serve.delegation.try_delegate",
             lambda *a, **k: None,
         )
-        op = SimpleNamespace(
+        from painted import Fidelity
+
+        from siftd.api.dispatch import Operation
+        op = Operation(
             method="GET",
             path="/api/v1/search",
             params={"db_path": db, "q": "test"},
             db=db,
+            fn=lambda **kw: kw,
+            render_method="search",
+            fidelity=Fidelity(),
         )
         result = delegation.try_serve(op)
         assert result is None

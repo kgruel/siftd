@@ -45,39 +45,52 @@ class Operation:
     db: Path
     render_context: dict[str, Any] = field(default_factory=dict)
 
+    def to_local(self) -> dict[str, Any]:
+        """Return the kwargs to pass to ``self.fn`` for local execution.
 
-# Annotation keys that travel in op.params but are NOT accepted by the local
-# fn. The wire form may still carry them (the server can declare a Parameter
-# to read them if it wants). See docs/guides/delegation-contract.md for the
-# pattern this implements.
-#
-# - debug_ids: serve route passes it to render_context; CLI local path uses
-#   op.render_context directly.
-# - around: CLI post-processing annotation; caveat producers read it from
-#   op.params; the local search fn doesn't accept it.
-# - action / embeddings_only: routing keys that pick which wire endpoint or
-#   wire shape; not local-fn kwargs.
-_LOCAL_FN_EXCLUDE = frozenset({"action", "embeddings_only", "debug_ids", "around"})
+        Strips ``OpSpec.local_excludes`` — annotation keys the local fn doesn't
+        accept (CLI-only state, routing keys). Ops with no registered spec get
+        ``self.params`` unchanged; local-only commands are valid.
+        """
+        from siftd.api.op_spec import apply_local, spec_for
+        return apply_local(self.params, spec_for(self))
 
-# Deprecated alias — kept for any external readers; new code uses _LOCAL_FN_EXCLUDE.
-_SERVE_ONLY_KEYS = _LOCAL_FN_EXCLUDE
+    def to_wire(self) -> dict[str, Any]:
+        """Return the GET query-params dict for HTTP delegation of this Operation.
 
+        Raises :class:`siftd.api.op_spec.MissingOpSpec` if the op has no spec
+        — wire serialization without a spec would silently leak local-only
+        keys (e.g. ``db_path``) onto the wire, recreating the bug class this
+        substrate dissolves.
 
-def local_kwargs(op: Operation) -> dict[str, Any]:
-    """Return the kwargs to pass to ``op.fn`` for local execution.
+        See :mod:`siftd.api.op_spec` and ``docs/guides/delegation-contract.md``.
+        """
+        from siftd.api.op_spec import MissingOpSpec, apply_wire, spec_for
+        spec = spec_for(self)
+        if spec is None:
+            raise MissingOpSpec(
+                f"no OpSpec registered for {self.method} {self.path}"
+            )
+        return apply_wire(self.params, spec)
 
-    The local form is ``op.params`` minus annotation keys that the fn
-    doesn't accept. This is one half of the operation-local-form +
-    operation-wire-form pair; see :func:`siftd.serve.delegation.wire_query`
-    for the other half and ``docs/guides/delegation-contract.md`` for the
-    contract.
-    """
-    return {k: v for k, v in op.params.items() if k not in _LOCAL_FN_EXCLUDE}
+    def to_wire_body(self) -> dict[str, Any]:
+        """Return the JSON body dict for HTTP POST delegation of this Operation.
+
+        Raises :class:`siftd.api.op_spec.MissingOpSpec` on missing spec, same
+        rationale as :meth:`to_wire`.
+        """
+        from siftd.api.op_spec import MissingOpSpec, apply_wire_body, spec_for
+        spec = spec_for(self)
+        if spec is None:
+            raise MissingOpSpec(
+                f"no OpSpec registered for {self.method} {self.path}"
+            )
+        return apply_wire_body(self.params, spec)
 
 
 def execute(op: Operation) -> Any:
     """Call the API function with the operation's local kwargs."""
-    return op.fn(**local_kwargs(op))
+    return op.fn(**op.to_local())
 
 
 def from_wire(op: Operation, body: dict[str, Any]) -> Any:
