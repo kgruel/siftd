@@ -48,12 +48,18 @@ RUN apt-get update \
 COPY --from=builder /opt/venv /opt/venv
 
 ENV PATH="/opt/venv/bin:$PATH" \
+    HOME=/var/lib/siftd \
     XDG_CONFIG_HOME=/etc \
+    XDG_STATE_HOME=/var/lib/siftd/state \
     PYTHONUNBUFFERED=1
 
-# Config dir (read-only mount target) and DB dir (writable volume target),
-# owned by the non-root runtime user.
-RUN mkdir -p /etc/siftd /var/lib/siftd \
+# Config dir (read-only mount target), plus DB + state dirs (writable volume
+# target) owned by the non-root runtime user. `siftd serve` writes runtime
+# state under XDG_STATE_HOME — pinned into the data volume above because the
+# `siftd` user has no writable home. Mount /var/lib/siftd as a NAMED volume so
+# Docker seeds it with this ownership (a host bind mount would be root-owned and
+# unwritable by uid 10001).
+RUN mkdir -p /etc/siftd /var/lib/siftd/state \
     && chown -R siftd:siftd /var/lib/siftd
 
 USER siftd
