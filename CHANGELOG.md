@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Production container image + homelab build pipeline** — a multi-stage root `Dockerfile` builds the `[serve]` extra into a lean (~315 MB), non-root image with a `/api/v1/health` healthcheck and `ca-certificates` for outbound OIDC/introspection TLS. A GitLab CI (`.gitlab-ci.yml`, active only on the gruel.network mirror) builds and pushes `registry.gruel.network/gruel/siftd:{latest,<sha>}`. Productionizes the `smoke/homelab/Dockerfile.serve` sibling; see `docs/ops/homelab-deploy-runbook.md`.
 - **`siftd serve` thin-client delegation**: `siftd query`, `siftd query <id>` (JSON + non-JSON), `siftd search`, `siftd tag`, `siftd stats`, `siftd workspaces`, `siftd export` now delegate transparently to a configured remote `serve.url`. Local execute remains the fallback. See `docs/ops/homelab.md` for the operator runbook (DNS + TLS + OIDC + per-machine config).
 - **`/api/v1/export?format=md|json`** — format-aware path that returns a rendered `ExportArtifact` (`content` + `media_type` + `filename` + `count`). Legacy path (no `format`) still returns `{"conversations": [...]}` unchanged.
 - **`/api/v1/conversations/{id}` anchor + window query params** — `anchor`, `anchor_value`, `window_start`, `window_end`. Mirrors the CLI's axes so delegated `siftd query <id> --json --at-turn N` actually anchors.

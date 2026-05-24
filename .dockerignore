@@ -1,0 +1,44 @@
+# Build context hygiene for the production Dockerfile.
+# The builder only needs pyproject.toml, README.md, src/, plugin/.
+# Everything else is noise (and some of it is large or sensitive).
+
+.git
+.github
+.gitlab-ci.yml
+.githooks
+
+# Local envs / caches
+.venv
+.worktrees
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.coverage
+coverage.xml
+
+# Build outputs
+dist
+build
+*.egg-info
+
+# Tests + dev scaffolding (not needed in the image)
+tests
+bench
+smoke
+debug
+docs
+plugin/**/node_modules
+
+# Editor / OS cruft
+.DS_Store
+.obsidian
+.agents
+.claude
+.claude-plugin
+
+# Secrets / local config that must never enter an image layer
+*.db
+config.toml
+.env
+.mcp.json
