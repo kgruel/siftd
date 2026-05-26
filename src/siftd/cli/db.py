@@ -561,13 +561,18 @@ def cmd_db_sync_status(args) -> int:
     """Report sync capabilities and inbox status as JSON."""
     from siftd.api.inbox import get_inbox_status
     from siftd.api.sync import SYNC_CAPABILITIES, SYNC_PROTOCOL_VERSION
+    from siftd.config import get_config, parse_size_bytes
 
     db = resolve_db(args)
     inbox = get_inbox_status(db)
+    max_body_size = parse_size_bytes(
+        str(get_config("serve.request_max_body_size") or "500MB")
+    )
 
     status = {
         "capabilities": sorted(SYNC_CAPABILITIES),
         "inbox": inbox,
+        "max_body_size": max_body_size,
         "protocol_version": SYNC_PROTOCOL_VERSION,
     }
     print(json.dumps(status))
@@ -811,9 +816,17 @@ def cmd_db_push(args) -> int:
     suffix = " (new remote database)" if not result.remote_existed else ""
 
     if result.dry_run:
-        print(f"Would push {result.conversations} conversations to {args.name} ({size_kb:.1f} KB)")
+        window_hint = f" in {result.windows} windows" if result.windows > 1 else ""
+        print(f"Would push {result.conversations} conversations to {args.name} ({size_kb:.1f} KB){window_hint}")
     else:
-        print(f"Pushed {result.conversations} conversations ({size_kb:.1f} KB){suffix}")
+        window_hint = f" ({result.windows} windows)" if result.windows > 1 else ""
+        print(f"Pushed {result.conversations} conversations ({size_kb:.1f} KB){suffix}{window_hint}")
+        if result.windows > 1 and not result.last_push_updated:
+            print(
+                f"  Partial push — some windows may not have completed.\n"
+                f"  Re-run 'siftd db push {args.name}' to resume from the last successful window.",
+                file=sys.stderr,
+            )
     return 0
 
 

@@ -27,7 +27,7 @@ pytestmark = pytest.mark.serve
 
 from litestar.testing import TestClient
 
-from siftd.api.sync import SYNC_HTTP_CHUNK_SIZE, SyncError, _pull_http, _push_http
+from siftd.api.sync import SYNC_HTTP_CHUNK_SIZE, SyncError, _pull_http, _push_slice_http
 from siftd.domain.sync import SyncRemote
 from siftd.serve.app import create_app
 
@@ -213,45 +213,57 @@ def _setup_client_auth(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+class _CapturingClient:
+    """Minimal fake httpx client that records post() chunks and returns a fixed response."""
+
+    def __init__(self, resp):
+        self._resp = resp
+        self.chunks_per_call: list[list[bytes]] = []
+        self.post_calls: list[dict] = []
+
+    def post(self, url, *, content=None, headers=None):
+        chunks: list[bytes] = []
+        if hasattr(content, "__iter__") and not isinstance(content, (bytes, bytearray)):
+            for c in content:
+                chunks.append(c)
+        else:
+            chunks = [content] if content else []
+        self.chunks_per_call.append(chunks)
+        self.post_calls.append({"url": url, "headers": headers})
+        return self._resp
+
+
 class TestPushHttpStreaming:
-    """_push_http must stream the file rather than reading it all into memory."""
+    """_push_slice_http must stream the file rather than reading it all into memory."""
 
-    def test_yields_multiple_chunks_for_large_file(self, tmp_path, monkeypatch):
+    def test_yields_multiple_chunks_for_large_file(self, tmp_path):
         """A >2 MiB file must produce at least 3 distinct chunk yields."""
-        tracker = _patch_fake_httpx(monkeypatch, post_resp=_PostResp(body={"status": "ok"}))
-        _setup_client_auth(monkeypatch)
-
         data_size = SYNC_HTTP_CHUNK_SIZE * 2 + 100
         slice_path = tmp_path / "slice.db"
         slice_path.write_bytes(b"S" * data_size)
 
-        _push_http(_remote(), slice_path)
+        client = _CapturingClient(_PostResp(body={"status": "ok"}))
+        _push_slice_http(client, "http://srv/api/v1/push", {}, slice_path)
 
-        assert tracker.post_calls, "post() was not called"
-        # chunks_per_call[0] has one entry per generator yield
-        chunks = tracker.chunks_per_call[0]
+        assert client.post_calls, "post() was not called"
+        chunks = client.chunks_per_call[0]
         assert len(chunks) >= 3, f"Expected ≥3 chunks for {data_size} bytes, got {len(chunks)}"
         assert sum(len(c) for c in chunks) == data_size
 
-    def test_content_length_header_is_set(self, tmp_path, monkeypatch):
+    def test_content_length_header_is_set(self, tmp_path):
         """Content-Length must be the actual file size so proxies can handle chunked bodies."""
-        tracker = _patch_fake_httpx(monkeypatch, post_resp=_PostResp(body={"status": "ok"}))
-        _setup_client_auth(monkeypatch)
-
         slice_path = tmp_path / "slice.db"
         slice_path.write_bytes(b"X" * 500)
 
-        _push_http(_remote(), slice_path)
+        client = _CapturingClient(_PostResp(body={"status": "ok"}))
+        _push_slice_http(client, "http://srv/api/v1/push", {}, slice_path)
 
-        headers = tracker.post_calls[0]["headers"]
+        headers = client.post_calls[0]["headers"]
         assert headers["Content-Length"] == "500"
         assert headers["Content-Type"] == "application/octet-stream"
 
-    def test_does_not_call_read_bytes_on_slice(self, tmp_path, monkeypatch):
+    def test_does_not_call_read_bytes_on_slice(self, tmp_path):
         """Streaming push must not buffer the entire slice with Path.read_bytes()."""
-        tracker = _patch_fake_httpx(monkeypatch, post_resp=_PostResp(body={"status": "ok"}))
-        _setup_client_auth(monkeypatch)
-
         slice_path = tmp_path / "slice.db"
         slice_path.write_bytes(b"A" * (SYNC_HTTP_CHUNK_SIZE + 100))
 
@@ -263,8 +275,9 @@ class TestPushHttpStreaming:
                 read_bytes_called.append(self_path)
             return original(self_path)
 
+        client = _CapturingClient(_PostResp(body={"status": "ok"}))
         with patch.object(Path, "read_bytes", spy_read_bytes):
-            _push_http(_remote(), slice_path)
+            _push_slice_http(client, "http://srv/api/v1/push", {}, slice_path)
 
         assert not read_bytes_called, "read_bytes() was called on the slice path"
 

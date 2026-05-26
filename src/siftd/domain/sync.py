@@ -81,6 +81,7 @@ class SyncStatus:
     inbox_pending: int = 0
     inbox_total: int = 0
     protocol_version: int = SYNC_PROTOCOL_VERSION
+    max_body_size: int | None = None
 
     @classmethod
     def from_json(cls, data: dict) -> SyncStatus:
@@ -90,6 +91,7 @@ class SyncStatus:
             inbox_pending=data.get("inbox", {}).get("pending", 0),
             inbox_total=data.get("inbox", {}).get("total", 0),
             protocol_version=data.get("protocol_version", SYNC_PROTOCOL_VERSION),
+            max_body_size=data.get("max_body_size"),
         )
 
 
@@ -103,6 +105,7 @@ class PushResult:
     remote_existed: bool
     dry_run: bool
     last_push_updated: bool = False
+    windows: int = 1
 
 
 @dataclass

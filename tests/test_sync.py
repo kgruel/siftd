@@ -22,7 +22,7 @@ from siftd.api.sync import (
     _pull_http,
     _pull_local,
     _pull_ssh,
-    _push_http,
+    _push_slice_http,
     _push_local,
     _push_ssh,
     _resolve_pull_since,
@@ -284,12 +284,19 @@ class TestSyncPushBranches:
 
     def test_http_branch_updates_last_push(self, tmp_path, monkeypatch, caplog):
         called = []
-        monkeypatch.setattr(
-            "siftd.api.slice.slice_database",
-            lambda **kw: {"conversations": 1, "size_bytes": 10},
-        )
-        monkeypatch.setattr("siftd.api.sync._push_http", lambda r, p: True)
+        # Patch _post_window_with_bisect to avoid real HTTP; preflight returns None
         monkeypatch.setattr("siftd.api.sync._preflight_http", lambda *a: None)
+        monkeypatch.setattr(
+            "siftd.api.sync._post_window_with_bisect",
+            lambda *a, **kw: (True, 1, 10),
+        )
+        _patch_httpx_module(monkeypatch, lambda **kw: _Client())
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: {})
+        monkeypatch.setattr("siftd.config_sync.get_sync_timeouts", lambda n, k: (5, 30))
+        monkeypatch.setattr(
+            "siftd.api.auth.acquire_token",
+            lambda *a: (_ for _ in ()).throw(AuthError("no-auth")),
+        )
         monkeypatch.setattr("siftd.config_sync.update_last_push", lambda n, ts, **kw: called.append((n, ts)))
         import logging
         with caplog.at_level(logging.WARNING, logger="siftd.api.sync"):
@@ -301,15 +308,21 @@ class TestSyncPushBranches:
         from siftd.domain.sync import SyncStatus
         push_called = []
         monkeypatch.setattr(
-            "siftd.api.slice.slice_database",
-            lambda **kw: {"conversations": 1, "size_bytes": 10},
-        )
-        monkeypatch.setattr("siftd.api.sync._push_http", lambda r, p: push_called.append(True) or True)
-        monkeypatch.setattr(
             "siftd.api.sync._preflight_http",
             lambda *a: SyncStatus(
                 capabilities=frozenset(), protocol_version=SYNC_PROTOCOL_VERSION + 1
             ),
+        )
+        monkeypatch.setattr(
+            "siftd.api.sync._post_window_with_bisect",
+            lambda *a, **kw: push_called.append(True) or (True, 1, 10),
+        )
+        _patch_httpx_module(monkeypatch, lambda **kw: _Client())
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: {})
+        monkeypatch.setattr("siftd.config_sync.get_sync_timeouts", lambda n, k: (5, 30))
+        monkeypatch.setattr(
+            "siftd.api.auth.acquire_token",
+            lambda *a: (_ for _ in ()).throw(AuthError("no-auth")),
         )
         with pytest.raises(SyncError, match="newer than local"):
             sync_push(_db(tmp_path), _remote(path="http://srv"))
@@ -319,13 +332,19 @@ class TestSyncPushBranches:
         from siftd.domain.sync import SyncStatus
         called = []
         monkeypatch.setattr(
-            "siftd.api.slice.slice_database",
-            lambda **kw: {"conversations": 1, "size_bytes": 10},
-        )
-        monkeypatch.setattr("siftd.api.sync._push_http", lambda r, p: True)
-        monkeypatch.setattr(
             "siftd.api.sync._preflight_http",
             lambda *a: SyncStatus(capabilities=frozenset(), protocol_version=SYNC_PROTOCOL_VERSION),
+        )
+        monkeypatch.setattr(
+            "siftd.api.sync._post_window_with_bisect",
+            lambda *a, **kw: (True, 1, 10),
+        )
+        _patch_httpx_module(monkeypatch, lambda **kw: _Client())
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: {})
+        monkeypatch.setattr("siftd.config_sync.get_sync_timeouts", lambda n, k: (5, 30))
+        monkeypatch.setattr(
+            "siftd.api.auth.acquire_token",
+            lambda *a: (_ for _ in ()).throw(AuthError("no-auth")),
         )
         monkeypatch.setattr("siftd.config_sync.update_last_push", lambda n, ts, **kw: called.append((n, ts)))
         result = sync_push(_db(tmp_path), _remote(path="http://srv"))
@@ -415,37 +434,28 @@ class TestResolvePullSince:
 
 
 class TestPushHttp:
-    def test_success_with_auth(self, tmp_path, monkeypatch):
+    """Tests for _push_slice_http: streaming POST, header passthrough, error handling."""
+
+    def test_headers_passed_through(self, tmp_path):
+        """_push_slice_http passes caller-supplied headers (including auth) to client.post."""
         slice_path = tmp_path / "s.db"
         slice_path.write_bytes(b"db")
         client = _Client(post_resp=_Resp(body={"status": "created"}))
-        _patch_httpx_module(monkeypatch, lambda timeout=None: client)
-        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: {"auth": {"token": "x"}})
-        monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: "tok")
-        assert _push_http(_remote(path="http://srv", name="r"), slice_path) is False
+        auth_headers = {"Authorization": "Bearer tok"}
+        _push_slice_http(client, "http://srv/api/v1/push", auth_headers, slice_path)
         _, url, content, headers = client.calls[0]
         assert url.endswith("/api/v1/push") and content == b"db"
         assert headers["Authorization"] == "Bearer tok"
 
-    def test_status_error(self, tmp_path, monkeypatch):
-        slice_path = tmp_path / "s.db"
-        slice_path.write_bytes(b"db")
-        client = _Client(post_resp=_Resp(status=500, body={}))
-        _patch_httpx_module(monkeypatch, lambda timeout=None: client)
-        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: None)
-        monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: (_ for _ in ()).throw(AuthError("no-auth")))
-        with pytest.raises(SyncError, match="HTTP 500"):
-            _push_http(_remote(path="http://srv"), slice_path)
-
-    def test_connect_error(self, tmp_path, monkeypatch):
+    def test_connect_error_raises_sync_error(self, tmp_path, monkeypatch):
+        """ConnectError from client.post is wrapped in SyncError."""
         slice_path = tmp_path / "s.db"
         slice_path.write_bytes(b"db")
         client = _Client(post_exc=_ConnectError("no route"))
-        _patch_httpx_module(monkeypatch, lambda timeout=None: client)
-        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: None)
-        monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: (_ for _ in ()).throw(AuthError("no-auth")))
+        # Patch httpx so _push_slice_http sees ConnectError = _ConnectError
+        _patch_httpx_module(monkeypatch, lambda **kw: client)
         with pytest.raises(SyncError, match="Cannot connect"):
-            _push_http(_remote(path="http://srv"), slice_path)
+            _push_slice_http(client, "http://srv/api/v1/push", {}, slice_path)
 
 
 class TestPullLocalAndHttp:

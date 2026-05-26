@@ -292,7 +292,8 @@ class TestDbPushPull:
         monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: _remote_cfg())
         monkeypatch.setattr(
             "siftd.api.sync.sync_push",
-            lambda **kw: SimpleNamespace(conversations=2, size_bytes=2048, dry_run=True, remote_existed=True),
+            lambda **kw: SimpleNamespace(conversations=2, size_bytes=2048, dry_run=True,
+                                         remote_existed=True, windows=1, last_push_updated=False),
         )
         rc = main(["--db", str(test_db), "db", "push", "r", "--dry-run"])
         assert rc == 0
@@ -300,7 +301,8 @@ class TestDbPushPull:
 
         monkeypatch.setattr(
             "siftd.api.sync.sync_push",
-            lambda **kw: SimpleNamespace(conversations=2, size_bytes=2048, dry_run=False, remote_existed=False),
+            lambda **kw: SimpleNamespace(conversations=2, size_bytes=2048, dry_run=False,
+                                         remote_existed=False, windows=1, last_push_updated=True),
         )
         rc = main(["--db", str(test_db), "db", "push", "r"])
         assert rc == 0
@@ -348,7 +350,8 @@ class TestDbPushPull:
 
         monkeypatch.setattr(
             "siftd.api.sync.sync_push",
-            lambda **kw: SimpleNamespace(conversations=0, size_bytes=0, dry_run=False, remote_existed=True),
+            lambda **kw: SimpleNamespace(conversations=0, size_bytes=0, dry_run=False,
+                                         remote_existed=True, windows=1, last_push_updated=False),
         )
         rc = main(["--db", str(test_db), "db", "push", "r"])
         assert rc == 0

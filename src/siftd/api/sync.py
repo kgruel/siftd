@@ -39,6 +39,7 @@ from siftd.safecall import parse_json
 logger = logging.getLogger(__name__)
 
 SYNC_HTTP_CHUNK_SIZE = 1024 * 1024  # 1 MiB
+_WINDOW_SAFETY = 0.8  # size headroom: target each window at 80% of the cap
 
 
 class SyncError(Exception):
@@ -117,6 +118,12 @@ def sync_push(
     effective_since = _resolve_since(since, push_all, remote, current_sig)
     should_update_cursor = since is None
 
+    if _is_http_remote(remote):
+        return _sync_push_http(
+            db_path, remote, filters, effective_since,
+            should_update_cursor, current_sig, dry_run,
+        )
+
     # Slice to a temp file (no FTS — remote doesn't need it)
     from siftd.api.slice import slice_database
 
@@ -155,21 +162,7 @@ def sync_push(
 
         # Negotiate capabilities with the remote
         use_staged = False
-        if _is_http_remote(remote):
-            http_status = _preflight_http(remote)
-            if http_status is None:
-                logger.warning(
-                    "HTTP sync preflight unavailable for %s; falling back to legacy push",
-                    remote.name,
-                )
-            elif http_status.protocol_version > SYNC_PROTOCOL_VERSION:
-                raise SyncError(
-                    f"Remote sync protocol is newer than local "
-                    f"(remote: {http_status.protocol_version}, local: {SYNC_PROTOCOL_VERSION}); "
-                    "upgrade local siftd."
-                )
-            remote_existed = _push_http(remote, slice_path)
-        elif remote.host:
+        if remote.host:
             status = asyncio.run(_preflight_ssh(remote))
             if status is None:
                 raise SyncError(
@@ -198,7 +191,7 @@ def sync_push(
             # If processing fails the data is safely staged on the remote;
             # not advancing the cursor means next push may resend (idempotent).
             processing_confirmed = False
-            if remote.host and not _is_http_remote(remote):
+            if remote.host:
                 try:
                     asyncio.run(_process_remote_ssh(remote))
                     processing_confirmed = True
@@ -559,15 +552,240 @@ def _push_local(remote: SyncRemote, slice_path: Path, db_path: Path) -> bool:
     return True
 
 
-def _push_http(remote: SyncRemote, slice_path: Path) -> bool:
-    """Push via HTTP POST to remote /api/v1/push endpoint.
+def _derive_date_windows(
+    convs: list,
+    target_bytes: int,
+    bytes_per_conv: float,
+) -> list[tuple[str | None, str | None]]:
+    """Split a sorted (oldest-first) conversation list into date-bounded windows.
 
-    Returns whether remote DB already existed.
+    Each window is sized to fit within target_bytes given the per-conv estimate.
+    Returns a list of (since, before) tuples matching the list_conversations semantics
+    (since = inclusive lower bound, before = exclusive upper bound).
+    """
+    if not convs:
+        return []
+    n = len(convs)
+    chunk_size = max(1, int(target_bytes / max(bytes_per_conv, 1)))
+    if chunk_size >= n:
+        return [(None, None)]
+    windows: list[tuple[str | None, str | None]] = []
+    i = 0
+    while i < n:
+        win_since = convs[i].started_at if i > 0 else None
+        next_i = i + chunk_size
+        win_before = convs[next_i].started_at if next_i < n else None
+        # Skip windows that would be empty due to boundary-duplicate timestamps
+        # (e.g. [A,A,A,B] with chunk_size=2 produces a [None,A) empty first window).
+        if win_before is None or convs[i].started_at < win_before:
+            windows.append((win_since, win_before))
+        i = next_i
+    return windows
+
+
+def _push_slice_http(client: Any, url: str, headers: dict[str, str], slice_path: Path) -> Any:
+    """Stream-POST a pre-built slice file. Returns the httpx Response.
+
+    Raises SyncError on ConnectError; callers check status_code for 4xx/5xx.
     """
     import httpx
 
+    file_size = slice_path.stat().st_size
+
+    def _body_iter():
+        with slice_path.open("rb") as fh:
+            while True:
+                chunk = fh.read(SYNC_HTTP_CHUNK_SIZE)
+                if not chunk:
+                    break
+                yield chunk
+
+    try:
+        return client.post(
+            url,
+            content=_body_iter(),
+            headers={
+                **headers,
+                "Content-Type": "application/octet-stream",
+                "Content-Length": str(file_size),
+            },
+        )
+    except httpx.ConnectError as e:
+        raise SyncError(f"Cannot connect to push endpoint: {e}") from e
+
+
+def _post_window_with_bisect(
+    url: str,
+    headers: dict[str, str],
+    client: Any,
+    db_path: Path,
+    filters: dict,
+    since: str | None,
+    before: str | None,
+    connect_timeout: float,
+    command_timeout: float,
+) -> tuple[bool, int, int]:
+    """Slice a date window, POST it, and bisect on 413.
+
+    Returns (remote_existed, conversations, size_bytes).
+    Only 413 triggers bisection; other HTTP errors raise SyncError immediately.
+    """
+    import httpx
+
+    from siftd.api.slice import slice_database
+
+    with tempfile.TemporaryDirectory(prefix="siftd-push-") as tmp:
+        slice_path = Path(tmp) / "push-slice.db"
+        result = slice_database(
+            source_db=db_path,
+            target_path=slice_path,
+            since=since,
+            before=before,
+            rebuild_fts=False,
+            **filters,
+        )
+        conversations = result["conversations"]
+        size_bytes = result["size_bytes"]
+
+        if conversations == 0:
+            return True, 0, 0
+
+        resp = _push_slice_http(client, url, headers, slice_path)
+
+        if resp.status_code == 413:
+            if conversations == 1:
+                raise SyncError(
+                    "A single conversation exceeds the remote's body size limit "
+                    "and cannot be split."
+                )
+            # Bisect on timestamp midpoint
+            from painted import Fidelity
+
+            from siftd.api.conversations import list_conversations
+
+            sub_convs = list(list_conversations(
+                fidelity=Fidelity(),
+                db_path=db_path,
+                since=since,
+                before=before,
+                oldest=True,
+                n=0,
+                **filters,
+            ))
+            mid_idx = len(sub_convs) // 2
+            mid_ts = sub_convs[mid_idx].started_at
+            min_ts = sub_convs[0].started_at
+            if mid_ts == min_ts:
+                # Naive midpoint lands on the minimum timestamp — advance to the
+                # first distinct timestamp so the lower half is non-empty.
+                if min_ts is None:
+                    raise SyncError(
+                        "Cannot bisect window: conversation timestamps are unset."
+                    )
+                mid_ts = next(
+                    (c.started_at for c in sub_convs
+                     if c.started_at is not None and c.started_at > min_ts),
+                    None,
+                )
+                if mid_ts is None:
+                    raise SyncError(
+                        f"Cannot bisect window: all conversations share timestamp {min_ts}."
+                    )
+            lo_existed, lo_convs, lo_bytes = _post_window_with_bisect(
+                url, headers, client, db_path, filters, since, mid_ts,
+                connect_timeout, command_timeout,
+            )
+            _, hi_convs, hi_bytes = _post_window_with_bisect(
+                url, headers, client, db_path, filters, mid_ts, before,
+                connect_timeout, command_timeout,
+            )
+            return lo_existed, lo_convs + hi_convs, lo_bytes + hi_bytes
+
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise SyncError(f"Push failed: HTTP {e.response.status_code}") from e
+
+        body = resp.json()
+        return body.get("status") != "created", conversations, size_bytes
+
+
+def _sync_push_http(
+    db_path: Path,
+    remote: SyncRemote,
+    filters: dict,
+    effective_since: str | None,
+    should_update_cursor: bool,
+    current_sig: str,
+    dry_run: bool,
+) -> PushResult:
+    """Full HTTP push: preflight, windowing, per-window POST, cursor advance."""
+    import httpx
+
     from siftd.api.auth import AuthError, acquire_token
-    from siftd.config_sync import get_sync_remote
+    from siftd.config_sync import get_sync_remote, get_sync_timeouts
+
+    http_status = _preflight_http(remote)
+    if http_status is None:
+        logger.warning(
+            "HTTP sync preflight unavailable for %s; falling back to legacy push",
+            remote.name,
+        )
+    elif http_status.protocol_version > SYNC_PROTOCOL_VERSION:
+        raise SyncError(
+            f"Remote sync protocol is newer than local "
+            f"(remote: {http_status.protocol_version}, local: {SYNC_PROTOCOL_VERSION}); "
+            "upgrade local siftd."
+        )
+
+    # Derive date windows when the full DB likely exceeds the advertised cap.
+    # Only safe to window when effective_since is None: the estimate
+    # db_size / total_convs is only accurate for a full push.
+    target_bytes: int | None = None
+    if http_status and http_status.max_body_size is not None:
+        target_bytes = int(http_status.max_body_size * _WINDOW_SAFETY)
+
+    date_windows: list[tuple[str | None, str | None]] = [(effective_since, None)]
+    if effective_since is None and target_bytes is not None:
+        db_size = db_path.stat().st_size
+        if db_size > target_bytes:
+            from painted import Fidelity
+
+            from siftd.api.conversations import list_conversations
+
+            all_convs = list(list_conversations(
+                fidelity=Fidelity(),
+                db_path=db_path,
+                n=0,
+                oldest=True,
+                **filters,
+            ))
+            if all_convs:
+                bytes_per_conv = db_size / len(all_convs)
+                date_windows = _derive_date_windows(all_convs, target_bytes, bytes_per_conv)
+
+    # Dry-run: single slice of everything to report size/count estimate.
+    if dry_run:
+        from siftd.api.slice import slice_database
+
+        with tempfile.TemporaryDirectory(prefix="siftd-dry-") as tmp:
+            slice_path = Path(tmp) / "push-slice.db"
+            result = slice_database(
+                source_db=db_path,
+                target_path=slice_path,
+                since=effective_since,
+                rebuild_fts=False,
+                **filters,
+            )
+        return PushResult(
+            conversations=result["conversations"],
+            size_bytes=result["size_bytes"],
+            remote_name=remote.name,
+            remote_existed=True,
+            dry_run=True,
+            last_push_updated=False,
+            windows=len(date_windows),
+        )
 
     remote_cfg = get_sync_remote(remote.name)
     auth = remote_cfg.get("auth") if remote_cfg else None
@@ -576,48 +794,57 @@ def _push_http(remote: SyncRemote, slice_path: Path) -> bool:
         token = acquire_token(auth)
         headers["Authorization"] = f"Bearer {token}"
     except AuthError:
-        pass  # --no-auth server
+        pass
 
     url = remote.path.rstrip("/") + "/api/v1/push"
-    file_size = slice_path.stat().st_size
-
-    def _body_iter():
-        with slice_path.open("rb") as f:
-            while True:
-                chunk = f.read(SYNC_HTTP_CHUNK_SIZE)
-                if not chunk:
-                    break
-                yield chunk
-
-    from siftd.config_sync import get_sync_timeouts
-
     connect_timeout, command_timeout = get_sync_timeouts(remote.name, "http")
 
-    try:
-        with httpx.Client(
-            timeout=httpx.Timeout(
-                connect=connect_timeout,
-                read=command_timeout,
-                write=command_timeout,
-                pool=connect_timeout,
-            ),
-        ) as client:
-            resp = client.post(
-                url, content=_body_iter(),
-                headers={
-                    **headers,
-                    "Content-Type": "application/octet-stream",
-                    "Content-Length": str(file_size),
-                },
-            )
-            resp.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        raise SyncError(f"Push to {remote.path} failed: HTTP {e.response.status_code}") from e
-    except httpx.ConnectError as e:
-        raise SyncError(f"Cannot connect to {remote.path}: {e}") from e
+    total_conversations = 0
+    total_size_bytes = 0
+    remote_existed = True
+    now = datetime.now(UTC).isoformat()
 
-    body = resp.json()
-    return body.get("status") != "created"
+    with httpx.Client(
+        timeout=httpx.Timeout(
+            connect=connect_timeout,
+            read=command_timeout,
+            write=command_timeout,
+            pool=connect_timeout,
+        ),
+    ) as client:
+        for win_idx, (win_since, win_before) in enumerate(date_windows):
+            win_existed, win_convs, win_bytes = _post_window_with_bisect(
+                url=url,
+                headers=headers,
+                client=client,
+                db_path=db_path,
+                filters=filters,
+                since=win_since,
+                before=win_before,
+                connect_timeout=connect_timeout,
+                command_timeout=command_timeout,
+            )
+            if win_idx == 0:
+                remote_existed = win_existed
+            total_conversations += win_convs
+            total_size_bytes += win_bytes
+
+            if should_update_cursor and win_convs > 0:
+                from siftd.config_sync import update_last_push
+
+                cursor_ts = win_before or now
+                update_last_push(remote.name, cursor_ts, filter_signature=current_sig)
+
+    last_push_updated = should_update_cursor and total_conversations > 0
+    return PushResult(
+        conversations=total_conversations,
+        size_bytes=total_size_bytes,
+        remote_name=remote.name,
+        remote_existed=remote_existed,
+        dry_run=False,
+        last_push_updated=last_push_updated,
+        windows=len(date_windows),
+    )
 
 
 # ---------------------------------------------------------------------------

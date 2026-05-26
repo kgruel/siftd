@@ -62,6 +62,9 @@ def create_app(
     async def provide_fts_rebuild() -> str:
         return fts_rebuild
 
+    async def provide_request_max_body_size() -> int:
+        return request_max_body_size
+
     middleware: list[Any] = []
     if auth_config:
         from siftd.serve.auth import create_auth_middleware
@@ -85,6 +88,7 @@ def create_app(
         dependencies={
             "db_path": Provide(provide_db_path),
             "fts_rebuild": Provide(provide_fts_rebuild),
+            "request_max_body_size": Provide(provide_request_max_body_size),
         },
         middleware=middleware,
         request_max_body_size=request_max_body_size,

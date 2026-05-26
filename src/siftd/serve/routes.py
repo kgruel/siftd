@@ -614,7 +614,7 @@ async def pull(
 
 
 @get("/api/v1/sync/status", opt={"no_auth": True})
-async def sync_status_route(db_path: Path) -> dict:
+async def sync_status_route(db_path: Path, request_max_body_size: int) -> dict:
     """Return sync capabilities and inbox status."""
     from siftd.api.inbox import get_inbox_status
     from siftd.domain.sync import SYNC_CAPABILITIES, SYNC_PROTOCOL_VERSION
@@ -629,6 +629,7 @@ async def sync_status_route(db_path: Path) -> dict:
         "capabilities": sorted(SYNC_CAPABILITIES),
         "inbox": inbox,
         "protocol_version": SYNC_PROTOCOL_VERSION,
+        "max_body_size": request_max_body_size,
     }
 
 

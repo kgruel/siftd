@@ -206,6 +206,9 @@ With the named remote in place, `siftd db push homelab` (not the bare URL form) 
 siftd ingest
 
 # Push the local slice to the homelab via the named remote (auth via [sync.remotes.homelab.auth]).
+# Large databases (>400 MB after the 0.8 safety factor on a 500 MB cap) are split
+# into time-ordered windows automatically — no flags required. The cursor advances
+# per window, so an interrupted push can be resumed by re-running the same command.
 siftd db push homelab
 
 # Expected: {"status": "created|merged", "conversations": N, "owned": N}
