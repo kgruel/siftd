@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -222,6 +223,7 @@ def follow_session(
     on_turn: Callable[[FollowEvent], None] | None = None,
     include_thinking: bool = False,
     timeout: float | None = None,
+    ready_event: threading.Event | None = None,
 ) -> None:
     """Follow a live session file, emitting events as they arrive.
 
@@ -241,13 +243,19 @@ def follow_session(
     f = None
     start_time = time.time() if timeout is not None else None
     try:
-        f = path.open("r", encoding="utf-8")
-        stat = path.stat()
-        last_inode = stat.st_ino
-        last_dev = stat.st_dev
-        f.seek(0, 2)  # Seek to end
-        last_size = stat.st_size
-        buf = ""
+        try:
+            f = path.open("r", encoding="utf-8")
+            stat = path.stat()
+            last_inode = stat.st_ino
+            last_dev = stat.st_dev
+            f.seek(0, 2)  # Seek to end
+            last_size = stat.st_size
+            buf = ""
+        except OSError:
+            return
+        finally:
+            if ready_event is not None:
+                ready_event.set()
 
         while True:
             if timeout is not None and start_time is not None:
@@ -269,7 +277,10 @@ def follow_session(
             if stat.st_ino != last_inode or stat.st_dev != last_dev:
                 if f:
                     f.close()
-                f = path.open("r", encoding="utf-8")
+                try:
+                    f = path.open("r", encoding="utf-8")
+                except OSError:
+                    break
                 last_inode = stat.st_ino
                 last_dev = stat.st_dev
                 last_size = 0

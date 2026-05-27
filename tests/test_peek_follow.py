@@ -407,20 +407,26 @@ def _follow_in_thread(
     *,
     on_turn: Callable[[FollowEvent], None] | None = None,
     json_mode: bool = False,
-    settle: float = 0.05,
 ) -> threading.Thread:
-    """Start ``follow_session`` in a daemon thread and wait for it to settle.
+    """Start ``follow_session`` in a daemon thread and wait until it has
+    opened the file and seeked to end (i.e. is ready to observe new writes).
 
-    Returns the thread so callers can join after unlinking the file.
+    Uses a threading.Event set by follow_session itself — no sleep heuristic.
     """
+    ready = threading.Event()
     thread = threading.Thread(
         target=follow_session,
         args=(path,),
-        kwargs={"poll_interval": 0.01, "on_turn": on_turn, "json_mode": json_mode},
+        kwargs={
+            "poll_interval": 0.01,
+            "on_turn": on_turn,
+            "json_mode": json_mode,
+            "ready_event": ready,
+        },
         daemon=True,
     )
     thread.start()
-    time.sleep(settle)
+    ready.wait(timeout=5.0)
     return thread
 
 
