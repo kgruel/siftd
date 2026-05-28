@@ -124,7 +124,7 @@ def test_validate_oidc_success_and_error(monkeypatch):
             captured.update(kwargs)
             if token == "bad":
                 raise _JWT.PyJWTError("bad token")
-            return {"email": "x@y"}
+            return {"email": "x@y", "iss": "https://idp"}
 
     monkeypatch.setitem(sys.modules, "jwt", _JWT)
     MW = create_auth_middleware({"issuer": "https://idp", "identity_claim": "email", "audience": "siftd"})
@@ -132,9 +132,11 @@ def test_validate_oidc_success_and_error(monkeypatch):
     monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result=_MockJWKS()))
 
     assert _run(mw._validate_oidc("ok")).sub == "x@y"
-    # Verify the production code passes issuer + requires iss/exp/aud to jwt.decode
+    # Verify the production code requires iss/exp/aud and validates aud via jwt.decode.
+    # iss is validated by our own normalized compare (NOT passed to jwt.decode), so
+    # `issuer` must not be in the decode kwargs.
     assert captured["audience"] == "siftd"
-    assert captured["issuer"] == "https://idp"
+    assert "issuer" not in captured
     assert set(captured["options"]["require"]) >= {"exp", "iss", "aud"}
 
     with pytest.raises(NotAuthorizedException, match="Invalid token"):
@@ -160,7 +162,7 @@ def test_validate_oidc_rejects_missing_identity_claim(monkeypatch):
         @staticmethod
         def decode(token, key, **kwargs):
             # Valid signature, valid iss/aud — but missing the configured `email` claim.
-            return {"sub": "fallback-subject"}
+            return {"sub": "fallback-subject", "iss": "https://idp"}
 
     monkeypatch.setitem(sys.modules, "jwt", _JWT)
     MW = create_auth_middleware({
@@ -234,7 +236,7 @@ def test_validate_oidc_rejects_empty_identity_claim(monkeypatch):
 
         @staticmethod
         def decode(token, key, **kwargs):
-            return {"sub": ""}
+            return {"sub": "", "iss": "https://idp"}
 
     monkeypatch.setitem(sys.modules, "jwt", _JWT)
     MW = create_auth_middleware({"issuer": "https://idp", "audience": "siftd"})
@@ -719,3 +721,71 @@ def test_validate_oidc_real_pyjwt_key_extraction(monkeypatch):
     identity = _run(mw._validate_oidc(token))
     assert identity.sub == "alice"
     assert "siftd:read" in identity.scopes
+
+
+def _signed_token_and_jwks(token_iss: str):
+    """Build a real RS256-signed token with the given iss claim + its JWKS."""
+    import datetime
+    import json
+
+    import jwt
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jwt.algorithms import RSAAlgorithm
+
+    private_key = rsa.generate_private_key(
+        public_exponent=65537, key_size=2048, backend=default_backend(),
+    )
+    kid = "test-key-1"
+    jwk_dict = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    jwk_dict["kid"] = kid
+    jwks = jwt.PyJWKSet.from_dict({"keys": [jwk_dict]})
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    now = datetime.datetime.now(datetime.timezone.utc)
+    token = jwt.encode(
+        {
+            "sub": "alice", "iss": token_iss, "aud": "siftd",
+            "exp": now + datetime.timedelta(hours=1), "iat": now,
+        },
+        private_pem, algorithm="RS256", headers={"kid": kid},
+    )
+    return token, jwks
+
+
+@pytest.mark.parametrize("config_issuer", [
+    "https://idp/application/o/siftd/",   # operator copies the trailing slash from discovery
+    "https://idp/application/o/siftd",    # operator drops it
+])
+def test_validate_oidc_accepts_trailing_slash_issuer(monkeypatch, config_issuer):
+    """An Authentik-style trailing-slash `iss` must validate regardless of how the
+    operator wrote serve.auth.issuer. Real PyJWT (no decode monkeypatch).
+
+    Regression: siftd rstrips the configured issuer before passing it to PyJWT's
+    exact-equality iss check, so the token's `.../siftd/` never matched the
+    rstripped `.../siftd` — every Authentik token was rejected with no config fix.
+    """
+    token, jwks = _signed_token_and_jwks("https://idp/application/o/siftd/")
+    MW = create_auth_middleware({"issuer": config_issuer, "audience": "siftd"})
+    mw = object.__new__(MW)
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result=jwks))
+
+    identity = _run(mw._validate_oidc(token))
+    assert identity.sub == "alice"
+
+
+def test_validate_oidc_real_pyjwt_rejects_wrong_issuer(monkeypatch):
+    """The security property survives moving the iss check out of PyJWT: a token
+    from a genuinely different issuer is still rejected by our normalized compare.
+    """
+    token, jwks = _signed_token_and_jwks("https://evil.example/application/o/siftd/")
+    MW = create_auth_middleware({"issuer": "https://idp/application/o/siftd", "audience": "siftd"})
+    mw = object.__new__(MW)
+    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result=jwks))
+
+    with pytest.raises(NotAuthorizedException, match="issuer mismatch"):
+        _run(mw._validate_oidc(token))

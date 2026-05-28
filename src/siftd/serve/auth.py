@@ -216,12 +216,19 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
                         token, signing_key.key,
                         algorithms=["RS256", "ES256"],
                         audience=audience,
-                        issuer=issuer,
+                        # Validate `iss` ourselves below rather than via PyJWT's
+                        # exact-string equality: some IdPs (e.g. Authentik) emit a
+                        # trailing-slash issuer (`.../o/<slug>/`) while the configured
+                        # issuer is rstripped for JWKS discovery. Compare normalized
+                        # so a trailing slash on either side doesn't reject every token.
                         options={"require": ["exp", "iss", "aud"]},
                     )
                 except TypeError as e:
                     logging.getLogger(__name__).debug("OIDC key/decode type error: %s", e)
                     raise NotAuthorizedException("Invalid token") from e
+                token_iss = payload.get("iss")
+                if not isinstance(token_iss, str) or token_iss.rstrip("/") != issuer:
+                    raise NotAuthorizedException("Token issuer mismatch")
                 # Reject if the configured identity claim is missing — collapsing
                 # multiple tokens under a synthetic "unknown" owner would conflate
                 # distinct subjects in conversation_owners.
