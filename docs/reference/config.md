@@ -55,6 +55,16 @@ All keys can be managed via `siftd config set <key> <value>`.
 | `required_scopes` | list[string] | — | Scopes the token must have for any access (all-of) |
 | `write_scopes` | list[string] | — | Additional scopes required for write operations (any-of) |
 
+## [auth]
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `issuer` | string | — | OIDC issuer URL the CLI acquires tokens from (`siftd auth login`) |
+| `client_id` | string | — | PUBLIC device-code client ID (NOT serve.auth.client_id, the confidential introspection client) |
+| `scope` | string | `openid offline_access` | Space-delimited scopes requested at login (e.g. 'openid offline_access') |
+| `device_authorization_endpoint` | string | — | Device authorization endpoint (auto-discovered from issuer if omitted) |
+| `token_endpoint` | string | — | Token endpoint (auto-discovered from issuer if omitted) |
+
 ## [adapters.*]
 
 | Key | Type | Default | Description |

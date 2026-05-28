@@ -164,11 +164,34 @@ echo 'export SIFTD_TOKEN="..."' >> ~/.zshenv
 pass insert siftd/laptop  # then refer to it via token_command below
 ```
 
+**Option C — interactive device-code login (`siftd auth login`).** Best for a box
+you SSH into: authorize on your phone/laptop browser, nothing needs a localhost
+browser on the target machine. Requires a **public** (no-secret) device-code
+client registered at your IdP. Configure the client-side acquisition namespace
+(distinct from `serve.auth.*`, which is *server* validation config) and log in:
+
+```bash
+siftd config set auth.issuer    https://your-idp.example.com/application/o/siftd/
+siftd config set auth.client_id <public-device-code-client-id>
+# auth.scope defaults to "openid offline_access"; offline_access is what gets
+# you a refresh token so the CLI can auto-refresh instead of re-prompting.
+
+siftd auth login     # prints a URL + code; poll completes once you authorize
+siftd auth status    # show where the token lives + its expiry
+siftd auth logout     # delete the stored credential
+```
+
+The acquired token is stored `0600` under `~/.local/state/siftd/credentials/`,
+keyed by issuer, and presented automatically on delegated reads. It is refreshed
+proactively when near expiry and reactively on a `401`. This is the recommended
+path once `[auth].issuer` is set — you can then drop the `delegation_token` line
+below.
+
 ### 3. Client config
 
 The CLI has **two distinct auth pipelines** that don't share config:
 
-- **Delegated reads** (`siftd query`, `siftd search`, etc.) — token resolved by `serve/client.py:_resolve_bearer_token`. Accepts: `SIFTD_SERVE_TOKEN` env var, `SIFTD_SERVE_DELEGATION_TOKEN` env var, or `serve.auth.delegation_token` / `serve.auth.static_token` config keys (both with `env:VAR` syntax). **It does NOT support `token_command` or `token = "file:..."`** — that syntax is only honored by the sync push path.
+- **Delegated reads** (`siftd query`, `siftd search`, etc.) — token resolved by `serve/client.py:_resolve_bearer_token`, in precedence order: (1) `SIFTD_SERVE_TOKEN` / `SIFTD_SERVE_DELEGATION_TOKEN` env vars; (2) a device-code credential acquired via `siftd auth login` (auto-refreshed near expiry — see below), active only when `[auth].issuer` is configured; (3) `serve.auth.delegation_token` / `serve.auth.static_token` config keys (both with `env:VAR` syntax). On a `401`, if a device-code credential exists it is refreshed once and the request retried. **It does NOT support `token_command` or `token = "file:..."`** — that syntax is only honored by the sync push path.
 - **Sync push** (`siftd db push`) — token resolved by `api/auth.py:acquire_token` from a named remote's `[sync.remotes.<name>.auth]` block. Accepts: `token_command`, `token = "env:VAR"`, `token = "file:..."`, or a literal.
 
 For one machine that does both reads and pushes, you need both configs. `~/.config/siftd/config.toml`:

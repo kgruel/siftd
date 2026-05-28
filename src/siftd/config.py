@@ -7,11 +7,8 @@ Example config:
     formatter = "verbose"
 """
 
-import contextlib
-import os
 import re
 import sys
-import tempfile
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import NamedTuple, cast
@@ -21,36 +18,12 @@ import tomlkit.exceptions
 from tomlkit import TOMLDocument
 from tomlkit.container import Container
 
-from siftd.paths import config_dir, config_file
-
-
-def _ensure_config_dir() -> Path:
-    """Create config directory with mode 0o700 if needed, return path."""
-    d = config_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    d.chmod(0o700)
-    return d
+from siftd.paths import atomic_write_secure, config_file
 
 
 def _write_config(path: Path, content: str) -> None:
-    """Write config atomically with restrictive permissions (0o600).
-
-    Writes to a temp file in the same directory, then replaces the target.
-    This avoids a window where the file is readable by other users.
-    """
-    _ensure_config_dir()
-    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-    try:
-        os.write(fd, content.encode())
-        os.fchmod(fd, 0o600)
-    finally:
-        os.close(fd)
-    try:
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    """Write config atomically with restrictive permissions (dir 0o700, file 0o600)."""
+    atomic_write_secure(path, content)
 
 
 class _SchemaEntry(NamedTuple):
@@ -187,6 +160,19 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
                  "Scopes the token must have for any access (all-of)", ""),
     _SchemaEntry("serve.auth.write_scopes", "list[string]", _is_str_list,
                  "Additional scopes required for write operations (any-of)", ""),
+    # Client-side token acquisition (distinct from serve.auth.* which is serve
+    # VALIDATION config). These configure how the CLI ACQUIRES a bearer via
+    # `siftd auth login` (device-code) and refreshes it — see credentials.py.
+    _SchemaEntry("auth.issuer", "string", _is_str,
+                 "OIDC issuer URL the CLI acquires tokens from (`siftd auth login`)", ""),
+    _SchemaEntry("auth.client_id", "string", _is_str,
+                 "PUBLIC device-code client ID (NOT serve.auth.client_id, the confidential introspection client)", ""),
+    _SchemaEntry("auth.scope", "string", _is_str,
+                 "Space-delimited scopes requested at login (e.g. 'openid offline_access')", "openid offline_access"),
+    _SchemaEntry("auth.device_authorization_endpoint", "string", _is_str,
+                 "Device authorization endpoint (auto-discovered from issuer if omitted)", ""),
+    _SchemaEntry("auth.token_endpoint", "string", _is_str,
+                 "Token endpoint (auto-discovered from issuer if omitted)", ""),
     # Adapters
     _SchemaEntry("adapters.*.locations", "list[string]", _is_str_list,
                  "Override discovery paths for a specific adapter", ""),
