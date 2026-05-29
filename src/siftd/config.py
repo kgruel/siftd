@@ -158,6 +158,17 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
                  "Scopes the token must have for any access (all-of)", ""),
     _SchemaEntry("serve.auth.write_scopes", "list[string]", _is_str_list,
                  "Additional scopes required for write operations (any-of)", ""),
+    # Browser SSO — the server advertises these PUBLIC params at GET /auth/config
+    # so the browser UI can run an auth-code+PKCE login (the browser is a client,
+    # exactly like the CLI device-code path). Only effective in issuer (JWKS) mode;
+    # unset browser_client_id leaves the UI on manual token-paste. The browser
+    # discovers authorize/token endpoints itself from issuer/.well-known.
+    _SchemaEntry("serve.auth.browser_client_id", "string", _is_str,
+                 "PUBLIC OAuth client ID the browser UI uses for auth-code+PKCE login "
+                 "(usually the same value as auth.client_id). Empty disables browser SSO.", ""),
+    _SchemaEntry("serve.auth.browser_scopes", "list[string]", _is_str_list,
+                 "Scopes the browser requests at login as a TOML array; offline_access yields a "
+                 "refresh token. Defaults to ['openid','profile','email','offline_access'].", ""),
     # Client-side token acquisition (distinct from serve.auth.* which is serve
     # VALIDATION config). These configure how the CLI ACQUIRES a bearer via
     # `siftd auth login` (device-code) and refreshes it — see credentials.py.

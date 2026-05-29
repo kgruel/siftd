@@ -172,46 +172,7 @@ document.body.addEventListener('htmx:afterSettle', function() {{
   if (window.Prism) Prism.highlightAll();
 }});
 </script>
-<script>
-(function() {{
-  var token = sessionStorage.getItem('siftd_token');
-  if (token) {{
-    document.body.setAttribute('hx-headers',
-      JSON.stringify({{"Authorization": "Bearer " + token}}));
-    htmx.process(document.body);
-    var btn = document.createElement('button');
-    btn.className = 'nav-auth-btn';
-    btn.textContent = 'Sign out';
-    btn.onclick = function() {{
-      sessionStorage.removeItem('siftd_token');
-      location.reload();
-    }};
-    document.querySelector('nav').appendChild(btn);
-  }}
-
-  document.body.addEventListener('htmx:responseError', function(e) {{
-    if (e.detail.xhr.status !== 401) return;
-    if (document.getElementById('siftd-login')) return;
-    document.getElementById('list').innerHTML =
-      '<div id="siftd-login">' +
-      '<div class="login-icon">&#x1f512;</div>' +
-      '<h3>Sign in to siftd</h3>' +
-      '<p>Enter a bearer token to authenticate.</p>' +
-      '<form onsubmit="return siftdLogin(this)">' +
-      '<input type="password" name="token" placeholder="Bearer token" autofocus ' +
-      'class="login-input">' +
-      '<button type="submit" class="login-btn">Sign in</button>' +
-      '</form></div>';
-    document.getElementById('detail').innerHTML = '';
-  }});
-
-  window.siftdLogin = function(form) {{
-    sessionStorage.setItem('siftd_token', form.token.value);
-    location.reload();
-    return false;
-  }};
-}})();
-</script>
+<script src="/static/auth.js"></script>
 </body>
 </html>"""
 
@@ -233,6 +194,37 @@ async def ui_shell(
         content=_page_shell(conv_id=id, search_q=q, follow_sid=follow),
         media_type="text/html",
     )
+
+
+@get("/auth/config", opt={"no_auth": True}, sync_to_thread=False)
+def ui_auth_config(auth_config: dict | None) -> dict:
+    """Advertise the PUBLIC OIDC params the browser needs for auth-code+PKCE login.
+
+    The browser is a client like the CLI, but — unlike the CLI — it cannot read
+    local ``[auth]`` config, so the server hands it the (non-secret) issuer +
+    public client_id + scopes here. The browser discovers the authorize/token
+    endpoints itself from ``issuer/.well-known/openid-configuration`` and runs the
+    flow client-side; the server stays a pure token *validator* and never sees
+    this acquisition. ``serve.auth`` is unchanged.
+
+    Returns ``{"enabled": false}`` unless the server is in issuer (JWKS) mode AND
+    ``serve.auth.browser_client_id`` is set — i.e. static_token / introspection
+    deployments fall back to the manual token-paste UI.
+    """
+    cfg = auth_config or {}
+    issuer = cfg.get("issuer")
+    client_id = cfg.get("browser_client_id")
+    if not issuer or not client_id:
+        return {"enabled": False}
+    scopes = cfg.get("browser_scopes") or ["openid", "profile", "email", "offline_access"]
+    if isinstance(scopes, str):  # tolerate a space-delimited string
+        scopes = scopes.split()
+    return {
+        "enabled": True,
+        "issuer": issuer.rstrip("/"),
+        "client_id": client_id,
+        "scope": " ".join(scopes),
+    }
 
 
 # ---------------------------------------------------------------------------

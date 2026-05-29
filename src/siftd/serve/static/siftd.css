@@ -1320,6 +1320,27 @@ body.compact .stat-value {
   border-color: var(--accent);
 }
 
+/* SSO button sits above the manual-token form, separated by a faint divider. */
+#siftd-login > .login-btn {
+  min-width: 180px;
+  margin-bottom: var(--space-md);
+}
+
+#siftd-login .login-or {
+  margin: 0 0 var(--space-md);
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.55;
+}
+
+#siftd-login .login-error {
+  margin: var(--space-md) 0 0;
+  max-width: 360px;
+  font-size: 0.8em;
+  color: var(--error, #e06c75);
+}
+
 .nav-auth-btn {
   background: none;
   border: 1px solid var(--border);

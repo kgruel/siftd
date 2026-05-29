@@ -68,6 +68,8 @@ def cmd_serve(args) -> int:
         auth_state = "disabled (--no-auth)"
     elif auth_config:
         auth_state = "enabled"
+        if auth_config.get("issuer") and auth_config.get("browser_client_id"):
+            auth_state += " (browser SSO: auth-code+PKCE)"
     else:
         auth_state = "disabled (no [serve.auth] config)"
     print(f"  auth: {auth_state}", file=sys.stderr)

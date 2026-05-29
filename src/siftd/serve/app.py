@@ -10,6 +10,7 @@ from litestar.di import Provide
 from litestar.static_files import create_static_files_router
 
 from siftd.serve.html_routes import (
+    ui_auth_config,
     ui_export,
     ui_follow,
     ui_meta,
@@ -66,6 +67,9 @@ def create_app(
     async def provide_request_max_body_size() -> int:
         return request_max_body_size
 
+    async def provide_auth_config() -> dict | None:
+        return auth_config
+
     middleware: list[Any] = []
     if auth_config:
         from siftd.serve.auth import create_auth_middleware, validate_auth_config
@@ -83,14 +87,15 @@ def create_app(
             export_route,
             push, pull, sync_status_route, conversation_detail, conversation_list,
             event_detail_route, search_route,
-            ui_shell, ui_meta, ui_query, ui_search, ui_peek, ui_follow, ui_stats,
-            ui_tag, ui_tags_suggest, ui_export,
+            ui_shell, ui_auth_config, ui_meta, ui_query, ui_search, ui_peek,
+            ui_follow, ui_stats, ui_tag, ui_tags_suggest, ui_export,
             static_router,
         ],
         dependencies={
             "db_path": Provide(provide_db_path),
             "fts_rebuild": Provide(provide_fts_rebuild),
             "request_max_body_size": Provide(provide_request_max_body_size),
+            "auth_config": Provide(provide_auth_config),
         },
         middleware=middleware,
         request_max_body_size=request_max_body_size,

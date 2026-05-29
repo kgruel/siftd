@@ -53,6 +53,8 @@ All keys can be managed via `siftd config set <key> <value>`.
 | `client_secret` | string | — | Client secret for introspection (supports env:VAR syntax) |
 | `required_scopes` | list[string] | — | Scopes the token must have for any access (all-of) |
 | `write_scopes` | list[string] | — | Additional scopes required for write operations (any-of) |
+| `browser_client_id` | string | — | PUBLIC OAuth client ID the browser UI uses for auth-code+PKCE login (usually the same value as auth.client_id). Empty disables browser SSO. |
+| `browser_scopes` | list[string] | — | Scopes the browser requests at login as a TOML array; offline_access yields a refresh token. Defaults to ['openid','profile','email','offline_access']. |
 
 ## [auth]
 

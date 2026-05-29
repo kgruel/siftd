@@ -69,6 +69,58 @@ Notes:
 - `required_scopes` is *all-of* — every read needs `siftd:read`.
 - `write_scopes` is *any-of* — every push needs at least one of these. The CLI's `db push` is a write op and goes through `require_write`.
 
+#### Browser login (optional, issuer mode only)
+
+Without this, opening the web UI dead-ends at "paste a bearer token" — there's no
+edge SSO (Caddy is a plain `reverse_proxy`), so the browser has no token. Browser
+login makes the UI a *client* like the CLI: it runs an OAuth **auth-code + PKCE**
+flow against your IdP and sends the resulting JWT. The server is unchanged — it
+still only *validates* — so this is purely additive.
+
+```toml
+[serve.auth]
+# ... issuer/audience/identity_claim as above ...
+browser_client_id = "siftd"   # see the two constraints below — get these wrong
+                              # and login succeeds but every data request 401s
+browser_scopes = ["openid", "profile", "email", "offline_access", "siftd:read"]
+```
+
+**The token the browser acquires must pass the same validation as any other —
+two non-obvious constraints, both invisible to a "does it authenticate" check
+because they fail only on the *next* request:**
+
+1. **`browser_client_id` must yield the right `aud`.** siftd matches `aud`
+   **exactly** against `serve.auth.audience` (`auth.py` passes `audience=` to
+   `jwt.decode`; no normalization). Authentik mints `aud = client_id`, so the
+   browser's `aud` is `browser_client_id`. The reliable rule: **set
+   `browser_client_id` to the same public client as the CLI's `auth.client_id`** —
+   that's the client whose device-code token already validates live, so the
+   browser token's `aud` matches by construction. (If your `serve.auth.audience`
+   is a custom Audience property mapping rather than the client_id, point
+   `browser_client_id` at whatever client carries that `aud`.)
+2. **`browser_scopes` must be a superset of `required_scopes`.** siftd rejects
+   any token missing a `required_scopes` entry (`auth.py:209`, all-of). The
+   example above sets `required_scopes = ["siftd:read"]`, so `browser_scopes`
+   **must include `siftd:read`** — otherwise the SSO token authenticates, then
+   401s on `/query`, and the silent-refresh produces another scope-less token →
+   the login overlay reappears in a loop. Include `offline_access` to get a
+   refresh token. As a rule, `browser_scopes` ⊇ the CLI's `auth.scope` ∪
+   `required_scopes`.
+
+Then, **on the IdP**, add the server's origin as a **Redirect URI** on that
+client — exactly `https://siftd.example.com/` (trailing slash). This both lets the
+IdP redirect back after login *and* grants the CORS the browser needs to POST the
+token exchange. The client must be **Public** (PKCE, no secret) — the same client
+type §1.1 of the Authentik runbook flips to for device-code, so one public client
+serves both the CLI (device-code) and the browser (auth-code+PKCE).
+
+Verify at boot: `siftd serve` prints `auth: enabled (browser SSO: auth-code+PKCE)`,
+and `GET /auth/config` returns `{"enabled": true, ...}` (only the public issuer /
+client_id / scopes — never a secret). The manual token-paste box remains as a
+fallback under the "Sign in with SSO" button. **The only true test is one live
+browser login** — TestClient cannot exercise `aud`/scope validation or the
+cross-origin token POST.
+
 ### 4. systemd unit
 
 `/etc/systemd/system/siftd-serve.service`:

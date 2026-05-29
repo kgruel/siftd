@@ -36,6 +36,21 @@ by the CSP it ships.** With `'unsafe-eval'` absent, that bans `hx-on`,
 `hx-vals="js:…"`, and `hx-trigger` event-filter brackets (`[expr]`) — all of
 which htmx evaluates via `new Function`.
 
+### ⚠ connect-src collision with browser SSO (when this branch merges)
+
+The browser login flow (`static/auth.js`, `feat/serve-browser-pkce-login`) does
+two cross-origin requests to the IdP: discovery (`GET issuer/.well-known/...`)
+and the PKCE token exchange (`POST token_endpoint`). Today's policy is
+`script-src`-only with **no `default-src`**, so `connect-src` is unrestricted and
+those fetches are allowed. **If a future hardening adds `default-src 'self'` (or
+an explicit `connect-src`), it MUST also add the configured `serve.auth.issuer`
+origin to `connect-src`** — otherwise SSO login breaks with a CSP error and the
+"Sign in with SSO" button dead-ends (now surfaced via `loginError()`, not silent).
+The token POST also requires CORS from the IdP regardless of CSP (granted by
+registering the serve origin as a Redirect URI). The sessionStorage token store
+`auth.js` uses leans on `script-src` keeping XSS out — so the CSP and the login
+flow are coupled: don't tighten one without checking the other.
+
 ## How to run a trustworthy browser CSP smoke
 
 Manual recipe (Chromium driven over the DevTools Protocol; `websockets` + `httpx`
