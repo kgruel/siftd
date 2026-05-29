@@ -931,3 +931,44 @@ def test_introspection_cache_drops_expired_before_evicting():
     assert "expired" not in keys
     assert "fresh" in keys
     assert "new" in keys
+
+
+# --- Startup preflight: serve.auth must name an auth mode ---
+
+
+@pytest.mark.parametrize("mode", ["static_token", "issuer", "introspection_url"])
+def test_validate_auth_config_accepts_each_mode(mode):
+    from siftd.serve.auth import validate_auth_config
+
+    validate_auth_config({mode: "x"})  # must not raise
+
+
+def test_validate_auth_config_empty_and_none_are_noops():
+    from siftd.serve.auth import validate_auth_config
+
+    validate_auth_config({})    # no table → no middleware → nothing to check
+    validate_auth_config(None)
+
+
+def test_validate_auth_config_rejects_modeless_table():
+    """A non-empty serve.auth table with no recognized mode fails loudly at boot."""
+    from siftd.serve.auth import validate_auth_config
+
+    with pytest.raises(ValueError, match="names no auth mode"):
+        validate_auth_config({"required_scopes": ["siftd:read"]})
+
+
+def test_validate_auth_config_delegation_token_gets_targeted_hint():
+    """The stale-delegation_token footgun gets a hint pointing at [auth].token."""
+    from siftd.serve.auth import validate_auth_config
+
+    with pytest.raises(ValueError, match=r"delegation_token.*CLIENT"):
+        validate_auth_config({"delegation_token": "secret"})
+
+
+def test_create_app_rejects_modeless_auth_config(tmp_path):
+    """The preflight runs at the create_app chokepoint, not just per-request."""
+    from siftd.serve.app import create_app
+
+    with pytest.raises(ValueError, match="names no auth mode"):
+        create_app(db_path=tmp_path / "x.db", auth_config={"identity": "local"})

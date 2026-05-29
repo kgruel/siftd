@@ -49,12 +49,16 @@ def cmd_serve(args) -> int:
 
         auth_config = get_config_table("serve.auth")
 
-    app = create_app(
-        db_path=db_path,
-        auth_config=auth_config,
-        fts_rebuild=fts_rebuild,
-        request_max_body_size=request_max_body_size,
-    )
+    try:
+        app = create_app(
+            db_path=db_path,
+            auth_config=auth_config,
+            fts_rebuild=fts_rebuild,
+            request_max_body_size=request_max_body_size,
+        )
+    except ValueError as e:
+        print(f"siftd serve: invalid configuration — {e}", file=sys.stderr)
+        return 1
 
     import uvicorn
 

@@ -124,6 +124,36 @@ def _identity_from_introspection(body: dict, identity_claim: str) -> UserIdentit
     )
 
 
+# The auth modes the server can validate. A non-empty serve.auth table must
+# select exactly one of these; otherwise middleware installs but every request
+# falls through to "No auth mode configured" (a fail-closed 401 on everything).
+_AUTH_MODES = ("static_token", "issuer", "introspection_url")
+
+
+def validate_auth_config(auth_config: dict | None) -> None:
+    """Startup preflight for the serve.auth table.
+
+    Raises ValueError if the table is non-empty but names no recognized auth
+    mode — turning a per-request, opaque "No auth mode configured" 401 into a
+    loud, single boot-time error. A common cause is a stale ``delegation_token``
+    (now a client-side ``[auth]`` key), so that case gets a targeted hint.
+    """
+    if not auth_config:
+        return  # empty/None → no middleware installed → nothing to validate
+    if any(auth_config.get(m) for m in _AUTH_MODES):
+        return
+    hint = ""
+    if auth_config.get("delegation_token"):
+        hint = (
+            " — `delegation_token` is a CLIENT key: set it under [auth].token, and "
+            "for a shared secret set serve.auth.static_token to the same value"
+        )
+    raise ValueError(
+        f"[serve.auth] is configured but names no auth mode "
+        f"(one of: {', '.join(_AUTH_MODES)}){hint}",
+    )
+
+
 def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMiddleware]:
     """Create an auth middleware class bound to the given config.
 
