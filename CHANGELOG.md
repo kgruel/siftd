@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Docs
+
+- **Authentik→siftd auth-migration runbook re-grounded to current code** — `docs/ops/authentik-auth-migration-runbook.md` (the §5.1/§5.2 device-code + introspection→JWKS migration) was written against pre-fix code and verified claim-by-claim against current `serve/auth.py` + Authentik 2025.x. Removed the false trailing-slash `iss` "code-level blocker" (now handled by the normalized rstrip-both-sides compare at `serve/auth.py:275`; `jwt.decode` no longer receives `issuer=`), added a Phase-0 deployed-build gate (the blocker is real on pre-fix builds), corrected drifted `auth.py:NNN` → `serve/auth.py:NNN` line refs throughout, clarified the live `iss`-lenient / `aud`-strict asymmetry, fixed the introspection-branch removal rationale (`issuer` wins the dispatch race, so a leftover `introspection_url` is inert), and corrected the Authentik Encryption-Key field-move attribution (2025.10.1, not 2025.12).
+
 ### Security
 
 - **OIDC: `iss` claim now required and validated** — `_validate_oidc` previously checked `aud` and signature but not `iss`. A signature-valid token bearing the configured `aud` but a different issuer would pass. Now `iss`/`aud`/`exp` are all required; `iss` is compared against the configured `serve.auth.issuer`.

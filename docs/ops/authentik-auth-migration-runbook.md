@@ -14,7 +14,7 @@ Both share the **existing siftd provider/application**. You edit it in place (pr
 
 - **Work top to bottom. Do not skip a ✅ gate.** Each gate makes the next change safe to verify. A skipped gate makes later failures misattribute.
 - **🛑 STOP-ASK-HUMAN** markers are decisions an agent must not guess (which signing cert, whether the provider also fronts browser SSO, rollback timing).
-- **Never paste a real JWT into a web tool** (jwt.io etc.). Decode locally with the `python3` one-liner in §V2.
+- **Never paste a real JWT into a web tool** (jwt.io etc.). Decode locally with the `python3` one-liner in Phase 5.
 - **Idempotent intent:** every "set X" means *ensure X equals this value* — re-running must not create duplicates.
 - After each provider change, the **discovery doc + a real token** are the source of truth, not the UI. Verify, don't assume.
 - ⚠ marks UI-label / placement details that drift across 2025.x point releases — locate the field by **function**, confirm on your instance.
@@ -31,8 +31,9 @@ Both share the **existing siftd provider/application**. You edit it in place (pr
 | **`ISSUER_URL`** captured. | Used verbatim in 4 places. | `ISSUER_URL = https://<host>/application/o/<slug>/` — `<slug>` is the **Application** slug bound to the provider (not the provider name). **Trailing slash included** (Authentik emits it). |
 | **Signing certificate choice** 🛑 | Determines RS256 vs ES256. | RSA cert → **RS256** (safe default; the built-in *"authentik Self-signed Certificate"* works). EC cert MUST be **P-256/SECP256R1** to yield ES256 (P-384→ES384, P-521→ES512 — siftd validates only RS256/ES256). |
 | **Rollback window agreed** 🛑 | Migration touches the live auth path. | Confirm a maintenance window and that you can restart `siftd serve` (the rollback in §R requires it). |
+| **Deployed `siftd serve` includes the normalized-`iss` fix.** 🛑 | Builds before the fix passed `issuer=issuer` to PyJWT (exact string equality) → Authentik's trailing-slash `iss` rejected **every** token with `InvalidIssuerError`, with no config escape (see Phase 5). | In-container: `docker exec siftd grep -c token_iss <site-packages>/siftd/serve/auth.py` must be **≥ 1** **and** `grep -c "issuer=issuer" …` must be **0**. The gruel.network instance was rolled forward to this build on **2026-05-28**; older deployments **must** be redeployed before proceeding. |
 
-✅ **Gate 0:** all rows have concrete values; the provider-is-API-only and Issuer-mode-Per-Provider checks both pass. If the provider also fronts browser SSO, **stop here**.
+✅ **Gate 0:** all rows have concrete values; the provider-is-API-only, Issuer-mode-Per-Provider, and deployed-`siftd`-has-the-normalized-`iss`-fix checks all pass. If the provider also fronts browser SSO, **stop here**.
 
 ---
 
@@ -48,14 +49,14 @@ Set **Client type** to **Public**. Public clients are secret-less by design; the
 ### 1.2 Signing Key = your chosen cert → satisfies §5.1 (RS256/ES256 signed JWT)
 Set **Signing Key** to the RSA (or P-256 EC) cert from Gate 0.
 - With a signing key set: `jwt_key` returns `(private_key, RS256/ES256)` → the access token is a **verifiable JWT**, public key published at the JWKS endpoint.
-- With **no** signing key: Authentik signs **symmetrically (HS256)** with the client secret → siftd's JWKS path **fails closed** (it only accepts RS256/ES256, `auth.py:217`).
+- With **no** signing key: Authentik signs **symmetrically (HS256)** with the client secret → siftd's JWKS path **fails closed** (it only accepts RS256/ES256, `serve/auth.py:262`).
 
 ### 1.3 Encryption Key = **empty** → satisfies §5.1 (plain signed JWT, not JWE)
 Ensure **Encryption Key** is **unset**. If set, Authentik emits **JWE** (RSA-OAEP-256 + A256CBC-HS512), which siftd cannot validate as a signed JWT.
-⚠ **2025.12 placement change:** PR #17722 moved the Encryption-Key field in the 2025.12 series. Find it by function wherever it now renders and confirm it is empty.
+⚠ **Placement change (2025.10.1):** PR #17722 moved the Encryption-Key field, shipped in Authentik 2025.10 (cherry-picked to 2025.10.1 as #17729) and inherited by all later releases including 2025.12. Find it by function wherever it now renders and confirm it is empty.
 
 ### 1.4 Subject mode → defines siftd's identity (`identity_claim` default `sub`)
-siftd's JWT path uses `identity_claim = "sub"` by default (`auth.py:201`), and that `sub` becomes the per-conversation owner in siftd. Authentik's **Subject mode** defaults to **hashed_user_id** (opaque but stable). For a human-readable owner, set Subject mode to **user_email** or **user_username**.
+siftd's JWT path uses `identity_claim = "sub"` by default (`serve/auth.py:241`), and that `sub` becomes the per-conversation owner in siftd. (The introspection path defaults this to `"username"` — irrelevant once you remove `introspection_url`, but don't carry that assumption over.) Authentik's **Subject mode** defaults to **hashed_user_id** (opaque but stable). For a human-readable owner, set Subject mode to **user_email** or **user_username**.
 🛑 Decision: keep `hashed_user_id` (stable, opaque) or switch to email/username. Whatever you pick is what shows up in siftd's `conversation_owners` — pick once, before first push, to avoid split identities.
 
 ### 1.5 Selected Scopes → must include **offline_access** → satisfies refresh-token auto-renew
@@ -63,12 +64,12 @@ Under **Selected Scopes**, ensure both are present:
 - `authentik default OAuth Mapping: OpenID 'openid'`
 - `authentik default OAuth Mapping: OpenID 'offline_access'`  ⚠ confirm exact display label on your instance
 
-Since 2024.2 the device-code response returns **access_token + id_token only**; the refresh token is issued **only** when `offline_access` is selected on the provider **and** requested by the client. siftd's client default scope is `"openid offline_access"`, so the client side is covered — the provider side is the missing half. The refresh grant itself rejects with `invalid_scope` if `offline_access` is absent from the token (`token.py @2025.12.6`).
+Since 2024.2 the device-code response returns **access_token + id_token only**; the refresh token is issued **only** when `offline_access` is selected on the provider **and** requested by the client. siftd's client default scope is `"openid offline_access"`, so the client side is covered — the provider side is the missing half. The refresh grant itself rejects with `invalid_scope` if `offline_access` is absent from the token (Authentik `providers/oauth2/views/token.py`, `create_refresh_response`; behavior present since 2024.2 — confirm the exact `invalid_scope` error on your running release).
 
 > If you defined custom siftd read/write scopes (e.g. `siftd:read`, `siftd:write`) via **Customization > Property Mappings > Create > Scope Mapping**, add them to Selected Scopes here too, and add them to the client's `auth.scope`. They surface in the token's space-delimited `scope` claim, which is what `[serve.auth] required_scopes` / `write_scopes` validate.
 
 ### 1.6 Read back the **Client ID** → becomes `auth.client_id` (client) and likely `audience` (server)
-Note the provider's **Client ID** (e.g. `siftd-cli`, or the auto-generated value). This is siftd's `auth.client_id`, and — per source — also the access token's `aud` (set at `IDToken.new()`, `aud = provider.client_id`). You will **confirm** `aud` against a decoded token in §V6 before trusting it for the server config.
+Note the provider's **Client ID** (e.g. `siftd-cli`, or the auto-generated value). This is siftd's `auth.client_id`, and — per source — also the access token's `aud` (set at `IDToken.new()`, `aud = provider.client_id`). You will **confirm** `aud` against a decoded token in Gate 5 (Phase 5) before trusting it for the server config.
 
 ✅ **Gate 1:** Client type = Public; Signing Key set; Encryption Key empty; Subject mode decided; `offline_access` in Selected Scopes; Client ID recorded. Submit/Update the provider.
 
@@ -110,7 +111,7 @@ curl -s https://<host>/application/o/<slug>/.well-known/openid-configuration | j
 - `issuer` **==** `ISSUER_URL` exactly (including trailing slash).
 - `id_token_signing_alg_values_supported` contains **`RS256`** (or `ES256`) and **NOT `HS256`**. → HS256 means the **Signing Key did not take** (§1.2); fix before proceeding.
 - `token_endpoint` present (global `/application/o/token/`) **and** `device_authorization_endpoint` present (global `/application/o/device/`).
-- `jwks_uri` shares the **same scheme + host + port** as `issuer` (per-app path `…/application/o/<slug>/jwks/`). siftd **enforces** this (`auth.py:308`); a mismatch (usually a Caddy header problem, Gate 0) breaks auth.
+- `jwks_uri` shares the **same scheme + host + port** as `issuer` (per-app path `…/application/o/<slug>/jwks/`). siftd **enforces** this for the **discovered** `jwks_uri` (`serve/auth.py:75-102`, raised at `:407-410`, guarded by `:403`); a mismatch (usually a Caddy header problem, Gate 0) breaks auth. Note: if you ever set `jwks_url` explicitly in config the origin check is skipped — rely on discovery (don't set it) so this guard stays active.
 - `scopes_supported` includes `offline_access` (confirms §1.5 took — it's built dynamically from the provider's selected scope mappings).
 
 Because discovery advertises both endpoints, siftd's `auth.device_authorization_endpoint` / `auth.token_endpoint` **overrides are not needed** on a stock provider.
@@ -156,11 +157,13 @@ PY <ACCESS_TOKEN>
 
 ✅ **Gate 5 — record these exact values:**
 - Header `alg` = **`RS256`** (or `ES256`). If `HS256` → signing key didn't take (back to §1.2).
-- `iss` — **capture the exact string, including any trailing slash.** ← see the BLOCKER below.
-- `aud` — this is what `[serve.auth] audience` must equal. Source says `aud = client_id`; **trust the decoded value, not the assumption.** If `aud` is absent or not the client_id, add an **Audience** property mapping (`Customization > Property Mappings > Scope/Provider Mapping`, *Included Client Audience = this provider*) and re-issue.
-- `exp`, `iat` present (siftd requires `exp`; `auth.py:220`).
+- `iss` — **capture the exact string, including any trailing slash.** ← see the trailing-slash note below (handled on the fixed build; a real blocker on pre-fix builds).
+- `aud` — this is what `[serve.auth] audience` must equal, and unlike `iss` it is validated **strictly**: siftd passes `audience=` to `jwt.decode` (`serve/auth.py:263`) and requires `aud` (`:269`), so PyJWT does an **exact match** — no normalization, no rstrip. siftd's default audience is the literal `"siftd"` (`serve/auth.py:242`), which will reject every Authentik token (whose `aud` = `client_id`). You **MUST** set `[serve.auth] audience` to the decoded `aud`. Source says `aud = client_id`; **trust the decoded value, not the assumption.** If `aud` is absent or not the client_id, add an **Audience** property mapping (`Customization > Property Mappings > Scope/Provider Mapping`, *Included Client Audience = this provider*) and re-issue.
+- `exp`, `iat` present (siftd requires `exp`, `iss`, and `aud` — `serve/auth.py:269` `options={"require": ["exp", "iss", "aud"]}`).
 
-> 🛑🔴 **BLOCKING — trailing-slash `iss` mismatch.** Authentik's per-provider `iss` is `https://<host>/application/o/<slug>/` **with a trailing slash**. siftd does `issuer = config["issuer"].rstrip("/")` (`auth.py:203`) and passes that to PyJWT, which does **exact string equality** on `iss` — no normalization. So `".../slug" != ".../slug/"` → `InvalidIssuerError` → **every Authentik token is rejected**, and **no config value fixes it** (rstrip strips any slash you add). If the decoded `iss` ends in `/`, treat this as a **code-level blocker at `auth.py:203`**, not a config issue — flag to the human before flipping the server. (The prior OIDC integration likely "worked" against a Keycloak `…/realms/main` issuer with no trailing slash, which never exposed this.)
+> ✅ **Trailing-slash `iss` is handled — NOT a blocker** (on the fixed build gated in Phase 0). Authentik's per-provider `iss` is `https://<host>/application/o/<slug>/` **with a trailing slash** (Gate 0). siftd validates `iss` **itself**, normalized: `serve/auth.py:243` does `issuer = config["issuer"].rstrip("/")`, `jwt.decode` is deliberately called with **no** `issuer=` kwarg (`serve/auth.py:260-270`; see the inline comment at `:264-268` naming this exact Authentik case), and the comparison at `serve/auth.py:275` rstrips **both sides**: `token_iss.rstrip("/") != issuer`. So a trailing slash on either side does **not** reject the token. Record the exact `iss` for Gate 6 sanity, but **do not** treat a trailing slash as a problem and **do not** strip it from your config — the rstrip is symmetric. (On mismatch siftd raises `Token issuer mismatch` and logs a loud warning with both values — grep the server log if Gate 6 401s.)
+>
+> 🛑🔴 **Pre-fix builds — the blocker is REAL.** Builds before the normalized-`iss` fix passed `issuer=issuer` to `jwt.decode`, where PyJWT does **exact string equality** on `iss`. There `".../slug" != ".../slug/"` → `InvalidIssuerError` → **every Authentik token is rejected**, and **no config value fixes it** (rstrip strips any slash you add). If the Phase-0 deployed-build gate failed (you see `issuer=issuer` in the container's `serve/auth.py` and no `token_iss` compare), this is a **code-level blocker** — redeploy `siftd` to the fixed build before flipping the server; do not attempt to "fix" it in config.
 
 ---
 
@@ -175,10 +178,10 @@ audience = "<aud from Gate 5>"                       # siftd default is literall
 # identity_claim defaults to "sub" on the JWT path — set only if you changed Subject mode and want a different claim
 required_scopes = ["siftd:read"]                     # if you minted custom scopes
 write_scopes    = ["siftd:write"]
-# REMOVE introspection_url entirely — its presence makes siftd pick the introspection branch (auth.py:163)
+# REMOVE introspection_url entirely — hygiene, not strictly required: `issuer` wins the branch race (serve/auth.py:201 is checked before :203), so a leftover introspection_url is INERT whenever issuer is present. Remove it to avoid confusion.
 ```
 
-Mode is chosen by **key presence** (`auth.py:159-166`): `issuer` present → JWT/JWKS; else `introspection_url` → introspection. You must **delete `introspection_url`** or it loses the race only if `issuer` is absent — keep it removed to avoid confusion. Restart `siftd serve` (e.g. `sudo systemctl restart siftd-serve`).
+Mode is chosen by **key presence** (`serve/auth.py:199-206`, order `static_token` > `issuer` > `introspection_url`): `issuer` present → JWT/JWKS; else `introspection_url` → introspection. You must **delete `introspection_url`** or it loses the race only if `issuer` is absent — keep it removed to avoid confusion. Restart `siftd serve` (e.g. `sudo systemctl restart siftd-serve`).
 
 ### End-to-end verification
 
@@ -234,11 +237,11 @@ Rollback is config-only on the server side plus an optional client-type revert; 
 | Authentik change | siftd config satisfied |
 |---|---|
 | Client type = Public (§1.1) | client sends `auth.client_id` with no secret |
-| Signing Key = RSA/EC cert (§1.2) | server validates `RS256`/`ES256` JWT (`auth.py:217`) |
+| Signing Key = RSA/EC cert (§1.2) | server validates `RS256`/`ES256` JWT (`serve/auth.py:262`) |
 | Encryption Key empty (§1.3) | token is a plain signed JWT, not JWE |
 | Subject mode (§1.4) | `[serve.auth] identity_claim` (default `sub`) → owner |
 | `offline_access` selected (§1.5) | refresh token for `auth.scope` auto-refresh |
 | Client ID read-back (§1.6) | `auth.client_id` + `[serve.auth] audience` (confirm via Gate 5) |
 | Stage-Config flow + brand bind (Phase 2) | `siftd auth login` device-code grant runs |
-| `ISSUER_URL` (Gate 0/3) | `auth.issuer` (client) + `[serve.auth] issuer` (server); JWKS-origin check (`auth.py:308`) |
-| Remove introspection (Phase 6) | server picks JWT/JWKS branch (`auth.py:161` vs `:163`) |
+| `ISSUER_URL` (Gate 0/3) | `auth.issuer` (client) + `[serve.auth] issuer` (server); JWKS-origin check (`serve/auth.py:75-102`, enforced `:407`) |
+| Remove introspection (Phase 6) | server picks JWT/JWKS branch (`serve/auth.py:201` issuer vs `:203` introspection) |
