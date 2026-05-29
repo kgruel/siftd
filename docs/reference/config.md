@@ -42,8 +42,7 @@ All keys can be managed via `siftd config set <key> <value>`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `static_token` | string | — | Static bearer token for auth (supports env:VAR syntax) |
-| `delegation_token` | string | — | Bearer token used by the CLI delegation client (supports env:VAR syntax) |
+| `static_token` | string | — | Static bearer token the SERVER validates against (supports env:VAR syntax) |
 | `identity` | string | `local` | User identity for static_token mode |
 | `issuer` | string | — | OIDC issuer URL for JWT validation |
 | `audience` | string | `siftd` | OIDC audience claim |
@@ -59,6 +58,7 @@ All keys can be managed via `siftd config set <key> <value>`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| `token` | string | — | Static bearer the CLI SENDS to serve (supports env:/file:/literal). For a shared-secret setup, match serve.auth.static_token. |
 | `issuer` | string | — | OIDC issuer URL the CLI acquires tokens from (`siftd auth login`) |
 | `client_id` | string | — | PUBLIC device-code client ID (NOT serve.auth.client_id, the confidential introspection client) |
 | `scope` | string | `openid offline_access` | Space-delimited scopes requested at login (e.g. 'openid offline_access') |

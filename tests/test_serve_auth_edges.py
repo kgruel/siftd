@@ -61,7 +61,7 @@ def test_authenticate_request_no_mode_configured_raises():
 
 def test_validate_introspection_cache_hit_returns_identity():
     MW = create_auth_middleware({"introspection_url": "https://idp/introspect"})
-    MW._introspection_cache = {"tok": ({"username": "alice"}, time.time() + 60)}
+    MW._introspection_cache = {MW._cache_key("tok"): ({"username": "alice"}, time.time() + 60)}
     mw = object.__new__(MW)
     out = _run(mw._validate_introspection("tok"))
     assert isinstance(out, UserIdentity)
@@ -343,8 +343,9 @@ def test_validate_oidc_rejects_kidless_token_against_keyed_jwks(monkeypatch):
     monkeypatch.setitem(sys.modules, "jwt", _JWT)
     MW = create_auth_middleware({"issuer": "https://idp", "audience": "siftd"})
     mw = object.__new__(MW)
-    # JWKS has a key with kid="test-kid"; token has no kid — must not match
-    monkeypatch.setattr(mw, "_get_jwks", lambda: asyncio.sleep(0, result=_MockJWKS()))
+    # JWKS has a key with kid="test-kid"; token has no kid — must not match, even
+    # after the forced refetch (stub accepts the force kwarg, returns same set).
+    monkeypatch.setattr(mw, "_get_jwks", lambda **kw: asyncio.sleep(0, result=_MockJWKS()))
 
     with pytest.raises(NotAuthorizedException, match="No matching JWKS key"):
         _run(mw._validate_oidc("kidless-token"))
@@ -469,7 +470,7 @@ def test_required_scopes_rejects_missing():
         "introspection_url": "https://idp/i",
         "required_scopes": ["siftd:read"],
     })
-    MW2._introspection_cache = {"tok": ({"active": True, "username": "u", "scope": "other"}, time.time() + 60)}
+    MW2._introspection_cache = {MW2._cache_key("tok"): ({"active": True, "username": "u", "scope": "other"}, time.time() + 60)}
     mw2 = object.__new__(MW2)
     conn = SimpleNamespace(scope={}, headers={"authorization": "Bearer tok"})
     with pytest.raises(NotAuthorizedException, match="Missing required scopes"):
@@ -479,7 +480,7 @@ def test_required_scopes_rejects_missing():
 def test_introspection_populates_scopes():
     MW = create_auth_middleware({"introspection_url": "https://idp/i"})
     MW._introspection_cache = {
-        "tok": ({"active": True, "username": "u", "scope": "siftd:read siftd:write"}, time.time() + 60),
+        MW._cache_key("tok"): ({"active": True, "username": "u", "scope": "siftd:read siftd:write"}, time.time() + 60),
     }
     mw = object.__new__(MW)
     out = _run(mw._validate_introspection("tok"))
@@ -577,7 +578,7 @@ def test_introspection_cache_respects_token_exp():
     MW = create_auth_middleware({"introspection_url": "https://idp/introspect"})
     # Token expired 1 second ago — cache deadline should be in the past
     expired_at = time.time() - 1
-    MW._introspection_cache = {"tok": ({"username": "alice"}, expired_at)}
+    MW._introspection_cache = {MW._cache_key("tok"): ({"username": "alice"}, expired_at)}
     mw = object.__new__(MW)
     # Cache miss: would need to call introspection endpoint, which isn't mocked → ImportError or httpx call
     # We verify the cache is NOT used by checking it doesn't return the cached identity
@@ -624,7 +625,7 @@ def test_introspection_cache_stores_exp_bounded_deadline(monkeypatch):
     _run(mw._validate_introspection("tok"))
 
     # Verify cache deadline is bounded by exp (~10s from now), not 60s
-    _, deadline = MW._introspection_cache["tok"]
+    _, deadline = MW._introspection_cache[MW._cache_key("tok")]
     assert deadline < time.time() + 15  # should be ~10s, not ~60s
 
 
@@ -658,7 +659,7 @@ def test_introspection_cache_uses_60s_when_no_exp(monkeypatch):
     before = time.time()
     _run(mw._validate_introspection("tok"))
 
-    _, deadline = MW._introspection_cache["tok"]
+    _, deadline = MW._introspection_cache[MW._cache_key("tok")]
     assert deadline >= before + 59  # ~60s from call time
 
 
@@ -789,3 +790,144 @@ def test_validate_oidc_real_pyjwt_rejects_wrong_issuer(monkeypatch):
 
     with pytest.raises(NotAuthorizedException, match="issuer mismatch"):
         _run(mw._validate_oidc(token))
+
+
+def test_validate_oidc_issuer_mismatch_logs_warning(monkeypatch, caplog):
+    """The iss mismatch must be logged at WARNING (non-secret) so an operator
+    config error is diagnosable — the client only ever sees a bare 401."""
+    token, jwks = _signed_token_and_jwks("https://evil.example/application/o/siftd/")
+    MW = create_auth_middleware({"issuer": "https://idp/application/o/siftd", "audience": "siftd"})
+    mw = object.__new__(MW)
+    monkeypatch.setattr(mw, "_get_jwks", lambda **kw: asyncio.sleep(0, result=jwks))
+
+    import logging as _logging
+    with caplog.at_level(_logging.WARNING, logger="siftd.serve.auth"):
+        with pytest.raises(NotAuthorizedException, match="issuer mismatch"):
+            _run(mw._validate_oidc(token))
+    assert any("does not match configured" in r.getMessage() for r in caplog.records)
+
+
+def _keypair_token_jwks(kid: str):
+    """Build a real RS256 token (kid in header) + a single-key JWKS for that kid."""
+    import datetime
+    import json
+
+    import jwt
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jwt.algorithms import RSAAlgorithm
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
+    jwk = json.loads(RSAAlgorithm.to_jwk(key.public_key()))
+    jwk["kid"] = kid
+    jwks = jwt.PyJWKSet.from_dict({"keys": [jwk]})
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    now = datetime.datetime.now(datetime.timezone.utc)
+    token = jwt.encode(
+        {"sub": "alice", "iss": "https://idp", "aud": "siftd",
+         "exp": now + datetime.timedelta(hours=1), "iat": now},
+        pem, algorithm="RS256", headers={"kid": kid},
+    )
+    return token, jwks
+
+
+def test_validate_oidc_refetches_jwks_on_unknown_kid(monkeypatch):
+    """H1: a token whose kid is absent from the cached JWKS (IdP key rotation)
+    must trigger one forced refetch and then validate — not be rejected until the
+    cache TTL lapses (which would be a ~1h auth outage after every rotation)."""
+    _, old_jwks = _keypair_token_jwks("kid-old")
+    new_token, new_jwks = _keypair_token_jwks("kid-new")
+
+    MW = create_auth_middleware({"issuer": "https://idp", "audience": "siftd"})
+    mw = object.__new__(MW)
+    calls = {"n": 0}
+
+    async def fake_get_jwks(force=False):
+        calls["n"] += 1
+        return new_jwks if force else old_jwks  # stale cache misses; forced refetch hits
+
+    monkeypatch.setattr(mw, "_get_jwks", fake_get_jwks)
+
+    identity = _run(mw._validate_oidc(new_token))
+    assert identity.sub == "alice"
+    assert calls["n"] == 2  # initial (miss) + one forced refetch (hit)
+
+
+def test_get_jwks_force_refetch_is_rate_limited(monkeypatch):
+    """H1 guard: a forced refetch within the rate-limit window is served from
+    cache (no network), so a flood of bogus-kid tokens can't hammer the JWKS
+    endpoint; once the window elapses, force does refetch."""
+    fetches = {"n": 0}
+
+    class _Resp:
+        def json(self):
+            return {"keys": []}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            fetches["n"] += 1
+            return _Resp()
+
+    class _HTTPX:
+        AsyncClient = _Client
+
+    class _JWT:
+        class PyJWKSet:
+            @staticmethod
+            def from_dict(d):
+                return {"parsed": d}
+
+    monkeypatch.setitem(sys.modules, "httpx", _HTTPX)
+    monkeypatch.setitem(sys.modules, "jwt", _JWT)
+    MW = create_auth_middleware({"issuer": "https://idp", "jwks_url": "https://idp/jwks"})
+    MW._jwks_cache = {"parsed": {"keys": []}}
+    mw = object.__new__(MW)
+
+    # Fresh cache + force → suppressed (rate-limited), no fetch.
+    MW._jwks_fetched_at = time.time()
+    assert _run(mw._get_jwks(force=True)) == {"parsed": {"keys": []}}
+    assert fetches["n"] == 0
+
+    # Window elapsed + force → refetch happens.
+    MW._jwks_fetched_at = time.time() - 120
+    _run(mw._get_jwks(force=True))
+    assert fetches["n"] == 1
+
+
+def test_introspection_cache_evicts_when_full():
+    """M1: the introspection cache is size-capped, not unbounded."""
+    MW = create_auth_middleware({"introspection_url": "https://idp/i"})
+    MW._introspection_cache = {}
+    MW._introspection_cache_max = 3
+    mw = object.__new__(MW)
+    now = time.time()
+    for i in range(6):
+        mw._store_introspection(f"k{i}", {"u": i}, now + 60, now)
+    assert len(MW._introspection_cache) <= 3
+
+
+def test_introspection_cache_drops_expired_before_evicting():
+    """M1: when at capacity, expired entries are reclaimed before live ones."""
+    MW = create_auth_middleware({"introspection_url": "https://idp/i"})
+    MW._introspection_cache = {}
+    MW._introspection_cache_max = 2
+    mw = object.__new__(MW)
+    now = time.time()
+    mw._store_introspection("expired", {"u": 0}, now - 1, now)   # already expired
+    mw._store_introspection("fresh", {"u": 1}, now + 60, now)    # cache now full (2)
+    mw._store_introspection("new", {"u": 2}, now + 60, now)      # triggers reclaim
+    keys = set(MW._introspection_cache)
+    assert "expired" not in keys
+    assert "fresh" in keys
+    assert "new" in keys

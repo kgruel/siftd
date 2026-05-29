@@ -22,9 +22,11 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, replace
 from http.client import HTTPConnection, HTTPSConnection
+from pathlib import Path
 from urllib.parse import urlencode, urlparse
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,43 @@ class AuthLoginError(Exception):
     Only raised on the interactive paths (device_login / explicit refresh).
     resolve_live_bearer never raises — it returns None instead.
     """
+
+
+class TokenRefError(ValueError):
+    """Raised when an ``env:``/``file:`` token reference cannot be resolved.
+
+    Callers adapt this to their own contract: the sync path wraps it in
+    ``AuthError``; the delegation client swallows it and falls through to None.
+    """
+
+
+def resolve_token_ref(ref: str) -> str:
+    """Resolve a static bearer reference to its value.
+
+    Grammar (shared with the sync-remote resolver in ``api/auth.py``):
+    - ``env:VAR``   — read from the environment; ``TokenRefError`` if unset/empty.
+    - ``file:PATH`` — read+strip the file (``~`` expanded); ``TokenRefError`` if
+      missing or unreadable.
+    - anything else — the literal token value.
+
+    Lives here (light-import, stdlib-only) so both the delegation client and the
+    sync resolver share one grammar that can't drift between them.
+    """
+    if ref.startswith("env:"):
+        name = ref[4:]
+        value = os.environ.get(name)
+        if not value:
+            raise TokenRefError(f"environment variable not set: {name}")
+        return value
+    if ref.startswith("file:"):
+        path = Path(ref[5:]).expanduser()
+        if not path.exists():
+            raise TokenRefError(f"token file not found: {path}")
+        try:
+            return path.read_text().strip()
+        except OSError as e:
+            raise TokenRefError(f"cannot read token file: {e.strerror}") from e
+    return ref
 
 
 @dataclass(frozen=True)
@@ -467,8 +506,12 @@ def _locked_refresh(issuer: str, *, rejected_token: str | None) -> str | None:
             return None
         # Someone else may have refreshed while we waited for the lock.
         if rejected_token is not None:
-            if current.access_token != rejected_token:
-                return current.access_token  # winner already rotated
+            # A different stored token means a concurrent winner rotated one in —
+            # but only short-circuit if that winner is itself fresh. A stale
+            # winner must fall through to a refresh rather than re-send a token
+            # the server will also reject (the backstop's whole purpose).
+            if current.access_token != rejected_token and not current.is_stale():
+                return current.access_token
         elif not current.is_stale():
             return current.access_token
         if not current.refresh_token:
@@ -512,10 +555,12 @@ class _file_lock:
 __all__ = [
     "AuthLoginError",
     "Credential",
+    "TokenRefError",
     "device_login",
     "refresh",
     "refresh_after_rejection",
     "resolve_live_bearer",
+    "resolve_token_ref",
     "load",
     "save",
     "delete",

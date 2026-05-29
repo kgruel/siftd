@@ -274,8 +274,8 @@ class TestOwnershipEnforcement:
         # Cache entries use absolute deadline (time.time() + TTL), not cached_at timestamp.
         MW = app.middleware[0]
         MW._introspection_cache = {
-            "tokA": ({"username": "alice"}, time.time() + 3600),
-            "tokB": ({"username": "bob"}, time.time() + 3600),
+            MW._cache_key("tokA"): ({"username": "alice"}, time.time() + 3600),
+            MW._cache_key("tokB"): ({"username": "bob"}, time.time() + 3600),
         }
 
         slice_a = _make_slice_bytes(tmp_path, external_id="alice-1")

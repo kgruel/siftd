@@ -137,9 +137,7 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
                  "Maximum request body size (e.g. '500MB', '1GB', bytes as int). Uses SI prefixes (1 MB = 1 000 000 bytes) matching Caddy. Must be changed in lockstep with Caddyfile request_body max_size.", "500MB"),
     # Serve auth — static_token, OIDC, or introspection
     _SchemaEntry("serve.auth.static_token", "string", _is_str,
-                 "Static bearer token for auth (supports env:VAR syntax)", ""),
-    _SchemaEntry("serve.auth.delegation_token", "string", _is_str,
-                 "Bearer token used by the CLI delegation client (supports env:VAR syntax)", ""),
+                 "Static bearer token the SERVER validates against (supports env:VAR syntax)", ""),
     _SchemaEntry("serve.auth.identity", "string", _is_str,
                  "User identity for static_token mode", "local"),
     _SchemaEntry("serve.auth.issuer", "string", _is_str,
@@ -163,6 +161,9 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     # Client-side token acquisition (distinct from serve.auth.* which is serve
     # VALIDATION config). These configure how the CLI ACQUIRES a bearer via
     # `siftd auth login` (device-code) and refreshes it — see credentials.py.
+    _SchemaEntry("auth.token", "string", _is_str,
+                 "Static bearer the CLI SENDS to serve (supports env:/file:/literal). "
+                 "For a shared-secret setup, match serve.auth.static_token.", ""),
     _SchemaEntry("auth.issuer", "string", _is_str,
                  "OIDC issuer URL the CLI acquires tokens from (`siftd auth login`)", ""),
     _SchemaEntry("auth.client_id", "string", _is_str,

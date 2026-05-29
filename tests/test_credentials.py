@@ -349,6 +349,18 @@ def test_reactive_uses_winner_token_without_refreshing(auth_env, monkeypatch):
     assert credentials.refresh_after_rejection(auth_env, rejected_token="loser") == "winner"
 
 
+def test_reactive_stale_winner_falls_through_to_refresh(auth_env, monkeypatch):
+    # A different stored token (a concurrent "winner") that is ITSELF stale must
+    # not be short-circuited and re-sent — fall through to a refresh, or the
+    # backstop hands back a token the server will also reject.
+    credentials.save(Credential(issuer=auth_env, access_token="stale-winner", refresh_token="r1",
+                                expires_at=time.time() - 1))
+    scripted = _ScriptedPost(refresh=[(200, {"access_token": "fresh", "expires_in": 3600})])
+    monkeypatch.setattr(credentials, "_post_form", scripted)
+    assert credentials.refresh_after_rejection(auth_env, rejected_token="loser") == "fresh"
+    assert scripted.calls["refresh"] == 1
+
+
 def test_reactive_refreshes_when_token_still_rejected(auth_env, monkeypatch):
     credentials.save(Credential(issuer=auth_env, access_token="rejected", refresh_token="r1",
                                 expires_at=time.time() + 3600))
@@ -399,3 +411,128 @@ def test_concurrent_refresh_happens_once(auth_env, monkeypatch):
     # now-fresh credential under the lock and skip the refresh entirely.
     assert refresh_count["n"] == 1
     assert results == ["refreshed"] * 5
+
+
+# --------------------------------------------------------------------------- #
+# resolve_token_ref — env:/file:/literal grammar (shared with api/auth.py)
+# --------------------------------------------------------------------------- #
+
+def test_resolve_token_ref_literal():
+    assert credentials.resolve_token_ref("abc123") == "abc123"
+
+
+def test_resolve_token_ref_env(monkeypatch):
+    monkeypatch.setenv("MY_TOK", "from-env")
+    assert credentials.resolve_token_ref("env:MY_TOK") == "from-env"
+
+
+def test_resolve_token_ref_env_missing_raises(monkeypatch):
+    monkeypatch.delenv("MISSING_TOK", raising=False)
+    with pytest.raises(credentials.TokenRefError, match="environment variable not set"):
+        credentials.resolve_token_ref("env:MISSING_TOK")
+
+
+def test_resolve_token_ref_file(tmp_path):
+    p = tmp_path / "tok"
+    p.write_text("  filetok\n")  # surrounding whitespace is stripped
+    assert credentials.resolve_token_ref(f"file:{p}") == "filetok"
+
+
+def test_resolve_token_ref_file_missing_raises(tmp_path):
+    with pytest.raises(credentials.TokenRefError, match="token file not found"):
+        credentials.resolve_token_ref(f"file:{tmp_path / 'nope'}")
+
+
+# --------------------------------------------------------------------------- #
+# Endpoint discovery — the DEFAULT real-login path (auth_env sets endpoints
+# explicitly, so it never exercises .well-known discovery; cover it here).
+# --------------------------------------------------------------------------- #
+
+def test_device_login_resolves_endpoints_via_discovery(tmp_path, monkeypatch):
+    """Only auth.issuer + auth.client_id configured → endpoints come from the
+    issuer's .well-known/openid-configuration. Exercises _get_discovery and the
+    discovery branch of _endpoints end-to-end against a real http.server."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a):  # silence
+            pass
+
+        def _base(self):
+            return f"http://127.0.0.1:{self.server.server_address[1]}"
+
+        def _send(self, payload):
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):  # .well-known/openid-configuration
+            self._send({
+                "device_authorization_endpoint": f"{self._base()}/device",
+                "token_endpoint": f"{self._base()}/token",
+            })
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if self.path == "/device":
+                self._send({"device_code": "dc", "user_code": "UC",
+                            "verification_uri": f"{self._base()}/v",
+                            "interval": 0, "expires_in": 600})
+            else:  # /token
+                self._send({"access_token": "acc", "refresh_token": "ref", "expires_in": 3600})
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    issuer = f"http://127.0.0.1:{server.server_address[1]}"
+    from siftd.config import set_config
+    set_config("auth.issuer", issuer)
+    set_config("auth.client_id", "siftd-cli")
+    # NB: device_authorization_endpoint / token_endpoint deliberately NOT set.
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    try:
+        cred = credentials.device_login(issuer, on_prompt=lambda *a: None, sleep=lambda s: None)
+        assert cred.access_token == "acc"
+        assert cred.refresh_token == "ref"
+    finally:
+        server.shutdown()
+
+
+def test_endpoints_discovery_missing_endpoints_raises(tmp_path, monkeypatch):
+    """If the issuer's discovery doc omits the endpoints, _endpoints raises a
+    clear AuthLoginError rather than proceeding with empty URLs."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            # Valid, non-empty discovery doc that simply omits the two endpoints
+            # (an empty {} would trip _get_discovery's non-JSON guard first).
+            body = json.dumps({"issuer": "https://idp", "jwks_uri": "https://idp/jwks"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    issuer = f"http://127.0.0.1:{server.server_address[1]}"
+    from siftd.config import set_config
+    set_config("auth.issuer", issuer)
+    set_config("auth.client_id", "cli")
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    try:
+        with pytest.raises(credentials.AuthLoginError, match="does not advertise"):
+            credentials._endpoints(issuer)
+    finally:
+        server.shutdown()

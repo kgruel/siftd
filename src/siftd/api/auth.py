@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
-from pathlib import Path
 
 
 class AuthError(Exception):
@@ -34,20 +32,11 @@ def acquire_token(auth: dict | None) -> str:
             raise AuthError(f"token command timed out: {cmd}") from e
 
     if token_ref := auth.get("token"):
-        if token_ref.startswith("env:"):
-            env_var = token_ref[4:]
-            value = os.environ.get(env_var)
-            if not value:
-                raise AuthError(f"environment variable not set: {env_var}")
-            return value
-        if token_ref.startswith("file:"):
-            path = Path(token_ref[5:]).expanduser()
-            if not path.exists():
-                raise AuthError(f"token file not found: {path}")
-            try:
-                return path.read_text().strip()
-            except OSError as e:
-                raise AuthError(f"cannot read token file: {e.strerror}") from e
-        return token_ref  # literal
+        from siftd.credentials import TokenRefError, resolve_token_ref
+
+        try:
+            return resolve_token_ref(token_ref)
+        except TokenRefError as e:
+            raise AuthError(str(e)) from e
 
     raise AuthError("no auth configured for remote")

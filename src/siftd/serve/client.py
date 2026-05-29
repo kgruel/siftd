@@ -78,19 +78,25 @@ def _configured_issuer() -> str | None:
         return None
 
 
-def _resolve_bearer_token() -> str | None:
-    """Resolve a bearer token for serve delegation.
+def _resolve_bearer_token() -> tuple[str | None, str | None]:
+    """Resolve a bearer token and its source for serve delegation.
 
-    Precedence:
-    1) Env var: SIFTD_SERVE_TOKEN, then SIFTD_SERVE_DELEGATION_TOKEN
-    2) Device-code credential acquired via `siftd auth login`, proactively
-       refreshed when near expiry (only when [auth].issuer is configured)
-    3) Config: serve.auth.delegation_token, then serve.auth.static_token
-       (supports env:VAR syntax for both)
+    The CLIENT acquires tokens only from the ``[auth]`` namespace; it never reads
+    ``serve.auth.*`` (which is the SERVER's validation config). Precedence, with
+    the source tag returned alongside the token:
+
+    1) Env var SIFTD_SERVE_TOKEN, then SIFTD_SERVE_DELEGATION_TOKEN  -> "env"
+    2) Device-code credential (`siftd auth login`) via [auth].issuer,
+       proactively refreshed when near expiry                       -> "device-code"
+    3) Static [auth].token reference (env:/file:/literal)            -> "static"
+
+    Returns ``(None, None)`` when nothing resolves. Only "device-code" is
+    refreshable — the reactive 401 retry keys off this tag, so an env/static
+    token that gets a 401 is never swapped for an unrelated device credential.
     """
     env = os.environ.get("SIFTD_SERVE_TOKEN") or os.environ.get("SIFTD_SERVE_DELEGATION_TOKEN")
     if env:
-        return env
+        return env, "env"
 
     issuer = _configured_issuer()
     if issuer:
@@ -99,22 +105,24 @@ def _resolve_bearer_token() -> str | None:
 
             token = resolve_live_bearer(issuer)
             if token:
-                return token
+                return token, "device-code"
         except Exception:
             pass  # never let acquisition break the read path
 
     try:
         from siftd.config import get_config
     except Exception:
-        return None
+        return None, None
 
-    cfg = get_config("serve.auth.delegation_token") or get_config("serve.auth.static_token")
-    if not cfg:
-        return None
-    cfg = str(cfg)
-    if cfg.startswith("env:"):
-        return os.environ.get(cfg[4:], "") or None
-    return cfg
+    ref = get_config("auth.token")
+    if not ref:
+        return None, None
+    try:
+        from siftd.credentials import resolve_token_ref
+
+        return resolve_token_ref(str(ref)), "static"
+    except Exception:
+        return None, None  # unresolvable static ref → no token, never break the read path
 
 
 def _send(target: ServeTarget, method: str, full_path: str,
@@ -135,22 +143,23 @@ def _send(target: ServeTarget, method: str, full_path: str,
 def _send_authed(target: ServeTarget, method: str, full_path: str, *,
                  base_headers: dict[str, str], body: bytes | None = None,
                  timeout_s: float) -> tuple[int, bytes]:
-    """Send with a resolved bearer; on 401 with a stored device-code credential,
-    refresh once and retry.
+    """Send with a resolved bearer; on 401 with a device-code token, refresh
+    once and retry.
 
-    The reactive retry is GATED on an issuer credential existing: static-token
-    users (no [auth].issuer, or no stored credential — refresh_after_rejection
-    returns None) hit no retry, so the strict 4xx-propagation behaviour is
-    unchanged for them.
+    The reactive retry is GATED on the resolved token's SOURCE being
+    "device-code" — the only refreshable source. Env- and static-token users
+    hit no retry (there is nothing to refresh), so a rejected env/static token
+    is never silently swapped for an unrelated device credential, and the strict
+    4xx-propagation behaviour is unchanged for them.
     """
-    token = _resolve_bearer_token()
+    token, source = _resolve_bearer_token()
     headers = dict(base_headers)
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
     status, raw = _send(target, method, full_path, headers, body, timeout_s)
 
-    if status == 401 and token:
+    if status == 401 and token and source == "device-code":
         issuer = _configured_issuer()
         if issuer:
             try:

@@ -20,7 +20,7 @@ class TestResolveBearerPrecedence:
             "siftd.credentials.resolve_live_bearer",
             lambda issuer: pytest.fail("env should win before device-code"),
         )
-        assert client._resolve_bearer_token() == "env-tok"
+        assert client._resolve_bearer_token() == ("env-tok", "env")
 
     def test_device_code_beats_static_config(self, monkeypatch):
         monkeypatch.delenv("SIFTD_SERVE_TOKEN", raising=False)
@@ -28,18 +28,26 @@ class TestResolveBearerPrecedence:
         monkeypatch.setattr(client, "_configured_issuer", lambda: "https://idp.test")
         monkeypatch.setattr("siftd.credentials.resolve_live_bearer", lambda issuer: "dev-tok")
         monkeypatch.setattr("siftd.config.get_config", lambda k: "static-tok")
-        assert client._resolve_bearer_token() == "dev-tok"
+        assert client._resolve_bearer_token() == ("dev-tok", "device-code")
 
     def test_falls_through_to_static_when_no_device_credential(self, monkeypatch):
         monkeypatch.delenv("SIFTD_SERVE_TOKEN", raising=False)
         monkeypatch.delenv("SIFTD_SERVE_DELEGATION_TOKEN", raising=False)
         monkeypatch.setattr(client, "_configured_issuer", lambda: "https://idp.test")
         monkeypatch.setattr("siftd.credentials.resolve_live_bearer", lambda issuer: None)
+        # Client reads its OWN [auth].token namespace — never serve.auth.*.
         monkeypatch.setattr(
             "siftd.config.get_config",
-            lambda k: "static-tok" if k == "serve.auth.delegation_token" else None,
+            lambda k: "static-tok" if k == "auth.token" else None,
         )
-        assert client._resolve_bearer_token() == "static-tok"
+        assert client._resolve_bearer_token() == ("static-tok", "static")
+
+    def test_no_issuer_no_static_returns_none(self, monkeypatch):
+        monkeypatch.delenv("SIFTD_SERVE_TOKEN", raising=False)
+        monkeypatch.delenv("SIFTD_SERVE_DELEGATION_TOKEN", raising=False)
+        monkeypatch.setattr(client, "_configured_issuer", lambda: None)
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+        assert client._resolve_bearer_token() == (None, None)
 
 
 class _FakeSend:
@@ -56,8 +64,8 @@ class _FakeSend:
 
 class TestSendAuthedRetry:
     def test_static_token_user_no_retry_on_401(self, monkeypatch):
-        """No [auth].issuer → a 401 propagates as ServeRequest4xx with NO retry."""
-        monkeypatch.setattr(client, "_resolve_bearer_token", lambda: "static-tok")
+        """A static-sourced token → a 401 propagates as ServeRequest4xx with NO retry."""
+        monkeypatch.setattr(client, "_resolve_bearer_token", lambda: ("static-tok", "static"))
         monkeypatch.setattr(client, "_configured_issuer", lambda: None)
         fake = _FakeSend([(401, b'{"error": "Unauthorized"}')])
         monkeypatch.setattr(client, "_send", fake)
@@ -67,8 +75,27 @@ class TestSendAuthedRetry:
         assert info.value.status == 401
         assert len(fake.calls) == 1  # no retry
 
+    def test_env_token_401_does_not_swap_to_device_code(self, monkeypatch):
+        """H2 regression: an env-sourced token that 401s must NOT be swapped for a
+        device-code credential, even when [auth].issuer is configured. Refreshing a
+        credential unrelated to the rejected token would re-issue the request under a
+        different server-side identity."""
+        monkeypatch.setattr(client, "_resolve_bearer_token", lambda: ("env-tok", "env"))
+        monkeypatch.setattr(client, "_configured_issuer", lambda: "https://idp.test")
+        monkeypatch.setattr(
+            "siftd.credentials.refresh_after_rejection",
+            lambda issuer, rejected_token: pytest.fail("must not refresh a non-device token"),
+        )
+        fake = _FakeSend([(401, b'{"error": "Unauthorized"}')])
+        monkeypatch.setattr(client, "_send", fake)
+
+        with pytest.raises(ServeRequest4xx) as info:
+            client._get_json("http://127.0.0.1:8484", "/api/v1/search")
+        assert info.value.status == 401
+        assert len(fake.calls) == 1  # no retry, no cross-source swap
+
     def test_retry_with_refreshed_token_on_401(self, monkeypatch):
-        monkeypatch.setattr(client, "_resolve_bearer_token", lambda: "old-tok")
+        monkeypatch.setattr(client, "_resolve_bearer_token", lambda: ("old-tok", "device-code"))
         monkeypatch.setattr(client, "_configured_issuer", lambda: "https://idp.test")
         monkeypatch.setattr(
             "siftd.credentials.refresh_after_rejection",
@@ -83,7 +110,7 @@ class TestSendAuthedRetry:
         assert fake.calls[1][2] == "Bearer new-tok"  # retried with refreshed token
 
     def test_refresh_returns_none_propagates_401(self, monkeypatch):
-        monkeypatch.setattr(client, "_resolve_bearer_token", lambda: "old-tok")
+        monkeypatch.setattr(client, "_resolve_bearer_token", lambda: ("old-tok", "device-code"))
         monkeypatch.setattr(client, "_configured_issuer", lambda: "https://idp.test")
         monkeypatch.setattr(
             "siftd.credentials.refresh_after_rejection",
@@ -98,7 +125,7 @@ class TestSendAuthedRetry:
         assert len(fake.calls) == 1  # refresh produced nothing new → no retry
 
     def test_post_json_retries_and_preserves_body(self, monkeypatch):
-        monkeypatch.setattr(client, "_resolve_bearer_token", lambda: "old-tok")
+        monkeypatch.setattr(client, "_resolve_bearer_token", lambda: ("old-tok", "device-code"))
         monkeypatch.setattr(client, "_configured_issuer", lambda: "https://idp.test")
         monkeypatch.setattr(
             "siftd.credentials.refresh_after_rejection",
