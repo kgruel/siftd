@@ -6,12 +6,12 @@ _Auto-generated from `--help` output._
 
 ```
 usage: siftd [-h] [--version] [--db PATH]
-             {register,session-id,config,adapters,db,tag,id,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade} ...
+             {register,session-id,config,adapters,db,tag,id,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,auth,upgrade} ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {register,session-id,config,adapters,db,tag,id,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,upgrade}
+  {register,session-id,config,adapters,db,tag,id,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,auth,upgrade}
     register            Register an active session for live tagging
     session-id          Print the session ID for the current workspace
     config              View or modify config settings
@@ -33,6 +33,8 @@ positional arguments:
     peek                Inspect live sessions from disk (bypasses SQLite)
     export              Export conversations as markdown or JSON
     serve               Start the HTTP team sync server
+    auth                Acquire and manage a bearer token for a remote siftd
+                        serve
     upgrade             Check for and install updates
 
 options:
@@ -872,6 +874,25 @@ options:
   --host ADDR  Bind address (default: 127.0.0.1)
   --port PORT  Listen port (default: 8484)
   --no-auth    Disable authentication (development only)
+```
+
+## siftd auth
+
+```
+usage: siftd auth [-h] {login,status,logout} ...
+
+Client-side token acquisition. `login` runs the OAuth device-code flow against
+the configured [auth].issuer; the resulting token is stored and presented
+automatically to a remote siftd serve.
+
+positional arguments:
+  {login,status,logout}
+    login               Authorize via OAuth device-code flow
+    status              Show stored credential status
+    logout              Delete the stored credential
+
+options:
+  -h, --help            show this help message and exit
 ```
 
 ## siftd upgrade

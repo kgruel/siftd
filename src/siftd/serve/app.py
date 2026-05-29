@@ -67,8 +67,9 @@ def create_app(
 
     middleware: list[Any] = []
     if auth_config:
-        from siftd.serve.auth import create_auth_middleware
+        from siftd.serve.auth import create_auth_middleware, validate_auth_config
 
+        validate_auth_config(auth_config)  # fail loudly at boot, not per-request
         middleware.append(create_auth_middleware(auth_config))
 
     static_dir = Path(__file__).parent / "static"

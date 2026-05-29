@@ -18,6 +18,12 @@ from litestar.connection import ASGIConnection
 from litestar.exceptions import NotAuthorizedException
 from litestar.middleware import AbstractAuthenticationMiddleware, AuthenticationResult
 
+# JWKS cache lifetime, and the minimum interval between forced refetches (a
+# forced refetch happens on an unknown-kid miss so IdP key rotation is picked up
+# without waiting out the TTL — rate-limited so bogus-kid tokens can't hammer it).
+_JWKS_CACHE_TTL_S = 3600
+_JWKS_FORCE_REFETCH_MIN_S = 60
+
 
 @dataclass
 class UserIdentity:
@@ -118,6 +124,36 @@ def _identity_from_introspection(body: dict, identity_claim: str) -> UserIdentit
     )
 
 
+# The auth modes the server can validate. A non-empty serve.auth table must
+# select exactly one of these; otherwise middleware installs but every request
+# falls through to "No auth mode configured" (a fail-closed 401 on everything).
+_AUTH_MODES = ("static_token", "issuer", "introspection_url")
+
+
+def validate_auth_config(auth_config: dict | None) -> None:
+    """Startup preflight for the serve.auth table.
+
+    Raises ValueError if the table is non-empty but names no recognized auth
+    mode — turning a per-request, opaque "No auth mode configured" 401 into a
+    loud, single boot-time error. A common cause is a stale ``delegation_token``
+    (now a client-side ``[auth]`` key), so that case gets a targeted hint.
+    """
+    if not auth_config:
+        return  # empty/None → no middleware installed → nothing to validate
+    if any(auth_config.get(m) for m in _AUTH_MODES):
+        return
+    hint = ""
+    if auth_config.get("delegation_token"):
+        hint = (
+            " — `delegation_token` is a CLIENT key: set it under [auth].token, and "
+            "for a shared secret set serve.auth.static_token to the same value"
+        )
+    raise ValueError(
+        f"[serve.auth] is configured but names no auth mode "
+        f"(one of: {', '.join(_AUTH_MODES)}){hint}",
+    )
+
+
 def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMiddleware]:
     """Create an auth middleware class bound to the given config.
 
@@ -136,7 +172,11 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
         _config = auth_config
         _jwks_cache: object | None = None
         _jwks_fetched_at: float = 0
+        # Keyed by sha256(token) (not the raw bearer) and size-capped, so a
+        # long-running introspection server neither grows unbounded nor retains
+        # plaintext tokens in memory.
         _introspection_cache: dict[str, tuple[dict, float]] = {}
+        _introspection_cache_max: int = 1024
 
         async def authenticate_request(
             self, connection: ASGIConnection,
@@ -205,10 +245,15 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
             try:
                 header = jwt.get_unverified_header(token)
                 kid = header.get("kid")
-                signing_key = next(
-                    (k for k in jwks.keys if k.key_id == kid),
-                    None,
-                )
+                signing_key = self._signing_key_for_kid(jwks, kid)
+                if signing_key is None:
+                    # kid absent from the cached JWKS — the IdP may have rotated
+                    # signing keys. Force one (rate-limited) refetch before
+                    # rejecting, mirroring PyJWKClient.get_signing_key's
+                    # refresh-and-retry-once. Without this, a rotation rejects
+                    # every fresh token until the TTL lapses (a ~1h auth outage).
+                    jwks = await self._get_jwks(force=True)
+                    signing_key = self._signing_key_for_kid(jwks, kid)
                 if signing_key is None:
                     raise NotAuthorizedException("No matching JWKS key for token")
                 try:
@@ -216,12 +261,27 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
                         token, signing_key.key,
                         algorithms=["RS256", "ES256"],
                         audience=audience,
-                        issuer=issuer,
+                        # Validate `iss` ourselves below rather than via PyJWT's
+                        # exact-string equality: some IdPs (e.g. Authentik) emit a
+                        # trailing-slash issuer (`.../o/<slug>/`) while the configured
+                        # issuer is rstripped for JWKS discovery. Compare normalized
+                        # so a trailing slash on either side doesn't reject every token.
                         options={"require": ["exp", "iss", "aud"]},
                     )
                 except TypeError as e:
                     logging.getLogger(__name__).debug("OIDC key/decode type error: %s", e)
                     raise NotAuthorizedException("Invalid token") from e
+                token_iss = payload.get("iss")
+                if not isinstance(token_iss, str) or token_iss.rstrip("/") != issuer:
+                    # iss and the configured issuer are both non-secret. Log loudly:
+                    # the client only sees a bare 401 and would otherwise retry-
+                    # refresh in a loop, so a config mismatch is invisible without
+                    # this. (The token's signature already validated above.)
+                    logging.getLogger(__name__).warning(
+                        "OIDC token iss %r does not match configured serve.auth.issuer %r",
+                        token_iss, issuer,
+                    )
+                    raise NotAuthorizedException("Token issuer mismatch")
                 # Reject if the configured identity claim is missing — collapsing
                 # multiple tokens under a synthetic "unknown" owner would conflate
                 # distinct subjects in conversation_owners.
@@ -243,8 +303,10 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
             import httpx
 
             now = time.time()
-            if token in SiftdAuthMiddleware._introspection_cache:
-                cached, expires_at = SiftdAuthMiddleware._introspection_cache[token]
+            cache_key = SiftdAuthMiddleware._cache_key(token)
+            cached_entry = SiftdAuthMiddleware._introspection_cache.get(cache_key)
+            if cached_entry is not None:
+                cached, expires_at = cached_entry
                 if now < expires_at:
                     identity_claim = self._config.get("identity_claim", "username")
                     return _identity_from_introspection(cached, identity_claim)
@@ -278,12 +340,45 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
             token_exp = body.get("exp")
             if isinstance(token_exp, (int, float)) and token_exp > 0:
                 cache_deadline = min(cache_deadline, float(token_exp))
-            SiftdAuthMiddleware._introspection_cache[token] = (body, cache_deadline)
+            self._store_introspection(cache_key, body, cache_deadline, now)
             identity_claim = self._config.get("identity_claim", "username")
             return _identity_from_introspection(body, identity_claim)
 
-        async def _get_jwks(self):
+        @staticmethod
+        def _cache_key(token: str) -> str:
+            """sha256 of the bearer — so plaintext tokens aren't kept as keys."""
+            import hashlib
+
+            return hashlib.sha256(token.encode()).hexdigest()
+
+        @staticmethod
+        def _store_introspection(key: str, body: dict, deadline: float, now: float) -> None:
+            """Insert a cache entry, enforcing the size cap.
+
+            When full and inserting a new key, drop expired entries first; if
+            still at the cap, evict in insertion (roughly oldest-first) order.
+            """
+            cache = SiftdAuthMiddleware._introspection_cache
+            cap = SiftdAuthMiddleware._introspection_cache_max
+            if key not in cache and len(cache) >= cap:
+                for expired in [k for k, (_, exp) in cache.items() if exp <= now]:
+                    del cache[expired]
+                while len(cache) >= cap:
+                    cache.pop(next(iter(cache)))
+            cache[key] = (body, deadline)
+
+        @staticmethod
+        def _signing_key_for_kid(jwks, kid):
+            """Return the JWKS key matching ``kid``, or None (exact match only)."""
+            return next((k for k in jwks.keys if k.key_id == kid), None)
+
+        async def _get_jwks(self, *, force: bool = False):
             """Fetch and cache JWKS from OIDC issuer.
+
+            ``force=True`` bypasses the TTL to pick up a freshly-rotated signing
+            key on an unknown-kid miss, but is itself rate-limited
+            (``_JWKS_FORCE_REFETCH_MIN_S``) so a flood of bogus-kid tokens can't
+            hammer the JWKS endpoint.
 
             The discovered ``jwks_uri`` must live under the configured issuer's
             origin (scheme + host[:port]); otherwise a compromised or misconfigured
@@ -295,8 +390,12 @@ def create_auth_middleware(auth_config: dict) -> type[AbstractAuthenticationMidd
             import jwt
 
             now = time.time()
-            if SiftdAuthMiddleware._jwks_cache and now - SiftdAuthMiddleware._jwks_fetched_at < 3600:
-                return SiftdAuthMiddleware._jwks_cache
+            if SiftdAuthMiddleware._jwks_cache is not None:
+                age = now - SiftdAuthMiddleware._jwks_fetched_at
+                if not force and age < _JWKS_CACHE_TTL_S:
+                    return SiftdAuthMiddleware._jwks_cache
+                if force and age < _JWKS_FORCE_REFETCH_MIN_S:
+                    return SiftdAuthMiddleware._jwks_cache
 
             issuer = self._config["issuer"].rstrip("/")
             jwks_url = self._config.get("jwks_url")

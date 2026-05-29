@@ -164,25 +164,52 @@ echo 'export SIFTD_TOKEN="..."' >> ~/.zshenv
 pass insert siftd/laptop  # then refer to it via token_command below
 ```
 
+**Option C — interactive device-code login (`siftd auth login`).** Best for a box
+you SSH into: authorize on your phone/laptop browser, nothing needs a localhost
+browser on the target machine. Requires a **public** (no-secret) device-code
+client registered at your IdP. Configure the client-side acquisition namespace
+(distinct from `serve.auth.*`, which is *server* validation config) and log in:
+
+```bash
+siftd config set auth.issuer    https://your-idp.example.com/application/o/siftd/
+siftd config set auth.client_id <public-device-code-client-id>
+# auth.scope defaults to "openid offline_access"; offline_access is what gets
+# you a refresh token so the CLI can auto-refresh instead of re-prompting.
+
+siftd auth login     # prints a URL + code; poll completes once you authorize
+siftd auth status    # show where the token lives + its expiry
+siftd auth logout     # delete the stored credential
+```
+
+The acquired token is stored `0600` under `~/.local/state/siftd/credentials/`,
+keyed by issuer, and presented automatically on delegated reads. It is refreshed
+proactively when near expiry and reactively on a `401`. This is the recommended
+path once `[auth].issuer` is set.
+
 ### 3. Client config
 
-The CLI has **two distinct auth pipelines** that don't share config:
+The CLI has **two distinct auth pipelines** that don't share config. Both draw
+*client* send-tokens from the `[auth]` namespace — never from `serve.auth.*`,
+which is the server's *validation* config:
 
-- **Delegated reads** (`siftd query`, `siftd search`, etc.) — token resolved by `serve/client.py:_resolve_bearer_token`. Accepts: `SIFTD_SERVE_TOKEN` env var, `SIFTD_SERVE_DELEGATION_TOKEN` env var, or `serve.auth.delegation_token` / `serve.auth.static_token` config keys (both with `env:VAR` syntax). **It does NOT support `token_command` or `token = "file:..."`** — that syntax is only honored by the sync push path.
+- **Delegated reads** (`siftd query`, `siftd search`, etc.) — token resolved by `serve/client.py:_resolve_bearer_token`, in precedence order, with the source tag in parens: (1) `SIFTD_SERVE_TOKEN` / `SIFTD_SERVE_DELEGATION_TOKEN` env vars (`env`); (2) a device-code credential acquired via `siftd auth login` (auto-refreshed near expiry — see below), active only when `[auth].issuer` is configured (`device-code`); (3) a static `[auth].token` (`env:`/`file:`/literal) (`static`). On a `401`, **only** a `device-code` token is refreshed once and retried — an `env`/`static` token that 401s is never swapped for an unrelated credential. **`token_command` is not honored here** — that's a sync-push affordance.
 - **Sync push** (`siftd db push`) — token resolved by `api/auth.py:acquire_token` from a named remote's `[sync.remotes.<name>.auth]` block. Accepts: `token_command`, `token = "env:VAR"`, `token = "file:..."`, or a literal.
 
 For one machine that does both reads and pushes, you need both configs. `~/.config/siftd/config.toml`:
 
 ```toml
-# --- Delegated read auth ---
+# --- Delegated read auth (client SENDS from [auth]) ---
 [serve]
 url = "https://siftd.example.com"
 delegate = true
 
-[serve.auth]
-delegation_token = "env:SIFTD_TOKEN"
-# or: static_token = "env:SIFTD_TOKEN"
-# (token_command and token = "file:..." are NOT supported here — see below)
+[auth]
+# Recommended: device-code login (siftd auth login).
+issuer = "https://idp.example.com/application/o/siftd/"
+client_id = "siftd"
+# Or a static shared secret the CLI sends — match serve.auth.static_token
+# on the server side:
+# token = "env:SIFTD_TOKEN"   # also accepts file:... or a literal
 
 # --- Sync push auth (named remote) ---
 [sync.remotes.homelab]
@@ -279,7 +306,7 @@ The "Partial" row on `search` is the one remaining thin-client gap. For all othe
 
 ## Troubleshooting
 
-- **`401 Missing bearer token`**: client config isn't reading the token. Check `SIFTD_TOKEN` is exported and `delegation_token = "env:SIFTD_TOKEN"` is in `[serve.auth]`. The lookup is `SIFTD_SERVE_TOKEN` env > `SIFTD_SERVE_DELEGATION_TOKEN` env > `serve.auth.delegation_token` > `serve.auth.static_token`.
+- **`401 Missing bearer token`**: the client isn't sending a token. Check `SIFTD_TOKEN` is exported and `token = "env:SIFTD_TOKEN"` is in `[auth]` (the client namespace — **not** `[serve.auth]`, which is server validation). The lookup is `SIFTD_SERVE_TOKEN` env > `SIFTD_SERVE_DELEGATION_TOKEN` env > `[auth].issuer` device-code credential > `[auth].token`. For a shared-secret setup, `[auth].token` (client) and `serve.auth.static_token` (server) must hold the same value.
 - **`401 Invalid token`**: token's `iss` or `aud` doesn't match, or the configured `identity_claim` is missing/empty. Decode the JWT payload locally and compare to `[serve.auth]`:
 
   ```bash

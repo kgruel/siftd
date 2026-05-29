@@ -125,7 +125,7 @@ class TestSchema:
 
     def test_serve_defaults(self):
         assert _match_schema("serve.host").default == "127.0.0.1"
-        assert _match_schema("serve.auth.delegation_token").expected == "string"
+        assert _match_schema("auth.token").expected == "string"
 
     def test_no_match(self):
         assert _match_schema("totally.unknown.deep.key") is None

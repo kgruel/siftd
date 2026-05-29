@@ -6,6 +6,7 @@ import sys
 
 from siftd.api import SchemaUpgradeRequiredError
 from siftd.cli._common import _get_version
+from siftd.cli.auth import build_auth_parser
 from siftd.cli.data import build_data_parser
 from siftd.cli.db import build_db_parser
 from siftd.cli.export import build_export_parser
@@ -70,6 +71,7 @@ def main(argv=None) -> int:
     build_peek_parser(subparsers)
     build_export_parser(subparsers)
     build_serve_parser(subparsers)
+    build_auth_parser(subparsers)
     build_upgrade_parser(subparsers)
 
     args, unknowns = parser.parse_known_args(argv)

@@ -76,6 +76,7 @@ MODULE_GROUPS: dict[str, str] = {
     "backfill": "ingestion",
     "config": "utilities",
     "config_sync": "utilities",
+    "credentials": "utilities",
     "paths": "utilities",
     "ids": "utilities",
     "math": "utilities",

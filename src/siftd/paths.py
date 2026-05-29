@@ -7,8 +7,10 @@ Follows XDG Base Directory Specification:
 - XDG_STATE_HOME (~/.local/state) - runtime state (sessions, etc.)
 """
 
+import contextlib
 import hashlib
 import os
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -42,6 +44,55 @@ def state_dir() -> Path:
     """Return the state directory (~/.local/state/siftd)."""
     base = _get_xdg_path("XDG_STATE_HOME", "~/.local/state")
     return base / APP_NAME
+
+
+def credentials_dir() -> Path:
+    """Return the OAuth credentials directory (~/.local/state/siftd/credentials)."""
+    return state_dir() / "credentials"
+
+
+def credential_file(issuer: str) -> Path:
+    """Return the stored-credential file for an OIDC issuer.
+
+    Keyed by a hash of the issuer URL (mirrors ``session_id_file``) so issuer
+    URLs containing slashes, schemes, or ports collapse to a flat,
+    filesystem-safe filename.
+    """
+    issuer_hash = hashlib.sha256(issuer.encode()).hexdigest()[:12]
+    return credentials_dir() / f"{issuer_hash}.json"
+
+
+def atomic_write_secure(
+    path: Path,
+    content: str | bytes,
+    *,
+    file_mode: int = 0o600,
+    dir_mode: int = 0o700,
+) -> None:
+    """Atomically write ``content`` to ``path`` with restrictive permissions.
+
+    Ensures the parent directory exists and is mode ``dir_mode`` (default 0o700),
+    writes to a temp file in that same directory at ``file_mode`` (default 0o600),
+    then atomically ``os.replace``s the target. Closing the gap where the file
+    could be world-readable or observed half-written. Shared by config writes
+    and credential storage; the only sanctioned way to persist sensitive files.
+    """
+    data = content.encode() if isinstance(content, str) else content
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    parent.chmod(dir_mode)
+    fd, tmp = tempfile.mkstemp(dir=parent, suffix=".tmp")
+    try:
+        os.write(fd, data)
+        os.fchmod(fd, file_mode)
+    finally:
+        os.close(fd)
+    try:
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def session_id_file(workspace_path: str) -> Path:
