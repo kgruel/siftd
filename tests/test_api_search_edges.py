@@ -85,6 +85,36 @@ def test_hybrid_mode_candidate_empty_and_no_results(monkeypatch, tmp_path):
     assert api_search.hybrid_search("q", db_path=tmp_path / "db", mode="hybrid", embed_backend=backend, embed_db=tmp_path / "e.db") == []
 
 
+def test_hybrid_mode_forwards_tag_kind_to_resolve_candidates(monkeypatch, tmp_path):
+    """I07: hybrid/semantic must honor --tag-kind like the FTS-only path does."""
+    seen = {}
+
+    def _capture(*a, **k):
+        seen.update(k)
+        return set()  # empty candidates short-circuits before embeddings
+
+    fake_search = SimpleNamespace(
+        resolve_candidates=_capture,
+        annotate_fts5_breakdown=lambda *a, **k: None,
+        mmr_rerank=lambda results, *_a, **_k: results,
+        apply_temporal_weight=lambda results, *_a, **_k: results,
+    )
+    monkeypatch.setitem(sys.modules, "siftd.search", fake_search)
+    monkeypatch.setitem(sys.modules, "siftd.embeddings.indexer", SimpleNamespace(SCHEMA_VERSION=1))
+    monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *a, **k: _Conn())
+    monkeypatch.setattr(api_search, "fts5_recall_conversations", lambda conn, q, limit=80, raw_fts=False: ({"x"}, "and"))
+    monkeypatch.setattr(api_search, "open_embeddings_db", lambda *_a, **_k: _Conn())
+    monkeypatch.setattr(api_search, "validate_index_compat", lambda *a, **k: None)
+    monkeypatch.setattr(api_search, "search_similar", lambda *a, **k: [])
+
+    backend = SimpleNamespace(name="b", model="m", dimension=1, embed_one=lambda q: [0.1])
+    api_search.hybrid_search(
+        "q", db_path=tmp_path / "db", mode="hybrid", embed_backend=backend,
+        embed_db=tmp_path / "e.db", tag=["t"], tag_kind=["decision"],
+    )
+    assert seen.get("tag_kind") == ["decision"]
+
+
 def test_hybrid_mode_recency_and_mmr(monkeypatch, tmp_path):
     calls = {}
 

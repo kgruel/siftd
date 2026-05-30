@@ -1262,25 +1262,31 @@ def resolve_entity_id(
         raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], count_row["n"])
     elif entity_type == "workspace":
         row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
-    elif entity_type in ("tool_call", "prompt", "response"):
-        # Prefix-match across event kinds so `siftd query <event_prefix>`
-        # works the same as conversation IDs.
-        kind = entity_type
-        row = conn.execute(
-            "SELECT id FROM events"
-            " WHERE (id = ? OR id LIKE ?) AND kind = ?",
-            (entity_id, f"{entity_id}%", kind),
+        return row["id"] if row else None
+    elif entity_type in ("tool_call", "prompt", "response", "exchange"):
+        # Prefix-match across event kinds so `siftd query <event_prefix>` /
+        # `siftd tag <kind> <prefix>` work like conversation IDs. Mirror the
+        # conversation branch: a colliding prefix must raise AmbiguousPrefix,
+        # not silently resolve to an arbitrary match. ('exchange' anchors on a
+        # prompt event.)
+        kind = "prompt" if entity_type == "exchange" else entity_type
+        params = (entity_id, f"{entity_id}%", kind)
+        rows = conn.execute(
+            "SELECT id FROM events WHERE (id = ? OR id LIKE ?) AND kind = ?"
+            " ORDER BY id LIMIT 6",
+            params,
+        ).fetchall()
+        if not rows:
+            return None
+        if len(rows) == 1:
+            return rows[0]["id"]
+        count_row = conn.execute(
+            "SELECT COUNT(*) AS n FROM events WHERE (id = ? OR id LIKE ?) AND kind = ?",
+            params,
         ).fetchone()
-    elif entity_type == "exchange":
-        # exchange uses a prompt event as anchor
-        row = conn.execute(
-            "SELECT id FROM events"
-            " WHERE (id = ? OR id LIKE ?) AND kind = 'prompt'",
-            (entity_id, f"{entity_id}%"),
-        ).fetchone()
+        raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], count_row["n"])
     else:
         return None
-    return row["id"] if row else None
 
 
 def get_conversation_metadata(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from siftd.api import EventDetail, get_event
+from siftd.api import get_event
 from siftd.api.conversations import resolve_entity_id
 from siftd.serialization.events import serialize_event_detail
 from siftd.storage.sqlite import (
@@ -61,6 +61,43 @@ def db_with_events(tmp_path):
     conn.commit()
     conn.close()
     return db_path, c, p1, p2, r1, r2, tc1
+
+
+class TestGetEventOwnerScoping:
+    """I03: event lookup must be owner-scoped like every other read path."""
+
+    def _assign_owner(self, db, conv_id, user_id):
+        conn = open_database(db)
+        conn.execute(
+            "INSERT INTO conversation_owners (conversation_id, user_id, push_id, assigned_at)"
+            " VALUES (?, ?, NULL, ?)",
+            (conv_id, user_id, "2024-01-01T00:00:00Z"),
+        )
+        conn.commit()
+        conn.close()
+
+    def test_owner_sees_their_event(self, db_with_events):
+        db, c, _p1, _p2, r1, *_ = db_with_events
+        self._assign_owner(db, c, "alice")
+        assert get_event(r1, db_path=db, owner="alice") is not None
+
+    def test_event_hidden_from_other_owner(self, db_with_events):
+        db, c, _p1, _p2, r1, *_ = db_with_events
+        self._assign_owner(db, c, "alice")
+        # A cross-owner ULID resolves to None -> route returns 404, not the row.
+        assert get_event(r1, db_path=db, owner="bob") is None
+
+    def test_prefix_lookup_is_also_scoped(self, db_with_events):
+        db, c, _p1, _p2, r1, *_ = db_with_events
+        self._assign_owner(db, c, "alice")
+        assert get_event(r1[:10], db_path=db, owner="bob") is None
+        assert get_event(r1[:10], db_path=db, owner="alice") is not None
+
+    def test_no_owner_arg_is_unscoped(self, db_with_events):
+        db, c, _p1, _p2, r1, *_ = db_with_events
+        self._assign_owner(db, c, "alice")
+        # owner=None preserves the pre-existing unscoped behavior (auth disabled).
+        assert get_event(r1, db_path=db) is not None
 
 
 class TestGetEventByKind:

@@ -611,7 +611,8 @@ class TestMigrateCascadeV2:
             "INSERT INTO content_blobs VALUES ('sha256abc','content data',1,'2024-01-01T00:00:00Z')"
         )
         conn.execute(
-            "INSERT INTO sync_inbox VALUES ('si1','2024-01-01T00:00:00Z',NULL,NULL,'staged',NULL,NULL,NULL,NULL)"
+            # 11 cols: + user_id, push_id (added for owner-scoped deferred merge)
+            "INSERT INTO sync_inbox VALUES ('si1','2024-01-01T00:00:00Z',NULL,NULL,'staged',NULL,NULL,NULL,NULL,NULL,NULL)"
         )
         conn.execute(
             "INSERT INTO active_sessions VALUES ('sess1','claude_code','/proj','2024-01-01T00:00:00Z','2024-01-01T00:00:00Z')"

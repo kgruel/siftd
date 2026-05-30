@@ -462,6 +462,35 @@ def _friendly_remote_error(host: str, path: str, stderr: str) -> str:
     return f"Remote error on {host}: {first_line}"
 
 
+def _friendly_http_push_error(resp) -> str:
+    """Map a failed HTTP push response to a user-friendly message.
+
+    The serve push route returns {error, error_type} on client-fixable failures
+    (invalid source, schema mismatch, locked DB). Surface that instead of the
+    bare status code so the cause is actionable — a version-mismatched member
+    used to fail every push with an opaque "HTTP 500".
+    """
+    status = resp.status_code
+    try:
+        body = resp.json()
+    except Exception:
+        body = None
+    if isinstance(body, dict) and body.get("error"):
+        error_type = body.get("error_type", "")
+        msg = body["error"]
+        if error_type == "database_locked":
+            return "Remote database is locked; another push may be in progress. Retry shortly."
+        if error_type == "schema_mismatch":
+            return (
+                f"Schema mismatch with the server: {msg}. "
+                "Upgrade both client and server to the same version."
+            )
+        if error_type == "invalid_source":
+            return f"Server rejected the slice as invalid: {msg}"
+        return f"Push rejected by server (HTTP {status}): {msg}"
+    return f"Push failed: HTTP {status}"
+
+
 # ---------------------------------------------------------------------------
 # Pre-flight capability negotiation
 # ---------------------------------------------------------------------------
@@ -704,7 +733,7 @@ def _post_window_with_bisect(
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
-            raise SyncError(f"Push failed: HTTP {e.response.status_code}") from e
+            raise SyncError(_friendly_http_push_error(resp)) from e
 
         body = resp.json()
         return body.get("status") != "created", conversations, size_bytes

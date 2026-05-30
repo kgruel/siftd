@@ -114,6 +114,43 @@ class TestPush:
         body = resp.json()
         assert body["status"] == "merged"
 
+    def test_push_non_sqlite_returns_400_invalid_source(self, tmp_path):
+        """I1: a non-SQLite body is a client error (400), not an opaque 500."""
+        team_db = tmp_path / "team.db"
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.post(
+                "/api/v1/push",
+                content=b"definitely not a sqlite database payload",
+                headers={"Content-Type": "application/octet-stream"},
+            )
+        assert resp.status_code == 400
+        assert resp.json()["error_type"] == "invalid_source"
+
+    def test_push_schema_mismatch_returns_409(self, tmp_path):
+        """I1: a version-mismatched slice is a distinguishable 409, not a 500."""
+        import sqlite3
+
+        slice_bytes = _make_slice_bytes(tmp_path, external_id="c1")
+        bumped = tmp_path / "bumped.db"
+        bumped.write_bytes(slice_bytes)
+        c = sqlite3.connect(str(bumped))
+        c.execute("PRAGMA user_version = 9999")
+        c.commit()
+        c.close()
+
+        team_db = tmp_path / "team.db"
+        create_database(team_db)  # target at the current schema version
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.post(
+                "/api/v1/push",
+                content=bumped.read_bytes(),
+                headers={"Content-Type": "application/octet-stream"},
+            )
+        assert resp.status_code == 409
+        assert resp.json()["error_type"] == "schema_mismatch"
+
 
 class TestPull:
     def test_pull_streams_slice(self, tmp_path):

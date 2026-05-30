@@ -76,11 +76,17 @@ class EventDetail:
 
 
 def resolve_event_row(
-    conn: sqlite3.Connection, event_id: str,
+    conn: sqlite3.Connection, event_id: str, owner: str | None = None,
 ) -> sqlite3.Row | None:
     """Resolve a possibly-prefix event ID to its full row, or None.
 
     Skips prefix-LIKE entirely when the input is a full 26-char ULID.
+
+    When ``owner`` is set, the match is scoped to events whose conversation is
+    owned by that identity — so a cross-owner ULID resolves to None (the caller
+    surfaces a 404, not the other tenant's event). Mirrors the owner-scoping
+    every other read path applies; without it, event lookup is a multi-tenant
+    read IDOR.
 
     Known future concern: the prefix path uses fetchone() and silently returns
     the first matching row when multiple events share a prefix. This mirrors
@@ -90,16 +96,28 @@ def resolve_event_row(
     the DB exceeds ~50k events and extend AmbiguousPrefix detection here if
     collisions are confirmed.
     """
+    from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
+
+    owner_clause = ""
+    owner_params: tuple[str, ...] = ()
+    if owner is not None:
+        if not has_conversation_owners_table(conn):
+            return None
+        owner_clause = " AND " + owner_predicate("conversation_id")
+        owner_params = (owner,)
+
+    cols = (
+        "SELECT id, kind, conversation_id, parent_id, external_id, timestamp"
+        " FROM events"
+    )
     if len(event_id) == _ULID_LEN:
         return conn.execute(
-            "SELECT id, kind, conversation_id, parent_id, external_id, timestamp"
-            " FROM events WHERE id = ?",
-            (event_id,),
+            f"{cols} WHERE id = ?{owner_clause}",
+            (event_id, *owner_params),
         ).fetchone()
     return conn.execute(
-        "SELECT id, kind, conversation_id, parent_id, external_id, timestamp"
-        " FROM events WHERE id LIKE ? ORDER BY id LIMIT 1",
-        (f"{event_id}%",),
+        f"{cols} WHERE id LIKE ?{owner_clause} ORDER BY id LIMIT 1",
+        (f"{event_id}%", *owner_params),
     ).fetchone()
 
 
@@ -271,6 +289,7 @@ def get_event(
     conn: sqlite3.Connection | None = None,
     include_content: bool = True,
     include_neighbors: bool = False,
+    owner: str | None = None,
 ) -> EventDetail | None:
     """Get a single event by ID (full or prefix).
 
@@ -282,6 +301,8 @@ def get_event(
             after a smart-route probe.
         include_content: Include `content_blocks`. Default True.
         include_neighbors: Include `neighbors` (opt-in for cost). Default False.
+        owner: When set, scope the lookup to events whose conversation is owned
+            by this identity; a cross-owner id resolves to None.
 
     Returns:
         EventDetail or None if no event matches.
@@ -300,7 +321,7 @@ def get_event(
     work_conn = conn or owned_conn
     assert work_conn is not None  # mypy: one of the two is set
     try:
-        row = resolve_event_row(work_conn, id)
+        row = resolve_event_row(work_conn, id, owner=owner)
         if row is None or row["kind"] not in _EVENT_KINDS:
             return None
 

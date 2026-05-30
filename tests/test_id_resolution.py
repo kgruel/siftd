@@ -8,7 +8,6 @@ from siftd.api.conversations import AmbiguousPrefix, resolve_entity_id
 from siftd.output._id_format import short_id
 from siftd.storage.sqlite import create_database, get_or_create_harness
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -177,7 +176,7 @@ class TestResolveEntityId:
         assert exc.matched_ids == sorted(all_ids)[:5]
 
     def test_workspace_entity_type_no_ambiguity_check(self, tmp_path):
-        """Non-conversation entity types don't raise AmbiguousPrefix."""
+        """The workspace entity type resolves by exact id only (no prefix/raise)."""
         db_path = tmp_path / "ws.db"
         conn = create_database(db_path)
         conn.close()
@@ -186,6 +185,73 @@ class TestResolveEntityId:
         result = resolve_entity_id(conn, "workspace", "nonexistent")
         conn.close()
         assert result is None
+
+    def _make_event_collision_db(self, tmp_path, kind, ids):
+        """Create a DB with one conversation and events of `kind` having `ids`."""
+        db_path = tmp_path / "events.db"
+        conn = create_database(db_path)
+        harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+        conn.execute(
+            "INSERT INTO conversations (id, external_id, harness_id, workspace_id, branch, started_at, ended_at)"
+            " VALUES (?, ?, ?, NULL, NULL, ?, NULL)",
+            ("conv1", "ext-1", harness_id, "2024-01-01T00:00:00Z"),
+        )
+        for eid in ids:
+            conn.execute(
+                "INSERT INTO events (id, kind, conversation_id, timestamp) VALUES (?, ?, ?, ?)",
+                (eid, kind, "conv1", "2024-01-01T00:00:00Z"),
+            )
+        conn.commit()
+        conn.close()
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def test_event_prefix_collision_raises(self, tmp_path):
+        """I05: a colliding event-kind prefix raises instead of resolving arbitrarily."""
+        ids = ["01EVTCOLL0000000000000AAAA", "01EVTCOLL0000000000000BBBB"]
+        conn = self._make_event_collision_db(tmp_path, "response", ids)
+        with pytest.raises(AmbiguousPrefix) as exc_info:
+            resolve_entity_id(conn, "response", "01EVTCOLL")
+        conn.close()
+        exc = exc_info.value
+        assert exc.total == 2
+        assert set(exc.matched_ids) == set(ids)
+
+    def test_event_unique_prefix_resolves(self, tmp_path):
+        """A non-colliding event prefix still resolves to the full id."""
+        ids = ["01EVTUNIQ0000000000000AAAA", "01OTHEREVT0000000000000BBB"]
+        conn = self._make_event_collision_db(tmp_path, "response", ids)
+        result = resolve_entity_id(conn, "response", "01EVTUNIQ")
+        conn.close()
+        assert result == ids[0]
+
+    def test_event_prefix_scoped_by_kind(self, tmp_path):
+        """A prefix shared across kinds is not ambiguous within one kind."""
+        db_path = tmp_path / "kinds.db"
+        conn = create_database(db_path)
+        harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+        conn.execute(
+            "INSERT INTO conversations (id, external_id, harness_id, workspace_id, branch, started_at, ended_at)"
+            " VALUES (?, ?, ?, NULL, NULL, ?, NULL)",
+            ("conv1", "ext-1", harness_id, "2024-01-01T00:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO events (id, kind, conversation_id, timestamp) VALUES (?, ?, ?, ?)",
+            ("01SHARED000000000000000RSP", "response", "conv1", "2024-01-01T00:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO events (id, kind, conversation_id, timestamp) VALUES (?, ?, ?, ?)",
+            ("01SHARED000000000000000PMT", "prompt", "conv1", "2024-01-01T00:00:00Z"),
+        )
+        conn.commit()
+        conn.close()
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        # Two events share "01SHARED" but differ by kind, so each resolves uniquely.
+        assert resolve_entity_id(conn, "response", "01SHARED") == "01SHARED000000000000000RSP"
+        assert resolve_entity_id(conn, "prompt", "01SHARED") == "01SHARED000000000000000PMT"
+        conn.close()
 
     def test_unknown_entity_type_returns_none(self, tmp_path):
         db_path = tmp_path / "u.db"

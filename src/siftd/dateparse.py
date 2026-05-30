@@ -36,7 +36,13 @@ def parse_date(value: str | None) -> str | None:
         return (date.today() - timedelta(weeks=weeks)).isoformat()
 
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-        return value
+        # Validate the calendar date — a well-shaped but impossible date like
+        # 2024-13-45 would otherwise pass through and, as a lexical string
+        # comparison against ISO timestamps, silently match nothing/everything.
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError as e:
+            raise ValueError(f"invalid date: '{value}' is not a real calendar date") from e
 
     raise ValueError(
         f"invalid date format: '{value}' (expected YYYY-MM-DD, Nd, Nw, today, or yesterday)"

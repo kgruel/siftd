@@ -44,8 +44,9 @@ def _dispatch(
     """Build an Operation and dispatch it through the format protocol.
 
     Shared helper for simple routes: extract params → execute → render.
-    Uses serve_fmt (serialization layer) instead of output/json_fmt
-    to respect the architecture boundary (serve cannot import output).
+    Uses serve_fmt (serialization layer) so the JSON wire contract is
+    owned by serialization/; html_routes deliberately uses output/ for
+    fragment rendering.
 
     Catches exceptions and returns a structured JSON error response
     instead of letting raw tracebacks propagate as 500 errors.
@@ -67,7 +68,30 @@ def _dispatch(
         result = execute(op)
         if render_method == "detail" and result is None:
             return Response(content={"error": "conversation not found"}, status_code=404)
-        return render(result, op, fmt=serve_fmt)
+
+        # Run caveat producers (stale-embeddings/truncation/ambiguity warnings)
+        # so the serve envelope carries them, like `siftd query/search --json`.
+        # Without this the HTTP API silently drops every caveat for agents.
+        # Caveats are advisory enrichment: a producer failure must never fail
+        # the request, so this is best-effort and logged, not fatal.
+        findings: list = []
+        try:
+            from siftd.api.caveats import ProducerContext, run_producers
+            from siftd.paths import db_path as default_db_path
+
+            ctx = ProducerContext(db_path=params.get("db_path") or db or default_db_path())
+            try:
+                findings = run_producers(op, result, ctx)
+            finally:
+                ctx.close()
+        except Exception:
+            logging.getLogger("siftd.serve").exception("caveat producers failed on %s %s", method, path)
+            findings = []
+
+        rendered = render(result, op, fmt=serve_fmt)
+        if findings and isinstance(rendered, dict) and "caveats" not in rendered:
+            rendered["caveats"] = serve_fmt.serialize_caveats(findings)
+        return rendered
     except ImportError as e:
         if "siftd.embeddings" in str(e) or "fastembed" in str(e):
             return Response(content={"error": str(e)}, status_code=501)
@@ -81,7 +105,21 @@ def _dispatch(
         # treats them as exit 2 with a friendly message; the wire equivalent
         # is 400, not 500.
         return Response(content={"error": str(e)}, status_code=400)
-    except (AmbiguousPrefix, ValueError, KeyError, QueryError) as e:
+    except AmbiguousPrefix as e:
+        # Preserve the structured shape so an HTTP agent can programmatically
+        # pick a longer prefix — mirrors `siftd id --json`. Must precede the
+        # generic ValueError branch.
+        return Response(
+            content={
+                "error": str(e),
+                "kind": "ambiguous_prefix",
+                "prefix": e.prefix,
+                "matched_ids": e.matched_ids,
+                "total": e.total,
+            },
+            status_code=400,
+        )
+    except (ValueError, KeyError, QueryError) as e:
         return Response(content={"error": str(e)}, status_code=400)
     except Exception as e:
         if e.__class__.__name__ == "EmbeddingsNotAvailable":
@@ -259,11 +297,15 @@ async def event_detail_route(
     from siftd.api.events import get_event
     from siftd.serialization.events import serialize_event_detail
 
-    del request  # unused; auth middleware enforces read access
+    # Scope to the authenticated identity like every other read route — the
+    # auth middleware only authenticates, it does not scope reads. A
+    # cross-owner event resolves to None below and surfaces as 404 (not 403),
+    # so existence isn't leaked across tenants.
+    owner = _effective_owner(request, None)
 
     try:
         detail = get_event(
-            event_id, db_path=db_path, include_neighbors=neighbors,
+            event_id, db_path=db_path, include_neighbors=neighbors, owner=owner,
         )
     except FileNotFoundError as e:
         return Response(content={"error": str(e)}, status_code=404)
@@ -462,12 +504,48 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
         push_id = ulid()
 
         rebuild_fts = fts_rebuild == "on_push"
-        result = receive_database(
-            tmp_path, db_path,
-            rebuild_fts=rebuild_fts,
-            user_id=identity,
-            push_id=push_id,
-        )
+        try:
+            result = receive_database(
+                tmp_path, db_path,
+                rebuild_fts=rebuild_fts,
+                user_id=identity,
+                push_id=push_id,
+            )
+        except Exception as exc:
+            # Map deterministic, client-fixable failures to structured 4xx/409/
+            # 503 with an error_type the client parses — instead of an opaque
+            # 500 that hides the cause and makes e.g. a version-mismatched fleet
+            # member fail every push unactionably. Mirrors the SSH receive
+            # path's JSON envelope (cli/db.py cmd_db_receive). Truly unexpected
+            # errors still propagate to a 500.
+            import sqlite3
+
+            from siftd.api.database import PreflightError
+
+            if isinstance(exc, PreflightError):
+                return Response(
+                    content={"error": str(exc), "error_type": "preflight_failed"},
+                    status_code=422,
+                )
+            if isinstance(exc, ValueError):
+                return Response(
+                    content={"error": str(exc), "error_type": "invalid_source"},
+                    status_code=400,
+                )
+            if isinstance(exc, sqlite3.OperationalError):
+                if "locked" in str(exc).lower():
+                    return Response(
+                        content={"error": str(exc), "error_type": "database_locked"},
+                        status_code=503,
+                    )
+                raise
+            if isinstance(exc, RuntimeError):
+                # Schema-version mismatch / missing runtime schema: same-version
+                # slices only. Distinguishable so the client can prompt an upgrade.
+                msg = str(exc)
+                et = "schema_mismatch" if "version" in msg.lower() else "merge_failed"
+                return Response(content={"error": msg, "error_type": et}, status_code=409)
+            raise
 
         # Attribution: record push in push_log
         _record_push_log(
@@ -743,7 +821,6 @@ async def search_route(
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),
     model: str | None = Parameter(query="model", default=None),
-    threshold: float = Parameter(query="threshold", default=0.0),
     n: int = Parameter(query="n", default=10),
     recall: int = Parameter(query="recall", default=80),
     embeddings_only: bool = Parameter(query="embeddings_only", default=True),
@@ -795,7 +872,7 @@ async def search_route(
              "rerank": rerank, "lambda_": lambda_, "recency": recency,
              "recency_half_life": recency_half_life,
              "recency_max_boost": recency_max_boost,
-             "threshold": threshold, "tag": tag, "all_tags": all_tags,
+             "tag": tag, "all_tags": all_tags,
              "no_tag": no_tag, "tag_kind": tag_kind,
              "include_derivative": include_derivative,
              "owner": owner, "raw_fts": raw_fts},

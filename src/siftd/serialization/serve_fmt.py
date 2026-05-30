@@ -16,6 +16,16 @@ if TYPE_CHECKING:
     from painted import Fidelity
 
 
+def serialize_caveats(findings: list[Any]) -> list[dict]:
+    """Serialize caveat Findings to JSON-ready dicts for the wire envelope.
+
+    Mirrors the shape output/json_fmt emits (``asdict(finding)``) so the HTTP
+    and CLI ``--json`` caveat envelopes agree. Lives here, not in serve/, so
+    the serve layer never reaches for dataclasses.asdict directly.
+    """
+    return [f if isinstance(f, dict) else dataclasses.asdict(f) for f in findings]
+
+
 def render_stats(stats: Any, fidelity: Fidelity) -> dict:
     """Serialize DatabaseStats to JSON-safe dict."""
     from siftd.serialization.stats import serialize_stats

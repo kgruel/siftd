@@ -28,6 +28,7 @@ from siftd.domain import Source
 from siftd.storage.sessions import consume_pending_tags, unregister_session
 from siftd.storage.sqlite import (
     clear_ingested_file_error,
+    clear_vocabulary_caches,
     compute_file_hash,
     delete_conversation,
     ensure_tool_aliases,
@@ -37,6 +38,7 @@ from siftd.storage.sqlite import (
     record_empty_file,
     record_failed_file,
     record_ingested_file,
+    record_session_file,
     store_conversation,
     update_file_stat,
 )
@@ -138,12 +140,35 @@ def _parse_source_conversation(
     adapter: AdapterModule,
     source_path: str,
 ):
-    """Parse a source and enforce the current ingest contract."""
+    """Parse a source and enforce the file-strategy contract (0/1 conversation).
+
+    For file-strategy adapters one file maps to exactly one conversation, so a
+    multi-conversation parse is an adapter bug worth surfacing.
+    """
     if not adapter.can_handle(source):
         raise AdapterParseError(
             f"Adapter {adapter.NAME} cannot handle source {source_path}"
         )
     return _get_single_conversation(list(adapter.parse(source)), source_path)
+
+
+def _parse_source_conversations(
+    source: Source,
+    adapter: AdapterModule,
+    source_path: str,
+) -> list:
+    """Parse a session-strategy source into all of its conversations.
+
+    Unlike :func:`_parse_source_conversation` (file strategy, 0/1), a session
+    source may legitimately yield many conversations — e.g. an OpenCode or
+    Gemini SQLite DB with one conversation per session. Each is stored and
+    deduped independently by external_id.
+    """
+    if not adapter.can_handle(source):
+        raise AdapterParseError(
+            f"Adapter {adapter.NAME} cannot handle source {source_path}"
+        )
+    return list(adapter.parse(source))
 
 
 def _normalize_status(status: str) -> tuple[str, str | None]:
@@ -424,118 +449,93 @@ def ingest_all(
                         emit_event("skipped")
                         continue
 
-                # We need to parse to get the conversation and check timestamps
-                conversation = _parse_source_conversation(source, adapter, file_path)
-                if conversation is None:
+                # A session source may yield MANY conversations (one per
+                # session in a DB). Store each independently, deduped by
+                # external_id; replace only when the parsed copy is newer. The
+                # ingested_files row is a single per-file hash/mtime marker with
+                # conversation_id=NULL, so replacing any one session does not
+                # cascade-delete the marker (see record_session_file).
+                conversations = _parse_source_conversations(source, adapter, file_path)
+                if not conversations:
                     stats.files_skipped += 1
                     if on_file:
                         on_file(source, "skipped (empty)")
                     emit_event("skipped (empty)")
                     continue
 
-                # Get or create harness to look up existing
-                harness_kwargs = {}
-                if conversation.harness.source:
-                    harness_kwargs["source"] = conversation.harness.source
-                if conversation.harness.log_format:
-                    harness_kwargs["log_format"] = conversation.harness.log_format
-                if conversation.harness.display_name:
-                    harness_kwargs["display_name"] = conversation.harness.display_name
-                harness_id = get_or_create_harness(conn, conversation.harness.name, **harness_kwargs)
+                if st is None:
+                    st = location.stat()
+                file_hash = current_hash or compute_file_hash(location)
 
-                # Check if conversation already exists
-                existing = find_conversation_by_external_id(
-                    conn, harness_id, conversation.external_id
-                )
+                file_harness_id = None
+                file_ingested = False
+                file_replaced = False
+                last_conversation = None
 
-                if existing:
-                    # Compare timestamps — only semantic changes trigger replacement.
-                    # Hash-only drift (formatting, adapter-ignored fields) updates the
-                    # file record but preserves the conversation and its manual state
-                    # (tags, ownership).
-                    should_replace = _compare_timestamps(
-                        conversation.ended_at, existing["ended_at"]
+                for conversation in conversations:
+                    harness_kwargs = {}
+                    if conversation.harness.source:
+                        harness_kwargs["source"] = conversation.harness.source
+                    if conversation.harness.log_format:
+                        harness_kwargs["log_format"] = conversation.harness.log_format
+                    if conversation.harness.display_name:
+                        harness_kwargs["display_name"] = conversation.harness.display_name
+                    harness_id = get_or_create_harness(conn, conversation.harness.name, **harness_kwargs)
+                    file_harness_id = harness_id
+
+                    existing = find_conversation_by_external_id(
+                        conn, harness_id, conversation.external_id
                     )
-                    hash_drifted = (
-                        existing_file_info is not None
-                        and current_hash is not None
-                        and current_hash != existing_file_info["file_hash"]
-                    )
-                    if should_replace:
-                        # New is newer, replace
-                        delete_conversation(conn, existing["id"])
-                        conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
-
-                        # Record file ingestion
-                        if st is None:
-                            st = location.stat()
-                        file_hash = current_hash or compute_file_hash(location)
-                        record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=st.st_mtime, file_size=st.st_size)
-
-                        # Apply pending tags from live session
-                        _apply_pending_tags(conn, adapter, conversation, conv_id)
-
-                        conn.commit()
-
-                        # Update stats
-                        _update_stats_for_conversation(stats, harness_name, conversation)
-                        stats.files_replaced += 1
-                        stats.by_harness[harness_name]["replaced"] += 1
-
-                        if on_file:
-                            on_file(source, "replaced")
-                        emit_event("replaced", conversation=conversation)
+                    if existing:
+                        # Only a newer parsed copy triggers replacement; an
+                        # equal/older session is left untouched (preserving its
+                        # tags, ownership, and manual state).
+                        if _compare_timestamps(conversation.ended_at, existing["ended_at"]):
+                            delete_conversation(conn, existing["id"])
+                            conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
+                            _apply_pending_tags(conn, adapter, conversation, conv_id)
+                            _update_stats_for_conversation(stats, harness_name, conversation)
+                            stats.by_harness[harness_name]["replaced"] += 1
+                            file_replaced = True
+                            last_conversation = conversation
                     else:
-                        # Existing is newer or same, skip
-                        # Record file so it's tracked (not shown as pending)
-                        if not get_ingested_file_info(conn, file_path):
-                            if st is None:
-                                st = location.stat()
-                            file_hash = current_hash or compute_file_hash(location)
-                            record_ingested_file(conn, file_path, file_hash, existing["id"], file_mtime=st.st_mtime, file_size=st.st_size)
-                            conn.commit()
-                        elif hash_drifted:
-                            # File bytes changed but conversation is semantically
-                            # the same (no timestamp advance). Update the stored
-                            # hash so the fast path works next time, but preserve
-                            # the conversation and its manual state.
-                            if st is None:
-                                st = location.stat()
-                            file_hash = current_hash or compute_file_hash(location)
-                            conn.execute(
-                                """UPDATE ingested_files
-                                   SET file_hash = ?, file_mtime = ?, file_size = ?
-                                   WHERE path = ?""",
-                                (file_hash, st.st_mtime, st.st_size, file_path),
-                            )
-                            conn.commit()
-                        stats.files_skipped += 1
-                        if on_file:
-                            on_file(source, "skipped (older)")
-                        emit_event("skipped (older)")
-                else:
-                    # New conversation
-                    conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
+                        conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
+                        _apply_pending_tags(conn, adapter, conversation, conv_id)
+                        _update_stats_for_conversation(stats, harness_name, conversation)
+                        file_ingested = True
+                        last_conversation = conversation
 
-                    if st is None:
-                        st = location.stat()
-                    file_hash = current_hash or compute_file_hash(location)
-                    record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=st.st_mtime, file_size=st.st_size)
+                # One marker for the whole file (NULL conversation_id), upserted.
+                # conversations is non-empty here, so the loop set the harness.
+                assert file_harness_id is not None
+                record_session_file(
+                    conn, file_path, file_hash, file_harness_id,
+                    file_mtime=st.st_mtime, file_size=st.st_size,
+                )
+                conn.commit()
 
-                    # Apply pending tags from live session
-                    _apply_pending_tags(conn, adapter, conversation, conv_id)
-
-                    conn.commit()
-
-                    _update_stats_for_conversation(stats, harness_name, conversation)
+                # File-level outcome: ingested if any new session arrived, else
+                # replaced if any session was updated, else nothing changed.
+                if file_ingested:
                     stats.files_ingested += 1
-
-                    if on_file:
-                        on_file(source, "ingested")
-                    emit_event("ingested", conversation=conversation)
+                    file_status = "ingested"
+                elif file_replaced:
+                    stats.files_replaced += 1
+                    file_status = "replaced"
+                else:
+                    stats.files_skipped += 1
+                    file_status = "skipped (older)"
+                if on_file:
+                    on_file(source, file_status)
+                emit_event(file_status, conversation=last_conversation)
 
         except sqlite3.IntegrityError as e:
             conn.rollback()
+            # The rollback erases any uncommitted vocab rows (models/providers
+            # created lazily this file) from the DB but NOT from the module
+            # caches; a later file would then reuse a now-dangling ULID as an FK
+            # and fail spuriously. Clear the caches so they re-resolve from disk.
+            clear_vocabulary_caches()
             error_msg = str(e)
             # Check specifically for duplicate conversation (harness_id, external_id)
             # SQLite format: "UNIQUE constraint failed: conversations.harness_id, conversations.external_id"
@@ -577,6 +577,9 @@ def ingest_all(
 
         except Exception as e:
             conn.rollback()
+            # See the IntegrityError handler above: clear vocab caches so a
+            # rolled-back model/provider ULID is not reused as a dangling FK.
+            clear_vocabulary_caches()
             _record_file_error(
                 conn, source, adapter, file_path, str(e), stats, on_file, emit_event
             )

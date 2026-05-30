@@ -25,7 +25,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools in
 ./dev setup          # Setup worktree (venv + deps)
 ./dev setup --embed  # Setup with embeddings (downloads model)
 ./dev lint           # Run ty + ruff (with autofix)
-./dev test           # Run tests (excluding embeddings)
+./dev test           # Run base tests (excludes embeddings, serve, slow lanes)
 ./dev test-all       # Run all tests including embeddings
 ./dev docs           # Generate reference docs
 ./dev docs --check   # Verify docs aren't stale
@@ -70,7 +70,7 @@ tests/              # Pytest, mirrors src structure
 
 ```bash
 siftd ingest              # Import conversation logs from all adapters
-siftd search "<query>"    # Semantic search (requires embeddings)
+siftd search "<query>"    # Hybrid search; falls back to FTS5 without embeddings
 siftd query               # List recent conversations
 siftd query -w proj -s "error"  # Filter by workspace, FTS5 search
 siftd query <id>          # View conversation detail

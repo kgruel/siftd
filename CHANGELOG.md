@@ -7,149 +7,234 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Docs
+> Targets **0.9.0**. The headline is a new operating mode — networked `siftd serve`
+> with transparent thin-client delegation — plus the auth subsystem (device-code
+> login + JWKS validation) and a read-surface overhaul. Several output-format and
+> flag changes are **agent/script-facing**; see Breaking Changes first.
 
-- **Authentik→siftd auth-migration runbook re-grounded to current code** — `docs/ops/authentik-auth-migration-runbook.md` (the §5.1/§5.2 device-code + introspection→JWKS migration) was written against pre-fix code and verified claim-by-claim against current `serve/auth.py` + Authentik 2025.x. Removed the false trailing-slash `iss` "code-level blocker" (now handled by the normalized rstrip-both-sides compare at `serve/auth.py:275`; `jwt.decode` no longer receives `issuer=`), added a Phase-0 deployed-build gate (the blocker is real on pre-fix builds), corrected drifted `auth.py:NNN` → `serve/auth.py:NNN` line refs throughout, clarified the live `iss`-lenient / `aud`-strict asymmetry, fixed the introspection-branch removal rationale (`issuer` wins the dispatch race, so a leftover `introspection_url` is inert), and corrected the Authentik Encryption-Key field-move attribution (2025.10.1, not 2025.12).
+### Breaking Changes (migration)
+
+- **Client send-token namespace moved to `[auth]`** — `serve.auth.delegation_token`
+  is **removed**; the static bearer the CLI *sends* now lives in `[auth].token`
+  (`env:`/`file:`/literal). `serve.auth.static_token` remains *server* validation
+  config only. Shared-secret deploy: set `[auth].token` (client) and
+  `serve.auth.static_token` (server) to the same value.
+- **List `turns` column shows prompt count** — the combined `Xp/Yr` (e.g. `15p/34r`)
+  is replaced by a single integer = prompt count (with `-v`, a separate `responses`
+  column gives the response count). Applies to terminal/markdown/HTML. Scripts
+  parsing `Xp/Yr` must update. `--json` fields unchanged.
+- **Turn headers use role labels** — `[prompt]`/`[response]` → `[user]`/`[assistant]`
+  in all human-facing output; search chunk badges go role-first
+  (`prompt → USER`, etc.). Machine-readable `kind`/`chunk_type` in `--json` unchanged.
+- **Conversation ID display widened 8 → 12 chars** — zero collisions at 12 across an
+  11,771-conversation DB (623 colliding prefixes at 8). Display-only; update grep
+  patterns. (Supersedes an earlier in-cycle move to 8.)
+- **Ambiguous prefix now exits 2, lists matches** — `siftd query`/`tag`/`id` no
+  longer silently first-match an ambiguous prefix (was non-deterministic). Use a
+  12-char or full ID.
+- **`siftd search` flags refactored into orthogonal axes** — `--first`/`--by-time`/
+  `--thread`/`--conversations` **removed** → `--select={all,first}` +
+  `--sort={score,time}` + `--mode={chunks,thread,conversations}`.
+- **`siftd search --context N` removed** — migrate to `--around "phrase" --turns -2:+2`.
+- **`siftd query <id> --exchanges N` requires an anchor flag** — implicit tail
+  behavior removed; use `--from-end --exchanges N`.
+- **`siftd search --turns` without `--around` exits 2** (was 1) — consistent with
+  other argparse-layer rejections.
+- **`Fidelity` is required on `list_conversations`/`get_conversation`/`export_*`** —
+  CLI/serve pass the cross-stage `Fidelity` contract into the fetch layer; the
+  `include_thinking`/`include_tool_content` booleans are gone from those signatures.
+  HTTP wire on `/api/v1/conversations/{id}` is unchanged (still accepts the booleans,
+  translated internally).
+- **`siftd tools` command + `/api/v1/tools*` routes removed** — express via the events
+  substrate: `siftd tag list --on tool_call --prefix shell:` (add `--by-workspace`
+  for the breakdown). `[tools]` config keys are now ignored; lost: percentage display.
+
+### Added
+
+- **`siftd auth login` — client-side OAuth device-code acquisition (RFC 8628)** —
+  interactive token acquisition so remote-human clients stop hand-pasting bearers.
+  Runs the device-authorization flow against `[auth].issuer` (browser URL + code),
+  stores access+refresh `0600` under `~/.local/state/siftd/credentials/` keyed by
+  issuer, and presents it automatically on delegated reads. Refreshes **proactively**
+  near expiry and **reactively** on `401` (gated on a stored credential existing).
+  Adds `siftd auth status`/`logout` and the `[auth]` namespace (`issuer`, `client_id`,
+  `scope`, optional endpoint overrides) — distinct from `serve.auth.*`. serve still
+  only ever *validates* a bearer.
+- **`siftd serve` thin-client delegation** — `query`, `query <id>` (JSON + non-JSON),
+  `search`, `tag`, `stats`, `workspaces`, `export` delegate transparently to a
+  configured remote `serve.url`; local execute remains the fallback.
+- **Production container image + homelab build pipeline** — multi-stage non-root root
+  `Dockerfile` (~315 MB) with `/api/v1/health` + `ca-certificates`; GitLab CI builds
+  and pushes `registry.gruel.network/gruel/siftd:{latest,<sha>}` (gruel.network mirror).
+- **Windowed HTTP push for large-history seeds** — `siftd db push` splits DBs over the
+  server's advertised `max_body_size` into resumable time-ordered date-window POSTs,
+  with 413-triggered recursive bisection. Steady-state incremental pushes are unaffected.
+- **`serve.request_max_body_size` knob** (default `500MB`, SI suffixes) — fixes
+  Litestar's 10 MB cap rejecting realistic `siftd db push` payloads; matches the
+  reference Caddyfile `max_size`.
+- **`/api/v1/export?format=md|json`** — format-aware path returning a rendered
+  `ExportArtifact`; legacy (no `format`) returns `{"conversations": […]}` unchanged.
+- **`/api/v1/conversations/{id}` anchor + window query params** (`anchor`,
+  `anchor_value`, `window_start`, `window_end`) — mirrors the CLI axes so delegated
+  `siftd query <id> --json --at-turn N` anchors.
+- **Anchor + window navigation axes on `siftd query <id>` and `siftd search`** —
+  anchors (`--from-start`/`--from-end`/`--at-turn N`/`--around PHRASE`) compose with
+  windows (`--exchanges N`/`--turns A:B`, spaced or `=` form). `--around` uses the FTS5
+  index; multi-match and no-match emit disambiguation/locate hints.
+- **`turn_index` + `event_id` in all search results** (FTS5/semantic/hybrid) — human
+  output appends `→ siftd query <id> --at-turn N`; `--json` includes both.
+- **Caveats substrate** — `Finding.channel` (`text`/`json`/`both`), `Finding.field`,
+  `Literal` `severity` (`info`/`warning`/`error`/`hint`), per-collection caps, and
+  `--no-hints` on `doctor` + `query`. Producers added: `ingest-status`, `fts-stale`,
+  `embeddings-stale`, `workspace-identity`, `active-sessions`, `pending-tags`,
+  `fresh-corpus`, `adapter-health` warnings, `search-mode-degraded`,
+  `search-tagging-tip`, `query-empty-tip`.
+- **`siftd id <ULID>`** — classifies a ULID as conversation or event with a one-line
+  summary + view hint (`--json`; exits 0/1/2).
+- **`siftd tag apply`/`remove` subcommands** + **`siftd tag list --by-workspace`** —
+  explicit verb forms for agents/scripts; per-workspace event-tag counts.
+- **`siftd db restore`/`receive --dry-run`** — preview destructive ops (paths, schema
+  direction-of-change, per-table row counts) without writing.
+- **`siftd query --stats` corpus-aware** — view count/tokens against corpus totals.
+- **`siftd peek --follow --timeout SECONDS`**, **`--latest` alias for `--last`**
+  (`tag`/`export`).
+- **`docs/guides/delegation-contract.md`** — names the local/wire-forms pattern and the
+  8-rule contract every delegated path follows; pinned by `tests/test_op_route_parity.py`.
+
+### Changed
+
+- **Wire-form substrate dissolution** — the four scattered op↔wire workarounds
+  (`_LOCAL_FN_EXCLUDE`, `_WIRE_EXCLUDE`, `_SERVE_PARAM_MAP`, `_expand_for_wire`) are
+  replaced by a per-op `OpSpec` registry plus `Operation.to_local()`/`to_wire()`/
+  `to_wire_body()`; `to_wire()` raises `MissingOpSpec` for unregistered paths instead
+  of silently sending every key. Internal; no CLI/wire-visible change.
+- **Caveat output capped per collection** — max 1 hint, max 3 infos (excess → one
+  "+N more" notice); warnings/errors uncapped.
+- **`siftd ingest` quiet when stdout isn't a TTY** — only the totals line prints when
+  piped (one-time stderr hint; `-v`/`-q` honored).
+- **`siftd db --help` epilog grouped** into Inspection / Maintenance / Sync / Sync remotes.
+
+### Fixed
+
+- **`siftd serve` validates `[serve.auth]` at startup** — a non-empty table naming no
+  recognized mode now fails loudly at boot (with a stale-`delegation_token` hint)
+  instead of fail-closing `401` opaquely on every request.
+- **OIDC: PyJWKSet → PEM key extraction** — `_validate_oidc` passed the whole
+  `PyJWKSet` to `jwt.decode` (accepts one key) → `TypeError` → HTTP 500 on every
+  OIDC-protected request. Now extracts the matching `PyJWK` by `kid`. (OIDC had never
+  worked end-to-end; caught by the docker-compose smoke harness.)
+- **OIDC: JWKS refetched on unknown `kid`** — a signing-key rotation previously rejected
+  every fresh token for up to the 3600s TTL (failing closed). Now force-refetches once
+  (rate-limited to 60s) before rejecting, mirroring PyJWT's `PyJWKClient`.
+- **OIDC: `iss` mismatch logged at WARNING** — a client/server issuer misconfig
+  surfaced only as a bare `401` + refresh loop; now logged loudly (both values non-secret).
+- **Reactive refresh no longer re-sends a stale "winner" token** — `_locked_refresh`
+  returned a differing stored token without a freshness check; now falls through to a
+  real refresh unless that token is fresh.
+- **`siftd search --fts` delegates when configured** — two silent short-circuits
+  skipped delegation for the FTS path; `/api/v1/search` now accepts `mode`
+  (`semantic|hybrid|fts`). (P7)
+- **FTS5 index rebuilt after first-push** — `receive_database` `_create_from_source`
+  returned without rebuilding `content_fts` even when `rebuild_fts=True`, so post-seed
+  FTS queries were empty. Now rebuilds before returning.
+- **Delegated reads reach the homelab** — when `serve.url` is explicitly set, the
+  local-vs-server DB-path SHA256 check is skipped (it was structurally incompatible with
+  the documented topology; every delegated call silently fell back to local). Loopback
+  still enforces the check.
+- **Delegated responses tolerate schema drift** — deserializers return `None` (→ local
+  fallback) on mismatch rather than raising.
+- **Caveats threaded across the delegation wire** — the typed deserializers extracted only
+  result rows and dropped the envelope's `caveats` key, so every delegated read (`query`
+  list + both `search` paths) emitted `caveats: []` — a thin client silently claimed a
+  healthy index. The server's caveats (stale embeddings, degraded mode, truncation) are now
+  preserved and reconstructed client-side (defensive: unknown keys dropped for newer-server
+  tolerance).
+- **Push errors return structured 4xx, not opaque 500** — the HTTP push route let
+  `receive_database` exceptions fall through to a generic 500, and the client wrapped any
+  non-413 as `"Push failed: HTTP 500"`, hiding the cause (a version-mismatched member failed
+  every push unactionably). The route now maps a non-SQLite body → `400 invalid_source`,
+  preflight failure → `422 preflight_failed`, schema-version mismatch → `409 schema_mismatch`,
+  locked DB → `503 database_locked` (mirroring the SSH receive envelope); the client surfaces
+  the `error_type` with an actionable message.
+- **Orphan `content_blobs` GC'd on merge** — blobs were copied wholesale but their referencing
+  `event_tool_call` rows were filtered to landed events, so a blob whose referrers were skipped
+  (dedup'd duplicate, non-landing event) lingered at `ref_count=0` forever — one leaked blob per
+  unreferenced source blob on every overlapping re-push (unbounded growth). The merge now deletes
+  the src-introduced blobs the ref_count recompute proves unreferenced.
+- **Server 4xx surfaced on delegated reads** — a 4xx now raises `ServeRequest4xx` and
+  prints a named-server error + exit 1 (was swallowed → misleading local fallback).
+  Unreachable/5xx still fall back. (P6)
+- **Anchor errors on delegated `query <id>` return 400, not 500** — `AnchorOutOfRange`/
+  `AnchorNotFound`/`AnchorPhraseInvalid` now caught explicitly.
+- **Wire params no longer leak** — `wire_query` expands `Fidelity`, drops `None`, strips
+  local-only keys (`db_path`/`embed_db`/`around`).
+- **Silent prefix-collision resolvers converged** — three resolvers
+  (`fetch_conversation_by_id_or_prefix`, `resolve_entity_id`, `get_conversation_metadata`)
+  unified into `resolve_entity_id`, raising typed `AmbiguousPrefix` (exit 2 / HTTP 400);
+  serve UI ambiguous paths no longer 500.
+- **`--turns -2:+2` (spaced) parses** like the `=` form; **`embeddings-available` doctor
+  finding is `warning`**; **`siftd query -s` hints toward `siftd search`**; **search
+  caveats now render** across terminal/markdown/HTML/JSON.
+- **CI green recovery** — three lanes red 9 days: `ingest-stale`+`ingest-errors` both
+  fire on stale+error DBs; py312 snapshots regenerated; `TestSortAxisValidation` catches
+  `SystemExit(2)`.
 
 ### Security
 
-- **OIDC: `iss` claim now required and validated** — `_validate_oidc` previously checked `aud` and signature but not `iss`. A signature-valid token bearing the configured `aud` but a different issuer would pass. Now `iss`/`aud`/`exp` are all required; `iss` is compared against the configured `serve.auth.issuer`.
-- **OIDC: `identity_claim` must be present and non-empty** — applies to both JWT and introspection paths. Previously the missing claim fell back to a synthetic `"unknown"` `sub`, collapsing distinct subjects under one owner in `conversation_owners`.
-- **OIDC: discovered `jwks_uri` must share the issuer's origin** (scheme + host + port). A misconfigured or compromised discovery endpoint can no longer redirect siftd to an attacker-controlled JWKS.
-- **Delegation: a rejected `env`/static token is never swapped for a device-code credential** — the client token resolver now tags each token with its *source* (`env`/`device-code`/`static`), and the reactive `401` refresh is gated to the `device-code` source (the only refreshable one). Previously, a 401 on an env-sourced token while `[auth].issuer` was configured would refresh and retry under the *device-code* identity, silently mis-attributing server-side writes (tags, owner stamping) to a different subject.
-- **Introspection cache is bounded and no longer keyed by the raw bearer** — the server-side introspection cache is now keyed by `sha256(token)` (plaintext tokens are not retained as keys) and size-capped (1024 entries, expired-first eviction). Previously it grew unbounded across distinct tokens — a soft memory-DoS on a long-running introspection-mode server.
-
-### Changed
-
-- **The CLI client acquires send-tokens only from `[auth]`, never from `serve.auth.*`** (**breaking**, unreleased). `serve.auth.delegation_token` is removed; a new `[auth].token` (supporting `env:`/`file:`/literal, shared grammar with the sync resolver) holds the static bearer the CLI *sends*. `serve.auth.static_token` remains *server* validation config only. This dissolves the namespace overlap that produced the cross-source swap and the "`delegation_token` alone 401s every request" trap. For a shared-secret deployment, set `[auth].token` (client) and `serve.auth.static_token` (server) to the same value. See `docs/dev/plans/2026-05-28-serve-auth-namespace-simplification.md`.
-
-### Added
-
-- **`siftd auth login` — client-side OAuth device-code acquisition** — interactive token acquisition (RFC 8628) so remote-human clients stop hand-pasting bearers. `siftd auth login` runs the device-authorization flow against `[auth].issuer` (authorize on any browser via a printed URL + code), stores the access + refresh token `0600` under `~/.local/state/siftd/credentials/` keyed by issuer, and the CLI presents it automatically on delegated reads. The token is refreshed **proactively** when near expiry and **reactively** on a `401` (gated on a stored credential existing, so static-token users are unaffected). Adds `siftd auth status` / `siftd auth logout`. New `[auth]` config namespace (`issuer`, `client_id`, `scope`, optional endpoint overrides) — distinct from `serve.auth.*`, which remains *server* validation config. Token storage and the atomic-0600 write are shared via `paths.atomic_write_secure` (config writes now delegate to the same helper). This is the client side of the auth boundary in `docs/dev/plans/2026-05-27-serve-auth-direction.md`: serve still only ever *validates* a bearer.
-
-- **Windowed HTTP push for large-history seeds** — `siftd db push <remote>` now handles databases that exceed the server's `request_max_body_size` cap. The server advertises its cap via `GET /api/v1/sync/status` (`max_body_size` field). When the local DB exceeds 80% of the cap (the `_WINDOW_SAFETY` factor), the push is split into time-ordered date windows; each window is a separate POST. Interrupted seeds resume automatically from the last committed window cursor. A 413 response on any single POST triggers recursive bisection as a safety net, and the cursor advances per-window so partial progress is preserved. Steady-state incremental pushes (small delta since last push) are unaffected — they always use a single POST. The window count is shown in CLI output when N > 1.
-
-- **Production container image + homelab build pipeline** — a multi-stage root `Dockerfile` builds the `[serve]` extra into a lean (~315 MB), non-root image with a `/api/v1/health` healthcheck and `ca-certificates` for outbound OIDC/introspection TLS. A GitLab CI (`.gitlab-ci.yml`, active only on the gruel.network mirror) builds and pushes `registry.gruel.network/gruel/siftd:{latest,<sha>}`. Productionizes the `smoke/homelab/Dockerfile.serve` sibling; see `docs/ops/homelab-deploy-runbook.md`.
-- **`siftd serve` thin-client delegation**: `siftd query`, `siftd query <id>` (JSON + non-JSON), `siftd search`, `siftd tag`, `siftd stats`, `siftd workspaces`, `siftd export` now delegate transparently to a configured remote `serve.url`. Local execute remains the fallback. See `docs/ops/homelab.md` for the operator runbook (DNS + TLS + OIDC + per-machine config).
-- **`/api/v1/export?format=md|json`** — format-aware path that returns a rendered `ExportArtifact` (`content` + `media_type` + `filename` + `count`). Legacy path (no `format`) still returns `{"conversations": [...]}` unchanged.
-- **`/api/v1/conversations/{id}` anchor + window query params** — `anchor`, `anchor_value`, `window_start`, `window_end`. Mirrors the CLI's axes so delegated `siftd query <id> --json --at-turn N` actually anchors.
-- **`docs/guides/delegation-contract.md`** — names the operation-has-local-and-wire-forms pattern (`local_kwargs`, `wire_query`, `from_wire`) and states the 8-rule contract every new delegated path must follow. The pattern is pinned by `tests/test_op_route_parity.py` (introspects Litestar routes vs CLI op params).
-- **`serve.request_max_body_size` config knob** — sets the maximum accepted request body (default `500MB`). Accepts bytes-as-int or a string with SI suffix (`KB`, `MB`, `GB`, `TB` — 1 MB = 1 000 000 bytes, matching Caddy's go-humanize convention). Fixes rejection of realistic `siftd db push` payloads by Litestar's default 10 MB cap. The reference Caddyfile `request_body { max_size 500MB }` directive defaults match; see the Caddyfile inline comment for the lockstep requirement.
-
-### Fixed
-
-- **`siftd serve` validates the `[serve.auth]` table at startup** — a non-empty table that names no recognized auth mode (`static_token` / `issuer` / `introspection_url`) now fails loudly at boot with a clear message (and a targeted hint when a stale client-side `delegation_token` is the cause), instead of installing middleware that fail-closes opaquely with `401 "No auth mode configured"` on every request.
-- **OIDC: JWKS is refetched on an unknown `kid` (key rotation)** — `_validate_oidc` matched the token's `kid` against the cached JWKS and hard-rejected on a miss, with no refetch until the 3600s TTL lapsed. After any IdP signing-key rotation, every freshly-minted token carried a new `kid` and was rejected for up to an hour (failing *closed*, with only a debug-level log). On a `kid` miss the JWKS is now force-refetched once (rate-limited to once per 60s so bogus-`kid` floods can't hammer the endpoint) before rejecting — mirroring PyJWT's `PyJWKClient.get_signing_key`.
-- **OIDC: an `iss` mismatch is logged at WARNING** — both `iss` and the configured issuer are non-secret. A client/server issuer misconfiguration previously surfaced only as a bare `401` (and a reactive-refresh loop), making it undiagnosable; it is now logged loudly server-side.
-- **Reactive refresh no longer re-sends a stale "winner" token** — in `_locked_refresh`, a stored token differing from the rejected one was returned without a freshness check (assuming a concurrent process had rotated in a *newer* token). If that token was itself stale, the backstop handed back a token the server would also reject. It now falls through to a real refresh unless the differing token is fresh.
-- **`siftd search --fts` now delegates to `siftd-serve` when configured** — Two silent short-circuits prevented FTS delegation: (1) the `search_mode != "fts"` guard in `cmd_search` skipped `try_serve` when mode was FTS, and (2) `_search_fts_only` (the `--fts` flag path) called `execute_for_render` directly without ever attempting delegation. Both paths now attempt `try_serve` first and fall back to local execution on failure. The `/api/v1/search` route now accepts a `mode` query parameter (`semantic | hybrid | fts`); `mode` is removed from `_WIRE_EXCLUDE` so the CLI's Operation passes it to the server. The deprecated `embeddings_only` boolean remains as a backward-compat alias for unmigrated clients. Fixes harness probe P7. (#ST-4a)
-
-- **FTS5 index not rebuilt after first-push to `siftd serve`** — `receive_database` took the `_create_from_source` path (target DB didn't exist yet) and returned without rebuilding `content_fts`, even when `rebuild_fts=True`. Push slices carry no FTS data, so after a first push the index was empty and `siftd query <id> --around PHRASE` / `siftd search --mode fts` returned no results. The `_create_from_source` path now calls `rebuild_fts_index` when `rebuild_fts=True` before returning.
-
-- **CI green recovery (test hygiene)** — three CI lanes had been red for 9 days: `ingest-stale` producer now fires alongside `ingest-errors` on stale+error DBs (tests updated to expect both); py312 snapshots regenerated after argparse drift from the read-surface catchup; `TestSortAxisValidation` updated to catch `SystemExit(2)` after Slice 2.5 changed the axis-error exit mechanism from `return 1` to `sys.exit(2)`.
-- **`serve` auth (OIDC): fix PyJWKSet → PEM key extraction** — `_validate_oidc` passed the cached `PyJWKSet` directly to `jwt.decode`, which only accepts a single key object. PyJWT raised `TypeError` (not a subclass of `jwt.PyJWTError`), surfacing as HTTP 500 on every OIDC-protected request. The fix extracts the matching `PyJWK` by `kid` before calling `jwt.decode`. OIDC auth has never worked end-to-end; caught by the ST-1 docker-compose smoke harness.
-- **Anchor errors on delegated `query <id>` return 400, not 500** — `AnchorOutOfRange`, `AnchorNotFound`, and `AnchorPhraseInvalid` inherit `Exception` (not `ValueError`), so `_dispatch`'s catch ladder fell through to the generic 500 handler. Now caught explicitly.
-- **Fidelity, None, and local-only params no longer leak onto the wire** — `wire_query(op)` expands `Fidelity` into `include_thinking` + `include_tool_content`, drops `None` values (urlencode would have emitted literal `"None"` strings), and strips `db_path`/`embed_db`/`around` (local-only / CLI-annotation keys the route ignores). `mode` was previously stripped here; ST-4a moved it out of `_WIRE_EXCLUDE` so it travels on the wire.
-- **Delegated reads now reach the homelab** — when `serve.url` is explicitly configured, the local-vs-server DB-path SHA256 comparison is skipped. The check was structurally incompatible with the documented homelab topology (laptop DB at `~/.local/share/...`, server DB at `/var/lib/siftd/...`); pre-fix, every delegated call silently fell back to local. Loopback delegation still enforces the check.
-- **Delegated responses tolerate schema drift** — every deserializer in `siftd.api.deserialize` returns `None` on schema mismatch (older/newer server, malformed body, non-numeric fields where ints expected) rather than raising. The CLI fallback path treats `None` as "fall back to local execute."
-- **Server 4xx surfaced on delegated reads** — `try_delegate` / `try_serve` previously treated any HTTP error (including 4xx) as `ServeUnavailable`, swallowing the error and silently falling back to local execution. A 4xx response now raises `ServeRequest4xx`, which propagates through `try_serve` to every CLI caller. All callers (`query`, `export`, `tag`, `meta`, `search`) print a named-server error to stderr ("siftd-serve returned HTTP NNN: <message> (<url>)") and exit 1. Unreachable / 5xx conditions continue to fall back locally. This fixes the `siftd query <id> --around PHRASE` false-pass in the smoke harness (P6): the CLI was emitting a misleading local "Conversation not found" error instead of the server's "phrase not found" 400.
-
-### Changed
-
-- **Wire-form substrate dissolution** — the four scattered workarounds that translated between `op.params` and the wire form (`_LOCAL_FN_EXCLUDE`, `_WIRE_EXCLUDE`, `_SERVE_PARAM_MAP`, `_expand_for_wire`) are replaced by a per-op `OpSpec` registry in `siftd.api.op_spec` plus `Operation.to_local()` / `Operation.to_wire()` / `Operation.to_wire_body()` methods. `Operation.to_wire()` now raises `MissingOpSpec` for unregistered paths instead of silently sending every key — closes the bug class that motivated the homelab-thin-client round-1/2 reviews. `Fidelity` translation is now a typed serializer (`fidelity_to_wire`) with an `isinstance` check rather than `hasattr` duck-typing. Internal API; no CLI- or wire-visible behavior change. (#ST-5)
-
-### Breaking Changes
-
-- **`siftd search --turns` without `--around` now exits 2 (was 1)** — The axis-validation error (missing `--around` when `--turns` is given) now exits with code 2, consistent with all other argparse-layer rejections. Scripts checking `exit code == 1` for this condition must update to `== 2`.
-
-- **Ambiguous 8-char prefix now exits 2 instead of silently resolving** — `siftd query <prefix>`, `siftd tag <prefix>`, and `siftd id <prefix>` previously resolved ambiguous prefixes by silently returning the first SQLite row (non-deterministic). They now exit with code 2 and list the matched IDs. Scripts or aliases using 8-char prefixes that happened to hit the right conversation by silent first-match must switch to a 12-char or full prefix. The error message lists matched IDs to aid migration.
-- **`siftd query` list view `turns` column now shows prompt count** — The combined `Xp/Yr` format (e.g. `15p/34r`) is replaced by a single integer equal to the prompt count, consistent with `--at-turn N` semantics (0-indexed navigation). With `-v`, the `turns` column still shows the single prompt count while a separate `responses` column gives the response count. **Breaking change**: scripts or agents parsing the `Xp/Yr` format from list output must update to read the single integer. The same change applies to markdown and HTML renderers.
-
-### Changed
-
-- **Conversation ID display width bumped from 8 to 12 characters** — `siftd query` list, `siftd search`, `siftd peek`, session tables, and all other ID display sites now show 12-character prefixes instead of 8. At 12 chars (which dips into the ULID random portion), there are zero collisions across an 11,771-conversation live database; at 8 chars, 623 distinct prefixes had collisions (worst case: 404 conversations sharing one prefix). Display-only change; no schema migration required.
-
-### Fixed
-
-- **Silent prefix collision in ID resolver** — Three separate prefix resolvers (`fetch_conversation_by_id_or_prefix`, `resolve_entity_id`, `get_conversation_metadata`) silently returned the first SQLite row on ambiguous prefix match. The `siftd search` + `siftd query <id> --summary` "workspace metadata disagreement" smoke-test finding (2026-05-14) was a symptom: both commands resolved the same 8-char prefix to *different* conversations. The three resolvers are now converged into one (`resolve_entity_id`), which raises a typed `AmbiguousPrefix` exception when the conversation path matches more than one row. CLI boundaries catch the exception and exit 2 with the matched IDs listed.
-- **Serve UI ambiguous-prefix paths returned 500** — `GET /query?id=<prefix>` and `/export?id=<prefix>` in the HTMX UI called `execute(op)` directly, bypassing the `_dispatch` error-normalisation wrapper that catches `AmbiguousPrefix`. An ambiguous prefix caused an unhandled exception (HTTP 500). Both routes now catch `AmbiguousPrefix` locally and return an inline HTML error fragment with the matched count.
-- **`siftd query` help text for conversation IDs** — The footer previously claimed "If a prefix matches multiple conversations, a warning identifies the ambiguity." The code did no such check. Help text now accurately describes the behavior: prefix collisions exit with code 2 and list the matched IDs.
-- **`--turns -2:+2` (spaced form) now parses correctly** — argparse previously rejected the spaced form and required `--turns=-2:+2`. Both forms now parse identically. The `=` form continues to work unchanged.
+- **Write-path multi-tenant IDOR closed — the merge is now owner-partitioned** — the
+  merge threaded the pushing identity in only to *stamp* new conversations, never to
+  *gate* writes/replaces. On a multi-tenant `serve` deployment one authenticated client
+  could (a) push a slice whose child rows (events, content, tool calls, attributes, tags)
+  reference another tenant's conversation/event IDs and have them grafted in, and (b) — the
+  most reachable variant, needing no knowledge of the victim's server IDs — push a
+  conversation sharing another tenant's natural key `(harness_id, external_id)` with a newer
+  ULID, **deleting that tenant's conversation and all its children** and re-stamping the
+  victim as owner of the attacker's content. `merge_database`/`receive_database` now take the
+  pushing `user_id`; every cross-DB INSERT/DELETE and the stale-conversation replacement are
+  confined to conversations the pusher owns or that are unowned. Single-tenant / SSH merges
+  (no `user_id`) are unchanged.
+- **Staged (deferred) merges carry the pusher identity** — `sync_inbox` gains `user_id`/
+  `push_id`; `stage_payload` persists them and `process_inbox` replays them into the
+  owner-partitioned merge, so a staged push is owner-scoped exactly like the synchronous
+  path (closing the seam before the inbox is wired to multi-tenant HTTP push).
+- **Caveat producers suppressed on owner-scoped requests** — producers query the whole DB
+  (corpus counts, ingest/index health, pending-tag totals) with no owner predicate; on a
+  multi-tenant request they would report whole-server aggregates to a scoped tenant. They are
+  now skipped whenever an owner scope is active (single-tenant/local keeps them).
+- **OIDC: `iss` required and validated** — `_validate_oidc` previously checked `aud` +
+  signature but not `iss`; now `iss`/`aud`/`exp` are all required and `iss` is compared
+  to the configured issuer.
+- **OIDC: `identity_claim` must be present and non-empty** — was falling back to a
+  synthetic `"unknown"` `sub`, collapsing distinct subjects under one owner.
+- **OIDC: discovered `jwks_uri` must share the issuer origin** (scheme+host+port) — a
+  compromised discovery endpoint can no longer redirect to an attacker-controlled JWKS.
+- **Delegation: a rejected `env`/static token is never swapped for a device-code
+  credential** — tokens are source-tagged; reactive refresh is gated to the
+  `device-code` source, preventing silent mis-attribution of server-side writes.
+- **Introspection cache bounded + `sha256(token)`-keyed** — no plaintext-token keys,
+  1024-entry cap (expired-first eviction); was a soft memory-DoS.
 
 ### Removed
 
-- **`siftd search --context N` removed (no deprecation alias)** — `--context N` showed ±N exchanges around the match using FTS5 match position as the anchor. The new `--around PHRASE` anchors by a *specific phrase*, so a silent alias would silently shift what is being anchored and show different turns. Migration: `--context 2` → `--around "phrase" --turns -2:+2`. A help-text note with the migration example is included in `siftd search --help`.
+- **`siftd search --context N`** (no alias — `--around` anchors differently; would
+  silently shift meaning). Migrate to `--around "phrase" --turns -2:+2`.
+- **`siftd tools` command + `siftd.api.tools` + `/api/v1/tools*` + `?tools=` UI knob** —
+  superseded by the events substrate (`siftd tag list --on tool_call`).
+- **FTS5-fallback inline prints + empty-result inline tips** — now routed through the
+  caveats channel (`search-mode-degraded`, `query-empty-tip`; suppressible via
+  `--no-hints`, excluded from `--json`).
+- **`ambiguous-id` caveat producer** — superseded by the `AmbiguousPrefix` exception
+  (prevents silent first-match at the source rather than patching post-render).
 
-### Added
+### Docs
 
-- **`turn_index` and `event_id` in all search results** — Every search result (FTS5, semantic, and hybrid modes) now carries `turn_index` (0-based prompt ordinal in the conversation) and `event_id` (matched event ID). Human-readable output appends `→ siftd query <id> --at-turn N` after each result for direct drill-in. `--json` output includes `turn_index` (always present, may be null) and `event_id` (omitted if None). These fields are populated in the fetch layer as a finalization pass on all `hybrid_search()` code paths, not opt-in.
-- **`siftd search --around PHRASE --turns A:B`** — Cross-mode phrase-anchored window retrieval in `siftd search`. `--around PHRASE` finds the first FTS5 match of the phrase in each result conversation and re-anchors `turn_index` to that position. `--turns A:B` (e.g. `--turns -2:+2`) fetches the signed-offset window of prompt+response pairs around that anchor. Works in FTS5 mode (`--fts`) and semantic/hybrid modes. Emits a hint caveat when in FTS5 mode noting that turn positions are derived from FTS5 match position (semantic mode may differ if embeddings are available).
-- **`siftd query <id> --around` UX improvements** — When `--around PHRASE` matches multiple turns, a disambiguation message is printed to stderr: `matched N turns; showing first (turn X). Use --at-turn <N> for others: [list]`. When `--around PHRASE` finds no match, the error message now includes `Try 'siftd search "PHRASE"' to locate conversations containing this phrase, or shorten the phrase.`
-
-- **`siftd query <id>` anchor + window navigation axes** — Three orthogonal axes now compose on `query <id>` detail views. Anchor flags (mutually exclusive): `--from-start` (first turn), `--from-end` (last turn), `--at-turn N` (N-th turn, 0-indexed), `--around PHRASE` (first FTS5 phrase match in the conversation). Window flags: `--exchanges N` (N turns from anchor), `--turns A:B` (signed offset range, e.g. `--turns -2:+2` or `--turns=-2:+2`). `--around PHRASE` uses the existing FTS5 index filtered to the conversation; phrase lookup is by document order (chronological), not relevance rank. The shared `add_anchor_window_args()` helper is extracted to `cli/_common.py` for reuse in Slice 2 (`search`).
-
-### Changed
-
-- **`siftd query <id> --exchanges N` without an anchor flag is now an error (exit 2)** — Previously `--exchanges N` implicitly anchored at the end of the conversation. That implicit tail behavior is removed. Migrate with `--from-end --exchanges N`. **Breaking change**: any script or agent invoking `siftd query <id> --exchanges N` must add `--from-end` (for tail behavior) or another anchor flag.
-
-### Fixed
-
-- **`embeddings-available` doctor finding is now `warning` severity** — when the embeddings database exists but the `[embed]` extra is not installed, the finding renders as `[!]` (warning) instead of `[i]` (info). The previous severity implied the condition was optional; it indicates partial breakage (a capability that existed is now unavailable).
-- **`siftd query -s` hints toward `siftd search`** — passing `-s`, `--search`, `--fts`, or `--semantic` to `siftd query` now appends `Did you mean: siftd search "<query>"?` to the argparse error. Exit code remains 2; the original `unrecognized arguments` message is preserved.
-
-### Changed
-
-- **Turn headers now use conversational role labels** — Phase 4 of the read-surface catchup. `[prompt]` / `[response]` are replaced by `[user]` / `[assistant]` in all human-facing output (query detail, peek detail, follow mode). Search chunk badges use role-first labels: `prompt → USER`, `response → ASSISTANT`, `tool_call → TOOL`; non-role chunk classes (`exchange`, `tool_summary`) now have stable presentation labels instead of raw uppercased storage tokens. **Breaking change**: scripts or pipelines that scrape `[prompt]` / `[response]` from human-readable output must migrate to `[user]` / `[assistant]`. Machine-readable fields (`kind`, `chunk_type` in `--json` output) are unchanged.
-
-- **`siftd search` flags refactored into three orthogonal axes** — Phase 2 of the read-surface catchup. `--first`, `--by-time`, `--thread`, and `--conversations` are **removed**; replaced by `--select={all,first}` (result selector), `--sort={score,time}` (sort order), and `--mode={chunks,thread,conversations}` (render mode). Invalid axis combinations (`--mode=thread --sort=time`, `--mode=conversations --sort=time`) are rejected at parse time with exit code 1 instead of the previous runtime warning. **Breaking change**: scripts and agents using the old flags must migrate to the new axes.
-
-- **`Fidelity` is now a required parameter on `list_conversations` and `get_conversation`** — Phase 1 of the read-surface catchup. The CLI-local `include_thinking` / `include_tool_content` boolean translation is removed; CLI and serve callers pass the cross-stage `Fidelity` contract directly into the fetch layer. `list_conversations` only evaluates the cost SQL subquery when `fidelity.depth >= 3` (matching the renderer's cost-column rung); the fast-path read from `conversation_stats.cost` is unchanged. `get_conversation` derives content-block and tool-content gating from `fidelity.shows("thinking")` / `fidelity.shows("tools")`. `export_conversations` and `export_document` now require `fidelity` instead of the two booleans; the export fetch always augments `visible` with `"thinking"` so the renderer can emit `*[thinking]*` placeholders independent of the caller's outer fidelity. HTTP wire contract on `/api/v1/conversations/{id}` is unchanged (still accepts `include_thinking` / `include_tool_content` query params, translated to `Fidelity` inside the route).
-
-### Added
-
-- **Adapter health warnings on `siftd ingest`** — Two new warnings printed after ingestion completes: (1) **zero-discovery** (info): if an adapter was loaded but found no files to ingest, prints "Adapter '<name>' found nothing to ingest — check scan paths or adapter config"; suppressed in quiet mode. (2) **failed-import** (warning): if a drop-in adapter at `~/.config/siftd/adapters/` failed to load, prints "Drop-in adapter at '<path>' failed to load: <error>"; always visible even in quiet mode. JSON mode emits structured `{"type": "adapter_warning", ...}` events for both. Failure information is captured via a new `failures_out` kwarg on `load_dropin_modules` (additive, existing callers unaffected) and surfaced through `IngestRunResult.dropin_failures`.
-- **`embeddings-stale` caveat producer** — Emits a warning when search results are incomplete due to unindexed conversations. Fires on `search_chunks` render calls when embeddings are available. Compares conversation IDs in the main database against the embeddings index and reports count of missing conversations. Suggests `siftd search --index` as the remediation. Severity=warning; includes pluralization ("1 conversation not indexed" vs "2 conversations not indexed").
-- **`active-sessions` caveat producer** — Emits a scoped info caveat on `siftd query` when there are active (live) sessions in the filtered workspace that haven't been ingested yet. Fires only on workspace-filtered list views (prevents noise from unscoped results). Suggests `siftd ingest` as the remediation. Aggregated count includes pluralization ("1 active session" vs "2 active sessions").
-- **`workspace-identity` caveat producer** — Inspects conversations in list results to identify unresolvable workspace IDs (orphaned references to missing rows in the workspaces table). Emits one `info` finding per unresolvable workspace, indicating that workspace filtering may not work correctly for those conversations. Gated on `list_conversations` at depth≥2.
-- **`siftd tag apply` and `siftd tag remove` subcommands** — Explicit named subcommands for applying and removing tags, identical in behavior to the existing positional `siftd tag <id> <tag>` and `siftd tag --remove <id> <tag>` forms. The legacy positional syntax is unchanged. `apply` and `remove` also accept `--last`, `--session`, and all other tag flags. Intended for agent prompts and scripts where explicit verb syntax is clearer.
-- **`siftd tag list --by-workspace`** — group tag counts by workspace. Counts only event-backed tags (`tool_call`, `prompt`, `response`, `exchange`); conversation-level tags are excluded by design. Composes with `--on`, `--prefix`, `-w/--workspace`, `--owner`, `--all-tags`, and `--limit` (default cap: 20 workspaces, ranked by total count descending). Other filters (`--since`, `--before`, `--no-tag`, `-l/--tag`, `-m/--model`, `--tool`, `--tool-tag`) error with exit 2 when combined with `--by-workspace`. Replaces the per-workspace view previously available only via `siftd tools --by-workspace`.
-- **`--timeout SECONDS` for `siftd peek --follow`** — Exit the follow loop after a wall-clock duration, even if the session remains active. Useful for integration tests and polling loops. Example: `siftd peek --follow --timeout 5` monitors a live session for 5 seconds then exits cleanly.
-- **`--latest` alias for `--last`** — Both `siftd tag` and `siftd export` now accept `--latest` as an alias for the existing `--last` flag, providing an alternative ergonomic name for the same functionality.
-- **`siftd id <ULID>` classification command** — Resolves a ULID to either a conversation or event, emits a one-line summary with context (workspace, started date for conversations; conversation ID for events) and a view hint. Supports `--json` for structured classification. Exit codes: 0 (hit), 1 (miss), 2 (ambiguous).
-- **`--dry-run` for `siftd db restore` and `siftd db receive`** — preview destructive operations before applying. `db restore --dry-run` prints source path, target path, schema version direction-of-change (upgrade / DOWNGRADE / no change), and per-table row counts for both source and target without touching the target file. `db receive --dry-run` drains stdin, runs the preflight integrity check, prints per-table row counts from the incoming payload and the would-be action (create / merge), then exits 0 without writing to the database.
-- **`siftd query --stats` corpus-aware** — Stats line now shows view count against corpus total and view tokens against corpus tokens: `View: 10 / 12,438 corpus | view tokens: 8.2K / 142M corpus`. With filters (`-w`, `--tag`, etc.) the view reflects the filtered set while corpus totals remain unfiltered.
-- **`fresh-corpus` caveat producer** — Emits an info finding when query results show a thin slice of a young corpus (< 10 conversations). Short-circuits on result size >= 10 to avoid unnecessary database queries. Applies to all `list-conversations` list views regardless of depth.
-- **`Finding.channel` field** — `"text"` | `"json"` | `"both"` (default `"both"`). Controls output-format visibility: `channel="text"` findings are excluded from `--json` output; `channel="json"` findings are excluded from text/TTY output. Wave H hint producers will use `channel="text"` for terminal-only hints.
-- **`Finding.field` slot** — Reserved for future column-binding (cell-tier caveats). No consumer today; defaults to `None`.
-- **`Finding.severity` narrowed to `Literal`** — Valid values: `"info"`, `"warning"`, `"error"`, `"hint"`. Type checker now catches severity typos.
-- **`siftd doctor --no-hints`** — Suppresses `severity="hint"` findings from doctor output without losing warnings or errors.
-- **`siftd query --no-hints`** — Suppresses `severity="hint"` caveat findings from query list output.
-- **`fts-stale` caveat producer** — Warns when the FTS5 full-text search index is out of sync with event content blocks. Detects missing entries (content blocks not yet indexed) and orphaned entries (FTS rows pointing to deleted blocks). Fires on keyword search operations (`siftd search`, `/api/v1/search`). Suggests `siftd db vacuum` to rebuild the index. Emitted as a single warning severity caveat with counts for both missing and orphaned entries in the context.
-- **`pending-tags` caveat producer** — Emits an info finding on `siftd query` when there are queued tag intents in the database awaiting the next `siftd ingest`. Includes count with correct pluralization ("1 pending tag intent" vs "N pending tag intents") and offers `siftd ingest` as the fix command.
-- **`ingest-status` caveat producer** — Monitors database ingestion health on `siftd query` list views. Emits three possible findings: `ingest-errors` (warning: N files failed ingestion, suggests `siftd doctor`), `ingest-never-run` (info: no ingest recorded, suggests `siftd ingest`), `ingest-stale` (info: last ingest > 7 days ago, suggests `siftd ingest`). Short-circuits if the database file doesn't exist. Applies to all `list-conversations` list views regardless of depth or filters.
-- **`search-mode-degraded` caveat producer** — Emits a hint when `siftd search` ran in FTS5-only (keyword) mode because embeddings are not installed. Fires on search render calls when `op.params["mode"] == "fts"` and results are non-empty. Severity=hint; channel=both (visible in tty and `--json`). Suggests `siftd install embed` as the remediation.
-- **`search-tagging-tip` caveat producer** — Emits a hint after a search returns results, suggesting how to tag the first result for future retrieval. Severity=hint; channel=text (suppressed in `--json` output and silenceable via `--no-hints`). Message includes the short conversation ID so the command is directly copy-pasteable.
-- **`query-empty-tip` caveat producer** — Emits a contextual hint when `siftd query` returns no conversations. Three variants based on active filters: workspace filter → suggests `siftd peek` for live sessions; other filters active → suggests broadening filters; no filters → suggests `siftd ingest` or `siftd peek`. Severity=hint; channel=text (suppressed in `--json` output and silenceable via `--no-hints`). The `--json` empty-result envelope now also threads actual caveats instead of hardcoded `"caveats": []`.
-
-### Removed
-
-- **FTS5-fallback inline prints from `siftd search`** — The `[FTS5 mode - ...]` messages printed to stderr when embeddings are unavailable are removed; the `search-mode-degraded` caveat producer (B8) covers this path and outputs through the standard caveats channel, which is suppressible via `--no-hints` and excluded from `--json` output by default.
-- **Empty-result inline tips from `siftd query`** — The three conditional tip messages ("Try 'siftd peek'…", "No matches for current filters…", "Run 'siftd ingest'…") are removed from the CLI; the `query-empty-tip` caveat producer covers this path and routes through the standard caveats channel, making them suppressible via `--no-hints`.
-- **`siftd tools` command and `siftd.api.tools` module.** Tool-call tag analytics are now expressible via the events substrate: use `siftd tag list --on tool_call --prefix shell:` for category counts, or add `--by-workspace` for the per-workspace breakdown. Capability lost: percentage display in the old output format. HTTP routes `/api/v1/tools` and `/api/v1/tools/workspaces` return 404. If you had `[tools]` in your `~/.config/siftd/config.toml`, those keys are now silently ignored.
-- **`?tools=true` query parameter on the serve UI `/query?id=…` view.** Removed alongside the `siftd tools` command. Tool-call content rendering at depth=2 no longer reads this URL knob; pass `?full=true` to see tool inputs/outputs (also enables thinking and depth=3).
-- **`ambiguous-id` caveat producer (B9)** — Superseded by the `AmbiguousPrefix` exception raised by `get_conversation` and `resolve_entity_id`. The producer was a post-render patch: it fired after `get_conversation` had already silently first-matched, queried the DB again to count matches, and emitted a warning. The new behaviour prevents silent first-match at the source; `AmbiguousPrefix` exits 2 at all CLI boundaries and returns HTTP 400 from the serve layer, so the post-render patch is redundant.
-
-### Changed
-
-- **Caveat output capped per collection** — `run_producers` now applies a post-collection cap: max 1 hint, max 3 infos (excess emits a single "+N more info findings (use --verbose to show all)" notice), warnings and errors uncapped. Prevents output from accumulating noise as more producers are added in Wave B. No change to existing warning-severity pricing caveats.
-
-- **`siftd ingest` defaults to quiet when stdout is not a TTY** — When output is piped, per-file and per-adapter progress lines are suppressed; only the final totals line is printed. A one-time hint on stderr informs users of the behavior change and how to restore verbose output (`-v`). Explicit `-q` or `-v` flags are honored and suppress the hint. TTY behavior is unchanged.
-- **`siftd db --help` epilog reorganized** — Help text now groups subcommands into logical sections: Inspection (info, schema-version, stats, workspaces, path, sync-status), Maintenance (vacuum, backup, restore), Sync (slice, merge, send, push, pull), and Sync remotes (remote, receive, process). Improves discoverability for users navigating the database operations namespace.
-- **ULID truncation standardized to 8 characters** — All list and search renderers (terminal, markdown, HTML, JSON) now display conversation IDs as 8-character short forms (`:8`). Detail views remain unchanged. Affects `siftd query`, `siftd search`, `siftd tag list`, serve HTML routes, and all export formats. **Note for agents:** grep patterns matching 12-character IDs should be updated to 8 characters for consistency with displayed output.
-
-### Fixed
-
-- **Search caveat producers now visible to users** — `embeddings-stale`, `fts-stale`, and `search-mode-degraded` producers fired correctly but all four `render_search` implementations silently dropped the caveats. Fixed across terminal (appends `note: <message>` lines), markdown (appends `> **Note:** <message>` blockquote), HTML (appends `<aside class="caveats">` fragment), and JSON (adds `"caveats": [...]` field to the envelope, always present, empty when none). Consistent with how `render_list` already surfaces caveats.
+- **Authentik→siftd auth-migration runbook re-grounded to current code**
+  (`docs/ops/authentik-auth-migration-runbook.md`) — verified claim-by-claim against
+  current `serve/auth.py` + Authentik 2025.x: removed the false trailing-slash `iss`
+  "code-level blocker" (handled by the normalized compare at `serve/auth.py:275`), added
+  a Phase-0 deployed-build gate, clarified the `iss`-lenient/`aud`-strict asymmetry,
+  corrected drifted `auth.py:NNN` → `serve/auth.py:NNN` refs, and fixed the
+  Encryption-Key field-move attribution (2025.10.1, not 2025.12).
 
 ## [0.8.1] - 2026-05-07
 

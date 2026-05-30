@@ -314,6 +314,11 @@ class TestQuerySqlCommand:
         )
         monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
 
+        import sqlite3
+        expected_id = sqlite3.connect(str(test_db)).execute(
+            "SELECT id FROM conversations WHERE external_id = 'conv1'"
+        ).fetchone()[0]
+
         rc = main([
             "--db", str(test_db),
             "query", "sql", "find",
@@ -322,8 +327,8 @@ class TestQuerySqlCommand:
 
         assert rc == 0
         captured = capsys.readouterr()
-        # Should find the conversation
-        assert "id" in captured.out.lower() or captured.out.strip()
+        # The query must actually return conv1's row, not merely print something.
+        assert expected_id[:12] in captured.out
 
     def test_query_sql_missing_var(self, test_db, tmp_path, monkeypatch, capsys):
         """siftd query sql with missing required var returns error."""

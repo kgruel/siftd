@@ -1903,7 +1903,9 @@ def ensure_sync_inbox_table(conn: sqlite3.Connection) -> None:
             error               TEXT,
             source_host         TEXT,
             size_bytes          INTEGER,
-            conversations       INTEGER
+            conversations       INTEGER,
+            user_id             TEXT,
+            push_id             TEXT
         )
     """)
     # Migration: add processing_started_at if missing (pre-existing DBs)
@@ -1913,6 +1915,16 @@ def ensure_sync_inbox_table(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE sync_inbox ADD COLUMN processing_started_at TEXT"
         )
+    # Migration: add user_id/push_id so a deferred (staged) merge carries the
+    # pushing identity into the owner-partitioned merge — without it a staged
+    # push would merge unscoped and reopen the write-path IDOR the synchronous
+    # path closes. Pre-existing staged rows have NULL user_id (merged unscoped,
+    # as they were before this column existed).
+    try:
+        conn.execute("SELECT user_id FROM sync_inbox LIMIT 0")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE sync_inbox ADD COLUMN user_id TEXT")
+        conn.execute("ALTER TABLE sync_inbox ADD COLUMN push_id TEXT")
 
 
 # Alias for backwards compatibility
@@ -2623,6 +2635,48 @@ def record_empty_file(
     if commit:
         conn.commit()
     return ulid
+
+
+def record_session_file(
+    conn: sqlite3.Connection,
+    path: str,
+    file_hash: str,
+    harness_id: str,
+    *,
+    file_mtime: float | None = None,
+    file_size: int | None = None,
+    commit: bool = False,
+) -> str:
+    """Record/refresh a per-file marker for a session-strategy source.
+
+    A session source (e.g. an OpenCode or Gemini SQLite DB) yields many
+    conversations from one file; each is stored and deduped independently by
+    external_id. This marker tracks the file's hash/mtime for the fast-path
+    skip with conversation_id=NULL, so replacing any single session's
+    conversation does not cascade-delete the marker (the conversation_id FK is
+    ON DELETE CASCADE). Upserts on the unique path. Returns the record id.
+    """
+    from datetime import UTC, datetime
+
+    ingested_at = datetime.now(UTC).isoformat()
+    conn.execute(
+        """INSERT INTO ingested_files
+               (id, path, file_hash, harness_id, conversation_id, ingested_at, error, file_mtime, file_size)
+           VALUES (?, ?, ?, ?, NULL, ?, NULL, ?, ?)
+           ON CONFLICT(path) DO UPDATE SET
+               file_hash=excluded.file_hash,
+               harness_id=excluded.harness_id,
+               conversation_id=NULL,
+               ingested_at=excluded.ingested_at,
+               error=NULL,
+               file_mtime=excluded.file_mtime,
+               file_size=excluded.file_size""",
+        (_ulid(), path, file_hash, harness_id, ingested_at, file_mtime, file_size),
+    )
+    if commit:
+        conn.commit()
+    row = conn.execute("SELECT id FROM ingested_files WHERE path = ?", (path,)).fetchone()
+    return row[0]
 
 
 def record_failed_file(

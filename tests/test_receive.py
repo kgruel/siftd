@@ -194,8 +194,17 @@ class TestReceiveOwnership:
         assert len(owners) == 1
         assert owners[0]["user_id"] == "bob@co.com"
 
-    def test_replacement_preserves_existing_owner(self, tmp_path):
-        """Replacement merges must not reassign ownership to the pusher."""
+    def test_cross_owner_replacement_is_rejected(self, tmp_path):
+        """A pusher cannot replace/destroy another tenant's conversation.
+
+        Security (S1/D1, the most reachable write-side multi-tenant IDOR): Bob
+        pushes a conversation sharing Alice's natural key (harness name +
+        external_id) with a newer ULID. Pre-fix, the owner-blind stale-match
+        deleted Alice's conversation and re-stamped Alice as owner of Bob's
+        content. Now the merge is owner-partitioned: Bob may replace only
+        conversations he owns or that are unowned, so Alice's conversation is
+        untouched and Bob's colliding push is dropped (the UNIQUE(harness_id,
+        external_id) blocks inserting his as a separate row)."""
         import sqlite3
 
         from siftd.storage.sqlite import (
@@ -243,17 +252,20 @@ class TestReceiveOwnership:
         sc.commit()
         sc.close()
 
-        # Bob pushes a newer replacement; Alice's ownership must be preserved.
+        # Bob attempts to replace Alice's conversation via the colliding
+        # natural key. The owner-partitioned merge must reject it.
         receive_database(source, target, user_id="bob", push_id="p2")
 
         conn = sqlite3.connect(str(target))
         conn.row_factory = sqlite3.Row
         try:
             conv_ids = [r["id"] for r in conn.execute("SELECT id FROM conversations").fetchall()]
-            assert conv_ids == [source_id]
+            # Alice's conversation survives untouched; Bob's push is dropped.
+            assert conv_ids == [target_id]
+            assert source_id not in conv_ids
             row = conn.execute(
                 "SELECT user_id FROM conversation_owners WHERE conversation_id = ?",
-                (source_id,),
+                (target_id,),
             ).fetchone()
             assert row["user_id"] == "alice"
         finally:

@@ -181,15 +181,17 @@ def test_search_op_keys_accepted_by_route():
             "embed_db": _Path("/tmp/embed.db"),  # local-only — must not reach wire
             "n": 10,
             "mode": "hybrid",                    # now travels on the wire (ST-4a)
-            "workspace": None,
-            "model": None,
-            "since": None,
-            "before": None,
-            "tag": None,
-            "all_tags": None,
-            "no_tag": None,
-            "tag_kind": None,
-            "owner": None,
+            # Optionals are set non-None so to_wire() (which drops None) emits
+            # them — the inverse parity check below needs the full sendable set.
+            "workspace": "ws",
+            "model": "m",
+            "since": "2024-01-01",
+            "before": "2024-12-31",
+            "tag": ["t"],
+            "all_tags": ["a"],
+            "no_tag": ["n"],
+            "tag_kind": ["k"],
+            "owner": "o",
             "exclude_active": True,
             "include_derivative": False,
             "recall": 80,
@@ -198,7 +200,7 @@ def test_search_op_keys_accepted_by_route():
             "recency": False,
             "recency_half_life": 30.0,
             "recency_max_boost": 1.15,
-            "backend": None,
+            "backend": "fastembed",
             "embeddings_only": False,            # deprecated alias; still sent for old-server compat
             "raw_fts": False,
             "debug_ids": False,                  # CLI annotation
@@ -218,6 +220,16 @@ def test_search_op_keys_accepted_by_route():
         f"{sorted(leftover)}. Round-4 caught this for embed_db/around — "
         f"any new addition needs either a Parameter() on the route or an "
         f"entry in the search OpSpec's wire_excludes in siftd.api.op_spec.SPECS."
+    )
+    # Inverse direction (I19): a route query param the CLI op never sends is
+    # dead delegation surface. Anything the server genuinely accepts on its own
+    # (no CLI counterpart) must be listed here with a per-entry reason.
+    SERVER_ONLY_SEARCH_PARAMS: set[str] = set()
+    dead = route_keys - wire_keys - SERVER_ONLY_SEARCH_PARAMS
+    assert not dead, (
+        f"search_route declares query params the CLI op never sends: {sorted(dead)}. "
+        f"Either remove the dead Parameter()+forward, or add it to "
+        f"SERVER_ONLY_SEARCH_PARAMS with a reason."
     )
     # Local paths and CLI annotations must not bleed to the wire.
     assert "embed_db" not in wire_keys, "local embeddings DB path must not leak to the wire"

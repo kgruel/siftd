@@ -196,12 +196,12 @@ Control how results are displayed:
 siftd search "query"                    # default: chunk snippets with scores
 siftd search -v "query"                 # verbose: full chunk text
 siftd search --full "query"             # complete prompt+response exchange
-siftd search --context 2 "query"        # show ±2 exchanges around match
-siftd search --thread "query"           # expand top hits into conversation threads
-siftd search --conversations "query"    # rank whole conversations, not chunks
+siftd search --around "query" --turns -2:+2  # window ±2 turns around the match
+siftd search --mode thread "query"           # expand top hits into conversation threads
+siftd search --mode conversations "query"    # rank whole conversations, not chunks
 ```
 
-The `--thread` mode is particularly useful for research — it shows the top conversations expanded as narratives, with a shortlist of other relevant sessions.
+The `--mode thread` view is particularly useful for research — it shows the top conversations expanded as narratives, with a shortlist of other relevant sessions.
 
 ## When to use which
 

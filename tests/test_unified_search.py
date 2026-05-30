@@ -173,8 +173,9 @@ class TestNoEmbeddingsInstalled:
         captured = capsys.readouterr()
 
         assert result == 0
-        # Should find the error content
-        assert "error" in captured.out.lower() or captured.out  # Results shown
+        # FTS for "error" only matches rows containing it, so a real hit must
+        # surface the term — not merely produce any output.
+        assert "error" in captured.out.lower()
 
     def test_semantic_flag_errors_without_embeddings(self, fts_db, capsys, monkeypatch):
         """--semantic flag errors with install instructions when embeddings unavailable."""
@@ -195,7 +196,7 @@ class TestNoEmbeddingsInstalled:
 
         assert result == 1
         assert "Semantic search requires the [embed] extra" in captured.err
-        assert "siftd install embed" in captured.out
+        assert "siftd install embed" in captured.err
 
 
 class TestFtsOnlyMode:

@@ -1067,6 +1067,49 @@ class TestFtsIntegrityCheck:
         assert check.requires_db is True
         assert check.cost == "fast"
 
+    def test_stale_schema_skips_without_migrating(self, tmp_path):
+        """C03: a diagnostic must not migrate the live DB.
+
+        When the on-disk schema is below SCHEMA_VERSION the check returns an
+        info finding and leaves the file untouched, rather than taking the
+        write path (which would migrate, back up, and switch to WAL).
+        """
+        import sqlite3
+
+        from siftd.storage.sqlite import create_database
+
+        db_path = tmp_path / "stale.db"
+        conn = create_database(db_path)  # full current-schema DB (has content_fts)
+        conn.close()
+
+        # Pretend the file is from an older schema version.
+        stale = sqlite3.connect(db_path)
+        stale.execute("PRAGMA user_version = 7")
+        stale.commit()
+        stale.close()
+
+        ctx = CheckContext(
+            db_path=db_path,
+            embed_db_path=tmp_path / "embed.db",
+            adapters_dir=tmp_path / "adapters",
+            formatters_dir=tmp_path / "formatters",
+            queries_dir=tmp_path / "queries",
+        )
+        try:
+            findings = FtsIntegrityCheck().run(ctx)
+        finally:
+            ctx.close()
+
+        assert len(findings) == 1
+        assert findings[0].severity == "info"
+        assert "Skipped" in findings[0].message
+
+        # The diagnostic must not have migrated the DB or created a backup.
+        check = sqlite3.connect(db_path)
+        assert check.execute("PRAGMA user_version").fetchone()[0] == 7
+        check.close()
+        assert not list(tmp_path.glob("*.bak*")), "doctor must not create a migration backup"
+
 
 class TestConfigValidCheck:
     """Tests for the config-valid check."""

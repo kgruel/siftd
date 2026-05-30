@@ -14,7 +14,7 @@ class FtsIntegrityCheck:
     cost: CheckCost = "fast"
 
     def run(self, ctx: CheckContext) -> list[Finding]:
-        from siftd.storage.sqlite import open_database
+        from siftd.storage.sqlite import SCHEMA_VERSION, _peek_user_version, open_database
 
         conn = ctx.get_db_conn()
         cur = conn.execute(
@@ -22,6 +22,26 @@ class FtsIntegrityCheck:
         )
         if not cur.fetchone():
             return []
+
+        # The FTS5 'integrity-check' command needs a writable connection, but a
+        # diagnostic must never be the thing that migrates the live DB. If the
+        # on-disk schema is stale, opening write mode would create a backup and
+        # run migrations as a side effect (and take a write lock that blocks a
+        # concurrent serve/ingest). Skip instead and let an ordinary command do
+        # the upgrade.
+        if _peek_user_version(ctx.db_path) < SCHEMA_VERSION:
+            return [
+                Finding(
+                    check=self.name,
+                    severity="info",
+                    message=(
+                        "Skipped FTS integrity check: database schema is below the "
+                        "current version. Migrate the database first (any normal "
+                        "read/write invocation upgrades it), then re-run doctor."
+                    ),
+                    fix_available=False,
+                )
+            ]
 
         try:
             write_conn = open_database(ctx.db_path, read_only=False)

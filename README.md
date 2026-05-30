@@ -158,8 +158,8 @@ siftd search -n 20 "error handling"        # more results
 See the surrounding context:
 
 ```bash
-siftd search --context 2 "token refresh"   # show 2 exchanges before/after
-siftd search --thread "architecture"       # expand top hits into full threads
+siftd search --around "token refresh" --turns -2:+2  # window around the match
+siftd search --mode thread "architecture"            # expand top hits into full threads
 ```
 
 ## This is useful — you'll need it again
@@ -305,8 +305,7 @@ See [Writing Adapters](docs/guides/writing-adapters.md) for the full guide.
 | `ingest` | Import conversation logs from all adapters |
 | `query` | List conversations, filter by workspace/date/tag, view details |
 | `search` | Semantic search (requires `[embed]` extra) |
-| `tag` | Apply tags to conversations |
-| `tags` | List and manage tags |
+| `tag` | Apply tags to conversations; `tag list` to browse |
 | `export` | Export conversations for PR review or context |
 | `peek` | View live sessions without waiting for ingest |
 | `db` | Database operations — `stats`, `info`, `backup`, `restore`, `vacuum`, `slice`, `path` |

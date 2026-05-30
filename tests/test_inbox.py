@@ -123,7 +123,8 @@ class TestProcessInbox:
         merge_calls = []
         results: list[dict] = []
 
-        def _fake_receive_database(source_path, target_db, rebuild_fts=True):
+        def _fake_receive_database(source_path, target_db, rebuild_fts=True,
+                                   user_id=None, push_id=None):
             merge_calls.append((source_path, target_db, rebuild_fts))
             entered_merge.set()
             assert release_merge.wait(timeout=2), "timed out waiting to release merge"
@@ -328,3 +329,93 @@ class TestPreflightGate:
         # status='error' is permanently quarantined — not retried
         results2 = process_inbox(db)
         assert results2 == []
+
+
+class TestStagedMergeOwnerScope:
+    """A staged (deferred) push must be owner-scoped at process time exactly
+    like the synchronous receive path — otherwise staging would reopen the
+    write-path multi-tenant IDOR (S0/S1/D1). The pusher identity persisted by
+    stage_payload is replayed into the owner-partitioned merge."""
+
+    @staticmethod
+    def _seed_alice(db):
+        from siftd.storage.sqlite import (
+            clear_vocabulary_caches,
+            get_or_create_harness,
+            open_database,
+        )
+
+        conn = open_database(db)
+        th = get_or_create_harness(conn, "h", source="t", log_format="jsonl")
+        conn.execute(
+            "INSERT INTO conversations (id, external_id, harness_id, started_at) "
+            "VALUES ('01ALICE0000000000000000000', 'conv-A', ?, '2024-01-01T00:00:00Z')",
+            (th,),
+        )
+        conn.execute(
+            "INSERT INTO events (id, kind, conversation_id, timestamp) "
+            "VALUES ('01ALICEEVENT00000000000000', 'prompt', "
+            "'01ALICE0000000000000000000', '2024-01-01T00:00:00Z')"
+        )
+        conn.execute(
+            "INSERT INTO conversation_owners (conversation_id, user_id, push_id, assigned_at) "
+            "VALUES ('01ALICE0000000000000000000', 'alice', 'p1', '2024-01-01T00:00:00Z')"
+        )
+        conn.commit()
+        conn.close()
+        clear_vocabulary_caches()
+
+    @staticmethod
+    def _malicious_slice(tmp_path):
+        """Bob's slice referencing Alice's conversation + event IDs (S0)."""
+        from siftd.storage.sqlite import create_database, get_or_create_harness
+
+        p = tmp_path / "evil.db"
+        sc = create_database(p)
+        sh = get_or_create_harness(sc, "h", source="t", log_format="jsonl")
+        sc.execute(
+            "INSERT INTO conversations (id, external_id, harness_id, started_at) "
+            "VALUES ('01ALICE0000000000000000000', 'conv-A', ?, '2024-01-01T00:00:00Z')",
+            (sh,),
+        )
+        sc.execute(
+            "INSERT INTO events (id, kind, conversation_id, timestamp) "
+            "VALUES ('01ALICEEVENT00000000000000', 'prompt', "
+            "'01ALICE0000000000000000000', '2024-01-01T00:00:00Z')"
+        )
+        sc.execute(  # forged turn injected into Alice's conversation
+            "INSERT INTO events (id, kind, conversation_id, timestamp) "
+            "VALUES ('01BOBEVENT0000000000000000', 'response', "
+            "'01ALICE0000000000000000000', '2024-01-01T00:00:00Z')"
+        )
+        sc.commit()
+        sc.close()
+        return p
+
+    def test_staged_push_is_owner_scoped(self, db, inbox, tmp_path):
+        self._seed_alice(db)
+        evil = self._malicious_slice(tmp_path)
+
+        staged = stage_payload(evil, db, user_id="bob", push_id="p2")
+        # identity is persisted for replay
+        conn = open_database(db)
+        row = conn.execute(
+            "SELECT user_id FROM sync_inbox WHERE id = ?", (staged["id"],)
+        ).fetchone()
+        conn.close()
+        assert row[0] == "bob"
+
+        results = process_inbox(db)
+        assert results[0]["status"] == "done"
+
+        conn = open_database(db)
+        try:
+            ev_ids = {
+                r[0] for r in conn.execute(
+                    "SELECT id FROM events WHERE conversation_id = '01ALICE0000000000000000000'"
+                ).fetchall()
+            }
+            # Bob's forged event must NOT have landed in Alice's conversation.
+            assert ev_ids == {"01ALICEEVENT00000000000000"}
+        finally:
+            conn.close()

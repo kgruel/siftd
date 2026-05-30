@@ -120,13 +120,19 @@ siftd db pull team --all --dry-run
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/v1/health` | GET | Health check (no auth) |
-| `/v1/push` | POST | Receive a slice into the team DB |
-| `/v1/pull` | GET | Export a filtered slice |
-| `/v1/query` | GET | List or detail conversations |
-| `/v1/search` | GET | Semantic + FTS search (requires `siftd[embed]` on server) |
+| `/api/v1/health` | GET | Health check (no auth) |
+| `/api/v1/push` | POST | Receive a slice into the team DB |
+| `/api/v1/pull` | GET | Export a filtered slice |
+| `/api/v1/conversations` | GET | List conversations |
+| `/api/v1/conversations/{id}` | GET | Conversation detail |
+| `/api/v1/search` | GET | Semantic + FTS search (requires `siftd[embed]` on server) |
+| `/api/v1/stats` | GET | Aggregate statistics |
+| `/api/v1/workspaces` | GET | List workspaces |
+| `/api/v1/tags` | GET | List tags |
+| `/api/v1/events/{event_id}` | GET | Event detail |
+| `/api/v1/export` | GET | Export conversations |
 
-Pull and query accept filter params: `workspace`, `since`, `before`, `model`, `tag`, `n`.
+Pull, conversations, and search accept filter params: `workspace`, `since`, `before`, `model`, `tag`, `n`.
 
 ## Attribution
 

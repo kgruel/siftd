@@ -81,6 +81,7 @@ def receive_database(
         rebuild_fts=rebuild_fts,
         before_commit=_on_before_commit,
         preflight=False,  # source already checked above
+        user_id=user_id,  # owner-partition the merge (multi-tenant write-IDOR guard)
     )
     result["status"] = "merged"
 

@@ -430,7 +430,7 @@ def cmd_query(args) -> int:
     from dataclasses import asdict
 
     from siftd.api import list_conversations
-    from siftd.api.dispatch import Operation, execute_for_render, from_wire
+    from siftd.api.dispatch import Operation, deserialize_caveats, execute_for_render, from_wire
     from siftd.cli._filters import extract_filter_args
     from siftd.serve.client import ServeRequest4xx
     from siftd.serve.delegation import print_serve_4xx, try_serve
@@ -467,7 +467,6 @@ def cmd_query(args) -> int:
     # type coercion uniformly with the rest of the wire-form contract).
     # The list deserializer returns None on schema mismatch (sentinel for
     # fallback) and [] for a legitimately empty list (not a fallback signal).
-    # Caveats aren't threaded across the serve boundary today.
     conversations = None
     try:
         delegated = try_serve(op)
@@ -476,6 +475,10 @@ def cmd_query(args) -> int:
         return 1
     if delegated is not None and isinstance(delegated, dict):
         conversations = from_wire(op, delegated)
+        if conversations is not None:
+            # I5: thread the server's caveats back so the thin client surfaces
+            # the same editorial-honesty warnings local execution would.
+            caveats = deserialize_caveats(delegated)
     if conversations is None:
         try:
             conversations, caveats = execute_for_render(op)

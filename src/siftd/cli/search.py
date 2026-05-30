@@ -188,16 +188,27 @@ def cmd_search(args) -> int:
     has_embeddings = embeddings_available() and embed_db.exists()
 
     if use_semantic:
-        # --semantic: require embeddings, error if unavailable
+        # --semantic: require embeddings, error if unavailable. Keep stdout
+        # clean so `siftd search --json | jq` stays valid — human text goes to
+        # stderr, and --json gets a structured error envelope on stdout.
+        import json
         if not embeddings_available():
-            print("Semantic search requires the [embed] extra.", file=sys.stderr)
-            print()
-            print("Install with:")
-            print("  siftd install embed")
+            if args.json:
+                msg = "Semantic search requires the [embed] extra. Install with: siftd install embed"
+                print(json.dumps({"error": msg}))
+            else:
+                print("Semantic search requires the [embed] extra.", file=sys.stderr)
+                print(file=sys.stderr)
+                print("Install with:", file=sys.stderr)
+                print("  siftd install embed", file=sys.stderr)
             return 1
         if not embed_db.exists():
-            print("No embeddings index found.")
-            print("Run 'siftd search --index' to build it.")
+            if args.json:
+                msg = "No embeddings index found. Run 'siftd search --index' to build it."
+                print(json.dumps({"error": msg}))
+            else:
+                print("No embeddings index found.", file=sys.stderr)
+                print("Run 'siftd search --index' to build it.", file=sys.stderr)
             return 1
         search_mode = "semantic"
     elif not has_embeddings:
@@ -212,7 +223,7 @@ def cmd_search(args) -> int:
     elif args.select == "first" or args.mode == "conversations":
         widened_limit = max(args.limit * 10, 100)
 
-    from siftd.api.dispatch import Operation, execute_for_render
+    from siftd.api.dispatch import Operation, deserialize_caveats, execute_for_render
     from siftd.api.search import (
         enrich_file_refs,
         filter_by_threshold,
@@ -275,6 +286,10 @@ def cmd_search(args) -> int:
         except ServeRequest4xx as e:
             print_serve_4xx(e)
             return 1
+        if isinstance(raw_results, dict):
+            # I5: surface the server's caveats (stale index, degraded mode) on
+            # the delegated path — without this the thin client always shows none.
+            caveats = deserialize_caveats(raw_results)
 
     # Local execution
     if raw_results is None:
@@ -438,7 +453,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     from painted import Fidelity
 
     from siftd.api import open_database
-    from siftd.api.dispatch import Operation, execute_for_render
+    from siftd.api.dispatch import Operation, deserialize_caveats, execute_for_render
     from siftd.api.search import search_chunks
     from siftd.cli._common import fidelity_from_args
 
@@ -510,6 +525,9 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         except ServeRequest4xx as e:
             print_serve_4xx(e)
             return 1
+        if isinstance(raw_results, dict):
+            # I5: surface the server's caveats on the delegated path.
+            caveats = deserialize_caveats(raw_results)
 
     if raw_results is None:
         try:

@@ -156,8 +156,10 @@ class TestSearchSearch:
         captured = capsys.readouterr()
 
         assert result == 0
-        # Should find content about errors/exceptions
-        assert "error" in captured.out.lower() or "exception" in captured.out.lower() or captured.out
+        # The seeded fixture's content is about exception/error handling, so a
+        # real hit must surface one of those terms (not merely any output).
+        out = captured.out.lower()
+        assert "error" in out or "exception" in out or "handle" in out
 
     def test_empty_query_shows_usage(self, indexed_db, capsys):
         """Empty query shows usage message."""
@@ -186,8 +188,9 @@ class TestSearchSearch:
         captured = capsys.readouterr()
 
         assert result == 1
-        assert "No embeddings index found" in captured.out
-        assert "--index" in captured.out
+        # Human text on stderr keeps stdout clean for --json | jq (I15).
+        assert "No embeddings index found" in captured.err
+        assert "--index" in captured.err
 
     def test_missing_main_db_shows_hint(self, tmp_path, capsys):
         """Missing main database shows helpful message."""

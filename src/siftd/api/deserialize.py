@@ -373,3 +373,43 @@ def from_wire(render_method: str, body: dict[str, Any]) -> Any:
     # No registered deserializer — caller handles the raw dict (e.g. search,
     # stats, tags, raw).
     return body
+
+
+def deserialize_caveats(body: Any) -> list:
+    """Reconstruct caveat Findings from a delegation response envelope (I5).
+
+    Inverse of ``serialization.serve_fmt.serialize_caveats`` (which emits
+    ``asdict(Finding)`` under the envelope's top-level ``caveats`` key). The
+    typed result deserializers above intentionally extract only the result rows
+    and drop this key; this lets delegated callers thread it back so a thin
+    client surfaces the same editorial-honesty caveats (stale index, degraded
+    mode, truncation) that local execution would — without it, every delegated
+    read silently reports ``caveats: []``.
+
+    Defensive by design: non-dict entries are skipped and unknown keys dropped,
+    so a server on a newer ``Finding`` shape degrades to the fields this client
+    knows rather than raising. Returns ``[]`` when the envelope carries none.
+    """
+    if not isinstance(body, dict):
+        return []
+    raw = body.get("caveats")
+    if not isinstance(raw, list):
+        return []
+    import dataclasses
+
+    from siftd.doctor.checks import Finding
+
+    known = {f.name for f in dataclasses.fields(Finding)}
+    required = {"check", "severity", "message", "fix_available"}
+    out: list = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        kwargs = {k: v for k, v in entry.items() if k in known}
+        if not required <= kwargs.keys():
+            continue
+        try:
+            out.append(Finding(**kwargs))
+        except Exception:
+            continue
+    return out

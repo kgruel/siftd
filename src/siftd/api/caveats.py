@@ -109,6 +109,18 @@ def run_producers(op: Operation, result: Any, ctx: ProducerContext) -> list[Find
     - hints: capped at 1
     Assembly order: unknown → errors → warnings → infos (capped + overflow) → hints
     """
+    # I4 — multi-tenant leak guard. Every producer queries the whole DB (corpus
+    # counts, ingest health, FTS / embedding staleness, pending-tag totals); none
+    # are owner-bounded yet. On an owner-scoped request (serve binds `owner` to
+    # the authenticated identity) a scoped tenant would otherwise receive caveats
+    # computed over *every* tenant's data — an operational-metadata leak across
+    # the tenant boundary, the caveat-channel sibling of the I03/I04 read-path
+    # IDOR. Until per-producer owner-scoping lands (deferred post-0.9.0), the only
+    # safe behavior on a scoped request is to emit no caveats. The result rows are
+    # already owner-scoped by execute(op); this blanks only the advisory channel.
+    if op.params.get("owner"):
+        return []
+
     raw: list[Finding] = []
     for spec in _producers:
         if spec.applies_to(op):

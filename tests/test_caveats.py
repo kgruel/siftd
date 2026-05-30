@@ -125,6 +125,48 @@ class TestProducerRegistry:
         # the absence of leak-check in subsequent runs.
 
 
+class TestOwnerScopeSuppression:
+    """I4 — an owner-scoped request suppresses ALL producers.
+
+    Producers query the whole DB and none are owner-bounded yet, so on a
+    multi-tenant serve request (owner bound to the authenticated identity) they
+    would leak whole-corpus aggregates across the tenant boundary. The guard
+    short-circuits before any producer runs.
+    """
+
+    def test_owner_scoped_op_suppresses_all_producers(self):
+        fired = []
+
+        @caveat_producer(kind="leaky", applies_to=lambda op: True)
+        def producer(op, result, ctx):
+            fired.append(True)
+            return [Finding(check="leaky", severity="warning",
+                            message="whole-corpus count", fix_available=False)]
+
+        findings = run_producers(_make_op(params={"owner": "alice"}), [], _make_ctx())
+        assert findings == []
+        # Short-circuited *before* invoking the producer — the whole-DB query
+        # that would leak never runs; this isn't just output filtering.
+        assert fired == []
+
+    def test_unscoped_op_still_runs_producers(self):
+        @caveat_producer(kind="leaky", applies_to=lambda op: True)
+        def producer(op, result, ctx):
+            return [Finding(check="leaky", severity="warning", message="m", fix_available=False)]
+
+        findings = run_producers(_make_op(params={}), [], _make_ctx())
+        assert any(f.check == "leaky" for f in findings)
+
+    def test_falsy_owner_does_not_suppress(self):
+        """auth-off / unscoped (owner None) must keep producing — not over-suppress."""
+        @caveat_producer(kind="leaky", applies_to=lambda op: True)
+        def producer(op, result, ctx):
+            return [Finding(check="leaky", severity="info", message="m", fix_available=False)]
+
+        findings = run_producers(_make_op(params={"owner": None}), [], _make_ctx())
+        assert any(f.check == "leaky" for f in findings)
+
+
 class TestExecuteForRender:
     def test_returns_result_and_findings_tuple(self):
         @caveat_producer(kind="ef-test", applies_to=lambda op: True)

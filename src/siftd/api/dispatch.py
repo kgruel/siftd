@@ -111,6 +111,16 @@ def from_wire(op: Operation, body: dict[str, Any]) -> Any:
     return _from_wire(op.render_method, body)
 
 
+def deserialize_caveats(body: dict[str, Any]) -> list:
+    """Reconstruct caveat Findings from a delegation envelope (I5 wire parity).
+
+    Thin re-export of :func:`siftd.api.deserialize.deserialize_caveats` so
+    delegated CLI callers reach it from the same module as :func:`from_wire`.
+    """
+    from siftd.api.deserialize import deserialize_caveats as _deserialize_caveats
+    return _deserialize_caveats(body)
+
+
 def render(
     result: Any,
     op: Operation,

@@ -58,6 +58,16 @@ class TestParseDate:
         with pytest.raises(ValueError, match="invalid date format"):
             parse_date("2024")
 
+    def test_well_shaped_but_impossible_date_raises(self):
+        """I09: a shaped-but-impossible calendar date must error, not pass through.
+
+        Otherwise it flows into filters as a lexical comparison and silently
+        matches nothing/everything.
+        """
+        for bad in ("2024-13-45", "2024-02-30", "2024-00-00", "2024-01-32"):
+            with pytest.raises(ValueError, match="not a real calendar date"):
+                parse_date(bad)
+
     # Relative date tests (need fixed_today fixture)
 
     @pytest.mark.parametrize(

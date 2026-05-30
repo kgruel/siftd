@@ -28,6 +28,59 @@ def test_dispatch_builds_operation_and_calls_dispatch(monkeypatch, tmp_path):
     assert out["ok"] and out["result"] == {"result": True} and seen["path"] == "/api/v1/x" and seen["method"] == "GET"
 
 
+def test_dispatch_threads_caveats_into_envelope(monkeypatch, tmp_path):
+    """I02: producer findings reach the serve JSON envelope as `caveats`."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class _Finding:
+        check: str
+        severity: str
+        message: str
+
+    monkeypatch.setattr(
+        "siftd.api.dispatch.Operation",
+        lambda **kw: SimpleNamespace(
+            params=kw.get("params", {}), render_method=kw.get("render_method"),
+            render_context={}, fidelity=None,
+        ),
+    )
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: {"result": []})
+    monkeypatch.setattr("siftd.api.dispatch.render", lambda result, op, fmt: {"result": result})
+    monkeypatch.setattr("siftd.api.caveats.ProducerContext", lambda **kw: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        "siftd.api.caveats.run_producers",
+        lambda op, result, ctx: [_Finding("stale-embeddings", "warning", "embeddings are stale")],
+    )
+
+    out = routes._dispatch(
+        "/api/v1/stats", "GET", lambda: None, {"db_path": tmp_path / "db"}, "stats", tmp_path / "db.db",
+    )
+    assert out["caveats"] == [
+        {"check": "stale-embeddings", "severity": "warning", "message": "embeddings are stale"}
+    ]
+
+
+def test_dispatch_no_caveats_leaves_envelope_clean(monkeypatch, tmp_path):
+    """No findings → no caveats key (envelopes stay minimal)."""
+    monkeypatch.setattr(
+        "siftd.api.dispatch.Operation",
+        lambda **kw: SimpleNamespace(
+            params=kw.get("params", {}), render_method=kw.get("render_method"),
+            render_context={}, fidelity=None,
+        ),
+    )
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: {"result": []})
+    monkeypatch.setattr("siftd.api.dispatch.render", lambda result, op, fmt: {"result": result})
+    monkeypatch.setattr("siftd.api.caveats.ProducerContext", lambda **kw: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr("siftd.api.caveats.run_producers", lambda op, result, ctx: [])
+
+    out = routes._dispatch(
+        "/api/v1/stats", "GET", lambda: None, {"db_path": tmp_path / "db"}, "stats", tmp_path / "db.db",
+    )
+    assert "caveats" not in out
+
+
 def test_dispatch_returns_structured_error_on_exception(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.dispatch.Operation", lambda **kw: None)
     def _raise(*_a, **_kw):
@@ -110,6 +163,44 @@ def test_dispatch_query_error_returns_400(monkeypatch, tmp_path):
     out = routes._dispatch("/api/v1/x", "GET", lambda: None, {}, "stats", tmp_path / "db.db")
     assert out.status_code == 400
     assert "Missing template variables" in out.content["error"]
+
+
+def test_event_detail_route_threads_effective_owner(monkeypatch, tmp_path):
+    """I03: the event route must scope reads to the authenticated owner."""
+    seen = {}
+
+    def _fake_get_event(event_id, **kwargs):
+        seen["event_id"] = event_id
+        seen["owner"] = kwargs.get("owner", "MISSING")
+        return None  # -> 404, fine for this wiring check
+
+    monkeypatch.setattr("siftd.api.events.get_event", _fake_get_event)
+    monkeypatch.setattr(routes, "_effective_owner", lambda _req, _o: "alice")
+
+    req = SimpleNamespace(user=SimpleNamespace(sub="alice"))
+    out = _run(routes.event_detail_route.fn(req, "01EVT", tmp_path / "db.db", neighbors=False))
+
+    assert seen["owner"] == "alice", "route must pass the effective owner to get_event"
+    assert out.status_code == 404  # _fake_get_event returned None
+
+
+def test_dispatch_ambiguous_prefix_returns_structured_400(monkeypatch, tmp_path):
+    """I04: AmbiguousPrefix over HTTP keeps matched_ids/total, not just str(e)."""
+    from siftd.api.conversations import AmbiguousPrefix
+
+    monkeypatch.setattr("siftd.api.dispatch.Operation", lambda **kw: None)
+
+    def _raise(*_a, **_kw):
+        raise AmbiguousPrefix("01ABC", ["01ABCDEF0001", "01ABCDEF0002"], 2)
+
+    monkeypatch.setattr("siftd.api.dispatch.execute", _raise)
+    out = routes._dispatch("/api/v1/conversations/{id}", "GET", lambda: None, {}, "detail", tmp_path / "db.db")
+    assert out.status_code == 400
+    assert out.content["kind"] == "ambiguous_prefix"
+    assert out.content["prefix"] == "01ABC"
+    assert out.content["matched_ids"] == ["01ABCDEF0001", "01ABCDEF0002"]
+    assert out.content["total"] == 2
+    assert "error" in out.content  # human message still present
 
 
 def test_tag_write_invalid_json_returns_400(monkeypatch, tmp_path):
@@ -221,8 +312,8 @@ def test_session_queue_tag_route_happy_path(monkeypatch, tmp_path):
     """POST /api/v1/sessions/{id}/tags queues a pending tag and returns the result."""
     import json as json_mod
 
-    from siftd.storage.sessions import get_pending_tags
     from siftd.api import open_database
+    from siftd.storage.sessions import get_pending_tags
 
     db_path = _make_session_db(tmp_path)
 

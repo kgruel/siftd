@@ -336,10 +336,20 @@ def test_cmd_search_index_semantic_and_output_edges(test_db, tmp_path, monkeypat
     monkeypatch.setattr("siftd.cli.search._search_build_index", lambda *a, **k: 0)
     assert cmd_search(make_args(db=str(test_db), index=True)) == 0
 
-    # lines 258-262: semantic requested but embed db missing
+    # lines 258-262: semantic requested but embed db missing — human text on
+    # stderr so stdout stays clean for --json | jq (I15).
     args = make_args(query=["x"], db=str(test_db), semantic=True, embed_db=str(embed))
     assert cmd_search(args) == 1
-    assert "No embeddings index found" in capsys.readouterr().out
+    assert "No embeddings index found" in capsys.readouterr().err
+
+    # I15: with --json, stdout carries a parseable error envelope (not prose),
+    # so `siftd search --semantic q --json | jq` does not abort.
+    import json as _json
+    args = make_args(query=["x"], db=str(test_db), semantic=True, embed_db=str(embed), json=True)
+    assert cmd_search(args) == 1
+    out = capsys.readouterr().out
+    payload = _json.loads(out)
+    assert "error" in payload and "embeddings index" in payload["error"]
 
     # json+mode=thread warning
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])

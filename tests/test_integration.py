@@ -253,8 +253,13 @@ class TestIngestEdgeCases:
         updated_info = get_ingested_file_info(conn, str(src))
         assert updated_info["file_hash"] != original_hash
 
-        # Conversation and tag preserved
-        assert updated_info["conversation_id"] == conv_id
+        # Conversation and tag preserved. The session-strategy file marker now
+        # carries conversation_id=NULL (one file may map to many conversations),
+        # so verify the conversation itself survives, not a file->conversation link.
+        assert updated_info["conversation_id"] is None
+        assert conn.execute(
+            "SELECT 1 FROM conversations WHERE id = ?", (conv_id,)
+        ).fetchone() is not None
         tag_row = conn.execute(
             "SELECT 1 FROM tag_assignments WHERE target_kind='conversation' AND target_id = ? AND tag_id = ?",
             (conv_id, tag_id),
@@ -294,8 +299,10 @@ class TestIngestEdgeCases:
         first = ingest_all(conn, [adapter])
         assert first.files_ingested == 1
         info_before = get_ingested_file_info(conn, str(src))
-        assert info_before["conversation_id"] is not None
+        # Successful ingest = no error recorded + the conversation exists. The
+        # session-strategy marker's conversation_id is NULL by design.
         assert info_before["error"] is None
+        assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 1
 
         # Mutate the file so hash changes (triggers re-parse)
         src.write_text("corrupt data")

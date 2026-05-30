@@ -23,8 +23,15 @@ def stage_payload(
     db_path: Path,
     *,
     source_host: str | None = None,
+    user_id: str | None = None,
+    push_id: str | None = None,
 ) -> dict:
     """Move a push payload into the inbox and record it in sync_inbox.
+
+    ``user_id`` is the pushing identity; it is persisted and replayed into the
+    owner-partitioned merge at process time, so a deferred (staged) push is
+    owner-scoped exactly like the synchronous path. Without it a staged push
+    would merge unscoped and bypass the multi-tenant write-IDOR guard.
 
     Returns a dict with ``id`` and ``status`` suitable for JSON response.
     """
@@ -45,10 +52,10 @@ def stage_payload(
     try:
         conn.execute(
             """INSERT INTO sync_inbox
-               (id, received_at, status, source_host, size_bytes)
-               VALUES (?, ?, 'staged', ?, ?)""",
+               (id, received_at, status, source_host, size_bytes, user_id, push_id)
+               VALUES (?, ?, 'staged', ?, ?, ?, ?)""",
             (payload_id, datetime.now(UTC).isoformat(), source_host,
-             size_bytes),
+             size_bytes, user_id, push_id),
         )
         conn.commit()
     except Exception:
@@ -94,22 +101,37 @@ def process_inbox(db_path: Path) -> list[dict]:
         conn.commit()
 
         rows = conn.execute(
-            "SELECT id FROM sync_inbox WHERE status = 'staged' ORDER BY received_at",
+            "SELECT id, user_id, push_id FROM sync_inbox "
+            "WHERE status = 'staged' ORDER BY received_at",
         ).fetchall()
     finally:
         conn.close()
 
     results: list[dict] = []
-    for (payload_id,) in rows:
+    for payload_id, user_id, push_id in rows:
         payload_path = inbox / f"{payload_id}.db"
-        result = _process_one(db_path, payload_id, payload_path)
+        result = _process_one(
+            db_path, payload_id, payload_path, user_id=user_id, push_id=push_id,
+        )
         results.append(result)
 
     return results
 
 
-def _process_one(db_path: Path, payload_id: str, payload_path: Path) -> dict:
-    """Process a single staged payload. Returns a result dict."""
+def _process_one(
+    db_path: Path,
+    payload_id: str,
+    payload_path: Path,
+    *,
+    user_id: str | None = None,
+    push_id: str | None = None,
+) -> dict:
+    """Process a single staged payload. Returns a result dict.
+
+    ``user_id``/``push_id`` carry the original pusher identity (persisted at
+    stage time) into the owner-partitioned merge, so a deferred push is
+    owner-scoped exactly like the synchronous receive path.
+    """
     now = datetime.now(UTC).isoformat()
 
     # Atomically claim staged payload (avoid double-processing with concurrent processors).
@@ -138,7 +160,10 @@ def _process_one(db_path: Path, payload_id: str, payload_path: Path) -> dict:
     try:
         from siftd.api.receive import receive_database
 
-        result = receive_database(payload_path, db_path, rebuild_fts=True)
+        result = receive_database(
+            payload_path, db_path, rebuild_fts=True,
+            user_id=user_id, push_id=push_id,
+        )
         conversations = result.get("conversations", 0)
 
         _update_status(db_path, payload_id, "done", now,

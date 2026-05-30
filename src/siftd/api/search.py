@@ -935,7 +935,7 @@ def hybrid_search(
     candidate_ids = resolve_candidates(
         db_path,
         workspace=workspace, model=model, since=since, before=before,
-        tag=tag, all_tags=all_tags, no_tag=no_tag,
+        tag=tag, all_tags=all_tags, no_tag=no_tag, tag_kind=tag_kind,
         exclude_active=exclude_active, include_derivative=include_derivative,
         owner=owner,
     )

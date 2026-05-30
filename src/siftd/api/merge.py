@@ -25,6 +25,7 @@ def merge_database(
     replace: bool = True,
     before_commit: Callable[[sqlite3.Connection, dict], None] | None = None,
     preflight: bool = True,
+    user_id: str | None = None,
 ) -> dict:
     """Merge a source database (slice) into the target database.
 
@@ -42,6 +43,12 @@ def merge_database(
             source before merging. Pass False when the caller has already
             run preflight (e.g. receive_database calls merge_database after
             its own preflight check).
+        user_id: Pushing identity. When set (and the target has a
+            ``conversation_owners`` table), the merge is owner-partitioned: it
+            may only insert into / replace conversations the pusher owns or that
+            are unowned. None (single-tenant / SSH) merges unrestricted. This is
+            the multi-tenant write-IDOR guard — without it one client can forge
+            content into, or destroy, another tenant's conversations.
 
     Returns:
         Dict with counts of merged entities.
@@ -88,7 +95,7 @@ def merge_database(
         if dry_run:
             conn.execute("SAVEPOINT merge_dry_run")
 
-        stats = _merge_attached(conn, replace=replace)
+        stats = _merge_attached(conn, replace=replace, user_id=user_id)
 
         # Validate FK integrity before committing (so failures are atomic)
         if not dry_run:
@@ -130,8 +137,17 @@ def merge_database(
     return stats
 
 
-def _merge_attached(conn, *, replace: bool = True) -> dict:
-    """Perform the merge with source attached as 'src'. Returns stats dict."""
+def _merge_attached(conn, *, replace: bool = True, user_id: str | None = None) -> dict:
+    """Perform the merge with source attached as 'src'. Returns stats dict.
+
+    When ``user_id`` is set and the target carries ownership data, the merge is
+    owner-partitioned (multi-tenant write-IDOR guard): every cross-DB write is
+    confined to conversations the pusher owns or that are unowned, so one
+    client cannot inject content into, or destroy, another tenant's threads.
+    When ``user_id`` is None (single-tenant / SSH) the merge is unrestricted —
+    the eligible sets below resolve to "all rows" and behavior is unchanged.
+    """
+    owner_scoped = bool(user_id) and has_conversation_owners_table(conn)
 
     # --- Step 1: Vocabulary ID mapping ---
     conn.execute("""
@@ -173,7 +189,9 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
     replaced_conversations = 0
     replaced_conversation_ids: list[str] = []
     if replace:
-        replaced_conversations, replaced_conversation_ids = _replace_stale_conversations(conn)
+        replaced_conversations, replaced_conversation_ids = _replace_stale_conversations(
+            conn, user_id=user_id, owner_scoped=owner_scoped,
+        )
 
     # --- Step 2: Core tables with FK remapping ---
 
@@ -222,6 +240,27 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
     src_conv_count = conn.execute("SELECT COUNT(*) FROM src.conversations").fetchone()[0]
     skipped_conversations = src_conv_count - new_conversations
 
+    # --- Step 1c: Owner-eligible target sets (multi-tenant write-IDOR guard) ---
+    # Every child-row insert below confines itself to these sets instead of the
+    # whole DB. When owner_scoped, eligible = conversations the pusher owns OR
+    # that are unowned (the just-inserted source conversations are unowned here —
+    # they're stamped to the pusher in receive's before_commit — so the pusher's
+    # own new content lands, while another tenant's owned conversations are
+    # excluded). When not scoped, eligible = all rows, so behavior is unchanged.
+    if owner_scoped:
+        conn.execute(
+            "CREATE TEMP TABLE _eligible_convs AS "
+            "SELECT id AS conversation_id FROM main.conversations "
+            "WHERE id IN (SELECT conversation_id FROM conversation_owners WHERE user_id = ?) "
+            "   OR id NOT IN (SELECT conversation_id FROM conversation_owners)",
+            (user_id,),
+        )
+    else:
+        conn.execute(
+            "CREATE TEMP TABLE _eligible_convs AS "
+            "SELECT id AS conversation_id FROM main.conversations"
+        )
+
     # content_blobs — SHA256 PK, INSERT OR IGNORE handles dedup
     blob_before = conn.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0]
     conn.execute("""
@@ -241,7 +280,7 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
                 (id, kind, conversation_id, parent_id, external_id, timestamp)
             SELECT se.id, se.kind, se.conversation_id, se.parent_id, se.external_id, se.timestamp
             FROM src.events se
-            WHERE se.conversation_id IN (SELECT id FROM main.conversations)
+            WHERE se.conversation_id IN (SELECT conversation_id FROM _eligible_convs)
         """)
         # event_response — remap model_id, provider_id; filter to events that landed in main
         conn.execute("""
@@ -256,7 +295,10 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
             FROM src.event_response ser
             LEFT JOIN _id_map mm ON mm.table_name = 'models' AND mm.source_id = ser.model_id
             LEFT JOIN _id_map pm ON pm.table_name = 'providers' AND pm.source_id = ser.provider_id
-            WHERE ser.event_id IN (SELECT id FROM main.events)
+            WHERE ser.event_id IN (
+                SELECT id FROM main.events
+                WHERE conversation_id IN (SELECT conversation_id FROM _eligible_convs)
+            )
         """)
         # event_tool_call — remap tool_id; filter to events that landed in main
         conn.execute("""
@@ -270,7 +312,10 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
                 setc.status
             FROM src.event_tool_call setc
             LEFT JOIN _id_map tm ON tm.table_name = 'tools' AND tm.source_id = setc.tool_id
-            WHERE setc.event_id IN (SELECT id FROM main.events)
+            WHERE setc.event_id IN (
+                SELECT id FROM main.events
+                WHERE conversation_id IN (SELECT conversation_id FROM _eligible_convs)
+            )
         """)
 
     # --- Step 3: Content + Attribute tables ---
@@ -283,14 +328,20 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
                 (id, event_id, block_index, block_type, content)
             SELECT sec.id, sec.event_id, sec.block_index, sec.block_type, sec.content
             FROM src.event_content sec
-            WHERE sec.event_id IN (SELECT id FROM main.events)
+            WHERE sec.event_id IN (
+                SELECT id FROM main.events
+                WHERE conversation_id IN (SELECT conversation_id FROM _eligible_convs)
+            )
         """)
 
     conn.execute("""
         INSERT OR IGNORE INTO attributes
         SELECT * FROM src.attributes
-        WHERE target_id IN (SELECT id FROM main.conversations)
-           OR target_id IN (SELECT id FROM main.events)
+        WHERE target_id IN (SELECT conversation_id FROM _eligible_convs)
+           OR target_id IN (
+                SELECT id FROM main.events
+                WHERE conversation_id IN (SELECT conversation_id FROM _eligible_convs)
+           )
     """)
 
     # --- Step 4: Tag junction tables (remap tag_id) ---
@@ -324,13 +375,16 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
             LEFT JOIN _id_map ws_map  ON ws_map.table_name  = 'workspaces' AND ws_map.source_id  = sta.target_id
             WHERE
                 (sta.target_kind = 'conversation'
-                 AND sta.target_id IN (SELECT id FROM main.conversations))
+                 AND sta.target_id IN (SELECT conversation_id FROM _eligible_convs))
                 OR
                 (sta.target_kind = 'workspace'
                  AND COALESCE(ws_map.target_id, sta.target_id) IN (SELECT id FROM main.workspaces))
                 OR
                 (sta.target_kind IN ('prompt','response','tool_call','exchange')
-                 AND sta.target_id IN (SELECT id FROM main.events))
+                 AND sta.target_id IN (
+                     SELECT id FROM main.events
+                     WHERE conversation_id IN (SELECT conversation_id FROM _eligible_convs)
+                 ))
         """)
 
     # --- Step 5: content_blobs ref_count ---
@@ -341,8 +395,30 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
         ) WHERE hash IN (SELECT hash FROM src.content_blobs)
     """)
 
+    # --- Step 5b: GC orphan blobs introduced by this merge (D2) ---
+    # content_blobs are copied wholesale (unfiltered) above, but the
+    # event_tool_call rows that reference them are filtered (to landed events,
+    # now also owner-gated). So a blob whose only referrers were skipped (a
+    # dedup'd duplicate conversation, an owner-excluded tenant, or a
+    # non-landing event) ends up with ref_count = 0 and never gets collected:
+    # the AFTER DELETE trigger on event_tool_call only fires for rows that
+    # existed to be deleted. Left alone this leaks one blob per unreferenced
+    # source blob on every overlapping re-push — unbounded growth. Delete the
+    # ones this merge introduced that the recompute just proved unreferenced.
+    # Scoped to src hashes (don't touch pre-existing orphans) and safe under
+    # content-addressing: a future push that needs the blob re-supplies it.
+    conn.execute("""
+        DELETE FROM content_blobs
+        WHERE ref_count = 0
+          AND hash IN (SELECT hash FROM src.content_blobs)
+    """)
+    # Recompute the net blob delta after GC so the stat reflects blobs that
+    # actually landed and are referenced, not transient orphans.
+    blob_after = conn.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0]
+
     # Clean up
     conn.execute("DROP TABLE _id_map")
+    conn.execute("DROP TABLE _eligible_convs")
 
     return {
         "conversations": new_conversations - replaced_conversations,
@@ -356,7 +432,9 @@ def _merge_attached(conn, *, replace: bool = True) -> dict:
     }
 
 
-def _replace_stale_conversations(conn) -> tuple[int, list[str]]:
+def _replace_stale_conversations(
+    conn, *, user_id: str | None = None, owner_scoped: bool = False,
+) -> tuple[int, list[str]]:
     """Delete target conversations that have a newer version in source.
 
     A source conversation is "newer" when it shares the same
@@ -367,12 +445,28 @@ def _replace_stale_conversations(conn) -> tuple[int, list[str]]:
     Deletes the stale conversation and all its children so the subsequent
     INSERT OR IGNORE picks up the source version instead of skipping it.
 
+    When ``owner_scoped`` (multi-tenant push with a known ``user_id``), the
+    stale match is confined to conversations the pusher OWNS or that are
+    UNOWNED. Without this, the match keys purely on the client-controlled
+    ``(harness_id, external_id)``: a hostile client could push a colliding
+    natural key with a newer ULID and DELETE another tenant's conversation
+    (and have the replacement re-stamped to that tenant) — the most reachable
+    write-side multi-tenant IDOR, needing no knowledge of the victim's ULIDs.
+
     Returns (count_replaced, replacement_source_ids) where replacement_source_ids
     are the source conversation IDs that will replace the stale target versions.
     """
     # Find stale target conversations: same natural key, source ULID is newer.
     # ULIDs are lexicographically time-ordered, so id comparison works.
-    stale_rows = conn.execute("""
+    owner_predicate = ""
+    match_params: tuple = ()
+    if owner_scoped:
+        owner_predicate = (
+            " AND (m.id IN (SELECT conversation_id FROM conversation_owners WHERE user_id = ?)"
+            "      OR m.id NOT IN (SELECT conversation_id FROM conversation_owners))"
+        )
+        match_params = (user_id,)
+    stale_rows = conn.execute(f"""
         SELECT m.id AS target_id, s.id AS source_id
         FROM src.conversations s
         JOIN main.conversations m
@@ -381,8 +475,8 @@ def _replace_stale_conversations(conn) -> tuple[int, list[str]]:
                  WHERE im.table_name = 'harnesses' AND im.source_id = s.harness_id),
                 s.harness_id)
             AND m.external_id = s.external_id
-        WHERE s.id > m.id
-    """).fetchall()
+        WHERE s.id > m.id{owner_predicate}
+    """, match_params).fetchall()
 
     if not stale_rows:
         return 0, []
