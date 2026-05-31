@@ -494,19 +494,27 @@ class TestSyncPushHttpWindowing:
         assert result.windows > 1
         assert len(update_calls) == result.windows
 
-    def test_incremental_push_single_post(self, tmp_path, monkeypatch):
-        """Incremental push (effective_since != None) always uses single window."""
+    def test_incremental_push_windows_when_over_cap(self, tmp_path, monkeypatch):
+        """Incremental/resume push windows too — not just full (--all) pushes.
+
+        Windowing used to be gated on ``effective_since is None``, so a delta /
+        resume push sent the whole post-cursor remainder as one un-windowed
+        slice — fragile on slow links and not resumable mid-remainder. It now
+        windows any push whose estimated slice exceeds the cap; the per-conv
+        estimate uses the whole-db ratio (db_size / total convs) so a partial
+        push is sized correctly. (The since-floor on window 0 is covered in
+        test_push_windowing_floor.)
+        """
         db = _make_push_db(tmp_path, n_convs=3)
-        # Tiny cap but incremental push should NOT trigger windowing
+        # Tiny cap forces per-conv windows for the 3-conv delta.
         client = _patch_push_deps(monkeypatch, max_body_size=1,
-                                   responses=[_PostResp(body={"status": "ok"})])
+                                   responses=[_PostResp(body={"status": "ok"})] * 10)
 
         from siftd.api.sync import sync_push
-        # since= overrides to incremental; windowing only gates on effective_since is None
         result = sync_push(db_path=db, remote=_remote(), since="2024-01-01T00:00:00Z")
 
-        assert result.windows == 1
-        assert len(client.post_calls) == 1
+        assert result.windows >= 2
+        assert len(client.post_calls) == result.windows
 
 
 # ---------------------------------------------------------------------------

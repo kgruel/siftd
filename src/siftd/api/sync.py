@@ -579,27 +579,48 @@ def _push_local(remote: SyncRemote, slice_path: Path, db_path: Path) -> bool:
     return True
 
 
+def _count_conversations(db_path: Path) -> int:
+    """Total conversation count, for the whole-db per-conv byte estimate.
+
+    Cheap COUNT(*) used to size windows for a delta push, where the slice file
+    carries only part of the db so ``db_size / len(slice)`` would overestimate.
+    """
+    from siftd.storage import open_database
+
+    conn = open_database(db_path, read_only=True)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+    finally:
+        conn.close()
+
+
 def _derive_date_windows(
     convs: list,
     target_bytes: int,
     bytes_per_conv: float,
+    since_floor: str | None = None,
 ) -> list[tuple[str | None, str | None]]:
     """Split a sorted (oldest-first) conversation list into date-bounded windows.
 
     Each window is sized to fit within target_bytes given the per-conv estimate.
     Returns a list of (since, before) tuples matching the list_conversations semantics
     (since = inclusive lower bound, before = exclusive upper bound).
+
+    ``since_floor`` is the lower bound of the *first* window. For a full push it
+    is None (no floor); for a delta/resume push it is the resolved cursor, so the
+    first window starts at the cursor rather than reaching back before it.
+    Subsequent windows chain via the conv timestamps regardless.
     """
     if not convs:
         return []
     n = len(convs)
     chunk_size = max(1, int(target_bytes / max(bytes_per_conv, 1)))
     if chunk_size >= n:
-        return [(None, None)]
+        return [(since_floor, None)]
     windows: list[tuple[str | None, str | None]] = []
     i = 0
     while i < n:
-        win_since = convs[i].started_at if i > 0 else None
+        win_since = convs[i].started_at if i > 0 else since_floor
         next_i = i + chunk_size
         win_before = convs[next_i].started_at if next_i < n else None
         # Skip windows that would be empty due to boundary-duplicate timestamps
@@ -785,24 +806,40 @@ def _sync_push_http(
     if http_status and http_status.max_body_size is not None:
         target_bytes = int(http_status.max_body_size * _WINDOW_SAFETY)
 
+    # Window any push whose slice would exceed the cap — full OR delta. The
+    # per-conv byte estimate uses the whole-db ratio (db_size / total convs);
+    # the slice file for a delta carries only the post-`since` rows, so the
+    # slice is estimated as that ratio * delta-count and split when it exceeds
+    # target. _post_window_with_bisect corrects any estimate miss via 413
+    # splitting. (Windowing was previously gated to full pushes, so a delta /
+    # resume push sent one un-windowed slice — fragile on slow links and not
+    # resumable mid-remainder.)
     date_windows: list[tuple[str | None, str | None]] = [(effective_since, None)]
-    if effective_since is None and target_bytes is not None:
-        db_size = db_path.stat().st_size
-        if db_size > target_bytes:
-            from painted import Fidelity
+    if target_bytes is not None:
+        from painted import Fidelity
 
-            from siftd.api.conversations import list_conversations
+        from siftd.api.conversations import list_conversations
 
-            all_convs = list(list_conversations(
-                fidelity=Fidelity(),
-                db_path=db_path,
-                n=0,
-                oldest=True,
-                **filters,
-            ))
-            if all_convs:
-                bytes_per_conv = db_size / len(all_convs)
-                date_windows = _derive_date_windows(all_convs, target_bytes, bytes_per_conv)
+        push_convs = list(list_conversations(
+            fidelity=Fidelity(),
+            db_path=db_path,
+            n=0,
+            oldest=True,
+            since=effective_since,
+            **filters,
+        ))
+        if push_convs:
+            db_size = db_path.stat().st_size
+            total_convs = (
+                len(push_convs) if effective_since is None
+                else _count_conversations(db_path)
+            )
+            bytes_per_conv = db_size / max(total_convs, 1)
+            if len(push_convs) * bytes_per_conv > target_bytes:
+                date_windows = _derive_date_windows(
+                    push_convs, target_bytes, bytes_per_conv,
+                    since_floor=effective_since,
+                )
 
     # Dry-run: single slice of everything to report size/count estimate.
     if dry_run:
