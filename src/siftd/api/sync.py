@@ -531,17 +531,15 @@ def _preflight_http(remote: SyncRemote) -> SyncStatus | None:
     """Query receiver capabilities via HTTP. Returns None if unsupported."""
     import httpx
 
-    from siftd.api.auth import AuthError, acquire_token
+    from siftd.api.auth import resolve_sync_bearer
     from siftd.config_sync import get_sync_remote, get_sync_timeouts
 
     remote_cfg = get_sync_remote(remote.name)
     auth = remote_cfg.get("auth") if remote_cfg else None
     headers: dict[str, str] = {}
-    try:
-        token = acquire_token(auth)
+    token, _src = resolve_sync_bearer(auth)
+    if token:
         headers["Authorization"] = f"Bearer {token}"
-    except AuthError:
-        pass
 
     url = remote.path.rstrip("/") + "/api/v1/sync/status"
     connect_timeout, _ = get_sync_timeouts(remote.name, "http")
@@ -653,11 +651,15 @@ def _post_window_with_bisect(
     before: str | None,
     connect_timeout: float,
     command_timeout: float,
+    token_source: str | None = None,
 ) -> tuple[bool, int, int]:
     """Slice a date window, POST it, and bisect on 413.
 
     Returns (remote_existed, conversations, size_bytes).
     Only 413 triggers bisection; other HTTP errors raise SyncError immediately.
+    A 401 on a refreshable ("device-code") token triggers one gated refresh +
+    retry before any bisection, so the refreshed bearer propagates into the
+    recursive sub-window posts (which close over the rebound ``headers``).
     """
     import httpx
 
@@ -680,6 +682,15 @@ def _post_window_with_bisect(
             return True, 0, 0
 
         resp = _push_slice_http(client, url, headers, slice_path)
+
+        if resp.status_code == 401 and token_source:
+            from siftd.api.auth import refresh_bearer_after_401
+
+            rejected = headers.get("Authorization", "").removeprefix("Bearer ")
+            new_token = refresh_bearer_after_401(rejected, token_source) if rejected else None
+            if new_token:
+                headers = {**headers, "Authorization": f"Bearer {new_token}"}
+                resp = _push_slice_http(client, url, headers, slice_path)
 
         if resp.status_code == 413:
             if conversations == 1:
@@ -722,11 +733,11 @@ def _post_window_with_bisect(
                     )
             lo_existed, lo_convs, lo_bytes = _post_window_with_bisect(
                 url, headers, client, db_path, filters, since, mid_ts,
-                connect_timeout, command_timeout,
+                connect_timeout, command_timeout, token_source,
             )
             _, hi_convs, hi_bytes = _post_window_with_bisect(
                 url, headers, client, db_path, filters, mid_ts, before,
-                connect_timeout, command_timeout,
+                connect_timeout, command_timeout, token_source,
             )
             return lo_existed, lo_convs + hi_convs, lo_bytes + hi_bytes
 
@@ -751,7 +762,7 @@ def _sync_push_http(
     """Full HTTP push: preflight, windowing, per-window POST, cursor advance."""
     import httpx
 
-    from siftd.api.auth import AuthError, acquire_token
+    from siftd.api.auth import resolve_sync_bearer
     from siftd.config_sync import get_sync_remote, get_sync_timeouts
 
     http_status = _preflight_http(remote)
@@ -819,11 +830,9 @@ def _sync_push_http(
     remote_cfg = get_sync_remote(remote.name)
     auth = remote_cfg.get("auth") if remote_cfg else None
     headers: dict[str, str] = {}
-    try:
-        token = acquire_token(auth)
+    token, token_source = resolve_sync_bearer(auth)
+    if token:
         headers["Authorization"] = f"Bearer {token}"
-    except AuthError:
-        pass
 
     url = remote.path.rstrip("/") + "/api/v1/push"
     connect_timeout, command_timeout = get_sync_timeouts(remote.name, "http")
@@ -852,6 +861,7 @@ def _sync_push_http(
                 before=win_before,
                 connect_timeout=connect_timeout,
                 command_timeout=command_timeout,
+                token_source=token_source,
             )
             if win_idx == 0:
                 remote_existed = win_existed
@@ -1143,17 +1153,15 @@ def _pull_http(
     """
     import httpx
 
-    from siftd.api.auth import AuthError, acquire_token
+    from siftd.api.auth import resolve_sync_bearer
     from siftd.config_sync import get_sync_remote
 
     remote_cfg = get_sync_remote(remote.name)
     auth = remote_cfg.get("auth") if remote_cfg else None
     headers: dict[str, str] = {}
-    try:
-        token = acquire_token(auth)
+    token, _src = resolve_sync_bearer(auth)
+    if token:
         headers["Authorization"] = f"Bearer {token}"
-    except AuthError:
-        pass
 
     url = remote.path.rstrip("/") + "/api/v1/pull"
     params: dict[str, Any] = {}

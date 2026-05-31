@@ -181,7 +181,6 @@ def _patch_push_deps(monkeypatch, *, max_body_size, responses, update_fn=None):
     Returns the _TrackingClient so callers can inspect post_calls.
     update_fn: optional callable to patch update_last_push with.
     """
-    from siftd.api.auth import AuthError
     from siftd.domain.sync import SYNC_CAPABILITIES
 
     status = SyncStatus(
@@ -191,10 +190,10 @@ def _patch_push_deps(monkeypatch, *, max_body_size, responses, update_fn=None):
     monkeypatch.setattr("siftd.api.sync._preflight_http", lambda remote: status)
     monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: {})
     monkeypatch.setattr("siftd.config_sync.get_sync_timeouts", lambda n, k: (5, 30))
-    monkeypatch.setattr(
-        "siftd.api.auth.acquire_token",
-        lambda *a: (_ for _ in ()).throw(AuthError("no-auth")),
-    )
+    # No client credential in these windowing tests: isolate from any real
+    # [auth] device-code credential on the host (the resolver would otherwise
+    # pick it up and tag it "device-code", firing the gated 401-retry).
+    monkeypatch.setattr("siftd.api.auth.resolve_sync_bearer", lambda auth: (None, None))
     monkeypatch.setattr(
         "siftd.config_sync.update_last_push",
         update_fn if update_fn is not None else (lambda *a, **kw: None),
@@ -214,6 +213,46 @@ def _patch_push_deps(monkeypatch, *, max_body_size, responses, update_fn=None):
 
 class TestSyncPushHttpWindowing:
     """sync_push HTTP path: windowed vs single-POST behavior."""
+
+    def test_push_attaches_auth_bearer_from_auth_namespace(self, tmp_path, monkeypatch):
+        """Regression: device-code push must attach the [auth] credential.
+
+        The push path used to resolve only the per-remote
+        ``[sync.remotes.<name>.auth]`` block; with none configured it sent NO
+        Authorization header (acquire_token(None) → AuthError → swallowed) and
+        the server returned 401. The resolver is now shared with the read path,
+        so an ``[auth]`` device-code credential is attached even without a
+        per-remote auth block. Fails without the shared-resolver fix.
+        """
+        from siftd.domain.sync import SYNC_CAPABILITIES
+
+        db = _make_push_db(tmp_path, n_convs=2)
+
+        status = SyncStatus(capabilities=SYNC_CAPABILITIES, max_body_size=500_000_000)
+        monkeypatch.setattr("siftd.api.sync._preflight_http", lambda remote: status)
+        monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: {})  # no per-remote auth
+        monkeypatch.setattr("siftd.config_sync.get_sync_timeouts", lambda n, k: (5, 30))
+        monkeypatch.setattr("siftd.config_sync.update_last_push", lambda *a, **kw: None)
+        # The [auth] device-code credential is the only token source.
+        monkeypatch.delenv("SIFTD_SERVE_TOKEN", raising=False)
+        monkeypatch.delenv("SIFTD_SERVE_DELEGATION_TOKEN", raising=False)
+        monkeypatch.setattr("siftd.api.auth.configured_issuer", lambda: "https://idp.example/")
+        monkeypatch.setattr("siftd.credentials.resolve_live_bearer", lambda issuer: "DEVTOKEN")
+
+        client = _TrackingClient([_PostResp(body={"status": "created"})])
+        fake_httpx = SimpleNamespace(
+            Client=lambda **kw: client,
+            Timeout=lambda **kw: None,
+            HTTPStatusError=_real_httpx.HTTPStatusError,
+            ConnectError=_real_httpx.ConnectError,
+        )
+        monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
+
+        from siftd.api.sync import sync_push
+        sync_push(db_path=db, remote=_remote())
+
+        assert len(client.post_calls) == 1
+        assert client.post_calls[0]["headers"].get("Authorization") == "Bearer DEVTOKEN"
 
     def test_steady_state_single_post(self, tmp_path, monkeypatch):
         """When full DB fits within the advertised cap, exactly 1 POST is made."""
@@ -349,7 +388,6 @@ class TestSyncPushHttpWindowing:
     def test_resume_after_partial_seed(self, tmp_path, monkeypatch):
         """A connection error mid-seed leaves the cursor at the last completed window;
         a rerun picks up from the cursor without re-pushing confirmed windows."""
-        from siftd.api.auth import AuthError
         from siftd.domain.sync import SYNC_CAPABILITIES
 
         db = _make_push_db(tmp_path, n_convs=4)  # 4 convs at day-apart timestamps
@@ -357,10 +395,7 @@ class TestSyncPushHttpWindowing:
         # Common patches that persist across both runs
         monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: {})
         monkeypatch.setattr("siftd.config_sync.get_sync_timeouts", lambda n, k: (5, 30))
-        monkeypatch.setattr(
-            "siftd.api.auth.acquire_token",
-            lambda *a: (_ for _ in ()).throw(AuthError("no-auth")),
-        )
+        monkeypatch.setattr("siftd.api.auth.resolve_sync_bearer", lambda auth: (None, None))
 
         class _PartialClient:
             """Succeeds for `succeed` POSTs then raises ConnectError."""

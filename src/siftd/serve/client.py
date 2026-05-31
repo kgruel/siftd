@@ -69,60 +69,25 @@ def _conn(target: ServeTarget, timeout_s: float):
 
 
 def _configured_issuer() -> str | None:
-    """Return the client-side acquisition issuer ([auth].issuer), or None."""
-    try:
-        from siftd.config import get_config
+    """Return the client-side acquisition issuer ([auth].issuer), or None.
 
-        return get_config("auth.issuer") or None
-    except Exception:
-        return None
+    Thin shim over the shared resolver in ``api.auth`` (single source of truth
+    for client-side token acquisition across reads and writes).
+    """
+    from siftd.api.auth import configured_issuer
+
+    return configured_issuer()
 
 
 def _resolve_bearer_token() -> tuple[str | None, str | None]:
     """Resolve a bearer token and its source for serve delegation.
 
-    The CLIENT acquires tokens only from the ``[auth]`` namespace; it never reads
-    ``serve.auth.*`` (which is the SERVER's validation config). Precedence, with
-    the source tag returned alongside the token:
-
-    1) Env var SIFTD_SERVE_TOKEN, then SIFTD_SERVE_DELEGATION_TOKEN  -> "env"
-    2) Device-code credential (`siftd auth login`) via [auth].issuer,
-       proactively refreshed when near expiry                       -> "device-code"
-    3) Static [auth].token reference (env:/file:/literal)            -> "static"
-
-    Returns ``(None, None)`` when nothing resolves. Only "device-code" is
-    refreshable — the reactive 401 retry keys off this tag, so an env/static
-    token that gets a 401 is never swapped for an unrelated device credential.
+    Thin shim over ``api.auth.resolve_client_bearer`` — the same resolver the
+    sync push/pull path uses, so a single ``[auth]`` credential serves both.
     """
-    env = os.environ.get("SIFTD_SERVE_TOKEN") or os.environ.get("SIFTD_SERVE_DELEGATION_TOKEN")
-    if env:
-        return env, "env"
+    from siftd.api.auth import resolve_client_bearer
 
-    issuer = _configured_issuer()
-    if issuer:
-        try:
-            from siftd.credentials import resolve_live_bearer
-
-            token = resolve_live_bearer(issuer)
-            if token:
-                return token, "device-code"
-        except Exception:
-            pass  # never let acquisition break the read path
-
-    try:
-        from siftd.config import get_config
-    except Exception:
-        return None, None
-
-    ref = get_config("auth.token")
-    if not ref:
-        return None, None
-    try:
-        from siftd.credentials import resolve_token_ref
-
-        return resolve_token_ref(str(ref)), "static"
-    except Exception:
-        return None, None  # unresolvable static ref → no token, never break the read path
+    return resolve_client_bearer()
 
 
 def _send(target: ServeTarget, method: str, full_path: str,
@@ -159,18 +124,13 @@ def _send_authed(target: ServeTarget, method: str, full_path: str, *,
 
     status, raw = _send(target, method, full_path, headers, body, timeout_s)
 
-    if status == 401 and token and source == "device-code":
-        issuer = _configured_issuer()
-        if issuer:
-            try:
-                from siftd.credentials import refresh_after_rejection
+    if status == 401 and token and source:
+        from siftd.api.auth import refresh_bearer_after_401
 
-                new_token = refresh_after_rejection(issuer, token)
-            except Exception:
-                new_token = None
-            if new_token and new_token != token:
-                headers["Authorization"] = f"Bearer {new_token}"
-                status, raw = _send(target, method, full_path, headers, body, timeout_s)
+        new_token = refresh_bearer_after_401(token, source)
+        if new_token:
+            headers["Authorization"] = f"Bearer {new_token}"
+            status, raw = _send(target, method, full_path, headers, body, timeout_s)
     return status, raw
 
 
