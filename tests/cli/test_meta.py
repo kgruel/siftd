@@ -160,7 +160,7 @@ def test_cmd_workspaces_and_status(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Database:" in out and "Embeddings:" in out
 
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [{"path": "/w", "convs": 2, "last_activity": "2024-01-01"}])
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [{"id": "01HWS", "path": "/w", "git_remote": None, "convs": 2, "last_activity": "2024-01-01"}])
     assert cmd_workspaces(_args(json=True, db=str(tmp_path / "db.sqlite"), limit=5)) == 0
 
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])

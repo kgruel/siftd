@@ -37,7 +37,13 @@ def render_workspaces(rows: list, fidelity: Fidelity) -> dict:
     """Serialize workspace rows to JSON-safe dict."""
     return {
         "workspaces": [
-            {"path": r["path"], "conversations": r["convs"], "last_activity": r["last_activity"]}
+            {
+                "id": r["id"],
+                "path": r["path"],
+                "git_remote": r["git_remote"],
+                "conversations": r["convs"],
+                "last_activity": r["last_activity"],
+            }
             for r in rows
         ]
     }

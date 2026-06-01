@@ -210,7 +210,10 @@ def list_workspaces(
         db_path: Path to database. Ignored if conn provided.
 
     Returns:
-        Rows with 'path' and 'convs' keys.
+        Rows with 'id' (workspace ULID), 'path', 'git_remote', 'convs', and
+        'last_activity' keys. The ULID 'id' is the workspace's stable identity
+        (workspaces.id) — the read API addresses workspaces by it, not by the
+        slash-containing path.
     """
     should_close = False
     if conn is None:

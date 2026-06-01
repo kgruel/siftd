@@ -239,7 +239,13 @@ def cmd_workspaces(args) -> int:
         return 1
     if result is not None and isinstance(result, dict) and "workspaces" in result:
         rows = [
-            {"path": w["path"], "convs": w["conversations"], "last_activity": w.get("last_activity")}
+            {
+                "id": w.get("id"),
+                "path": w["path"],
+                "git_remote": w.get("git_remote"),
+                "convs": w["conversations"],
+                "last_activity": w.get("last_activity"),
+            }
             for w in result["workspaces"]
         ]
 
@@ -257,7 +263,9 @@ def cmd_workspaces(args) -> int:
     if args.json:
         out = [
             {
+                "id": row["id"],
                 "path": row["path"],
+                "git_remote": row["git_remote"],
                 "conversations": row["convs"],
                 "last_activity": row["last_activity"],
             }

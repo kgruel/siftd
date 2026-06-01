@@ -1024,7 +1024,7 @@ def list_workspaces(conn: sqlite3.Connection | None = ..., n: int = ..., *, db_p
 - `conn`: Database connection. Opened from db_path if not provided.
 - `n`: Maximum workspaces to return.
 
-**Returns:** Rows with 'path' and 'convs' keys.
+**Returns:** Rows with 'id' (workspace ULID), 'path', 'git_remote', 'convs', and 'last_activity' keys. The ULID 'id' is the workspace's stable identity (workspaces.id) — the read API addresses workspaces by it, not by the slash-containing path.
 
 ### stats_cache_path
 
