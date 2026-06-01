@@ -814,6 +814,16 @@ def workspace_detail(
             "SELECT COUNT(*) FROM conversations c WHERE c.workspace_id = ?" + conv_owner,
             [workspace_id, *owner_params],
         ).fetchone()[0]
+
+        # Cross-tenant read IDOR guard: an owner-scoped caller may only see a
+        # workspace they actually participate in. Sibling fetch_top_workspaces
+        # makes a workspace visible iff the owner owns >=1 conversation there;
+        # mirror that here so a foreign workspace ULID returns None (404 at the
+        # route) instead of leaking the workspace's path + private git_remote.
+        # owner=None (single-tenant/local) stays fully unscoped.
+        if owner and sessions == 0:
+            return None
+
         cost = 0.0
         has_stats = conn.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
@@ -832,7 +842,7 @@ def workspace_detail(
         conn.close()
 
     recent = list_conversations(
-        fidelity=fidelity, db_path=path, workspace=ws["path"], owner=owner, n=recent_n,
+        fidelity=fidelity, db_path=path, workspace_id=ws["id"], owner=owner, n=recent_n,
     )
     return WorkspaceDetail(
         id=ws["id"],

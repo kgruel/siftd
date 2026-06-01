@@ -208,6 +208,7 @@ def list_conversations(
     fidelity: Fidelity,
     db_path: Path | None = None,
     workspace: str | None = None,
+    workspace_id: str | None = None,
     model: str | None = None,
     since: str | None = None,
     before: str | None = None,
@@ -232,6 +233,8 @@ def list_conversations(
             its cost column is precomputed.
         db_path: Path to database. Uses default if not specified.
         workspace: Filter by workspace path substring.
+        workspace_id: Filter by exact workspace ULID (workspaces.id); distinct
+            from ``workspace`` path/remote substring.
         model: Filter by model name substring.
         since: Filter conversations started after this date (ISO format).
         before: Filter conversations started before this date.
@@ -262,7 +265,7 @@ def list_conversations(
 
     conn = open_database(db, read_only=True)
     try:
-        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest, fidelity, owner, tag_kind)
+        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest, fidelity, owner, tag_kind, workspace_id)
     finally:
         conn.close()
 
@@ -284,6 +287,7 @@ def _list_conversations_impl(
     fidelity: Fidelity,
     owner: str | None = None,
     tag_kind: list[str] | None = None,
+    workspace_id: str | None = None,
 ) -> list[ConversationSummary]:
     """Implementation of list_conversations with connection already open."""
     # Check if pricing table exists
@@ -292,6 +296,7 @@ def _list_conversations_impl(
     # Build WHERE clauses
     wb = WhereBuilder()
     wb.workspace(workspace)
+    wb.workspace_id(workspace_id)
     wb.model(model)
     wb.since(since)
     wb.before(before)

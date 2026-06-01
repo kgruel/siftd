@@ -98,6 +98,18 @@ class WhereBuilder:
             self.require_join("w")
             self.add("(w.path LIKE ? OR w.git_remote LIKE ?)", f"%{value}%", f"%{value}%")
 
+    def workspace_id(self, value: str | None) -> None:
+        """Filter by exact workspace ULID.
+
+        Distinct from :meth:`workspace` (a path/remote substring match):
+        ``workspace_id`` matches the ``conversations.workspace_id`` column
+        exactly, so a substring like ``/foo`` cannot bleed in conversations
+        from ``/foo-bar``. No join needed — ``workspace_id`` is a column on
+        ``conversations c``.
+        """
+        if value:
+            self.add("c.workspace_id = ?", value)
+
     def model(self, value: str | None) -> None:
         if value:
             self.add(
