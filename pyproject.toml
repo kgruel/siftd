@@ -24,6 +24,11 @@ dependencies = [
     "asyncssh",
     "painted>=0.1.7",
     "tomlkit",
+    # Client-side HTTP: sync push/pull, serve delegation, and device-code token
+    # refresh all need an HTTP client. In base (not [serve]) so a thin client
+    # talking to a remote siftd-serve works without the server stack. Pure-Python
+    # dependency chain (httpcore/h11/certifi/idna/sniffio) — no compiled deps.
+    "httpx",
 ]
 
 [project.scripts]
@@ -40,7 +45,10 @@ embed = [
 serve = [
     "litestar[standard]",
     "uvicorn",
-    "httpx",
+    # PyJWT[crypto] is server-only: serve/auth.py validates RS256 tokens against
+    # the issuer's JWKS. The client never decodes JWTs (credentials.py reads the
+    # exp claim with a hand-rolled base64 parse, no PyJWT), so the cryptography
+    # chain stays out of the base install. httpx moved to base deps.
     "PyJWT[crypto]",
     "mistune>=3.0",
 ]

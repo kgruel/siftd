@@ -34,7 +34,7 @@ Extended adapter information for display/reporting.
 List all discovered adapters from all sources.
 
 ```python
-def list_adapters(*, dropin_path: pathlib._local.Path | None = ...) -> list[AdapterInfo]
+def list_adapters(*, dropin_path: pathlib.Path | None = ...) -> list[AdapterInfo]
 ```
 
 **Returns:** List of AdapterInfo for all discovered adapters.
@@ -96,7 +96,7 @@ def list_checks() -> list[CheckInfo]
 Run health checks and return findings.
 
 ```python
-def run_checks(*, checks: list[str] | None = ..., db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., deep: bool = ..., fast: bool = ..., on_check_done: object | None = ...) -> list[Finding]
+def run_checks(*, checks: list[str] | None = ..., db_path: pathlib.Path | None = ..., embed_db_path: pathlib.Path | None = ..., deep: bool = ..., fast: bool = ..., on_check_done: object | None = ...) -> list[Finding]
 ```
 
 **Parameters:**
@@ -169,7 +169,7 @@ Session metadata for list display.
 Find a session file by ID prefix match.
 
 ```python
-def find_session_file(session_id_prefix: str) -> pathlib._local.Path | None
+def find_session_file(session_id_prefix: str) -> pathlib.Path | None
 ```
 
 **Returns:** Path to the matching file, or None if not found.
@@ -351,7 +351,7 @@ def get_recent_conversation_ids(conn: Connection, limit: int, *, owner: str | No
 List conversations with optional filtering.
 
 ```python
-def list_conversations(*, fidelity: Fidelity, db_path: pathlib._local.Path | None = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., tool: str | None = ..., tag: str | list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., tool_tag: str | None = ..., n: int = ..., oldest: bool = ..., owner: str | None = ...) -> list[ConversationSummary]
+def list_conversations(*, fidelity: Fidelity, db_path: pathlib.Path | None = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., tool: str | None = ..., tag: str | list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., tool_tag: str | None = ..., n: int = ..., oldest: bool = ..., owner: str | None = ...) -> list[ConversationSummary]
 ```
 
 **Parameters:**
@@ -383,7 +383,7 @@ def list_conversations(*, fidelity: Fidelity, db_path: pathlib._local.Path | Non
 Get full conversation detail by ID.
 
 ```python
-def get_conversation(id: str, *, fidelity: Fidelity, db_path: pathlib._local.Path | None = ..., tool_filter: str | None = ..., owner: str | None = ..., anchor: str | None = ..., anchor_value: int | str | None = ..., window_start: int | None = ..., window_end: int | None = ...) -> siftd.api.conversations.ConversationDetail | None
+def get_conversation(id: str, *, fidelity: Fidelity, db_path: pathlib.Path | None = ..., tool_filter: str | None = ..., owner: str | None = ..., anchor: str | None = ..., anchor_value: int | str | None = ..., window_start: int | None = ..., window_end: int | None = ...) -> siftd.api.conversations.ConversationDetail | None
 ```
 
 **Parameters:**
@@ -450,7 +450,7 @@ def list_query_files() -> list[QueryFile]
 Run a user-defined SQL query file.
 
 ```python
-def run_query_file(name: str, variables: dict[str, str] | None = ..., *, db_path: pathlib._local.Path | None = ...) -> QueryResult
+def run_query_file(name: str, variables: dict[str, str] | None = ..., *, db_path: pathlib.Path | None = ...) -> QueryResult
 ```
 
 **Parameters:**
@@ -540,7 +540,7 @@ Error copying a resource.
 Copy a built-in adapter to the config directory for customization.
 
 ```python
-def copy_adapter(name: str, *, dest_dir: pathlib._local.Path | None = ..., force: bool = ...) -> Path
+def copy_adapter(name: str, *, dest_dir: pathlib.Path | None = ..., force: bool = ...) -> Path
 ```
 
 **Parameters:**
@@ -559,7 +559,7 @@ def copy_adapter(name: str, *, dest_dir: pathlib._local.Path | None = ..., force
 Copy a built-in formatter to the config directory for customization.
 
 ```python
-def copy_formatter(name: str, *, dest_dir: pathlib._local.Path | None = ..., force: bool = ...) -> Path
+def copy_formatter(name: str, *, dest_dir: pathlib.Path | None = ..., force: bool = ...) -> Path
 ```
 
 **Parameters:**
@@ -578,7 +578,7 @@ def copy_formatter(name: str, *, dest_dir: pathlib._local.Path | None = ..., for
 Copy a built-in query to the config directory for customization.
 
 ```python
-def copy_query(name: str, *, dest_dir: pathlib._local.Path | None = ..., force: bool = ...) -> Path
+def copy_query(name: str, *, dest_dir: pathlib.Path | None = ..., force: bool = ...) -> Path
 ```
 
 **Parameters:**
@@ -708,7 +708,7 @@ Conversation-level aggregate derived from chunk results.
 Canonical entry point for retrieving search chunks.
 
 ```python
-def search_chunks(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ..., raw_fts: bool = ...) -> list[SearchChunk]
+def search_chunks(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ..., raw_fts: bool = ...) -> list[SearchChunk]
 ```
 
 ### hybrid_search
@@ -716,7 +716,7 @@ def search_chunks(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None
 Unified search pipeline — FTS5, semantic, or hybrid.
 
 ```python
-def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib._local.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., raw_fts: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ...) -> list[SearchChunk]
+def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., raw_fts: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ...) -> list[SearchChunk]
 ```
 
 **Parameters:**
@@ -820,7 +820,7 @@ def embeddings_available() -> bool
 Find chronologically earliest result above relevance threshold.
 
 ```python
-def first_mention(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]], *, threshold: float = ..., db_path: pathlib._local.Path | None = ...) -> siftd.domain.search_types.SearchChunk | dict[str, Any] | None
+def first_mention(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]], *, threshold: float = ..., db_path: pathlib.Path | None = ...) -> siftd.domain.search_types.SearchChunk | dict[str, Any] | None
 ```
 
 **Parameters:**
@@ -835,7 +835,7 @@ def first_mention(results: list[siftd.domain.search_types.SearchChunk] | list[di
 Build or update the embeddings index.
 
 ```python
-def build_index(*, db_path: pathlib._local.Path | None = ..., embed_db_path: pathlib._local.Path | None = ..., rebuild: bool = ..., backend: str | None = ..., verbose: bool = ...) -> dict
+def build_index(*, db_path: pathlib.Path | None = ..., embed_db_path: pathlib.Path | None = ..., rebuild: bool = ..., backend: str | None = ..., verbose: bool = ...) -> dict
 ```
 
 **Parameters:**
@@ -962,7 +962,7 @@ Tool with usage count.
 Get cost coverage statistics from conversation_stats.
 
 ```python
-def get_cost_coverage(conn: sqlite3.Connection | None = ..., *, db_path: pathlib._local.Path | None = ...) -> siftd.api.stats.CostCoverage | None
+def get_cost_coverage(conn: sqlite3.Connection | None = ..., *, db_path: pathlib.Path | None = ...) -> siftd.api.stats.CostCoverage | None
 ```
 
 ### get_stats
@@ -970,7 +970,7 @@ def get_cost_coverage(conn: sqlite3.Connection | None = ..., *, db_path: pathlib
 Get comprehensive database statistics.
 
 ```python
-def get_stats(*, db_path: pathlib._local.Path | None = ..., owner: str | None = ...) -> DatabaseStats
+def get_stats(*, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> DatabaseStats
 ```
 
 **Returns:** DatabaseStats with counts, harnesses, workspaces, models, tools.
@@ -984,7 +984,7 @@ def get_stats(*, db_path: pathlib._local.Path | None = ..., owner: str | None = 
 Get token/cost breakdown grouped by model.
 
 ```python
-def get_usage_by_model(*, db_path: pathlib._local.Path | None = ...) -> list[GroupUsage]
+def get_usage_by_model(*, db_path: pathlib.Path | None = ...) -> list[GroupUsage]
 ```
 
 ### get_usage_by_workspace
@@ -992,7 +992,7 @@ def get_usage_by_model(*, db_path: pathlib._local.Path | None = ...) -> list[Gro
 Get token/cost breakdown grouped by workspace.
 
 ```python
-def get_usage_by_workspace(*, db_path: pathlib._local.Path | None = ...) -> list[GroupUsage]
+def get_usage_by_workspace(*, db_path: pathlib.Path | None = ...) -> list[GroupUsage]
 ```
 
 ### get_usage_summary
@@ -1000,7 +1000,7 @@ def get_usage_by_workspace(*, db_path: pathlib._local.Path | None = ...) -> list
 Get aggregate token/cost totals across all conversations.
 
 ```python
-def get_usage_summary(*, db_path: pathlib._local.Path | None = ...) -> UsageSummary
+def get_usage_summary(*, db_path: pathlib.Path | None = ...) -> UsageSummary
 ```
 
 ### dict_to_stats
@@ -1016,7 +1016,7 @@ def dict_to_stats(data: dict) -> DatabaseStats
 List workspaces with conversation counts.
 
 ```python
-def list_workspaces(conn: sqlite3.Connection | None = ..., n: int = ..., *, db_path: pathlib._local.Path | None = ..., owner: str | None = ...) -> list[Row]
+def list_workspaces(conn: sqlite3.Connection | None = ..., n: int = ..., *, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> list[Row]
 ```
 
 **Parameters:**
@@ -1047,7 +1047,7 @@ def write_stats_cache(stats: DatabaseStats) -> None
 Read cached stats if the cache exists and is fresh.
 
 ```python
-def read_stats_cache(*, db_path: pathlib._local.Path | None = ...) -> siftd.api.stats.DatabaseStats | None
+def read_stats_cache(*, db_path: pathlib.Path | None = ...) -> siftd.api.stats.DatabaseStats | None
 ```
 
 ## Export
@@ -1087,7 +1087,7 @@ A conversation prepared for export.
 Export conversations matching the specified criteria.
 
 ```python
-def export_conversations(*, fidelity: Fidelity, id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib._local.Path | None = ..., owner: str | None = ...) -> list[ExportedConversation]
+def export_conversations(*, fidelity: Fidelity, id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib.Path | None = ..., owner: str | None = ...) -> list[ExportedConversation]
 ```
 
 ### export_document
@@ -1095,7 +1095,7 @@ def export_conversations(*, fidelity: Fidelity, id: list[str] | None = ..., last
 Export conversations as a complete document.
 
 ```python
-def export_document(*, fidelity: Fidelity, format: str = ..., no_header: bool = ..., id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib._local.Path | None = ..., owner: str | None = ...) -> ExportArtifact
+def export_document(*, fidelity: Fidelity, format: str = ..., no_header: bool = ..., id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib.Path | None = ..., owner: str | None = ...) -> ExportArtifact
 ```
 
 **Parameters:**
@@ -1232,6 +1232,7 @@ Result of a push operation.
 | `remote_existed` | `bool` |  |
 | `dry_run` | `bool` |  |
 | `last_push_updated` | `bool` |  |
+| `windows` | `int` |  |
 
 ### SyncRemote
 
@@ -1319,7 +1320,7 @@ def backup_database(source_path: Path, target_path: Path) -> None
 Create or open a database, running migrations.
 
 ```python
-def create_database(db_path: pathlib._local.Path | None = ...) -> Connection
+def create_database(db_path: pathlib.Path | None = ...) -> Connection
 ```
 
 **Returns:** An open sqlite3.Connection with schema initialized.
@@ -1329,7 +1330,7 @@ def create_database(db_path: pathlib._local.Path | None = ...) -> Connection
 Open a database connection.
 
 ```python
-def open_database(db_path: pathlib._local.Path | None = ..., *, read_only: bool = ..., auto_upgrade: bool = ...) -> Connection
+def open_database(db_path: pathlib.Path | None = ..., *, read_only: bool = ..., auto_upgrade: bool = ...) -> Connection
 ```
 
 **Parameters:**
@@ -1428,7 +1429,7 @@ def get_or_create_tag(conn: Connection, name: str, description: str | None = ...
 List all tags with usage counts.
 
 ```python
-def list_tags(db_path: pathlib._local.Path | None = ..., conn: sqlite3.Connection | None = ..., *, since: str | None = ..., before: str | None = ..., owner: str | None = ...) -> list[TagInfo]
+def list_tags(db_path: pathlib.Path | None = ..., conn: sqlite3.Connection | None = ..., *, since: str | None = ..., before: str | None = ..., owner: str | None = ...) -> list[TagInfo]
 ```
 
 **Parameters:**
@@ -1469,7 +1470,7 @@ def remove_tag(conn: Connection, entity_type: str, entity_id: str, tag_id: str, 
 Rename a tag.
 
 ```python
-def rename_tag(old_name: str = ..., new_name: str = ..., *, conn: sqlite3.Connection | None = ..., db_path: pathlib._local.Path | None = ..., commit: bool = ...) -> bool
+def rename_tag(old_name: str = ..., new_name: str = ..., *, conn: sqlite3.Connection | None = ..., db_path: pathlib.Path | None = ..., commit: bool = ...) -> bool
 ```
 
 **Parameters:**
@@ -1490,7 +1491,7 @@ def rename_tag(old_name: str = ..., new_name: str = ..., *, conn: sqlite3.Connec
 Get a single event by ID (full or prefix).
 
 ```python
-def get_event(id: str, *, db_path: pathlib._local.Path | None = ..., conn: sqlite3.Connection | None = ..., include_content: bool = ..., include_neighbors: bool = ...) -> siftd.api.events.EventDetail | None
+def get_event(id: str, *, db_path: pathlib.Path | None = ..., conn: sqlite3.Connection | None = ..., include_content: bool = ..., include_neighbors: bool = ..., owner: str | None = ...) -> siftd.api.events.EventDetail | None
 ```
 
 **Parameters:**
@@ -1499,6 +1500,7 @@ def get_event(id: str, *, db_path: pathlib._local.Path | None = ..., conn: sqlit
 - `db_path`: Path to database. Uses default if not specified.
 - `conn`: Optional existing read-only connection. Caller retains ownership; if provided, db_path is ignored. Useful to avoid a second open after a smart-route probe.
 - `include_content`: Include `content_blocks`. Default True.
+- `include_neighbors`: Include `neighbors` (opt-in for cost). Default False.
 
 **Returns:** EventDetail or None if no event matches.
 
@@ -1543,7 +1545,7 @@ def record_push_log(*, db_path: Path, identity: str, conversations: int, size_by
 Merge a source database (slice) into the target database.
 
 ```python
-def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..., dry_run: bool = ..., replace: bool = ..., before_commit: collections.abc.Callable[[sqlite3.Connection, dict], None] | None = ..., preflight: bool = ...) -> dict
+def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..., dry_run: bool = ..., replace: bool = ..., before_commit: collections.abc.Callable[[sqlite3.Connection, dict], None] | None = ..., preflight: bool = ..., user_id: str | None = ...) -> dict
 ```
 
 **Parameters:**
@@ -1554,6 +1556,7 @@ def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..
 - `dry_run`: If True, compute counts but roll back all changes.
 - `replace`: If True (default), replace stale conversations with newer versions from the source. If False, keep existing versions.
 - `before_commit`: Optional callback(conn, stats) invoked after merge but before commit.  Runs in the same transaction as the merge, so any writes are atomic with the merge itself.
+- `preflight`: If True (default), run structural integrity checks on the source before merging. Pass False when the caller has already run preflight (e.g. receive_database calls merge_database after its own preflight check).
 
 **Returns:** Dict with counts of merged entities.
 

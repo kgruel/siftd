@@ -1458,6 +1458,7 @@ version = "0.8.1"
 source = { editable = "." }
 dependencies = [
     { name = "asyncssh" },
+    { name = "httpx" },
     { name = "painted" },
     { name = "tomlkit" },
 ]
@@ -1483,7 +1484,6 @@ embed = [
     { name = "tokenizers" },
 ]
 serve = [
-    { name = "httpx" },
     { name = "litestar", extra = ["standard"] },
     { name = "mistune" },
     { name = "pyjwt", extra = ["crypto"] },
@@ -1496,7 +1496,7 @@ requires-dist = [
     { name = "chardet", marker = "extra == 'dev'", specifier = "<6" },
     { name = "diff-cover", marker = "extra == 'dev'" },
     { name = "fastembed", marker = "extra == 'embed'" },
-    { name = "httpx", marker = "extra == 'serve'" },
+    { name = "httpx" },
     { name = "huggingface-hub", marker = "extra == 'embed'" },
     { name = "litestar", extras = ["standard"], marker = "extra == 'serve'" },
     { name = "mistune", marker = "extra == 'serve'", specifier = ">=3.0" },
