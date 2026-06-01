@@ -962,7 +962,7 @@ Tool with usage count.
 Get cost coverage statistics from conversation_stats.
 
 ```python
-def get_cost_coverage(conn: sqlite3.Connection | None = ..., *, db_path: pathlib.Path | None = ...) -> siftd.api.stats.CostCoverage | None
+def get_cost_coverage(conn: sqlite3.Connection | None = ..., *, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> siftd.api.stats.CostCoverage | None
 ```
 
 ### get_stats
@@ -984,7 +984,7 @@ def get_stats(*, db_path: pathlib.Path | None = ..., owner: str | None = ...) ->
 Get token/cost breakdown grouped by model.
 
 ```python
-def get_usage_by_model(*, db_path: pathlib.Path | None = ...) -> list[GroupUsage]
+def get_usage_by_model(*, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> list[GroupUsage]
 ```
 
 ### get_usage_by_workspace
@@ -992,7 +992,7 @@ def get_usage_by_model(*, db_path: pathlib.Path | None = ...) -> list[GroupUsage
 Get token/cost breakdown grouped by workspace.
 
 ```python
-def get_usage_by_workspace(*, db_path: pathlib.Path | None = ...) -> list[GroupUsage]
+def get_usage_by_workspace(*, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> list[GroupUsage]
 ```
 
 ### get_usage_summary
@@ -1000,7 +1000,7 @@ def get_usage_by_workspace(*, db_path: pathlib.Path | None = ...) -> list[GroupU
 Get aggregate token/cost totals across all conversations.
 
 ```python
-def get_usage_summary(*, db_path: pathlib.Path | None = ...) -> UsageSummary
+def get_usage_summary(*, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> UsageSummary
 ```
 
 ### dict_to_stats

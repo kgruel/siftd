@@ -136,6 +136,7 @@ def get_cost_coverage(
     conn: sqlite3.Connection | None = None,
     *,
     db_path: Path | None = None,
+    owner: str | None = None,
 ) -> CostCoverage | None:
     """Get cost coverage statistics from conversation_stats.
 
@@ -145,7 +146,11 @@ def get_cost_coverage(
     that have a positive computed cost (cost > 0).  Conversations with NULL cost
     have no pricing data available; conversations with cost = 0.0 have tokens
     but were priced at zero (indicates stale stats — run siftd ingest to rebuild).
+
+    When ``owner`` is set, scoped to conversations owned by that user_id;
+    ``owner=None`` is unscoped, the single-tenant/local default.
     """
+    from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
     from siftd.storage.sqlite import open_database
 
     should_close = False
@@ -160,14 +165,19 @@ def get_cost_coverage(
         ).fetchone()[0]
         if not has_stats:
             return None
+        if owner and not has_conversation_owners_table(conn):
+            return CostCoverage(0, 0, 0, 0.0)
 
-        row = conn.execute("""
-            SELECT
-                COUNT(*) FILTER (WHERE total_tokens > 0) AS with_tokens,
-                COUNT(*) FILTER (WHERE cost > 0) AS with_cost,
-                COUNT(*) FILTER (WHERE total_tokens > 0 AND cost IS NULL) AS null_cost
-            FROM conversation_stats
-        """).fetchone()
+        owner_where = f" WHERE {owner_predicate('conversation_id')}" if owner else ""
+        owner_params = [owner] if owner else []
+        row = conn.execute(
+            "SELECT"
+            " COUNT(*) FILTER (WHERE total_tokens > 0) AS with_tokens,"
+            " COUNT(*) FILTER (WHERE cost > 0) AS with_cost,"
+            " COUNT(*) FILTER (WHERE total_tokens > 0 AND cost IS NULL) AS null_cost"
+            f" FROM conversation_stats{owner_where}",
+            owner_params,
+        ).fetchone()
 
         with_tokens = row["with_tokens"] or 0
         with_cost = row["with_cost"] or 0
@@ -544,13 +554,23 @@ class GroupUsage:
     cost: float
 
 
-def get_usage_summary(*, db_path: Path | None = None) -> UsageSummary:
-    """Get aggregate token/cost totals across all conversations."""
+def get_usage_summary(*, db_path: Path | None = None, owner: str | None = None) -> UsageSummary:
+    """Get aggregate token/cost totals across all conversations.
+
+    When ``owner`` is set, totals are scoped to conversations owned by that
+    user_id (via :func:`owner_predicate`); ``owner=None`` is unscoped, the
+    single-tenant/local default.
+    """
+    from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
     from siftd.storage.sqlite import open_database
 
     path = db_path or default_db_path()
     conn = open_database(path, read_only=True)
     try:
+        if owner and not has_conversation_owners_table(conn):
+            return UsageSummary(0, 0, 0, 0.0)
+        conv_where = f" WHERE {owner_predicate('c.id')}" if owner else ""
+        conv_params = [owner] if owner else []
         row = conn.execute(
             "SELECT COUNT(DISTINCT c.id) AS n,"
             " COALESCE(SUM(er.input_tokens), 0) AS inp,"
@@ -558,6 +578,8 @@ def get_usage_summary(*, db_path: Path | None = None) -> UsageSummary:
             " FROM conversations c"
             " LEFT JOIN events e ON e.conversation_id = c.id AND e.kind = 'response'"
             " LEFT JOIN event_response er ON er.event_id = e.id"
+            f"{conv_where}",
+            conv_params,
         ).fetchone()
         # Cost is per-conversation in conversation_stats, sum separately
         has_stats = conn.execute(
@@ -565,8 +587,12 @@ def get_usage_summary(*, db_path: Path | None = None) -> UsageSummary:
         ).fetchone()[0]
         total_cost = 0.0
         if has_stats:
+            cost_where = (
+                f" WHERE {owner_predicate('conversation_id')}" if owner else ""
+            )
             cost_row = conn.execute(
-                "SELECT COALESCE(SUM(cost), 0) AS cost FROM conversation_stats"
+                f"SELECT COALESCE(SUM(cost), 0) AS cost FROM conversation_stats{cost_where}",
+                conv_params,
             ).fetchone()
             total_cost = cost_row["cost"]
         return UsageSummary(
@@ -579,13 +605,22 @@ def get_usage_summary(*, db_path: Path | None = None) -> UsageSummary:
         conn.close()
 
 
-def get_usage_by_model(*, db_path: Path | None = None) -> list[GroupUsage]:
-    """Get token/cost breakdown grouped by model."""
+def get_usage_by_model(*, db_path: Path | None = None, owner: str | None = None) -> list[GroupUsage]:
+    """Get token/cost breakdown grouped by model.
+
+    When ``owner`` is set, scoped to conversations owned by that user_id;
+    ``owner=None`` is unscoped, the single-tenant/local default.
+    """
+    from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
     from siftd.storage.sqlite import open_database
 
     path = db_path or default_db_path()
     conn = open_database(path, read_only=True)
     try:
+        if owner and not has_conversation_owners_table(conn):
+            return []
+        owner_clause = f" AND {owner_predicate('e.conversation_id')}" if owner else ""
+        owner_params = [owner] if owner else []
         # Tokens from responses grouped by model
         token_rows = conn.execute(
             "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
@@ -596,7 +631,9 @@ def get_usage_by_model(*, db_path: Path | None = None) -> list[GroupUsage]:
             " JOIN event_response er ON er.event_id = e.id"
             " LEFT JOIN models m ON er.model_id = m.id"
             " WHERE e.kind = 'response'"
-            " GROUP BY m.raw_name"
+            f"{owner_clause}"
+            " GROUP BY m.raw_name",
+            owner_params,
         ).fetchall()
         has_stats = conn.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
@@ -610,7 +647,9 @@ def get_usage_by_model(*, db_path: Path | None = None) -> list[GroupUsage]:
                 " JOIN events e ON e.conversation_id = cs.conversation_id AND e.kind = 'response'"
                 " JOIN event_response er ON er.event_id = e.id"
                 " LEFT JOIN models m ON er.model_id = m.id"
-                " GROUP BY m.raw_name"
+                f"{(' WHERE ' + owner_predicate('e.conversation_id')) if owner else ''}"
+                " GROUP BY m.raw_name",
+                owner_params,
             ).fetchall()
             cost_by_model = {r["name"]: r["cost"] for r in cost_rows}
         results = [
@@ -627,13 +666,22 @@ def get_usage_by_model(*, db_path: Path | None = None) -> list[GroupUsage]:
         conn.close()
 
 
-def get_usage_by_workspace(*, db_path: Path | None = None) -> list[GroupUsage]:
-    """Get token/cost breakdown grouped by workspace."""
+def get_usage_by_workspace(*, db_path: Path | None = None, owner: str | None = None) -> list[GroupUsage]:
+    """Get token/cost breakdown grouped by workspace.
+
+    When ``owner`` is set, scoped to conversations owned by that user_id;
+    ``owner=None`` is unscoped, the single-tenant/local default.
+    """
+    from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
     from siftd.storage.sqlite import open_database
 
     path = db_path or default_db_path()
     conn = open_database(path, read_only=True)
     try:
+        if owner and not has_conversation_owners_table(conn):
+            return []
+        owner_where = f" WHERE {owner_predicate('c.id')}" if owner else ""
+        owner_params = [owner] if owner else []
         # Tokens from responses grouped by workspace
         token_rows = conn.execute(
             "SELECT COALESCE(w.path, '') AS name,"
@@ -644,7 +692,9 @@ def get_usage_by_workspace(*, db_path: Path | None = None) -> list[GroupUsage]:
             " LEFT JOIN workspaces w ON c.workspace_id = w.id"
             " LEFT JOIN events e ON e.conversation_id = c.id AND e.kind = 'response'"
             " LEFT JOIN event_response er ON er.event_id = e.id"
-            " GROUP BY w.path"
+            f"{owner_where}"
+            " GROUP BY w.path",
+            owner_params,
         ).fetchall()
         # Cost from conversation_stats grouped by workspace
         has_stats = conn.execute(
@@ -658,7 +708,9 @@ def get_usage_by_workspace(*, db_path: Path | None = None) -> list[GroupUsage]:
                 " FROM conversation_stats cs"
                 " JOIN conversations c ON cs.conversation_id = c.id"
                 " LEFT JOIN workspaces w ON c.workspace_id = w.id"
-                " GROUP BY w.path"
+                f"{owner_where}"
+                " GROUP BY w.path",
+                owner_params,
             ).fetchall()
             cost_by_ws = {r["name"]: r["cost"] for r in cost_rows}
         results = [

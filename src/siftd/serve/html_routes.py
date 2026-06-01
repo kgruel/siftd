@@ -692,17 +692,17 @@ async def ui_stats(request: Request, db_path: Path) -> Response:
     by_model: list = []
     by_workspace: list = []
     try:
-        usage = get_usage_summary(db_path=db_path)
-        cc = get_cost_coverage(db_path=db_path)
+        usage = get_usage_summary(db_path=db_path, owner=owner)
+        cc = get_cost_coverage(db_path=db_path, owner=owner)
         cost_coverage = round(cc.pct_covered) if cc else 0
     except Exception:
         pass
     try:
-        by_model = get_usage_by_model(db_path=db_path)
+        by_model = get_usage_by_model(db_path=db_path, owner=owner)
     except Exception:
         pass
     try:
-        by_workspace = get_usage_by_workspace(db_path=db_path)
+        by_workspace = get_usage_by_workspace(db_path=db_path, owner=owner)
     except Exception:
         pass
 
