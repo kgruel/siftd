@@ -395,6 +395,70 @@ def list_tags(
     return rows
 
 
+def tag_activity_series(
+    conn: sqlite3.Connection,
+    *,
+    weeks: int = 12,
+    owner: str | None = None,
+) -> dict[str, list[int]]:
+    """Per-tag activity sparkline: distinct conversations bearing each tag,
+    bucketed by conversation ``started_at`` into ``weeks`` week-buckets.
+
+    The window ends at the most recent conversation (data-relative, not
+    wall-clock ``now()``) so the series is deterministic and testable. Returns
+    ``{tag_name: [oldest, ..., newest]}`` of length ``weeks``; tags with no
+    activity in the window are omitted. Owner-scoped when ``owner`` is set.
+
+    A conversation "bears" a tag when the tag is applied to the conversation
+    directly (``target_kind='conversation'``) or to any of its events
+    (tool_call/prompt/response/exchange) — the union of the two association
+    paths the flat counts in :func:`list_tags` keep separate.
+    """
+    if owner and not has_conversation_owners_table(conn):
+        return {}
+
+    ref_where = f" WHERE {owner_predicate('c.id')}" if owner else ""
+    owner_params = [owner] if owner else []
+    ref = conn.execute(
+        f"SELECT MAX(c.started_at) FROM conversations c{ref_where}",
+        owner_params,
+    ).fetchone()[0]
+    if not ref:
+        return {}
+
+    owner_clause = f" AND {owner_predicate('c.id')}" if owner else ""
+    rows = conn.execute(
+        f"""
+        SELECT t.name AS name,
+               CAST((julianday(?) - julianday(c.started_at)) / 7 AS INTEGER) AS weeks_ago,
+               COUNT(DISTINCT tc.conversation_id) AS n
+        FROM (
+            SELECT ta.tag_id AS tag_id, ta.target_id AS conversation_id
+            FROM tag_assignments ta
+            WHERE ta.target_kind = 'conversation'
+            UNION
+            SELECT ta.tag_id AS tag_id, e.conversation_id AS conversation_id
+            FROM tag_assignments ta
+            JOIN events e ON e.id = ta.target_id
+            WHERE ta.target_kind IN ('tool_call', 'prompt', 'response', 'exchange')
+        ) tc
+        JOIN tags t ON t.id = tc.tag_id
+        JOIN conversations c ON c.id = tc.conversation_id
+        WHERE julianday(?) - julianday(c.started_at) < ?{owner_clause}
+        GROUP BY t.name, weeks_ago
+        """,
+        [ref, ref, weeks * 7, *owner_params],
+    ).fetchall()
+
+    series: dict[str, list[int]] = {}
+    for r in rows:
+        wk = r["weeks_ago"]
+        if wk is None or wk < 0 or wk >= weeks:
+            continue
+        series.setdefault(r["name"], [0] * weeks)[weeks - 1 - wk] = r["n"]
+    return series
+
+
 def list_tags_by_workspace(
     conn: sqlite3.Connection,
     *,

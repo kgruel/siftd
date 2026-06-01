@@ -47,7 +47,7 @@ def test_dispatch_wrappers_forward_params(monkeypatch, tmp_path):
 
     _run(routes.stats_route.fn(req, db))
     _run(routes.workspaces_route.fn(req, db, n=7))
-    _run(routes.tags_route.fn(req, db, since="a", before="b"))
+    _run(routes.tags_route.fn(req, db, since="a", before="b", visible=None))
     _run(routes.export_route.fn(req, db, n=1))
     _run(routes.conversation_detail.fn(req, db, id="abc", include_thinking=True, include_tool_content=True, tool_filter="shell"))
     _run(routes.conversation_list.fn(req, db, n=5, oldest=True))

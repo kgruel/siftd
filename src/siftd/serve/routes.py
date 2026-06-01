@@ -132,6 +132,24 @@ def _dispatch(
         )
 
 
+def _fidelity_from_visible(visible: str | None, *, depth: int = 1):
+    """Build a Fidelity from a ``?visible=`` query param (comma-separated tags).
+
+    The general client-facing mechanism for requesting result enrichments: a
+    consumer asks for ``?visible=activity,facets`` and the listed tags land in
+    ``Fidelity.visible``, which the API fns gate their optional (and possibly
+    expensive) enrichment queries on. ``"text"`` is always present so the base
+    payload is unaffected; unknown tags are harmless (a fn that doesn't honor a
+    tag simply ignores it).
+    """
+    from painted import Fidelity
+
+    tags = {"text"}
+    if visible:
+        tags |= {t.strip() for t in visible.split(",") if t.strip()}
+    return Fidelity(depth=depth, visible=frozenset(tags))
+
+
 @get("/api/v1")
 async def index() -> dict:
     """API index — list available endpoints."""
@@ -222,15 +240,23 @@ async def tags_route(
     db_path: Path,
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),
+    visible: str | None = Parameter(query="visible", default=None),
 ) -> dict | Response:
-    """List tags with usage counts."""
+    """List tags with usage counts.
+
+    ``?visible=activity`` enriches each tag with a per-week activity sparkline
+    (see :func:`siftd.api.tags.list_tags`); omitted, the enrichment query is
+    skipped.
+    """
     from siftd.api.tags import list_tags
 
     owner = _effective_owner(request, None)
+    fidelity = _fidelity_from_visible(visible)
     return _dispatch(
         "/api/v1/tags", "GET", list_tags,
-        {"db_path": db_path, "since": since, "before": before, "owner": owner},
-        "tags", db_path,
+        {"db_path": db_path, "since": since, "before": before, "owner": owner,
+         "fidelity": fidelity},
+        "tags", db_path, fidelity=fidelity,
     )
 
 

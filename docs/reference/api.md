@@ -1174,6 +1174,7 @@ Tag with usage counts.
 | `exchange_count` | `int` |  |
 | `prompt_count` | `int` |  |
 | `response_count` | `int` |  |
+| `activity` | `list[int] \| None` |  |
 
 ### EventDetail
 
@@ -1429,7 +1430,7 @@ def get_or_create_tag(conn: Connection, name: str, description: str | None = ...
 List all tags with usage counts.
 
 ```python
-def list_tags(db_path: pathlib.Path | None = ..., conn: sqlite3.Connection | None = ..., *, since: str | None = ..., before: str | None = ..., owner: str | None = ...) -> list[TagInfo]
+def list_tags(db_path: pathlib.Path | None = ..., conn: sqlite3.Connection | None = ..., *, since: str | None = ..., before: str | None = ..., owner: str | None = ..., fidelity: painted.core.fidelity.Fidelity | None = ...) -> list[TagInfo]
 ```
 
 **Parameters:**
@@ -1437,6 +1438,7 @@ def list_tags(db_path: pathlib.Path | None = ..., conn: sqlite3.Connection | Non
 - `db_path`: Path to database. Ignored if conn provided.
 - `conn`: Existing connection to use.
 - `since`: Only count associations where conversation started after this ISO date.
+- `before`: Only count associations where conversation started before this ISO date.
 
 **Returns:** List of TagInfo objects sorted by name.
 

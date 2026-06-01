@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from painted import Fidelity
+
 from siftd.paths import db_path as _db_path
 from siftd.storage.sqlite import open_database as _open_database
 from siftd.storage.tags import DERIVATIVE_TAG
@@ -34,6 +36,9 @@ from siftd.storage.tags import (
 )
 from siftd.storage.tags import (
     rename_tag as _rename_tag,
+)
+from siftd.storage.tags import (
+    tag_activity_series as _tag_activity_series,
 )
 from siftd.storage.tags import (
     tag_used_by_other_owners as _tag_used_by_other_owners,
@@ -68,7 +73,13 @@ _ALL_ENTITY_TYPES = frozenset({"conversation", "workspace"}) | _GRANULAR_KINDS
 
 @dataclass
 class TagInfo:
-    """Tag with usage counts."""
+    """Tag with usage counts.
+
+    ``activity`` is an optional Fidelity-gated enrichment (a per-week
+    conversation-activity sparkline, oldest→newest); it is ``None`` unless the
+    caller passes a fidelity with the ``"activity"`` visible tag, so thin
+    callers pay nothing for it.
+    """
 
     name: str
     description: str | None
@@ -79,6 +90,7 @@ class TagInfo:
     exchange_count: int
     prompt_count: int
     response_count: int
+    activity: list[int] | None = None
 
 
 TagMutationResult = Literal["applied", "removed", "not_found", "already_applied", "not_applied"]
@@ -138,6 +150,7 @@ def list_tags(
     since: str | None = None,
     before: str | None = None,
     owner: str | None = None,
+    fidelity: Fidelity | None = None,
 ) -> list[TagInfo]:
     """List all tags with usage counts.
 
@@ -146,6 +159,10 @@ def list_tags(
         conn: Existing connection to use.
         since: Only count associations where conversation started after this ISO date.
         before: Only count associations where conversation started before this ISO date.
+        fidelity: Optional rendering contract. When it carries the ``"activity"``
+            visible tag (``fidelity.shows("activity")``), each TagInfo is enriched
+            with a per-week conversation-activity sparkline; otherwise the extra
+            query is skipped entirely (thin callers pay nothing).
 
     Returns:
         List of TagInfo objects sorted by name.
@@ -158,7 +175,7 @@ def list_tags(
 
     try:
         rows = _list_tags(conn, since=since, before=before, owner=owner)
-        return [
+        infos = [
             TagInfo(
                 name=r["name"],
                 description=r["description"],
@@ -172,6 +189,11 @@ def list_tags(
             )
             for r in rows
         ]
+        if fidelity is not None and fidelity.shows("activity"):
+            series = _tag_activity_series(conn, owner=owner)
+            for info in infos:
+                info.activity = series.get(info.name)
+        return infos
     finally:
         if should_close:
             conn.close()
