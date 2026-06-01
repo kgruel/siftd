@@ -49,6 +49,28 @@ def render_workspaces(rows: list, fidelity: Fidelity) -> dict:
     }
 
 
+def render_workspace_detail(detail: Any, fidelity: Fidelity) -> dict:
+    """Serialize a WorkspaceDetail to a JSON-safe dict.
+
+    The workspace is identified by its ULID ``id``; ``model_mix`` is the
+    by-model breakdown within the workspace (GroupUsage rows) and ``recent``
+    reuses the conversation-list serializer.
+    """
+    from siftd.serialization.conversations import serialize_conversation_list
+
+    return {
+        "id": detail.id,
+        "path": detail.path,
+        "git_remote": detail.git_remote,
+        "sessions": detail.sessions,
+        "input_tokens": detail.input_tokens,
+        "output_tokens": detail.output_tokens,
+        "cost": detail.cost,
+        "model_mix": [dataclasses.asdict(g) for g in detail.model_mix],
+        "recent": serialize_conversation_list(detail.recent),
+    }
+
+
 def render_tags(tags: list, fidelity: Fidelity) -> dict:
     """Serialize TagInfo list to JSON-safe dict."""
     return {

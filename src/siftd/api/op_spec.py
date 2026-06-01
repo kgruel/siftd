@@ -97,6 +97,9 @@ SPECS: dict[tuple[str, str], OpSpec] = {
     ("/api/v1/workspaces", "GET"): OpSpec(
         wire_excludes=_WIRE_EXCLUDE_COMMON,
     ),
+    ("/api/v1/workspaces/{id}", "GET"): OpSpec(
+        wire_excludes=_WIRE_EXCLUDE_COMMON,
+    ),
     ("/api/v1/tags", "GET"): OpSpec(
         wire_excludes=_WIRE_EXCLUDE_COMMON,
     ),
@@ -131,6 +134,7 @@ SPECS: dict[tuple[str, str], OpSpec] = {
 # loud failure, not silent drift, but the new path won't be delegatable
 # until the normalizer is updated.
 _CONVERSATION_DETAIL_RE = re.compile(r"^/api/v1/conversations/[^/{]+$")
+_WORKSPACE_DETAIL_RE = re.compile(r"^/api/v1/workspaces/[^/{]+$")
 
 
 def _normalize_path(path: str) -> str:
@@ -146,6 +150,8 @@ def _normalize_path(path: str) -> str:
         return path  # already a template (e.g. server-side _dispatch call)
     if _CONVERSATION_DETAIL_RE.match(path):
         return "/api/v1/conversations/{id}"
+    if _WORKSPACE_DETAIL_RE.match(path):
+        return "/api/v1/workspaces/{id}"
     return path
 
 

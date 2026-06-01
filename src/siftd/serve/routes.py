@@ -146,6 +146,7 @@ async def index() -> dict:
             {"method": "GET", "path": "/api/v1/search", "description": "Semantic + FTS search"},
             {"method": "GET", "path": "/api/v1/stats", "description": "Database statistics"},
             {"method": "GET", "path": "/api/v1/workspaces", "description": "List workspaces"},
+            {"method": "GET", "path": "/api/v1/workspaces/{id}", "description": "Workspace detail by ULID"},
             {"method": "GET", "path": "/api/v1/tags", "description": "List tags with counts"},
             {"method": "GET", "path": "/api/v1/export", "description": "Export full conversations"},
             {"method": "POST", "path": "/api/v1/tag", "description": "Apply, remove, rename, or delete tags"},
@@ -188,6 +189,31 @@ async def workspaces_route(
         {"db_path": db_path, "n": n, "owner": owner},
         "workspaces", db_path,
     )
+
+
+@get("/api/v1/workspaces/{id:str}")
+async def workspace_detail_route(
+    request: Request,
+    db_path: Path,
+    id: str,
+) -> dict | Response:
+    """Detail for one workspace, addressed by its ULID (workspaces.id).
+
+    Mirrors /api/v1/conversations/{id}: the master list is /api/v1/workspaces,
+    this is the per-entity detail (stat grid + by-model mix + recent sessions).
+    404 when no workspace has that id. Owner-scoped via the effective owner.
+    """
+    from painted import Fidelity
+
+    from siftd.api.stats import workspace_detail
+    from siftd.serialization import serve_fmt
+
+    owner = _effective_owner(request, None)
+    fidelity = Fidelity(depth=2, visible=frozenset({"text"}))
+    detail = workspace_detail(id, fidelity=fidelity, db_path=db_path, owner=owner)
+    if detail is None:
+        return Response(content={"error": f"workspace not found: {id}"}, status_code=404)
+    return serve_fmt.render_workspace_detail(detail, fidelity)
 
 
 @get("/api/v1/tags")

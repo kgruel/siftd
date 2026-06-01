@@ -728,3 +728,120 @@ def get_usage_by_workspace(*, db_path: Path | None = None, owner: str | None = N
         return results
     finally:
         conn.close()
+
+
+@dataclass
+class WorkspaceDetail:
+    """Per-workspace detail, keyed by the workspace ULID.
+
+    Composes the stat grid + a by-model breakdown within the workspace +
+    recent conversations. ``model_mix`` reuses :class:`GroupUsage` (one row per
+    model, scoped to this workspace). All counts are owner-scoped when ``owner``
+    is set. ``top_tags`` is deferred (needs its own tag-by-workspace query).
+    """
+
+    id: str
+    path: str
+    git_remote: str | None
+    sessions: int
+    input_tokens: int
+    output_tokens: int
+    cost: float
+    model_mix: list[GroupUsage]
+    recent: list
+
+
+def workspace_detail(
+    workspace_id: str,
+    *,
+    fidelity,
+    db_path: Path | None = None,
+    owner: str | None = None,
+    recent_n: int = 10,
+) -> WorkspaceDetail | None:
+    """Detail for one workspace, addressed by its stable ULID (workspaces.id).
+
+    Mirrors the conversations list+detail split: the master list comes from
+    :func:`list_workspaces`, this is the per-entity detail. Returns ``None`` if
+    no workspace has that id (or, with ``owner`` set, if the owners table is
+    absent — pre-migration safety, matching the other read fns).
+
+    ``owner=None`` is unscoped (single-tenant/local default).
+    """
+    from siftd.api.conversations import list_conversations
+    from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
+
+    path = db_path or default_db_path()
+    conn = open_database(path, read_only=True)
+    try:
+        if owner and not has_conversation_owners_table(conn):
+            return None
+        ws = conn.execute(
+            "SELECT id, path, git_remote FROM workspaces WHERE id = ?",
+            (workspace_id,),
+        ).fetchone()
+        if ws is None:
+            return None
+
+        owner_clause = f" AND {owner_predicate('e.conversation_id')}" if owner else ""
+        owner_params = [owner] if owner else []
+        model_rows = conn.execute(
+            "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
+            " COUNT(DISTINCT e.conversation_id) AS convs,"
+            " COALESCE(SUM(er.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(er.output_tokens), 0) AS out"
+            " FROM events e"
+            " JOIN event_response er ON er.event_id = e.id"
+            " JOIN conversations c ON c.id = e.conversation_id"
+            " LEFT JOIN models m ON er.model_id = m.id"
+            " WHERE e.kind = 'response' AND c.workspace_id = ?"
+            f"{owner_clause}"
+            " GROUP BY m.raw_name",
+            [workspace_id, *owner_params],
+        ).fetchall()
+        model_mix = [
+            GroupUsage(
+                name=r["name"], conversations=r["convs"],
+                input_tokens=r["inp"], output_tokens=r["out"], cost=0.0,
+            )
+            for r in model_rows
+        ]
+        model_mix.sort(key=lambda g: g.input_tokens + g.output_tokens, reverse=True)
+
+        # Sessions + cost scoped to this workspace (owner-aware).
+        conv_owner = f" AND {owner_predicate('c.id')}" if owner else ""
+        sessions = conn.execute(
+            "SELECT COUNT(*) FROM conversations c WHERE c.workspace_id = ?" + conv_owner,
+            [workspace_id, *owner_params],
+        ).fetchone()[0]
+        cost = 0.0
+        has_stats = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
+        ).fetchone()[0]
+        if has_stats:
+            cost_owner = (
+                f" AND {owner_predicate('cs.conversation_id')}" if owner else ""
+            )
+            cost = conn.execute(
+                "SELECT COALESCE(SUM(cs.cost), 0) FROM conversation_stats cs"
+                " JOIN conversations c ON c.id = cs.conversation_id"
+                " WHERE c.workspace_id = ?" + cost_owner,
+                [workspace_id, *owner_params],
+            ).fetchone()[0]
+    finally:
+        conn.close()
+
+    recent = list_conversations(
+        fidelity=fidelity, db_path=path, workspace=ws["path"], owner=owner, n=recent_n,
+    )
+    return WorkspaceDetail(
+        id=ws["id"],
+        path=ws["path"],
+        git_remote=ws["git_remote"],
+        sessions=sessions,
+        input_tokens=sum(g.input_tokens for g in model_mix),
+        output_tokens=sum(g.output_tokens for g in model_mix),
+        cost=cost,
+        model_mix=model_mix,
+        recent=recent,
+    )
