@@ -109,6 +109,7 @@ from siftd.api.stats import (
     TableCounts,
     ToolStats,
     UsageSummary,
+    WorkspaceDetail,
     WorkspaceStats,
     dict_to_stats,
     get_cost_coverage,
@@ -119,6 +120,7 @@ from siftd.api.stats import (
     list_workspaces,
     read_stats_cache,
     stats_cache_path,
+    workspace_detail,
     write_stats_cache,
 )
 from siftd.api.sync import (
@@ -302,6 +304,8 @@ __all__ = [
     "get_usage_summary",
     "dict_to_stats",
     "list_workspaces",
+    "workspace_detail",
+    "WorkspaceDetail",
     "stats_cache_path",
     "write_stats_cache",
     "read_stats_cache",

@@ -52,7 +52,9 @@ def test_dispatch_wrappers_forward_params(monkeypatch, tmp_path):
     _run(routes.conversation_detail.fn(req, db, id="abc", include_thinking=True, include_tool_content=True, tool_filter="shell"))
     _run(routes.conversation_list.fn(req, db, n=5, oldest=True))
     assert seen[0][0] == "/api/v1/stats"
-    assert any(p == "/api/v1/conversations" and prm["id"] == "abc" for p, _, _, prm, _ in seen)
+    # conversation_detail now passes the detail template path so _dispatch's
+    # OpSpec lookup resolves the conversations-detail spec.
+    assert any(p == "/api/v1/conversations/{id}" and prm["id"] == "abc" for p, _, _, prm, _ in seen)
 
 
 _UNSET = object()

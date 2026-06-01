@@ -34,6 +34,18 @@ def _effective_owner(request: Request, owner: str | None) -> str | None:
     return owner
 
 
+def _not_found_message(path: str) -> str:
+    """Entity-specific 404 message derived from the dispatch path.
+
+    Explicit map rather than singularizing the path segment — the existing
+    conversation-detail body (``"conversation not found"``) is contract-pinned
+    by tests, so we preserve it exactly and extend per entity.
+    """
+    if "/workspaces" in path:
+        return "workspace not found"
+    return "conversation not found"
+
+
 def _dispatch(
     path: str, method: str, fn: Callable, params: dict[str, Any],
     render_method: str, db: Path,
@@ -57,6 +69,7 @@ def _dispatch(
 
     from siftd.api.conversations import AmbiguousPrefix, AnchorError, QueryError
     from siftd.api.dispatch import Operation, execute, render
+    from siftd.api.op_spec import spec_for_path
     from siftd.serialization import serve_fmt
 
     try:
@@ -66,8 +79,15 @@ def _dispatch(
             render_context=render_context or {},
         )
         result = execute(op)
-        if render_method == "detail" and result is None:
-            return Response(content={"error": "conversation not found"}, status_code=404)
+        # Per-entity detail Operations declare not_found_on_none in their OpSpec
+        # (conversations/{id}, workspaces/{id}). A None result means "no such
+        # entity" → 404. List/aggregate Operations leave the flag False so an
+        # empty result renders as a normal 200.
+        spec = spec_for_path(path, method)
+        if spec is not None and spec.not_found_on_none and result is None:
+            return Response(
+                content={"error": _not_found_message(path)}, status_code=404,
+            )
 
         # Run caveat producers (stale-embeddings/truncation/ambiguity warnings)
         # so the serve envelope carries them, like `siftd query/search --json`.
@@ -220,18 +240,22 @@ async def workspace_detail_route(
     Mirrors /api/v1/conversations/{id}: the master list is /api/v1/workspaces,
     this is the per-entity detail (stat grid + by-model mix + recent sessions).
     404 when no workspace has that id. Owner-scoped via the effective owner.
-    """
-    from painted import Fidelity
 
+    Routed through ``_dispatch`` (like the sibling detail/list routes) so it
+    shares the structured-error envelope and caveat-channel plumbing; the 404
+    comes from the OpSpec ``not_found_on_none`` flag.
+    """
     from siftd.api.stats import workspace_detail
-    from siftd.serialization import serve_fmt
 
     owner = _effective_owner(request, None)
-    fidelity = Fidelity(depth=2, visible=frozenset({"text"}))
-    detail = workspace_detail(id, fidelity=fidelity, db_path=db_path, owner=owner)
-    if detail is None:
-        return Response(content={"error": f"workspace not found: {id}"}, status_code=404)
-    return serve_fmt.render_workspace_detail(detail, fidelity)
+    fidelity = _fidelity_from_visible(None, depth=2)
+    return _dispatch(
+        "/api/v1/workspaces/{id}", "GET", workspace_detail,
+        {"workspace_id": id, "fidelity": fidelity, "db_path": db_path,
+         "owner": owner},
+        "workspace_detail", db_path,
+        fidelity=fidelity,
+    )
 
 
 @get("/api/v1/tags")
@@ -806,8 +830,10 @@ async def conversation_detail(
             )
 
     owner = _effective_owner(request, None)
+    # Pass the detail template path (not the list path) so _dispatch's OpSpec
+    # lookup resolves the conversations-detail spec (not_found_on_none=True).
     return _dispatch(
-        "/api/v1/conversations", "GET", get_conversation,
+        "/api/v1/conversations/{id}", "GET", get_conversation,
         {"id": id, "fidelity": fidelity, "db_path": db_path,
          "tool_filter": tool_filter, "owner": owner,
          "anchor": anchor, "anchor_value": coerced_value,

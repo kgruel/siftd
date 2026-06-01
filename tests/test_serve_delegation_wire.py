@@ -375,7 +375,9 @@ def test_conversation_detail_route_accepts_anchor_and_window(monkeypatch, tmp_pa
         anchor="at_turn", anchor_value="5", window_start=-2, window_end=2,
     ))
 
-    assert captured["_path"] == "/api/v1/conversations"
+    # Detail template path (not the list path): _dispatch's OpSpec lookup keys
+    # on this to find the conversations-detail spec (not_found_on_none=True).
+    assert captured["_path"] == "/api/v1/conversations/{id}"
     assert captured["id"] == "abc"
     assert captured["anchor"] == "at_turn"
     # anchor_value coerced to int for at_turn

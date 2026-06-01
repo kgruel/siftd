@@ -57,11 +57,17 @@ class OpSpec:
             by ``to_wire``.
         wire_remaps: Local kwarg name → wire query param name. Only needed for
             Python-keyword collisions (``lambda_`` → ``lambda``).
+        not_found_on_none: When the operation's result is ``None``, the serve
+            ``_dispatch`` returns a 404 instead of rendering. Set on per-entity
+            detail operations (conversations/{id}, workspaces/{id}) where
+            ``None`` means "no such entity"; left ``False`` for list/aggregate
+            operations whose empty result is a valid 200.
     """
 
     local_excludes: frozenset[str] = frozenset()
     wire_excludes: frozenset[str] = frozenset()
     wire_remaps: Mapping[str, str] = field(default_factory=dict)
+    not_found_on_none: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +89,7 @@ SPECS: dict[tuple[str, str], OpSpec] = {
     ),
     ("/api/v1/conversations/{id}", "GET"): OpSpec(
         wire_excludes=_WIRE_EXCLUDE_COMMON,
+        not_found_on_none=True,
     ),
     ("/api/v1/search", "GET"): OpSpec(
         local_excludes=_LOCAL_FN_EXCLUDE_SEARCH,
@@ -99,6 +106,7 @@ SPECS: dict[tuple[str, str], OpSpec] = {
     ),
     ("/api/v1/workspaces/{id}", "GET"): OpSpec(
         wire_excludes=_WIRE_EXCLUDE_COMMON,
+        not_found_on_none=True,
     ),
     ("/api/v1/tags", "GET"): OpSpec(
         wire_excludes=_WIRE_EXCLUDE_COMMON,
@@ -153,6 +161,17 @@ def _normalize_path(path: str) -> str:
     if _WORKSPACE_DETAIL_RE.match(path):
         return "/api/v1/workspaces/{id}"
     return path
+
+
+def spec_for_path(path: str, method: str) -> OpSpec | None:
+    """Return the :class:`OpSpec` for a ``(path, method)`` pair, or ``None``.
+
+    The path/method-keyed sibling of :func:`spec_for` (which keys off an
+    :class:`Operation`). Used by the serve ``_dispatch`` to consult the spec
+    (e.g. ``not_found_on_none``) from the raw route args, before/without
+    depending on the constructed ``op`` object.
+    """
+    return SPECS.get((_normalize_path(path), method))
 
 
 def spec_for(op: Operation) -> OpSpec | None:

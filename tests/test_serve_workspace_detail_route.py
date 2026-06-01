@@ -44,3 +44,18 @@ def test_workspace_detail_route_404_on_unknown(tmp_path):
     out = _run(routes.workspace_detail_route.fn(SimpleNamespace(), db, id="01HNOPE"))
     assert isinstance(out, Response)
     assert out.status_code == 404
+    # 404 now comes from the OpSpec not_found_on_none flag via _dispatch, with
+    # the entity-specific message derived from the path.
+    assert out.content["error"] == "workspace not found"
+
+
+def test_workspace_detail_route_payload_shape_unchanged(tmp_path):
+    """Routing through _dispatch preserves the pre-existing payload shape."""
+    db = tmp_path / "d.db"
+    ws_a, _ = _build(db)
+
+    out = _run(routes.workspace_detail_route.fn(SimpleNamespace(), db, id=ws_a))
+    assert not isinstance(out, Response)
+    assert set(out) >= {"id", "git_remote", "model_mix", "recent"}
+    assert isinstance(out["model_mix"], list)
+    assert isinstance(out["recent"], list)
