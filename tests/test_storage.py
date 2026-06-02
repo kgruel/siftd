@@ -10,6 +10,7 @@ import siftd.storage.queries as q
 import siftd.storage.sessions as sess
 import siftd.storage.sqlite as sq
 import siftd.storage.tags as tags
+import siftd.storage.usage_rollup as urollup
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall, Usage
 from siftd.storage import BlobCollisionError, compute_content_hash, get_content, get_ref_count, release_content, store_content
 from siftd.storage.filters import WhereBuilder, tag_condition
@@ -809,7 +810,7 @@ class TestConversationStats:
     def test_rebuild(self, populated_db):
         conn, cid = populated_db
         assert cstats.has_conversation_stats_table(conn)
-        assert cstats.rebuild_conversation_stats(conn, commit=True) >= 1
+        assert urollup.rebuild_rollups(conn, commit=True) >= 1
         row = conn.execute("SELECT * FROM conversation_stats WHERE conversation_id=?", (cid,)).fetchone()
         assert row["prompt_count"] == 1 and row["total_tokens"] == 300
 
@@ -821,7 +822,7 @@ class TestConversationStats:
     def test_cost_null_when_no_pricing(self, populated_db):
         """When pricing is absent, cost should be NULL (not 0.0)."""
         conn, cid = populated_db
-        cstats.rebuild_conversation_stats(conn, commit=True)
+        urollup.rebuild_rollups(conn, commit=True)
         row = conn.execute(
             "SELECT cost FROM conversation_stats WHERE conversation_id=?", (cid,)
         ).fetchone()
@@ -857,7 +858,7 @@ class TestConversationStats:
         )
         db.commit()
 
-        cstats.rebuild_conversation_stats(db, commit=True)
+        urollup.rebuild_rollups(db, commit=True)
         row = db.execute(
             "SELECT cost FROM conversation_stats WHERE conversation_id=?", (conv_id,)
         ).fetchone()
@@ -884,7 +885,7 @@ class TestConversationStats:
         )
         db.commit()
 
-        cstats.rebuild_conversation_stats(db, commit=True)
+        urollup.rebuild_rollups(db, commit=True)
         row = db.execute(
             "SELECT cost FROM conversation_stats WHERE conversation_id=?", (conv_id,)
         ).fetchone()

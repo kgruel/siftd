@@ -113,10 +113,10 @@ class TestGetStats:
 class TestGetCostCoverage:
     def test_returns_cost_coverage(self, test_db):
         from siftd.api.database import open_database
-        from siftd.storage.conversation_stats import rebuild_conversation_stats
+        from siftd.storage.usage_rollup import rebuild_rollups
 
         conn = open_database(test_db)
-        rebuild_conversation_stats(conn, commit=True)
+        rebuild_rollups(conn, commit=True)
         result = get_cost_coverage(conn)
         conn.close()
         # test_db has 2 conversations with tokens but no pricing → NULL cost
@@ -136,7 +136,6 @@ class TestGetCostCoverage:
         assert result is None
 
     def test_positive_cost_counted(self, tmp_path):
-        from siftd.storage.conversation_stats import rebuild_conversation_stats
         from siftd.storage.sqlite import (
             create_database,
             get_or_create_harness,
@@ -147,6 +146,7 @@ class TestGetCostCoverage:
             insert_prompt,
             insert_response,
         )
+        from siftd.storage.usage_rollup import rebuild_rollups
 
         conn = create_database(tmp_path / "t.db")
         provider_id = get_or_create_provider(conn, "anthropic")
@@ -179,7 +179,7 @@ class TestGetCostCoverage:
         _add_conv("c2", with_pricing=False)  # model_id=None → NULL cost
         conn.commit()
 
-        rebuild_conversation_stats(conn, commit=True)
+        rebuild_rollups(conn, commit=True)
         result = get_cost_coverage(conn)
         conn.close()
 

@@ -584,10 +584,11 @@ def ingest_all(
                 conn, source, adapter, file_path, str(e), stats, on_file, emit_event
             )
 
-    # Rebuild materialized stats table for fast list_conversations queries.
-    from siftd.storage.conversation_stats import rebuild_conversation_stats
+    # Rebuild the derived tier: usage_by_conv_model rollup, then conversation_stats
+    # (its model/provider-dropped cache) re-derived from it.
+    from siftd.storage.usage_rollup import rebuild_rollups
 
-    rebuild_conversation_stats(conn, commit=True)
+    rebuild_rollups(conn, commit=True)
 
     # Restore normal settings after bulk ingest
     conn.execute("PRAGMA synchronous = NORMAL")

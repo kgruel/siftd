@@ -811,6 +811,7 @@ class TestSchemaStability:
         "ingested_files",
         # Migration-ensured
         "conversation_stats",
+        "usage_by_conv_model",  # keystone usage rollup (schema v9); conversation_stats' source
         "active_sessions",
         "pending_tags",
         "conversation_owners",

@@ -51,6 +51,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Usage rollup substrate (`usage_by_conv_model`) — schema v8 → v9** — a new
+  ingest-time fact table at grain `(conversation_id, model_id, provider_id)` that
+  backs per-model/-provider/-workspace/-harness/global token+cost aggregates with a
+  single cost definition. `conversation_stats` is now *re-derived from* this rollup
+  (cost summed to conversation grain, rounded once); values are unchanged — verified
+  byte-identical across the full corpus (0 cost/token/count diffs over 12,760
+  conversations). The v9 migration backfills the table and re-derives stats inside
+  the existing single-transaction + automatic pre-migration-backup path. Note:
+  opening a v8 database triggers a one-time v8→v9 migration, and an older siftd
+  (v8) will refuse to open a v9 database. Foundation for the cost-coherence work
+  (per-provider breakdowns; the `stats --by model` cost fan-out fix) landing next.
 - **`siftd auth login` — client-side OAuth device-code acquisition (RFC 8628)** —
   interactive token acquisition so remote-human clients stop hand-pasting bearers.
   Runs the device-authorization flow against `[auth].issuer` (browser URL + code),
