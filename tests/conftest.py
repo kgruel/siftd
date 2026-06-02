@@ -36,6 +36,24 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _sandbox_db_home(tmp_path, monkeypatch):
+    """Hard-isolate every test from the real database.
+
+    `siftd.paths` resolves XDG_DATA_HOME at call time, so a test that opens the
+    default db_path() reaches the user's real ~/.local/share/siftd/siftd.db.
+    While SCHEMA_VERSION matched that was a harmless no-op open; a version bump
+    turns it into a *migration of production data* (the v9 rollup incident).
+    Redirecting XDG_DATA_HOME (where the DB lives) to a throwaway dir makes the
+    real DB unreachable from any test, regardless of how the path is resolved.
+    Config/state/cache are left alone so tests that legitimately read the real
+    config or credential dirs are unaffected; tests needing a specific DB still
+    pass the path explicitly.
+    """
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_xdg_data"))
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_caveat_producers():
     """Snapshot and restore the caveat producer registry around each test.
 
