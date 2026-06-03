@@ -63,7 +63,8 @@ def test_folio_three_regions_and_head_metadata():
     # Head metadata for enhance.js (chrome head + active nav follow the swap).
     assert 'data-view="transcript"' in html
     assert 'data-title="Transcript"' in html
-    assert 'data-count="2"' in html  # two turns
+    # Count is rail items: 2 exchanges × (user + assistant) = 4 turns.
+    assert 'data-count="4"' in html
 
 
 def test_folio_rail_has_user_and_assistant_items():
@@ -82,8 +83,8 @@ def test_folio_ledger_counts_tools_across_turns_descending():
     assert 'data-n="3"' in html
     assert 'data-n="1"' in html
     assert html.index('data-n="3"') < html.index('data-n="1"')
-    # Foot tool total = 4 (the ledger owns tool counts; the body does not inline them).
-    assert '<span class="ledger__statn">4</span>' in html
+    # Tool total = 4 lives in the ledger header navmeta (the foot now shows cost).
+    assert '<span class="micro">Tool ledger</span><span class="folio__navmeta">4</span>' in html
     assert "tool-call" not in html  # no inline tool I/O in the folio body
 
 
@@ -93,6 +94,22 @@ def test_folio_turn_tools_chip_and_token_total():
     assert "Read" in html and "&times;2" in html  # collapsed count surfaces
     # Token foot = 30 + 13 = 43 (fmt_tokens passes small values through).
     assert "43" in html
+
+
+def test_folio_ledger_foot_shows_cost_when_known():
+    detail = _detail()
+    detail.cost = 1.2345  # rollup's canonical per-conversation cost
+    html = render_folio(detail, _FID)
+    assert '<span class="micro">Cost</span>' in html
+    assert "$1.2345" in html
+
+
+def test_folio_ledger_foot_shows_dash_when_cost_unknown():
+    # _detail() leaves cost=None (no priced usage) — render an em dash, never $0.
+    html = render_folio(_detail(), _FID)
+    assert '<span class="micro">Cost</span>' in html
+    assert "&mdash;" in html
+    assert "$0.00" not in html
 
 
 def test_folio_escapes_user_prompt():

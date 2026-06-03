@@ -100,6 +100,28 @@ def test_workspace_detail_model_mix_cost_filled_and_headline_is_sum(tmp_path):
     assert abs(d.cost - 9.0) < 1e-6
 
 
+def test_get_conversation_carries_rollup_cost_at_depth_3(tmp_path):
+    """get_conversation surfaces the rollup's canonical cost at depth>=3 (the
+    folio ledger foot reads it), and leaves it None below — same gate as the
+    list, so thin detail fetches don't over-read."""
+    from siftd.api.conversations import get_conversation
+
+    db = tmp_path / "cd.db"
+    _, cid = _build_multi_response(db, n_responses=3)  # 3 × $3 = $9
+
+    deep = get_conversation(
+        cid, fidelity=Fidelity(depth=3, visible=frozenset({"text"})), db_path=db
+    )
+    assert deep is not None
+    assert deep.cost is not None and abs(deep.cost - 9.0) < 1e-6
+
+    shallow = get_conversation(
+        cid, fidelity=Fidelity(depth=2, visible=frozenset({"text"})), db_path=db
+    )
+    assert shallow is not None
+    assert shallow.cost is None  # not fetched below depth 3
+
+
 def _build_two_owners(db_path):
     """alice (claude_code: 2 responses, 1 token-bearing) + bob (aider: 1
     token-bearing response), ownership recorded so owner-scoped coverage reads

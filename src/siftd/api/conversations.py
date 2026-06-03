@@ -14,7 +14,10 @@ from siftd.domain.search_types import ROLE_ASSISTANT, ROLE_USER
 from siftd.paths import db_path as default_db_path
 from siftd.safecall import parse_json
 from siftd.safecall import read_text as _safe_read_text
-from siftd.storage.conversation_stats import has_conversation_stats_table
+from siftd.storage.conversation_stats import (
+    get_conversation_cost,
+    has_conversation_stats_table,
+)
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.filters import tag_condition as _tag_condition
 from siftd.storage.fts import fts5_first_event_in_conversation
@@ -179,6 +182,7 @@ class ConversationDetail:
     total_output_tokens: int
     turns: list[Turn]
     tags: list[str] = field(default_factory=list)
+    cost: float | None = None
 
     @property
     def exchanges(self) -> list[Exchange]:
@@ -688,8 +692,14 @@ def get_conversation(
                 )
             )
 
-        # Tags render in list/detail at depth >= 3.
+        # Tags + cost render in list/detail at depth >= 3. Cost is the rollup's
+        # canonical precomputed value (None when no priced usage), never faked.
         tags = fetch_conversation_tags(conn, conv_id) if fidelity.depth >= 3 else []
+        cost = (
+            get_conversation_cost(conn, conv_id)
+            if fidelity.depth >= 3 and has_conversation_stats_table(conn)
+            else None
+        )
 
         # Anchor + window resolution (fetch-layer concern per fidelity-as-contract).
         # All turns are fetched above; we slice here to return only the requested window.
@@ -710,6 +720,7 @@ def get_conversation(
             total_output_tokens=total_output,
             turns=turns,
             tags=tags,
+            cost=cost,
         )
     finally:
         conn.close()

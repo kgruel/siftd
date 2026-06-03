@@ -64,6 +64,21 @@ def _coerce_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _coerce_cost(value: Any) -> float | None:
+    """Coerce a wire value to float, preserving ``None``.
+
+    Unlike ``_coerce_int``, ``None`` is meaningful here — it means "no priced
+    usage" (distinct from a real 0.0), so it must survive the round-trip rather
+    than collapse to a default. Malformed non-null values fall back to ``None``.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _coerce_list(value: Any) -> list:
     """Coerce a wire value to a list; return [] on any failure."""
     if isinstance(value, list):
@@ -318,6 +333,7 @@ def deserialize_conversation_detail(body: dict[str, Any]) -> ConversationDetail 
             total_output_tokens=total_out,
             turns=turns,
             tags=_coerce_list(d.get("tags")),
+            cost=_coerce_cost(d.get("cost")),
         )
     except Exception:
         return None

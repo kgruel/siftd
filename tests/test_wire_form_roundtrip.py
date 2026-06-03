@@ -214,6 +214,7 @@ class TestConversationDetailRoundTrip:
             total_output_tokens=sum(t.total_output_tokens for t in turns),
             turns=turns,
             tags=["work"],
+            cost=2.5,
         )
 
     def test_minimal_detail_roundtrips_with_token_splits_reconstructed(self):
@@ -226,6 +227,7 @@ class TestConversationDetailRoundTrip:
         assert recovered.model == original.model
         assert recovered.started_at == original.started_at
         assert recovered.tags == original.tags
+        assert recovered.cost == original.cost  # cost survives the wire boundary
         assert len(recovered.turns) == len(original.turns)
         # Token splits are reconstructed by summing per-turn (the wire form
         # only carries the combined sum at conversation level).

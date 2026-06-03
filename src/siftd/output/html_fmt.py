@@ -833,6 +833,10 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
         getattr(detail, "total_input_tokens", 0) + getattr(detail, "total_output_tokens", 0)
     )
     total_tools = sum(tool_counter.values())
+    # Cost is the rollup's canonical per-conversation value, fetched at depth>=3.
+    # None means no priced usage — render an em dash, never a fabricated $0.
+    cost = getattr(detail, "cost", None)
+    cost_str = f"${cost:.4f}" if cost is not None else "&mdash;"
 
     ledger_rows: list[str] = []
     for name, cnt in tool_counter.most_common():
@@ -847,15 +851,18 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
             '<span class="ledger__name">no tool calls</span></li>'
         )
 
-    n_turns = len(turns)
+    # The count is rail items (each User / Assistant message is a turn), so the
+    # "Turns N" header matches the rail length — not the exchange count, which
+    # would under-report by ~half (one exchange renders two turns).
+    turn_count = n
     kick = f"{escape(short)} · folio" if short else "folio"
 
     parts: list[str] = [
         f'<article class="folio" data-view="transcript" data-title="Transcript"'
-        f' data-count="{n_turns}" data-kick="{kick}">',
+        f' data-count="{turn_count}" data-kick="{kick}">',
         '<nav class="folio__nav" aria-label="Turns">',
         '<div class="folio__navhead"><span class="micro">Turns</span>'
-        f'<span class="folio__navmeta">{n_turns}</span></div>',
+        f'<span class="folio__navmeta">{turn_count}</span></div>',
         f'<div class="turns">{"".join(rail)}</div>',
         "</nav>",
         '<div class="folio__body">',
@@ -868,8 +875,8 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
         '<div class="ledger__foot">',
         '<div class="ledger__stat"><span class="micro">Tokens</span>'
         f'<span class="ledger__statn">{escape(fmt_tokens(total_tokens))}</span></div>',
-        '<div class="ledger__stat"><span class="micro">Tools</span>'
-        f'<span class="ledger__statn">{total_tools}</span></div>',
+        '<div class="ledger__stat"><span class="micro">Cost</span>'
+        f'<span class="ledger__statn">{cost_str}</span></div>',
         "</div></aside>",
         "</article>",
     ]

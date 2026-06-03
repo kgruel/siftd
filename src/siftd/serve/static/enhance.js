@@ -8,6 +8,8 @@
  *   3. chrome head + active nav — read the swapped fragment's data-* on every
  *      htmx settle so the view header and rail highlight follow #main, without
  *      coupling the fragment to the head via hx-swap-oob.
+ *   4. transcript scroll-spy — an IntersectionObserver marks the rail's current
+ *      turn (.is-current) as the folio body scrolls.
  */
 (function () {
   'use strict';
@@ -63,7 +65,41 @@
     });
   }
 
-  function enhance() { wireTone(); drawLedgers(); syncChrome(); }
+  // --- transcript scroll-spy (rail .is-current follows the body) ------------
+  // CSP-safe: IntersectionObserver + classList, no eval/inline. The folio body
+  // is its own scroll container, so it's the observer root; the negative bottom
+  // margin makes "current" track the turn crossing the top third of the view.
+  var spyObserver = null;
+  function initSpy() {
+    if (spyObserver) { spyObserver.disconnect(); spyObserver = null; }
+    var body = document.querySelector('#main .folio__body');
+    if (!body || !('IntersectionObserver' in window)) return;
+    var turns = body.querySelectorAll('.turn[id]');
+    if (!turns.length) return;
+    var visible = {};
+    function refresh() {
+      var bestId = null, bestN = Infinity;
+      Object.keys(visible).forEach(function (id) {
+        if (!visible[id]) return;
+        var n = parseInt(id.replace('t-', ''), 10);
+        if (n < bestN) { bestN = n; bestId = id; }
+      });
+      document.querySelectorAll('.turn-item.is-current').forEach(function (a) {
+        a.classList.remove('is-current');
+      });
+      if (bestId) {
+        var item = document.querySelector('.turn-item[href="#' + bestId + '"]');
+        if (item) item.classList.add('is-current');
+      }
+    }
+    spyObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { visible[e.target.id] = e.isIntersecting; });
+      refresh();
+    }, { root: body, rootMargin: '0px 0px -65% 0px', threshold: 0 });
+    turns.forEach(function (t) { spyObserver.observe(t); });
+  }
+
+  function enhance() { wireTone(); drawLedgers(); syncChrome(); initSpy(); }
 
   document.body.addEventListener('htmx:afterSettle', enhance);
   applyTone();

@@ -262,7 +262,10 @@ async def ui_folio(
 
     owner = _effective_owner(request, None)
     fmt = get_format("html")
-    fidelity = _fidelity(depth=2, chars=0)
+    # depth=3 fetches the rollup's canonical cost (+ tags) for the ledger foot.
+    # shows() is membership-based, so tools/thinking stay unfetched — the bump
+    # only flips the cost/tag gates, not the body's prose-only rendering.
+    fidelity = _fidelity(depth=3, chars=0)
 
     conv_id = id
     if not conv_id:
