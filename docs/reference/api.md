@@ -1024,7 +1024,7 @@ def list_workspaces(conn: sqlite3.Connection | None = ..., n: int = ..., *, db_p
 - `conn`: Database connection. Opened from db_path if not provided.
 - `n`: Maximum workspaces to return.
 
-**Returns:** Rows with 'path' and 'convs' keys.
+**Returns:** Rows with 'id' (workspace ULID), 'path', 'git_remote', 'convs', and 'last_activity' keys. The ULID 'id' is the workspace's stable identity (workspaces.id) — the read API addresses workspaces by it, not by the slash-containing path.
 
 ### stats_cache_path
 
@@ -1174,6 +1174,7 @@ Tag with usage counts.
 | `exchange_count` | `int` |  |
 | `prompt_count` | `int` |  |
 | `response_count` | `int` |  |
+| `activity` | `list[int] \| None` |  |
 
 ### EventDetail
 
@@ -1429,7 +1430,7 @@ def get_or_create_tag(conn: Connection, name: str, description: str | None = ...
 List all tags with usage counts.
 
 ```python
-def list_tags(db_path: pathlib.Path | None = ..., conn: sqlite3.Connection | None = ..., *, since: str | None = ..., before: str | None = ..., owner: str | None = ...) -> list[TagInfo]
+def list_tags(db_path: pathlib.Path | None = ..., conn: sqlite3.Connection | None = ..., *, since: str | None = ..., before: str | None = ..., owner: str | None = ..., fidelity: painted.core.fidelity.Fidelity | None = ...) -> list[TagInfo]
 ```
 
 **Parameters:**
@@ -1437,6 +1438,7 @@ def list_tags(db_path: pathlib.Path | None = ..., conn: sqlite3.Connection | Non
 - `db_path`: Path to database. Ignored if conn provided.
 - `conn`: Existing connection to use.
 - `since`: Only count associations where conversation started after this ISO date.
+- `before`: Only count associations where conversation started before this ISO date.
 
 **Returns:** List of TagInfo objects sorted by name.
 

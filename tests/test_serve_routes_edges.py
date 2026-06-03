@@ -97,8 +97,12 @@ def test_dispatch_detail_none_returns_404(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.dispatch.Operation", lambda **kw: None)
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: None)
     monkeypatch.setattr("siftd.api.dispatch.render", lambda *_a, **_k: {"should": "not run"})
-    out = routes._dispatch("/api/v1/conversations", "GET", lambda: None, {"id": "x"}, "detail", tmp_path / "db.db")
+    # The detail-template path (not the list path) is what resolves the
+    # conversations-detail OpSpec with not_found_on_none=True. The route now
+    # passes this template form; this test follows the corrected convention.
+    out = routes._dispatch("/api/v1/conversations/{id}", "GET", lambda: None, {"id": "x"}, "detail", tmp_path / "db.db")
     assert out.status_code == 404
+    assert out.content["error"] == "conversation not found"
 
 
 def test_health_nonexistent_db_returns_zero_counts(tmp_path):

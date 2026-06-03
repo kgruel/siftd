@@ -661,7 +661,7 @@ def fetch_top_workspaces(
         owner_params = (owner,)
     return conn.execute(
         f"""
-        SELECT w.path, counts.convs, counts.last_activity
+        SELECT w.id, w.path, w.git_remote, counts.convs, counts.last_activity
         FROM (
             SELECT
                 c.workspace_id,

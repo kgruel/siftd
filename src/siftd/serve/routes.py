@@ -34,6 +34,18 @@ def _effective_owner(request: Request, owner: str | None) -> str | None:
     return owner
 
 
+def _not_found_message(path: str) -> str:
+    """Entity-specific 404 message derived from the dispatch path.
+
+    Explicit map rather than singularizing the path segment — the existing
+    conversation-detail body (``"conversation not found"``) is contract-pinned
+    by tests, so we preserve it exactly and extend per entity.
+    """
+    if "/workspaces" in path:
+        return "workspace not found"
+    return "conversation not found"
+
+
 def _dispatch(
     path: str, method: str, fn: Callable, params: dict[str, Any],
     render_method: str, db: Path,
@@ -57,6 +69,7 @@ def _dispatch(
 
     from siftd.api.conversations import AmbiguousPrefix, AnchorError, QueryError
     from siftd.api.dispatch import Operation, execute, render
+    from siftd.api.op_spec import spec_for_path
     from siftd.serialization import serve_fmt
 
     try:
@@ -66,8 +79,15 @@ def _dispatch(
             render_context=render_context or {},
         )
         result = execute(op)
-        if render_method == "detail" and result is None:
-            return Response(content={"error": "conversation not found"}, status_code=404)
+        # Per-entity detail Operations declare not_found_on_none in their OpSpec
+        # (conversations/{id}, workspaces/{id}). A None result means "no such
+        # entity" → 404. List/aggregate Operations leave the flag False so an
+        # empty result renders as a normal 200.
+        spec = spec_for_path(path, method)
+        if spec is not None and spec.not_found_on_none and result is None:
+            return Response(
+                content={"error": _not_found_message(path)}, status_code=404,
+            )
 
         # Run caveat producers (stale-embeddings/truncation/ambiguity warnings)
         # so the serve envelope carries them, like `siftd query/search --json`.
@@ -132,6 +152,24 @@ def _dispatch(
         )
 
 
+def _fidelity_from_visible(visible: str | None, *, depth: int = 1):
+    """Build a Fidelity from a ``?visible=`` query param (comma-separated tags).
+
+    The general client-facing mechanism for requesting result enrichments: a
+    consumer asks for ``?visible=activity,facets`` and the listed tags land in
+    ``Fidelity.visible``, which the API fns gate their optional (and possibly
+    expensive) enrichment queries on. ``"text"`` is always present so the base
+    payload is unaffected; unknown tags are harmless (a fn that doesn't honor a
+    tag simply ignores it).
+    """
+    from painted import Fidelity
+
+    tags = {"text"}
+    if visible:
+        tags |= {t.strip() for t in visible.split(",") if t.strip()}
+    return Fidelity(depth=depth, visible=frozenset(tags))
+
+
 @get("/api/v1")
 async def index() -> dict:
     """API index — list available endpoints."""
@@ -146,6 +184,7 @@ async def index() -> dict:
             {"method": "GET", "path": "/api/v1/search", "description": "Semantic + FTS search"},
             {"method": "GET", "path": "/api/v1/stats", "description": "Database statistics"},
             {"method": "GET", "path": "/api/v1/workspaces", "description": "List workspaces"},
+            {"method": "GET", "path": "/api/v1/workspaces/{id}", "description": "Workspace detail by ULID"},
             {"method": "GET", "path": "/api/v1/tags", "description": "List tags with counts"},
             {"method": "GET", "path": "/api/v1/export", "description": "Export full conversations"},
             {"method": "POST", "path": "/api/v1/tag", "description": "Apply, remove, rename, or delete tags"},
@@ -190,21 +229,58 @@ async def workspaces_route(
     )
 
 
+@get("/api/v1/workspaces/{id:str}")
+async def workspace_detail_route(
+    request: Request,
+    db_path: Path,
+    id: str,
+) -> dict | Response:
+    """Detail for one workspace, addressed by its ULID (workspaces.id).
+
+    Mirrors /api/v1/conversations/{id}: the master list is /api/v1/workspaces,
+    this is the per-entity detail (stat grid + by-model mix + recent sessions).
+    404 when no workspace has that id. Owner-scoped via the effective owner.
+
+    Routed through ``_dispatch`` (like the sibling detail/list routes) so it
+    shares the structured-error envelope and caveat-channel plumbing; the 404
+    comes from the OpSpec ``not_found_on_none`` flag.
+    """
+    from siftd.api.stats import workspace_detail
+
+    owner = _effective_owner(request, None)
+    fidelity = _fidelity_from_visible(None, depth=2)
+    return _dispatch(
+        "/api/v1/workspaces/{id}", "GET", workspace_detail,
+        {"workspace_id": id, "fidelity": fidelity, "db_path": db_path,
+         "owner": owner},
+        "workspace_detail", db_path,
+        fidelity=fidelity,
+    )
+
+
 @get("/api/v1/tags")
 async def tags_route(
     request: Request,
     db_path: Path,
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),
+    visible: str | None = Parameter(query="visible", default=None),
 ) -> dict | Response:
-    """List tags with usage counts."""
+    """List tags with usage counts.
+
+    ``?visible=activity`` enriches each tag with a per-week activity sparkline
+    (see :func:`siftd.api.tags.list_tags`); omitted, the enrichment query is
+    skipped.
+    """
     from siftd.api.tags import list_tags
 
     owner = _effective_owner(request, None)
+    fidelity = _fidelity_from_visible(visible)
     return _dispatch(
         "/api/v1/tags", "GET", list_tags,
-        {"db_path": db_path, "since": since, "before": before, "owner": owner},
-        "tags", db_path,
+        {"db_path": db_path, "since": since, "before": before, "owner": owner,
+         "fidelity": fidelity},
+        "tags", db_path, fidelity=fidelity,
     )
 
 
@@ -754,8 +830,10 @@ async def conversation_detail(
             )
 
     owner = _effective_owner(request, None)
+    # Pass the detail template path (not the list path) so _dispatch's OpSpec
+    # lookup resolves the conversations-detail spec (not_found_on_none=True).
     return _dispatch(
-        "/api/v1/conversations", "GET", get_conversation,
+        "/api/v1/conversations/{id}", "GET", get_conversation,
         {"id": id, "fidelity": fidelity, "db_path": db_path,
          "tool_filter": tool_filter, "owner": owner,
          "anchor": anchor, "anchor_value": coerced_value,

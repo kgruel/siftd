@@ -25,8 +25,12 @@ def test_stats(monkeypatch):
 
 
 def test_workspaces():
-    r = render_workspaces([{"path": "/a", "convs": 3, "last_activity": "d"}], _F)
+    r = render_workspaces(
+        [{"id": "01HWS", "path": "/a", "git_remote": None, "convs": 3, "last_activity": "d"}],
+        _F,
+    )
     assert r["workspaces"][0]["conversations"] == 3
+    assert r["workspaces"][0]["id"] == "01HWS"
 
 
 def test_tags():
