@@ -28,14 +28,20 @@ def test_page_shell_modes():
     shell_q = hr._page_shell(search_q="abc")
     shell_follow = hr._page_shell(follow_sid="sid-1")
     shell_id = hr._page_shell(conv_id="cid-1")
-    assert '/search?q=abc' in shell_q
-    assert '/follow?sid=sid-1' in shell_follow
-    assert '/query?id=cid-1' in shell_id
+    # Swiss deep-link remap: ?q= -> Search, ?follow= -> Sessions, ?id= -> folio.
+    assert "/view/search?q=abc" in shell_q
+    assert "/view/sessions" in shell_follow
+    assert "/folio?id=cid-1" in shell_id
+    # The mounted view is the current one in the rail.
+    assert 'data-view="transcript"' in shell_id and 'aria-current="page"' in shell_id
 
 
-def test_ui_shell_returns_html_response():
-    resp = _run(hr.ui_shell.fn(id="cid", q="qq", follow=None))
+def test_ui_shell_returns_html_response(tmp_path):
+    resp = _run(hr.ui_shell.fn(
+        db_path=tmp_path / "db.db", auth_config=None, id="cid", q="qq", follow=None,
+    ))
     assert resp.media_type == "text/html" and "<!DOCTYPE html>" in resp.content
+    assert "chrome--swiss" in resp.content
 
 
 def test_ui_meta_handles_data_source_failures(monkeypatch, tmp_path):

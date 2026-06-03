@@ -668,3 +668,209 @@ def render_stats(stats: Any, fidelity: Fidelity, **context: Any) -> str:
 
     parts.append("</article>")
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Swiss "folio" — conversation transcript as a three-region grid
+# ---------------------------------------------------------------------------
+
+
+def _md_to_html(content: str) -> str:
+    """Render assistant prose as HTML (markdown when mistune is available)."""
+    try:
+        import mistune
+
+        md = mistune.create_markdown(escape=True)
+        rendered = md(content)
+        # mistune's type is str | list[...]; a string input yields a string.
+        return rendered if isinstance(rendered, str) else "\n".join(map(str, rendered))
+    except ImportError:
+        out: list[str] = []
+        for para in content.split("\n\n"):
+            stripped = para.strip()
+            if stripped:
+                out.append(f"<p>{escape(stripped)}</p>")
+        return "".join(out)
+
+
+def _plain_paragraphs(text: str) -> str:
+    """User prompts: escaped, paragraph-split, never markdown-interpreted."""
+    out: list[str] = []
+    for para in text.strip().split("\n\n"):
+        stripped = para.strip()
+        if stripped:
+            out.append(f"<p>{escape(stripped)}</p>")
+    return "".join(out) or "<p></p>"
+
+
+class _FolioEmitter:
+    """Narrative emitter for the folio body: prose + code only.
+
+    Tool I/O is deliberately NOT inlined here — the folio surfaces tools in the
+    right-hand ledger and the per-turn ``.turn__tools`` chip, so the body stays
+    readable prose. The tool_* methods are intentional no-ops; the ledger is
+    built separately from ``turn.tool_call_summaries``.
+    """
+
+    def __init__(self) -> None:
+        self.parts: list[str] = []
+
+    def text(self, content: str, *, event_id: str | None = None) -> None:
+        del event_id
+        self.parts.append(_md_to_html(content))
+
+    def thinking(self, content: str, *, event_id: str | None = None) -> None:
+        del event_id
+        self.parts.append(
+            f'<details class="turn-think"><summary>thinking</summary>'
+            f"<pre>{escape(content)}</pre></details>"
+        )
+
+    def thinking_placeholder(self, *, event_id: str | None = None) -> None:
+        del event_id
+
+    def tool_summary(self, tools: list) -> None:
+        del tools
+
+    def tool_content(
+        self, name: str, count: int, raw_input: str | None,
+        raw_result: str | None, status: str | None, *,
+        event_id: str | None = None, tool_call_id: str | None = None,
+    ) -> None:
+        del name, count, raw_input, raw_result, status, event_id, tool_call_id
+
+    def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
+        del block_type, content, event_id
+
+    def to_html(self) -> str:
+        return "\n".join(self.parts)
+
+
+def _folio_rail_item(n: int, role: str, label: str, time: str, anchor: str) -> str:
+    return (
+        f'<a class="turn-item" data-role="{role}" href="#{anchor}">'
+        f'<span class="turn-item__n">{n:02d}</span>'
+        f'<span class="turn-item__role">{label}</span>'
+        f'<span class="turn-item__t">{escape(time)}</span></a>'
+    )
+
+
+def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
+    """Render a conversation as the Swiss 'folio' fragment.
+
+    Three CSS-grid regions, all over data ``get_conversation`` already returns:
+      - ``.folio__nav``    turn-rail (anchor links into the body; ``:target``
+                           highlights the landed turn — no JS scroll-spy needed)
+      - ``.folio__body``   user prompts + assistant prose (markdown); tool I/O is
+                           NOT inlined (the ledger owns it)
+      - ``.folio__ledger`` a ``Counter`` over ``turn.tool_call_summaries`` —
+                           pure render-layer, no new data
+
+    The fragment root carries ``data-view/title/count/kick`` so ``enhance.js``
+    updates the chrome head + active nav on an htmx swap without oob coupling.
+    The ledger foot shows tokens + tool count (both exact); cost is intentionally
+    absent — ``ConversationDetail`` carries no cost, and a fabricated $0 would
+    re-introduce the very mispricing the rollup work removed.
+    """
+    from collections import Counter
+
+    from siftd.output.common import fmt_timestamp, fmt_tokens
+    from siftd.output.narrative import walk_narrative
+
+    turns = getattr(detail, "turns", []) or []
+    conv_id = getattr(detail, "id", "") or ""
+    short = short_id(conv_id) if conv_id else ""
+
+    rail: list[str] = []
+    body: list[str] = []
+    tool_counter: Counter[str] = Counter()
+    n = 0
+
+    for turn in turns:
+        t_time = fmt_timestamp(getattr(turn, "timestamp", None), time_only=True) or ""
+        prompt_text = getattr(turn, "prompt_text", None)
+        narrative = getattr(turn, "narrative", []) or []
+        summaries = getattr(turn, "tool_call_summaries", []) or []
+
+        if prompt_text:
+            n += 1
+            anchor = f"t-{n}"
+            rail.append(_folio_rail_item(n, "user", "User", t_time, anchor))
+            body.append(
+                f'<div class="turn" data-role="user" id="{anchor}">'
+                f'<header class="turn__head"><span class="turn__role">User</span>'
+                f'<span class="turn__time">{escape(t_time)}</span></header>'
+                f'<div class="turn__text">{_plain_paragraphs(prompt_text)}</div>'
+                f"</div>"
+            )
+
+        if narrative:
+            n += 1
+            anchor = f"t-{n}"
+            tool_parts: list[str] = []
+            for s in summaries:
+                tool_counter[s.tool_name] += s.count
+                lbl = escape(s.tool_name)
+                if s.count > 1:
+                    lbl += f"&times;{s.count}"
+                tool_parts.append(lbl)
+            tools_html = (
+                f'<span class="turn__tools">{" &middot; ".join(tool_parts)}</span>'
+                if tool_parts else ""
+            )
+            emitter = _FolioEmitter()
+            walk_narrative(narrative, emitter, fidelity=fidelity, tool_chars=0)
+            rail.append(_folio_rail_item(n, "assistant", "Assistant", t_time, anchor))
+            body.append(
+                f'<div class="turn" data-role="assistant" id="{anchor}">'
+                f'<header class="turn__head"><span class="turn__role">Assistant</span>'
+                f'<span class="turn__time">{escape(t_time)}</span>{tools_html}</header>'
+                f'<div class="turn__text">{emitter.to_html()}</div>'
+                f"</div>"
+            )
+
+    total_tokens = (
+        getattr(detail, "total_input_tokens", 0) + getattr(detail, "total_output_tokens", 0)
+    )
+    total_tools = sum(tool_counter.values())
+
+    ledger_rows: list[str] = []
+    for name, cnt in tool_counter.most_common():
+        ledger_rows.append(
+            f'<li class="ledger__row"><span class="ledger__name">{escape(name)}</span>'
+            f'<span class="ledger__bar" data-n="{cnt}"></span>'
+            f'<span class="ledger__n">{cnt}</span></li>'
+        )
+    if not ledger_rows:
+        ledger_rows.append(
+            '<li class="ledger__row ledger__empty">'
+            '<span class="ledger__name">no tool calls</span></li>'
+        )
+
+    n_turns = len(turns)
+    kick = f"{escape(short)} · folio" if short else "folio"
+
+    parts: list[str] = [
+        f'<article class="folio" data-view="transcript" data-title="Transcript"'
+        f' data-count="{n_turns}" data-kick="{kick}">',
+        '<nav class="folio__nav" aria-label="Turns">',
+        '<div class="folio__navhead"><span class="micro">Turns</span>'
+        f'<span class="folio__navmeta">{n_turns}</span></div>',
+        f'<div class="turns">{"".join(rail)}</div>',
+        "</nav>",
+        '<div class="folio__body">',
+        "".join(body) or '<p class="empty">This conversation has no turns.</p>',
+        "</div>",
+        '<aside class="folio__ledger" aria-label="Tool ledger">',
+        '<div class="folio__navhead"><span class="micro">Tool ledger</span>'
+        f'<span class="folio__navmeta">{total_tools}</span></div>',
+        f'<ul class="ledger">{"".join(ledger_rows)}</ul>',
+        '<div class="ledger__foot">',
+        '<div class="ledger__stat"><span class="micro">Tokens</span>'
+        f'<span class="ledger__statn">{escape(fmt_tokens(total_tokens))}</span></div>',
+        '<div class="ledger__stat"><span class="micro">Tools</span>'
+        f'<span class="ledger__statn">{total_tools}</span></div>',
+        "</div></aside>",
+        "</article>",
+    ]
+    return "".join(parts)

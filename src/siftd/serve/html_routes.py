@@ -64,37 +64,122 @@ def _tool_chars(fidelity) -> int:
 # Page shell — the only full-page response
 # ---------------------------------------------------------------------------
 
+_NAV_ITEMS: tuple[tuple[str, str, str, str, str], ...] = (
+    # (view_id, number, name, descriptor, mount_url)
+    ("sessions", "01", "Sessions", "live · ingested", "/view/sessions"),
+    ("search", "02", "Search", "query · facets", "/view/search"),
+    ("transcript", "03", "Transcript", "folio · full", "/folio"),
+    ("tags", "04", "Tags", "pinned · tree", "/view/tags"),
+    ("workspaces", "05", "Workspaces", "explorer", "/view/workspaces"),
+    ("stats", "06", "Stats", "tokens · cost", "/view/stats"),
+)
+_VIEW_TITLES = {vid: name for vid, _n, name, _d, _u in _NAV_ITEMS}
+
+
+def _stub(view: str, title: str, hint: str = "coming in a later slice") -> str:
+    """A neutral placeholder for a view not yet authored in this slice.
+
+    Carries the same ``data-view/title/kick`` head metadata as a real fragment
+    so ``enhance.js`` updates the chrome head + active nav identically.
+    """
+    from html import escape
+
+    return (
+        f'<div class="stub" data-view="{escape(view)}" data-title="{escape(title)}"'
+        f' data-kick="{escape(hint)}">'
+        f'<span class="stub__mark"></span>'
+        f'<p>{escape(title)}</p>'
+        f'<p class="stub__hint">{escape(hint)}</p></div>'
+    )
+
+
+def _siftd_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return "v" + version("siftd")
+    except Exception:
+        return ""
+
+
+def _shell_footer(db_path: Path, *, with_counts: bool) -> dict:
+    """Rail-foot summary. Counts are corpus-wide, so they're only computed when
+    auth is disabled — the shell route is ``no_auth`` and would otherwise leak
+    global totals to an unauthenticated load."""
+    foot: dict = {"version": _siftd_version()}
+    if not with_counts:
+        return foot
+    try:
+        from siftd.api.stats import get_stats
+
+        stats = get_stats(db_path=db_path)
+        foot["conversations"] = f"{stats.counts.conversations:,}"
+    except Exception:
+        pass
+    try:
+        if db_path.exists():
+            foot["on_disk"] = f"{db_path.stat().st_size / 1_000_000:.1f} MB"
+    except Exception:
+        pass
+    return foot
+
+
 def _page_shell(
     *,
     conv_id: str | None = None,
     search_q: str | None = None,
     follow_sid: str | None = None,
+    footer: dict | None = None,
 ) -> str:
-    """Build the page shell with optional initial state for deep links."""
+    """Build the Swiss page shell (left rail + surface) with deep-link state.
+
+    The rail mounts one of six views into ``#main`` via htmx. Only Transcript
+    (the folio) is live in this slice; the others mount a ``.stub``. Deep links
+    remap to a view: ``?id=`` → Transcript, ``?q=`` → Search, ``?follow=`` →
+    Sessions (the latter two land on their stub until those slices ship).
+    """
     from html import escape as esc
     from urllib.parse import quote as urlquote
 
-    # Search bar: pre-populate if search_q provided
-    search_val = f' value="{esc(search_q)}"' if search_q else ""
-
-    # List pane: search results, peek sessions, or conversation list
-    if search_q:
-        list_url = f"/search?q={urlquote(search_q)}"
+    if conv_id:
+        active, main_url = "transcript", f"/folio?id={urlquote(conv_id)}"
+    elif search_q:
+        active, main_url = "search", f"/view/search?q={urlquote(search_q)}"
     elif follow_sid:
-        list_url = "/peek"
+        active, main_url = "sessions", "/view/sessions"
     else:
-        list_url = "/query"
+        active, main_url = "transcript", "/folio"
 
-    # Detail pane: auto-load conversation, follow session, or empty
-    if follow_sid:
-        detail_attr = f' hx-get="/follow?sid={esc(follow_sid)}" hx-trigger="load" hx-swap="innerHTML"'
-        detail_content = '<p class="empty">Loading session...</p>'
-    elif conv_id:
-        detail_attr = f' hx-get="/query?id={esc(conv_id)}" hx-trigger="load" hx-swap="innerHTML"'
-        detail_content = '<p class="empty">Loading...</p>'
-    else:
-        detail_attr = ""
-        detail_content = '<div class="empty-state"><div class="empty-icon">&#x2139;</div><p>Select a conversation from the list</p><p class="empty-hint">or search with the bar above</p></div>'
+    nav_parts: list[str] = []
+    for vid, num, name, ds, url in _NAV_ITEMS:
+        cur = ' aria-current="page"' if vid == active else ""
+        # Only the live view pushes a clean URL; stubs leave the address bar
+        # untouched (their deep-link contract returns with their slice).
+        push_attr = ' hx-push-url="/"' if vid == "transcript" else ""
+        nav_parts.append(
+            f'<a data-view="{vid}"{cur} hx-get="{esc(url)}" hx-target="#main"'
+            f' hx-swap="innerHTML"{push_attr}>'
+            f'<span class="n">{num}</span>'
+            f'<span><span class="nm">{esc(name)}</span>'
+            f'<span class="ds">{esc(ds)}</span></span></a>'
+        )
+    nav = "".join(nav_parts)
+
+    foot = footer or {}
+    foot_rows = ""
+    for label, value in (
+        ("Conversations", foot.get("conversations")),
+        ("On disk", foot.get("on_disk")),
+    ):
+        if value:
+            foot_rows += (
+                f'<div class="row2"><span>{esc(label)}</span>'
+                f"<b>{esc(str(value))}</b></div>"
+            )
+    version = foot.get("version") or ""
+    ver_html = f'<div class="ver">{esc(version)}</div>' if version else ""
+
+    init_title = _VIEW_TITLES.get(active, "siftd")
 
     return f"""\
 <!DOCTYPE html>
@@ -105,73 +190,31 @@ def _page_shell(
 <title>siftd</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-<link href="https://unpkg.com/prismjs@1.30.0/themes/prism-tomorrow.min.css" rel="stylesheet">
 <link rel="stylesheet" href="/static/siftd.css">
 </head>
-<body>
-<nav>
-  <span class="brand">siftd</span>
-  <input type="search" name="q" placeholder="Search..."{search_val}
-    hx-get="/search" hx-target="#list" hx-trigger="keyup changed delay:300ms"
-    hx-include="this">
-  <a href="/" hx-get="/query" hx-target="#list" hx-push-url="/"
-    hx-on::before-request="document.querySelectorAll('#filters select,#filters input').forEach(e=>e.value='')">Recent</a>
-  <a href="#" hx-get="/peek" hx-target="#list">Live</a>
-  <a href="#" hx-get="/stats" hx-target="#detail" hx-swap="innerHTML">Stats</a>
-  <button class="density-toggle" onclick="document.body.classList.toggle('compact')" title="Toggle compact mode">Compact</button>
-</nav>
-<main>
-  <div id="list-pane">
-    <div id="filters" hx-get="/meta" hx-trigger="load" hx-swap="innerHTML">
+<body data-theme="swiss" data-tone="light">
+<div class="chrome chrome--swiss">
+  <aside class="sw-rail">
+    <div class="sw-brand"><b>siftd</b><i></i></div>
+    <nav class="sw-nav">{nav}</nav>
+    <div class="sw-foot">
+      {foot_rows}
+      <button class="sw-tone" type="button" data-tone-toggle>Dark</button>
+      {ver_html}
     </div>
-    <div id="list" hx-get="{esc(list_url)}" hx-trigger="load" hx-swap="innerHTML"
-      hx-include="#filters">
-    </div>
+  </aside>
+  <div class="sw-surface">
+    <header class="sw-head">
+      <h1 id="sw-title">{esc(init_title)}</h1>
+      <span class="ct" id="sw-count"></span>
+      <span class="kick" id="sw-kick"></span>
+    </header>
+    <main class="content" id="main" hx-get="{esc(main_url)}" hx-trigger="load" hx-swap="innerHTML"></main>
   </div>
-  <div id="divider"></div>
-  <div id="detail-pane">
-    <div id="detail"{detail_attr}>
-      {detail_content}
-    </div>
-  </div>
-</main>
-<script>
-(function() {{
-  const d = document.getElementById('divider');
-  const lp = document.getElementById('list-pane');
-  const m = document.querySelector('main');
-  let dragging = false;
-  d.addEventListener('mousedown', function(e) {{
-    dragging = true; e.preventDefault();
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-  }});
-  document.addEventListener('mousemove', function(e) {{
-    if (!dragging) return;
-    const pct = ((e.clientX - m.offsetLeft) / m.offsetWidth) * 100;
-    if (pct > 15 && pct < 85) {{
-      lp.style.width = pct + '%';
-      document.getElementById('detail-pane').style.width = (100 - pct) + '%';
-    }}
-  }});
-  document.addEventListener('mouseup', function() {{
-    if (dragging) {{
-      dragging = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    }}
-  }});
-}})();
-</script>
-<script src="https://unpkg.com/prismjs@1.30.0/components/prism-core.min.js"></script>
-<script src="https://unpkg.com/prismjs@1.30.0/plugins/autoloader/prism-autoloader.min.js"></script>
-<script>
-document.body.addEventListener('htmx:afterSettle', function() {{
-  if (window.Prism) Prism.highlightAll();
-}});
-</script>
+</div>
+<script src="/static/enhance.js"></script>
 <script src="/static/auth.js"></script>
 </body>
 </html>"""
@@ -179,21 +222,79 @@ document.body.addEventListener('htmx:afterSettle', function() {{
 
 @get("/", opt={"no_auth": True})
 async def ui_shell(
+    db_path: Path,
+    auth_config: dict | None = None,
     id: str | None = Parameter(query="id", default=None),
     q: str | None = Parameter(query="q", default=None),
     follow: str | None = Parameter(query="follow", default=None),
 ) -> Response:
-    """Serve the page shell — the single full-page HTML response.
+    """Serve the Swiss page shell — the single full-page HTML response.
 
     Accepts optional params for deep-linkable URLs:
-        ?id=   — open a conversation
-        ?q=    — pre-populate search
-        ?follow= — follow a live session
+        ?id=     — open a conversation (Transcript folio)
+        ?q=      — pre-populate Search
+        ?follow= — follow a live session (Sessions)
     """
+    footer = _shell_footer(db_path, with_counts=auth_config is None)
     return Response(
-        content=_page_shell(conv_id=id, search_q=q, follow_sid=follow),
+        content=_page_shell(conv_id=id, search_q=q, follow_sid=follow, footer=footer),
         media_type="text/html",
     )
+
+
+@get("/folio")
+async def ui_folio(
+    request: Request,
+    db_path: Path,
+    id: str | None = Parameter(query="id", default=None),
+) -> Response:
+    """Render the Swiss transcript folio for one conversation.
+
+    With ``?id=`` renders that conversation; without, the most recent one so
+    the view is never empty. Owner-scoped via the effective identity.
+    """
+    from siftd.api.conversations import (
+        AmbiguousPrefix,
+        get_conversation,
+        list_conversations,
+    )
+    from siftd.output.format_registry import get_format
+
+    owner = _effective_owner(request, None)
+    fmt = get_format("html")
+    fidelity = _fidelity(depth=2, chars=0)
+
+    conv_id = id
+    if not conv_id:
+        latest = list_conversations(
+            fidelity=_fidelity(depth=1), db_path=db_path, n=1, owner=owner,
+        )
+        if not latest:
+            return _html_response(_stub("transcript", "Transcript", "no conversations yet"))
+        conv_id = latest[0].id
+
+    try:
+        detail = get_conversation(conv_id, fidelity=fidelity, db_path=db_path, owner=owner)
+    except AmbiguousPrefix as exc:
+        return _html_response(
+            _stub("transcript", "Transcript", f"ambiguous id — {exc.total} matches")
+        )
+    if detail is None:
+        return _html_response(_stub("transcript", "Transcript", f"not found: {conv_id[:12]}"))
+    return _html_response(fmt.render_folio(detail, fidelity))
+
+
+@get("/view/{name:str}")
+async def ui_view_stub(
+    name: str,
+    q: str | None = Parameter(query="q", default=None),
+) -> Response:
+    """Placeholder for a view not yet authored in this slice (Swiss Phase B)."""
+    title = _VIEW_TITLES.get(name, name.replace("-", " ").title())
+    hint = "coming in a later slice"
+    if name == "search" and q:
+        hint = f'search "{q[:40]}" — coming in a later slice'
+    return _html_response(_stub(name, title, hint))
 
 
 @get("/auth/config", opt={"no_auth": True}, sync_to_thread=False)
