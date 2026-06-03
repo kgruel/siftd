@@ -29,11 +29,9 @@ from siftd.storage.queries import (
     fetch_responses_for_conversation,
     fetch_tags_for_conversations,
     fetch_tool_calls_for_conversation,
-    has_pricing_table,
 )
 from siftd.storage.sql_helpers import (
     batched_in_query,
-    cost_expr_sql,
     has_conversation_owners_table,
     owner_predicate,
 )
@@ -226,11 +224,12 @@ def list_conversations(
     """List conversations with optional filtering.
 
     Args:
-        fidelity: Cross-stage rendering contract. ``fidelity.depth`` gates
-            expensive fetches — the cost subquery is only evaluated at
-            ``depth >= 3`` (the rung at which the renderer emits a cost
-            column). The fast-path stats table read is unaffected because
-            its cost column is precomputed.
+        fidelity: Cross-stage rendering contract carried through to the
+            renderer, which emits the cost column at ``depth >= 3``. Cost
+            itself is no longer recomputed here: the fast path reads the
+            precomputed ``conversation_stats.cost`` (the rollup's single
+            canonical definition), and the no-stats fallback emits NULL cost
+            rather than re-deriving it (see ``_list_conversations_impl``).
         db_path: Path to database. Uses default if not specified.
         workspace: Filter by workspace path substring.
         workspace_id: Filter by exact workspace ULID (workspaces.id); distinct
@@ -290,9 +289,6 @@ def _list_conversations_impl(
     workspace_id: str | None = None,
 ) -> list[ConversationSummary]:
     """Implementation of list_conversations with connection already open."""
-    # Check if pricing table exists
-    has_pricing = has_pricing_table(conn)
-
     # Build WHERE clauses
     wb = WhereBuilder()
     wb.workspace(workspace)
@@ -396,25 +392,16 @@ def _list_conversations_impl(
             conv_ids,
         ).fetchall()
     else:
-        # Fallback: compute from source tables (before first ingest rebuilds
-        # the stats table, or if the table was dropped).
-        # r2 alias: expose event_id as id so cost_expr_sql's {r}.id works against
-        # the polymorphic attributes table (target_id = event_id for responses).
-        # Cost subquery is only evaluated at the depth rung where the renderer
-        # actually emits a cost column (matches painted_bridge.render_list).
-        wants_cost = fidelity.depth >= 3
-        cost_subquery = (
-            f"""(SELECT ROUND(SUM({cost_expr_sql('r2', 'pr', coalesce_pricing=True)}) / 1000000.0, 4)
-            FROM events e2
-            JOIN (SELECT er2.event_id AS id, er2.model_id, er2.provider_id,
-                         er2.input_tokens, er2.output_tokens
-                  FROM event_response er2) r2 ON r2.id = e2.id
-            LEFT JOIN pricing pr ON pr.model_id = r2.model_id
-                                 AND pr.provider_id = r2.provider_id
-            WHERE e2.kind = 'response' AND e2.conversation_id = c.id)"""
-            if (has_pricing and wants_cost)
-            else "NULL"
-        )
+        # Fallback: compute from source tables when the materialized derived
+        # tier is absent — a sliced / never-ingested DB that hasn't built
+        # conversation_stats (and therefore has no usage_by_conv_model either,
+        # since both are ensured together at write-open).  Cost is the rollup's
+        # single canonical definition, so it is NOT re-derived here: with no
+        # materialized tier, cost is NULL (unknown), never a divergently-priced
+        # number.  (The retired fallback used coalesce_pricing=True with a plain
+        # provider join and no harness-source fallback, which mispriced the ~21%
+        # of responses with a NULL provider_id and emitted 0.0 where the
+        # canonical path emits NULL.)
         rows = conn.execute(
             f"""SELECT c.id AS conversation_id, w.path AS workspace,
                     (SELECT m2.name FROM events e2
@@ -428,7 +415,7 @@ def _list_conversations_impl(
                     (SELECT COALESCE(SUM(er2.input_tokens), 0) + COALESCE(SUM(er2.output_tokens), 0)
                      FROM events e2 JOIN event_response er2 ON er2.event_id = e2.id
                      WHERE e2.kind = 'response' AND e2.conversation_id = c.id) AS tokens,
-                    {cost_subquery} AS cost
+                    NULL AS cost
                 FROM conversations c
                 LEFT JOIN workspaces w ON w.id = c.workspace_id
                 WHERE c.id IN ({placeholders})

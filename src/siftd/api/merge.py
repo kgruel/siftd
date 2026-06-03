@@ -124,15 +124,28 @@ def merge_database(
     finally:
         conn.close()
 
-    # Rebuild FTS in target if requested and not dry_run
-    if rebuild_fts and not dry_run:
-        fts_conn = open_database(target_db)
+    # Rebuild the derived tier (and FTS, if requested) after a real merge.
+    # The merge copies raw rows via INSERT...SELECT but never touches the
+    # derived tier, so usage_by_conv_model / conversation_stats would go stale —
+    # the live sync/receive path merges new conversations that would otherwise
+    # never reach the rollup, silently undercounting server stats.  Mirrors the
+    # ingest invariant.  Unconditional (not gated on rebuild_fts) so stats stay
+    # correct even when callers skip the FTS rebuild (receive defaults to off).
+    # Full rebuild — correct but O(corpus); an incremental per-conversation
+    # upsert is a deferred optimization.  Post-commit (matching the FTS rebuild):
+    # a failure here leaves the tier stale rather than aborting the merge.
+    if not dry_run:
+        post_conn = open_database(target_db)
         try:
-            from siftd.storage.fts import rebuild_fts_index
+            from siftd.storage.usage_rollup import rebuild_rollups
 
-            rebuild_fts_index(fts_conn, commit=True)
+            rebuild_rollups(post_conn, commit=True)
+            if rebuild_fts:
+                from siftd.storage.fts import rebuild_fts_index
+
+                rebuild_fts_index(post_conn, commit=True)
         finally:
-            fts_conn.close()
+            post_conn.close()
 
     return stats
 

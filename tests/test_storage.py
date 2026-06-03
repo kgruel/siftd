@@ -780,6 +780,9 @@ class TestQueries:
         assert len(q.fetch_harness_conversation_counts(conn)) >= 1
         assert len(q.fetch_model_names(conn)) >= 1
         assert len(q.fetch_top_tools(conn)) >= 1
+        # Token coverage now reads the usage_by_conv_model rollup (S3); build it
+        # so the derived tier reflects the populated source rows.
+        urollup.rebuild_rollups(conn, commit=True)
         assert q.fetch_response_token_coverage(conn)[0] >= 1
         assert len(q.fetch_token_coverage_by_harness(conn)) >= 1
         assert q.has_pricing_table(conn)

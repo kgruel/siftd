@@ -100,8 +100,14 @@ class CostCoverage:
     pct_covered: float
 
 
-def get_cost_coverage(conn: sqlite3.Connection) -> CostCoverage | None:
+def get_cost_coverage(
+    conn: sqlite3.Connection, *, owner: str | None = None
+) -> CostCoverage | None:
     """Get cost coverage statistics from conversation_stats.
+
+    This is the single definition of cost coverage; the public API wrapper
+    (:func:`siftd.api.stats.get_cost_coverage`) opens a connection and delegates
+    here so the FILTER definition lives in one place.
 
     Returns None if the conversation_stats table does not exist.
 
@@ -109,17 +115,31 @@ def get_cost_coverage(conn: sqlite3.Connection) -> CostCoverage | None:
     that have a positive computed cost (cost > 0).  Conversations with NULL cost
     have no pricing data available; conversations with cost = 0.0 have tokens
     but were priced at zero (indicates stale stats -- run siftd ingest to rebuild).
+
+    When ``owner`` is set, scoped to conversations owned by that user_id (via
+    :func:`owner_predicate`); ``owner=None`` is unscoped (single-tenant/local
+    default).
     """
+    from siftd.storage.sql_helpers import (
+        has_conversation_owners_table,
+        owner_predicate,
+    )
+
     if not has_conversation_stats_table(conn):
         return None
+    if owner and not has_conversation_owners_table(conn):
+        return CostCoverage(0, 0, 0, 0.0)
 
-    row = conn.execute("""
-        SELECT
-            COUNT(*) FILTER (WHERE total_tokens > 0) AS with_tokens,
-            COUNT(*) FILTER (WHERE cost > 0) AS with_cost,
-            COUNT(*) FILTER (WHERE total_tokens > 0 AND cost IS NULL) AS null_cost
-        FROM conversation_stats
-    """).fetchone()
+    owner_where = f" WHERE {owner_predicate('conversation_id')}" if owner else ""
+    params = [owner] if owner else []
+    row = conn.execute(
+        "SELECT"
+        " COUNT(*) FILTER (WHERE total_tokens > 0) AS with_tokens,"
+        " COUNT(*) FILTER (WHERE cost > 0) AS with_cost,"
+        " COUNT(*) FILTER (WHERE total_tokens > 0 AND cost IS NULL) AS null_cost"
+        f" FROM conversation_stats{owner_where}",
+        params,
+    ).fetchone()
 
     with_tokens = row["with_tokens"] or 0
     with_cost = row["with_cost"] or 0

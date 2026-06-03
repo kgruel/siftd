@@ -839,22 +839,30 @@ def fetch_response_token_coverage(
     *,
     owner: str | None = None,
 ) -> tuple[int, int]:
-    """Fetch total responses and count with any token usage, optionally scoped to an owner."""
+    """Fetch total responses and count with any token usage, optionally scoped to an owner.
+
+    Reads the ``usage_by_conv_model`` rollup (S3): ``response_count`` and
+    ``responses_with_tokens`` are materialized from the same
+    ``events JOIN event_response`` flatten this used to scan, so the totals are
+    identical — a GROUP-BY sum over the rollup instead of a full response-event
+    scan.  Every path that bulk-writes raw rows (ingest, slice, merge) rebuilds
+    the rollup, so a populated DB always has it; an empty rollup means an empty
+    corpus (correctly ``(0, 0)``), while a DB missing the table entirely is
+    malformed and surfaces a loud error rather than a silently-zero answer.
+    """
     if owner and not has_conversation_owners_table(conn):
         return 0, 0
     sql = (
-        "SELECT COUNT(*) AS total, "
-        "SUM(CASE WHEN er.input_tokens IS NOT NULL OR er.output_tokens IS NOT NULL THEN 1 ELSE 0 END) "
-        "AS with_tokens FROM events e JOIN event_response er ON er.event_id = e.id WHERE e.kind = 'response'"
+        "SELECT COALESCE(SUM(response_count), 0) AS total, "
+        "COALESCE(SUM(responses_with_tokens), 0) AS with_tokens "
+        "FROM usage_by_conv_model u"
     )
     params: tuple[object, ...] = ()
     if owner:
-        sql += f" AND {owner_predicate('e.conversation_id')}"
+        sql += f" WHERE {owner_predicate('u.conversation_id')}"
         params = (owner,)
     row = conn.execute(sql, params).fetchone()
-    total = row["total"] if row else 0
-    with_tokens = row["with_tokens"] if row and row["with_tokens"] is not None else 0
-    return total, with_tokens
+    return row["total"], row["with_tokens"]
 
 
 def fetch_token_coverage_by_harness(
@@ -862,25 +870,31 @@ def fetch_token_coverage_by_harness(
     *,
     owner: str | None = None,
 ) -> list[sqlite3.Row]:
-    """Fetch response token coverage grouped by harness, optionally scoped to an owner."""
+    """Fetch response token coverage grouped by harness, optionally scoped to an owner.
+
+    Reads the ``usage_by_conv_model`` rollup (S3), joined up to the harness via
+    ``conversations.harness_id``.  The INNER JOINs to ``conversations`` and
+    ``harnesses`` mirror the pre-rollup query, so responses on harness-less
+    conversations are dropped identically.  Like
+    :func:`fetch_response_token_coverage`, the rollup is a maintained invariant
+    of any populated DB; a missing table is malformed and errors loudly.
+    """
     if owner and not has_conversation_owners_table(conn):
         return []
     extra_where = ""
     params: tuple[object, ...] = ()
     if owner:
-        extra_where = f"AND {owner_predicate('c.id')}"
+        extra_where = f"WHERE {owner_predicate('u.conversation_id')}"
         params = (owner,)
     return conn.execute(
         f"""
         SELECT h.name AS harness,
-               COUNT(e.id) AS responses,
-               SUM(CASE WHEN er.input_tokens IS NOT NULL OR er.output_tokens IS NOT NULL THEN 1 ELSE 0 END)
-                   AS with_tokens
-        FROM events e
-        JOIN event_response er ON er.event_id = e.id
-        JOIN conversations c ON c.id = e.conversation_id
+               COALESCE(SUM(u.response_count), 0) AS responses,
+               COALESCE(SUM(u.responses_with_tokens), 0) AS with_tokens
+        FROM usage_by_conv_model u
+        JOIN conversations c ON c.id = u.conversation_id
         JOIN harnesses h ON h.id = c.harness_id
-        WHERE e.kind = 'response' {extra_where}
+        {extra_where}
         GROUP BY h.name
         ORDER BY responses DESC
         """,

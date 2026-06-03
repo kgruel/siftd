@@ -1339,23 +1339,44 @@ class TestFetchOwnersEdgeCases:
         assert result == []
         conn.close()
 
-    def test_list_cost_expr_not_evaluated_below_depth_3(self, monkeypatch, test_db):
-        """Fallback list query must not evaluate cost expression at depth<3."""
+    def test_list_cost_null_in_no_stats_fallback(self, monkeypatch, tmp_path):
+        """The no-stats fallback emits NULL cost (S3-B).
+
+        The rollup is the single canonical cost definition, so an un-ingested /
+        sliced DB with no materialized tier reports cost as NULL (unknown) — it
+        does NOT re-derive cost at read time.  The setup is the 21%-mispricing
+        case: a token-bearing response with NULL provider_id whose harness
+        source ("anthropic") has pricing.  The canonical rollup path prices it;
+        the retired fallback emitted 0.0 (coalesce_pricing=True + plain provider
+        join, no harness-source fallback).  Asserting ``is None`` distinguishes
+        the fix from both the old mispriced 0.0 and any computed number.
+        """
+        import siftd.storage.sqlite as sq
         from siftd.api import conversations as conv_api
 
-        monkeypatch.setattr(conv_api, "has_conversation_stats_table", lambda _conn: False)
-        monkeypatch.setattr(conv_api, "has_pricing_table", lambda _conn: True)
-
-        def _boom(*_args, **_kwargs):
-            raise AssertionError("cost_expr_sql should not be evaluated at depth<3")
-
-        monkeypatch.setattr(conv_api, "cost_expr_sql", _boom)
-
-        rows = conv_api.list_conversations(
-            fidelity=Fidelity(depth=1),
-            db_path=test_db,
-            n=1,
+        db = tmp_path / "nostats.db"
+        conn = sq.create_database(db)
+        provider_id = sq.get_or_create_provider(conn, "anthropic")
+        model_id = sq.get_or_create_model(conn, "claude-test-model")
+        harness_id = sq.get_or_create_harness(conn, "claude_code", source="anthropic", log_format="jsonl")
+        ws_id = sq.get_or_create_workspace(conn, "/proj", "2024-01-01T10:00:00Z")
+        conn.execute(
+            "INSERT INTO pricing (id, model_id, provider_id, input_per_mtok, output_per_mtok) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("pr-1", model_id, provider_id, 3.0, 15.0),
         )
+        conv_id = sq.insert_conversation(conn, "c1", harness_id, ws_id, "2024-01-01T10:00:00Z")
+        prompt_id = sq.insert_prompt(conn, conv_id, "p1", "2024-01-01T10:00:00Z")
+        sq.insert_response(
+            conn, conv_id, prompt_id, model_id, None, "r1", "2024-01-01T10:00:01Z", 1_000_000, 0
+        )
+        conn.commit()
+        conn.close()
+
+        # Force the no-stats fallback even though the table exists.
+        monkeypatch.setattr(conv_api, "has_conversation_stats_table", lambda _conn: False)
+
+        rows = conv_api.list_conversations(fidelity=Fidelity(depth=3), db_path=db, n=1)
         assert rows
         assert rows[0].cost is None
 

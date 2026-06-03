@@ -356,7 +356,7 @@ def list_conversations(*, fidelity: Fidelity, db_path: pathlib.Path | None = ...
 
 **Parameters:**
 
-- `fidelity`: Cross-stage rendering contract. ``fidelity.depth`` gates expensive fetches — the cost subquery is only evaluated at ``depth >= 3`` (the rung at which the renderer emits a cost column). The fast-path stats table read is unaffected because its cost column is precomputed.
+- `fidelity`: Cross-stage rendering contract carried through to the renderer, which emits the cost column at ``depth >= 3``. Cost itself is no longer recomputed here: the fast path reads the precomputed ``conversation_stats.cost`` (the rollup's single canonical definition), and the no-stats fallback emits NULL cost rather than re-deriving it (see ``_list_conversations_impl``).
 - `db_path`: Path to database. Uses default if not specified.
 - `workspace`: Filter by workspace path substring.
 - `model`: Filter by model name substring.

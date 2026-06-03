@@ -106,15 +106,29 @@ def slice_database(
     finally:
         conn.close()
 
-    # Step 4: Rebuild FTS in target if requested
-    if rebuild_fts and conv_ids:
-        target_conn = open_database(target_path)
-        try:
+    # Step 4: Rebuild the derived tier (and FTS, if requested) in the target.
+    # The slice copies raw rows only; usage_by_conv_model / conversation_stats
+    # are derived, so without this the stats reads that GROUP BY over the rollup
+    # would hit an absent table (rebuild_fts=False) or an empty one (silently
+    # reporting zero tokens for real conversations).  This is the same invariant
+    # ingest holds — any bulk raw-row write ends by rebuilding the derived tier.
+    # Always run, even for an empty slice (conv_ids == []): create_empty_database
+    # writes schema.sql only, which has no derived-tier tables, so an empty slice
+    # would otherwise leave them absent and stats reads would crash instead of
+    # returning zeros.  An empty rebuild just creates the empty tables and is
+    # trivially fast.  Unconditional on rebuild_fts too: the rollup backs basic
+    # stats even when the FTS index is skipped.
+    target_conn = open_database(target_path)
+    try:
+        from siftd.storage.usage_rollup import rebuild_rollups
+
+        rebuild_rollups(target_conn, commit=True)
+        if rebuild_fts:
             from siftd.storage.fts import rebuild_fts_index
 
             rebuild_fts_index(target_conn, commit=True)
-        finally:
-            target_conn.close()
+    finally:
+        target_conn.close()
 
     size_bytes = target_path.stat().st_size
     return {"conversations": len(conv_ids), "size_bytes": size_bytes}
@@ -168,7 +182,12 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
                         AND er.model_id IS NOT NULL)
     """)
 
-    # Providers referenced by responses
+    # Providers referenced by responses, OR named by a copied harness's source.
+    # The canonical rollup cost prices NULL-provider responses through the
+    # harness source (usage_rollup.py: providers.name = harnesses.source), so the
+    # fallback provider — which no response.provider_id references — must travel
+    # with the slice or the target reprices that cost as NULL/0.  (Harnesses are
+    # copied above, so slice.harnesses is populated here.)
     conn.execute("""
         INSERT OR IGNORE INTO slice.providers
         SELECT p.* FROM providers p
@@ -176,6 +195,7 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
                         JOIN events e ON e.id = er.event_id
                         WHERE e.conversation_id IN (SELECT id FROM _slice_conv_ids)
                         AND er.provider_id IS NOT NULL)
+           OR p.name IN (SELECT source FROM slice.harnesses WHERE source IS NOT NULL)
     """)
 
     # Tools referenced by tool_calls

@@ -18,6 +18,7 @@ from siftd.storage.sqlite import (
     insert_prompt_content,
     insert_response,
 )
+from siftd.storage.usage_rollup import rebuild_rollups
 
 _F = Fidelity()
 
@@ -52,6 +53,9 @@ def _build(db_path):
     _conv("cA1", ws_a, "2024-01-15T10:00:00Z", "alice", 100, 50)
     _conv("cA2", ws_a, "2024-01-16T10:00:00Z", "bob", 1000, 500)
     _conv("cB1", ws_b, "2024-01-17T10:00:00Z", "alice", 7, 3)
+    # model_mix + token/cost aggregates now read the rollup, so build it (as a
+    # real ingest would) before the read fns run.
+    rebuild_rollups(conn)
     conn.commit()
     conn.close()
     return ws_a, ws_b

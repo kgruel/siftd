@@ -34,6 +34,12 @@ def _seed(db, *, with_owners: bool) -> None:
         "CREATE TABLE event_response (event_id TEXT PRIMARY KEY, model_id TEXT,"
         " provider_id TEXT, input_tokens INTEGER, output_tokens INTEGER);"
         "CREATE TABLE conversation_stats (conversation_id TEXT, cost REAL, total_tokens INTEGER);"
+        # usage_by_conv_model rollup (schema v9): the per-(conv,model) usage fact
+        # the breakdowns now group over. Rows mirror conversation_stats so the
+        # owner-scoped assertions below hold.
+        "CREATE TABLE usage_by_conv_model (conversation_id TEXT, model_id TEXT,"
+        " provider_id TEXT, input_tokens INTEGER, output_tokens INTEGER,"
+        " response_count INTEGER, responses_with_tokens INTEGER, cost REAL);"
         # Alice's conversation
         "INSERT INTO models VALUES ('mA','model-a','model-a');"
         "INSERT INTO workspaces VALUES ('wA','/tmp/wsA');"
@@ -41,6 +47,7 @@ def _seed(db, *, with_owners: bool) -> None:
         "INSERT INTO events VALUES ('eA','response','cA',NULL,NULL,'2024-01-01T00:00:00Z');"
         "INSERT INTO event_response VALUES ('eA','mA',NULL,10,20);"
         "INSERT INTO conversation_stats VALUES ('cA',1.5,30);"
+        "INSERT INTO usage_by_conv_model VALUES ('cA','mA',NULL,10,20,1,1,1.5);"
         # Bob's conversation
         "INSERT INTO models VALUES ('mB','model-b','model-b');"
         "INSERT INTO workspaces VALUES ('wB','/tmp/wsB');"
@@ -48,6 +55,7 @@ def _seed(db, *, with_owners: bool) -> None:
         "INSERT INTO events VALUES ('eB','response','cB',NULL,NULL,'2024-01-02T00:00:00Z');"
         "INSERT INTO event_response VALUES ('eB','mB',NULL,100,200);"
         "INSERT INTO conversation_stats VALUES ('cB',9.0,300);"
+        "INSERT INTO usage_by_conv_model VALUES ('cB','mB',NULL,100,200,1,1,9.0);"
     )
     if with_owners:
         conn.executescript(

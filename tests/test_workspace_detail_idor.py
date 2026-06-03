@@ -26,6 +26,7 @@ from siftd.storage.sqlite import (
     insert_prompt_content,
     insert_response,
 )
+from siftd.storage.usage_rollup import rebuild_rollups
 
 _F = Fidelity()
 
@@ -65,6 +66,8 @@ def _build(db_path):
     cf1 = _conv("cF1", ws_foo, "2024-01-15T10:00:00Z", "bob")
     cf2 = _conv("cF2", ws_foo, "2024-01-16T10:00:00Z", "bob")
     cbar = _conv("cB1", ws_foobar, "2024-01-17T10:00:00Z", "alice")
+    # workspace_detail's model_mix now reads the rollup; build it as ingest would.
+    rebuild_rollups(conn)
     conn.commit()
     conn.close()
     return ws_foo, ws_foobar, cf1, cf2, cbar

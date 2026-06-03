@@ -10,6 +10,7 @@ from pathlib import Path
 
 from siftd.paths import cache_dir
 from siftd.paths import db_path as default_db_path
+from siftd.storage.conversation_stats import CostCoverage
 from siftd.storage.queries import (
     fetch_conversation_time_window,
     fetch_harness_conversation_counts,
@@ -105,16 +106,6 @@ class TokenCoverage:
 
 
 @dataclass
-class CostCoverage:
-    """Cost coverage across conversations with token data."""
-
-    total_with_tokens: int
-    with_positive_cost: int
-    with_null_cost: int
-    pct_covered: float
-
-
-@dataclass
 class DatabaseStats:
     """Complete database statistics."""
 
@@ -149,8 +140,14 @@ def get_cost_coverage(
 
     When ``owner`` is set, scoped to conversations owned by that user_id;
     ``owner=None`` is unscoped, the single-tenant/local default.
+
+    Thin wrapper: opens a read-only connection when ``conn`` is not supplied and
+    delegates to :func:`siftd.storage.conversation_stats.get_cost_coverage`, the
+    single definition of the coverage FILTER.
     """
-    from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
+    from siftd.storage.conversation_stats import (
+        get_cost_coverage as _storage_get_cost_coverage,
+    )
     from siftd.storage.sqlite import open_database
 
     should_close = False
@@ -160,36 +157,7 @@ def get_cost_coverage(
         should_close = True
 
     try:
-        has_stats = conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
-        ).fetchone()[0]
-        if not has_stats:
-            return None
-        if owner and not has_conversation_owners_table(conn):
-            return CostCoverage(0, 0, 0, 0.0)
-
-        owner_where = f" WHERE {owner_predicate('conversation_id')}" if owner else ""
-        owner_params = [owner] if owner else []
-        row = conn.execute(
-            "SELECT"
-            " COUNT(*) FILTER (WHERE total_tokens > 0) AS with_tokens,"
-            " COUNT(*) FILTER (WHERE cost > 0) AS with_cost,"
-            " COUNT(*) FILTER (WHERE total_tokens > 0 AND cost IS NULL) AS null_cost"
-            f" FROM conversation_stats{owner_where}",
-            owner_params,
-        ).fetchone()
-
-        with_tokens = row["with_tokens"] or 0
-        with_cost = row["with_cost"] or 0
-        null_cost = row["null_cost"] or 0
-        pct = round((with_cost / with_tokens) * 100, 2) if with_tokens else 0.0
-
-        return CostCoverage(
-            total_with_tokens=with_tokens,
-            with_positive_cost=with_cost,
-            with_null_cost=null_cost,
-            pct_covered=pct,
-        )
+        return _storage_get_cost_coverage(conn, owner=owner)
     finally:
         if should_close:
             conn.close()
@@ -574,17 +542,21 @@ def get_usage_summary(*, db_path: Path | None = None, owner: str | None = None) 
             return UsageSummary(0, 0, 0, 0.0)
         conv_where = f" WHERE {owner_predicate('c.id')}" if owner else ""
         conv_params = [owner] if owner else []
+        # Conversation count + token totals. The count stays over `conversations`
+        # (LEFT JOIN keeps zero-response conversations in the corpus total); the
+        # token sums come from the rollup (usage_by_conv_model — the single usage
+        # fact) instead of re-descending to event_response.
         row = conn.execute(
             "SELECT COUNT(DISTINCT c.id) AS n,"
-            " COALESCE(SUM(er.input_tokens), 0) AS inp,"
-            " COALESCE(SUM(er.output_tokens), 0) AS out"
+            " COALESCE(SUM(u.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(u.output_tokens), 0) AS out"
             " FROM conversations c"
-            " LEFT JOIN events e ON e.conversation_id = c.id AND e.kind = 'response'"
-            " LEFT JOIN event_response er ON er.event_id = e.id"
+            " LEFT JOIN usage_by_conv_model u ON u.conversation_id = c.id"
             f"{conv_where}",
             conv_params,
         ).fetchone()
-        # Cost is per-conversation in conversation_stats, sum separately
+        # Cost is per-conversation in conversation_stats (the rollup's conv-grain
+        # cache, already rounded once per conversation), summed separately.
         has_stats = conn.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
         ).fetchone()[0]
@@ -622,46 +594,30 @@ def get_usage_by_model(*, db_path: Path | None = None, owner: str | None = None)
     try:
         if owner and not has_conversation_owners_table(conn):
             return []
-        owner_clause = f" AND {owner_predicate('e.conversation_id')}" if owner else ""
+        owner_where = f" WHERE {owner_predicate('u.conversation_id')}" if owner else ""
         owner_params = [owner] if owner else []
-        # Tokens from responses grouped by model
-        token_rows = conn.execute(
+        # One GROUP BY over the rollup: tokens AND cost from the same grain. The
+        # old two-query form joined per-conversation cs.cost to per-response rows,
+        # fanning each conversation's cost out once per response (the 290x cost
+        # inflation). Here cost is summed at (conversation, model) grain — no fan.
+        rows = conn.execute(
             "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
-            " COUNT(DISTINCT e.conversation_id) AS convs,"
-            " COALESCE(SUM(er.input_tokens), 0) AS inp,"
-            " COALESCE(SUM(er.output_tokens), 0) AS out"
-            " FROM events e"
-            " JOIN event_response er ON er.event_id = e.id"
-            " LEFT JOIN models m ON er.model_id = m.id"
-            " WHERE e.kind = 'response'"
-            f"{owner_clause}"
+            " COUNT(DISTINCT u.conversation_id) AS convs,"
+            " COALESCE(SUM(u.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(u.output_tokens), 0) AS out,"
+            " COALESCE(SUM(u.cost), 0) AS cost"
+            " FROM usage_by_conv_model u"
+            " LEFT JOIN models m ON m.id = u.model_id"
+            f"{owner_where}"
             " GROUP BY m.raw_name",
             owner_params,
         ).fetchall()
-        has_stats = conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
-        ).fetchone()[0]
-        cost_by_model: dict[str, float] = {}
-        if has_stats:
-            cost_rows = conn.execute(
-                "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
-                " COALESCE(SUM(cs.cost), 0) AS cost"
-                " FROM conversation_stats cs"
-                " JOIN events e ON e.conversation_id = cs.conversation_id AND e.kind = 'response'"
-                " JOIN event_response er ON er.event_id = e.id"
-                " LEFT JOIN models m ON er.model_id = m.id"
-                f"{(' WHERE ' + owner_predicate('e.conversation_id')) if owner else ''}"
-                " GROUP BY m.raw_name",
-                owner_params,
-            ).fetchall()
-            cost_by_model = {r["name"]: r["cost"] for r in cost_rows}
         results = [
             GroupUsage(
                 name=r["name"], conversations=r["convs"],
-                input_tokens=r["inp"], output_tokens=r["out"],
-                cost=cost_by_model.get(r["name"], 0),
+                input_tokens=r["inp"], output_tokens=r["out"], cost=r["cost"],
             )
-            for r in token_rows
+            for r in rows
         ]
         results.sort(key=lambda g: g.input_tokens + g.output_tokens, reverse=True)
         return results
@@ -685,44 +641,32 @@ def get_usage_by_workspace(*, db_path: Path | None = None, owner: str | None = N
             return []
         owner_where = f" WHERE {owner_predicate('c.id')}" if owner else ""
         owner_params = [owner] if owner else []
-        # Tokens from responses grouped by workspace
-        token_rows = conn.execute(
+        # One GROUP BY: tokens AND cost from the rollup, joined up to workspace.
+        # The conversation count stays over `conversations` (LEFT JOIN the rollup)
+        # so a workspace's zero-response conversations still count. Cost is now
+        # the rollup's per-(conversation,model) cost summed per workspace — the
+        # same correct per-model-cost primitive get_usage_by_model uses (shares
+        # one definition; differs from the old per-conversation-rounded cs.cost
+        # sum only by sub-cent rounding).
+        rows = conn.execute(
             "SELECT COALESCE(w.path, '') AS name,"
             " COUNT(DISTINCT c.id) AS convs,"
-            " COALESCE(SUM(er.input_tokens), 0) AS inp,"
-            " COALESCE(SUM(er.output_tokens), 0) AS out"
+            " COALESCE(SUM(u.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(u.output_tokens), 0) AS out,"
+            " COALESCE(SUM(u.cost), 0) AS cost"
             " FROM conversations c"
-            " LEFT JOIN workspaces w ON c.workspace_id = w.id"
-            " LEFT JOIN events e ON e.conversation_id = c.id AND e.kind = 'response'"
-            " LEFT JOIN event_response er ON er.event_id = e.id"
+            " LEFT JOIN usage_by_conv_model u ON u.conversation_id = c.id"
+            " LEFT JOIN workspaces w ON w.id = c.workspace_id"
             f"{owner_where}"
             " GROUP BY w.path",
             owner_params,
         ).fetchall()
-        # Cost from conversation_stats grouped by workspace
-        has_stats = conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
-        ).fetchone()[0]
-        cost_by_ws: dict[str, float] = {}
-        if has_stats:
-            cost_rows = conn.execute(
-                "SELECT COALESCE(w.path, '') AS name,"
-                " COALESCE(SUM(cs.cost), 0) AS cost"
-                " FROM conversation_stats cs"
-                " JOIN conversations c ON cs.conversation_id = c.id"
-                " LEFT JOIN workspaces w ON c.workspace_id = w.id"
-                f"{owner_where}"
-                " GROUP BY w.path",
-                owner_params,
-            ).fetchall()
-            cost_by_ws = {r["name"]: r["cost"] for r in cost_rows}
         results = [
             GroupUsage(
                 name=r["name"], conversations=r["convs"],
-                input_tokens=r["inp"], output_tokens=r["out"],
-                cost=cost_by_ws.get(r["name"], 0),
+                input_tokens=r["inp"], output_tokens=r["out"], cost=r["cost"],
             )
-            for r in token_rows
+            for r in rows
         ]
         results.sort(key=lambda g: g.cost, reverse=True)
         return results
@@ -783,18 +727,22 @@ def workspace_detail(
         if ws is None:
             return None
 
-        owner_clause = f" AND {owner_predicate('e.conversation_id')}" if owner else ""
+        owner_clause = f" AND {owner_predicate('u.conversation_id')}" if owner else ""
         owner_params = [owner] if owner else []
+        # Model mix from the rollup: tokens AND cost per model within this
+        # workspace. Cost was previously hardcoded 0.0 here (a self-contradicting
+        # payload next to a real headline) — it is now the rollup's real
+        # per-(conversation,model) cost.
         model_rows = conn.execute(
             "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
-            " COUNT(DISTINCT e.conversation_id) AS convs,"
-            " COALESCE(SUM(er.input_tokens), 0) AS inp,"
-            " COALESCE(SUM(er.output_tokens), 0) AS out"
-            " FROM events e"
-            " JOIN event_response er ON er.event_id = e.id"
-            " JOIN conversations c ON c.id = e.conversation_id"
-            " LEFT JOIN models m ON er.model_id = m.id"
-            " WHERE e.kind = 'response' AND c.workspace_id = ?"
+            " COUNT(DISTINCT u.conversation_id) AS convs,"
+            " COALESCE(SUM(u.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(u.output_tokens), 0) AS out,"
+            " COALESCE(SUM(u.cost), 0) AS cost"
+            " FROM usage_by_conv_model u"
+            " JOIN conversations c ON c.id = u.conversation_id"
+            " LEFT JOIN models m ON m.id = u.model_id"
+            " WHERE c.workspace_id = ?"
             f"{owner_clause}"
             " GROUP BY m.raw_name",
             [workspace_id, *owner_params],
@@ -802,13 +750,15 @@ def workspace_detail(
         model_mix = [
             GroupUsage(
                 name=r["name"], conversations=r["convs"],
-                input_tokens=r["inp"], output_tokens=r["out"], cost=0.0,
+                input_tokens=r["inp"], output_tokens=r["out"], cost=r["cost"],
             )
             for r in model_rows
         ]
         model_mix.sort(key=lambda g: g.input_tokens + g.output_tokens, reverse=True)
 
-        # Sessions + cost scoped to this workspace (owner-aware).
+        # Sessions scoped to this workspace (owner-aware). Count stays over
+        # `conversations` (not the rollup) so a conversation with zero responses
+        # still counts as a session.
         conv_owner = f" AND {owner_predicate('c.id')}" if owner else ""
         sessions = conn.execute(
             "SELECT COUNT(*) FROM conversations c WHERE c.workspace_id = ?" + conv_owner,
@@ -823,27 +773,15 @@ def workspace_detail(
         # owner=None (single-tenant/local) stays fully unscoped.
         if owner and sessions == 0:
             return None
-
-        cost = 0.0
-        has_stats = conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
-        ).fetchone()[0]
-        if has_stats:
-            cost_owner = (
-                f" AND {owner_predicate('cs.conversation_id')}" if owner else ""
-            )
-            cost = conn.execute(
-                "SELECT COALESCE(SUM(cs.cost), 0) FROM conversation_stats cs"
-                " JOIN conversations c ON c.id = cs.conversation_id"
-                " WHERE c.workspace_id = ?" + cost_owner,
-                [workspace_id, *owner_params],
-            ).fetchone()[0]
     finally:
         conn.close()
 
     recent = list_conversations(
         fidelity=fidelity, db_path=path, workspace_id=ws["id"], owner=owner, n=recent_n,
     )
+    # Headline cost is the sum of the model mix — one source, so the headline
+    # can never disagree with the per-model rows shown beneath it (the old
+    # separate cs.cost headline could, and the model rows read 0.0).
     return WorkspaceDetail(
         id=ws["id"],
         path=ws["path"],
@@ -851,7 +789,7 @@ def workspace_detail(
         sessions=sessions,
         input_tokens=sum(g.input_tokens for g in model_mix),
         output_tokens=sum(g.output_tokens for g in model_mix),
-        cost=cost,
+        cost=sum(g.cost for g in model_mix),
         model_mix=model_mix,
         recent=recent,
     )
