@@ -33,7 +33,7 @@ from siftd.storage.sessions import ensure_session_tables
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Registry of versioned migrations: version -> migration function.
 # Each function migrates the DB from version-1 to version.
@@ -231,6 +231,7 @@ def open_database(
             ensure_content_blobs_table(conn)
             ensure_session_tables(conn)
             _ensure_git_remote_index(conn)
+            _ensure_usage_by_conv_model_table(conn)
             _ensure_conversation_stats_table(conn)
             ensure_conversation_owners_table(conn)
             ensure_sync_inbox_table(conn)
@@ -1777,6 +1778,86 @@ def _migrate_v8_drop_tool_search(conn: sqlite3.Connection) -> None:
 MIGRATIONS[8] = _migrate_v8_drop_tool_search
 
 
+def _migrate_v9_usage_rollup(conn: sqlite3.Connection) -> None:
+    """v9: add the usage_by_conv_model rollup; re-derive conversation_stats from it.
+
+    Creates the keystone derived-tier fact table at grain
+    (conversation_id, model_id, provider_id), backfills it from the event tables,
+    and rebuilds conversation_stats as a cache over it.  The single per-response
+    cost definition now lives in usage_rollup.rebuild_usage_by_conv_model.
+
+    Caller (open_database runner) owns the transaction — this function must not
+    call conn.commit(), conn.rollback(), or conn.execute("BEGIN").
+    Rollback on assertion failure: restore from the auto-generated pre-migration
+    backup file (<db>.bak.YYYYMMDD.db next to the database).
+    """
+    from siftd.storage.usage_rollup import (
+        ensure_usage_by_conv_model_table,
+        rebuild_rollups,
+    )
+
+    # Canonical pre-migration cost total from the existing (v8, raw-derived)
+    # conversation_stats — used to assert the rollup reproduces it.
+    pre_cost = None
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_stats'"
+    ).fetchone():
+        pre_cost = conn.execute("SELECT SUM(cost) FROM conversation_stats").fetchone()[0]
+
+    ensure_usage_by_conv_model_table(conn)
+    rebuild_rollups(conn)  # rollup from raw, then conversation_stats from rollup; no commit
+
+    # The rollup is built from the flattened response rows (events JOIN
+    # event_response).  A bare response event with no event_response extension
+    # contributes nothing — a legitimate (if degenerate) state on synthetic /
+    # legacy DBs — so integrity keys off the flatten count, not the response-event
+    # count.  Surface (but do not abort on) any such orphans: the old
+    # conversation_stats counted them and the rollup-derived one will not.
+    flatten_n = conn.execute(
+        "SELECT COUNT(*) FROM events e JOIN event_response er ON er.event_id = e.id "
+        "WHERE e.kind = 'response'"
+    ).fetchone()[0]
+    n_resp_events = conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'response'").fetchone()[0]
+    if n_resp_events != flatten_n:
+        _logger.warning(
+            "Migration v9: %d response event(s) lack an event_response row and are "
+            "excluded from the usage rollup (previously counted by conversation_stats).",
+            n_resp_events - flatten_n,
+        )
+
+    n_rollup = conn.execute("SELECT COUNT(*) FROM usage_by_conv_model").fetchone()[0]
+    if flatten_n > 0 and n_rollup == 0:
+        raise MigrationAssertionError(
+            f"Migration v9: usage_by_conv_model empty despite {flatten_n} response rows"
+        )
+
+    # Integrity: every flattened response is counted exactly once in the rollup
+    # (catches a GROUP BY / join that silently drops or duplicates rows).
+    post_resp = conn.execute(
+        "SELECT COALESCE(SUM(response_count), 0) FROM usage_by_conv_model"
+    ).fetchone()[0]
+    if post_resp != flatten_n:
+        raise MigrationAssertionError(
+            f"Migration v9 response_count integrity: rollup SUM={post_resp} "
+            f"vs {flatten_n} flattened response rows"
+        )
+
+    # Cost parity catches the 290x fan-out class (orders of magnitude).  The
+    # tolerance absorbs accumulated per-conversation rounding (pre is rounded
+    # per-conv; the rollup total is unrounded) — it is NOT a bit-parity check.
+    if pre_cost is not None:
+        post_cost = conn.execute("SELECT SUM(cost) FROM usage_by_conv_model").fetchone()[0] or 0.0
+        tol = max(1.0, abs(pre_cost) * 0.01)
+        if abs(post_cost - pre_cost) > tol:
+            raise MigrationAssertionError(
+                f"Migration v9 cost parity: rollup SUM(cost)={post_cost:.4f} "
+                f"vs pre conversation_stats SUM={pre_cost:.4f} (tol {tol:.4f})"
+            )
+
+
+MIGRATIONS[9] = _migrate_v9_usage_rollup
+
+
 # Known model prices (input_per_mtok, output_per_mtok) in USD per million tokens.
 # Prices are seeded at DB open time when the matching model+provider already exist.
 # Sourced from published API pricing pages.
@@ -1852,6 +1933,13 @@ def _ensure_conversation_stats_table(conn: sqlite3.Connection) -> None:
     from siftd.storage.conversation_stats import ensure_conversation_stats_table
 
     ensure_conversation_stats_table(conn)
+
+
+def _ensure_usage_by_conv_model_table(conn: sqlite3.Connection) -> None:
+    """Create the usage_by_conv_model rollup table. Idempotent."""
+    from siftd.storage.usage_rollup import ensure_usage_by_conv_model_table
+
+    ensure_usage_by_conv_model_table(conn)
 
 
 def ensure_push_log_table(conn: sqlite3.Connection) -> None:

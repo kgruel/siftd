@@ -43,6 +43,12 @@ def run_siftd(*args: str) -> str:
     # Set fixed terminal width for consistent argparse formatting
     env = os.environ.copy()
     env["COLUMNS"] = "80"
+    # The autouse DB sandbox sets XDG_DATA_HOME to a throwaway dir so no test
+    # opens the real database. --help is display-only (it never opens the DB),
+    # but it *renders* the default db_path() in the help text — so drop the
+    # sandbox override here to keep the rendered default at the canonical
+    # ~/.local/share/siftd/siftd.db, which the HOME→~ normalization expects.
+    env.pop("XDG_DATA_HOME", None)
     result = subprocess.run(
         ["uv", "run", "siftd", *args],
         capture_output=True,

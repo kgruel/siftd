@@ -9,9 +9,8 @@ conversation instead of joining/aggregating the responses table.
 import sqlite3
 from dataclasses import dataclass
 
-from siftd.storage.sql_helpers import cost_expr_sql
-
 _TABLE = "conversation_stats"
+_ROLLUP = "usage_by_conv_model"
 
 _CREATE_SQL = f"""
 CREATE TABLE IF NOT EXISTS {_TABLE} (
@@ -42,35 +41,28 @@ def has_conversation_stats_table(conn: sqlite3.Connection) -> bool:
 
 
 def rebuild_conversation_stats(conn: sqlite3.Connection, *, commit: bool = False) -> int:
-    """Rebuild the entire conversation_stats table from source tables.
+    """Rebuild conversation_stats as a cache derived from ``usage_by_conv_model``.
+
+    Precondition: the rollup must be current.  Call
+    :func:`siftd.storage.usage_rollup.rebuild_rollups` to rebuild both in order;
+    this function alone assumes the rollup already reflects the events.
+
+    ``response_count`` / ``total_tokens`` / ``cost`` are SUMs over the rollup
+    (the single usage-fact source — cost is *not* recomputed from raw here).
+    Because each rollup group is single-provider and thus uniformly priced or
+    unpriced, ``SUM(cost)`` ignoring NULLs matches the historical per-response
+    behaviour exactly; the round happens once here, at conversation grain.
+    ``model_name`` is the family-label argmax (``LEFT JOIN models`` so an
+    all-NULL-model conversation still resolves to a NULL label), with a
+    deterministic tiebreak: on equal response counts a *named* model beats the
+    NULL-model group (``(m.name IS NULL)``), then alphabetical (``m.name``) — a
+    NULL "dominant model" is the least useful label.  ``prompt_count`` still
+    counts prompt events (not a usage fact).
 
     Returns the number of rows written.
     """
     ensure_conversation_stats_table(conn)
     conn.execute(f"DELETE FROM {_TABLE}")
-
-    # Check if pricing table exists for cost calculation
-    has_pricing = conn.execute(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pricing'"
-    ).fetchone()[0] > 0
-
-    cost_expr = "NULL"
-    cost_join = ""
-    if has_pricing:
-        cost_expr = f"ROUND(SUM({cost_expr_sql('r', 'pr')}) / 1000000.0, 4)"
-        # Route pricing through harness source when responses.provider_id is NULL.
-        # COALESCE(r.provider_id, p_fallback.id) means: use the response's explicit
-        # provider if set, otherwise fall back to the harness source's provider.
-        # Removing COALESCE on per_mtok values lets NULL propagate when pricing is
-        # absent, so missing pricing yields NULL cost instead of 0.0.
-        cost_join = (
-            "LEFT JOIN conversations c2 ON c2.id = r.conversation_id "
-            "LEFT JOIN harnesses h2 ON h2.id = c2.harness_id "
-            "LEFT JOIN providers p_fallback ON p_fallback.name = h2.source "
-            "LEFT JOIN pricing pr "
-            "ON pr.model_id = r.model_id "
-            "AND pr.provider_id = COALESCE(r.provider_id, p_fallback.id)"
-        )
 
     conn.execute(f"""
         INSERT INTO {_TABLE} (conversation_id, prompt_count, response_count,
@@ -78,22 +70,18 @@ def rebuild_conversation_stats(conn: sqlite3.Connection, *, commit: bool = False
         SELECT
             c.id,
             (SELECT COUNT(*) FROM events WHERE kind = 'prompt' AND conversation_id = c.id),
-            (SELECT COUNT(*) FROM events WHERE kind = 'response' AND conversation_id = c.id),
-            (SELECT COALESCE(SUM(er.input_tokens), 0) + COALESCE(SUM(er.output_tokens), 0)
-             FROM events e JOIN event_response er ON er.event_id = e.id
-             WHERE e.kind = 'response' AND e.conversation_id = c.id),
+            COALESCE((SELECT SUM(u.response_count) FROM {_ROLLUP} u
+                      WHERE u.conversation_id = c.id), 0),
+            COALESCE((SELECT SUM(u.input_tokens) + SUM(u.output_tokens) FROM {_ROLLUP} u
+                      WHERE u.conversation_id = c.id), 0),
             (SELECT m.name
-             FROM events e_r2
-             JOIN event_response er2 ON er2.event_id = e_r2.id
-             LEFT JOIN models m ON m.id = er2.model_id
-             WHERE e_r2.kind = 'response' AND e_r2.conversation_id = c.id
-             GROUP BY m.name ORDER BY COUNT(*) DESC LIMIT 1),
-            (SELECT {cost_expr}
-             FROM (SELECT e.id, e.conversation_id, er.input_tokens, er.output_tokens,
-                          er.model_id, er.provider_id
-                   FROM events e JOIN event_response er ON er.event_id = e.id
-                   WHERE e.kind = 'response') r {cost_join}
-             WHERE r.conversation_id = c.id)
+             FROM {_ROLLUP} u
+             LEFT JOIN models m ON m.id = u.model_id
+             WHERE u.conversation_id = c.id
+             GROUP BY m.name
+             ORDER BY SUM(u.response_count) DESC, (m.name IS NULL), m.name LIMIT 1),
+            (SELECT ROUND(SUM(u.cost), 4) FROM {_ROLLUP} u
+             WHERE u.conversation_id = c.id)
         FROM conversations c
     """)
     count = conn.execute(f"SELECT COUNT(*) FROM {_TABLE}").fetchone()[0]
