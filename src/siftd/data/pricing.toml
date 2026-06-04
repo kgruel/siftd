@@ -1,0 +1,168 @@
+# siftd pricing reference — the version-controlled source of truth for model prices.
+#
+# A price is REFERENCE DATA: a fact about (model, provider), identical on every machine,
+# sourced externally. The `pricing` SQLite table is a PROJECTION of this file (plus the
+# user override at ~/.config/siftd/pricing.toml), rebuilt on every DB open via UPSERT —
+# it is never frozen and never synced between machines. To correct a price, edit it here
+# (or in the override file) and reopen the DB; the next ingest reprices the corpus.
+#
+# Each entry:
+#   model       canonical model name (must match models.name — see siftd/model_names.py)
+#   provider    provider name (anthropic | openai | google | ...)
+#   input_per_mtok / output_per_mtok   USD per million tokens (base / standard tier)
+#   cache_read_per_mtok / cache_creation_per_mtok   OPTIONAL override; omit to derive
+#               from input_per_mtok via the standard Anthropic multiple (read ×0.1,
+#               creation ×1.25 for the 5-minute cache write — both verified against the
+#               Anthropic pricing page). Set only for a provider whose cache differs.
+#   source      provenance: a citation URL, or an honest note
+#   as_of       date the value was last verified (YYYY-MM-DD)
+#
+# Unknown ≠ free: a model with no entry here (and no override) stays UNPRICED (cost NULL,
+# rendered "—"), never a fabricated $0. Add real published values rather than guessing.
+#
+# Tiered pricing (e.g. Gemini >200k-token prompts, Anthropic 1h vs 5m cache writes) is
+# NOT yet modeled — these use the base/standard tier. See the deferred notes at the end.
+
+# ─── Anthropic — Claude 4.x (Opus 4.5+ is $5/$25; verified 2026-06-04) ────────
+# Source: https://platform.claude.com/docs/en/about-claude/pricing
+[[price]]
+model = "claude-opus-4-5"
+provider = "anthropic"
+input_per_mtok = 5.0
+output_per_mtok = 25.0
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+as_of = "2026-06-04"
+
+[[price]]
+model = "claude-opus-4-6"
+provider = "anthropic"
+input_per_mtok = 5.0
+output_per_mtok = 25.0
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+as_of = "2026-06-04"
+
+[[price]]
+model = "claude-opus-4-7"
+provider = "anthropic"
+input_per_mtok = 5.0
+output_per_mtok = 25.0
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+as_of = "2026-06-04"
+
+[[price]]
+model = "claude-opus-4-8"
+provider = "anthropic"
+input_per_mtok = 5.0
+output_per_mtok = 25.0
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+as_of = "2026-06-04"
+
+[[price]]
+model = "claude-sonnet-4-5"
+provider = "anthropic"
+input_per_mtok = 3.0
+output_per_mtok = 15.0
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+as_of = "2026-06-04"
+
+[[price]]
+model = "claude-sonnet-4-6"
+provider = "anthropic"
+input_per_mtok = 3.0
+output_per_mtok = 15.0
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+as_of = "2026-06-04"
+
+[[price]]
+model = "claude-haiku-4-5"
+provider = "anthropic"
+input_per_mtok = 1.0
+output_per_mtok = 5.0
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+as_of = "2026-06-04"
+
+# ─── Anthropic — prior generations ───────────────────────────────────────────
+[[price]]
+model = "claude-3-5-haiku"
+provider = "anthropic"
+input_per_mtok = 0.80
+output_per_mtok = 4.0
+source = "https://platform.claude.com/docs/en/about-claude/pricing (Haiku 3.5)"
+as_of = "2026-06-04"
+
+[[price]]
+model = "claude-3-opus"
+provider = "anthropic"
+input_per_mtok = 15.0
+output_per_mtok = 75.0
+source = "Anthropic published pricing, claude-3 generation"
+as_of = "2026-06-04"
+
+[[price]]
+model = "claude-3-haiku"
+provider = "anthropic"
+input_per_mtok = 0.25
+output_per_mtok = 1.25
+source = "Anthropic published pricing, claude-3 generation"
+as_of = "2026-06-04"
+
+# ─── OpenAI (verified 2026-06-04) ────────────────────────────────────────────
+# Source: https://developers.openai.com/api/docs/pricing
+[[price]]
+model = "gpt-5.5"
+provider = "openai"
+input_per_mtok = 5.0
+output_per_mtok = 30.0
+source = "https://developers.openai.com/api/docs/pricing"
+as_of = "2026-06-04"
+
+[[price]]
+model = "gpt-5.4"
+provider = "openai"
+input_per_mtok = 2.50
+output_per_mtok = 15.0
+source = "https://developers.openai.com/api/docs/pricing"
+as_of = "2026-06-04"
+
+[[price]]
+model = "gpt-5.3-codex"
+provider = "openai"
+input_per_mtok = 1.75
+output_per_mtok = 14.0
+source = "https://developers.openai.com/api/docs/pricing"
+as_of = "2026-06-04"
+
+# ─── Google (base/standard tier, verified 2026-06-04) ────────────────────────
+# Source: https://ai.google.dev/gemini-api/docs/pricing
+[[price]]
+model = "gemini-2.5-pro"
+provider = "google"
+input_per_mtok = 1.25
+output_per_mtok = 10.0
+source = "https://ai.google.dev/gemini-api/docs/pricing (<=200k tier)"
+as_of = "2026-06-04"
+
+[[price]]
+model = "gemini-2.5-flash"
+provider = "google"
+input_per_mtok = 0.30
+output_per_mtok = 2.50
+source = "https://ai.google.dev/gemini-api/docs/pricing (text/image/video)"
+as_of = "2026-06-04"
+
+[[price]]
+model = "gemini-3.1-pro"
+provider = "google"
+input_per_mtok = 2.0
+output_per_mtok = 12.0
+source = "https://ai.google.dev/gemini-api/docs/pricing (3.1 Pro, <=200k tier)"
+as_of = "2026-06-04"
+
+# ─── Models with usage but no verified price (USER: confirm + add) ────────────
+# Left UNPRICED on purpose — values I could not pin to a primary source. On your
+# live DB some may still carry a sync-imported price (source NULL); add a [[price]]
+# block here to govern them, or leave them to render "—":
+#   gemini-3-pro, gemini-3-flash (google)   — "Gemini 3" base tier not cleanly published;
+#                                              live sync had 2.0/12.0 and 0.5/3.0
+#   gpt-5.2, gpt-5.2-codex (openai)          — deprecated; not on the current pricing page
+#   gpt-5.3 (openai, non-codex)              — not on the current pricing page

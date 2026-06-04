@@ -195,8 +195,12 @@ def _merge_attached(conn, *, replace: bool = True, user_id: str | None = None) -
     # 7. tool_aliases — match on (raw_name, remapped harness_id), remap both FKs
     _map_tool_aliases(conn)
 
-    # 8. pricing — match on (remapped model_id, remapped provider_id), remap both FKs
-    _map_pricing(conn)
+    # NOTE: pricing is NOT merged. It is reference data (a fact about a model,
+    # identical on every machine — see siftd.pricing), not per-machine data. Copying
+    # it between machines was the contamination vector that froze stale prices via
+    # INSERT OR IGNORE. The post-merge open_database() below reprojects the LOCAL
+    # pricing reference onto the merged DB (including any newly-merged models), so
+    # prices stay sourced from this machine's reference, not the source DB's.
 
     # --- Step 1b: Replace stale conversations with newer source versions ---
     replaced_conversations = 0
@@ -701,23 +705,3 @@ def _map_tool_aliases(conn) -> None:
     """)
 
 
-def _map_pricing(conn) -> None:
-    """Map pricing: match on (remapped model_id, remapped provider_id), remap both FKs."""
-
-    conn.execute("""
-        INSERT OR IGNORE INTO pricing (id, model_id, provider_id, input_per_mtok, output_per_mtok)
-        SELECT
-            s.id,
-            COALESCE(mm.target_id, s.model_id),
-            COALESCE(pm.target_id, s.provider_id),
-            s.input_per_mtok,
-            s.output_per_mtok
-        FROM src.pricing s
-        LEFT JOIN _id_map mm ON mm.table_name = 'models' AND mm.source_id = s.model_id
-        LEFT JOIN _id_map pm ON pm.table_name = 'providers' AND pm.source_id = s.provider_id
-        WHERE NOT EXISTS (
-            SELECT 1 FROM main.pricing t
-            WHERE t.model_id = COALESCE(mm.target_id, s.model_id)
-              AND t.provider_id = COALESCE(pm.target_id, s.provider_id)
-        )
-    """)

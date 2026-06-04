@@ -11,6 +11,7 @@ from siftd.api.database import open_database
 from siftd.backfill import (
     backfill_derivative_tags,
     backfill_filter_binary,
+    backfill_models,
     backfill_response_attributes,
     backfill_shell_tags,
 )
@@ -20,6 +21,7 @@ BackfillOperation = Literal[
     "shell_tags",
     "derivative_tags",
     "filter_binary",
+    "models",
 ]
 
 
@@ -36,6 +38,7 @@ class BackfillRunResult:
     filtered: int = 0
     skipped: int = 0
     errors: int = 0
+    updated_models: int = 0
     elapsed_ms: int = 0
 
 
@@ -78,6 +81,12 @@ def run_backfill(
             result.errors = int(stats.get("errors", 0))
         elif operation == "response_attributes":
             result.inserted_attributes = backfill_response_attributes(conn)
+        elif operation == "models":
+            # Re-parse raw_name → canonical name for rows the parser previously fell
+            # back on (e.g. after a parse_model_name improvement). The pricing
+            # reference reprojects onto any newly-canonical model on the next open;
+            # cost refreshes on the next ingest/rollup rebuild.
+            result.updated_models = backfill_models(conn)
         else:
             raise ValueError(f"Unsupported backfill operation: {operation}")
     finally:

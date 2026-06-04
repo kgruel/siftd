@@ -442,6 +442,14 @@ def cmd_backfill(args) -> int:
             print(f"Tagged {count} conversations as siftd:derivative.")
         else:
             print("No untagged derivative conversations found.")
+    elif getattr(args, "models", False):
+        print("Re-parsing model names to canonical form...")
+        result = run_backfill(db_path=db, operation="models")
+        if result.updated_models:
+            print(f"Canonicalized {result.updated_models} model name(s).")
+            print("Prices reproject on next open; cost refreshes on next ingest.")
+        else:
+            print("No model names needed canonicalizing.")
     elif args.filter_binary:
         dry_run = getattr(args, "dry_run", False)
         if dry_run:
@@ -1207,8 +1215,10 @@ def build_data_parser(subparsers) -> None:
   siftd backfill --derivative-tags  # mark siftd-generated conversations
   siftd backfill --filter-binary    # filter binary content from existing blobs
   siftd backfill --filter-binary --dry-run  # preview what would be filtered
-  siftd backfill --git-remote       # backfill git remote URLs for workspaces missing them""",
+  siftd backfill --git-remote       # backfill git remote URLs for workspaces missing them
+  siftd backfill --models           # re-parse model names to canonical form (reprices on next open)""",
     )
+    p_backfill.add_argument("--models", action="store_true", help="Re-parse raw model names to canonical form (e.g. claude-haiku-4.5 -> claude-haiku-4-5)")
     p_backfill.add_argument("--shell-tags", action="store_true", help="Tag shell.execute calls with shell:* categories")
     p_backfill.add_argument("--derivative-tags", action="store_true", help="Tag conversations containing siftd search/query as siftd:derivative")
     p_backfill.add_argument("--filter-binary", action="store_true", help="Filter binary content (images, base64) from existing blobs")

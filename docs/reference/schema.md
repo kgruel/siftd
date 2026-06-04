@@ -84,6 +84,11 @@ Flat pricing lookup for approximate cost computation
 Anthropic; set explicitly for a provider whose cache pricing isn't that multiple.
     cache_read_per_mtok     REAL,               -- $ per million cache-read input tokens
     cache_creation_per_mtok REAL,               -- $ per million cache-creation input tokens
+    -- Provenance (v11): the pricing table is a projection of the version-controlled
+    -- reference (siftd/data/pricing.toml + user override). source/as_of carry the
+    -- citation and verification date forward so a stored price is auditable.
+    source          TEXT,                       -- citation URL or provenance note
+    as_of           TEXT,                       -- date the value was verified (YYYY-MM-DD)
     UNIQUE (model_id, provider_id)
 );
 

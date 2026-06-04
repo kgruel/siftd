@@ -12,7 +12,6 @@ from siftd.domain.shell_categories import (
     SHELL_TAG_PREFIX,
     categorize_shell_command,
 )
-from siftd.model_names import parse_model_name
 from siftd.safecall import parse_json
 from siftd.storage.attributes import set_attribute
 from siftd.storage.sqlite import get_or_create_provider
@@ -24,32 +23,16 @@ from siftd.storage.tags import (
 )
 
 
-def backfill_models(conn: sqlite3.Connection) -> int:
-    """Backfill parsed fields for existing model rows with NULL fields.
+def backfill_models(conn: sqlite3.Connection, *, commit: bool = True) -> int:
+    """Re-parse ``raw_name`` → canonical fields for model rows the parser fell back on.
 
-    Updates rows where creator/family/version/variant are NULL.
-    Returns count of rows updated.
+    Thin wrapper over the storage primitive :func:`recanonicalize_model_names`
+    (the logic lives in storage so a schema migration can reuse it without an
+    ingestion-layer import). Returns the count of rows updated.
     """
-    cur = conn.execute(
-        "SELECT id, raw_name FROM models WHERE creator IS NULL OR family IS NULL"
-    )
-    rows = cur.fetchall()
-    updated = 0
-    for row in rows:
-        parsed = parse_model_name(row["raw_name"])
-        # Skip if parsing produced no useful info (fallback case)
-        if parsed["creator"] is None:
-            continue
-        conn.execute(
-            """UPDATE models
-               SET name = ?, creator = ?, family = ?, version = ?, variant = ?, released = ?
-               WHERE id = ?""",
-            (parsed["name"], parsed["creator"], parsed["family"],
-             parsed["version"], parsed["variant"], parsed["released"], row["id"]),
-        )
-        updated += 1
-    conn.commit()
-    return updated
+    from siftd.storage.sqlite import recanonicalize_model_names
+
+    return recanonicalize_model_names(conn, commit=commit)
 
 
 def backfill_providers(conn: sqlite3.Connection) -> int:
