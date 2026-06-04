@@ -151,21 +151,14 @@ def test_stats_nav_links_live_dashboard_not_stub(ctx):
     assert 'hx-get="/view/stats"' not in body
 
 
-def test_dashboard_degrades_on_pre_rollup_db_no_500(tmp_path):
-    """The live DB is intentionally v8 (no usage_by_conv_model) until the 0.9.0
-    rollup migration — the rollup-era reads would 500 there. The route must
-    degrade to a stub like the folio shows '—', never a 500. A v9 fixture can't
-    catch this (table present), so drop it to simulate the real v8 DB."""
-    db, _cid = _make_db(tmp_path / "v8.db")
-    conn = create_database(db)  # reopen
-    conn.execute("DROP TABLE usage_by_conv_model")
-    conn.commit()
-    conn.close()
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
-        resp = client.get("/dashboard")
-    assert resp.status_code == 200  # not 500
-    assert 'class="stub"' in resp.text
-    assert "rollup not built" in resp.text
+# NOTE: the pre-rollup (v8) degrade-to-stub test was removed in the 0.9.0
+# integration. Its premise — "the live DB is intentionally v8 until the 0.9.0
+# rollup migration" — is exactly what this branch eliminates: every served DB is
+# opened via open_database(), which auto-migrates a stale-but-writable DB to the
+# current schema (rollup present) or raises SchemaUpgradeRequiredError on a
+# read-only stale mount. A v11 DB always has usage_by_conv_model, so the dashboard
+# can no longer encounter a missing-rollup state through normal operation, and the
+# storage-direct existence check it required violated the serve→API boundary.
 
 
 def _make_owned_db(path: Path) -> Path:

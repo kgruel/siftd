@@ -23,22 +23,6 @@ def has_conversation_owners_table(conn: sqlite3.Connection) -> bool:
     )
 
 
-def has_usage_rollup_table(conn: sqlite3.Connection) -> bool:
-    """Return True if the usage_by_conv_model rollup table exists (schema v9+).
-
-    The rollup-era usage reads (get_usage_summary/by_model/by_workspace and
-    get_stats' token coverage) read this table unconditionally and raise
-    OperationalError on a pre-rollup (v8) DB. Callers exposing those reads on an
-    un-migrated DB use this to degrade gracefully rather than 500.
-    """
-    return (
-        conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='usage_by_conv_model'"
-        ).fetchone()
-        is not None
-    )
-
-
 def owner_predicate(conversation_id_expr: str) -> str:
     """Return a composable owner-scoping predicate for a conversation id expression."""
     return (
