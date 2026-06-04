@@ -151,6 +151,23 @@ def test_stats_nav_links_live_dashboard_not_stub(ctx):
     assert 'hx-get="/view/stats"' not in body
 
 
+def test_dashboard_degrades_on_pre_rollup_db_no_500(tmp_path):
+    """The live DB is intentionally v8 (no usage_by_conv_model) until the 0.9.0
+    rollup migration — the rollup-era reads would 500 there. The route must
+    degrade to a stub like the folio shows '—', never a 500. A v9 fixture can't
+    catch this (table present), so drop it to simulate the real v8 DB."""
+    db, _cid = _make_db(tmp_path / "v8.db")
+    conn = create_database(db)  # reopen
+    conn.execute("DROP TABLE usage_by_conv_model")
+    conn.commit()
+    conn.close()
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+        resp = client.get("/dashboard")
+    assert resp.status_code == 200  # not 500
+    assert 'class="stub"' in resp.text
+    assert "rollup not built" in resp.text
+
+
 def _make_owned_db(path: Path) -> Path:
     """Two tenants, priced: alice owns /alice-proj ($3), bob owns /bob-proj ($6).
 

@@ -297,9 +297,11 @@ async def ui_dashboard(request: Request, db_path: Path) -> Response:
     *sums across all of them*, so the ``owner=`` on each aggregate read is the
     only thing scoping it (``owner=None`` would be a cross-tenant total).
 
-    No try/except wrapper: the usage reads return zeroed/empty results on an
-    empty or pre-rollup DB (missing tables handled inside), so an honest empty
-    dashboard renders rather than a swallowed error masking a real fault.
+    Pre-rollup (v8) DBs have no usage_by_conv_model table — the rollup-era reads
+    read it unconditionally and would 500 (the live DB is intentionally v8 until
+    the 0.9.0 migration). Rather than a blanket try/except that could mask a real
+    fault, we make the one expected absence explicit: a single existence check up
+    front degrades to a stub, mirroring how the folio shows "&mdash;" pre-rollup.
     """
     from siftd.api.stats import (
         get_cost_coverage,
@@ -309,6 +311,18 @@ async def ui_dashboard(request: Request, db_path: Path) -> Response:
         get_usage_summary,
     )
     from siftd.output.html_fmt import render_dashboard
+    from siftd.storage.sql_helpers import has_usage_rollup_table
+    from siftd.storage.sqlite import open_database
+
+    conn = open_database(db_path, read_only=True)
+    try:
+        rollup_ready = has_usage_rollup_table(conn)
+    finally:
+        conn.close()
+    if not rollup_ready:
+        return _html_response(
+            _stub("stats", "Stats", "usage rollup not built yet — run `siftd ingest`")
+        )
 
     owner = _effective_owner(request, None)
     return _html_response(
