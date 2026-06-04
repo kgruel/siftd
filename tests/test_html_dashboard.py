@@ -76,8 +76,8 @@ def test_dashboard_has_three_regions_and_chrome_contract():
     assert "Model mix" in html and "Workspace mix" in html
     assert "Corpus" in html
     # Corpus footnotes from get_stats.
-    assert "Token coverage" in html and "83%" in html
-    assert "Cost coverage" in html and "80%" in html
+    assert "Token coverage" in html and "83.3%" in html
+    assert "Cost coverage" in html and "80.0%" in html
 
 
 def test_dashboard_headline_and_row_cost_when_priced():
@@ -87,7 +87,8 @@ def test_dashboard_headline_and_row_cost_when_priced():
         by_workspace=[GroupUsage("/proj", 2, 1_000_000, 500_000, 12.3456)],
     )
     assert "$12.50" in html  # headline, 2dp
-    assert "$12.3456" in html  # per-row, 4dp
+    assert "$12.35" in html  # per-row, 2dp (money column, not 4dp folio precision)
+    assert "$12.3456" not in html
     assert "ledger--usage" in html
 
 
@@ -116,6 +117,22 @@ def test_dashboard_headline_dash_when_no_priced_usage():
     )
     # The headline Cost stat shows the em dash, no fabricated grand total.
     assert "$0.00" not in html
+
+
+def test_dashboard_coverage_does_not_round_up_to_false_100():
+    """99.87% coverage must not display as a false '100%' — the live DB has
+    603,506/604,299 token-bearing responses (99.87%); rounding up would claim a
+    completeness it doesn't have. Floors to 1dp instead."""
+    stats = _stats()
+    stats.token_coverage = TokenCoverage(604_299, 603_506, 99.87, [])
+    html = _render(
+        usage=UsageSummary(2, 1_000_000, 500_000, 12.5),
+        by_model=[GroupUsage("claude-x", 2, 1_000_000, 500_000, 12.5)],
+        by_workspace=[GroupUsage("/proj", 2, 1_000_000, 500_000, 12.5)],
+        stats=stats,
+    )
+    assert "99.8%" in html
+    assert ">100%" not in html and ">100.0%" not in html
 
 
 def test_dashboard_empty_corpus_renders_without_error():

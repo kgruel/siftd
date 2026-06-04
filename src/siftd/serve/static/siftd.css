@@ -193,9 +193,13 @@ body { margin: 0; }
 .dash__cols { display:grid; grid-template-columns:1fr 1fr; }
 .dash__panel { border-right:1px solid var(--hair); border-bottom:1px solid var(--hair); min-width:0; }
 .dash__panel:last-child { border-right:0; }
-/* Usage rows carry a 4th cell (cost) beyond the folio ledger's name·bar·n. */
-.ledger--usage .ledger__row { grid-template-columns:1fr 52px auto auto; }
-.ledger__cost { text-align:right; color:var(--ink); font-variant-numeric:tabular-nums; }
+/* Usage rows carry a 4th cell (cost) beyond the folio ledger's name·bar·n.
+   Fixed token/cost columns (not auto) so the numbers line up in clean vertical
+   columns across rows instead of drifting with content width. */
+.ledger--usage .ledger__row { grid-template-columns:1fr 44px 82px 92px; gap:14px; }
+.ledger--usage .ledger__n { padding-right:0; }
+.ledger__cost { text-align:right; color:var(--ink); font-variant-numeric:tabular-nums;
+  white-space:nowrap; }
 .dash__metagrid { display:grid; grid-template-columns:repeat(2,1fr); }
 .dash__metarow { display:flex; justify-content:space-between; gap:12px; padding:11px 18px;
   border-bottom:1px solid var(--hair); font-family:var(--font-mono);

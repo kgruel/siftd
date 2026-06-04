@@ -903,7 +903,9 @@ def _dash_usage_rows(groups: list, *, label_fn=None, limit: int = 10) -> str:
     for g in groups[:limit]:
         name = label_fn(g.name) if label_fn else g.name
         tok = (g.input_tokens or 0) + (g.output_tokens or 0)
-        cost_str = "&mdash;" if g.cost is None else f"${g.cost:.4f}"
+        # 2dp for a money column — 4dp is per-conversation folio precision, far
+        # too noisy on aggregates ($886.85, not $886.8454).
+        cost_str = "&mdash;" if g.cost is None else f"${g.cost:,.2f}"
         rows.append(
             f'<li class="ledger__row"><span class="ledger__name">{escape(name)}</span>'
             f'<span class="ledger__bar" data-n="{tok}"></span>'
@@ -965,11 +967,21 @@ def render_dashboard(
             f'<span class="dash__metav">{v}</span></div>'
         )
 
+    def _pct(p: float) -> str:
+        # 1dp, and never round UP to a false 100% — 99.87% is not "complete".
+        # Coverage measures token *presence* per response, not completeness of
+        # the value (cache-read tokens live off this axis), so an honest 99.9%
+        # matters: it must not read as "we have everything".
+        import math
+
+        shown = math.floor(p * 10) / 10 if p < 100 else 100.0
+        return f"{shown:.1f}%"
+
     meta_rows: list[str] = []
     if tok_pct is not None:
-        meta_rows.append(_meta("Token coverage", f"{tok_pct:.0f}%"))
+        meta_rows.append(_meta("Token coverage", _pct(tok_pct)))
     if cost_pct is not None:
-        meta_rows.append(_meta("Cost coverage", f"{cost_pct:.0f}%"))
+        meta_rows.append(_meta("Cost coverage", _pct(cost_pct)))
     if counts is not None:
         meta_rows.append(_meta("Responses", f"{counts.responses:,}"))
         meta_rows.append(_meta("Tool calls", f"{counts.tool_calls:,}"))
