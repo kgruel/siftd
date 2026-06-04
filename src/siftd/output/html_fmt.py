@@ -768,9 +768,11 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
 
     The fragment root carries ``data-view/title/count/kick`` so ``enhance.js``
     updates the chrome head + active nav on an htmx swap without oob coupling.
-    The ledger foot shows tokens + tool count (both exact); cost is intentionally
-    absent — ``ConversationDetail`` carries no cost, and a fabricated $0 would
-    re-introduce the very mispricing the rollup work removed.
+    The ledger foot shows tokens + cost; cost is the rollup's canonical
+    per-conversation value (``ConversationDetail.cost``, fetched at depth>=3),
+    rendered as ``&mdash;`` when ``None`` (no priced usage) — never a fabricated
+    $0 that would re-introduce the mispricing the rollup work removed. The tool
+    total lives in the ledger header (``folio__navmeta``).
     """
     from collections import Counter
 
@@ -879,5 +881,139 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
         f'<span class="ledger__statn">{cost_str}</span></div>',
         "</div></aside>",
         "</article>",
+    ]
+    return "".join(parts)
+
+
+def _dash_usage_rows(groups: list, *, label_fn=None, limit: int = 10) -> str:
+    """Render a usage breakdown (model or workspace) as ``.ledger`` rows.
+
+    The bar is sized by total tokens (always exact) via ``data-n`` — drawLedgers
+    normalises per-list. Cost is the honest tail: ``&mdash;`` when ``None`` (no
+    priced usage), never a fabricated $0. Empty input renders one muted row.
+    """
+    from siftd.output.common import fmt_tokens
+
+    if not groups:
+        return (
+            '<li class="ledger__row ledger__empty">'
+            '<span class="ledger__name">no usage</span></li>'
+        )
+    rows: list[str] = []
+    for g in groups[:limit]:
+        name = label_fn(g.name) if label_fn else g.name
+        tok = (g.input_tokens or 0) + (g.output_tokens or 0)
+        cost_str = "&mdash;" if g.cost is None else f"${g.cost:.4f}"
+        rows.append(
+            f'<li class="ledger__row"><span class="ledger__name">{escape(name)}</span>'
+            f'<span class="ledger__bar" data-n="{tok}"></span>'
+            f'<span class="ledger__n">{escape(fmt_tokens(tok))}</span>'
+            f'<span class="ledger__cost">{cost_str}</span></li>'
+        )
+    return "".join(rows)
+
+
+def render_dashboard(
+    *,
+    usage: Any,
+    by_model: list,
+    by_workspace: list,
+    coverage: Any,
+    stats: Any,
+    owner: str | None = None,
+) -> str:
+    """Render the Swiss 'Stats' dashboard fragment.
+
+    Aggregate companion to the folio. Composes the four api reads the route
+    gathers — no new api type (the route is the only consumer; it dissolves into
+    "call the reads, pass them here"). Regions:
+      - ``.dash__head``   headline: conversations, tokens, cost (the rollup payoff)
+      - ``.dash__cols``   two ``.ledger`` panels — model mix + workspace mix,
+                          token-sized bars, honest per-row cost
+      - ``.dash__meta``   trust footnotes: token + cost coverage, corpus counts,
+                          activity window, last ingest
+
+    Cost honesty carries up from the folio: a per-row ``None`` renders ``&mdash;``,
+    and the headline shows ``&mdash;`` when there is no priced usage at all rather
+    than a fabricated ``$0.00``. The fragment root carries ``data-view/title/
+    count/kick`` for enhance.js chrome sync, exactly like the folio.
+    """
+    from siftd.output.common import fmt_timestamp, fmt_tokens, fmt_workspace
+
+    convs = getattr(usage, "total_conversations", 0)
+    in_tok = getattr(usage, "total_input_tokens", 0)
+    out_tok = getattr(usage, "total_output_tokens", 0)
+    total_cost = getattr(usage, "total_cost", 0.0) or 0.0
+
+    # "No priced usage" → em dash, same rule as a per-row None. A genuine summed
+    # $0 with priced rows present still shows $0.00 (distinct from unknown).
+    priced = total_cost > 0 or any(getattr(m, "cost", None) is not None for m in by_model)
+    headline_cost = f"${total_cost:,.2f}" if priced else "&mdash;"
+
+    kick = f"{escape(owner)} &middot; usage" if owner else "usage"
+
+    counts = getattr(stats, "counts", None)
+    tcov = getattr(stats, "token_coverage", None)
+    tok_pct = getattr(tcov, "pct_with_tokens", None) if tcov else None
+    cost_pct = getattr(coverage, "pct_covered", None) if coverage else None
+    window = getattr(stats, "activity_window", (None, None)) or (None, None)
+    last_ingest = getattr(stats, "last_ingest_at", None)
+
+    def _meta(k: str, v: str) -> str:
+        return (
+            f'<div class="dash__metarow"><span class="dash__metak">{escape(k)}</span>'
+            f'<span class="dash__metav">{v}</span></div>'
+        )
+
+    meta_rows: list[str] = []
+    if tok_pct is not None:
+        meta_rows.append(_meta("Token coverage", f"{tok_pct:.0f}%"))
+    if cost_pct is not None:
+        meta_rows.append(_meta("Cost coverage", f"{cost_pct:.0f}%"))
+    if counts is not None:
+        meta_rows.append(_meta("Responses", f"{counts.responses:,}"))
+        meta_rows.append(_meta("Tool calls", f"{counts.tool_calls:,}"))
+        meta_rows.append(_meta("Models", f"{counts.models:,}"))
+        meta_rows.append(_meta("Workspaces", f"{counts.workspaces:,}"))
+    start, end = window
+    if start or end:
+        # fmt_timestamp emits ISO-ish text (no markup); the &ndash; is a literal
+        # entity, so the value is assembled pre-escaped rather than run through escape().
+        span = f"{escape(fmt_timestamp(start) or '?')} &ndash; {escape(fmt_timestamp(end) or '?')}"
+        meta_rows.append(_meta("Activity", span))
+    if last_ingest:
+        meta_rows.append(_meta("Last ingest", escape(fmt_timestamp(last_ingest) or "")))
+
+    parts: list[str] = [
+        f'<article class="dash" data-view="stats" data-title="Stats"'
+        f' data-count="{convs}" data-kick="{kick}">',
+        '<section class="dash__head">',
+        '<div class="dash__stat"><span class="micro">Conversations</span>'
+        f'<span class="dash__statn">{convs:,}</span></div>',
+        '<div class="dash__stat"><span class="micro">Tokens</span>'
+        f'<span class="dash__statn">{escape(fmt_tokens(in_tok + out_tok))}</span>'
+        f'<span class="dash__sub">{escape(fmt_tokens(in_tok))} in &middot; '
+        f'{escape(fmt_tokens(out_tok))} out</span></div>',
+        '<div class="dash__stat"><span class="micro">Cost</span>'
+        f'<span class="dash__statn">{headline_cost}</span></div>',
+        '</section>',
+        '<div class="dash__cols">',
+        '<section class="dash__panel">',
+        '<div class="folio__navhead"><span class="micro">Model mix</span>'
+        f'<span class="folio__navmeta">{len(by_model)}</span></div>',
+        f'<ul class="ledger ledger--usage">{_dash_usage_rows(by_model)}</ul>',
+        '</section>',
+        '<section class="dash__panel">',
+        '<div class="folio__navhead"><span class="micro">Workspace mix</span>'
+        f'<span class="folio__navmeta">{len(by_workspace)}</span></div>',
+        '<ul class="ledger ledger--usage">'
+        f'{_dash_usage_rows(by_workspace, label_fn=fmt_workspace, limit=8)}</ul>',
+        '</section>',
+        '</div>',
+        '<section class="dash__meta">',
+        '<div class="folio__navhead"><span class="micro">Corpus</span></div>',
+        f'<div class="dash__metagrid">{"".join(meta_rows)}</div>',
+        '</section>',
+        '</article>',
     ]
     return "".join(parts)

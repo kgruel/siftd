@@ -11,6 +11,7 @@ from litestar.static_files import create_static_files_router
 
 from siftd.serve.html_routes import (
     ui_auth_config,
+    ui_dashboard,
     ui_export,
     ui_folio,
     ui_follow,
@@ -89,7 +90,7 @@ def create_app(
             export_route,
             push, pull, sync_status_route, conversation_detail, conversation_list,
             event_detail_route, search_route,
-            ui_shell, ui_auth_config, ui_folio, ui_view_stub,
+            ui_shell, ui_auth_config, ui_folio, ui_dashboard, ui_view_stub,
             ui_meta, ui_query, ui_search, ui_peek,
             ui_follow, ui_stats, ui_tag, ui_tags_suggest, ui_export,
             static_router,

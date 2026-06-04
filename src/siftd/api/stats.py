@@ -516,13 +516,20 @@ class UsageSummary:
 
 @dataclass
 class GroupUsage:
-    """Token/cost breakdown for a single group (model or workspace)."""
+    """Token/cost breakdown for a single group (model or workspace).
+
+    ``cost`` is ``None`` when the group has no priced usage — the same
+    NULL-means-unpriced invariant :class:`~siftd.api.conversations.ConversationDetail`
+    carries — so consumers render "unknown" rather than a fabricated ``$0`` that
+    would re-introduce the mispricing the rollup work removed. A genuine summed
+    ``0.0`` (priced rows that net to zero) stays distinct from that ``None``.
+    """
 
     name: str
     conversations: int
     input_tokens: int
     output_tokens: int
-    cost: float
+    cost: float | None
 
 
 def get_usage_summary(*, db_path: Path | None = None, owner: str | None = None) -> UsageSummary:
@@ -609,7 +616,9 @@ def get_usage_by_model(*, db_path: Path | None = None, owner: str | None = None)
             " COUNT(DISTINCT u.conversation_id) AS convs,"
             " COALESCE(SUM(u.input_tokens), 0) AS inp,"
             " COALESCE(SUM(u.output_tokens), 0) AS out,"
-            " COALESCE(SUM(u.cost), 0) AS cost"
+            # No COALESCE on cost: an all-unpriced model sums to NULL → cost=None,
+            # rendered as "unknown" rather than a fabricated $0 (see GroupUsage).
+            " SUM(u.cost) AS cost"
             " FROM usage_by_conv_model u"
             " LEFT JOIN models m ON m.id = u.model_id"
             f"{owner_where}"
@@ -657,7 +666,9 @@ def get_usage_by_workspace(*, db_path: Path | None = None, owner: str | None = N
             " COUNT(DISTINCT c.id) AS convs,"
             " COALESCE(SUM(u.input_tokens), 0) AS inp,"
             " COALESCE(SUM(u.output_tokens), 0) AS out,"
-            " COALESCE(SUM(u.cost), 0) AS cost"
+            # No COALESCE on cost: a workspace with no priced usage sums to NULL →
+            # cost=None ("unknown"), never a fabricated $0 (see GroupUsage).
+            " SUM(u.cost) AS cost"
             " FROM conversations c"
             " LEFT JOIN usage_by_conv_model u ON u.conversation_id = c.id"
             " LEFT JOIN workspaces w ON w.id = c.workspace_id"
@@ -672,7 +683,9 @@ def get_usage_by_workspace(*, db_path: Path | None = None, owner: str | None = N
             )
             for r in rows
         ]
-        results.sort(key=lambda g: g.cost, reverse=True)
+        # None (unpriced) sorts as 0 here — ordering only; the row still renders
+        # its honest "unknown", it just lands among the zero-cost groups.
+        results.sort(key=lambda g: g.cost or 0.0, reverse=True)
         return results
     finally:
         conn.close()
@@ -797,7 +810,7 @@ def workspace_detail(
         sessions=sessions,
         input_tokens=sum(g.input_tokens for g in model_mix),
         output_tokens=sum(g.output_tokens for g in model_mix),
-        cost=sum(g.cost for g in model_mix),
+        cost=sum(g.cost or 0.0 for g in model_mix),
         model_mix=model_mix,
         recent=recent,
     )

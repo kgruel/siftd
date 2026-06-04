@@ -30,6 +30,7 @@ from siftd.storage.sqlite import (
     insert_response,
     insert_response_content,
 )
+from siftd.storage.usage_rollup import rebuild_rollups
 
 
 def _make_db(path: Path) -> tuple[Path, str]:
@@ -128,3 +129,92 @@ def test_deep_link_id_mounts_folio(ctx):
     body = client.get("/", params={"id": cid}).text
     assert f'hx-get="/folio?id={cid}"' in body
     assert 'data-view="transcript"' in body and 'aria-current="page"' in body
+
+
+# --- Stats dashboard (Phase B slice 2) -------------------------------------
+
+
+def test_dashboard_route_renders_swiss_dashboard(ctx):
+    client, _cid = ctx
+    body = client.get("/dashboard").text
+    assert 'class="dash"' in body
+    assert 'data-view="stats"' in body
+    assert "Model mix" in body and "Workspace mix" in body
+
+
+def test_stats_nav_links_live_dashboard_not_stub(ctx):
+    """The Stats rail item points at the live /dashboard now, not /view/stats —
+    clicking it must mount the dashboard, never the placeholder."""
+    client, _cid = ctx
+    body = client.get("/").text
+    assert 'hx-get="/dashboard"' in body
+    assert 'hx-get="/view/stats"' not in body
+
+
+def _make_owned_db(path: Path) -> Path:
+    """Two tenants, priced: alice owns /alice-proj ($3), bob owns /bob-proj ($6).
+
+    The global (owner=None) total is $9 — so a dashboard that shows $9 or leaks
+    /bob-proj to alice is the cross-tenant IDOR. Pricing is seeded so cost is a
+    real number (not the unpriced None), making the leak visible as a value.
+    """
+    conn = create_database(path)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_owners (conversation_id TEXT,"
+        " user_id TEXT, push_id TEXT, assigned_at TEXT)"
+    )
+    h = get_or_create_harness(conn, "claude_code", source="anthropic", log_format="jsonl")
+    m = get_or_create_model(conn, "claude-x")
+    p = get_or_create_provider(conn, "anthropic")
+    conn.execute(
+        "INSERT INTO pricing (id, model_id, provider_id, input_per_mtok, output_per_mtok)"
+        " VALUES ('pr', ?, ?, 3.0, 15.0)",
+        (m, p),
+    )
+
+    def _owned(ext, ws_path, owner, mtok):
+        ws = get_or_create_workspace(conn, ws_path, "2026-01-01T00:00:00Z")
+        cid = insert_conversation(
+            conn, external_id=ext, harness_id=h, workspace_id=ws,
+            started_at="2026-01-15T10:00:00Z",
+        )
+        pid = insert_prompt(conn, cid, ext + "p", "2026-01-15T10:00:00Z")
+        insert_response(
+            conn, cid, pid, m, p, ext + "r", "2026-01-15T10:00:00Z",
+            input_tokens=mtok * 1_000_000, output_tokens=0,
+        )
+        conn.execute(
+            "INSERT INTO conversation_owners VALUES (?,?,?,?)",
+            (cid, owner, None, "2026-01-15T10:00:00Z"),
+        )
+
+    _owned("cA", "/alice-proj", "alice", 1)  # $3
+    _owned("cB", "/bob-proj", "bob", 2)      # $6
+    rebuild_rollups(conn)
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_dashboard_scopes_to_authenticated_owner(tmp_path):
+    """End-to-end IDOR guard: the dashboard sums cost/usage across conversations,
+    so the owner= on every read is the only thing scoping it. An alice-authed
+    request must show alice's workspace + cost, never bob's or the global $9.
+
+    A single-owner fixture would pass even if the route leaked — the two-owner
+    assertion is what discriminates. Static-token auth maps identity→request.user.sub,
+    which _effective_owner threads into the reads.
+    """
+    db = _make_owned_db(tmp_path / "owned.db")
+    auth = {"static_token": "s3cret", "identity": "alice"}
+    with TestClient(app=create_app(db_path=db, auth_config=auth)) as client:
+        body = client.get("/dashboard", headers={"Authorization": "Bearer s3cret"}).text
+
+    # Alice sees her own workspace, never bob's (fmt_workspace strips the slash).
+    assert "alice-proj" in body
+    assert "bob-proj" not in body
+    # Scoped to alice's single conversation, not the global two.
+    assert 'data-count="1"' in body
+    # Headline cost is alice's $3.00, never the cross-tenant $9.00.
+    assert "$3.00" in body
+    assert "$9.00" not in body

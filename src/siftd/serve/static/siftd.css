@@ -180,6 +180,30 @@ body { margin: 0; }
 .ledger__statn { font-family:var(--font-mono); font-weight:600; color:var(--ink); }
 
 /* ========================================================================= */
+/* STATS (dashboard) — headline · model/workspace ledgers · corpus           */
+/* ========================================================================= */
+.dash { height:100%; overflow-y:auto; min-height:0; background:var(--paper); padding-bottom:64px; }
+.dash__head { display:grid; grid-template-columns:repeat(3,1fr); border-bottom:1px solid var(--hair); }
+.dash__stat { display:flex; flex-direction:column; gap:8px; padding:26px 28px;
+  border-right:1px solid var(--hair); }
+.dash__stat:last-child { border-right:0; }
+.dash__statn { font-family:var(--font-mono); font-weight:600; color:var(--ink);
+  font-size:calc(var(--fs-base) + 13px); letter-spacing:-.01em; line-height:1; }
+.dash__sub { font-family:var(--font-mono); font-size:var(--fs-micro); color:var(--faint); }
+.dash__cols { display:grid; grid-template-columns:1fr 1fr; }
+.dash__panel { border-right:1px solid var(--hair); border-bottom:1px solid var(--hair); min-width:0; }
+.dash__panel:last-child { border-right:0; }
+/* Usage rows carry a 4th cell (cost) beyond the folio ledger's name·bar·n. */
+.ledger--usage .ledger__row { grid-template-columns:1fr 52px auto auto; }
+.ledger__cost { text-align:right; color:var(--ink); font-variant-numeric:tabular-nums; }
+.dash__metagrid { display:grid; grid-template-columns:repeat(2,1fr); }
+.dash__metarow { display:flex; justify-content:space-between; gap:12px; padding:11px 18px;
+  border-bottom:1px solid var(--hair); font-family:var(--font-mono);
+  font-size:calc(var(--fs-base) - 0.5px); }
+.dash__metak { color:var(--mid); }
+.dash__metav { color:var(--ink); font-variant-numeric:tabular-nums; text-align:right; }
+
+/* ========================================================================= */
 /* STUB — views not yet authored in this slice                              */
 /* ========================================================================= */
 .stub { height:100%; display:flex; flex-direction:column; align-items:center;

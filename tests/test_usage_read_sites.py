@@ -55,6 +55,41 @@ def _build_multi_response(db_path, *, n_responses=3):
     return ws, cid
 
 
+def _build_unpriced(db_path):
+    """One conversation of a model with NO pricing row → the rollup stores NULL
+    cost, so the usage breakdowns must report cost=None (unknown), not a
+    fabricated $0. Tokens are still exact (1M in)."""
+    conn = sq.create_database(db_path)
+    ws = sq.get_or_create_workspace(conn, "/proj", "2024-01-01T00:00:00Z")
+    h = sq.get_or_create_harness(conn, "tool", source="anthropic")
+    m = sq.get_or_create_model(conn, "claude-x")
+    p = sq.get_or_create_provider(conn, "anthropic")
+    # no _seed_pricing → cost is NULL in the rollup
+    cid = sq.insert_conversation(conn, "c1", h, ws, "2024-01-01T00:00:00Z")
+    pid = sq.insert_prompt(conn, cid, "p1", "2024-01-01T00:00:00Z")
+    sq.insert_response(conn, cid, pid, m, p, "r0", "2024-01-01T00:00:01Z", 1_000_000, 0)
+    rebuild_rollups(conn)
+    conn.commit()
+    conn.close()
+    return ws, cid
+
+
+def test_usage_by_model_unpriced_cost_is_none_not_zero(tmp_path):
+    """An all-unpriced model surfaces cost=None — the same NULL=unpriced honesty
+    ConversationDetail.cost carries — so the dashboard renders an em dash rather
+    than a fabricated $0. The pre-fix COALESCE(SUM(cost),0) reported 0.0 here."""
+    db = tmp_path / "unp.db"
+    _build_unpriced(db)
+
+    rows = get_usage_by_model(db_path=db)
+    assert [r.name for r in rows] == ["claude-x"]
+    assert rows[0].input_tokens == 1_000_000  # tokens stay exact
+    assert rows[0].cost is None  # NOT 0.0 — that would re-fabricate the $0
+
+    ws_rows = get_usage_by_workspace(db_path=db)
+    assert ws_rows[0].cost is None
+
+
 def test_usage_by_model_cost_not_fanned_by_response_count(tmp_path):
     db = tmp_path / "m.db"
     _build_multi_response(db, n_responses=3)
@@ -62,6 +97,7 @@ def test_usage_by_model_cost_not_fanned_by_response_count(tmp_path):
     rows = get_usage_by_model(db_path=db)
     assert [r.name for r in rows] == ["claude-x"]
     # 3 responses × $3 = $9, summed once. The pre-S2 fan-out reported 3×$9 = $27.
+    assert rows[0].cost is not None  # priced fixture — not the unpriced None case
     assert abs(rows[0].cost - 9.0) < 1e-6
     assert rows[0].conversations == 1  # COUNT(DISTINCT conversation_id), not response count
 
@@ -72,6 +108,7 @@ def test_usage_by_workspace_cost_not_fanned_by_response_count(tmp_path):
 
     rows = get_usage_by_workspace(db_path=db)
     assert [r.name for r in rows] == ["/proj"]
+    assert rows[0].cost is not None  # priced fixture — not the unpriced None case
     assert abs(rows[0].cost - 9.0) < 1e-6
     assert rows[0].conversations == 1
 
@@ -94,9 +131,11 @@ def test_workspace_detail_model_mix_cost_filled_and_headline_is_sum(tmp_path):
     assert d is not None
     assert len(d.model_mix) == 1
     # model_mix cost was a hardcoded 0.0 before S2.
-    assert abs(d.model_mix[0].cost - 9.0) < 1e-6
+    mix_cost = d.model_mix[0].cost
+    assert mix_cost is not None  # priced fixture — not the unpriced None case
+    assert abs(mix_cost - 9.0) < 1e-6
     # Headline is the sum of the mix — it can never disagree with the rows.
-    assert abs(d.cost - sum(g.cost for g in d.model_mix)) < 1e-9
+    assert abs(d.cost - sum(g.cost or 0.0 for g in d.model_mix)) < 1e-9
     assert abs(d.cost - 9.0) < 1e-6
 
 

@@ -71,7 +71,7 @@ _NAV_ITEMS: tuple[tuple[str, str, str, str, str], ...] = (
     ("transcript", "03", "Transcript", "folio · full", "/folio"),
     ("tags", "04", "Tags", "pinned · tree", "/view/tags"),
     ("workspaces", "05", "Workspaces", "explorer", "/view/workspaces"),
-    ("stats", "06", "Stats", "tokens · cost", "/view/stats"),
+    ("stats", "06", "Stats", "tokens · cost", "/dashboard"),
 )
 _VIEW_TITLES = {vid: name for vid, _n, name, _d, _u in _NAV_ITEMS}
 
@@ -285,6 +285,42 @@ async def ui_folio(
     if detail is None:
         return _html_response(_stub("transcript", "Transcript", f"not found: {conv_id[:12]}"))
     return _html_response(fmt.render_folio(detail, fidelity))
+
+
+@get("/dashboard")
+async def ui_dashboard(request: Request, db_path: Path) -> Response:
+    """Render the Swiss 'Stats' dashboard — aggregate token/cost over the corpus.
+
+    Owner-scoped: every read takes the effective identity, so a tenant sees only
+    their own totals. This is the highest-IDOR-risk view in the set — the folio
+    owner-checks one conversation inside ``get_conversation``, but the dashboard
+    *sums across all of them*, so the ``owner=`` on each aggregate read is the
+    only thing scoping it (``owner=None`` would be a cross-tenant total).
+
+    No try/except wrapper: the usage reads return zeroed/empty results on an
+    empty or pre-rollup DB (missing tables handled inside), so an honest empty
+    dashboard renders rather than a swallowed error masking a real fault.
+    """
+    from siftd.api.stats import (
+        get_cost_coverage,
+        get_stats,
+        get_usage_by_model,
+        get_usage_by_workspace,
+        get_usage_summary,
+    )
+    from siftd.output.html_fmt import render_dashboard
+
+    owner = _effective_owner(request, None)
+    return _html_response(
+        render_dashboard(
+            usage=get_usage_summary(db_path=db_path, owner=owner),
+            by_model=get_usage_by_model(db_path=db_path, owner=owner),
+            by_workspace=get_usage_by_workspace(db_path=db_path, owner=owner),
+            coverage=get_cost_coverage(db_path=db_path, owner=owner),
+            stats=get_stats(db_path=db_path, owner=owner),
+            owner=owner,
+        )
+    )
 
 
 @get("/view/{name:str}")
