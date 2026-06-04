@@ -126,55 +126,90 @@ def batched_in_query(
     return results
 
 
+def uncached_input_sql(response_alias: str = "r") -> str:
+    """SQL fragment: per-response UNCACHED input tokens, normalized across the
+    provider input-token conventions.
+
+    Anthropic reports ``input_tokens`` EXCLUSIVE of cache — ``cache_read`` /
+    ``cache_creation`` are separate, additive fields. OpenAI reports it INCLUSIVE
+    — ``cache_read`` is a subset already counted in ``input_tokens``. Verified on
+    the live corpus (claude: input ≪ cache_read; codex: input ≥ cache_read). Since
+    that convention is a hard API-contract property of the provider, it's keyed on
+    the harness ``source``; an ambiguous source (e.g. ``multi`` — a Claude-backed
+    multiplexer) falls back to the per-row signature, which is unambiguous exactly
+    where it matters: a ``cache_read`` exceeding ``input_tokens`` can only be the
+    exclusive convention.
+
+    The caller's flatten MUST expose ``{r}.input_tokens``, ``{r}.cache_read`` and
+    ``{r}.source`` as columns. Returns a non-negative scalar expression.
+    """
+    r = response_alias
+    it = f"COALESCE({r}.input_tokens, 0)"
+    cr = f"COALESCE({r}.cache_read, 0)"
+    return (
+        f"CASE"
+        f" WHEN {r}.source = 'anthropic' THEN {it}"  # exclusive: input is already uncached
+        f" WHEN {it} < {cr} THEN {it}"               # exclusive signature (claude-backed 'multi')
+        f" ELSE {it} - {cr}"                          # inclusive (openai + default): strip the subset
+        f" END"
+    )
+
+
 def cost_expr_sql(
     response_alias: str = "r",
     pricing_alias: str = "pr",
     *,
     coalesce_pricing: bool = False,
 ) -> str:
-    """SQL fragment: per-response cost calculation (cache-aware).
+    """SQL fragment: per-response cost — cache-aware, four billed components.
 
-    Computes:
-        (non-cached input tokens * input_rate + output tokens * output_rate) / 1M
+    Computes (before the caller's ``/ 1e6``)::
 
-    Cache-read tokens (from the polymorphic attributes table) are subtracted from input
-    tokens so they aren't double-charged.  The CASE clamps negative values
-    to zero (a response may report more cache-read than total input tokens
-    due to rounding in some providers).
+        uncached_input * input_rate
+      + cache_creation * cache_creation_rate
+      + cache_read     * cache_read_rate
+      + output         * output_rate
 
-    Args:
-        response_alias: SQL alias for the responses table.
-        pricing_alias: SQL alias for the pricing table.
-        coalesce_pricing: If True, COALESCE per-mtok columns to 0 so missing
-            pricing produces cost=0.  If False (default), NULL propagates so
-            missing pricing yields NULL cost — preferred for materialized stats
-            where NULL signals "no pricing data" rather than "free".
+    where ``uncached_input`` is :func:`uncached_input_sql` (so the token total and
+    the cost can never disagree about what's cached), and the three input-side
+    components are DISJOINT — no double-charging. This supersedes the old
+    "subtract cache_read, bill nothing" form, which billed cache_read at zero and
+    collapsed Anthropic cost to output-only (input_tokens being uncached there,
+    ``input − cache_read`` clamped to 0).
 
-    Returns:
-        A SQL expression suitable for use inside SUM() or as a scalar.
-        Callers typically wrap with ``ROUND(SUM(...) / 1000000.0, 4)``.
+    Cache rates are OVERRIDE-ONLY pricing columns: when
+    ``cache_read_per_mtok`` / ``cache_creation_per_mtok`` are NULL they default to
+    the standard Anthropic multiples of the input rate (read ×0.1, creation ×1.25)
+    — exact for Anthropic, an approximation for any provider whose cache pricing
+    isn't a standard multiple (set the column to override). When
+    ``coalesce_pricing`` is False (default) a NULL ``input_per_mtok`` propagates to
+    NULL cost — the "unpriced ≠ free" / em-dash invariant.
+
+    REQUIRES the flatten to expose ``{r}.cache_read``, ``{r}.cache_creation``,
+    ``{r}.source``, ``{r}.input_tokens``, ``{r}.output_tokens`` — this no longer
+    runs its own ``attributes`` subquery (the rebuild joins the cache sums once).
+
+    Returns an expression for use inside ``SUM()``; wrap with
+    ``ROUND(SUM(...) / 1000000.0, 4)``.
     """
     r = response_alias
     p = pricing_alias
     input_rate = f"COALESCE({p}.input_per_mtok, 0)" if coalesce_pricing else f"{p}.input_per_mtok"
     output_rate = f"COALESCE({p}.output_per_mtok, 0)" if coalesce_pricing else f"{p}.output_per_mtok"
+    # Override-only cache rates; default to the standard multiple of the input rate.
+    # When input_rate is NULL (unpriced) these resolve to NULL too, so cost stays NULL.
+    cache_read_rate = f"COALESCE({p}.cache_read_per_mtok, {input_rate} * 0.1)"
+    cache_creation_rate = f"COALESCE({p}.cache_creation_per_mtok, {input_rate} * 1.25)"
 
-    cache_read = (
-        f"COALESCE("
-        f"(SELECT MAX(CAST(a.value AS INTEGER))"
-        f" FROM attributes a"
-        f" WHERE a.target_kind = 'response'"
-        f" AND a.target_id = {r}.id"
-        f" AND a.key = 'cache_read_input_tokens'), 0)"
-    )
-
+    uncached = uncached_input_sql(r)
+    cr = f"COALESCE({r}.cache_read, 0)"
+    cc = f"COALESCE({r}.cache_creation, 0)"
+    out = f"COALESCE({r}.output_tokens, 0)"
     return (
-        f"CASE"
-        f" WHEN COALESCE({r}.input_tokens, 0) - {cache_read} < 0"
-        f" THEN 0"
-        f" ELSE COALESCE({r}.input_tokens, 0) - {cache_read}"
-        f" END * {input_rate}"
-        f" + COALESCE({r}.output_tokens, 0) * {output_rate}"
+        f"({uncached}) * {input_rate}"
+        f" + {cc} * {cache_creation_rate}"
+        f" + {cr} * {cache_read_rate}"
+        f" + {out} * {output_rate}"
     )
 
 

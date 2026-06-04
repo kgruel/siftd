@@ -77,11 +77,17 @@ Flat pricing lookup for approximate cost computation
 | `model_id` | TEXT | NOT NULL REFERENCES models(id) ON DELETE CASCADE |  |
 | `provider_id` | TEXT | NOT NULL REFERENCES providers(id) ON DELETE CASCADE |  |
 | `input_per_mtok` | REAL |  | $ per million input tokens |
-| `output_per_mtok` | REAL |  | $ per million output tokens |
+| `output_per_mtok` | REAL |  | $ per million output tokens -- Cache rates are OVERRIDE-ONLY: NULL means "derive from input_per_mtok via the -- standard Anthropic multiple" (cache read ×0.1, cache creation ×1.25 |
 
 ### workspaces
 
-Physical paths where work happens
+Anthropic; set explicitly for a provider whose cache pricing isn't that multiple.
+    cache_read_per_mtok     REAL,               -- $ per million cache-read input tokens
+    cache_creation_per_mtok REAL,               -- $ per million cache-creation input tokens
+    UNIQUE (model_id, provider_id)
+);
+
+-- Physical paths where work happens
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|

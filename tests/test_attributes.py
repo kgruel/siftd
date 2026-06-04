@@ -77,9 +77,11 @@ def test_migration_backfill_continuity(db):
 # ---------------------------------------------------------------------------
 # 4. Cost parity — cost_expr_sql() and cost.sql both produce 0.0099
 #
-# Fixture: input_tokens=1000, output_tokens=500, cache_read=200 (effective=800)
-#          input_per_mtok=3.0, output_per_mtok=15.0
-# Expected: (800*3 + 500*15) / 1_000_000 = 9900 / 1_000_000 = 0.0099
+# Fixture: source='anthropic' (exclusive convention → input is uncached, cache is
+#          additive), input_tokens=1000, output_tokens=500, cache_read=200,
+#          cache_creation=0; input_per_mtok=3.0, output_per_mtok=15.0
+# Expected (v10, 4 components, cache read @0.1× input rate):
+#   (1000*3 + 200*0.3 + 500*15) / 1_000_000 = 10560 / 1_000_000 = 0.01056
 # ---------------------------------------------------------------------------
 
 def _seed_cost_fixture(conn):
@@ -116,31 +118,41 @@ def test_cost_expr_sql_parity(tmp_path):
     conn = open_database(tmp_path / "cost.db")
     event_id, conv_id = _seed_cost_fixture(conn)
 
-    # Path A: cost_expr_sql() — using the conversation_stats subquery pattern
-    # r subquery presents event_response data with e.id as the id column.
+    # Path A: cost_expr_sql() — the flatten must expose source + the two cache
+    # components (the v10 contract), matching rebuild_usage_by_conv_model. Fixture
+    # is source='anthropic' (exclusive): uncached=input=1000, cache_read=200 ADDITIVE.
+    # cost = 1000*3 + 0*ccreate + 200*(3*0.1) + 500*15 = 3000 + 0 + 60 + 7500 = 10560 → 0.01056
     cost_expr = cost_expr_sql("r", "pr", coalesce_pricing=True)
     path_a = conn.execute(f"""
         SELECT ROUND(SUM({cost_expr}) / 1000000.0, 4) AS cost
         FROM (
             SELECT e.id, e.conversation_id, er.input_tokens, er.output_tokens,
-                   er.model_id, er.provider_id
+                   er.model_id, er.provider_id, h.source AS source,
+                   COALESCE((SELECT MAX(CAST(value AS INTEGER)) FROM attributes a
+                     WHERE a.target_kind='response' AND a.target_id=e.id
+                     AND a.key='cache_read_input_tokens'), 0) AS cache_read,
+                   COALESCE((SELECT MAX(CAST(value AS INTEGER)) FROM attributes a
+                     WHERE a.target_kind='response' AND a.target_id=e.id
+                     AND a.key='cache_creation_input_tokens'), 0) AS cache_creation
             FROM events e JOIN event_response er ON er.event_id = e.id
+            LEFT JOIN conversations c ON c.id = e.conversation_id
+            LEFT JOIN harnesses h ON h.id = c.harness_id
             WHERE e.kind = 'response'
         ) r
         LEFT JOIN pricing pr ON pr.model_id = r.model_id AND pr.provider_id = r.provider_id
         WHERE r.id = ?
     """, (event_id,)).fetchone()[0]
 
-    assert path_a == pytest.approx(0.0099, abs=1e-6), f"cost_expr_sql path gave {path_a}"
+    assert path_a == pytest.approx(0.0106, abs=1e-6), f"cost_expr_sql path gave {path_a}"
 
-    # Path B: cost.sql builtin query
+    # Path B: cost.sql builtin query — must agree with cost_expr_sql to the cent.
     cost_sql = files("siftd.builtin_queries").joinpath("cost.sql").read_text()
     cost_sql_runnable = cost_sql.replace("$limit", "100").replace("LIMIT $limit", "LIMIT 100")
     rows = conn.execute(cost_sql_runnable).fetchall()
     assert len(rows) == 1
     path_b = rows[0]["approx_cost_usd"]
 
-    assert path_b == pytest.approx(0.0099, abs=1e-6), f"cost.sql path gave {path_b}"
+    assert path_b == pytest.approx(0.0106, abs=1e-6), f"cost.sql path gave {path_b}"
 
     conn.close()
 

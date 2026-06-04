@@ -33,7 +33,7 @@ from siftd.storage.sessions import ensure_session_tables
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Registry of versioned migrations: version -> migration function.
 # Each function migrates the DB from version-1 to version.
@@ -1858,6 +1858,95 @@ def _migrate_v9_usage_rollup(conn: sqlite3.Connection) -> None:
 MIGRATIONS[9] = _migrate_v9_usage_rollup
 
 
+def _migrate_v10_cache_tokens(conn: sqlite3.Connection) -> None:
+    """v10: fold Anthropic cache tokens into the usage fact + bill them.
+
+    Pre-v10 the rollup summed only ``event_response.input_tokens`` — for Anthropic
+    the *uncached* sliver — so tokens read ~1% of reality and cost collapsed to
+    output-only (the cache-aware cost_expr subtracted cache_read from an
+    already-uncached input → clamped to 0). The cache_read / cache_creation tokens
+    were captured in the polymorphic ``attributes`` table but never reached the
+    fact.
+
+    This migration adds the cache token columns to ``usage_by_conv_model`` and the
+    override-only cache-rate columns to ``pricing``, then rebuilds: ``input_tokens``
+    becomes the TRUE total (uncached + cache_read + cache_creation, normalized per
+    provider convention), the cache components are stored disjointly, and cost
+    bills all four components (see usage_rollup.rebuild_usage_by_conv_model /
+    sql_helpers.cost_expr_sql).
+
+    Cost CHANGES BY DESIGN here (≈13× up on a cache-heavy corpus), so — unlike v9 —
+    there is no cost-parity assertion; the guardrails run in the new direction
+    (cost/tokens grow, uncached stays non-negative). Caller owns the transaction.
+    """
+    from siftd.storage.usage_rollup import rebuild_rollups
+
+    def _has_col(table: str, col: str) -> bool:
+        return any(r[1] == col for r in conn.execute(f"PRAGMA table_info({table})"))
+
+    # Pre-migration totals (from the v9 rollup) to assert monotonic growth.
+    pre_cost = conn.execute("SELECT SUM(cost) FROM usage_by_conv_model").fetchone()[0]
+    pre_input = conn.execute("SELECT COALESCE(SUM(input_tokens), 0) FROM usage_by_conv_model").fetchone()[0]
+
+    # Additive ALTERs (idempotent — a fresh v10 DB already has them via the DDL).
+    for col in ("cache_read_per_mtok", "cache_creation_per_mtok"):
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pricing'").fetchone() \
+                and not _has_col("pricing", col):
+            conn.execute(f"ALTER TABLE pricing ADD COLUMN {col} REAL")
+    for col in ("cache_read_tokens", "cache_creation_tokens"):
+        if not _has_col("usage_by_conv_model", col):
+            conn.execute(f"ALTER TABLE usage_by_conv_model ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
+
+    rebuild_rollups(conn)  # repopulate with cache-aware tokens + 4-component cost
+
+    # Integrity: response_count still equals the flattened response rows (the
+    # GROUP BY didn't drop or duplicate) — counts don't move with this migration.
+    flatten_n = conn.execute(
+        "SELECT COUNT(*) FROM events e JOIN event_response er ON er.event_id = e.id "
+        "WHERE e.kind = 'response'"
+    ).fetchone()[0]
+    post_resp = conn.execute(
+        "SELECT COALESCE(SUM(response_count), 0) FROM usage_by_conv_model"
+    ).fetchone()[0]
+    if post_resp != flatten_n:
+        raise MigrationAssertionError(
+            f"Migration v10 response_count integrity: rollup SUM={post_resp} "
+            f"vs {flatten_n} flattened response rows"
+        )
+
+    # uncached is non-negative: input_tokens (the true total) must be >= the cache
+    # components in every row, or the convention normalization produced nonsense.
+    bad = conn.execute(
+        "SELECT COUNT(*) FROM usage_by_conv_model "
+        "WHERE cache_read_tokens + cache_creation_tokens > input_tokens"
+    ).fetchone()[0]
+    if bad:
+        raise MigrationAssertionError(
+            f"Migration v10: {bad} rollup row(s) have cache tokens exceeding the "
+            f"total input_tokens (uncached < 0) — convention normalization is wrong"
+        )
+
+    # New-direction guardrails (the inverse of v9's parity): folding cache in only
+    # adds tokens and cost, so post >= pre. A corpus with no Anthropic cache is
+    # unchanged (>=, not strictly >).
+    post_input = conn.execute("SELECT COALESCE(SUM(input_tokens), 0) FROM usage_by_conv_model").fetchone()[0]
+    if post_input < pre_input:
+        raise MigrationAssertionError(
+            f"Migration v10: total input_tokens shrank ({post_input} < {pre_input}) "
+            f"— folding cache in must not reduce the token total"
+        )
+    if pre_cost is not None:
+        post_cost = conn.execute("SELECT SUM(cost) FROM usage_by_conv_model").fetchone()[0]
+        if post_cost is not None and post_cost < pre_cost - max(1.0, abs(pre_cost) * 0.01):
+            raise MigrationAssertionError(
+                f"Migration v10: total cost shrank (post={post_cost:.4f} < "
+                f"pre={pre_cost:.4f}) — billing cache components must not reduce cost"
+            )
+
+
+MIGRATIONS[10] = _migrate_v10_cache_tokens
+
+
 # Known model prices (input_per_mtok, output_per_mtok) in USD per million tokens.
 # Prices are seeded at DB open time when the matching model+provider already exist.
 # Sourced from published API pricing pages.
@@ -1887,6 +1976,8 @@ def ensure_pricing_table(conn: sqlite3.Connection) -> None:
             provider_id     TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
             input_per_mtok  REAL,
             output_per_mtok REAL,
+            cache_read_per_mtok     REAL,
+            cache_creation_per_mtok REAL,
             UNIQUE (model_id, provider_id)
         )
     """)
