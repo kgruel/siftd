@@ -204,3 +204,66 @@ def test_merge_does_not_import_source_pricing(tmp_path):
         assert row is not None and row["input_per_mtok"] == 5.0
     finally:
         t_conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 8. Reprice op (#2): rebuild cost from the reference without re-ingesting
+# ---------------------------------------------------------------------------
+
+def _seed_one_response(conn, raw_name, source, inp, out):
+    h = sq.get_or_create_harness(conn, "tool", source=source)
+    ws = sq.get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+    m = sq.get_or_create_model(conn, raw_name)
+    p = sq.get_or_create_provider(conn, source)
+    cid = sq.insert_conversation(conn, "c1", h, ws, "2024-01-01T00:00:00Z")
+    pid = sq.insert_prompt(conn, cid, "p1", "2024-01-01T00:00:00Z")
+    sq.insert_response(conn, cid, pid, m, p, "r0", "2024-01-01T00:00:01Z", inp, out)
+    return m, p
+
+
+def test_reprice_op_rebuilds_cost_from_reference(tmp_path):
+    from siftd.api import run_backfill
+
+    db = tmp_path / "t.db"
+    conn = sq.create_database(db)
+    _seed_one_response(conn, "claude-opus-4-5-20251101", "anthropic", 1_000_000, 0)
+    conn.commit()
+    conn.close()
+
+    result = run_backfill(db_path=db, operation="pricing")
+    assert result.repriced_rows >= 1
+
+    conn = open_database(db)
+    cost = conn.execute("SELECT SUM(cost) FROM usage_by_conv_model").fetchone()[0]
+    conn.close()
+    # 1M input tokens @ opus-4-5 $5/Mtok (reference) = $5.00
+    assert abs(cost - 5.0) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# 9. Provenance visibility (#3): priced rows with source IS NULL are surfaced
+# ---------------------------------------------------------------------------
+
+def test_priced_without_provenance_is_surfaced(tmp_path):
+    conn = sq.create_database(tmp_path / "t.db")
+    # A governed model (reference prices it, source set) + an out-of-band model
+    # (priced by hand, source NULL), both with usage.
+    _m_gov, p = _seed_one_response(conn, "claude-opus-4-5-20251101", "anthropic", 100, 10)
+    m_orphan = sq.get_or_create_model(conn, "some-synced-only-model")
+    # give the orphan model a response so it counts as "with usage"
+    cid = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()[0]
+    pid = conn.execute("SELECT id FROM events WHERE kind='prompt' LIMIT 1").fetchone()[0]
+    sq.insert_response(conn, cid, pid, m_orphan, p, "r1", "2024-01-01T00:00:02Z", 50, 5)
+    sq.ensure_pricing_table(conn)  # governs opus-4-5 (source set)
+    conn.execute(
+        "INSERT INTO pricing (id, model_id, provider_id, input_per_mtok, output_per_mtok) "
+        "VALUES (?, ?, ?, 2.0, 8.0)",  # source NULL → out-of-band
+        (sq._ulid(), m_orphan, p),
+    )
+    conn.commit()
+
+    rows = sq.get_priced_models_without_provenance(conn)
+    names = {r["model_name"] for r in rows}
+    assert "some-synced-only-model" in names
+    assert "claude-opus-4-5" not in names  # governed → has provenance
+    conn.close()

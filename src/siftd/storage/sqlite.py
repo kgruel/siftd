@@ -3076,6 +3076,37 @@ def get_models_without_pricing(conn: sqlite3.Connection) -> list[dict]:
     return [{"model_name": row[0], "provider_name": row[1]} for row in cur.fetchall()]
 
 
+def get_priced_models_without_provenance(conn: sqlite3.Connection) -> list[dict]:
+    """Get models that are priced but whose pricing row has no reference provenance.
+
+    These are "out-of-band" rows: a price reached the table by some path other than
+    the version-controlled reference (historically, sync from another machine), so
+    ``pricing.source IS NULL``. The projection (UPSERT from the reference) preserves
+    rather than corrects them — they could be wrong and a fresh machine wouldn't have
+    them. Surfacing them tells the user which models to verify and add to the
+    reference. Only models WITH usage are reported. Empty list if no pricing table or
+    no ``source`` column (pre-v11).
+    """
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='pricing'"
+    )
+    if not cur.fetchone():
+        return []
+    if not any(r[1] == "source" for r in conn.execute("PRAGMA table_info(pricing)")):
+        return []
+
+    cur = conn.execute("""
+        SELECT DISTINCT m.name AS model_name, COALESCE(p.name, 'unknown') AS provider_name
+        FROM pricing pr
+        JOIN models m ON m.id = pr.model_id
+        LEFT JOIN providers p ON p.id = pr.provider_id
+        WHERE pr.source IS NULL
+          AND EXISTS (SELECT 1 FROM event_response er WHERE er.model_id = pr.model_id)
+        ORDER BY provider_name, m.name
+    """)
+    return [{"model_name": row[0], "provider_name": row[1]} for row in cur.fetchall()]
+
+
 def get_freelist_info(conn: sqlite3.Connection) -> dict:
     """Get SQLite freelist page statistics.
 

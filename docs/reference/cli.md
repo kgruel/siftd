@@ -426,13 +426,16 @@ examples:
 ## siftd backfill
 
 ```
-usage: siftd backfill [-h] [--models] [--shell-tags] [--derivative-tags]
-                      [--filter-binary] [--git-remote] [--dry-run]
+usage: siftd backfill [-h] [--models] [--pricing] [--shell-tags]
+                      [--derivative-tags] [--filter-binary] [--git-remote]
+                      [--dry-run]
 
 options:
   -h, --help         show this help message and exit
   --models           Re-parse raw model names to canonical form (e.g. claude-
                      haiku-4.5 -> claude-haiku-4-5)
+  --pricing          Reproject the pricing reference and rebuild the cost
+                     rollup (run after editing pricing.toml)
   --shell-tags       Tag shell.execute calls with shell:* categories
   --derivative-tags  Tag conversations containing siftd search/query as
                      siftd:derivative
@@ -452,6 +455,7 @@ examples:
   siftd backfill --filter-binary --dry-run  # preview what would be filtered
   siftd backfill --git-remote       # backfill git remote URLs for workspaces missing them
   siftd backfill --models           # re-parse model names to canonical form (reprices on next open)
+  siftd backfill --pricing          # reproject the pricing reference + rebuild cost (after editing prices)
 ```
 
 ## siftd migrate

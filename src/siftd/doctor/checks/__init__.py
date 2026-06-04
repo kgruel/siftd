@@ -142,6 +142,7 @@ from siftd.doctor.checks.ingest_errors import IngestErrorsCheck  # noqa: E402
 from siftd.doctor.checks.ingest_pending import IngestPendingCheck  # noqa: E402
 from siftd.doctor.checks.orphaned_chunks import OrphanedChunksCheck  # noqa: E402
 from siftd.doctor.checks.pending_tags import PendingTagsCheck  # noqa: E402
+from siftd.doctor.checks.pricing_provenance import PricingProvenanceCheck  # noqa: E402
 from siftd.doctor.checks.schema_current import SchemaCurrentCheck  # noqa: E402
 from siftd.doctor.checks.workspace_identity import WorkspaceIdentityCheck  # noqa: E402
 
@@ -154,6 +155,7 @@ BUILTIN_CHECKS: list[Check] = [
     EmbeddingsStaleCheck(),
     OrphanedChunksCheck(),
     CostCoverageCheck(),
+    PricingProvenanceCheck(),
     DropInsValidCheck(),
     FreelistCheck(),
     SchemaCurrentCheck(),
