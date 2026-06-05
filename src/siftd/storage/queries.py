@@ -564,6 +564,11 @@ def fetch_table_count(
             return conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'response'").fetchone()[0]
         if table_name == "tool_calls":
             return conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'tool_call'").fetchone()[0]
+        if table_name == "models":
+            # Canonical grain: one logical model, not one raw spelling. Two
+            # spellings of the same model (claude-haiku-4.5 / claude-haiku-4-5)
+            # are one model here, matching the ledger's GROUP BY models.name.
+            return conn.execute("SELECT COUNT(DISTINCT name) FROM models").fetchone()[0]
         return conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
 
     if table_name == "conversations":
@@ -607,9 +612,12 @@ def fetch_table_count(
             (owner,),
         ).fetchone()[0]
     if table_name == "models":
+        # Canonical grain (COUNT DISTINCT models.name), not raw model_id, so the
+        # owner-scoped count collapses spellings the same way the ledger does.
         return conn.execute(
-            f"SELECT COUNT(DISTINCT er.model_id) FROM events e "
+            f"SELECT COUNT(DISTINCT m.name) FROM events e "
             f"JOIN event_response er ON er.event_id = e.id "
+            f"JOIN models m ON m.id = er.model_id "
             f"WHERE e.kind = 'response' AND er.model_id IS NOT NULL "
             f"AND {owner_predicate('e.conversation_id')}",
             (owner,),
