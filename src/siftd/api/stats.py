@@ -601,7 +601,11 @@ def get_usage_by_model(*, db_path: Path | None = None, owner: str | None = None)
         # fanning each conversation's cost out once per response (the 290x cost
         # inflation). Here cost is summed at (conversation, model) grain — no fan.
         rows = conn.execute(
-            "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
+            # Canonical identity (v11 models.name) is the display + grouping key,
+            # not the raw adapter spelling — else dated/dot-form spellings of one
+            # model (claude-haiku-4.5 vs claude-haiku-4-5) split the ledger. Fall
+            # back to raw_name then 'unknown' for any model that didn't canonicalize.
+            "SELECT COALESCE(m.name, m.raw_name, 'unknown') AS name,"
             " COUNT(DISTINCT u.conversation_id) AS convs,"
             " COALESCE(SUM(u.input_tokens), 0) AS inp,"
             " COALESCE(SUM(u.output_tokens), 0) AS out,"
@@ -609,7 +613,7 @@ def get_usage_by_model(*, db_path: Path | None = None, owner: str | None = None)
             " FROM usage_by_conv_model u"
             " LEFT JOIN models m ON m.id = u.model_id"
             f"{owner_where}"
-            " GROUP BY m.raw_name",
+            " GROUP BY COALESCE(m.name, m.raw_name, 'unknown')",
             owner_params,
         ).fetchall()
         results = [
@@ -734,7 +738,11 @@ def workspace_detail(
         # payload next to a real headline) — it is now the rollup's real
         # per-(conversation,model) cost.
         model_rows = conn.execute(
-            "SELECT COALESCE(m.raw_name, 'unknown') AS name,"
+            # Canonical identity (v11 models.name) is the display + grouping key,
+            # not the raw adapter spelling — else dated/dot-form spellings of one
+            # model (claude-haiku-4.5 vs claude-haiku-4-5) split the ledger. Fall
+            # back to raw_name then 'unknown' for any model that didn't canonicalize.
+            "SELECT COALESCE(m.name, m.raw_name, 'unknown') AS name,"
             " COUNT(DISTINCT u.conversation_id) AS convs,"
             " COALESCE(SUM(u.input_tokens), 0) AS inp,"
             " COALESCE(SUM(u.output_tokens), 0) AS out,"
@@ -744,7 +752,7 @@ def workspace_detail(
             " LEFT JOIN models m ON m.id = u.model_id"
             " WHERE c.workspace_id = ?"
             f"{owner_clause}"
-            " GROUP BY m.raw_name",
+            " GROUP BY COALESCE(m.name, m.raw_name, 'unknown')",
             [workspace_id, *owner_params],
         ).fetchall()
         model_mix = [
