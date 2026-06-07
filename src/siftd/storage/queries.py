@@ -787,12 +787,19 @@ def fetch_last_ingest_time(conn: sqlite3.Connection, *, owner: str | None = None
 
 
 def fetch_model_names(conn: sqlite3.Connection, *, owner: str | None = None) -> list[str]:
-    """Fetch all model raw_names, optionally scoped to an owner."""
+    """Fetch model names at the v11 canonical grain, optionally scoped to an owner.
+
+    Returns ``models.name`` (canonical) deduped, not ``raw_name`` (adapter spelling),
+    so one logical model collapses its spellings into a single entry — matching the
+    dashboard ledger archetype (``get_usage_by_model``). The model filter matches
+    ``raw_name LIKE ? OR name LIKE ?`` (filters.py), so a canonical value still
+    selects every raw spelling it subsumes.
+    """
     if owner and not has_conversation_owners_table(conn):
         return []
     if owner:
         rows = conn.execute(
-            f"SELECT DISTINCT COALESCE(m.raw_name, 'unknown') AS name "
+            f"SELECT DISTINCT COALESCE(m.name, m.raw_name, 'unknown') AS name "
             f"FROM events e "
             f"JOIN event_response er ON er.event_id = e.id "
             f"LEFT JOIN models m ON m.id = er.model_id "
@@ -801,8 +808,11 @@ def fetch_model_names(conn: sqlite3.Connection, *, owner: str | None = None) -> 
             (owner,),
         ).fetchall()
         return [row["name"] for row in rows if row["name"]]
-    rows = conn.execute("SELECT raw_name FROM models").fetchall()
-    return [row["raw_name"] for row in rows]
+    rows = conn.execute(
+        "SELECT DISTINCT COALESCE(name, raw_name, 'unknown') AS name "
+        "FROM models ORDER BY name"
+    ).fetchall()
+    return [row["name"] for row in rows if row["name"]]
 
 
 def fetch_top_tools(
