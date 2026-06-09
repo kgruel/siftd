@@ -103,8 +103,8 @@ def test_dashboard_row_cost_unpriced_is_dash_not_zero():
     )
     assert "&mdash;" in html
     assert "$0.00" not in html and "$0.0000" not in html
-    # Tokens stay exact even when cost is unknown (fmt_tokens → "1000.0k").
-    assert "1000.0k" in html
+    # Tokens stay exact even when cost is unknown (fmt_tokens → "1.0M").
+    assert "1.0M" in html
 
 
 def test_dashboard_headline_dash_when_no_priced_usage():
