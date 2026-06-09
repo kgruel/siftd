@@ -8,7 +8,16 @@ from pathlib import Path
 
 
 def fmt_tokens(n: int) -> str:
-    """Format token count: 1234 -> '1.2k', 12345 -> '12.3k'."""
+    """Format token count: 1234 -> '1.2k', 1_500_000 -> '1.5M', 46_590_000_000 -> '46.6B'.
+
+    Rolls over through k/M/B so billion-scale corpora (post cache-fold) read
+    sanely instead of overflowing the 'k' suffix (e.g. '46822076.3k'). The 'M'/'B'
+    forms are round-trip compatible with the adapter token parsers that read them.
+    """
+    if n >= 1_000_000_000:
+        return f"{n / 1_000_000_000:.1f}B"
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
     if n >= 1000:
         return f"{n / 1000:.1f}k"
     return str(n)
