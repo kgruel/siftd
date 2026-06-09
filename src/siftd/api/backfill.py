@@ -11,6 +11,7 @@ from siftd.api.database import open_database
 from siftd.backfill import (
     backfill_derivative_tags,
     backfill_filter_binary,
+    backfill_models,
     backfill_response_attributes,
     backfill_shell_tags,
 )
@@ -20,6 +21,8 @@ BackfillOperation = Literal[
     "shell_tags",
     "derivative_tags",
     "filter_binary",
+    "models",
+    "pricing",
 ]
 
 
@@ -36,6 +39,8 @@ class BackfillRunResult:
     filtered: int = 0
     skipped: int = 0
     errors: int = 0
+    updated_models: int = 0
+    repriced_rows: int = 0
     elapsed_ms: int = 0
 
 
@@ -78,6 +83,19 @@ def run_backfill(
             result.errors = int(stats.get("errors", 0))
         elif operation == "response_attributes":
             result.inserted_attributes = backfill_response_attributes(conn)
+        elif operation == "models":
+            # Re-parse raw_name → canonical name for rows the parser previously fell
+            # back on (e.g. after a parse_model_name improvement). The pricing
+            # reference reprojects onto any newly-canonical model on the next open;
+            # cost refreshes on the next ingest/rollup rebuild.
+            result.updated_models = backfill_models(conn)
+        elif operation == "pricing":
+            # open_database already reprojected the pricing reference onto the table
+            # (ensure_pricing_table runs on every open). Re-materialize the rollup so
+            # cost reflects the current reference — the rebuild trigger that ingest and
+            # merge have but a bare price edit lacks. No log scan; just raw × pricing.
+            from siftd.storage.usage_rollup import rebuild_rollups
+            result.repriced_rows = rebuild_rollups(conn, commit=True)
         else:
             raise ValueError(f"Unsupported backfill operation: {operation}")
     finally:

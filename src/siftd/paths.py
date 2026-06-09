@@ -125,6 +125,15 @@ def config_file() -> Path:
     return config_dir() / "config.toml"
 
 
+def pricing_override_file() -> Path:
+    """Return the user pricing-override path (~/.config/siftd/pricing.toml).
+
+    Overrides the shipped pricing reference (siftd/data/pricing.toml) per
+    (model, provider). Need not exist.
+    """
+    return config_dir() / "pricing.toml"
+
+
 def db_path() -> Path:
     """Return the database path, checking config override first.
 

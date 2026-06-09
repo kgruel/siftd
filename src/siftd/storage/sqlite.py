@@ -33,7 +33,7 @@ from siftd.storage.sessions import ensure_session_tables
 from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Registry of versioned migrations: version -> migration function.
 # Each function migrates the DB from version-1 to version.
@@ -1947,28 +1947,64 @@ def _migrate_v10_cache_tokens(conn: sqlite3.Connection) -> None:
 MIGRATIONS[10] = _migrate_v10_cache_tokens
 
 
-# Known model prices (input_per_mtok, output_per_mtok) in USD per million tokens.
-# Prices are seeded at DB open time when the matching model+provider already exist.
-# Sourced from published API pricing pages.
-_PRICING_SEED: list[tuple[str, str, float, float]] = [
-    # Anthropic
-    ("claude-opus-4-5", "anthropic", 15.0, 75.0),
-    ("claude-sonnet-4-5", "anthropic", 3.0, 15.0),
-    ("claude-haiku-4-5", "anthropic", 0.80, 4.0),
-    ("claude-opus-4-6", "anthropic", 15.0, 75.0),
-    ("claude-sonnet-4-6", "anthropic", 3.0, 15.0),
-    # OpenAI
-    ("gpt-5.3", "openai", 10.0, 30.0),
-    ("gpt-5.4", "openai", 15.0, 60.0),
-    ("gpt-5.3-codex", "openai", 10.0, 30.0),
-    # Google
-    ("gemini-2.5-pro", "google", 1.25, 10.0),
-    ("gemini-2.5-flash", "google", 0.075, 0.30),
-]
+def _project_pricing_reference(conn: sqlite3.Connection) -> None:
+    """UPSERT the pricing reference (siftd/data/pricing.toml + user override) into
+    the pricing table, keyed by canonical (model name, provider name).
+
+    This is the projection that makes the table reference-derived rather than
+    born-frozen: ON CONFLICT corrects an existing (model_id, provider_id) row to the
+    current reference value (e.g. a stale sync-imported price), while leaving
+    out-of-band rows for models the reference doesn't cover untouched. A reference
+    name may resolve to several model_ids (spelling variants that backfill_models
+    canonicalized to one name) — each is priced.
+    """
+    from siftd.pricing import load_pricing_reference
+
+    for e in load_pricing_reference():
+        # One reference name can resolve to several model_ids (spelling variants
+        # canonicalized to one name). Insert per (model_id, provider_id) with a FRESH
+        # id each — a single shared id across N fresh rows would collide on the PK
+        # (which ON CONFLICT(model_id, provider_id) does not catch).
+        targets = conn.execute(
+            "SELECT m.id AS model_id, p.id AS provider_id FROM models m "
+            "JOIN providers p ON p.name = ? WHERE m.name = ?",
+            (e.provider, e.model),
+        ).fetchall()
+        for t in targets:
+            conn.execute(
+                """
+                INSERT INTO pricing (id, model_id, provider_id, input_per_mtok, output_per_mtok,
+                                     cache_read_per_mtok, cache_creation_per_mtok, source, as_of)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(model_id, provider_id) DO UPDATE SET
+                    input_per_mtok          = excluded.input_per_mtok,
+                    output_per_mtok         = excluded.output_per_mtok,
+                    cache_read_per_mtok     = excluded.cache_read_per_mtok,
+                    cache_creation_per_mtok = excluded.cache_creation_per_mtok,
+                    source                  = excluded.source,
+                    as_of                   = excluded.as_of
+                """,
+                (_ulid(), t["model_id"], t["provider_id"], e.input_per_mtok, e.output_per_mtok,
+                 e.cache_read_per_mtok, e.cache_creation_per_mtok, e.source, e.as_of),
+            )
 
 
 def ensure_pricing_table(conn: sqlite3.Connection) -> None:
-    """Create the pricing table if it doesn't exist, then seed known prices. Idempotent."""
+    """Create the pricing table and project the pricing reference onto it. Idempotent.
+
+    The table is a *projection* of the version-controlled reference (see
+    ``siftd.pricing``): prices are UPSERT-applied on every open, never frozen
+    (``INSERT OR IGNORE`` would have let a stale value persist forever) and never
+    synced between machines. Runs at open BEFORE the migration loop, so it is
+    self-healing across schema versions.
+
+    The cache-rate columns are deliberately NOT added here — they are added by the
+    v10 migration, and the rollup's cache-awareness gate keys on their presence;
+    adding them early would flip v9's frozen-cost rebuild path and break v9's cost
+    parity on a pre-v10 DB climbing through v9. So the projection runs only once the
+    table is at v10+ shape (cache columns present); on a pre-v10 table it is deferred
+    to _migrate_v11's ensure call (after v10 adds the cache columns).
+    """
     conn.execute("""
         CREATE TABLE IF NOT EXISTS pricing (
             id              TEXT PRIMARY KEY,
@@ -1978,20 +2014,116 @@ def ensure_pricing_table(conn: sqlite3.Connection) -> None:
             output_per_mtok REAL,
             cache_read_per_mtok     REAL,
             cache_creation_per_mtok REAL,
+            source          TEXT,
+            as_of           TEXT,
             UNIQUE (model_id, provider_id)
         )
     """)
-    for model_name, provider_name, input_per_mtok, output_per_mtok in _PRICING_SEED:
+    # Self-heal + project only once the table is at v10+ shape (cache columns present).
+    # On a pre-v10 table mid-migration we add NOTHING here: adding the cache columns
+    # would flip v9's frozen-cost rebuild gate, and adding the v11 provenance columns
+    # *before* v10's cache columns would make migrated column order diverge from the
+    # fresh DDL (slice.py copies pricing with SELECT pr.*). _migrate_v11 calls ensure
+    # again after v10 has added the cache columns — this branch then appends provenance
+    # AFTER them, so migrated order == fresh order.
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(pricing)")}
+    if "cache_read_per_mtok" in existing:
+        for col in ("source", "as_of"):
+            if col not in existing:
+                conn.execute(f"ALTER TABLE pricing ADD COLUMN {col} TEXT")
+                existing.add(col)
+        _project_pricing_reference(conn)
+
+
+def recanonicalize_model_names(conn: sqlite3.Connection, *, commit: bool = False) -> int:
+    """Re-parse ``raw_name`` → canonical ``name`` (and parsed fields) for model rows
+    the parser previously fell back on (``creator``/``family`` NULL).
+
+    An improved :func:`parse_model_name` (e.g. the dot/dash normalization) only reaches
+    *new* rows via ``get_or_create_model``; this updates existing rows so spelling
+    variants like ``claude-haiku-4.5`` collapse onto the canonical name the pricing
+    reference is keyed by. ``model_id`` is unchanged (FKs intact). Returns rows updated.
+    """
+    rows = conn.execute(
+        "SELECT id, raw_name FROM models WHERE creator IS NULL OR family IS NULL"
+    ).fetchall()
+    updated = 0
+    for row in rows:
+        parsed = parse_model_name(row["raw_name"])
+        if parsed["creator"] is None:  # still a fallback parse — nothing useful to set
+            continue
         conn.execute(
-            """
-            INSERT OR IGNORE INTO pricing (id, model_id, provider_id, input_per_mtok, output_per_mtok)
-            SELECT ?, m.id, p.id, ?, ?
-            FROM models m
-            JOIN providers p ON p.name = ?
-            WHERE m.name = ?
-            """,
-            (_ulid(), input_per_mtok, output_per_mtok, provider_name, model_name),
+            "UPDATE models SET name = ?, creator = ?, family = ?, version = ?, "
+            "variant = ?, released = ? WHERE id = ?",
+            (parsed["name"], parsed["creator"], parsed["family"], parsed["version"],
+             parsed["variant"], parsed["released"], row["id"]),
         )
+        updated += 1
+    if commit:
+        conn.commit()
+    return updated
+
+
+def _migrate_v11_pricing_reference(conn: sqlite3.Connection) -> None:
+    """v11: the pricing table becomes a projection of the version-controlled reference.
+
+    Pre-v11 prices were seeded with INSERT OR IGNORE (so a stale value, once present,
+    was never corrected — "born-frozen") and copied between machines by sync (so the
+    first-arriving value won permanently). The live corpus showed the two
+    highest-volume models mispriced this way (claude-opus-4-5 frozen at 5/25 vs the
+    reference's 15/75; claude-haiku-4-5 at 1/5 vs 0.80/4.0).
+
+    This migration: (1) canonicalizes model names so the reference (keyed by canonical
+    name) reaches spelling variants (e.g. claude-haiku-4.5 → claude-haiku-4-5);
+    (2) reprojects the reference via UPSERT, correcting the frozen rows and adding
+    provenance; (3) rebuilds the rollup so materialized cost reflects the corrected
+    prices. Cost CHANGES BY DESIGN (opus-4-5 reprices ~3× up, haiku down) so there is
+    no cost-parity assertion. Caller owns the transaction.
+    """
+    from siftd.storage.usage_rollup import rebuild_rollups
+
+    recanonicalize_model_names(conn)      # canonicalize names → reference matches
+    ensure_pricing_table(conn)            # reproject reference (UPSERT) onto pricing
+    rebuild_rollups(conn)                 # re-materialize cost from corrected pricing
+
+    # Integrity: the rebuild didn't drop or duplicate response rows.
+    flatten_n = conn.execute(
+        "SELECT COUNT(*) FROM events e JOIN event_response er ON er.event_id = e.id "
+        "WHERE e.kind = 'response'"
+    ).fetchone()[0]
+    post_resp = conn.execute(
+        "SELECT COALESCE(SUM(response_count), 0) FROM usage_by_conv_model"
+    ).fetchone()[0]
+    if post_resp != flatten_n:
+        raise MigrationAssertionError(
+            f"Migration v11 response_count integrity: rollup SUM={post_resp} "
+            f"vs {flatten_n} flattened response rows"
+        )
+
+    # The reprojection corrected the frozen rows: every reference-covered (model,
+    # provider) now matches the reference value (no stale price survived the UPSERT).
+    from siftd.pricing import load_pricing_reference
+    for e in load_pricing_reference():
+        if e.input_per_mtok is None:
+            continue
+        bad = conn.execute(
+            """
+            SELECT pr.input_per_mtok, pr.output_per_mtok
+            FROM pricing pr JOIN models m ON m.id = pr.model_id
+            JOIN providers p ON p.id = pr.provider_id
+            WHERE m.name = ? AND p.name = ?
+              AND (pr.input_per_mtok IS NOT ? OR pr.output_per_mtok IS NOT ?)
+            """,
+            (e.model, e.provider, e.input_per_mtok, e.output_per_mtok),
+        ).fetchone()
+        if bad is not None:
+            raise MigrationAssertionError(
+                f"Migration v11: {e.model}/{e.provider} priced {bad[0]}/{bad[1]} "
+                f"after reprojection, expected reference {e.input_per_mtok}/{e.output_per_mtok}"
+            )
+
+
+MIGRATIONS[11] = _migrate_v11_pricing_reference
 
 
 def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
@@ -2939,6 +3071,37 @@ def get_models_without_pricing(conn: sqlite3.Connection) -> list[dict]:
             WHERE pr.model_id = er.model_id
               AND (er.provider_id IS NULL OR pr.provider_id = er.provider_id)
           )
+        ORDER BY provider_name, m.name
+    """)
+    return [{"model_name": row[0], "provider_name": row[1]} for row in cur.fetchall()]
+
+
+def get_priced_models_without_provenance(conn: sqlite3.Connection) -> list[dict]:
+    """Get models that are priced but whose pricing row has no reference provenance.
+
+    These are "out-of-band" rows: a price reached the table by some path other than
+    the version-controlled reference (historically, sync from another machine), so
+    ``pricing.source IS NULL``. The projection (UPSERT from the reference) preserves
+    rather than corrects them — they could be wrong and a fresh machine wouldn't have
+    them. Surfacing them tells the user which models to verify and add to the
+    reference. Only models WITH usage are reported. Empty list if no pricing table or
+    no ``source`` column (pre-v11).
+    """
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='pricing'"
+    )
+    if not cur.fetchone():
+        return []
+    if not any(r[1] == "source" for r in conn.execute("PRAGMA table_info(pricing)")):
+        return []
+
+    cur = conn.execute("""
+        SELECT DISTINCT m.name AS model_name, COALESCE(p.name, 'unknown') AS provider_name
+        FROM pricing pr
+        JOIN models m ON m.id = pr.model_id
+        LEFT JOIN providers p ON p.id = pr.provider_id
+        WHERE pr.source IS NULL
+          AND EXISTS (SELECT 1 FROM event_response er WHERE er.model_id = pr.model_id)
         ORDER BY provider_name, m.name
     """)
     return [{"model_name": row[0], "provider_name": row[1]} for row in cur.fetchall()]

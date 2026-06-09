@@ -46,3 +46,22 @@ def test_gemini_models(raw, expected):
 )
 def test_fallback_models(raw, expected):
     assert parse_model_name(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected_name",
+    [
+        # Dot and dash spellings of the dateless 4.x form collapse to one canonical
+        # (dash) name, so a single pricing-reference entry prices both.
+        ("claude-haiku-4.5", "claude-haiku-4-5"),
+        ("claude-haiku-4-5", "claude-haiku-4-5"),
+        ("claude-sonnet-4.6", "claude-sonnet-4-6"),
+        ("claude-opus-4-7", "claude-opus-4-7"),
+    ],
+    ids=["haiku-dot", "haiku-dash", "sonnet-dot", "opus-dash"],
+)
+def test_dateless_dot_dash_canonicalizes(raw, expected_name):
+    parsed = parse_model_name(raw)
+    assert parsed["name"] == expected_name
+    assert parsed["creator"] == "anthropic"
+    assert parsed["family"] == "claude"

@@ -57,6 +57,15 @@ def test_fmt_tokens_formats_thousands():
     assert fmt_tokens(0) == "0"
 
 
+def test_fmt_tokens_rolls_over_to_millions_and_billions():
+    # 'k' must not run away on billion-scale corpora (post cache-fold).
+    assert fmt_tokens(1_000_000) == "1.0M"
+    assert fmt_tokens(1_500_000) == "1.5M"
+    assert fmt_tokens(999_999_999) == "1000.0M"  # just under the B threshold
+    assert fmt_tokens(1_000_000_000) == "1.0B"
+    assert fmt_tokens(46_594_425_913) == "46.6B"
+
+
 # --- fmt_workspace ---
 
 

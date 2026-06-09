@@ -92,6 +92,25 @@ def _parse_claude(raw_name: str) -> dict:
             "released": released,
         }
 
+    # Pattern 4: claude-{variant}-{major}{sep}{minor}, no date (4.x without a
+    # release suffix). The separator may be a dot OR a dash — both spellings of the
+    # same model land here and canonicalize to the dash form, so e.g.
+    # claude-haiku-4.5 and claude-haiku-4-5 share one canonical name (and one price).
+    m = re.match(
+        r"^claude-(" + "|".join(_CLAUDE_VARIANTS) + r")-(\d+)[.-](\d+)$",
+        raw_name,
+    )
+    if m:
+        variant, major, minor = m.groups()
+        return {
+            "name": f"claude-{variant}-{major}-{minor}",
+            "creator": "anthropic",
+            "family": "claude",
+            "version": f"{major}.{minor}",
+            "variant": variant,
+            "released": None,
+        }
+
     return _fallback(raw_name)
 
 
