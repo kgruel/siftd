@@ -21,6 +21,7 @@ from siftd.storage.conversation_stats import (
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.filters import tag_condition as _tag_condition
 from siftd.storage.fts import fts5_first_event_in_conversation
+from siftd.storage.fts import sanitize_fts5_query as sanitize_fts5_query  # re-export for the api boundary
 from siftd.storage.queries import (
     fetch_conversation_by_id_or_prefix,
     fetch_conversation_model,

@@ -28,8 +28,8 @@ def test_page_shell_modes():
     shell_q = hr._page_shell(search_q="abc")
     shell_follow = hr._page_shell(follow_sid="sid-1")
     shell_id = hr._page_shell(conv_id="cid-1")
-    # Swiss deep-link remap: ?q= -> Search, ?follow= -> Sessions, ?id= -> folio.
-    assert "/view/search?q=abc" in shell_q
+    # Swiss deep-link remap: ?q= -> Search (live /find), ?follow= -> Sessions, ?id= -> folio.
+    assert "/find?q=abc" in shell_q
     assert "/view/sessions" in shell_follow
     assert "/folio?id=cid-1" in shell_id
     # The mounted view is the current one in the rail.
@@ -49,7 +49,7 @@ def test_ui_meta_handles_data_source_failures(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.stats.list_workspaces", lambda **k: (_ for _ in ()).throw(RuntimeError("x")))
     monkeypatch.setattr("siftd.api.tags.list_tags", lambda **k: (_ for _ in ()).throw(RuntimeError("x")))
 
-    resp = _run(hr.ui_meta.fn(object(), tmp_path / "db.db"))
+    resp = _run(hr.ui_meta.fn(object(), tmp_path / "db.db", None))
 
     assert resp.media_type == "text/html"
     assert "<select" in resp.content and 'name="workspace"' in resp.content

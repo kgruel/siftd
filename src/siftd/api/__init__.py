@@ -34,6 +34,7 @@ from siftd.api.conversations import (
     list_query_files,
     resolve_entity_id,
     run_query_file,
+    sanitize_fts5_query,
 )
 from siftd.api.database import (
     PreflightError,
@@ -252,6 +253,7 @@ __all__ = [
     "QueryError",
     "list_query_files",
     "run_query_file",
+    "sanitize_fts5_query",
     # file refs
     "FileRef",
     "fetch_file_refs",

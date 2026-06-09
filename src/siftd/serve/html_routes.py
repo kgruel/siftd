@@ -67,7 +67,7 @@ def _tool_chars(fidelity) -> int:
 _NAV_ITEMS: tuple[tuple[str, str, str, str, str], ...] = (
     # (view_id, number, name, descriptor, mount_url)
     ("sessions", "01", "Sessions", "live · ingested", "/view/sessions"),
-    ("search", "02", "Search", "query · facets", "/view/search"),
+    ("search", "02", "Search", "query · facets", "/find"),
     ("transcript", "03", "Transcript", "folio · full", "/folio"),
     ("tags", "04", "Tags", "pinned · tree", "/view/tags"),
     ("workspaces", "05", "Workspaces", "explorer", "/view/workspaces"),
@@ -144,7 +144,7 @@ def _page_shell(
     if conv_id:
         active, main_url = "transcript", f"/folio?id={urlquote(conv_id)}"
     elif search_q:
-        active, main_url = "search", f"/view/search?q={urlquote(search_q)}"
+        active, main_url = "search", f"/find?q={urlquote(search_q)}"
     elif follow_sid:
         active, main_url = "sessions", "/view/sessions"
     else:
@@ -337,6 +337,37 @@ async def ui_view_stub(
     return _html_response(_stub(name, title, hint))
 
 
+@get("/find")
+async def ui_find(
+    q: str | None = Parameter(query="q", default=None),
+) -> Response:
+    """The Swiss 'Find' view: one surface unifying metadata facets + content search.
+
+    A host fragment, not a renderer — it composes the two existing reads it has
+    no new logic over: ``/meta`` (the control strip: search box + filter
+    dropdowns) loads into ``#filters``, ``/query`` (the conversation list) loads
+    into ``#list``. Every control in the strip targets ``#list`` and includes
+    ``#filters``, so keyword + facets resolve as one ``list_conversations`` call.
+
+    A deep-linked ``?q=`` pre-fills the box and the initial list (FTS5-sanitized
+    in ``ui_query``). Content search here is keyword/FTS only; semantic ranking
+    (CLI ``search``) is a deliberate follow-up that swaps in behind this same box.
+    """
+    from urllib.parse import quote as urlquote
+
+    term = (q or "").strip()
+    qs = f"?search={urlquote(term)}" if term else ""
+    return _html_response(
+        '<div class="find" data-view="search" data-title="Search"'
+        ' data-kick="query · facets">'
+        f'<div class="find__filters" id="filters" role="search"'
+        f' hx-get="/meta{qs}" hx-trigger="load"></div>'
+        f'<div class="find__list" id="list"'
+        f' hx-get="/query{qs}" hx-trigger="load"></div>'
+        "</div>"
+    )
+
+
 @get("/auth/config", opt={"no_auth": True}, sync_to_thread=False)
 def ui_auth_config(auth_config: dict | None) -> dict:
     """Advertise the PUBLIC OIDC params the browser needs for auth-code+PKCE login.
@@ -374,8 +405,17 @@ def ui_auth_config(auth_config: dict | None) -> dict:
 
 
 @get("/meta")
-async def ui_meta(request: Request, db_path: Path) -> Response:
-    """Return filter dropdowns populated from the database."""
+async def ui_meta(
+    request: Request,
+    db_path: Path,
+    search: str | None = Parameter(query="search", default=None),
+) -> Response:
+    """Return the find control strip: a content-search box + filter dropdowns.
+
+    ``search`` pre-fills the box for deep-linked ``?q=`` loads. Every control
+    targets ``#list`` and includes ``#filters``, so the box and the dropdowns
+    compose into one query — keyword + metadata facets in a single request.
+    """
     from html import escape
 
     from siftd.api.stats import get_stats, list_workspaces
@@ -427,7 +467,17 @@ async def ui_meta(request: Request, db_path: Path) -> Response:
             f' hx-include="#filters">'
         )
 
+    # Content search: untrusted text, debounced; ui_query sanitizes it for FTS5.
+    search_box = (
+        '<input type="search" name="search" placeholder="Search content…"'
+        f' value="{escape(search or "")}"'
+        ' hx-get="/query" hx-target="#list"'
+        ' hx-trigger="keyup changed delay:350ms, search"'
+        ' hx-include="#filters" class="filter-input filter-input--q">'
+    )
+
     parts = [
+        search_box,
         _select("workspace", "workspaces", ws_opts),
         _select("model", "models", model_opts),
         _select("tag", "tags", tag_opts),
@@ -475,6 +525,16 @@ async def ui_query(
     before = before or None
     owner = _effective_owner(request, owner or None)
     tag = [t for t in (tag or []) if t] or None
+
+    # FTS5 safety: the find box is untrusted text fed straight into a MATCH
+    # clause. Tokenize+quote it so bare punctuation (", :, *, (, or the word
+    # AND) can't raise an fts5 syntax error → a 500 in the user's face.
+    # Punctuation-only input sanitizes to None → the search filter is dropped.
+    # The api keeps its raw-FTS contract; sanitization lives at the serve edge.
+    if search:
+        from siftd.api import sanitize_fts5_query
+
+        search = sanitize_fts5_query(search).fts_query
 
     fmt = get_format("html")
     ctx = {"detail_base": "/query", "shell_base": "/"}

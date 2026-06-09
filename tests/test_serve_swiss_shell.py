@@ -117,11 +117,54 @@ def test_stub_view_carries_head_metadata(ctx):
     assert 'data-title="Sessions"' in body
 
 
-def test_search_stub_echoes_query(ctx):
+def test_find_view_is_live_unified_surface(ctx):
+    """Search is no longer a stub: /find is the live unified find view — a host
+    that composes the control strip (/meta) and the conversation list (/query)."""
     client, _cid = ctx
-    body = client.get("/view/search", params={"q": "needle"}).text
+    body = client.get("/find").text
+    assert 'class="find"' in body
     assert 'data-view="search"' in body
-    assert "needle" in body
+    # Composes the two existing reads, not a new renderer.
+    assert 'id="filters"' in body and 'hx-get="/meta"' in body
+    assert 'id="list"' in body and 'hx-get="/query"' in body
+
+
+def test_search_nav_links_live_find_not_stub(ctx):
+    """The Search rail item points at the live /find now, not the /view/search
+    stub — clicking it must mount the find view, never the placeholder."""
+    client, _cid = ctx
+    body = client.get("/").text
+    assert 'data-view="search"' in body and 'hx-get="/find"' in body
+    assert 'hx-get="/view/search"' not in body
+
+
+def test_find_deep_link_propagates_query(ctx):
+    """?q= deep-links through the shell to /find, which seeds both the control
+    strip (prefill) and the initial list with the term."""
+    client, _cid = ctx
+    shell = client.get("/", params={"q": "needle"}).text
+    assert "/find?q=needle" in shell
+    find = client.get("/find", params={"q": "needle"}).text
+    assert "/meta?search=needle" in find
+    assert "/query?search=needle" in find
+
+
+def test_meta_has_content_search_box(ctx):
+    """The control strip leads with a content-search box that targets the list."""
+    client, _cid = ctx
+    body = client.get("/meta").text
+    assert 'name="search"' in body and 'filter-input--q' in body
+    # Deep-link prefill fills the box value.
+    assert 'value="needle"' in client.get("/meta", params={"search": "needle"}).text
+
+
+def test_find_box_punctuation_does_not_500(ctx):
+    """The find box is untrusted text fed into FTS5 MATCH. Bare punctuation
+    (", :, *, (, AND) must sanitize to a clean list, never an fts5 syntax 500."""
+    client, _cid = ctx
+    for raw in ('"', "a:b", "*", "foo AND", "(", '")'):
+        resp = client.get("/query", params={"search": raw})
+        assert resp.status_code == 200, f"{raw!r} -> {resp.status_code}"
 
 
 def test_deep_link_id_mounts_folio(ctx):

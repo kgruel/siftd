@@ -138,7 +138,7 @@ def test_ui_meta_populates_non_empty_options(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: SimpleNamespace(models=["m1"]))
     monkeypatch.setattr("siftd.api.stats.list_workspaces", lambda **k: [{"path": "/w1"}])
     monkeypatch.setattr("siftd.api.tags.list_tags", lambda **k: [SimpleNamespace(name="tag1")])
-    out = _run(hr.ui_meta.fn(SimpleNamespace(), tmp_path / "db.db"))
+    out = _run(hr.ui_meta.fn(SimpleNamespace(), tmp_path / "db.db", None))
     assert "/w1" in out.content and "tag1" in out.content and "m1" in out.content
 
 
