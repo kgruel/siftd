@@ -7,13 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Targets **0.9.0**. The headline is a new operating mode — networked `siftd serve`
-> with transparent thin-client delegation — plus the auth subsystem (device-code
-> login + JWKS validation) and a read-surface overhaul. Several output-format and
-> flag changes are **agent/script-facing**; see Breaking Changes first.
+## [0.9.0] - 2026-06-09
+
+> Two headlines. **The numbers are real now**: cache tokens are counted and billed
+> (schema v9→v11 — usage rollup substrate, cache-inclusive token facts, pricing as a
+> version-controlled reference), correcting reported tokens and cost by an order of
+> magnitude. And **a new operating mode**: networked `siftd serve` with transparent
+> thin-client delegation, plus the auth subsystem (device-code + browser PKCE login,
+> JWKS validation) and a read-surface overhaul. Several output-format and flag
+> changes are **agent/script-facing**; see Breaking Changes first.
 
 ### Breaking Changes (migration)
 
+- **Reported token and cost numbers change — by a lot** — Anthropic cache tokens
+  (previously stranded in schemaless attributes) are now part of the usage fact and
+  are billed: `input_tokens` on aggregates means the **true total** (incl. cache
+  read/creation), and cost is computed from four components with cache rates derived
+  from input rates (Anthropic ×0.1 read / ×1.25 creation; override-only in pricing).
+  On a real corpus this moved totals from 433M → 46.8B tokens. Scripts comparing
+  against pre-0.9 numbers must re-baseline.
+- **Schema v8 → v11 (three migrations, run automatically on first open)** — v9 usage
+  rollup, v10 cache-inclusive usage facts, v11 pricing-as-reference. Each migration
+  takes the existing single-transaction + pre-migration-backup path; a v8-or-older
+  siftd refuses to open a v9+ database. Large DBs: expect a one-time backup copy.
 - **Client send-token namespace moved to `[auth]`** — `serve.auth.delegation_token`
   is **removed**; the static bearer the CLI *sends* now lives in `[auth].token`
   (`env:`/`file:`/literal). `serve.auth.static_token` remains *server* validation
@@ -58,10 +74,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (cost summed to conversation grain, rounded once); values are unchanged — verified
   byte-identical across the full corpus (0 cost/token/count diffs over 12,760
   conversations). The v9 migration backfills the table and re-derives stats inside
-  the existing single-transaction + automatic pre-migration-backup path. Note:
-  opening a v8 database triggers a one-time v8→v9 migration, and an older siftd
-  (v8) will refuse to open a v9 database. Foundation for the cost-coherence work
-  (per-provider breakdowns; the `stats --by model` cost fan-out fix) landing next.
+  the existing single-transaction + automatic pre-migration-backup path. Foundation
+  for the rest of this release's cost-coherence work (S2/S3 read re-point, the
+  `stats --by model` fan-out fix, v10 cache truth, v11 pricing reference — below).
+- **Cache-inclusive usage facts — schema v9 → v10** — cache read/creation tokens move
+  from schemaless attributes into the usage rollup as first-class columns; cost
+  becomes a four-component sum (input, output, cache-read, cache-creation). Verified
+  to the cent against a live corpus. Surfaced and closed the second gap: previously
+  ~43% of input tokens were silently unpriced.
+- **Pricing as a sourced reference — schema v10 → v11** — the pricing table is now a
+  projection of a version-controlled reference (`siftd/data/pricing.toml` + user
+  override at `~/.config/siftd/pricing.toml`), UPSERTed on every open: never
+  born-frozen, never contaminated by sync (`_map_pricing` deleted). Rows carry
+  provenance (`source` citation + `as_of` date). `siftd backfill --pricing`
+  reprojects the reference and rebuilds the cost rollup after editing the TOML;
+  a new doctor check audits provenance.
+- **Browser PKCE login — the browser is a client** — `siftd serve` gains an
+  auth-code+PKCE flow (`auth.js` SPA) so the web UI authenticates against the same
+  OIDC issuer as the CLI; serve still only ever *validates* a bearer.
+- **`GET /api/v1/workspaces/{id}` + workspace-detail Operation** — workspace detail
+  through the dispatch pipeline (ULID-first identity), with fidelity-gated tag
+  activity enrichment and a general `?visible=` field-selection mechanism.
 - **`siftd auth login` — client-side OAuth device-code acquisition (RFC 8628)** —
   interactive token acquisition so remote-human clients stop hand-pasting bearers.
   Runs the device-authorization flow against `[auth].issuer` (browser URL + code),
@@ -114,7 +147,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Wire-form substrate dissolution** — the four scattered op↔wire workarounds
+- **Usage read-sites re-pointed to the rollup (S2/S3)** — per-model/-workspace/
+  -harness aggregates, slice/merge derived-tier rebuilds, and token coverage all
+  read from `usage_by_conv_model` instead of recomputing from events; the 21%
+  mispricing harness-source cost fallback is retired (slices carry fallback pricing
+  forward instead). — the four scattered op↔wire workarounds
   (`_LOCAL_FN_EXCLUDE`, `_WIRE_EXCLUDE`, `_SERVE_PARAM_MAP`, `_expand_for_wire`) are
   replaced by a per-op `OpSpec` registry plus `Operation.to_local()`/`to_wire()`/
   `to_wire_body()`; `to_wire()` raises `MissingOpSpec` for unregistered paths instead
@@ -127,7 +164,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`siftd serve` validates `[serve.auth]` at startup** — a non-empty table naming no
+- **`stats --by model` cost fan-out (up to 290×)** — per-model cost was recomputed
+  through a join that fanned out across providers/rows, inflating a real corpus's
+  per-model totals to ~$913k against a ~$3.1k whole-corpus figure. Aggregates now
+  read the rollup at its native grain; one cost definition everywhere.
+- **Model identity at canonical grain across the stats surface** — the model ledger
+  groups/displays by canonical `name` (raw spellings like `claude-haiku-4.5` /
+  `claude-haiku-4-5` no longer split rows), model counts count canonical names
+  (`fetch_table_count`), and the model-filter dropdown lists canonical names.
+- **`fmt_tokens` rolls over through M/B** — 44.4B tokens rendered as `44443867k`;
+  the formatter only had one rung. Now climbs k → M → B. — a non-empty table naming no
   recognized mode now fails loudly at boot (with a stale-`delegation_token` hint)
   instead of fail-closing `401` opaquely on every request.
 - **OIDC: PyJWKSet → PEM key extraction** — `_validate_oidc` passed the whole
@@ -192,6 +238,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Workspace-detail cross-tenant read IDOR closed** — `GET /api/v1/workspaces/{id}`
+  returned detail for workspaces the requester didn't own, and a path-substring
+  filter could bleed sibling-workspace rows into scoped aggregates; both now
+  owner-scoped end-to-end (with an IDOR regression test).
+- **`/stats` usage breakdowns owner-scoped** — per-model/-workspace breakdowns on a
+  multi-tenant serve previously aggregated the whole corpus regardless of requester.
 - **Write-path multi-tenant IDOR closed — the merge is now owner-partitioned** — the
   merge threaded the pushing identity in only to *stamp* new conversations, never to
   *gate* writes/replaces. On a multi-tenant `serve` deployment one authenticated client
@@ -968,7 +1020,10 @@ Initial public release.
 
 ---
 
-[Unreleased]: https://github.com/kgruel/siftd/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/kgruel/siftd/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/kgruel/siftd/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/kgruel/siftd/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/kgruel/siftd/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/kgruel/siftd/compare/v0.6.4...v0.7.0
 [0.5.5]: https://github.com/kgruel/siftd/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/kgruel/siftd/compare/v0.5.3...v0.5.4
