@@ -733,8 +733,10 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
 
     require_write(request)
 
+    from siftd.api import record_audit_event
     from siftd.api.tags import modify_conversation_tag
     from siftd.output.html_fmt import render_tag_section
+    from siftd.serve.routes import _actor_identity, _client_ip
 
     owner = _effective_owner(request, None)
     form = await request.form()
@@ -747,6 +749,15 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
 
     tags = modify_conversation_tag(
         conv_id, tag_name, action=action, db_path=db_path, owner=owner,
+    )
+    record_audit_event(
+        db_path=db_path,
+        actor=_actor_identity(request),
+        action=f"tag.{action}",
+        target_type="conversation",
+        target=conv_id,
+        detail=tag_name,
+        source_ip=_client_ip(request),
     )
     return _html_response(render_tag_section(
         conv_id, tags,

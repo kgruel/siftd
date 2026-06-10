@@ -679,3 +679,77 @@ class TestClientIpProvenance:
         finally:
             conn.close()
         assert ip != "203.0.113.7"  # spoofed XFF must NOT be trusted
+
+
+class TestAuditLog:
+    """F6: state-changing tag mutations write an attributable audit_log row."""
+
+    def test_tag_mutation_writes_audit_row(self, tmp_path):
+        import time
+
+        team_db = tmp_path / "team.db"
+        auth_config = {"introspection_url": "https://idp/i", "identity_claim": "username"}
+        app = create_app(db_path=team_db, auth_config=auth_config, rate_limit_per_minute=0)
+        # Seed the introspection cache so "tokA" resolves to alice without a
+        # network round-trip.
+        mw = app.middleware[0]
+        mw._introspection_cache = {
+            mw._cache_key("tokA"): ({"username": "alice"}, time.time() + 3600),
+        }
+
+        from siftd.storage.sqlite import open_database
+
+        slice_a = _make_slice_bytes(tmp_path, external_id="alice-1")
+        with TestClient(app, raise_server_exceptions=False) as client:
+            client.post(
+                "/api/v1/push", content=slice_a,
+                headers={"Authorization": "Bearer tokA",
+                         "Content-Type": "application/octet-stream"},
+            )
+            r = client.post(
+                "/api/v1/tag",
+                content=__import__("json").dumps(
+                    {"action": "apply", "tags": ["reviewed"], "last": 1}
+                ).encode(),
+                headers={"Authorization": "Bearer tokA",
+                         "Content-Type": "application/json"},
+            )
+            assert r.status_code == 200
+
+        conn = open_database(team_db, read_only=True)
+        try:
+            rows = conn.execute(
+                "SELECT actor, action, detail FROM audit_log WHERE action = 'tag.apply'"
+            ).fetchall()
+        finally:
+            conn.close()
+        assert len(rows) >= 1
+        assert rows[0]["actor"] == "alice"
+        assert "reviewed" in (rows[0]["detail"] or "")
+
+
+class TestErrorHygiene:
+    """F8a: error bodies never leak the absolute server DB path."""
+
+    def test_missing_db_error_does_not_leak_path(self, tmp_path):
+        missing = tmp_path / "nope" / "team.db"  # does not exist
+        app = create_app(db_path=missing, auth_config=None, rate_limit_per_minute=0)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.get("/api/v1/conversations/abc123")
+            assert r.status_code == 404
+            body = str(r.json())
+            assert str(missing) not in body          # no absolute path leaked
+            assert "nope" not in body
+
+    def test_session_queue_missing_db_no_path_leak(self, tmp_path):
+        import json
+        missing = tmp_path / "nope" / "team.db"
+        app = create_app(db_path=missing, auth_config=None, rate_limit_per_minute=0)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.post(
+                "/api/v1/sessions/sid1/tags",
+                content=json.dumps({"tags": ["x"]}).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            assert r.status_code == 404
+            assert str(missing) not in str(r.json())
