@@ -45,11 +45,18 @@ def _sandbox_db_home(tmp_path, monkeypatch):
     turns it into a *migration of production data* (the v9 rollup incident).
     Redirecting XDG_DATA_HOME (where the DB lives) to a throwaway dir makes the
     real DB unreachable from any test, regardless of how the path is resolved.
-    Config/state/cache are left alone so tests that legitimately read the real
-    config or credential dirs are unaffected; tests needing a specific DB still
-    pass the path explicitly.
+    XDG_CONFIG_HOME and XDG_STATE_HOME are sandboxed for the same reason:
+    tests that resolved the user's real ~/.config/siftd/config.toml or
+    ~/.local/state/siftd/serve.json asserted against whatever the developer's
+    serve/auth settings or last-run serve happened to be (the port-8485
+    delegation flakes came from the runtime state-file fallback; two auth
+    tests silently depended on the developer's real [auth] table). A test
+    that needs specific config/state writes it into the sandbox dirs or
+    monkeypatches the loader; none may depend on the real ones.
     """
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_xdg_data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "_xdg_config"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "_xdg_state"))
     yield
 
 
