@@ -116,8 +116,7 @@ def _page_shell(
   <input type="search" name="q" placeholder="Search..."{search_val}
     hx-get="/search" hx-target="#list" hx-trigger="keyup changed delay:300ms"
     hx-include="this">
-  <a href="/" hx-get="/query" hx-target="#list" hx-push-url="/"
-    hx-on::before-request="document.querySelectorAll('#filters select,#filters input').forEach(e=>e.value='')">Recent</a>
+  <a href="/" id="nav-recent" hx-get="/query" hx-target="#list" hx-push-url="/">Recent</a>
   <a href="#" hx-get="/peek" hx-target="#list">Live</a>
   <a href="#" hx-get="/stats" hx-target="#detail" hx-swap="innerHTML">Stats</a>
   <button class="density-toggle" onclick="document.body.classList.toggle('compact')" title="Toggle compact mode">Compact</button>
@@ -163,6 +162,19 @@ def _page_shell(
       document.body.style.userSelect = '';
     }}
   }});
+
+  // Reset the filter controls when "Recent" is clicked. Authored as a listener
+  // rather than hx-on::before-request because the CSP forbids 'unsafe-eval' and
+  // htmx compiles hx-on bodies via new Function (which the policy blocks). This
+  // inline block runs under script-src 'unsafe-inline'. See finding F3 / the
+  // browser CSP smoke.
+  const recent = document.getElementById('nav-recent');
+  if (recent) {{
+    recent.addEventListener('htmx:before-request', function() {{
+      document.querySelectorAll('#filters select,#filters input').forEach(
+        function(el) {{ el.value = ''; }});
+    }});
+  }}
 }})();
 </script>
 <script src="https://unpkg.com/prismjs@1.30.0/components/prism-core.min.js"></script>
