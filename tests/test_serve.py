@@ -556,14 +556,46 @@ class TestSecurityHeaders:
         # auth.js does the code->token exchange via fetch() to the issuer's token
         # endpoint, which connect-src governs. A configured issuer must be
         # allowlisted or client-side SSO login silently breaks.
+        #
+        # We assert against what ``create_app(auth_config={issuer})`` *produces*
+        # — its per-app ``after_request`` closure, which closes over the CSP
+        # built from this app's auth_config — rather than via a second app's
+        # HTTP response. Litestar memoizes route-handler resolution (incl. the
+        # resolved after_request) the first time any app serves a path in the
+        # process; once one auth-less app has served ``GET /``, every later app's
+        # *HTTP* responses inherit that first app's CSP. Production builds exactly
+        # one app per process, so this never bites it — but a shared test process
+        # would make an HTTP assertion here order-dependent. Invoking
+        # ``app.after_request`` directly exercises the full
+        # create_app -> _build_csp(auth_config) -> header wiring while sidestepping
+        # that cross-app HTTP-resolution bleed. See the standalone _build_csp test
+        # for the widening logic in isolation.
+        import asyncio
+
+        from litestar.response import Response
+
         team_db = tmp_path / "team.db"
         create_database(team_db).close()
         auth_config = {"issuer": "https://idp.example.com/realms/x"}
         app = create_app(db_path=team_db, auth_config=auth_config)
-        with TestClient(app, raise_server_exceptions=False) as client:
-            r = client.get("/")
-            csp = r.headers.get("content-security-policy", "")
-            assert "connect-src 'self' https://idp.example.com" in csp
+
+        resp = asyncio.run(
+            app.after_request(Response(content=b"", media_type="text/html"))
+        )
+        csp = resp.headers.get("Content-Security-Policy", "")
+        assert "connect-src 'self' https://idp.example.com" in csp
+
+    def test_build_csp_widening_logic(self):
+        # Unit-level cover for the issuer-widening logic itself (process-state
+        # independent). Pairs with the create_app wiring test above.
+        from siftd.serve.app import _build_csp
+
+        assert "connect-src 'self';" in _build_csp(None)
+        assert "connect-src 'self';" in _build_csp({})
+        widened = _build_csp({"issuer": "https://idp.example.com/realms/x"})
+        assert "connect-src 'self' https://idp.example.com;" in widened
+        # A bare/origin-less issuer falls back to 'self' rather than emitting junk.
+        assert "connect-src 'self';" in _build_csp({"issuer": "not-a-url"})
 
     def test_shell_references_vendored_assets_not_cdn(self, tmp_path):
         team_db = tmp_path / "team.db"
