@@ -42,8 +42,12 @@ src/siftd/
 ├── adapters/       # Log parsing per tool (SDK in adapters/sdk.py)
 ├── api/            # Public API layer (CLI and serve consume this)
 ├── cli/            # CLI package — thin dispatcher + per-command modules
+├── content/        # Content-block helpers (binary filtering)
+├── data/           # Version-controlled reference data (pricing.toml)
 ├── doctor/         # Health check system (per-check modules)
+├── domain/         # Domain models (Conversation, Usage, events)
 ├── embeddings/     # Semantic search (optional [embed] extra)
+├── ingestion/      # Ingest orchestration over adapters
 ├── output/         # Format registry, terminal/markdown/json/html renderers
 ├── peek/           # Live session introspection (bypasses DB)
 ├── serialization/  # Serve-layer JSON formatting (architecture boundary)
@@ -72,7 +76,7 @@ tests/              # Pytest, mirrors src structure
 siftd ingest              # Import conversation logs from all adapters
 siftd search "<query>"    # Hybrid search; falls back to FTS5 without embeddings
 siftd query               # List recent conversations
-siftd query -w proj -s "error"  # Filter by workspace, FTS5 search
+siftd search -w proj "error"    # Search content, filtered by workspace
 siftd query <id>          # View conversation detail
 siftd peek                # View live/recent sessions (bypasses DB)
 siftd tag <id> <tag>      # Tag a conversation
