@@ -2179,6 +2179,31 @@ def ensure_push_log_table(conn: sqlite3.Connection) -> None:
     """)
 
 
+def ensure_audit_log_table(conn: sqlite3.Connection) -> None:
+    """Create audit_log table for state-changing operation provenance. Idempotent.
+
+    Records who did what to which entity, so destructive mutations (tag
+    delete/rename, etc.) on the shared multi-tenant DB are attributable rather
+    than repudiable. Server-side only; mirrors push_log. See finding F6.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id          TEXT PRIMARY KEY,
+            actor       TEXT NOT NULL,
+            action      TEXT NOT NULL,
+            target_type TEXT,
+            target      TEXT,
+            detail      TEXT,
+            source_ip   TEXT,
+            occurred_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_audit_log_occurred
+        ON audit_log(occurred_at)
+    """)
+
+
 def ensure_conversation_owners_table(conn: sqlite3.Connection) -> None:
     """Create conversation_owners table for multi-tenancy. Idempotent.
 

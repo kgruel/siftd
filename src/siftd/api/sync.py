@@ -662,6 +662,21 @@ def _push_slice_http(client: Any, url: str, headers: dict[str, str], slice_path:
         raise SyncError(f"Cannot connect to push endpoint: {e}") from e
 
 
+def _sum_owned(a: int | None, b: int | None) -> int | None:
+    """Combine per-window owned counts, preserving "not reported" (None).
+
+    A window with no push (0 conversations) or a server that doesn't report
+    ownership yields None; summing must not coerce that to 0, or the CLI would
+    print a fake "0 owned" suffix. None + None stays None; otherwise None
+    contributes nothing to the sum.
+    """
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a + b
+
+
 def _post_window_with_bisect(
     url: str,
     headers: dict[str, str],
@@ -673,10 +688,13 @@ def _post_window_with_bisect(
     connect_timeout: float,
     command_timeout: float,
     token_source: str | None = None,
-) -> tuple[bool, int, int]:
+) -> tuple[bool, int, int, int | None]:
     """Slice a date window, POST it, and bisect on 413.
 
-    Returns (remote_existed, conversations, size_bytes).
+    Returns (remote_existed, conversations, size_bytes, owned). ``owned`` is
+    the server-stamped ownership count when the response carries it
+    (authenticated push to a server that reports it), else None — never 0,
+    so callers can distinguish "not reported" from "zero owned".
     Only 413 triggers bisection; other HTTP errors raise SyncError immediately.
     A 401 on a refreshable ("device-code") token triggers one gated refresh +
     retry before any bisection, so the refreshed bearer propagates into the
@@ -700,7 +718,7 @@ def _post_window_with_bisect(
         size_bytes = result["size_bytes"]
 
         if conversations == 0:
-            return True, 0, 0
+            return True, 0, 0, None
 
         resp = _push_slice_http(client, url, headers, slice_path)
 
@@ -752,15 +770,20 @@ def _post_window_with_bisect(
                     raise SyncError(
                         f"Cannot bisect window: all conversations share timestamp {min_ts}."
                     )
-            lo_existed, lo_convs, lo_bytes = _post_window_with_bisect(
+            lo_existed, lo_convs, lo_bytes, lo_owned = _post_window_with_bisect(
                 url, headers, client, db_path, filters, since, mid_ts,
                 connect_timeout, command_timeout, token_source,
             )
-            _, hi_convs, hi_bytes = _post_window_with_bisect(
+            _, hi_convs, hi_bytes, hi_owned = _post_window_with_bisect(
                 url, headers, client, db_path, filters, mid_ts, before,
                 connect_timeout, command_timeout, token_source,
             )
-            return lo_existed, lo_convs + hi_convs, lo_bytes + hi_bytes
+            return (
+                lo_existed,
+                lo_convs + hi_convs,
+                lo_bytes + hi_bytes,
+                _sum_owned(lo_owned, hi_owned),
+            )
 
         try:
             resp.raise_for_status()
@@ -768,7 +791,13 @@ def _post_window_with_bisect(
             raise SyncError(_friendly_http_push_error(resp)) from e
 
         body = resp.json()
-        return body.get("status") != "created", conversations, size_bytes
+        owned = body.get("owned")
+        return (
+            body.get("status") != "created",
+            conversations,
+            size_bytes,
+            owned if isinstance(owned, int) else None,
+        )
 
 
 def _sync_push_http(
@@ -876,6 +905,7 @@ def _sync_push_http(
 
     total_conversations = 0
     total_size_bytes = 0
+    total_owned: int | None = None
     remote_existed = True
     now = datetime.now(UTC).isoformat()
 
@@ -888,7 +918,7 @@ def _sync_push_http(
         ),
     ) as client:
         for win_idx, (win_since, win_before) in enumerate(date_windows):
-            win_existed, win_convs, win_bytes = _post_window_with_bisect(
+            win_existed, win_convs, win_bytes, win_owned = _post_window_with_bisect(
                 url=url,
                 headers=headers,
                 client=client,
@@ -904,6 +934,7 @@ def _sync_push_http(
                 remote_existed = win_existed
             total_conversations += win_convs
             total_size_bytes += win_bytes
+            total_owned = _sum_owned(total_owned, win_owned)
 
             if should_update_cursor and win_convs > 0:
                 from siftd.config_sync import update_last_push
@@ -920,6 +951,7 @@ def _sync_push_http(
         dry_run=False,
         last_push_updated=last_push_updated,
         windows=len(date_windows),
+        owned=total_owned,
     )
 
 

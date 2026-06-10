@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Security headers + CSP on all serve responses; CDN assets vendored** — htmx and Prism are now served from `/static/vendor/` instead of unpkg.com (no external script origin; closes the supply-chain vector). Every response carries a `Content-Security-Policy` (notably `connect-src 'self'`, which prevents a bearer token in `sessionStorage` from being exfiltrated off-origin even after a hypothetical injection) plus `X-Content-Type-Options`, `X-Frame-Options: DENY`, and `Referrer-Policy`. When an OIDC issuer is configured, `connect-src` widens to that origin so the browser PKCE login flow (which fetches discovery + token endpoints) keeps working. HSTS remains the reverse proxy's job. (finding F3)
+- **Per-client rate limiting on serve** — default 600 requests/minute, keyed by the real client IP (trusted-proxy `X-Forwarded-For` aware, so it's effective behind Caddy), exempting `/static` and the health check. Configurable via `serve.rate_limit_per_minute` (0 disables). (finding F4)
+- **Audit log for tag mutations** — apply/remove/rename/delete and live-session tag queueing now write an `audit_log` row (actor, action, target, source IP, timestamp), mirroring `push_log`, so destructive changes on the shared DB are attributable. (finding F6)
+- **`/peek` and `/follow` are gated off on public binds** — these endpoints read the server host's session files and bypass owner scoping. They are no longer registered when bound to a non-loopback address unless `serve.allow_live_endpoints` is explicitly enabled. (finding F7)
+- **Error responses no longer leak internal filesystem paths** — not-found errors on the dispatch, event-detail, and session-queue routes return generic messages; the detail (including absolute DB paths) is logged server-side only. (finding F8a)
+- **`push_log` records the real client IP** — `X-Forwarded-For` is honored only from a configured `serve.trusted_proxies` allowlist (otherwise the connection peer is used), so provenance behind a reverse proxy is accurate and a client cannot spoof its recorded IP. (finding F8b)
+- **`siftd serve` creates the team DB at startup** — a server-owned empty schema DB is created when missing, so the first push *merges* into it rather than adopting an uploaded SQLite file wholesale. (finding F9)
+- **`siftd serve` fails closed on a public bind without auth** — binding a non-loopback address with authentication disabled is now refused (exit 2) unless the new `--unsafe-public-no-auth` flag is passed. Previously such a server started silently, exposing the entire corpus for read **and** write. The production container (`--host 0.0.0.0`) now requires a mounted `[serve.auth]` config (or the explicit override). (finding F2)
+
 ## [0.9.0] - 2026-06-09
 
 > Two headlines. **The numbers are real now**: cache tokens are counted and billed

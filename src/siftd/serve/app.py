@@ -42,12 +42,66 @@ from siftd.serve.routes import (
 )
 
 
+def _origin(url: str) -> str | None:
+    """Return ``scheme://host[:port]`` for a URL, or None if it has no origin."""
+    from urllib.parse import urlparse
+
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return None
+    if not p.scheme or not p.netloc:
+        return None
+    return f"{p.scheme}://{p.netloc}"
+
+
+def _build_csp(auth_config: dict | None) -> str:
+    """Build the Content-Security-Policy header value (finding F3).
+
+    All JS (htmx, prism) is vendored under ``/static`` so there is no external
+    script origin to compromise. ``script-src`` keeps ``'unsafe-inline'`` for
+    the shell's inline blocks + ``onclick`` handlers; removing it (nonces) is a
+    tracked follow-up. We deliberately omit ``'unsafe-eval'`` — htmx's
+    ``hx-on`` compiles via ``new Function`` which the policy blocks, so those
+    were rewritten as listeners (see the shell + the browser CSP smoke).
+
+    ``connect-src`` is the key control: even after a hypothetical script
+    injection, a bearer token in sessionStorage could not be exfiltrated to an
+    off-origin endpoint. But the browser SSO flow (``auth.js``) discovers the
+    IdP via ``fetch(issuer/.well-known/openid-configuration)`` and exchanges the
+    auth code via ``fetch(token_endpoint)`` — both governed by ``connect-src``.
+    So when an OIDC issuer is configured we widen ``connect-src`` to that
+    origin; otherwise client-side login would silently fail. The authorize
+    *redirect* is navigation, not connect-src, so it needs no allowance.
+    HSTS is left to the TLS-terminating reverse proxy (Caddy).
+    """
+    connect = "'self'"
+    issuer = (auth_config or {}).get("issuer") if auth_config else None
+    if issuer:
+        origin = _origin(str(issuer))
+        if origin:
+            connect = f"'self' {origin}"
+    return (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        f"connect-src {connect}; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "object-src 'none'"
+    )
+
+
 def create_app(
     *,
     db_path: Path,
     auth_config: dict | None = None,
     fts_rebuild: str = "on_push",
     request_max_body_size: int = 500_000_000,  # 500 MB in SI bytes (matches Caddy default)
+    rate_limit_per_minute: int | None = 600,
+    allow_live_endpoints: bool = True,
 ) -> Litestar:
     """Create the Litestar application.
 
@@ -56,7 +110,29 @@ def create_app(
         auth_config: Auth config dict (None = no auth).
         fts_rebuild: FTS rebuild strategy ("on_push", "scheduled", "off").
         request_max_body_size: Max request body in bytes; applies to streaming push.
+        rate_limit_per_minute: Per-client request cap (finding F4). ``None``/``0``
+            disables it. The limiter keys by the real client IP — honoring
+            ``X-Forwarded-For`` from configured trusted proxies — so it is
+            effective behind a reverse proxy that would otherwise collapse every
+            client to one address. ``/static`` and the health check are exempt.
+            The generous default (600/min) does not impede the htmx UI's polling
+            but throttles credential brute force.
+        allow_live_endpoints: When False, the ``/peek`` and ``/follow`` live
+            session endpoints are not registered (finding F7). They read session
+            files from the *server host's* filesystem, bypassing DB owner
+            scoping, so they should be off on a shared/public deployment.
     """
+
+    csp = _build_csp(auth_config)
+
+    def _add_security_headers(response: Any) -> Any:
+        """Attach defense-in-depth security headers to every response (F3)."""
+        headers = response.headers
+        headers.setdefault("Content-Security-Policy", csp)
+        headers.setdefault("X-Content-Type-Options", "nosniff")
+        headers.setdefault("X-Frame-Options", "DENY")
+        headers.setdefault("Referrer-Policy", "no-referrer")
+        return response
 
     async def provide_db_path() -> Path:
         return db_path
@@ -77,20 +153,41 @@ def create_app(
         validate_auth_config(auth_config)  # fail loudly at boot, not per-request
         middleware.append(create_auth_middleware(auth_config))
 
+    if rate_limit_per_minute:
+        from litestar.middleware.rate_limit import RateLimitConfig
+
+        from siftd.serve.routes import _client_ip
+
+        def _rate_id(request: Any) -> str:
+            # Key by the real client IP (trusted-proxy XFF aware) so the limit
+            # isn't collapsed to the reverse proxy's single address.
+            return _client_ip(request) or "unknown"
+
+        rate_config = RateLimitConfig(
+            rate_limit=("minute", rate_limit_per_minute),
+            exclude=["^/static", "^/api/v1/health$"],
+            identifier_for_request=_rate_id,
+        )
+        middleware.append(rate_config.middleware)
+
     static_dir = Path(__file__).parent / "static"
     static_router = create_static_files_router(path="/static", directories=[static_dir])
 
+    route_handlers: list[Any] = [
+        index, health, stats_route, workspaces_route, workspace_detail_route,
+        tag_write_route, session_queue_tag_route, tags_route,
+        export_route,
+        push, pull, sync_status_route, conversation_detail, conversation_list,
+        event_detail_route, search_route,
+        ui_shell, ui_auth_config, ui_meta, ui_query, ui_search,
+        ui_stats, ui_tag, ui_tags_suggest, ui_export,
+        static_router,
+    ]
+    if allow_live_endpoints:
+        route_handlers.extend([ui_peek, ui_follow])
+
     return Litestar(
-        route_handlers=[
-            index, health, stats_route, workspaces_route, workspace_detail_route,
-            tag_write_route, session_queue_tag_route, tags_route,
-            export_route,
-            push, pull, sync_status_route, conversation_detail, conversation_list,
-            event_detail_route, search_route,
-            ui_shell, ui_auth_config, ui_meta, ui_query, ui_search, ui_peek,
-            ui_follow, ui_stats, ui_tag, ui_tags_suggest, ui_export,
-            static_router,
-        ],
+        route_handlers=route_handlers,
         dependencies={
             "db_path": Provide(provide_db_path),
             "fts_rebuild": Provide(provide_fts_rebuild),
@@ -98,5 +195,6 @@ def create_app(
             "auth_config": Provide(provide_auth_config),
         },
         middleware=middleware,
+        after_request=_add_security_headers,
         request_max_body_size=request_max_body_size,
     )

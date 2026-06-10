@@ -302,7 +302,8 @@ class TestDbPushPull:
         monkeypatch.setattr(
             "siftd.api.sync.sync_push",
             lambda **kw: SimpleNamespace(conversations=2, size_bytes=2048, dry_run=False,
-                                         remote_existed=False, windows=1, last_push_updated=True),
+                                         remote_existed=False, windows=1,
+                                         last_push_updated=True, owned=None),
         )
         rc = main(["--db", str(test_db), "db", "push", "r"])
         assert rc == 0

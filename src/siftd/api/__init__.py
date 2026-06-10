@@ -96,6 +96,7 @@ from siftd.api.resources import (
 from siftd.api.serve_status import (
     HealthStatus,
     get_health_status,
+    record_audit_event,
     record_push_log,
 )
 from siftd.api.slice import (
@@ -311,6 +312,7 @@ __all__ = [
     "read_stats_cache",
     "get_health_status",
     "record_push_log",
+    "record_audit_event",
     # merge
     "merge_database",
     # receive
