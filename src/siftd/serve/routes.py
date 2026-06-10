@@ -34,6 +34,37 @@ def _effective_owner(request: Request, owner: str | None) -> str | None:
     return owner
 
 
+def _actor_identity(request: Request) -> str:
+    """Resolve the authenticated actor for audit records, or 'anonymous'."""
+    return _effective_owner(request, None) or "anonymous"
+
+
+def _client_ip(request: Request) -> str | None:
+    """Resolve the real client IP, honoring X-Forwarded-For only from trusted proxies.
+
+    Behind a reverse proxy (Caddy), ``request.client.host`` is the proxy's
+    address, so provenance records lose the real client. When the immediate
+    peer is in the configured ``serve.trusted_proxies`` list, trust the
+    left-most ``X-Forwarded-For`` entry; otherwise fall back to the peer. With
+    no configuration, no XFF is trusted (a client could otherwise spoof it).
+    See finding F8b.
+    """
+    peer = getattr(getattr(request, "client", None), "host", None)
+    try:
+        from siftd.config import get_config
+
+        trusted = get_config("serve.trusted_proxies")
+    except Exception:
+        trusted = None
+    if peer and trusted:
+        trusted_set = {p.strip() for p in str(trusted).split(",") if p.strip()}
+        if peer in trusted_set:
+            xff = request.headers.get("x-forwarded-for")
+            if xff:
+                return xff.split(",")[0].strip()
+    return peer
+
+
 def _not_found_message(path: str) -> str:
     """Entity-specific 404 message derived from the dispatch path.
 
@@ -1000,6 +1031,6 @@ def _record_push_log(
         identity=identity,
         conversations=conversations,
         size_bytes=size_bytes,
-        source_ip=request.client.host if request.client else None,
+        source_ip=_client_ip(request),
         push_id=push_id,
     )

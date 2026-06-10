@@ -582,3 +582,100 @@ class TestSecurityHeaders:
         with TestClient(app, raise_server_exceptions=False) as client:
             assert client.get("/static/vendor/htmx.min.js").status_code == 200
             assert client.get("/static/vendor/prism/prism-core.min.js").status_code == 200
+
+
+class TestRateLimitAndLiveGate:
+    """F4 (per-client rate limit) + F7 (live-endpoint gate)."""
+
+    def test_live_endpoints_gated_off(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        app = create_app(db_path=team_db, auth_config=None, allow_live_endpoints=False)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            assert client.get("/peek").status_code == 404
+            assert client.get("/follow?sid=abc").status_code == 404
+
+    def test_live_endpoints_present_when_allowed(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        app = create_app(db_path=team_db, auth_config=None, allow_live_endpoints=True)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            assert client.get("/peek").status_code == 200  # registered (may be empty)
+
+    def test_rate_limit_returns_429_when_exceeded(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        # Tiny limit to exercise the limiter deterministically.
+        app = create_app(db_path=team_db, auth_config=None, rate_limit_per_minute=3)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            codes = [client.get("/").status_code for _ in range(8)]
+            assert 429 in codes
+            # health is exempt — never throttled
+            assert client.get("/api/v1/health").status_code == 200
+
+    def test_rate_limit_disabled_when_zero(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        app = create_app(db_path=team_db, auth_config=None, rate_limit_per_minute=0)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            codes = [client.get("/").status_code for _ in range(10)]
+            assert 429 not in codes
+
+
+class TestClientIpProvenance:
+    """F8b: push_log records the real client IP, honoring XFF only from trusted proxies."""
+
+    def test_push_log_uses_xff_only_from_trusted_proxy(self, tmp_path, monkeypatch):
+        # Configure the TestClient peer ("testclient") as a trusted proxy, so the
+        # forwarded client IP is recorded instead of the proxy address.
+        import siftd.config as cfg
+
+        monkeypatch.setattr(
+            cfg, "get_config",
+            lambda k: "testclient" if k == "serve.trusted_proxies" else None,
+        )
+
+        team_db = tmp_path / "team.db"
+        app = create_app(db_path=team_db, auth_config=None, rate_limit_per_minute=0)
+        slice_a = _make_slice_bytes(tmp_path, external_id="c-xff")
+
+        from siftd.storage.sqlite import open_database
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            client.post(
+                "/api/v1/push", content=slice_a,
+                headers={"Content-Type": "application/octet-stream",
+                         "X-Forwarded-For": "203.0.113.7, 10.0.0.1"},
+            )
+
+        conn = open_database(team_db, read_only=True)
+        try:
+            ip = conn.execute("SELECT source_ip FROM push_log").fetchone()[0]
+        finally:
+            conn.close()
+        assert ip == "203.0.113.7"  # left-most XFF entry, trusted proxy honored
+
+    def test_push_log_ignores_xff_without_trusted_proxy(self, tmp_path, monkeypatch):
+        import siftd.config as cfg
+
+        monkeypatch.setattr(cfg, "get_config", lambda k: None)  # no trusted proxies
+
+        team_db = tmp_path / "team.db"
+        app = create_app(db_path=team_db, auth_config=None, rate_limit_per_minute=0)
+        slice_a = _make_slice_bytes(tmp_path, external_id="c-noxff")
+
+        from siftd.storage.sqlite import open_database
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            client.post(
+                "/api/v1/push", content=slice_a,
+                headers={"Content-Type": "application/octet-stream",
+                         "X-Forwarded-For": "203.0.113.7"},
+            )
+
+        conn = open_database(team_db, read_only=True)
+        try:
+            ip = conn.execute("SELECT source_ip FROM push_log").fetchone()[0]
+        finally:
+            conn.close()
+        assert ip != "203.0.113.7"  # spoofed XFF must NOT be trusted
