@@ -873,14 +873,20 @@ examples:
 
 ```
 usage: siftd serve [-h] [--host ADDR] [--port PORT] [--no-auth]
+                   [--unsafe-public-no-auth]
 
 Serve the siftd database over HTTP for team sync.
 
 options:
-  -h, --help   show this help message and exit
-  --host ADDR  Bind address (default: 127.0.0.1)
-  --port PORT  Listen port (default: 8484)
-  --no-auth    Disable authentication (development only)
+  -h, --help            show this help message and exit
+  --host ADDR           Bind address (default: 127.0.0.1)
+  --port PORT           Listen port (default: 8484)
+  --no-auth             Disable authentication (development only)
+  --unsafe-public-no-auth
+                        Allow binding a non-loopback address with NO
+                        authentication. Dangerous: exposes the entire corpus
+                        for read and write. Without this flag, a public bind
+                        without [serve.auth] is refused.
 ```
 
 ## siftd auth

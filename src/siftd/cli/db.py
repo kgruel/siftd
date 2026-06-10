@@ -820,7 +820,11 @@ def cmd_db_push(args) -> int:
         print(f"Would push {result.conversations} conversations to {args.name} ({size_kb:.1f} KB){window_hint}")
     else:
         window_hint = f" ({result.windows} windows)" if result.windows > 1 else ""
-        print(f"Pushed {result.conversations} conversations ({size_kb:.1f} KB){suffix}{window_hint}")
+        # Server-stamped ownership count: only authenticated HTTP pushes to a
+        # server that reports it set this — None (older server, no auth,
+        # local/SSH transport) omits the suffix rather than showing a fake 0.
+        owned_hint = f", {result.owned} owned" if result.owned is not None else ""
+        print(f"Pushed {result.conversations} conversations ({size_kb:.1f} KB{owned_hint}){suffix}{window_hint}")
         if result.windows > 1 and not result.last_push_updated:
             print(
                 f"  Partial push — some windows may not have completed.\n"

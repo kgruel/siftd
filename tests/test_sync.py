@@ -288,7 +288,7 @@ class TestSyncPushBranches:
         monkeypatch.setattr("siftd.api.sync._preflight_http", lambda *a: None)
         monkeypatch.setattr(
             "siftd.api.sync._post_window_with_bisect",
-            lambda *a, **kw: (True, 1, 10),
+            lambda *a, **kw: (True, 1, 10, None),
         )
         _patch_httpx_module(monkeypatch, lambda **kw: _Client())
         monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: {})
@@ -315,7 +315,7 @@ class TestSyncPushBranches:
         )
         monkeypatch.setattr(
             "siftd.api.sync._post_window_with_bisect",
-            lambda *a, **kw: push_called.append(True) or (True, 1, 10),
+            lambda *a, **kw: push_called.append(True) or (True, 1, 10, None),
         )
         _patch_httpx_module(monkeypatch, lambda **kw: _Client())
         monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: {})
@@ -337,7 +337,7 @@ class TestSyncPushBranches:
         )
         monkeypatch.setattr(
             "siftd.api.sync._post_window_with_bisect",
-            lambda *a, **kw: (True, 1, 10),
+            lambda *a, **kw: (True, 1, 10, None),
         )
         _patch_httpx_module(monkeypatch, lambda **kw: _Client())
         monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: {})

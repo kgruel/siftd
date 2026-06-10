@@ -36,11 +36,11 @@ main() {
     uv sync --extra dev --extra serve --quiet
 
     if [ $verbose -eq 1 ]; then
-        uv run pytest tests/ -v --tb=short -m serve
+        uv run pytest tests/ -v --tb=short -m "serve and not embeddings"
     else
         log_info "Running serve tests..."
         set +e
-        output=$(uv run pytest tests/ -q --tb=line -m serve 2>&1)
+        output=$(uv run pytest tests/ -q --tb=line -m "serve and not embeddings" 2>&1)
         status=$?
         set -e
         if [ $status -ne 0 ]; then

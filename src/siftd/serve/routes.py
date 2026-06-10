@@ -34,6 +34,37 @@ def _effective_owner(request: Request, owner: str | None) -> str | None:
     return owner
 
 
+def _actor_identity(request: Request) -> str:
+    """Resolve the authenticated actor for audit records, or 'anonymous'."""
+    return _effective_owner(request, None) or "anonymous"
+
+
+def _client_ip(request: Request) -> str | None:
+    """Resolve the real client IP, honoring X-Forwarded-For only from trusted proxies.
+
+    Behind a reverse proxy (Caddy), ``request.client.host`` is the proxy's
+    address, so provenance records lose the real client. When the immediate
+    peer is in the configured ``serve.trusted_proxies`` list, trust the
+    left-most ``X-Forwarded-For`` entry; otherwise fall back to the peer. With
+    no configuration, no XFF is trusted (a client could otherwise spoof it).
+    See finding F8b.
+    """
+    peer = getattr(getattr(request, "client", None), "host", None)
+    try:
+        from siftd.config import get_config
+
+        trusted = get_config("serve.trusted_proxies")
+    except Exception:
+        trusted = None
+    if peer and trusted:
+        trusted_set = {p.strip() for p in str(trusted).split(",") if p.strip()}
+        if peer in trusted_set:
+            xff = request.headers.get("x-forwarded-for")
+            if xff:
+                return xff.split(",")[0].strip()
+    return peer
+
+
 def _not_found_message(path: str) -> str:
     """Entity-specific 404 message derived from the dispatch path.
 
@@ -117,8 +148,12 @@ def _dispatch(
             return Response(content={"error": str(e)}, status_code=501)
         logging.getLogger("siftd.serve").exception("dispatch import error on %s %s", method, path)
         return Response(content={"error": f"{path} failed"}, status_code=500)
-    except FileNotFoundError as e:
-        return Response(content={"error": str(e)}, status_code=404)
+    except FileNotFoundError:
+        # str(e) is "Database not found: <abs path>" — don't leak the path (F8a).
+        logging.getLogger("siftd.serve").warning(
+            "dispatch file-not-found on %s %s", method, path,
+        )
+        return Response(content={"error": "resource not found"}, status_code=404)
     except AnchorError as e:
         # AnchorOutOfRange / AnchorNotFound / AnchorPhraseInvalid are all
         # user-input errors (bad --at-turn N, --around PHRASE). The local CLI
@@ -299,6 +334,7 @@ async def tag_write_route(request: Request, db_path: Path) -> dict | Response:
     """
     from litestar.exceptions import PermissionDeniedException
 
+    from siftd.api import record_audit_event
     from siftd.api.tags import apply_tags, delete_tag_safe, rename_tag_safe
     from siftd.serialization.tags import (
         serialize_apply_result,
@@ -320,26 +356,27 @@ async def tag_write_route(request: Request, db_path: Path) -> dict | Response:
         return Response(content={"error": "request body must be a JSON object"}, status_code=400)
 
     action = body.get("action", "apply")
+    audit_target: str | None = None
+    audit_detail: str | None = None
     try:
         if action == "rename":
+            old_name = str(body.get("old_name") or "")
+            new_name = str(body.get("new_name") or "")
             result = rename_tag_safe(
-                db_path=db_path,
-                old_name=str(body.get("old_name") or ""),
-                new_name=str(body.get("new_name") or ""),
-                owner=owner,
+                db_path=db_path, old_name=old_name, new_name=new_name, owner=owner,
             )
             payload = serialize_rename_result(result)
+            audit_target, audit_detail = old_name, f"-> {new_name}"
         elif action == "delete":
-            result = delete_tag_safe(
-                db_path=db_path,
-                tag_name=str(body.get("tag_name") or ""),
-                owner=owner,
-            )
+            tag_name = str(body.get("tag_name") or "")
+            result = delete_tag_safe(db_path=db_path, tag_name=tag_name, owner=owner)
             payload = serialize_delete_result(result)
+            audit_target = tag_name
         else:
+            tag_list = [str(t) for t in body.get("tags", [])]
             result = apply_tags(
                 db_path=db_path,
-                tags=[str(t) for t in body.get("tags", [])],
+                tags=tag_list,
                 entity_type=str(body.get("entity_type", "conversation")),
                 entity_id=body.get("entity_id"),
                 last=body.get("last"),
@@ -347,12 +384,37 @@ async def tag_write_route(request: Request, db_path: Path) -> dict | Response:
                 remove=action == "remove",
             )
             payload = serialize_apply_result(result)
+            audit_target = (
+                str(body.get("entity_id"))
+                if body.get("entity_id") is not None
+                else (f"last:{body.get('last')}" if body.get("last") is not None else None)
+            )
+            audit_detail = ",".join(tag_list) or None
     except PermissionError as e:
         raise PermissionDeniedException(str(e)) from e
     except ValueError as e:
+        # Domain validation messages are safe to surface (no internal paths).
         return Response(content={"error": str(e)}, status_code=400)
     except FileNotFoundError as e:
+        # apply_tags/rename/delete overload FileNotFoundError for both a missing
+        # db file AND safe, contract-pinned domain messages ("no matching
+        # entities found", "Tag not found: <name>"). The db-file branch is
+        # unreachable once F9 pre-creates the team DB, and the domain messages
+        # carry no path — so surface str(e) here rather than genericizing it
+        # (which would mask those two legitimate messages). See report note.
         return Response(content={"error": str(e)}, status_code=404)
+
+    record_audit_event(
+        db_path=db_path,
+        actor=_actor_identity(request),
+        action=f"tag.{action}",
+        target_type=str(body.get("entity_type", "conversation"))
+        if action in ("apply", "remove")
+        else "tag",
+        target=audit_target,
+        detail=audit_detail,
+        source_ip=_client_ip(request),
+    )
 
     # Refresh stats cache
     try:
@@ -383,8 +445,10 @@ async def event_detail_route(
         detail = get_event(
             event_id, db_path=db_path, include_neighbors=neighbors, owner=owner,
         )
-    except FileNotFoundError as e:
-        return Response(content={"error": str(e)}, status_code=404)
+    except FileNotFoundError:
+        # Don't leak the absolute server path in the error body (F8a).
+        log.warning("event detail: database not found at %s", db_path)
+        return Response(content={"error": "database not found"}, status_code=404)
     if detail is None:
         return Response(content={"error": "event not found"}, status_code=404)
     return serialize_event_detail(detail)
@@ -408,7 +472,7 @@ async def session_queue_tag_route(
     """
     from litestar.exceptions import PermissionDeniedException
 
-    from siftd.api import open_database
+    from siftd.api import open_database, record_audit_event
     from siftd.api.sessions import queue_tag as _queue_tag
     from siftd.serve.auth import require_write
 
@@ -438,10 +502,9 @@ async def session_queue_tag_route(
         return Response(content={"error": "exchange_index must be an integer"}, status_code=400)
 
     if not db_path.exists():
-        return Response(
-            content={"error": f"Database not found: {db_path}"},
-            status_code=404,
-        )
+        # Don't leak the absolute server path in the error body (F8a).
+        log.warning("session queue tag: database not found at %s", db_path)
+        return Response(content={"error": "database not found"}, status_code=404)
     conn = open_database(db_path)
 
     try:
@@ -468,6 +531,16 @@ async def session_queue_tag_route(
         conn.commit()
     finally:
         conn.close()
+
+    record_audit_event(
+        db_path=db_path,
+        actor=_actor_identity(request),
+        action="session.queue_tag",
+        target_type="session",
+        target=session_id,
+        detail=",".join(str(n) for n in tag_names) or None,
+        source_ip=_client_ip(request),
+    )
 
     return {"queued": queued, "duplicate": duplicate}
 
@@ -638,13 +711,16 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
             pass  # Cache refresh failure is never fatal
 
         status_code = 201 if result["status"] == "created" else 200
-        return Response(
-            content={
-                "status": result["status"],
-                "conversations": result["conversations"],
-            },
-            status_code=status_code,
-        )
+        content = {
+            "status": result["status"],
+            "conversations": result["conversations"],
+        }
+        # receive_database stamps ownership only for authenticated pushes
+        # (user_id set); surface the count when it did, omit the key when it
+        # didn't — clients render the suffix only when the server supplied it.
+        if "owned" in result:
+            content["owned"] = result["owned"]
+        return Response(content=content, status_code=status_code)
     finally:
         if tmp_path and tmp_path.exists():
             tmp_path.unlink()
@@ -1000,6 +1076,6 @@ def _record_push_log(
         identity=identity,
         conversations=conversations,
         size_bytes=size_bytes,
-        source_ip=request.client.host if request.client else None,
+        source_ip=_client_ip(request),
         push_id=push_id,
     )

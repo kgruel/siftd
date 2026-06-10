@@ -127,12 +127,12 @@ def test_search_route_importerror_and_dispatch_error(monkeypatch, tmp_path):
         return real_import(name, *a, **k)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    r1 = _run(routes.search_route.fn(SimpleNamespace(), db, q="hi"))
+    r1 = _run(routes.search_route.fn(SimpleNamespace(), db, q="hi", mode=None))
     assert r1.status_code == 501
 
     monkeypatch.setattr(builtins, "__import__", real_import)
     monkeypatch.setattr(routes, "_dispatch", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    r2 = _run(routes.search_route.fn(SimpleNamespace(), db, q="hi"))
+    r2 = _run(routes.search_route.fn(SimpleNamespace(), db, q="hi", mode=None))
     assert r2.status_code == 500
 
 
@@ -213,7 +213,7 @@ def test_tag_write_rename_delete_remove_apply_paths(monkeypatch, tmp_path):
 def test_search_success_and_identity_exception_paths(monkeypatch, tmp_path):
     db = tmp_path / "db.db"
     monkeypatch.setattr(routes, "_dispatch", lambda *a, **k: {"ok": True})
-    out = _run(routes.search_route.fn(SimpleNamespace(), db, q="hi", embeddings_only=False))
+    out = _run(routes.search_route.fn(SimpleNamespace(), db, q="hi", embeddings_only=False, mode=None))
     assert out == {"ok": True}
 
     class _BadUser:

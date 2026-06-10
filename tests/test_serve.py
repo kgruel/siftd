@@ -532,3 +532,387 @@ class TestCLI:
         with pytest.raises(SystemExit) as exc:
             main(["serve", "--help"])
         assert exc.value.code == 0
+
+
+class TestSecurityHeaders:
+    """F3: every response carries CSP + hardening headers; assets are vendored."""
+
+    def test_security_headers_present(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.get("/")
+            assert r.status_code == 200
+            csp = r.headers.get("content-security-policy", "")
+            assert "connect-src 'self'" in csp        # blocks off-origin token exfil
+            assert "frame-ancestors 'none'" in csp
+            assert "unpkg.com" not in csp              # no external script origin
+            assert r.headers.get("x-content-type-options") == "nosniff"
+            assert r.headers.get("x-frame-options") == "DENY"
+            assert r.headers.get("referrer-policy") == "no-referrer"
+
+    def test_csp_widens_connect_src_to_oidc_issuer(self, tmp_path):
+        # auth.js does the code->token exchange via fetch() to the issuer's token
+        # endpoint, which connect-src governs. A configured issuer must be
+        # allowlisted or client-side SSO login silently breaks.
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        auth_config = {"issuer": "https://idp.example.com/realms/x"}
+        app = create_app(db_path=team_db, auth_config=auth_config)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.get("/")
+            csp = r.headers.get("content-security-policy", "")
+            assert "connect-src 'self' https://idp.example.com" in csp
+
+    def test_shell_references_vendored_assets_not_cdn(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            html = client.get("/").text
+            assert "/static/vendor/htmx.min.js" in html
+            assert "unpkg.com/htmx" not in html
+            assert "unpkg.com/prismjs" not in html
+
+    def test_vendored_assets_served(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            assert client.get("/static/vendor/htmx.min.js").status_code == 200
+            assert client.get("/static/vendor/prism/prism-core.min.js").status_code == 200
+
+
+class TestRateLimitAndLiveGate:
+    """F4 (per-client rate limit) + F7 (live-endpoint gate)."""
+
+    def test_live_endpoints_gated_off(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        app = create_app(db_path=team_db, auth_config=None, allow_live_endpoints=False)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            assert client.get("/peek").status_code == 404
+            assert client.get("/follow?sid=abc").status_code == 404
+
+    def test_live_endpoints_present_when_allowed(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        app = create_app(db_path=team_db, auth_config=None, allow_live_endpoints=True)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            assert client.get("/peek").status_code == 200  # registered (may be empty)
+
+    def test_rate_limit_returns_429_when_exceeded(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        # Tiny limit to exercise the limiter deterministically.
+        app = create_app(db_path=team_db, auth_config=None, rate_limit_per_minute=3)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            codes = [client.get("/").status_code for _ in range(8)]
+            assert 429 in codes
+            # health is exempt — never throttled
+            assert client.get("/api/v1/health").status_code == 200
+
+    def test_rate_limit_disabled_when_zero(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        app = create_app(db_path=team_db, auth_config=None, rate_limit_per_minute=0)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            codes = [client.get("/").status_code for _ in range(10)]
+            assert 429 not in codes
+
+
+class TestClientIpProvenance:
+    """F8b: push_log records the real client IP, honoring XFF only from trusted proxies."""
+
+    def test_push_log_uses_xff_only_from_trusted_proxy(self, tmp_path, monkeypatch):
+        # Configure the TestClient peer ("testclient") as a trusted proxy, so the
+        # forwarded client IP is recorded instead of the proxy address.
+        import siftd.config as cfg
+
+        monkeypatch.setattr(
+            cfg, "get_config",
+            lambda k: "testclient" if k == "serve.trusted_proxies" else None,
+        )
+
+        team_db = tmp_path / "team.db"
+        app = create_app(db_path=team_db, auth_config=None, rate_limit_per_minute=0)
+        slice_a = _make_slice_bytes(tmp_path, external_id="c-xff")
+
+        from siftd.storage.sqlite import open_database
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            client.post(
+                "/api/v1/push", content=slice_a,
+                headers={"Content-Type": "application/octet-stream",
+                         "X-Forwarded-For": "203.0.113.7, 10.0.0.1"},
+            )
+
+        conn = open_database(team_db, read_only=True)
+        try:
+            ip = conn.execute("SELECT source_ip FROM push_log").fetchone()[0]
+        finally:
+            conn.close()
+        assert ip == "203.0.113.7"  # left-most XFF entry, trusted proxy honored
+
+    def test_push_log_ignores_xff_without_trusted_proxy(self, tmp_path, monkeypatch):
+        import siftd.config as cfg
+
+        monkeypatch.setattr(cfg, "get_config", lambda k: None)  # no trusted proxies
+
+        team_db = tmp_path / "team.db"
+        app = create_app(db_path=team_db, auth_config=None, rate_limit_per_minute=0)
+        slice_a = _make_slice_bytes(tmp_path, external_id="c-noxff")
+
+        from siftd.storage.sqlite import open_database
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            client.post(
+                "/api/v1/push", content=slice_a,
+                headers={"Content-Type": "application/octet-stream",
+                         "X-Forwarded-For": "203.0.113.7"},
+            )
+
+        conn = open_database(team_db, read_only=True)
+        try:
+            ip = conn.execute("SELECT source_ip FROM push_log").fetchone()[0]
+        finally:
+            conn.close()
+        assert ip != "203.0.113.7"  # spoofed XFF must NOT be trusted
+
+
+class TestAuditLog:
+    """F6: state-changing tag mutations write an attributable audit_log row."""
+
+    def test_tag_mutation_writes_audit_row(self, tmp_path):
+        import time
+
+        team_db = tmp_path / "team.db"
+        auth_config = {"introspection_url": "https://idp/i", "identity_claim": "username"}
+        app = create_app(db_path=team_db, auth_config=auth_config, rate_limit_per_minute=0)
+        # Seed the introspection cache so "tokA" resolves to alice without a
+        # network round-trip.
+        mw = app.middleware[0]
+        mw._introspection_cache = {
+            mw._cache_key("tokA"): ({"username": "alice"}, time.time() + 3600),
+        }
+
+        from siftd.storage.sqlite import open_database
+
+        slice_a = _make_slice_bytes(tmp_path, external_id="alice-1")
+        with TestClient(app, raise_server_exceptions=False) as client:
+            client.post(
+                "/api/v1/push", content=slice_a,
+                headers={"Authorization": "Bearer tokA",
+                         "Content-Type": "application/octet-stream"},
+            )
+            r = client.post(
+                "/api/v1/tag",
+                content=__import__("json").dumps(
+                    {"action": "apply", "tags": ["reviewed"], "last": 1}
+                ).encode(),
+                headers={"Authorization": "Bearer tokA",
+                         "Content-Type": "application/json"},
+            )
+            assert r.status_code == 200
+
+        conn = open_database(team_db, read_only=True)
+        try:
+            rows = conn.execute(
+                "SELECT actor, action, detail FROM audit_log WHERE action = 'tag.apply'"
+            ).fetchall()
+        finally:
+            conn.close()
+        assert len(rows) >= 1
+        assert rows[0]["actor"] == "alice"
+        assert "reviewed" in (rows[0]["detail"] or "")
+
+
+class TestErrorHygiene:
+    """F8a: error bodies never leak the absolute server DB path."""
+
+    def test_missing_db_error_does_not_leak_path(self, tmp_path):
+        missing = tmp_path / "nope" / "team.db"  # does not exist
+        app = create_app(db_path=missing, auth_config=None, rate_limit_per_minute=0)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.get("/api/v1/conversations/abc123")
+            assert r.status_code == 404
+            body = str(r.json())
+            assert str(missing) not in body          # no absolute path leaked
+            assert "nope" not in body
+
+    def test_session_queue_missing_db_no_path_leak(self, tmp_path):
+        import json
+        missing = tmp_path / "nope" / "team.db"
+        app = create_app(db_path=missing, auth_config=None, rate_limit_per_minute=0)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.post(
+                "/api/v1/sessions/sid1/tags",
+                content=json.dumps({"tags": ["x"]}).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            assert r.status_code == 404
+            assert str(missing) not in str(r.json())
+
+
+class TestPublicBindAuthGuard:
+    """F2: refuse to bind a non-loopback address with auth disabled (fail closed)."""
+
+    @staticmethod
+    def _args(tmp_path, **over):
+        from types import SimpleNamespace
+
+        base = dict(db=str(tmp_path / "team.db"), host="0.0.0.0", port=None,
+                    no_auth=False, unsafe_public_no_auth=False)
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def _patch_config(self, monkeypatch, *, auth_table):
+        import siftd.config as cfg
+
+        monkeypatch.setattr(cfg, "get_config", lambda _k=None: None)
+        monkeypatch.setattr(cfg, "get_config_table", lambda _k: auth_table)
+
+    def test_public_bind_no_auth_refused(self, monkeypatch, tmp_path):
+        from siftd.cli.serve import cmd_serve
+
+        self._patch_config(monkeypatch, auth_table=None)
+        called = {"uvicorn": False}
+        import uvicorn
+
+        monkeypatch.setattr(uvicorn, "run", lambda *a, **k: called.__setitem__("uvicorn", True))
+
+        rc = cmd_serve(self._args(tmp_path))
+        assert rc == 2
+        assert called["uvicorn"] is False  # never bound
+
+    def test_public_bind_no_auth_with_override_proceeds(self, monkeypatch, tmp_path):
+        from siftd.cli.serve import cmd_serve
+
+        self._patch_config(monkeypatch, auth_table=None)
+        import siftd.paths
+        monkeypatch.setattr(siftd.paths, "state_dir", lambda: tmp_path)
+
+        reached = {"uvicorn": False}
+        import uvicorn
+        monkeypatch.setattr(uvicorn, "run", lambda *a, **k: reached.__setitem__("uvicorn", True))
+
+        rc = cmd_serve(self._args(tmp_path, unsafe_public_no_auth=True))
+        assert rc == 0
+        assert reached["uvicorn"] is True  # guard passed, server bound
+
+    def test_public_bind_with_auth_proceeds(self, monkeypatch, tmp_path):
+        from siftd.cli.serve import cmd_serve
+
+        self._patch_config(monkeypatch, auth_table={"static_token": "x" * 32})
+        import siftd.paths
+        monkeypatch.setattr(siftd.paths, "state_dir", lambda: tmp_path)
+
+        reached = {"uvicorn": False}
+        import uvicorn
+        monkeypatch.setattr(uvicorn, "run", lambda *a, **k: reached.__setitem__("uvicorn", True))
+
+        rc = cmd_serve(self._args(tmp_path))
+        assert rc == 0
+        assert reached["uvicorn"] is True
+
+    def test_loopback_no_auth_allowed(self, monkeypatch, tmp_path):
+        from siftd.cli.serve import cmd_serve
+
+        self._patch_config(monkeypatch, auth_table=None)
+        import siftd.paths
+        monkeypatch.setattr(siftd.paths, "state_dir", lambda: tmp_path)
+
+        reached = {"uvicorn": False}
+        import uvicorn
+        monkeypatch.setattr(uvicorn, "run", lambda *a, **k: reached.__setitem__("uvicorn", True))
+
+        rc = cmd_serve(self._args(tmp_path, host="127.0.0.1"))
+        assert rc == 0
+        assert reached["uvicorn"] is True  # loopback never triggers the guard
+
+
+class TestServeStartupDbCreate:
+    """F9: server pre-creates the team DB so the first push merges, not adopts."""
+
+    def test_cmd_serve_creates_db_at_startup(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+
+        import siftd.config as cfg
+        import siftd.paths
+        from siftd.cli.serve import cmd_serve
+
+        monkeypatch.setattr(cfg, "get_config", lambda _k=None: None)
+        monkeypatch.setattr(cfg, "get_config_table", lambda _k: None)
+        monkeypatch.setattr(siftd.paths, "state_dir", lambda: tmp_path)
+        import uvicorn
+        monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
+
+        db = tmp_path / "fresh" / "team.db"
+        assert not db.exists()
+        args = SimpleNamespace(db=str(db), host="127.0.0.1", port=None,
+                               no_auth=True, unsafe_public_no_auth=False)
+        rc = cmd_serve(args)
+        assert rc == 0
+        assert db.exists()  # F9: server created the schema before serving
+
+        # And it's a real schema DB the merge path can use (not an empty file).
+        from siftd.storage.sql_helpers import has_conversation_owners_table
+        from siftd.storage.sqlite import open_database
+        conn = open_database(db, read_only=True)
+        try:
+            assert has_conversation_owners_table(conn)
+        finally:
+            conn.close()
+
+
+class TestPushOwnedCount:
+    """Push response surfaces the server-stamped ownership count (`owned`)."""
+
+    def test_authenticated_push_response_carries_owned(self, tmp_path):
+        import time
+
+        team_db = tmp_path / "team.db"
+        auth_config = {"introspection_url": "https://idp/i", "identity_claim": "username"}
+        app = create_app(db_path=team_db, auth_config=auth_config, rate_limit_per_minute=0)
+        mw = app.middleware[0]
+        mw._introspection_cache = {
+            mw._cache_key("tokA"): ({"username": "alice"}, time.time() + 3600),
+        }
+        headers = {"Authorization": "Bearer tokA",
+                   "Content-Type": "application/octet-stream"}
+
+        from siftd.storage.sqlite import open_database
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            # First push creates the DB: every received conversation is stamped.
+            r1 = client.post(
+                "/api/v1/push",
+                content=_make_slice_bytes(tmp_path, external_id="own-1"),
+                headers=headers,
+            )
+            assert r1.status_code == 201
+            body1 = r1.json()
+            assert body1["owned"] == body1["conversations"] == 1
+
+            # Second push merges: only the new conversation is stamped.
+            second_dir = tmp_path / "second"
+            second_dir.mkdir()
+            r2 = client.post(
+                "/api/v1/push",
+                content=_make_slice_bytes(second_dir, external_id="own-2"),
+                headers=headers,
+            )
+            assert r2.status_code == 200
+            body2 = r2.json()
+            assert body2["owned"] == body2["conversations"] == 1
+
+        # The reported counts match the actual ownership rows.
+        conn = open_database(team_db, read_only=True)
+        try:
+            n = conn.execute(
+                "SELECT COUNT(*) FROM conversation_owners WHERE user_id = 'alice'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        assert n == 2

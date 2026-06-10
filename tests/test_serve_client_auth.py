@@ -81,7 +81,7 @@ class TestSendAuthedRetry:
         credential unrelated to the rejected token would re-issue the request under a
         different server-side identity."""
         monkeypatch.setattr(client, "_resolve_bearer_token", lambda: ("env-tok", "env"))
-        monkeypatch.setattr(client, "_configured_issuer", lambda: "https://idp.test")
+        monkeypatch.setattr("siftd.api.auth.configured_issuer", lambda: "https://idp.test")
         monkeypatch.setattr(
             "siftd.credentials.refresh_after_rejection",
             lambda issuer, rejected_token: pytest.fail("must not refresh a non-device token"),
@@ -96,7 +96,9 @@ class TestSendAuthedRetry:
 
     def test_retry_with_refreshed_token_on_401(self, monkeypatch):
         monkeypatch.setattr(client, "_resolve_bearer_token", lambda: ("old-tok", "device-code"))
-        monkeypatch.setattr(client, "_configured_issuer", lambda: "https://idp.test")
+        # The 401-refresh path resolves the issuer via api.auth (from [auth].issuer),
+        # not via client._configured_issuer — patch the seam the production path reads.
+        monkeypatch.setattr("siftd.api.auth.configured_issuer", lambda: "https://idp.test")
         monkeypatch.setattr(
             "siftd.credentials.refresh_after_rejection",
             lambda issuer, rejected_token: "new-tok",
@@ -111,7 +113,7 @@ class TestSendAuthedRetry:
 
     def test_refresh_returns_none_propagates_401(self, monkeypatch):
         monkeypatch.setattr(client, "_resolve_bearer_token", lambda: ("old-tok", "device-code"))
-        monkeypatch.setattr(client, "_configured_issuer", lambda: "https://idp.test")
+        monkeypatch.setattr("siftd.api.auth.configured_issuer", lambda: "https://idp.test")
         monkeypatch.setattr(
             "siftd.credentials.refresh_after_rejection",
             lambda issuer, rejected_token: None,
@@ -126,7 +128,7 @@ class TestSendAuthedRetry:
 
     def test_post_json_retries_and_preserves_body(self, monkeypatch):
         monkeypatch.setattr(client, "_resolve_bearer_token", lambda: ("old-tok", "device-code"))
-        monkeypatch.setattr(client, "_configured_issuer", lambda: "https://idp.test")
+        monkeypatch.setattr("siftd.api.auth.configured_issuer", lambda: "https://idp.test")
         monkeypatch.setattr(
             "siftd.credentials.refresh_after_rejection",
             lambda issuer, rejected_token: "new-tok",

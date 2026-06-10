@@ -99,7 +99,15 @@
     turns.forEach(function (t) { spyObserver.observe(t); });
   }
 
-  function enhance() { wireTone(); drawLedgers(); syncChrome(); initSpy(); }
+  // --- prism syntax highlighting --------------------------------------------
+  // The folio's markdown emitter produces fenced <pre><code class="language-*">
+  // blocks; prism (vendored, autoloader-driven) colorizes them. CSP-safe: prism
+  // ships as static <script> includes, no eval on our side.
+  function highlight() {
+    if (window.Prism) window.Prism.highlightAll();
+  }
+
+  function enhance() { wireTone(); drawLedgers(); syncChrome(); initSpy(); highlight(); }
 
   document.body.addEventListener('htmx:afterSettle', enhance);
   applyTone();

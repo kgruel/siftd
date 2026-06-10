@@ -8,7 +8,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from siftd.ids import ulid
-from siftd.storage.sqlite import ensure_push_log_table, open_database
+from siftd.storage.sqlite import (
+    ensure_audit_log_table,
+    ensure_push_log_table,
+    open_database,
+)
 
 
 @dataclass
@@ -74,3 +78,50 @@ def record_push_log(
         conn.commit()
     finally:
         conn.close()
+
+
+def record_audit_event(
+    *,
+    db_path: Path,
+    actor: str,
+    action: str,
+    target_type: str | None = None,
+    target: str | None = None,
+    detail: str | None = None,
+    source_ip: str | None = None,
+) -> None:
+    """Record a state-changing operation in the audit_log table.
+
+    Best-effort provenance for mutations on the shared multi-tenant DB (tag
+    apply/remove/rename/delete, session tag queueing). Never raises into the
+    caller — an audit-write failure must not fail the underlying operation. See
+    finding F6.
+    """
+    try:
+        conn = open_database(db_path)
+        try:
+            ensure_audit_log_table(conn)
+            conn.execute(
+                "INSERT INTO audit_log "
+                "(id, actor, action, target_type, target, detail, source_ip, occurred_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    ulid(),
+                    actor,
+                    action,
+                    target_type,
+                    target,
+                    detail,
+                    source_ip,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        import logging
+
+        logging.getLogger("siftd.serve").warning(
+            "audit_log write failed for action=%s target=%s", action, target,
+        )

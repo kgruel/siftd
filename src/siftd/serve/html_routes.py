@@ -191,7 +191,8 @@ def _page_shell(
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/htmx.org@2.0.4"></script>
+<script src="/static/vendor/htmx.min.js"></script>
+<link href="/static/vendor/prism/prism-tomorrow.min.css" rel="stylesheet">
 <link rel="stylesheet" href="/static/siftd.css">
 </head>
 <body data-theme="swiss" data-tone="light">
@@ -214,6 +215,8 @@ def _page_shell(
     <main class="content" id="main" hx-get="{esc(main_url)}" hx-trigger="load" hx-swap="innerHTML"></main>
   </div>
 </div>
+<script src="/static/vendor/prism/prism-core.min.js"></script>
+<script src="/static/vendor/prism/autoloader.min.js" data-autoloader-path="/static/vendor/prism/components/"></script>
 <script src="/static/enhance.js"></script>
 <script src="/static/auth.js"></script>
 </body>
@@ -922,8 +925,10 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
 
     require_write(request)
 
+    from siftd.api import record_audit_event
     from siftd.api.tags import modify_conversation_tag
     from siftd.output.html_fmt import render_tag_section
+    from siftd.serve.routes import _actor_identity, _client_ip
 
     owner = _effective_owner(request, None)
     form = await request.form()
@@ -936,6 +941,15 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
 
     tags = modify_conversation_tag(
         conv_id, tag_name, action=action, db_path=db_path, owner=owner,
+    )
+    record_audit_event(
+        db_path=db_path,
+        actor=_actor_identity(request),
+        action=f"tag.{action}",
+        target_type="conversation",
+        target=conv_id,
+        detail=tag_name,
+        source_ip=_client_ip(request),
     )
     return _html_response(render_tag_section(
         conv_id, tags,
