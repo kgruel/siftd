@@ -42,6 +42,58 @@ from siftd.serve.routes import (
 )
 
 
+def _origin(url: str) -> str | None:
+    """Return ``scheme://host[:port]`` for a URL, or None if it has no origin."""
+    from urllib.parse import urlparse
+
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return None
+    if not p.scheme or not p.netloc:
+        return None
+    return f"{p.scheme}://{p.netloc}"
+
+
+def _build_csp(auth_config: dict | None) -> str:
+    """Build the Content-Security-Policy header value (finding F3).
+
+    All JS (htmx, prism) is vendored under ``/static`` so there is no external
+    script origin to compromise. ``script-src`` keeps ``'unsafe-inline'`` for
+    the shell's inline blocks + ``onclick`` handlers; removing it (nonces) is a
+    tracked follow-up. We deliberately omit ``'unsafe-eval'`` — htmx's
+    ``hx-on`` compiles via ``new Function`` which the policy blocks, so those
+    were rewritten as listeners (see the shell + the browser CSP smoke).
+
+    ``connect-src`` is the key control: even after a hypothetical script
+    injection, a bearer token in sessionStorage could not be exfiltrated to an
+    off-origin endpoint. But the browser SSO flow (``auth.js``) discovers the
+    IdP via ``fetch(issuer/.well-known/openid-configuration)`` and exchanges the
+    auth code via ``fetch(token_endpoint)`` — both governed by ``connect-src``.
+    So when an OIDC issuer is configured we widen ``connect-src`` to that
+    origin; otherwise client-side login would silently fail. The authorize
+    *redirect* is navigation, not connect-src, so it needs no allowance.
+    HSTS is left to the TLS-terminating reverse proxy (Caddy).
+    """
+    connect = "'self'"
+    issuer = (auth_config or {}).get("issuer") if auth_config else None
+    if issuer:
+        origin = _origin(str(issuer))
+        if origin:
+            connect = f"'self' {origin}"
+    return (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        f"connect-src {connect}; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "object-src 'none'"
+    )
+
+
 def create_app(
     *,
     db_path: Path,
@@ -57,6 +109,17 @@ def create_app(
         fts_rebuild: FTS rebuild strategy ("on_push", "scheduled", "off").
         request_max_body_size: Max request body in bytes; applies to streaming push.
     """
+
+    csp = _build_csp(auth_config)
+
+    def _add_security_headers(response: Any) -> Any:
+        """Attach defense-in-depth security headers to every response (F3)."""
+        headers = response.headers
+        headers.setdefault("Content-Security-Policy", csp)
+        headers.setdefault("X-Content-Type-Options", "nosniff")
+        headers.setdefault("X-Frame-Options", "DENY")
+        headers.setdefault("Referrer-Policy", "no-referrer")
+        return response
 
     async def provide_db_path() -> Path:
         return db_path
@@ -98,5 +161,6 @@ def create_app(
             "auth_config": Provide(provide_auth_config),
         },
         middleware=middleware,
+        after_request=_add_security_headers,
         request_max_body_size=request_max_body_size,
     )

@@ -106,8 +106,8 @@ def _page_shell(
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/htmx.org@2.0.4"></script>
-<link href="https://unpkg.com/prismjs@1.30.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+<script src="/static/vendor/htmx.min.js"></script>
+<link href="/static/vendor/prism/prism-tomorrow.min.css" rel="stylesheet">
 <link rel="stylesheet" href="/static/siftd.css">
 </head>
 <body>
@@ -177,8 +177,8 @@ def _page_shell(
   }}
 }})();
 </script>
-<script src="https://unpkg.com/prismjs@1.30.0/components/prism-core.min.js"></script>
-<script src="https://unpkg.com/prismjs@1.30.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="/static/vendor/prism/prism-core.min.js"></script>
+<script src="/static/vendor/prism/autoloader.min.js" data-autoloader-path="/static/vendor/prism/components/"></script>
 <script>
 document.body.addEventListener('htmx:afterSettle', function() {{
   if (window.Prism) Prism.highlightAll();

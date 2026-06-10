@@ -532,3 +532,53 @@ class TestCLI:
         with pytest.raises(SystemExit) as exc:
             main(["serve", "--help"])
         assert exc.value.code == 0
+
+
+class TestSecurityHeaders:
+    """F3: every response carries CSP + hardening headers; assets are vendored."""
+
+    def test_security_headers_present(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.get("/")
+            assert r.status_code == 200
+            csp = r.headers.get("content-security-policy", "")
+            assert "connect-src 'self'" in csp        # blocks off-origin token exfil
+            assert "frame-ancestors 'none'" in csp
+            assert "unpkg.com" not in csp              # no external script origin
+            assert r.headers.get("x-content-type-options") == "nosniff"
+            assert r.headers.get("x-frame-options") == "DENY"
+            assert r.headers.get("referrer-policy") == "no-referrer"
+
+    def test_csp_widens_connect_src_to_oidc_issuer(self, tmp_path):
+        # auth.js does the code->token exchange via fetch() to the issuer's token
+        # endpoint, which connect-src governs. A configured issuer must be
+        # allowlisted or client-side SSO login silently breaks.
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        auth_config = {"issuer": "https://idp.example.com/realms/x"}
+        app = create_app(db_path=team_db, auth_config=auth_config)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.get("/")
+            csp = r.headers.get("content-security-policy", "")
+            assert "connect-src 'self' https://idp.example.com" in csp
+
+    def test_shell_references_vendored_assets_not_cdn(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            html = client.get("/").text
+            assert "/static/vendor/htmx.min.js" in html
+            assert "unpkg.com/htmx" not in html
+            assert "unpkg.com/prismjs" not in html
+
+    def test_vendored_assets_served(self, tmp_path):
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            assert client.get("/static/vendor/htmx.min.js").status_code == 200
+            assert client.get("/static/vendor/prism/prism-core.min.js").status_code == 200
