@@ -753,3 +753,114 @@ class TestErrorHygiene:
             )
             assert r.status_code == 404
             assert str(missing) not in str(r.json())
+
+
+class TestPublicBindAuthGuard:
+    """F2: refuse to bind a non-loopback address with auth disabled (fail closed)."""
+
+    @staticmethod
+    def _args(tmp_path, **over):
+        from types import SimpleNamespace
+
+        base = dict(db=str(tmp_path / "team.db"), host="0.0.0.0", port=None,
+                    no_auth=False, unsafe_public_no_auth=False)
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def _patch_config(self, monkeypatch, *, auth_table):
+        import siftd.config as cfg
+
+        monkeypatch.setattr(cfg, "get_config", lambda _k=None: None)
+        monkeypatch.setattr(cfg, "get_config_table", lambda _k: auth_table)
+
+    def test_public_bind_no_auth_refused(self, monkeypatch, tmp_path):
+        from siftd.cli.serve import cmd_serve
+
+        self._patch_config(monkeypatch, auth_table=None)
+        called = {"uvicorn": False}
+        import uvicorn
+
+        monkeypatch.setattr(uvicorn, "run", lambda *a, **k: called.__setitem__("uvicorn", True))
+
+        rc = cmd_serve(self._args(tmp_path))
+        assert rc == 2
+        assert called["uvicorn"] is False  # never bound
+
+    def test_public_bind_no_auth_with_override_proceeds(self, monkeypatch, tmp_path):
+        from siftd.cli.serve import cmd_serve
+
+        self._patch_config(monkeypatch, auth_table=None)
+        import siftd.paths
+        monkeypatch.setattr(siftd.paths, "state_dir", lambda: tmp_path)
+
+        reached = {"uvicorn": False}
+        import uvicorn
+        monkeypatch.setattr(uvicorn, "run", lambda *a, **k: reached.__setitem__("uvicorn", True))
+
+        rc = cmd_serve(self._args(tmp_path, unsafe_public_no_auth=True))
+        assert rc == 0
+        assert reached["uvicorn"] is True  # guard passed, server bound
+
+    def test_public_bind_with_auth_proceeds(self, monkeypatch, tmp_path):
+        from siftd.cli.serve import cmd_serve
+
+        self._patch_config(monkeypatch, auth_table={"static_token": "x" * 32})
+        import siftd.paths
+        monkeypatch.setattr(siftd.paths, "state_dir", lambda: tmp_path)
+
+        reached = {"uvicorn": False}
+        import uvicorn
+        monkeypatch.setattr(uvicorn, "run", lambda *a, **k: reached.__setitem__("uvicorn", True))
+
+        rc = cmd_serve(self._args(tmp_path))
+        assert rc == 0
+        assert reached["uvicorn"] is True
+
+    def test_loopback_no_auth_allowed(self, monkeypatch, tmp_path):
+        from siftd.cli.serve import cmd_serve
+
+        self._patch_config(monkeypatch, auth_table=None)
+        import siftd.paths
+        monkeypatch.setattr(siftd.paths, "state_dir", lambda: tmp_path)
+
+        reached = {"uvicorn": False}
+        import uvicorn
+        monkeypatch.setattr(uvicorn, "run", lambda *a, **k: reached.__setitem__("uvicorn", True))
+
+        rc = cmd_serve(self._args(tmp_path, host="127.0.0.1"))
+        assert rc == 0
+        assert reached["uvicorn"] is True  # loopback never triggers the guard
+
+
+class TestServeStartupDbCreate:
+    """F9: server pre-creates the team DB so the first push merges, not adopts."""
+
+    def test_cmd_serve_creates_db_at_startup(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+
+        import siftd.config as cfg
+        import siftd.paths
+        from siftd.cli.serve import cmd_serve
+
+        monkeypatch.setattr(cfg, "get_config", lambda _k=None: None)
+        monkeypatch.setattr(cfg, "get_config_table", lambda _k: None)
+        monkeypatch.setattr(siftd.paths, "state_dir", lambda: tmp_path)
+        import uvicorn
+        monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
+
+        db = tmp_path / "fresh" / "team.db"
+        assert not db.exists()
+        args = SimpleNamespace(db=str(db), host="127.0.0.1", port=None,
+                               no_auth=True, unsafe_public_no_auth=False)
+        rc = cmd_serve(args)
+        assert rc == 0
+        assert db.exists()  # F9: server created the schema before serving
+
+        # And it's a real schema DB the merge path can use (not an empty file).
+        from siftd.storage.sql_helpers import has_conversation_owners_table
+        from siftd.storage.sqlite import open_database
+        conn = open_database(db, read_only=True)
+        try:
+            assert has_conversation_owners_table(conn)
+        finally:
+            conn.close()

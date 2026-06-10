@@ -42,6 +42,15 @@ def cmd_serve(args) -> int:
         str(get_config("serve.request_max_body_size") or "500MB")
     )
 
+    # Rate limit (finding F4): per-client requests/minute. Default 600 (generous
+    # for the htmx UI, restrictive for brute force). Set serve.rate_limit_per_minute
+    # to 0 to disable.
+    rl_cfg = get_config("serve.rate_limit_per_minute")
+    try:
+        rate_limit_per_minute = int(rl_cfg) if rl_cfg is not None else 600
+    except (ValueError, TypeError):
+        rate_limit_per_minute = 600
+
     # Auth config
     auth_config = None
     if not args.no_auth:
@@ -49,12 +58,49 @@ def cmd_serve(args) -> int:
 
         auth_config = get_config_table("serve.auth")
 
+    # Fail closed: refuse to bind a non-loopback address with auth disabled.
+    # An unauthenticated server on a public interface exposes the entire
+    # multi-user corpus for read AND write. Require an explicit opt-out so the
+    # dangerous combination can never happen by misconfiguration (e.g. the
+    # Docker image's `--host 0.0.0.0` with no [serve.auth] mounted). See
+    # security finding F2.
+    is_public = host not in ("127.0.0.1", "::1", "localhost")
+    auth_off = args.no_auth or not auth_config
+    if is_public and auth_off and not getattr(args, "unsafe_public_no_auth", False):
+        print(
+            f"refusing to bind public address {host!r} with authentication disabled: "
+            "configure [serve.auth] (or pass --unsafe-public-no-auth to override). "
+            "An unauthenticated public server exposes the entire corpus for read and write.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Ensure the team DB exists with a server-created schema before serving, so
+    # the first push *merges* into it rather than adopting the uploaded SQLite
+    # file wholesale (receive_database's _create_from_source path). See finding F9.
+    if not db_path.exists():
+        from siftd.api import create_database
+
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        create_database(db_path).close()
+
+    # Live session endpoints (/peek, /follow) read the server host's session
+    # files and bypass owner scoping (finding F7). Default off on a public bind;
+    # serve.allow_live_endpoints overrides explicitly.
+    live_cfg = get_config("serve.allow_live_endpoints")
+    if live_cfg is None:
+        allow_live_endpoints = not is_public
+    else:
+        allow_live_endpoints = str(live_cfg).strip().lower() in ("1", "true", "yes", "on")
+
     try:
         app = create_app(
             db_path=db_path,
             auth_config=auth_config,
             fts_rebuild=fts_rebuild,
             request_max_body_size=request_max_body_size,
+            rate_limit_per_minute=rate_limit_per_minute,
+            allow_live_endpoints=allow_live_endpoints,
         )
     except ValueError as e:
         print(f"siftd serve: invalid configuration — {e}", file=sys.stderr)
@@ -117,5 +163,11 @@ def build_serve_parser(subparsers) -> None:
     parser.add_argument(
         "--no-auth", action="store_true",
         help="Disable authentication (development only)",
+    )
+    parser.add_argument(
+        "--unsafe-public-no-auth", action="store_true",
+        help="Allow binding a non-loopback address with NO authentication. "
+             "Dangerous: exposes the entire corpus for read and write. "
+             "Without this flag, a public bind without [serve.auth] is refused.",
     )
     parser.set_defaults(func=cmd_serve)

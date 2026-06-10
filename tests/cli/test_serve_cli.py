@@ -60,11 +60,13 @@ class TestCmdServe:
         # Fake siftd.serve.app module to avoid litestar import
         fake_app_mod = ModuleType("siftd.serve.app")
 
-        def fake_create_app(*, db_path, auth_config, fts_rebuild, request_max_body_size):
+        def fake_create_app(*, db_path, auth_config, fts_rebuild,
+                            request_max_body_size, **kwargs):
             captured["db_path"] = db_path
             captured["auth_config"] = auth_config
             captured["fts_rebuild"] = fts_rebuild
             captured["request_max_body_size"] = request_max_body_size
+            captured.update(kwargs)  # rate_limit_per_minute, allow_live_endpoints
             return "fake_app"
 
         fake_app_mod.create_app = fake_create_app
