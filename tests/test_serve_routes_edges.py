@@ -428,5 +428,5 @@ def test_sync_status_redacts_inbox_error(monkeypatch, tmp_path):
         "siftd.api.inbox.get_inbox_status",
         lambda _db: {"pending": 0, "total": 1, "last": {"status": "failed", "error": "boom"}},
     )
-    out = _run(routes.sync_status_route.fn(tmp_path / "db.db"))
+    out = _run(routes.sync_status_route.fn(tmp_path / "db.db", request_max_body_size=500 * 1024 * 1024))
     assert "error" not in out["inbox"]["last"]

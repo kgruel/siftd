@@ -270,17 +270,19 @@ class TestAnchorWindowOverHttp:
 
 class TestDelegationWireRoundTrip:
     """Synthesize the URL the delegation client would build and confirm the
-    server accepts it. This catches contract drift between _remap_params'
-    output and the route's declared Parameter(query=...) names.
+    server accepts it. This catches contract drift between the OpSpec wire
+    serialization (Operation.to_wire / apply_wire) and the route's declared
+    Parameter(query=...) names. (Originally written against _remap_params,
+    which the ST-5 wire-form dissolution replaced with the OpSpec registry.)
     """
 
-    def test_remap_params_output_is_parseable_by_route(self, tmp_path):
-        """The querystring produced by _remap_params(Fidelity → axes) must
+    def test_wire_serialization_output_is_parseable_by_route(self, tmp_path):
+        """The querystring produced by apply_wire (Fidelity → axes) must
         result in a 200 against /api/v1/conversations/{id}.
         """
         from painted import Fidelity
 
-        from siftd.serve.delegation import _remap_params
+        from siftd.api.op_spec import SPECS, apply_wire
 
         db, _ = _make_multi_turn_db(tmp_path / "team.db", n_turns=4)
         app = create_app(db_path=db, auth_config=None)
@@ -298,13 +300,9 @@ class TestDelegationWireRoundTrip:
             "db_path": db,
         }
 
-        # Match try_serve's filtering: drop db_path, then remap.
-        wire = {k: v for k, v in op_params.items() if k != "db_path"}
-        wire = _remap_params(wire)
-        # urlencode behaves like the actual delegation client.
-        # None values omitted to match what httpx/urlencode would skip;
-        # the CLI's actual `_get_json` uses None filtering upstream of urlencode.
-        wire = {k: v for k, v in wire.items() if v is not None}
+        # The production wire path: excludes (db_path/id), drop-None,
+        # Fidelity → axis expansion, keyword remaps — all inside apply_wire.
+        wire = apply_wire(op_params, SPECS[("/api/v1/conversations/{id}", "GET")])
         # str() coercion is what urlencode does for non-string scalars.
         querystring = urlencode({k: str(v) if not isinstance(v, str) else v for k, v in wire.items()})
 
@@ -339,16 +337,16 @@ class TestDelegationWireRoundTrip:
         assert resp.status_code == 200, resp.text
 
     def test_none_valued_params_are_dropped_not_serialized_as_string(self):
-        """Drop-None must happen in _expand_for_wire, not just in tests.
+        """Drop-None must happen in the wire layer, not just in tests.
 
         Pre-fix, urlencode({'tool_filter': None}) → 'tool_filter=None' on the
         wire. The route's Litestar Parameter declared the type as str|None and
         treated 'None' (literal four-character string) as a real filter pattern,
-        which then filtered out every tool call. The smoke test build a real
-        op.params dict (with explicit None values) and asserts the resulting
-        URL omits those keys entirely.
+        which then filtered out every tool call. Build a real op.params dict
+        (with explicit None values) and assert the wire dict omits those keys
+        entirely. (apply_wire is the production drop-None site post-ST-5.)
         """
-        from siftd.serve.delegation import _remap_params
+        from siftd.api.op_spec import SPECS, apply_wire
 
         op_params = {
             "id": "abc",
@@ -360,7 +358,7 @@ class TestDelegationWireRoundTrip:
             "window_end": None,
             "tag": None,                 # list[str] | None
         }
-        wired = _remap_params(op_params)
+        wired = apply_wire(op_params, SPECS[("/api/v1/conversations/{id}", "GET")])
 
         # All None values dropped — the route sees absent params and uses defaults.
         assert "tool_filter" not in wired
@@ -373,8 +371,6 @@ class TestDelegationWireRoundTrip:
         assert "fidelity" not in wired
         assert "include_thinking" not in wired
         assert "include_tool_content" not in wired
-        # Scalar non-None passes through.
-        assert wired["id"] == "abc"
 
     def test_include_thinking_bool_false_string_is_falsy(self, tmp_path):
         db, _ = _make_multi_turn_db(tmp_path / "team.db", n_turns=2)
