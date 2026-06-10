@@ -106,6 +106,10 @@ class PushResult:
     dry_run: bool
     last_push_updated: bool = False
     windows: int = 1
+    # Conversations the server stamped to the authenticated identity. None when
+    # the transport doesn't report it (local/SSH, unauthenticated HTTP, or an
+    # older server) — distinct from 0, so the CLI omits the suffix entirely.
+    owned: int | None = None
 
 
 @dataclass

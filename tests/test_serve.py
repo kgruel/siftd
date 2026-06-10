@@ -864,3 +864,55 @@ class TestServeStartupDbCreate:
             assert has_conversation_owners_table(conn)
         finally:
             conn.close()
+
+
+class TestPushOwnedCount:
+    """Push response surfaces the server-stamped ownership count (`owned`)."""
+
+    def test_authenticated_push_response_carries_owned(self, tmp_path):
+        import time
+
+        team_db = tmp_path / "team.db"
+        auth_config = {"introspection_url": "https://idp/i", "identity_claim": "username"}
+        app = create_app(db_path=team_db, auth_config=auth_config, rate_limit_per_minute=0)
+        mw = app.middleware[0]
+        mw._introspection_cache = {
+            mw._cache_key("tokA"): ({"username": "alice"}, time.time() + 3600),
+        }
+        headers = {"Authorization": "Bearer tokA",
+                   "Content-Type": "application/octet-stream"}
+
+        from siftd.storage.sqlite import open_database
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            # First push creates the DB: every received conversation is stamped.
+            r1 = client.post(
+                "/api/v1/push",
+                content=_make_slice_bytes(tmp_path, external_id="own-1"),
+                headers=headers,
+            )
+            assert r1.status_code == 201
+            body1 = r1.json()
+            assert body1["owned"] == body1["conversations"] == 1
+
+            # Second push merges: only the new conversation is stamped.
+            second_dir = tmp_path / "second"
+            second_dir.mkdir()
+            r2 = client.post(
+                "/api/v1/push",
+                content=_make_slice_bytes(second_dir, external_id="own-2"),
+                headers=headers,
+            )
+            assert r2.status_code == 200
+            body2 = r2.json()
+            assert body2["owned"] == body2["conversations"] == 1
+
+        # The reported counts match the actual ownership rows.
+        conn = open_database(team_db, read_only=True)
+        try:
+            n = conn.execute(
+                "SELECT COUNT(*) FROM conversation_owners WHERE user_id = 'alice'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        assert n == 2

@@ -635,3 +635,32 @@ class TestCmdDbPushOutput:
         rc, out, err = _run_cmd_push(args, result, db)
         assert rc == 0
         assert "4 windows" in out
+
+    def test_owned_suffix_shown_when_server_reports_it(self, tmp_path):
+        db = _make_push_db(tmp_path, n_convs=2)
+        result = PushResult(
+            conversations=2, size_bytes=1024, remote_name="t",
+            remote_existed=True, dry_run=False, last_push_updated=True,
+            windows=1, owned=2,
+        )
+        args = _build_args()
+        args.db = str(db)
+        rc, out, err = _run_cmd_push(args, result, db)
+        assert rc == 0
+        assert "(1.0 KB, 2 owned)" in out
+
+    def test_owned_suffix_absent_when_not_reported(self, tmp_path):
+        # owned=None (older server, no auth, local/SSH transport) must omit the
+        # suffix entirely — not render a fake "0 owned".
+        db = _make_push_db(tmp_path, n_convs=2)
+        result = PushResult(
+            conversations=2, size_bytes=1024, remote_name="t",
+            remote_existed=True, dry_run=False, last_push_updated=True,
+            windows=1, owned=None,
+        )
+        args = _build_args()
+        args.db = str(db)
+        rc, out, err = _run_cmd_push(args, result, db)
+        assert rc == 0
+        assert "owned" not in out
+        assert "(1.0 KB)" in out

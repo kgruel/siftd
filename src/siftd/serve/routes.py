@@ -711,13 +711,16 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
             pass  # Cache refresh failure is never fatal
 
         status_code = 201 if result["status"] == "created" else 200
-        return Response(
-            content={
-                "status": result["status"],
-                "conversations": result["conversations"],
-            },
-            status_code=status_code,
-        )
+        content = {
+            "status": result["status"],
+            "conversations": result["conversations"],
+        }
+        # receive_database stamps ownership only for authenticated pushes
+        # (user_id set); surface the count when it did, omit the key when it
+        # didn't — clients render the suffix only when the server supplied it.
+        if "owned" in result:
+            content["owned"] = result["owned"]
+        return Response(content=content, status_code=status_code)
     finally:
         if tmp_path and tmp_path.exists():
             tmp_path.unlink()
