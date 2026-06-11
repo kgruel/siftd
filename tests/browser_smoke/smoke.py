@@ -204,50 +204,62 @@ document.addEventListener('securitypolicyviolation', function (e) {
 
 
 # ---------------------------------------------------------------------------
-# Flow: the current two-pane shell. Shell-SPECIFIC — rewrite when the UI does.
+# Flow: the Swiss shell. Shell-SPECIFIC — rewrite when the UI does.
 # ---------------------------------------------------------------------------
 
 
 async def flow(cdp, check, goto, code_conv):
     await goto(f"{BASE}/", 2.5)
-    shell_ok = await cdp.eval("!!document.getElementById('list') && !!window.htmx")
-    check("shell rendered + vendored htmx loaded", bool(shell_ok))
+    shell_ok = await cdp.eval("!!document.querySelector('.sw-rail') && !!window.htmx")
+    check("swiss shell rendered + vendored htmx loaded", bool(shell_ok))
 
-    rows = await cdp.eval(
-        "document.querySelectorAll('#list tr, #list .conv-row, #list li, #list a').length"
-    )
-    check("list pane populated on load", rows is not None and rows > 0, f"rows={rows}")
+    # rail nav: every view (stubs included) must swap #main via htmx
+    for view in ("sessions", "search", "transcript", "tags", "workspaces", "stats"):
+        await cdp.click(f'a[data-view="{view}"]')
+        await cdp.drain(1.5)
+        children = await cdp.eval(
+            "document.getElementById('main') ? document.getElementById('main').childElementCount : -1"
+        )
+        check(
+            f"rail nav swaps #main: {view}",
+            children is not None and children > 0,
+            f"children={children}",
+        )
 
-    # search box: real keystrokes -> htmx keyup trigger (300ms delay)
-    await cdp.click('input[name="q"]')
+    # find box: real keystrokes -> htmx keyup trigger (350ms delay)
+    await cdp.click('a[data-view="search"]')
+    await cdp.drain(1.5)
+    await cdp.click('input[name="search"]')
     await cdp.type_text("needle")
     await cdp.drain(1.5)
-    listed = await cdp.eval("document.getElementById('list').textContent.length")
-    check("search keystrokes swap list", listed is not None and listed > 0, f"len={listed}")
+    rows = await cdp.eval(
+        "document.querySelectorAll('#list table tbody tr, #list .conv-row, #list tr').length"
+    )
+    check("find keystrokes filter list", rows is not None and rows > 0, f"rows={rows}")
 
-    # open the conversation w/ the rust fence -> Prism autoloader under CSP
+    # FTS5 footgun characters must not error the list pane
+    await cdp.eval("document.querySelector('input[name=\"search\"]').value=''")
+    await cdp.click('input[name="search"]')
+    await cdp.type_text('a"(:*')
+    await cdp.drain(1.5)
+    err = await cdp.eval(
+        "document.getElementById('list').textContent.toLowerCase().includes('error')"
+    )
+    check("FTS5 punctuation input survives", not err)
+
+    # folio with the rust fence -> Prism autoloader under CSP
     await goto(f"{BASE}/?id={code_conv}", 3.5)
-    pre = await cdp.eval("document.querySelectorAll('#detail pre, #detail code').length")
-    tokens = await cdp.eval("document.querySelectorAll('#detail .token').length")
+    pre = await cdp.eval("document.querySelectorAll('#main pre, #main code').length")
+    tokens = await cdp.eval("document.querySelectorAll('#main .token').length")
     check("folio code block present", pre and pre > 0, f"pre/code={pre}")
     check("prism highlighted under CSP", tokens and tokens > 0, f"tokens={tokens}")
 
-    # nav links (htmx swaps), incl. the F3 listener rewrite on #nav-recent
-    await cdp.click('a[hx-get="/stats"]')
-    await cdp.drain(1.5)
-    stats_ok = await cdp.eval("document.getElementById('detail').textContent.length > 10")
-    check("stats nav swaps detail", bool(stats_ok))
-    await cdp.click("#nav-recent")
-    await cdp.drain(1.5)
-    recent_ok = await cdp.eval("document.getElementById('list').childElementCount > 0")
-    check("recent nav (listener rewrite) swaps list", bool(recent_ok))
-
-    # density toggle (inline onclick under 'unsafe-inline')
-    before = await cdp.eval("document.body.classList.contains('compact')")
-    await cdp.click(".density-toggle")
+    # tone toggle (enhance.js listener under CSP)
+    before = await cdp.eval("document.body.dataset.tone")
+    await cdp.click("[data-tone-toggle]")
     await cdp.drain(0.5)
-    after = await cdp.eval("document.body.classList.contains('compact')")
-    check("density toggle flips", before != after, f"{before} -> {after}")
+    after = await cdp.eval("document.body.dataset.tone")
+    check("tone toggle flips", before != after, f"{before} -> {after}")
 
 
 # ---------------------------------------------------------------------------
