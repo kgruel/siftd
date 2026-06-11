@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from litestar import Litestar
+from litestar.datastructures import MutableScopeHeaders
 from litestar.di import Provide
+from litestar.enums import ScopeType
+from litestar.middleware import ASGIMiddleware
 from litestar.static_files import create_static_files_router
 
 from siftd.serve.html_routes import (
@@ -94,6 +97,42 @@ def _build_csp(auth_config: dict | None) -> str:
     )
 
 
+class _SecurityHeadersMiddleware(ASGIMiddleware):
+    """Attach defense-in-depth security headers to every HTTP response (F3).
+
+    This is per-app ASGI middleware rather than an ``after_request`` hook
+    because Litestar memoizes route-handler resolution (including the resolved
+    ``after_request``) process-wide the first time any app serves a path —
+    with a hook, once one app has served ``GET /``, every later
+    ``create_app()`` instance's HTTP responses inherit the *first* app's CSP.
+    Middleware instances are per-app, so each app's headers stay its own.
+
+    Known parity gap (same as the hook it replaced): responses synthesized
+    from middleware-raised exceptions (auth 401s, rate-limit 429s) carry no
+    security headers — Litestar converts those to responses outside the user
+    middleware stack, so no list position can intercept them. Verified
+    empirically; acceptable because those are bare JSON error bodies with no
+    scriptable content.
+    """
+
+    scopes = (ScopeType.HTTP,)
+
+    def __init__(self, csp: str) -> None:
+        self.csp = csp
+
+    async def handle(self, scope: Any, receive: Any, send: Any, next_app: Any) -> None:
+        async def send_with_headers(message: Any) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableScopeHeaders.from_message(message)
+                headers.setdefault("Content-Security-Policy", self.csp)
+                headers.setdefault("X-Content-Type-Options", "nosniff")
+                headers.setdefault("X-Frame-Options", "DENY")
+                headers.setdefault("Referrer-Policy", "no-referrer")
+            await send(message)
+
+        await next_app(scope, receive, send_with_headers)
+
+
 def create_app(
     *,
     db_path: Path,
@@ -123,17 +162,6 @@ def create_app(
             scoping, so they should be off on a shared/public deployment.
     """
 
-    csp = _build_csp(auth_config)
-
-    def _add_security_headers(response: Any) -> Any:
-        """Attach defense-in-depth security headers to every response (F3)."""
-        headers = response.headers
-        headers.setdefault("Content-Security-Policy", csp)
-        headers.setdefault("X-Content-Type-Options", "nosniff")
-        headers.setdefault("X-Frame-Options", "DENY")
-        headers.setdefault("Referrer-Policy", "no-referrer")
-        return response
-
     async def provide_db_path() -> Path:
         return db_path
 
@@ -146,7 +174,7 @@ def create_app(
     async def provide_auth_config() -> dict | None:
         return auth_config
 
-    middleware: list[Any] = []
+    middleware: list[Any] = [_SecurityHeadersMiddleware(csp=_build_csp(auth_config))]
     if auth_config:
         from siftd.serve.auth import create_auth_middleware, validate_auth_config
 
@@ -195,6 +223,5 @@ def create_app(
             "auth_config": Provide(provide_auth_config),
         },
         middleware=middleware,
-        after_request=_add_security_headers,
         request_max_body_size=request_max_body_size,
     )

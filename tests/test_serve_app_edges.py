@@ -9,14 +9,15 @@ pytestmark = pytest.mark.serve
 from siftd.serve import app as serve_app
 
 
-def test_create_app_without_auth_has_no_middleware(tmp_path):
+def test_create_app_without_auth_has_no_auth_middleware(tmp_path):
     # rate_limit_per_minute=0 isolates the auth-middleware wiring under test;
     # the rate limiter (F4, on by default) would otherwise add its own entry.
+    # The security-headers middleware (F3) is unconditional.
     app = serve_app.create_app(
         db_path=tmp_path / "db.db", auth_config=None, fts_rebuild="off",
         rate_limit_per_minute=0,
     )
-    assert app.middleware == []
+    assert [type(m) for m in app.middleware] == [serve_app._SecurityHeadersMiddleware]
 
 
 def test_create_app_with_auth_adds_middleware_and_dependencies(monkeypatch, tmp_path):
@@ -29,7 +30,7 @@ def test_create_app_with_auth_adds_middleware_and_dependencies(monkeypatch, tmp_
         db_path=db, auth_config={"issuer": "https://idp"}, fts_rebuild="scheduled",
         rate_limit_per_minute=0,
     )
-    assert app.middleware == [marker]
+    assert marker in app.middleware
     assert (asyncio.run(app.dependencies["db_path"].dependency()), asyncio.run(app.dependencies["fts_rebuild"].dependency())) == (db, "scheduled")
 
 

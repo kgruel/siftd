@@ -309,7 +309,7 @@ class TestOwnershipEnforcement:
 
         # Pre-populate introspection cache to avoid network calls and simulate two users.
         # Cache entries use absolute deadline (time.time() + TTL), not cached_at timestamp.
-        MW = app.middleware[0]
+        MW = next(m for m in app.middleware if hasattr(m, "_cache_key"))
         MW._introspection_cache = {
             MW._cache_key("tokA"): ({"username": "alice"}, time.time() + 3600),
             MW._cache_key("tokB"): ({"username": "bob"}, time.time() + 3600),
@@ -565,6 +565,30 @@ class TestSecurityHeaders:
             csp = r.headers.get("content-security-policy", "")
             assert "connect-src 'self' https://idp.example.com" in csp
 
+    def test_csp_does_not_bleed_across_apps_in_one_process(self, tmp_path):
+        # Litestar memoizes route-handler resolution process-wide: with headers
+        # attached via an after_request hook, once a no-auth app had served
+        # GET /, every later create_app() instance's HTTP responses inherited
+        # the FIRST app's CSP (narrow connect-src), silently dropping the OIDC
+        # issuer allowance. Headers now ride per-app ASGI middleware, which is
+        # resolved per-app. This test performs the poisoning sequence
+        # explicitly so the regression can't hide behind collection order.
+        team_db = tmp_path / "team.db"
+        create_database(team_db).close()
+
+        # Step 1: a no-auth app serves the path first (the poisoning step).
+        app_first = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app_first, raise_server_exceptions=False) as client:
+            csp = client.get("/").headers.get("content-security-policy", "")
+            assert "connect-src 'self';" in csp
+
+        # Step 2: a later issuer-configured app must still widen connect-src.
+        auth_config = {"issuer": "https://idp.example.com/realms/x"}
+        app_second = create_app(db_path=team_db, auth_config=auth_config)
+        with TestClient(app_second, raise_server_exceptions=False) as client:
+            csp = client.get("/").headers.get("content-security-policy", "")
+            assert "connect-src 'self' https://idp.example.com" in csp
+
     def test_shell_references_vendored_assets_not_cdn(self, tmp_path):
         team_db = tmp_path / "team.db"
         create_database(team_db).close()
@@ -692,7 +716,7 @@ class TestAuditLog:
         app = create_app(db_path=team_db, auth_config=auth_config, rate_limit_per_minute=0)
         # Seed the introspection cache so "tokA" resolves to alice without a
         # network round-trip.
-        mw = app.middleware[0]
+        mw = next(m for m in app.middleware if hasattr(m, "_cache_key"))
         mw._introspection_cache = {
             mw._cache_key("tokA"): ({"username": "alice"}, time.time() + 3600),
         }
@@ -875,7 +899,7 @@ class TestPushOwnedCount:
         team_db = tmp_path / "team.db"
         auth_config = {"introspection_url": "https://idp/i", "identity_claim": "username"}
         app = create_app(db_path=team_db, auth_config=auth_config, rate_limit_per_minute=0)
-        mw = app.middleware[0]
+        mw = next(m for m in app.middleware if hasattr(m, "_cache_key"))
         mw._introspection_cache = {
             mw._cache_key("tokA"): ({"username": "alice"}, time.time() + 3600),
         }
