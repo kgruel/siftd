@@ -58,7 +58,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies with embeddings
-        run: uv sync --extra dev --extra embed
+        run: uv sync --extra dev --extra embed --extra serve
 
       - name: Cache fastembed models
         uses: actions/cache@v4
@@ -87,7 +87,7 @@ jobs:
         run: uv sync --extra dev --extra serve
 
       - name: Run serve tests
-        run: uv run pytest tests/ -v --tb=short -m serve
+        run: uv run pytest tests/ -v --tb=short -m "serve and not embeddings"
 
   # Local equivalent: ./dev test-slow
   # Publish invokes this reusable workflow; keep slow tests out of PR CI.

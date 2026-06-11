@@ -751,6 +751,28 @@ class TestRequestBodySizeLimit:
 # ---------------------------------------------------------------------------
 
 
+def _init_empty_embed_db():
+    """Create an initialized, empty embeddings DB at the sandboxed default path.
+
+    The search route resolves the *server's* default embeddings DB (embed_db is
+    wire-excluded), which `_sandbox_db_home` redirects into tmp. Hybrid/semantic
+    searches raise FileNotFoundError (-> 404) when that DB is absent; these
+    wire-contract tests assert the route accepts the mode, so they need the DB
+    to exist — empty is enough (missing index metadata degrades with a warning).
+
+    No-op without the [embed] extra (storage.embeddings imports numpy at module
+    level): the route 501s before resolving the DB path, so it isn't needed.
+    """
+    from siftd.paths import embeddings_db_path
+
+    try:
+        from siftd.storage.embeddings import open_embeddings_db
+    except ImportError:
+        return
+
+    open_embeddings_db(embeddings_db_path()).close()
+
+
 class TestSearchModeWireContract:
     """Verify the `mode` query param travels on the wire and is honoured by the route.
 
@@ -797,6 +819,7 @@ class TestSearchModeWireContract:
     @pytest.mark.embeddings
     def test_search_mode_hybrid_accepted(self, tmp_path):
         """mode=hybrid is accepted by the route (backward-compat check)."""
+        _init_empty_embed_db()
         db, _ = _make_multi_turn_db(tmp_path / "team.db")
         app = create_app(db_path=db, auth_config=None)
         with TestClient(app) as client:
@@ -809,6 +832,7 @@ class TestSearchModeWireContract:
     @pytest.mark.embeddings
     def test_search_mode_semantic_accepted(self, tmp_path):
         """mode=semantic is accepted by the route (backward-compat check)."""
+        _init_empty_embed_db()
         db, _ = _make_multi_turn_db(tmp_path / "team.db")
         app = create_app(db_path=db, auth_config=None)
         with TestClient(app) as client:
@@ -820,6 +844,7 @@ class TestSearchModeWireContract:
 
     def test_search_embeddings_only_alias_still_works(self, tmp_path):
         """embeddings_only= continues to work when mode= is absent (backward compat)."""
+        _init_empty_embed_db()
         db, _ = _make_multi_turn_db(tmp_path / "team.db")
         app = create_app(db_path=db, auth_config=None)
         with TestClient(app) as client:

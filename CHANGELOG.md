@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-06-11
+
+> Security-hardening release for `siftd serve`: findings F2–F9 from a serve-layer
+> security audit, plus a three-tier CSP regression suite (static fitness function,
+> HTML↔CSP cross-check, real-browser smoke via `./dev browser-smoke`) guarding the
+> new policy.
+
+### Added
+
+- **Push response reports the server-stamped ownership count** — `siftd sync push` now shows how many conversations the server attributed to your authenticated identity ("Pushed 2 conversations (1.0 KB, 2 owned)"). Absent when the server doesn't report it (older server, local/SSH transport) rather than fabricating 0.
+
 ### Security
 
 - **Security headers + CSP on all serve responses; CDN assets vendored** — htmx and Prism are now served from `/static/vendor/` instead of unpkg.com (no external script origin; closes the supply-chain vector). Every response carries a `Content-Security-Policy` (notably `connect-src 'self'`, which prevents a bearer token in `sessionStorage` from being exfiltrated off-origin even after a hypothetical injection) plus `X-Content-Type-Options`, `X-Frame-Options: DENY`, and `Referrer-Policy`. When an OIDC issuer is configured, `connect-src` widens to that origin so the browser PKCE login flow (which fetches discovery + token endpoints) keeps working. HSTS remains the reverse proxy's job. (finding F3)
@@ -1031,7 +1042,8 @@ Initial public release.
 
 ---
 
-[Unreleased]: https://github.com/kgruel/siftd/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/kgruel/siftd/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/kgruel/siftd/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/kgruel/siftd/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/kgruel/siftd/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/kgruel/siftd/compare/v0.7.0...v0.8.0

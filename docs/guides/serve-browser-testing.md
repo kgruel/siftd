@@ -1,8 +1,13 @@
-# Serve browser testing — CSP smoke methodology + roadmap
+# Serve browser testing — CSP smoke methodology + tiers
 
-Status: **roadmap / methodology note.** Seeds a future browser-testing branch.
-Not yet implemented as automated tests. Written 2026-05-24 after a manual
-browser CSP smoke of the serve UI found a real bug.
+Status: **all three tiers implemented.** Written 2026-05-24 after a manual
+browser CSP smoke of the serve UI found a real bug; tiers landed 2026-06-10.
+
+- **T1 + T2** — `tests/architecture/test_csp_fitness.py` (base lane, every
+  `./dev check`)
+- **T3** — `./dev browser-smoke` → `tests/browser_smoke/smoke.py` (on demand:
+  serve-layer changes touching headers/CSP/UI JS, and post-merge per the
+  harness re-run discipline)
 
 ## Why this exists
 
