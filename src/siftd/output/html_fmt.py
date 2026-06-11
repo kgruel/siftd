@@ -152,7 +152,11 @@ def _render_tag_section(
             f' placeholder="add tag\u2026"'
             f' autocomplete="off"'
             f' hx-get="{escape(tag_suggest_url)}"'
-            f' hx-trigger="focus, keyup[key!=\'Enter\'] changed delay:200ms"'
+            # `input` (not keyup[key!='Enter']): fires only on value change, so
+            # Enter never refires the suggest fetch — and htmx event filters
+            # compile via new Function, which the CSP's missing 'unsafe-eval'
+            # blocks (see tests/architecture/test_csp_fitness.py).
+            f' hx-trigger="focus, input changed delay:200ms"'
             f' hx-target="#{escape(list_id)}" hx-swap="innerHTML"'
             f' hx-include="this">'
             f'<datalist id="{escape(list_id)}"></datalist>'
