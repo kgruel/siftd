@@ -11,8 +11,11 @@ pytestmark = pytest.mark.serve
 from siftd.serve import html_routes as hr
 
 
-def _run(coro):
-    return asyncio.run(coro)
+def _run(result):
+    # Most UI handlers are sync (threadpool via sync_to_thread); ui_tag is async.
+    if asyncio.iscoroutine(result):
+        return asyncio.run(result)
+    return result
 
 
 class _Fmt:
@@ -127,7 +130,7 @@ def test_ui_tag_missing_fields(monkeypatch, tmp_path):
 
 
 def test_ui_meta_populates_non_empty_options(monkeypatch, tmp_path):
-    monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: SimpleNamespace(models=["m1"]))
+    monkeypatch.setattr("siftd.api.stats.list_models", lambda **k: ["m1"])
     monkeypatch.setattr("siftd.api.stats.list_workspaces", lambda **k: [{"path": "/w1"}])
     monkeypatch.setattr("siftd.api.tags.list_tags", lambda **k: [SimpleNamespace(name="tag1")])
     out = _run(hr.ui_meta.fn(SimpleNamespace(), tmp_path / "db.db", None))

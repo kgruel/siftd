@@ -9,8 +9,11 @@ pytestmark = pytest.mark.serve
 from siftd.serve import html_routes as hr
 
 
-def _run(coro):
-    return asyncio.run(coro)
+def _run(result):
+    # Most UI handlers are sync (threadpool via sync_to_thread); ui_tag is async.
+    if asyncio.iscoroutine(result):
+        return asyncio.run(result)
+    return result
 
 
 def test_html_helpers_detail_and_tool_chars():
@@ -51,7 +54,7 @@ def test_ui_shell_returns_html_response(tmp_path):
 
 
 def test_ui_meta_handles_data_source_failures(monkeypatch, tmp_path):
-    monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setattr("siftd.api.stats.list_models", lambda **k: (_ for _ in ()).throw(RuntimeError("x")))
     monkeypatch.setattr("siftd.api.stats.list_workspaces", lambda **k: (_ for _ in ()).throw(RuntimeError("x")))
     monkeypatch.setattr("siftd.api.tags.list_tags", lambda **k: (_ for _ in ()).throw(RuntimeError("x")))
 

@@ -214,8 +214,8 @@ def _page_shell(
 </html>"""
 
 
-@get("/", opt={"no_auth": True})
-async def ui_shell(
+@get("/", opt={"no_auth": True}, sync_to_thread=True)
+def ui_shell(
     db_path: Path,
     live_enabled: bool,
     auth_config: dict | None = None,
@@ -241,8 +241,8 @@ async def ui_shell(
     )
 
 
-@get("/folio")
-async def ui_folio(
+@get("/folio", sync_to_thread=True)
+def ui_folio(
     request: Request,
     db_path: Path,
     id: str | None = Parameter(query="id", default=None),
@@ -292,8 +292,8 @@ async def ui_folio(
     ))
 
 
-@get("/dashboard")
-async def ui_dashboard(request: Request, db_path: Path) -> Response:
+@get("/dashboard", sync_to_thread=True)
+def ui_dashboard(request: Request, db_path: Path) -> Response:
     """Render the Swiss 'Stats' dashboard — aggregate token/cost over the corpus.
 
     Owner-scoped: every read takes the effective identity, so a tenant sees only
@@ -329,8 +329,8 @@ async def ui_dashboard(request: Request, db_path: Path) -> Response:
     )
 
 
-@get("/view/sessions")
-async def ui_sessions(
+@get("/view/sessions", sync_to_thread=True)
+def ui_sessions(
     request: Request,
     db_path: Path,
     live_enabled: bool,
@@ -367,8 +367,8 @@ async def ui_sessions(
     ))
 
 
-@get("/view/{name:str}")
-async def ui_view_stub(
+@get("/view/{name:str}", sync_to_thread=False)
+def ui_view_stub(
     name: str,
     q: str | None = Parameter(query="q", default=None),
 ) -> Response:
@@ -380,8 +380,8 @@ async def ui_view_stub(
     return _html_response(_stub(name, title, hint))
 
 
-@get("/find")
-async def ui_find(
+@get("/find", sync_to_thread=False)
+def ui_find(
     q: str | None = Parameter(query="q", default=None),
 ) -> Response:
     """The Swiss 'Find' view: one surface unifying metadata facets + content search.
@@ -447,8 +447,8 @@ def ui_auth_config(auth_config: dict | None) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@get("/meta")
-async def ui_meta(
+@get("/meta", sync_to_thread=True)
+def ui_meta(
     request: Request,
     db_path: Path,
     search: str | None = Parameter(query="search", default=None),
@@ -461,14 +461,14 @@ async def ui_meta(
     """
     from html import escape
 
-    from siftd.api.stats import get_stats, list_workspaces
+    from siftd.api.stats import list_models, list_workspaces
     from siftd.api.tags import list_tags
 
     owner = _effective_owner(request, None)
 
-    stats = None
+    model_names: list[str] = []
     try:
-        stats = get_stats(db_path=db_path, owner=owner)
+        model_names = list_models(db_path=db_path, owner=owner)
     except Exception:
         pass
 
@@ -500,7 +500,7 @@ async def ui_meta(
     from siftd.output.common import fmt_workspace
 
     ws_opts = [(r["path"], fmt_workspace(r["path"])) for r in ws_rows if r["path"]]
-    model_opts = [(m, m) for m in (stats.models if stats else [])]
+    model_opts = [(m, m) for m in model_names]
     tag_opts = [(t, t) for t in tag_names]
 
     def _date(name: str, label: str) -> str:
@@ -535,8 +535,8 @@ async def ui_meta(
     return _html_response("".join(parts))
 
 
-@get("/query")
-async def ui_query(
+@get("/query", sync_to_thread=True)
+def ui_query(
     request: Request,
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
@@ -604,8 +604,8 @@ async def ui_query(
     return _html_response(dispatch(op, fmt=fmt))
 
 
-@get("/search")
-async def ui_search(
+@get("/search", sync_to_thread=True)
+def ui_search(
     request: Request,
     db_path: Path,
     q: str = Parameter(query="q", default=""),
@@ -720,8 +720,8 @@ async def ui_search(
 # ---------------------------------------------------------------------------
 
 
-@get("/follow")
-async def ui_follow(
+@get("/follow", sync_to_thread=True)
+def ui_follow(
     sid: str = Parameter(query="sid", default=""),
     poll: bool = Parameter(query="poll", default=False),
 ) -> Response:
@@ -845,8 +845,8 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
     ))
 
 
-@get("/tags/suggest")
-async def ui_tags_suggest(
+@get("/tags/suggest", sync_to_thread=True)
+def ui_tags_suggest(
     request: Request,
     db_path: Path,
     tag: str = Parameter(query="tag", default=""),
@@ -872,8 +872,8 @@ async def ui_tags_suggest(
 # ---------------------------------------------------------------------------
 
 
-@get("/export")
-async def ui_export(
+@get("/export", sync_to_thread=True)
+def ui_export(
     request: Request,
     db_path: Path,
     id: str = Parameter(query="id", default=""),

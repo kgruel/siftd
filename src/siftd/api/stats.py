@@ -163,6 +163,38 @@ def get_cost_coverage(
             conn.close()
 
 
+def list_models(
+    conn: sqlite3.Connection | None = None,
+    *,
+    db_path: Path | None = None,
+    owner: str | None = None,
+) -> list[str]:
+    """List canonical model names, optionally scoped to an owner.
+
+    A cheap projection for filter UIs — ``get_stats`` returns the same list but
+    pays for full-table counts and token coverage to get it.
+
+    Args:
+        conn: Database connection. Opened from db_path if not provided.
+        db_path: Path to database. Ignored if conn provided.
+        owner: Scope to conversations owned by this identity.
+
+    Returns:
+        Sorted, deduped canonical model names.
+    """
+    should_close = False
+    if conn is None:
+        db = db_path or default_db_path()
+        conn = open_database(db, read_only=True)
+        should_close = True
+    try:
+        owner_kw = {"owner": owner} if owner else {}
+        return fetch_model_names(conn, **owner_kw)
+    finally:
+        if should_close:
+            conn.close()
+
+
 def list_workspaces(
     conn: sqlite3.Connection | None = None,
     n: int = 10,
