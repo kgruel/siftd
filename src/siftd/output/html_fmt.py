@@ -24,13 +24,18 @@ media_type = "text/html"
 
 
 def _hx_detail(detail_base: str, conv_id: str, shell_base: str = "") -> str:
-    """Build htmx attributes for a detail link, or empty string if no base."""
+    """Build htmx attributes for a detail link, or empty string if no base.
+
+    Rows mount the detail surface into ``#main`` — the Swiss shell's single
+    swap target. The old two-pane ``#detail`` container no longer exists, so
+    anything still targeting it is a dead click (htmx targetError).
+    """
     if not detail_base:
         return ""
     push = f' hx-push-url="{escape(shell_base)}?id={escape(conv_id)}"' if shell_base else ""
     return (
         f' hx-get="{escape(detail_base)}?id={escape(conv_id)}"'
-        f' hx-target="#detail" hx-swap="innerHTML"'
+        f' hx-target="#main" hx-swap="innerHTML"'
         f'{push}'
     )
 
@@ -40,69 +45,18 @@ def _hx_detail(detail_base: str, conv_id: str, shell_base: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
-def _render_controls(controls: dict, detail_base: str, export_base: str = "") -> str:
-    """Render toolbar: fidelity toggles (left) + export links (right).
-
-    Fidelity order: Brief | Tools | Thinking | Full.
-    Tools + Thinking both on → auto-selects Full.
-    """
-    conv_id = controls.get("id", "")
-    tools = controls.get("tools", False)
-    thinking = controls.get("thinking", False)
-    full = controls.get("full", False)
-    brief = controls.get("brief", False)
-
-    def _qs(**params: str | bool) -> str:
-        parts = []
-        for k, v in sorted(params.items()):
-            if v and v is not False:
-                parts.append(f"{k}={escape(str(v).lower() if isinstance(v, bool) else str(v))}")
-        return "&".join(parts)
-
-    def _btn(label: str, qs: str, active: bool) -> str:
-        css = "toggle active" if active else "toggle"
-        href = f"{escape(detail_base)}?{qs}" if detail_base else f"?{qs}"
-        return (
-            f'<button class="{css}"'
-            f' hx-get="{href}"'
-            f' hx-target="#detail" hx-swap="innerHTML">'
-            f"{label}</button>"
-        )
-
-    # Tools+Thinking both on → promote to Full
-    next_tools = not tools
-    next_thinking = not thinking
-    if next_tools and thinking:
-        tools_qs = _qs(id=conv_id, full=True)
-    else:
-        tools_qs = _qs(id=conv_id, tools=next_tools, thinking=thinking)
-    if tools and next_thinking:
-        thinking_qs = _qs(id=conv_id, full=True)
-    else:
-        thinking_qs = _qs(id=conv_id, tools=tools, thinking=next_thinking)
-
-    buttons = [
-        _btn("Brief", _qs(id=conv_id, brief=True), brief),
-        _btn("Tools", tools_qs, tools),
-        _btn("Thinking", thinking_qs, thinking),
-        _btn("Full", _qs(id=conv_id, full=True), full),
-    ]
-
-    parts = ['<div class="detail-toolbar">']
-    parts.append('<div class="fidelity-controls">' + "".join(buttons) + "</div>")
-
-    if export_base:
-        parts.append(
-            f'<div class="export-actions">'
-            f'<a href="{escape(export_base)}?id={escape(conv_id)}&format=md"'
-            f' class="export-link" download>.md</a>'
-            f'<a href="{escape(export_base)}?id={escape(conv_id)}&format=json"'
-            f' class="export-link" download>.json</a>'
-            f'</div>'
-        )
-
-    parts.append("</div>")
-    return "\n".join(parts)
+def _render_export_links(export_base: str, conv_id: str) -> str:
+    """Render md/json download links for one conversation."""
+    if not export_base:
+        return ""
+    return (
+        f'<div class="export-actions">'
+        f'<a href="{escape(export_base)}?id={escape(conv_id)}&format=md"'
+        f' class="export-link" download>.md</a>'
+        f'<a href="{escape(export_base)}?id={escape(conv_id)}&format=json"'
+        f' class="export-link" download>.json</a>'
+        f'</div>'
+    )
 
 
 def _render_tag_section(
@@ -194,7 +148,6 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
         turns: override which turns to render (default: result.turns)
         tool_chars: int
         no_header: bool
-        controls: dict — fidelity toggle state (id, tools, thinking, full, brief)
     """
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens
     from siftd.output.narrative import HtmlEmitter, walk_narrative
@@ -207,22 +160,15 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
         detail = context.get("detail")
     no_header = context.get("no_header", False)
     tool_chars = context.get("tool_chars", 0)
-    controls = context.get("controls")
 
     parts: list[str] = ['<article class="conversation-detail">']
 
     if detail and not no_header:
         detail_id = getattr(detail, "id", "") or ""
-        detail_base = context.get("detail_base", "")
-        export_base = context.get("export_base_url", "")
 
         parts.append('<header class="conversation-header">')
 
-        # Row 1: toolbar — fidelity controls (left) + export (right)
-        if controls:
-            parts.append(_render_controls(controls, detail_base, export_base))
-
-        # Row 2: sticky info bar — date · model · tokens · id
+        # Sticky info bar — date · model · tokens · id
         # Matches list table column vocabulary
         meta = []
         ts = fmt_timestamp(getattr(detail, "started_at", None))
@@ -777,6 +723,12 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     rendered as ``&mdash;`` when ``None`` (no priced usage) — never a fabricated
     $0 that would re-introduce the mispricing the rollup work removed. The tool
     total lives in the ledger header (``folio__navmeta``).
+
+    Context keys (all optional — the folio is the single detail surface, so it
+    hosts the tag/export affordances the two-pane detail used to carry):
+        interactive_tags: bool — tag pills get × remove + an add input
+        tag_action_url / tag_suggest_url: routes for the tag form (no hardcoding)
+        export_base_url: route for md/json download links
     """
     from collections import Counter
 
@@ -863,6 +815,19 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     turn_count = n
     kick = f"{escape(short)} · folio" if short else "folio"
 
+    # Curation foot: tags + export, hosted in the ledger aside. The /tag route
+    # swaps the same stable #tags-<id> section render_tag_section returns.
+    curation = ""
+    if conv_id:
+        tags = getattr(detail, "tags", None) or []
+        tag_html = _render_tag_section(
+            conv_id, tags, context.get("interactive_tags", False),
+            tag_action_url=context.get("tag_action_url", ""),
+            tag_suggest_url=context.get("tag_suggest_url", ""),
+        )
+        export_html = _render_export_links(context.get("export_base_url", ""), conv_id)
+        curation = f'<div class="ledger__curation">{tag_html}{export_html}</div>'
+
     parts: list[str] = [
         f'<article class="folio" data-view="transcript" data-title="Transcript"'
         f' data-count="{turn_count}" data-kick="{kick}">',
@@ -883,7 +848,9 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
         f'<span class="ledger__statn">{escape(fmt_tokens(total_tokens))}</span></div>',
         '<div class="ledger__stat"><span class="micro">Cost</span>'
         f'<span class="ledger__statn">{cost_str}</span></div>',
-        "</div></aside>",
+        "</div>",
+        curation,
+        "</aside>",
         "</article>",
     ]
     return "".join(parts)

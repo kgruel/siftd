@@ -132,3 +132,34 @@ def test_folio_empty_conversation_renders_without_crash():
     assert 'class="folio"' in html
     assert 'data-count="0"' in html
     assert "no tool calls" in html  # ledger empty-state, not a crash
+
+
+def test_folio_curation_foot_hosts_tags_and_export():
+    """The folio is the single detail surface, so it carries the tag/export
+    affordances the two-pane detail used to own. The tag section keeps the
+    stable #tags-<id> the /tag route swaps via outerHTML."""
+    detail = _detail()
+    detail.tags = ["shell:file", "decision"]
+    html = render_folio(
+        detail,
+        _FID,
+        interactive_tags=True,
+        tag_action_url="/tag",
+        tag_suggest_url="/tags/suggest",
+        export_base_url="/export",
+    )
+    assert 'class="ledger__curation"' in html
+    assert 'id="tags-' in html  # stable swap target for the /tag route
+    assert 'hx-post="/tag"' in html  # remove buttons + add form
+    assert "format=md" in html and "format=json" in html  # export links
+
+
+def test_folio_without_context_renders_passive_tags_only():
+    # CLI html export path: no routes to offer — tags render as plain pills,
+    # no forms, no export links.
+    detail = _detail()
+    detail.tags = ["decision"]
+    html = render_folio(detail, _FID)
+    assert 'class="tag">decision' in html
+    assert "hx-post" not in html
+    assert "export-actions" not in html

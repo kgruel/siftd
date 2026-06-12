@@ -247,6 +247,18 @@ async def flow(cdp, check, goto, code_conv):
     )
     check("FTS5 punctuation input survives", not err)
 
+    # row click: a Find list row must mount the folio into #main and push
+    # /?id=… — regression guard for the dead two-pane "#detail" target
+    # (htmx targetError: clicks silently did nothing).
+    await cdp.click('a[data-view="search"]')
+    await cdp.drain(1.5)
+    await cdp.click("#list tbody tr")
+    await cdp.drain(1.5)
+    folio = await cdp.eval("!!document.querySelector('#main .folio')")
+    pushed = await cdp.eval("location.search.includes('id=')")
+    check("find row click mounts folio in #main", bool(folio))
+    check("find row click pushes /?id= deep link", bool(pushed))
+
     # folio with the rust fence -> Prism autoloader under CSP
     await goto(f"{BASE}/?id={code_conv}", 3.5)
     pre = await cdp.eval("document.querySelectorAll('#main pre, #main code').length")

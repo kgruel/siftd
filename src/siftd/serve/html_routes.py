@@ -23,19 +23,6 @@ def _html_response(content: str) -> Response:
     return Response(content=content, media_type="text/html")
 
 
-def _hx_detail(detail_base: str, conv_id: str, shell_base: str = "") -> str:
-    """Build htmx attributes for a row that navigates to conversation detail."""
-    from html import escape
-    if not detail_base:
-        return ""
-    push = f' hx-push-url="{escape(shell_base)}?id={escape(conv_id)}"' if shell_base else ""
-    return (
-        f' hx-get="{escape(detail_base)}?id={escape(conv_id)}"'
-        f' hx-target="#detail" hx-swap="innerHTML"'
-        f'{push}'
-    )
-
-
 def _fidelity(
     depth: int = 1,
     chars: int = 200,
@@ -287,7 +274,13 @@ async def ui_folio(
         )
     if detail is None:
         return _html_response(_stub("transcript", "Transcript", f"not found: {conv_id[:12]}"))
-    return _html_response(fmt.render_folio(detail, fidelity))
+    return _html_response(fmt.render_folio(
+        detail, fidelity,
+        interactive_tags=True,
+        tag_action_url="/tag",
+        tag_suggest_url="/tags/suggest",
+        export_base_url="/export",
+    ))
 
 
 @get("/dashboard")
@@ -507,17 +500,14 @@ async def ui_query(
     search: str | None = Parameter(query="search", default=None),
     owner: str | None = Parameter(query="owner", default=None),
     n: int = Parameter(query="n", default=50),
-    id: str | None = Parameter(query="id", default=None),
-    # Fidelity controls (detail view)
-    thinking: bool = Parameter(query="thinking", default=False),
-    full: bool = Parameter(query="full", default=False),
-    brief: bool = Parameter(query="brief", default=False),
 ) -> Response:
-    """List or detail conversations as HTML fragments."""
-    from html import escape
+    """List conversations as an HTML fragment (rows link to the folio).
 
-    from siftd.api.conversations import AmbiguousPrefix, get_conversation, list_conversations
-    from siftd.api.dispatch import Operation, dispatch, execute
+    List-only: the old ``?id=`` detail mode is gone — the folio is the single
+    detail surface, and rows mount it into ``#main``.
+    """
+    from siftd.api.conversations import list_conversations
+    from siftd.api.dispatch import Operation, dispatch
     from siftd.output.format_registry import get_format
 
     # Normalize empty strings to None (htmx sends "" for blank inputs)
@@ -540,51 +530,7 @@ async def ui_query(
         search = sanitize_fts5_query(search).fts_query
 
     fmt = get_format("html")
-    ctx = {"detail_base": "/query", "shell_base": "/"}
-
-    if id is not None:
-        # Build fidelity from query params — same logic as CLI flags
-        if full:
-            fidelity = _fidelity(depth=3, chars=0, tools=True, thinking=True)
-        elif brief:
-            fidelity = _fidelity(depth=0, chars=80)
-        else:
-            fidelity = _fidelity(depth=2, chars=0, thinking=thinking)
-
-        op = Operation(
-            path=f"/api/v1/conversations/{id}",
-            method="GET",
-            fn=get_conversation,
-            params={
-                "id": id,
-                "fidelity": fidelity,
-                "db_path": db_path,
-                "owner": owner,
-            },
-            render_method="detail",
-            fidelity=fidelity,
-            db=db_path,
-            render_context={
-                **ctx,
-                "tool_chars": _tool_chars(fidelity),
-                "controls": {"id": id, "thinking": thinking,
-                             "full": full, "brief": brief},
-                "interactive_tags": True,
-                "tag_action_url": "/tag",
-                "tag_suggest_url": "/tags/suggest",
-                "export_base_url": "/export",
-            },
-        )
-        try:
-            detail = execute(op)
-        except AmbiguousPrefix as exc:
-            return _html_response(
-                f'<p class="error">Ambiguous prefix {escape(exc.prefix)!r} — matched {exc.total} conversations.'
-                " Use a longer prefix or full ID.</p>"
-            )
-        if detail is None:
-            return _html_response(f'<p class="empty">Not found: {id[:12]}</p>')
-        return _html_response(fmt.render_detail(detail, op.fidelity, **op.render_context))
+    ctx = {"detail_base": "/folio", "shell_base": "/"}
 
     list_fidelity = _fidelity()
     op = Operation(
@@ -634,7 +580,7 @@ async def ui_search(
         return _html_response('<p class="empty">Type to search...</p>')
 
     fmt = get_format("html")
-    ctx = {"detail_base": "/query", "shell_base": "/", "query": q, "mode": mode}
+    ctx = {"detail_base": "/folio", "shell_base": "/", "query": q, "mode": mode}
 
     # Mode toggle tabs
     def _tab(label: str, m: str) -> str:
@@ -809,8 +755,6 @@ async def ui_follow(
         fidelity,
         no_header=True,
         tool_chars=tc,
-        detail_base="/query",
-        shell_base="/",
     )
 
     if poll:

@@ -109,6 +109,29 @@ def test_folio_by_id(ctx):
     assert "ask number 1" in body
 
 
+def test_query_rows_mount_folio_in_main(ctx):
+    """Rows are the click path from Find to a conversation. They must target
+    #main (the only swap target in the Swiss shell) and mount the folio —
+    the old #detail target matched nothing, so clicks were silent no-ops."""
+    client, cid = ctx
+    body = client.get("/query").text
+    assert 'hx-get="/folio?id=' in body
+    assert 'hx-target="#main"' in body
+    assert 'hx-push-url="/?id=' in body
+    assert "#detail" not in body
+
+
+def test_folio_hosts_tag_and_export_curation(ctx):
+    """The folio is the single detail surface, so it owns the tag/export
+    affordances the deleted /query?id= detail mode used to carry."""
+    client, cid = ctx
+    body = client.get("/folio", params={"id": cid}).text
+    assert 'class="ledger__curation"' in body
+    assert 'hx-post="/tag"' in body          # interactive tag add/remove
+    assert 'id="tags-' in body               # stable swap target for /tag
+    assert "format=md" in body and "format=json" in body  # export links
+
+
 def test_stub_view_carries_head_metadata(ctx):
     client, _cid = ctx
     body = client.get("/view/sessions").text

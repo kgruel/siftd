@@ -29,21 +29,10 @@ class _Fmt:
         return "<stats/>"
 
 
-def test_ui_query_detail_none_and_success(monkeypatch, tmp_path):
-    monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: None)
-    not_found = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", thinking=False, full=False, brief=False))
-    assert "Not found" in not_found.content
-
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: {"id": "abc"})
-    ok = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", thinking=False, full=True, brief=False))
-    assert "<detail/>" in ok.content
-
-
 def test_ui_query_list_path(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
     monkeypatch.setattr("siftd.api.dispatch.dispatch", lambda _op, fmt: "<list/>")
-    out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace="", since=None, before=None, model="", tag=[""], search="", owner=None, n=5, id=None, thinking=False, full=False, brief=False))
+    out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace="", since=None, before=None, model="", tag=[""], search="", owner=None, n=5))
     assert "<list/>" in out.content
 
 
@@ -142,13 +131,6 @@ def test_ui_meta_populates_non_empty_options(monkeypatch, tmp_path):
     assert "/w1" in out.content and "tag1" in out.content and "m1" in out.content
 
 
-def test_ui_query_brief_fidelity_branch(monkeypatch, tmp_path):
-    monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: {"id": "abc"})
-    out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace=None, since=None, before=None, model=None, tag=None, search=None, owner=None, n=50, id="abc", thinking=False, full=False, brief=True))
-    assert "<detail/>" in out.content
-
-
 def test_ui_search_no_results_fallback(monkeypatch, tmp_path):
     db = tmp_path / "db.db"
     monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
@@ -188,7 +170,21 @@ def test_ui_stats_exception_branches(monkeypatch, tmp_path):
     assert "<stats/>" in out.content
 
 
-def test_ui_query_and_export_ambiguous_prefix(monkeypatch, tmp_path):
+def test_ui_folio_ambiguous_prefix_stub(monkeypatch, tmp_path):
+    # /query is list-only now — the folio owns the ambiguous-id UX.
+    from siftd.api.conversations import AmbiguousPrefix
+
+    amb = AmbiguousPrefix("01AMBPFX", ["01AMBPFXA1B2C3D4E5F6G7H8", "01AMBPFXB2C3D4E5F6G7H8I9"], 2)
+    monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
+    monkeypatch.setattr(
+        "siftd.api.conversations.get_conversation",
+        lambda *_a, **_k: (_ for _ in ()).throw(amb),
+    )
+    resp = _run(hr.ui_folio.fn(SimpleNamespace(), tmp_path / "db.db", id="01AMBPFX"))
+    assert "ambiguous id" in resp.content and "2 matches" in resp.content
+
+
+def test_ui_export_ambiguous_prefix(monkeypatch, tmp_path):
     from siftd.api.conversations import AmbiguousPrefix
 
     db = tmp_path / "db.db"
@@ -199,15 +195,6 @@ def test_ui_query_and_export_ambiguous_prefix(monkeypatch, tmp_path):
         "siftd.api.dispatch.execute",
         lambda _op: (_ for _ in ()).throw(amb),
     )
-
-    query_resp = _run(hr.ui_query.fn(
-        SimpleNamespace(), db,
-        workspace=None, since=None, before=None, model=None, tag=None,
-        search=None, owner=None, n=50, id="01AMBPFX",
-        thinking=False, full=False, brief=False,
-    ))
-    assert "Ambiguous prefix" in query_resp.content
-    assert "01AMBPFX" in query_resp.content
 
     export_resp = _run(hr.ui_export.fn(SimpleNamespace(), db, id="01AMBPFX", format="md"))
     assert "Ambiguous prefix" in export_resp.content

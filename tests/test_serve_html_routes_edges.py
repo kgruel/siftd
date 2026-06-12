@@ -14,9 +14,14 @@ def _run(coro):
 
 
 def test_html_helpers_detail_and_tool_chars():
-    assert hr._hx_detail("", "cid") == ""
-    detail = hr._hx_detail("/query", "cid", "/")
-    assert 'hx-get="/query?id=cid"' in detail and 'hx-push-url="/?id=cid"' in detail
+    from siftd.output.html_fmt import _hx_detail
+
+    assert _hx_detail("", "cid") == ""
+    detail = _hx_detail("/folio", "cid", "/")
+    # Rows mount the folio into the Swiss shell's #main — the only swap target
+    # that exists; "#detail" was the two-pane container and is gone.
+    assert 'hx-get="/folio?id=cid"' in detail and 'hx-push-url="/?id=cid"' in detail
+    assert 'hx-target="#main"' in detail
 
     f_full = hr._fidelity(depth=3, tools=True, thinking=True)
     f_brief = hr._fidelity(depth=1)
