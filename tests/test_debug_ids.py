@@ -14,7 +14,6 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 
 from siftd.domain.search_types import SearchChunk
@@ -154,7 +153,7 @@ def test_search_route_still_accepts_debug_ids(monkeypatch, tmp_path):
         return {"result_count": 0, "results": []}
 
     monkeypatch.setattr(routes, "_dispatch", fake_dispatch)
-    asyncio.run(routes.search_route.fn(SimpleNamespace(), tmp_path / "db.db", q="hi", debug_ids=False, mode=None))
+    routes.search_route.fn(SimpleNamespace(), tmp_path / "db.db", q="hi", debug_ids=False, mode=None)
     assert "debug_ids" in seen_rc[0]
 
 

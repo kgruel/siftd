@@ -205,8 +205,8 @@ def _fidelity_from_visible(visible: str | None, *, depth: int = 1):
     return Fidelity(depth=depth, visible=frozenset(tags))
 
 
-@get("/api/v1")
-async def index() -> dict:
+@get("/api/v1", sync_to_thread=False)
+def index() -> dict:
     """API index — list available endpoints."""
     return {
         "service": "siftd",
@@ -229,8 +229,8 @@ async def index() -> dict:
     }
 
 
-@get("/api/v1/health", opt={"no_auth": True})
-async def health(db_path: Path) -> dict:
+@get("/api/v1/health", opt={"no_auth": True}, sync_to_thread=True)
+def health(db_path: Path) -> dict:
     """Health check — returns DB status."""
     from siftd.api import get_health_status
     from siftd.serialization import serialize_health_status
@@ -238,8 +238,8 @@ async def health(db_path: Path) -> dict:
     return serialize_health_status(get_health_status(db_path))
 
 
-@get("/api/v1/stats")
-async def stats_route(request: Request, db_path: Path) -> dict | Response:
+@get("/api/v1/stats", sync_to_thread=True)
+def stats_route(request: Request, db_path: Path) -> dict | Response:
     """Return database statistics. Server has DB warm, so this is fast."""
     from siftd.api.stats import get_stats
 
@@ -247,8 +247,8 @@ async def stats_route(request: Request, db_path: Path) -> dict | Response:
     return _dispatch("/api/v1/stats", "GET", get_stats, {"db_path": db_path, "owner": owner}, "stats", db_path)
 
 
-@get("/api/v1/workspaces")
-async def workspaces_route(
+@get("/api/v1/workspaces", sync_to_thread=True)
+def workspaces_route(
     request: Request,
     db_path: Path,
     n: int = Parameter(query="n", default=10000),
@@ -264,8 +264,8 @@ async def workspaces_route(
     )
 
 
-@get("/api/v1/workspaces/{id:str}")
-async def workspace_detail_route(
+@get("/api/v1/workspaces/{id:str}", sync_to_thread=True)
+def workspace_detail_route(
     request: Request,
     db_path: Path,
     id: str,
@@ -293,8 +293,8 @@ async def workspace_detail_route(
     )
 
 
-@get("/api/v1/tags")
-async def tags_route(
+@get("/api/v1/tags", sync_to_thread=True)
+def tags_route(
     request: Request,
     db_path: Path,
     since: str | None = Parameter(query="since", default=None),
@@ -426,8 +426,8 @@ async def tag_write_route(request: Request, db_path: Path) -> dict | Response:
     return payload
 
 
-@get("/api/v1/events/{event_id:str}")
-async def event_detail_route(
+@get("/api/v1/events/{event_id:str}", sync_to_thread=True)
+def event_detail_route(
     request: Request, event_id: str, db_path: Path,
     neighbors: bool = Parameter(query="neighbors", default=False),
 ) -> dict | Response:
@@ -545,8 +545,8 @@ async def session_queue_tag_route(
     return {"queued": queued, "duplicate": duplicate}
 
 
-@get("/api/v1/export")
-async def export_route(
+@get("/api/v1/export", sync_to_thread=True)
+def export_route(
     request: Request,
     db_path: Path,
     id: list[str] | None = Parameter(query="id", default=None),
@@ -726,8 +726,8 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
             tmp_path.unlink()
 
 
-@get("/api/v1/pull")
-async def pull(
+@get("/api/v1/pull", sync_to_thread=True)
+def pull(
     request: Request,
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
@@ -843,8 +843,8 @@ async def pull(
         raise
 
 
-@get("/api/v1/sync/status", opt={"no_auth": True})
-async def sync_status_route(db_path: Path, request_max_body_size: int) -> dict:
+@get("/api/v1/sync/status", opt={"no_auth": True}, sync_to_thread=True)
+def sync_status_route(db_path: Path, request_max_body_size: int) -> dict:
     """Return sync capabilities and inbox status."""
     from siftd.api.inbox import get_inbox_status
     from siftd.domain.sync import SYNC_CAPABILITIES, SYNC_PROTOCOL_VERSION
@@ -863,8 +863,8 @@ async def sync_status_route(db_path: Path, request_max_body_size: int) -> dict:
     }
 
 
-@get("/api/v1/conversations/{id:str}")
-async def conversation_detail(
+@get("/api/v1/conversations/{id:str}", sync_to_thread=True)
+def conversation_detail(
     request: Request,
     db_path: Path,
     id: str,
@@ -919,8 +919,8 @@ async def conversation_detail(
     )
 
 
-@get("/api/v1/conversations")
-async def conversation_list(
+@get("/api/v1/conversations", sync_to_thread=True)
+def conversation_list(
     request: Request,
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
@@ -966,8 +966,8 @@ async def conversation_list(
     )
 
 
-@get("/api/v1/search")
-async def search_route(
+@get("/api/v1/search", sync_to_thread=True)
+def search_route(
     request: Request,
     db_path: Path,
     q: str = Parameter(query="q"),
