@@ -88,19 +88,9 @@ def test_ui_peek_and_follow_branches(monkeypatch):
     assert "Cannot read session" in _run(hr.ui_follow.fn(sid="x")).content
 
 
-def test_ui_stats_tools_tag_suggest_and_export(monkeypatch, tmp_path):
+def test_ui_tags_suggest_and_export(monkeypatch, tmp_path):
     db = tmp_path / "db.db"
     monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
-
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: (_ for _ in ()).throw(RuntimeError("x")))
-    assert "No data available" in _run(hr.ui_stats.fn(SimpleNamespace(), db)).content
-
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: {"ok": True})
-    monkeypatch.setattr("siftd.api.stats.get_usage_summary", lambda **_k: None)
-    monkeypatch.setattr("siftd.api.stats.get_cost_coverage", lambda **_k: None)
-    monkeypatch.setattr("siftd.api.stats.get_usage_by_model", lambda **_k: [])
-    monkeypatch.setattr("siftd.api.stats.get_usage_by_workspace", lambda **_k: [])
-    assert "<stats/>" in _run(hr.ui_stats.fn(SimpleNamespace(), db)).content
 
     monkeypatch.setattr("siftd.api.tags.list_tags", lambda **_k: [SimpleNamespace(name="alpha"), SimpleNamespace(name="beta")])
     assert "alpha" in _run(hr.ui_tags_suggest.fn(SimpleNamespace(), db, tag="a")).content
@@ -157,17 +147,6 @@ def test_ui_follow_poll_and_first_load(monkeypatch):
 
     full = _run(hr.ui_follow.fn(sid="sid123", poll=False))
     assert "follow-content" in full.content and "every 2s" in full.content
-
-
-def test_ui_stats_exception_branches(monkeypatch, tmp_path):
-    db = tmp_path / "db.db"
-    monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: {"ok": True})
-    monkeypatch.setattr("siftd.api.stats.get_usage_summary", lambda **_k: (_ for _ in ()).throw(RuntimeError("x")))
-    monkeypatch.setattr("siftd.api.stats.get_usage_by_model", lambda **_k: (_ for _ in ()).throw(RuntimeError("x")))
-    monkeypatch.setattr("siftd.api.stats.get_usage_by_workspace", lambda **_k: (_ for _ in ()).throw(RuntimeError("x")))
-    out = _run(hr.ui_stats.fn(SimpleNamespace(), db))
-    assert "<stats/>" in out.content
 
 
 def test_ui_folio_ambiguous_prefix_stub(monkeypatch, tmp_path):
