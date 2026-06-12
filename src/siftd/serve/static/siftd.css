@@ -37,7 +37,9 @@ body { margin: 0; }
 /* ---- shared primitives ------------------------------------------------- */
 .content { background:var(--paper); color:var(--ink);
   font-family:var(--font-ui); font-size:var(--fs-base);
-  letter-spacing:var(--letter); overflow-y:auto; }
+  letter-spacing:var(--letter); overflow-y:auto;
+  /* Views respond to the surface they mount in, not the viewport. */
+  container-type:inline-size; container-name:main; }
 .micro { font-size:var(--fs-micro); letter-spacing:.16em; text-transform:uppercase;
   color:var(--mid); font-weight:600; }
 .tnum { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; }
@@ -97,10 +99,25 @@ body { margin: 0; }
 /* ========================================================================= */
 .folio { display:grid; height:100%; min-height:0;
   grid-template-columns:204px minmax(0,1fr) 248px;
-  grid-template-areas:"nav body ledger"; background:var(--paper); }
+  grid-template-rows:minmax(0,1fr) auto;
+  grid-template-areas:"nav body ledger" "nav body foot"; background:var(--paper); }
 .folio__nav { grid-area:nav; border-right:1px solid var(--hair); overflow-y:auto; min-height:0; }
 .folio__body { grid-area:body; overflow-y:auto; min-height:0; padding:30px 44px 64px; }
 .folio__ledger { grid-area:ledger; border-left:1px solid var(--hair); overflow-y:auto; min-height:0; }
+.folio__foot { grid-area:foot; border-left:1px solid var(--hair); border-top:1px solid var(--hair); }
+
+/* Narrow container: the conversation is front and center; nav, ledger and
+   foot reflow into a three-column footer band beneath it. Same markup. */
+@container main (max-width: 760px) {
+  .folio { grid-template-columns:5fr 4fr 5fr;
+    grid-template-rows:minmax(0,1fr) auto;
+    grid-template-areas:"body body body" "nav ledger foot"; }
+  .folio__nav, .folio__ledger, .folio__foot {
+    border-top:2px solid var(--hair-strong); border-left:0; border-right:0;
+    max-height:218px; overflow-y:auto; }
+  .folio__ledger, .folio__foot { border-left:1px solid var(--hair); }
+  .folio__body { padding:24px 28px 48px; }
+}
 .folio__navhead { display:flex; justify-content:space-between; align-items:center;
   padding:14px 18px; border-bottom:1px solid var(--hair); }
 .folio__navmeta { font-family:var(--font-mono); font-size:var(--fs-micro); color:var(--faint); }
@@ -175,9 +192,33 @@ body { margin: 0; }
 .ledger__n { text-align:right; color:var(--mid); font-variant-numeric:tabular-nums; }
 .ledger__empty { color:var(--faint); }
 .ledger__empty .ledger__name { color:var(--faint); }
-.ledger__foot { display:flex; gap:8px; padding:14px 18px; border-top:1px solid var(--hair); margin-top:6px; }
+.folio__stats { display:flex; gap:8px; padding:14px 18px; }
 .ledger__stat { flex:1; display:flex; flex-direction:column; gap:4px; }
 .ledger__statn { font-family:var(--font-mono); font-weight:600; color:var(--ink); }
+
+/* Curation — tags + export, foot citizens */
+.ledger__curation { display:flex; flex-direction:column; gap:12px;
+  padding:12px 18px 16px; border-top:1px solid var(--hair); }
+.tag-section { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.tag-section .tag { display:inline-flex; align-items:center; gap:7px;
+  font-family:var(--font-mono); font-size:var(--fs-micro); letter-spacing:.06em;
+  border:1px solid var(--hair); padding:3px 8px; color:var(--mid); }
+.tag-remove { appearance:none; background:none; border:0; padding:0; line-height:1;
+  font-size:12px; color:var(--faint); cursor:pointer; }
+.tag-remove:hover { color:var(--accent); }
+.tag-add { display:inline-flex; margin:0; }
+.tag-input { appearance:none; background:transparent; border:0;
+  border-bottom:1px solid var(--hair); border-radius:0; width:12ch;
+  font-family:var(--font-mono); font-size:var(--fs-micro); letter-spacing:.06em;
+  color:var(--ink); padding:3px 2px; }
+.tag-input:focus { outline:none; border-bottom-color:var(--accent); }
+.tag-input::placeholder { color:var(--faint); }
+.tag-input::-webkit-calendar-picker-indicator { display:none !important; }
+.export-actions { display:flex; gap:8px; }
+.export-link { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.1em; text-transform:uppercase; text-decoration:none;
+  border:1px solid var(--hair); padding:4px 10px; color:var(--mid); }
+.export-link:hover { border-color:var(--accent); color:var(--accent); }
 
 /* ========================================================================= */
 /* STATS (dashboard) — headline · model/workspace ledgers · corpus           */

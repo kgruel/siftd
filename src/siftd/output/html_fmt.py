@@ -753,9 +753,14 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
       - ``.folio__ledger`` a ``Counter`` over ``turn.tool_call_summaries`` —
                            pure render-layer, no new data
 
+    A fourth region, ``.folio__foot`` (tokens · cost · tags · export), sits
+    under the ledger column when wide; on a narrow container the grid reflows
+    to a body-on-top layout with a nav · ledger · foot footer band (container
+    query — pure CSS, no markup difference between the layouts).
+
     The fragment root carries ``data-view/title/count/kick`` so ``enhance.js``
     updates the chrome head + active nav on an htmx swap without oob coupling.
-    The ledger foot shows tokens + cost; cost is the rollup's canonical
+    The foot shows tokens + cost; cost is the rollup's canonical
     per-conversation value (``ConversationDetail.cost``, fetched at depth>=3),
     rendered as ``&mdash;`` when ``None`` (no priced usage) — never a fabricated
     $0 that would re-introduce the mispricing the rollup work removed. The tool
@@ -860,7 +865,7 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     title = context.get("title", "Transcript")
     live_poll_url = context.get("live_poll_url", "")
 
-    # Curation foot: tags + export, hosted in the ledger aside. The /tag route
+    # Curation: tags + export, hosted in the folio foot. The /tag route
     # swaps the same stable #tags-<id> section render_tag_section returns.
     curation = ""
     if conv_id and not live_poll_url:
@@ -895,14 +900,19 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
         '<div class="folio__navhead"><span class="micro">Tool ledger</span>'
         f'<span class="folio__navmeta">{total_tools}</span></div>',
         f'<ul class="ledger">{"".join(ledger_rows)}</ul>',
-        '<div class="ledger__foot">',
+        "</aside>",
+        # Foot is its own grid area, not part of the ledger aside: wide layouts
+        # pin it under the ledger column; narrow ones reflow it into the footer
+        # band (nav · ledger · foot) so the conversation stays front and center.
+        '<footer class="folio__foot">',
+        '<div class="folio__stats">',
         '<div class="ledger__stat"><span class="micro">Tokens</span>'
         f'<span class="ledger__statn">{escape(fmt_tokens(total_tokens))}</span></div>',
         '<div class="ledger__stat"><span class="micro">Cost</span>'
         f'<span class="ledger__statn">{cost_str}</span></div>',
         "</div>",
         curation,
-        "</aside>",
+        "</footer>",
         "</article>",
     ]
     return "".join(parts)
