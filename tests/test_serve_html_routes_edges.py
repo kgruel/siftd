@@ -43,7 +43,8 @@ def test_page_shell_modes():
 
 def test_ui_shell_returns_html_response(tmp_path):
     resp = _run(hr.ui_shell.fn(
-        db_path=tmp_path / "db.db", auth_config=None, id="cid", q="qq", follow=None,
+        db_path=tmp_path / "db.db", live_enabled=True, auth_config=None,
+        id="cid", q="qq", follow=None,
     ))
     assert resp.media_type == "text/html" and "<!DOCTYPE html>" in resp.content
     assert "chrome--swiss" in resp.content

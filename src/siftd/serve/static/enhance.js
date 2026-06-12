@@ -45,6 +45,21 @@
     });
   }
 
+  // --- day histograms (data-n -> height) ------------------------------------
+  // Sessions day-heads render 24 hour-bucket spans server-side; scale each
+  // against the day's max. CSSOM .style writes only (CSP: no inline styles).
+  function drawHists(root) {
+    (root || document).querySelectorAll('.hist').forEach(function (h) {
+      var spans = h.querySelectorAll('span[data-n]');
+      var max = 1;
+      spans.forEach(function (s) { var n = +s.dataset.n || 0; if (n > max) max = n; });
+      spans.forEach(function (s) {
+        var n = +s.dataset.n || 0;
+        s.style.height = (n ? Math.max(2, Math.round(n / max * 16)) : 1) + 'px';
+      });
+    });
+  }
+
   // --- chrome head + active nav from the mounted fragment -------------------
   function syncChrome() {
     var v = document.querySelector('#main [data-view]');
@@ -107,7 +122,7 @@
     if (window.Prism) window.Prism.highlightAll();
   }
 
-  function enhance() { wireTone(); drawLedgers(); syncChrome(); initSpy(); highlight(); }
+  function enhance() { wireTone(); drawLedgers(); drawHists(); syncChrome(); initSpy(); highlight(); }
 
   document.body.addEventListener('htmx:afterSettle', enhance);
   applyTone();

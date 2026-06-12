@@ -134,10 +134,23 @@ def test_folio_hosts_tag_and_export_curation(ctx):
 
 def test_stub_view_carries_head_metadata(ctx):
     client, _cid = ctx
-    body = client.get("/view/sessions").text
+    body = client.get("/view/tags").text
     assert 'class="stub"' in body
-    assert 'data-view="sessions"' in body
-    assert 'data-title="Sessions"' in body
+    assert 'data-view="tags"' in body
+    assert 'data-title="Tags"' in body
+
+
+def test_sessions_view_is_live(ctx):
+    """Sessions is no longer a stub: live zone + day-grouped ingested timeline,
+    rows mounting the folio like every conversation row."""
+    client, _cid = ctx
+    body = client.get("/view/sessions").text
+    assert 'class="stub"' not in body
+    assert 'data-view="sessions"' in body and 'data-title="Sessions"' in body
+    assert 'class="zone zone--live"' in body      # ctx app: live endpoints on
+    assert 'class="day__head"' in body            # day grouping over real rows
+    assert 'class="hist"' in body                 # hour-of-day buckets
+    assert 'hx-get="/folio?id=' in body and 'hx-target="#main"' in body
 
 
 def test_find_view_is_live_unified_surface(ctx):

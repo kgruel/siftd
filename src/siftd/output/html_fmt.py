@@ -856,6 +856,194 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     return "".join(parts)
 
 
+def _ago(epoch: float | None) -> str:
+    """Humanize seconds-since-epoch as a compact age ('2m', '1h 14m', '3d')."""
+    import time as _time
+
+    if not epoch:
+        return ""
+    delta = max(0, int(_time.time() - epoch))
+    if delta < 60:
+        return f"{delta}s"
+    minutes, hours, days = delta // 60, delta // 3600, delta // 86400
+    if days:
+        return f"{days}d"
+    if hours:
+        return f"{hours}h {minutes % 60:02d}m"
+    return f"{minutes}m"
+
+
+def _iso_epoch(ts: str | None) -> float | None:
+    from datetime import datetime
+
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _hour_hist(hours: list[int]) -> str:
+    """24 hour-of-day buckets as .hist spans; enhance.js scales heights from
+    data-n (CSSOM writes only — no inline style attributes under the CSP)."""
+    buckets = [0] * 24
+    for h in hours:
+        if 0 <= h < 24:
+            buckets[h] += 1
+    spans = "".join(f'<span data-n="{n}"></span>' for n in buckets)
+    return f'<span class="hist" aria-hidden="true">{spans}</span>'
+
+
+def render_sessions(live: list, summaries: list, **context: Any) -> str:
+    """Render the Swiss 'Sessions' view: a Live zone over an Ingested timeline.
+
+    Live zone — peek scan results (server-local session files). Rendered only
+    when ``context['live_enabled']`` (the serve layer threads the F7
+    ``allow_live_endpoints`` policy through; on a public bind the /follow
+    route isn't even registered, so the cards must not render either).
+    Cards show scan-level fields only: workspace [branch] · model · adapter ·
+    exchanges · started/active age. No tokens, no cost — the scan's token
+    convention is harness-reported (cache-exclusive for Anthropic), and a live
+    number that jumps ~40× after ingest inside the same view would
+    re-introduce the undercount class the v10 rollup work removed.
+
+    Ingested zone — ConversationSummary rows grouped by start day, newest
+    first. Day heads carry totals (sessions · tokens · cost) and an
+    hour-of-day histogram; all derived render-side from started_at /
+    total_tokens / cost — no new data surface. Cost honesty as everywhere:
+    sum of priced rows, ``&mdash;`` when nothing in the day is priced.
+    Rows mount the folio via the same _hx_detail contract as Find.
+    """
+    from collections import OrderedDict
+    from datetime import datetime
+
+    from siftd.output.common import fmt_model, fmt_tokens
+
+    detail_base = context.get("detail_base", "")
+    shell_base = context.get("shell_base", "")
+    follow_base = context.get("follow_base", "")
+    live_enabled = context.get("live_enabled", False)
+
+    parts: list[str] = []
+
+    # --- live zone ---------------------------------------------------------
+    if live_enabled:
+        cards: list[str] = []
+        for s in live:
+            ws = getattr(s, "workspace_name", None) or "?"
+            branch = getattr(s, "branch", None)
+            ws_label = f"{ws} [{branch}]" if branch else ws
+            model = fmt_model(getattr(s, "model", None)) or ""
+            adapter = getattr(s, "adapter_name", None) or ""
+            meta_bits = [b for b in (model, adapter) if b]
+            started = _iso_epoch(getattr(s, "started_at", None))
+            age = _ago(started)
+            active = _ago(getattr(s, "last_activity", None))
+            when = f"started {age} ago" if age else (f"active {active} ago" if active else "")
+            sid = getattr(s, "session_id", "")
+            hx = ""
+            if follow_base and sid:
+                from urllib.parse import quote as _q
+
+                hx = (
+                    f' hx-get="{escape(follow_base)}?sid={_q(sid)}"'
+                    f' hx-target="#main" hx-swap="innerHTML"'
+                    f' hx-push-url="{escape(shell_base)}?follow={_q(sid)}"'
+                )
+            cards.append(
+                f'<li class="card card--live"{hx}>'
+                f'<span class="pulse" aria-hidden="true"></span>'
+                f'<div class="card__ws">{escape(ws_label)}</div>'
+                f'<div class="card__meta">{escape(" · ".join(meta_bits))}'
+                f'{(" · " + escape(when)) if when and meta_bits else escape(when)}</div>'
+                f'<div class="card__nums">'
+                f'<span class="stat"><span class="stat__n">{getattr(s, "exchange_count", 0)}</span>'
+                f'<span class="micro">exchanges</span></span>'
+                f"</div></li>"
+            )
+        live_body = (
+            f'<ul class="cards">{"".join(cards)}</ul>'
+            if cards
+            else '<p class="zone__empty">no live sessions on this host</p>'
+        )
+        parts.append(
+            '<section class="zone zone--live" aria-label="Live sessions">'
+            '<div class="zone__head"><span class="micro">Live</span>'
+            f'<span class="zone__count">{len(cards)} active</span>'
+            '<span class="zone__rule"></span></div>'
+            f"{live_body}</section>"
+        )
+
+    # --- ingested timeline ---------------------------------------------------
+    days: OrderedDict[str, list] = OrderedDict()
+    for c in summaries:
+        epoch = _iso_epoch(getattr(c, "started_at", None))
+        key = datetime.fromtimestamp(epoch).strftime("%Y-%m-%d") if epoch else "unknown"
+        days.setdefault(key, []).append(c)
+
+    day_parts: list[str] = []
+    for key, convs in days.items():
+        if key == "unknown":
+            label = "undated"
+            hist = ""
+        else:
+            label = datetime.strptime(key, "%Y-%m-%d").strftime("%a %d %b")
+            hours = []
+            for c in convs:
+                e = _iso_epoch(c.started_at)
+                if e is not None:
+                    hours.append(datetime.fromtimestamp(e).hour)
+            hist = _hour_hist(hours)
+        tok = sum(getattr(c, "total_tokens", 0) or 0 for c in convs)
+        priced = [c.cost for c in convs if getattr(c, "cost", None) is not None]
+        cost_str = f"${sum(priced):,.2f}" if priced else "&mdash;"
+        sub = f"{len(convs)} sessions · {fmt_tokens(tok)} tok · {cost_str}"
+
+        rows: list[str] = []
+        for c in convs:
+            model = fmt_model(getattr(c, "model", None)) or ""
+            ws = getattr(c, "workspace_path", None)
+            ws_name = ws.rstrip("/").rsplit("/", 1)[-1] if ws else "?"
+            row_cost = getattr(c, "cost", None)
+            row_cost_str = f"${row_cost:,.2f}" if row_cost is not None else "&mdash;"
+            rows.append(
+                f"<li class=\"row\"{_hx_detail(detail_base, c.id, shell_base)}>"
+                f'<span class="row__ws">{escape(ws_name)}</span>'
+                f'<span class="row__model">{escape(model)}</span>'
+                f'<span class="row__turns">{getattr(c, "prompt_count", 0)}</span>'
+                f'<span class="row__tok">{escape(fmt_tokens(getattr(c, "total_tokens", 0) or 0))}</span>'
+                f'<span class="cost">{row_cost_str}</span>'
+                f"</li>"
+            )
+        day_parts.append(
+            f'<div class="day"><div class="day__head">'
+            f'<span class="day__date">{escape(label)}</span>'
+            f'<span class="day__sub">{sub}</span>{hist}</div>'
+            f'<ul class="rows">{"".join(rows)}</ul></div>'
+        )
+
+    ingested = (
+        "".join(day_parts)
+        if day_parts
+        else '<p class="empty">No ingested sessions yet.</p>'
+    )
+    parts.append(
+        '<section class="zone zone--ingested" aria-label="Ingested sessions">'
+        '<div class="zone__head"><span class="micro">Ingested</span>'
+        f'<span class="zone__count">{len(summaries)} sessions</span>'
+        '<span class="zone__rule"></span></div></section>'
+        f"{ingested}"
+    )
+
+    kick = "live · ingested" if live_enabled else "ingested"
+    return (
+        f'<section class="sessions" data-view="sessions" data-title="Sessions"'
+        f' data-count="{len(summaries)}" data-kick="{kick}">'
+        f'{"".join(parts)}</section>'
+    )
+
+
 def _dash_usage_rows(groups: list, *, label_fn=None, limit: int = 10) -> str:
     """Render a usage breakdown (model or workspace) as ``.ledger`` rows.
 

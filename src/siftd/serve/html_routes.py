@@ -117,13 +117,15 @@ def _page_shell(
     search_q: str | None = None,
     follow_sid: str | None = None,
     footer: dict | None = None,
+    live_enabled: bool = False,
 ) -> str:
     """Build the Swiss page shell (left rail + surface) with deep-link state.
 
-    The rail mounts one of six views into ``#main`` via htmx. Only Transcript
-    (the folio) is live in this slice; the others mount a ``.stub``. Deep links
-    remap to a view: ``?id=`` → Transcript, ``?q=`` → Search, ``?follow=`` →
-    Sessions (the latter two land on their stub until those slices ship).
+    The rail mounts one of six views into ``#main`` via htmx. Deep links remap
+    to a view: ``?id=`` → Transcript folio, ``?q=`` → Search, ``?follow=`` →
+    the live follow tail (Sessions). When live endpoints are disabled (public
+    bind — F7), ``?follow=`` degrades to the Sessions view itself rather than
+    pointing at an unregistered route.
     """
     from html import escape as esc
     from urllib.parse import quote as urlquote
@@ -132,6 +134,8 @@ def _page_shell(
         active, main_url = "transcript", f"/folio?id={urlquote(conv_id)}"
     elif search_q:
         active, main_url = "search", f"/find?q={urlquote(search_q)}"
+    elif follow_sid and live_enabled:
+        active, main_url = "sessions", f"/follow?sid={urlquote(follow_sid)}"
     elif follow_sid:
         active, main_url = "sessions", "/view/sessions"
     else:
@@ -140,9 +144,9 @@ def _page_shell(
     nav_parts: list[str] = []
     for vid, num, name, ds, url in _NAV_ITEMS:
         cur = ' aria-current="page"' if vid == active else ""
-        # Only the live view pushes a clean URL; stubs leave the address bar
-        # untouched (their deep-link contract returns with their slice).
-        push_attr = ' hx-push-url="/"' if vid == "transcript" else ""
+        # Live views push a clean URL; stubs leave the address bar untouched
+        # (their deep-link contract returns with their slice).
+        push_attr = ' hx-push-url="/"' if vid in ("transcript", "sessions") else ""
         nav_parts.append(
             f'<a data-view="{vid}"{cur} hx-get="{esc(url)}" hx-target="#main"'
             f' hx-swap="innerHTML"{push_attr}>'
@@ -213,6 +217,7 @@ def _page_shell(
 @get("/", opt={"no_auth": True})
 async def ui_shell(
     db_path: Path,
+    live_enabled: bool,
     auth_config: dict | None = None,
     id: str | None = Parameter(query="id", default=None),
     q: str | None = Parameter(query="q", default=None),
@@ -223,11 +228,15 @@ async def ui_shell(
     Accepts optional params for deep-linkable URLs:
         ?id=     — open a conversation (Transcript folio)
         ?q=      — pre-populate Search
-        ?follow= — follow a live session (Sessions)
+        ?follow= — follow a live session (Sessions; degrades to the Sessions
+                   view when live endpoints are off)
     """
     footer = _shell_footer(db_path, with_counts=auth_config is None)
     return Response(
-        content=_page_shell(conv_id=id, search_q=q, follow_sid=follow, footer=footer),
+        content=_page_shell(
+            conv_id=id, search_q=q, follow_sid=follow, footer=footer,
+            live_enabled=live_enabled,
+        ),
         media_type="text/html",
     )
 
@@ -318,6 +327,44 @@ async def ui_dashboard(request: Request, db_path: Path) -> Response:
             owner=owner,
         )
     )
+
+
+@get("/view/sessions")
+async def ui_sessions(
+    request: Request,
+    db_path: Path,
+    live_enabled: bool,
+) -> Response:
+    """The Swiss 'Sessions' view: a Live zone over a day-grouped Ingested timeline.
+
+    Live zone = the peek scan (server-local session files, no owner concept) —
+    rendered only when ``live_enabled`` (the F7 ``allow_live_endpoints``
+    policy: off on a public bind, so the host's sessions are never shown to
+    remote users; ``/follow`` isn't registered then either). Ingested zone =
+    ``list_conversations``, owner-scoped like every DB read.
+    """
+    from siftd.api.conversations import list_conversations
+    from siftd.output.format_registry import get_format
+
+    live: list = []
+    if live_enabled:
+        from siftd.api.peek import list_active_sessions
+
+        live = list_active_sessions(include_inactive=False, limit=12)
+
+    owner = _effective_owner(request, None)
+    summaries = list_conversations(
+        fidelity=_fidelity(), db_path=db_path, n=50, owner=owner,
+    )
+
+    fmt = get_format("html")
+    return _html_response(fmt.render_sessions(
+        live, summaries,
+        live_enabled=live_enabled,
+        detail_base="/folio",
+        shell_base="/",
+        follow_base="/follow",
+    ))
 
 
 @get("/view/{name:str}")
@@ -673,47 +720,6 @@ async def ui_search(
 # ---------------------------------------------------------------------------
 
 
-@get("/peek")
-async def ui_peek() -> Response:
-    """List active sessions as HTML — the entry point for follow mode."""
-    from html import escape
-
-    from siftd.api.peek import list_active_sessions
-
-    sessions = list_active_sessions(include_inactive=False, limit=30)
-
-    if not sessions:
-        return _html_response('<p class="empty">No active sessions</p>')
-
-    parts: list[str] = ['<table class="conversation-list">']
-    parts.append(
-        "<thead><tr>"
-        '<th class="identifier">Session</th>'
-        '<th class="workspace">Workspace</th>'
-        '<th class="model">Model</th>'
-        '<th class="metric">Exchanges</th>'
-        '<th class="adapter">Adapter</th>'
-        "</tr></thead><tbody>"
-    )
-    for s in sessions:
-        ws = s.workspace_name or ""
-        if s.branch:
-            ws = f"{ws} [{s.branch}]" if ws else f"[{s.branch}]"
-        parts.append(
-            f'<tr hx-get="/follow?sid={escape(s.session_id)}"'
-            f' hx-target="#detail" hx-swap="innerHTML"'
-            f' hx-push-url="/?follow={escape(s.session_id)}">'
-            f'<td class="identifier">{escape(short_id(s.session_id))}</td>'
-            f'<td class="workspace">{escape(ws)}</td>'
-            f'<td class="model">{escape(s.model or "")}</td>'
-            f'<td class="metric">{s.exchange_count}</td>'
-            f'<td class="adapter">{escape(s.adapter_name or "")}</td>'
-            f"</tr>"
-        )
-    parts.append("</tbody></table>")
-    return _html_response("\n".join(parts))
-
-
 @get("/follow")
 async def ui_follow(
     sid: str = Parameter(query="sid", default=""),
@@ -760,7 +766,8 @@ async def ui_follow(
     if poll:
         return _html_response(exchanges_html)
 
-    # First load: session header + polling wrapper
+    # First load: a Swiss fragment (head metadata syncs the chrome — follow is
+    # a state of the Sessions view) wrapping the session header + polling div.
     info = detail.info
     ws = info.workspace_name or ""
     if info.branch:
@@ -779,7 +786,10 @@ async def ui_follow(
 
     poll_url = f"/follow?sid={escape(sid)}&poll=true"
     body = (
-        f'<article class="conversation-detail follow-mode">'
+        f'<article class="conversation-detail follow-mode"'
+        f' data-view="sessions" data-title="Sessions"'
+        f' data-count="{info.exchange_count}"'
+        f' data-kick="follow · {escape(short_id(info.session_id))}">'
         f'{header}'
         f'<div id="follow-content"'
         f' hx-get="{poll_url}" hx-trigger="every 2s"'

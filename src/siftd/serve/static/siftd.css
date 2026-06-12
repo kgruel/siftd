@@ -208,6 +208,56 @@ body { margin: 0; }
 .dash__metav { color:var(--ink); font-variant-numeric:tabular-nums; text-align:right; }
 
 /* ========================================================================= */
+/* SESSIONS — Live zone (peek cards) over the day-grouped Ingested timeline   */
+/* ========================================================================= */
+.sessions { height:100%; overflow-y:auto; min-height:0; background:var(--paper);
+  padding:8px 0 40px; }
+.zone { padding:18px 32px 6px; }
+.zone__head { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+.zone__count { font-family:var(--font-mono); font-size:var(--fs-micro); color:var(--faint); }
+.zone__rule { flex:1; height:1px; background:var(--hair); }
+.zone__empty { margin:0 0 8px; color:var(--faint); font-family:var(--font-mono);
+  font-size:var(--fs-micro); letter-spacing:.08em; }
+
+/* live cards */
+.cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr));
+  gap:14px; list-style:none; margin:0; padding:0; }
+.card { position:relative; border:1px solid var(--hair); border-radius:var(--card-radius);
+  background:var(--panel); padding:14px 16px; overflow:hidden; }
+.card--live { box-shadow:var(--row-marker); cursor:pointer; }
+.card--live:hover { background:var(--sel-bg); }
+.pulse { position:absolute; top:14px; right:14px; width:8px; height:8px; border-radius:999px;
+  background:var(--accent); animation:pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.35; transform:scale(.8); } }
+.card__ws { font-weight:700; font-size:calc(var(--fs-base) + 2px); letter-spacing:-.01em; }
+.card__meta { font-family:var(--font-mono); font-size:var(--fs-micro); color:var(--mid);
+  margin-top:4px; letter-spacing:.04em; }
+.card__nums { display:flex; gap:18px; margin-top:14px; flex-wrap:wrap; }
+.stat { display:flex; align-items:baseline; gap:5px; }
+.stat__n { font-family:var(--font-mono); font-weight:700; font-size:calc(var(--fs-base) + 5px);
+  color:var(--ink); font-variant-numeric:tabular-nums; }
+
+/* ingested timeline */
+.day__head { display:flex; align-items:center; gap:14px; padding:14px 32px 8px;
+  border-bottom:1px solid var(--hair); }
+.day__date { font-family:var(--font-mono); font-weight:600; color:var(--ink); white-space:nowrap; }
+.day__sub { font-size:var(--fs-micro); color:var(--faint); font-family:var(--font-mono); }
+.hist { display:flex; margin-left:auto; height:16px; align-items:flex-end; gap:1px; }
+.hist span { width:3px; background:var(--accent); opacity:.45; }
+.rows { list-style:none; margin:0; padding:0; }
+.row { display:flex; align-items:center; gap:14px; height:var(--row-h);
+  padding:0 32px; border-bottom:1px solid var(--hair);
+  font-family:var(--font-mono); cursor:pointer; }
+.row:hover { background:var(--sel-bg); }
+.row__ws { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  font-family:var(--font-ui); color:var(--ink); }
+.row__model { width:16ch; color:var(--mid); overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; }
+.row__turns { width:4ch; text-align:right; color:var(--mid); font-variant-numeric:tabular-nums; }
+.row__tok { width:8ch; text-align:right; color:var(--ink); font-variant-numeric:tabular-nums; }
+.row .cost { width:9ch; text-align:right; font-variant-numeric:tabular-nums; color:var(--ink); }
+
+/* ========================================================================= */
 /* STUB — views not yet authored in this slice                              */
 /* ========================================================================= */
 .stub { height:100%; display:flex; flex-direction:column; align-items:center;

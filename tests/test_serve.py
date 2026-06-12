@@ -624,19 +624,33 @@ class TestRateLimitAndLiveGate:
     """F4 (per-client rate limit) + F7 (live-endpoint gate)."""
 
     def test_live_endpoints_gated_off(self, tmp_path):
+        """F7: with live endpoints off, /follow is unregistered AND the
+        Sessions view renders no Live zone — the server host's session files
+        are never shown to remote users."""
         team_db = tmp_path / "team.db"
         create_database(team_db).close()
         app = create_app(db_path=team_db, auth_config=None, allow_live_endpoints=False)
         with TestClient(app, raise_server_exceptions=False) as client:
-            assert client.get("/peek").status_code == 404
             assert client.get("/follow?sid=abc").status_code == 404
+            sessions = client.get("/view/sessions")
+            assert sessions.status_code == 200
+            assert "zone--live" not in sessions.text
+            assert 'hx-get="/follow' not in sessions.text
+            # The shell's ?follow= deep link degrades to the Sessions view,
+            # never pointing #main at the unregistered route.
+            shell = client.get("/", params={"follow": "abc"}).text
+            assert "/view/sessions" in shell and "/follow?sid=" not in shell
 
     def test_live_endpoints_present_when_allowed(self, tmp_path):
         team_db = tmp_path / "team.db"
         create_database(team_db).close()
         app = create_app(db_path=team_db, auth_config=None, allow_live_endpoints=True)
         with TestClient(app, raise_server_exceptions=False) as client:
-            assert client.get("/peek").status_code == 200  # registered (may be empty)
+            sessions = client.get("/view/sessions")
+            assert sessions.status_code == 200
+            assert "zone--live" in sessions.text  # zone present (may be empty)
+            shell = client.get("/", params={"follow": "abc"}).text
+            assert "/follow?sid=abc" in shell
 
     def test_rate_limit_returns_429_when_exceeded(self, tmp_path):
         team_db = tmp_path / "team.db"

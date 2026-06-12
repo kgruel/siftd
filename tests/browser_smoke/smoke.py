@@ -259,6 +259,25 @@ async def flow(cdp, check, goto, code_conv):
     check("find row click mounts folio in #main", bool(folio))
     check("find row click pushes /?id= deep link", bool(pushed))
 
+    # sessions view: live zone (loopback server -> live on, sandbox -> empty)
+    # over the day-grouped ingested timeline; hist bars scaled by enhance.js
+    await cdp.click('a[data-view="sessions"]')
+    await cdp.drain(1.5)
+    zones = await cdp.eval(
+        "!!document.querySelector('#main .zone--live')"
+        " && !!document.querySelector('#main .day__head')"
+    )
+    check("sessions view renders live zone + day groups", bool(zones))
+    hist_drawn = await cdp.eval(
+        "(function(){var s=document.querySelector('#main .hist span[data-n]');"
+        "return s ? s.style.height !== '' : false;})()"
+    )
+    check("day hist bars scaled by enhance.js", bool(hist_drawn))
+    await cdp.click("#main .rows .row")
+    await cdp.drain(1.5)
+    srow = await cdp.eval("!!document.querySelector('#main .folio')")
+    check("sessions row click mounts folio", bool(srow))
+
     # folio with the rust fence -> Prism autoloader under CSP
     await goto(f"{BASE}/?id={code_conv}", 3.5)
     pre = await cdp.eval("document.querySelectorAll('#main pre, #main code').length")

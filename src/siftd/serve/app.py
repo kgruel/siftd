@@ -20,9 +20,9 @@ from siftd.serve.html_routes import (
     ui_folio,
     ui_follow,
     ui_meta,
-    ui_peek,
     ui_query,
     ui_search,
+    ui_sessions,
     ui_shell,
     ui_tag,
     ui_tags_suggest,
@@ -159,10 +159,11 @@ def create_app(
             client to one address. ``/static`` and the health check are exempt.
             The generous default (600/min) does not impede the htmx UI's polling
             but throttles credential brute force.
-        allow_live_endpoints: When False, the ``/peek`` and ``/follow`` live
-            session endpoints are not registered (finding F7). They read session
-            files from the *server host's* filesystem, bypassing DB owner
-            scoping, so they should be off on a shared/public deployment.
+        allow_live_endpoints: When False, the ``/follow`` live session endpoint
+            is not registered and the Sessions view renders its ingested zone
+            only (finding F7). Live session data is read from the *server
+            host's* filesystem, bypassing DB owner scoping, so it must be off
+            on a shared/public deployment.
     """
 
     async def provide_db_path() -> Path:
@@ -176,6 +177,9 @@ def create_app(
 
     async def provide_auth_config() -> dict | None:
         return auth_config
+
+    async def provide_live_enabled() -> bool:
+        return allow_live_endpoints
 
     middleware: list[Any] = [_SecurityHeadersMiddleware(csp=_build_csp(auth_config))]
     if auth_config:
@@ -210,13 +214,14 @@ def create_app(
         export_route,
         push, pull, sync_status_route, conversation_detail, conversation_list,
         event_detail_route, search_route,
-        ui_shell, ui_auth_config, ui_folio, ui_dashboard, ui_view_stub,
+        ui_shell, ui_auth_config, ui_folio, ui_dashboard, ui_sessions,
+        ui_view_stub,
         ui_find, ui_meta, ui_query, ui_search,
         ui_tag, ui_tags_suggest, ui_export,
         static_router,
     ]
     if allow_live_endpoints:
-        route_handlers.extend([ui_peek, ui_follow])
+        route_handlers.append(ui_follow)
 
     return Litestar(
         route_handlers=route_handlers,
@@ -225,6 +230,7 @@ def create_app(
             "fts_rebuild": Provide(provide_fts_rebuild),
             "request_max_body_size": Provide(provide_request_max_body_size),
             "auth_config": Provide(provide_auth_config),
+            "live_enabled": Provide(provide_live_enabled),
         },
         middleware=middleware,
         request_max_body_size=request_max_body_size,

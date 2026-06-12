@@ -63,15 +63,28 @@ def test_ui_search_modes_and_fallbacks(monkeypatch, tmp_path):
     assert "<list/>" in fb.content
 
 
-def test_ui_peek_and_follow_branches(monkeypatch):
+def test_ui_sessions_and_follow_branches(monkeypatch, tmp_path):
+    db = tmp_path / "db.db"
+    monkeypatch.setattr("siftd.api.conversations.list_conversations", lambda **_k: [])
+
     monkeypatch.setattr("siftd.api.peek.list_active_sessions", lambda **_k: [])
-    assert "No active sessions" in _run(hr.ui_peek.fn()).content
+    out = _run(hr.ui_sessions.fn(SimpleNamespace(), db, live_enabled=True)).content
+    assert "no live sessions on this host" in out
 
     monkeypatch.setattr(
         "siftd.api.peek.list_active_sessions",
-        lambda **_k: [SimpleNamespace(session_id="s12345678", workspace_name="ws", branch="b", model="m", exchange_count=2, adapter_name="a")],
+        lambda **_k: [SimpleNamespace(session_id="s12345678", workspace_name="ws", branch="b", model="m", exchange_count=2, adapter_name="a", last_activity=0.0, started_at=None)],
     )
-    assert "conversation-list" in _run(hr.ui_peek.fn()).content
+    out = _run(hr.ui_sessions.fn(SimpleNamespace(), db, live_enabled=True)).content
+    assert "card--live" in out and 'hx-get="/follow?sid=s12345678"' in out
+
+    # live_enabled=False: no live zone, no follow links, no peek scan at all
+    monkeypatch.setattr(
+        "siftd.api.peek.list_active_sessions",
+        lambda **_k: (_ for _ in ()).throw(AssertionError("scan must not run")),
+    )
+    out = _run(hr.ui_sessions.fn(SimpleNamespace(), db, live_enabled=False)).content
+    assert "zone--live" not in out and "/follow" not in out
 
     assert "No session ID" in _run(hr.ui_follow.fn(sid="")).content
 
