@@ -147,22 +147,37 @@ def test_ui_search_no_results_fallback(monkeypatch, tmp_path):
     assert "No results for" in out.content
 
 
-def test_ui_follow_poll_and_first_load(monkeypatch):
+def test_ui_follow_renders_live_folio(monkeypatch):
+    # Follow IS the folio rendered from a live source: real html renderer over
+    # in-memory peek exchanges — no DB, no separate poll fragment.
+    from siftd.domain.peek import PeekExchange, PeekNarrativeBlock
+
     monkeypatch.setattr("siftd.api.peek.find_session_file", lambda _sid: "/tmp/f")
     monkeypatch.setattr(
         "siftd.api.peek.read_session_detail",
         lambda *a, **k: SimpleNamespace(
-            info=SimpleNamespace(session_id="sid123456789", workspace_name="ws", branch="b", model="m", exchange_count=3, adapter_name="a"),
-            exchanges=[{"x": 1}],
+            info=SimpleNamespace(session_id="sid123456789", workspace_name="ws", branch="b", model="m", exchange_count=1, adapter_name="a"),
+            exchanges=[PeekExchange(
+                timestamp="2026-06-12T10:00:00Z",
+                prompt_text="hello",
+                narrative=[PeekNarrativeBlock(block_type="text", content="world")],
+                tool_calls=[("shell.execute", 2)],
+                input_tokens=10,
+                output_tokens=5,
+            )],
         ),
     )
-    monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
 
-    poll = _run(hr.ui_follow.fn(sid="sid123", poll=True))
-    assert "<detail/>" in poll.content
-
-    full = _run(hr.ui_follow.fn(sid="sid123", poll=False))
-    assert "follow-content" in full.content and "every 2s" in full.content
+    out = _run(hr.ui_follow.fn(sid="sid123")).content
+    # Folio chrome under the Sessions view, self-refreshing as a whole fragment.
+    assert "folio--live" in out and 'data-view="sessions"' in out
+    assert 'hx-get="/follow?sid=sid123"' in out and "every 2s" in out
+    assert 'hx-swap="outerHTML"' in out
+    # Projection carried the content: turns, ledger, token sum.
+    assert "hello" in out and "world" in out
+    assert "shell.execute" in out
+    # Pre-ingest: no curation (tags/export need the DB), cost stays an em dash.
+    assert "add tag" not in out and "&mdash;" in out
 
 
 def test_ui_folio_ambiguous_prefix_stub(monkeypatch, tmp_path):

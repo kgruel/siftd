@@ -27,9 +27,7 @@ def test_html_helpers_detail_and_tool_chars():
     assert 'hx-target="#main"' in detail
 
     f_full = hr._fidelity(depth=3, tools=True, thinking=True)
-    f_brief = hr._fidelity(depth=1)
     assert f_full.shows("tools") and f_full.shows("thinking")
-    assert hr._tool_chars(f_full) == 0 and hr._tool_chars(f_brief) == 120
 
 
 def test_page_shell_modes():

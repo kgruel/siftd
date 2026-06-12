@@ -40,13 +40,6 @@ def _fidelity(
     return Fidelity(depth=depth, visible=frozenset(visible), chars=chars)
 
 
-def _tool_chars(fidelity) -> int:
-    """Derive tool content char limit from fidelity (mirrors cli_common logic)."""
-    if fidelity.depth >= 3:
-        return 0
-    return 120
-
-
 # ---------------------------------------------------------------------------
 # Page shell — the only full-page response
 # ---------------------------------------------------------------------------
@@ -723,15 +716,18 @@ def ui_search(
 @get("/follow", sync_to_thread=True)
 def ui_follow(
     sid: str = Parameter(query="sid", default=""),
-    poll: bool = Parameter(query="poll", default=False),
 ) -> Response:
-    """Follow a live session — returns the latest exchanges as HTML.
+    """Follow a live session — the folio rendered from a live source.
 
-    When poll=true, returns just the exchanges (for htmx polling swap).
-    On first load (poll=false), returns the session header + exchanges
-    with a polling div that auto-refreshes.
+    Not a separate view: ``folio_detail_from_session`` projects the peek
+    detail onto the folio's duck shape and ``render_folio`` does the rest,
+    under the Sessions chrome. ``live_poll_url`` makes the fragment
+    self-refreshing (whole-folio outerHTML swap, so the rail, ledger and
+    token foot all advance together); enhance.js keeps the body pinned to
+    the bottom across swaps — it is a tail.
     """
     from html import escape
+    from urllib.parse import quote as urlquote
 
     from siftd.api.peek import AmbiguousSessionError, find_session_file
     from siftd.output.format_registry import get_format
@@ -752,53 +748,19 @@ def ui_follow(
     if detail is None:
         return _html_response(f'<p class="empty">Cannot read session: {escape(sid[:12])}</p>')
 
+    from siftd.output.html_fmt import folio_detail_from_session
+
     fmt = get_format("html")
     fidelity = _fidelity(depth=2, chars=0, tools=True, thinking=True)
-    tc = _tool_chars(fidelity)
 
-    exchanges_html = fmt.render_detail(
-        detail.exchanges,
-        fidelity,
-        no_header=True,
-        tool_chars=tc,
-    )
-
-    if poll:
-        return _html_response(exchanges_html)
-
-    # First load: a Swiss fragment (head metadata syncs the chrome — follow is
-    # a state of the Sessions view) wrapping the session header + polling div.
-    info = detail.info
-    ws = info.workspace_name or ""
-    if info.branch:
-        ws = f"{ws} [{info.branch}]" if ws else f"[{info.branch}]"
-
-    header = (
-        f'<header class="conversation-header">'
-        f'<h2 class="identifier">{escape(info.session_id[:12])}'
-        f' <span class="adapter">[{escape(info.adapter_name or "peek")}]</span></h2>'
-        f'<div class="meta">'
-        f'<span class="workspace">{escape(ws)}</span>'
-        f'<span class="model">{escape(info.model or "")}</span>'
-        f'<span class="metric">{info.exchange_count} exchanges</span>'
-        f'</div></header>'
-    )
-
-    poll_url = f"/follow?sid={escape(sid)}&poll=true"
-    body = (
-        f'<article class="conversation-detail follow-mode"'
-        f' data-view="sessions" data-title="Sessions"'
-        f' data-count="{info.exchange_count}"'
-        f' data-kick="follow · {escape(short_id(info.session_id))}">'
-        f'{header}'
-        f'<div id="follow-content"'
-        f' hx-get="{poll_url}" hx-trigger="every 2s"'
-        f' hx-swap="innerHTML">'
-        f'{exchanges_html}'
-        f'</div>'
-        f'</article>'
-    )
-    return _html_response(body)
+    folio_detail = folio_detail_from_session(detail)
+    return _html_response(fmt.render_folio(
+        folio_detail, fidelity,
+        view="sessions",
+        title="Sessions",
+        kick=f"follow · {escape(short_id(detail.info.session_id))}",
+        live_poll_url=f"/follow?sid={urlquote(sid)}",
+    ))
 
 
 # ---------------------------------------------------------------------------

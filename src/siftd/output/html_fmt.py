@@ -705,6 +705,43 @@ def _folio_rail_item(n: int, role: str, label: str, time: str, anchor: str) -> s
     )
 
 
+def folio_detail_from_session(detail: Any) -> Any:
+    """Project a peek ``SessionDetail`` onto the folio's duck shape.
+
+    Follow is not a separate view — it is the folio rendered from a live
+    source. ``PeekExchange`` already carries what a folio turn reads
+    (``prompt_text``/``narrative``/``timestamp``); this maps the remaining
+    gap: ``tool_calls`` tuples become ``tool_call_summaries`` objects, token
+    sums fold up, and cost stays ``None`` (no priced usage pre-ingest — the
+    foot renders an em dash, same rule as the DB path).
+    """
+    from types import SimpleNamespace
+
+    turns: list[Any] = []
+    input_tokens = 0
+    output_tokens = 0
+    for ex in getattr(detail, "exchanges", []) or []:
+        turns.append(SimpleNamespace(
+            timestamp=ex.timestamp,
+            prompt_text=ex.prompt_text,
+            narrative=ex.narrative,
+            tool_call_summaries=[
+                SimpleNamespace(tool_name=name, count=count)
+                for name, count in (ex.tool_calls or [])
+            ],
+        ))
+        input_tokens += ex.input_tokens or 0
+        output_tokens += ex.output_tokens or 0
+    return SimpleNamespace(
+        id=detail.info.session_id,
+        turns=turns,
+        total_input_tokens=input_tokens,
+        total_output_tokens=output_tokens,
+        cost=None,
+        tags=[],
+    )
+
+
 def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     """Render a conversation as the Swiss 'folio' fragment.
 
@@ -729,6 +766,11 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
         interactive_tags: bool — tag pills get × remove + an add input
         tag_action_url / tag_suggest_url: routes for the tag form (no hardcoding)
         export_base_url: route for md/json download links
+        view / title / kick: chrome overrides — follow renders the folio under
+            the Sessions view, not Transcript
+        live_poll_url: marks the folio live — the article root self-refreshes
+            (htmx outerHTML swap) from this URL, and curation is suppressed
+            (tags/export need ingest; a live session has neither)
     """
     from collections import Counter
 
@@ -813,12 +855,15 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     # "Turns N" header matches the rail length — not the exchange count, which
     # would under-report by ~half (one exchange renders two turns).
     turn_count = n
-    kick = f"{escape(short)} · folio" if short else "folio"
+    kick = context.get("kick") or (f"{escape(short)} · folio" if short else "folio")
+    view = context.get("view", "transcript")
+    title = context.get("title", "Transcript")
+    live_poll_url = context.get("live_poll_url", "")
 
     # Curation foot: tags + export, hosted in the ledger aside. The /tag route
     # swaps the same stable #tags-<id> section render_tag_section returns.
     curation = ""
-    if conv_id:
+    if conv_id and not live_poll_url:
         tags = getattr(detail, "tags", None) or []
         tag_html = _render_tag_section(
             conv_id, tags, context.get("interactive_tags", False),
@@ -828,9 +873,16 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
         export_html = _render_export_links(context.get("export_base_url", ""), conv_id)
         curation = f'<div class="ledger__curation">{tag_html}{export_html}</div>'
 
+    live_attrs = (
+        f' hx-get="{escape(live_poll_url)}" hx-trigger="every 2s"'
+        f' hx-swap="outerHTML"'
+        if live_poll_url else ""
+    )
+    folio_cls = "folio folio--live" if live_poll_url else "folio"
     parts: list[str] = [
-        f'<article class="folio" data-view="transcript" data-title="Transcript"'
-        f' data-count="{turn_count}" data-kick="{kick}">',
+        f'<article class="{folio_cls}" data-view="{escape(view)}"'
+        f' data-title="{escape(title)}"'
+        f' data-count="{turn_count}" data-kick="{kick}"{live_attrs}>',
         '<nav class="folio__nav" aria-label="Turns">',
         '<div class="folio__navhead"><span class="micro">Turns</span>'
         f'<span class="folio__navmeta">{turn_count}</span></div>',

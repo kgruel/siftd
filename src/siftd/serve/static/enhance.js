@@ -122,7 +122,30 @@
     if (window.Prism) window.Prism.highlightAll();
   }
 
-  function enhance() { wireTone(); drawLedgers(); drawHists(); syncChrome(); initSpy(); highlight(); }
+  // --- live folio tail ------------------------------------------------------
+  // /follow self-refreshes as a whole-folio outerHTML swap, which resets the
+  // body's scroll each poll. Capture scroll state before the swap, restore it
+  // after: pinned to the bottom when the reader was at (or near) it — it's a
+  // tail — otherwise back to where they were reading. A first mount (no prior
+  // live folio) starts pinned.
+  var liveScroll = null;
+  document.body.addEventListener('htmx:beforeSwap', function () {
+    var body = document.querySelector('.folio--live .folio__body');
+    if (!body) return;
+    liveScroll = {
+      top: body.scrollTop,
+      stick: body.scrollTop + body.clientHeight >= body.scrollHeight - 40,
+    };
+  });
+  function tailLiveFolio() {
+    var body = document.querySelector('.folio--live .folio__body');
+    if (!body) { liveScroll = null; return; }
+    body.scrollTop = (liveScroll === null || liveScroll.stick)
+      ? body.scrollHeight : liveScroll.top;
+    liveScroll = null;
+  }
+
+  function enhance() { wireTone(); drawLedgers(); drawHists(); syncChrome(); initSpy(); highlight(); tailLiveFolio(); }
 
   document.body.addEventListener('htmx:afterSettle', enhance);
   applyTone();
