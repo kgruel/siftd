@@ -25,8 +25,12 @@ pytest.importorskip("litestar")
 pytestmark = pytest.mark.serve
 
 
-def _run(coro):
-    return asyncio.run(coro)
+def _run(result):
+    # Most routes are sync now (threadpool via sync_to_thread); body-reading
+    # handlers (tag_write/session_queue/push) stay async and return coroutines.
+    if asyncio.iscoroutine(result):
+        return asyncio.run(result)
+    return result
 
 
 # --- Operation.to_local / to_wire / to_wire_body ---
