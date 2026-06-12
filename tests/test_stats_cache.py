@@ -211,6 +211,43 @@ class TestCacheMeta:
         assert isinstance(raw["_meta"]["db_mtime_ns"], int)
 
 
+class TestCacheOwnerAndFreshness:
+    """Per-owner cache files + opt-in db-mtime staleness check."""
+
+    def test_owner_scoped_cache_is_separate_file(self, tmp_path, monkeypatch):
+        db_file = tmp_path / "siftd.db"
+        db_file.write_bytes(b"x" * 1024)
+        stats = _make_stats(db_file)
+        monkeypatch.setattr("siftd.api.stats.cache_dir", lambda: tmp_path / "cache")
+        monkeypatch.setattr("siftd.api.stats.default_db_path", lambda: db_file)
+
+        write_stats_cache(stats)
+        write_stats_cache(stats, owner="alice@example.com")
+
+        assert stats_cache_path() != stats_cache_path("alice@example.com")
+        # An owner never reads the unscoped (cross-tenant) file, and vice versa.
+        assert read_stats_cache(db_path=db_file, owner="alice@example.com") is not None
+        assert read_stats_cache(db_path=db_file, owner="bob@example.com") is None
+        assert read_stats_cache(db_path=db_file) is not None
+
+    def test_require_fresh_rejects_changed_db(self, tmp_path, monkeypatch):
+        db_file = tmp_path / "siftd.db"
+        db_file.write_bytes(b"x" * 1024)
+        stats = _make_stats(db_file)
+        monkeypatch.setattr("siftd.api.stats.cache_dir", lambda: tmp_path / "cache")
+        monkeypatch.setattr("siftd.api.stats.default_db_path", lambda: db_file)
+
+        write_stats_cache(stats)
+        assert read_stats_cache(db_path=db_file, require_fresh=True) is not None
+
+        # Touch the DB: the loose read still serves; the fresh read refuses.
+        import os
+        st = db_file.stat()
+        os.utime(db_file, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+        assert read_stats_cache(db_path=db_file) is not None
+        assert read_stats_cache(db_path=db_file, require_fresh=True) is None
+
+
 class TestIngestWritesCache:
     """Integration: cmd_ingest writes the stats cache."""
 

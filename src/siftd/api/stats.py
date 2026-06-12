@@ -228,9 +228,20 @@ def list_workspaces(
             conn.close()
 
 
-def stats_cache_path() -> Path:
-    """Return path to the stats cache file."""
-    return cache_dir() / "stats.json"
+def stats_cache_path(owner: str | None = None) -> Path:
+    """Return path to the stats cache file.
+
+    The cache is owner-dimensional: ingest writes the unscoped (owner=None)
+    file; owner-scoped consumers (the serve dashboard) get their own file so
+    a tenant never reads cross-tenant totals. Owner is hashed into the name —
+    it is an identity string (email/sub), not filesystem-safe.
+    """
+    if owner is None:
+        return cache_dir() / "stats.json"
+    import hashlib
+
+    digest = hashlib.sha256(owner.encode()).hexdigest()[:16]
+    return cache_dir() / f"stats.{digest}.json"
 
 
 def _stats_to_dict(stats: DatabaseStats) -> dict:
@@ -337,8 +348,8 @@ def _dict_to_stats(data: dict) -> DatabaseStats:
     return dict_to_stats(data)
 
 
-def write_stats_cache(stats: DatabaseStats) -> None:
-    """Atomically write stats to the cache file.
+def write_stats_cache(stats: DatabaseStats, *, owner: str | None = None) -> None:
+    """Atomically write stats to the cache file (per-owner when scoped).
 
     Includes db_mtime_ns for staleness detection and computed_at timestamp.
     """
@@ -349,7 +360,7 @@ def write_stats_cache(stats: DatabaseStats) -> None:
         },
         **_stats_to_dict(stats),
     }
-    dest = stats_cache_path()
+    dest = stats_cache_path(owner)
     dest.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=dest.parent, suffix=".tmp")
     try:
@@ -364,12 +375,21 @@ def write_stats_cache(stats: DatabaseStats) -> None:
         raise
 
 
-def read_stats_cache(*, db_path: Path | None = None) -> DatabaseStats | None:
-    """Read cached stats if the cache exists and is fresh.
+def read_stats_cache(
+    *,
+    db_path: Path | None = None,
+    owner: str | None = None,
+    require_fresh: bool = False,
+) -> DatabaseStats | None:
+    """Read cached stats if the cache exists and matches.
 
     Returns None if cache is missing, corrupt, or the db_path doesn't match.
+    With require_fresh, also returns None when the DB file changed since the
+    cache was computed (db_mtime_ns mismatch) — the CLI's tiered fallback
+    prefers a possibly-stale answer over a cold recompute, but the serve
+    dashboard must reflect a push-ingest, so it opts in.
     """
-    path = stats_cache_path()
+    path = stats_cache_path(owner)
     if not path.exists():
         return None
     try:
@@ -382,6 +402,14 @@ def read_stats_cache(*, db_path: Path | None = None) -> DatabaseStats | None:
     cached_db = Path(data.get("db_path", ""))
     if cached_db.resolve() != effective_db.resolve():
         return None
+
+    if require_fresh:
+        try:
+            current_mtime = effective_db.stat().st_mtime_ns
+        except OSError:
+            return None
+        if data.get("_meta", {}).get("db_mtime_ns") != current_mtime:
+            return None
 
     return dict_to_stats(data)
 

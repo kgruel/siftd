@@ -307,3 +307,46 @@ def test_dashboard_scopes_to_authenticated_owner(tmp_path):
     # Headline cost is alice's $3.00, never the cross-tenant $9.00.
     assert "$3.00" in body
     assert "$9.00" not in body
+
+
+def test_dashboard_reads_through_stats_cache(tmp_path, monkeypatch):
+    """get_stats is the dashboard's full-table sweep: the first load pays it
+    once and writes the per-owner cache; repeat loads serve from cache. A DB
+    write invalidates (require_fresh ties the cache to db mtime), and the
+    cached numbers stay owner-scoped — alice's cache never feeds bob."""
+    import os
+
+    import siftd.api.stats as stats_mod
+
+    db = _make_owned_db(tmp_path / "owned.db")
+    calls = {"n": 0}
+    real_get_stats = stats_mod.get_stats
+
+    def counting_get_stats(**kw):
+        calls["n"] += 1
+        return real_get_stats(**kw)
+
+    monkeypatch.setattr("siftd.api.stats.get_stats", counting_get_stats)
+
+    auth = {"static_token": "s3cret", "identity": "alice"}
+    hdrs = {"Authorization": "Bearer s3cret"}
+    with TestClient(app=create_app(db_path=db, auth_config=auth)) as client:
+        first = client.get("/dashboard", headers=hdrs).text
+        assert calls["n"] == 1
+        second = client.get("/dashboard", headers=hdrs).text
+        assert calls["n"] == 1  # served from alice's cache
+        assert "bob-proj" not in second and 'data-count="1"' in second
+        assert first == second
+
+        # A DB write invalidates: the next load recomputes and re-caches.
+        st = os.stat(db)
+        os.utime(db, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+        assert client.get("/dashboard", headers=hdrs).status_code == 200
+        assert calls["n"] == 2
+
+    # Same DB, different identity: bob never reads alice's cached totals.
+    auth_bob = {"static_token": "s3cret", "identity": "bob"}
+    with TestClient(app=create_app(db_path=db, auth_config=auth_bob)) as client:
+        body = client.get("/dashboard", headers=hdrs).text
+        assert calls["n"] == 3  # cache miss — bob computes his own
+        assert "alice-proj" not in body and "bob-proj" in body

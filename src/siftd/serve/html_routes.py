@@ -306,17 +306,32 @@ def ui_dashboard(request: Request, db_path: Path) -> Response:
         get_usage_by_model,
         get_usage_by_workspace,
         get_usage_summary,
+        read_stats_cache,
+        write_stats_cache,
     )
     from siftd.output.html_fmt import render_dashboard
 
     owner = _effective_owner(request, None)
+
+    # The usage_* reads hit the rollup (cheap); get_stats is the full-table
+    # sweep (~10s cold on a large DB). Read-through the per-owner stats cache:
+    # require_fresh ties it to db mtime so a push-ingest invalidates it, and a
+    # miss pays the sweep once, then writes back. Ingest pre-warms owner=None.
+    stats = read_stats_cache(db_path=db_path, owner=owner, require_fresh=True)
+    if stats is None:
+        stats = get_stats(db_path=db_path, owner=owner)
+        try:
+            write_stats_cache(stats, owner=owner)
+        except OSError:
+            pass
+
     return _html_response(
         render_dashboard(
             usage=get_usage_summary(db_path=db_path, owner=owner),
             by_model=get_usage_by_model(db_path=db_path, owner=owner),
             by_workspace=get_usage_by_workspace(db_path=db_path, owner=owner),
             coverage=get_cost_coverage(db_path=db_path, owner=owner),
-            stats=get_stats(db_path=db_path, owner=owner),
+            stats=stats,
             owner=owner,
         )
     )

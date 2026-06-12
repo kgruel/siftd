@@ -57,6 +57,9 @@ def _sandbox_db_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_xdg_data"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "_xdg_config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "_xdg_state"))
+    # XDG_CACHE_HOME for the same reason: the dashboard's stats read-through
+    # writes the cache file; without this, tests pollute ~/.cache/siftd.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "_xdg_cache"))
     yield
 
 
