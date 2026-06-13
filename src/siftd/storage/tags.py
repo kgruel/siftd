@@ -483,8 +483,13 @@ def list_tags(
         for row in cur.fetchall()
     ]
     if owner:
+        # Drop tags this owner doesn't use — but never a pinned one, or the pin
+        # would orphan: the tag vanishes from the owner's view yet the tag_pins
+        # row persists (untagging doesn't cascade), leaving it impossible to
+        # unpin. A pinned-but-unused tag stays, shown with a zero dominant count.
         rows = [r for r in rows if (
-            r["conversation_count"] or r["workspace_count"] or r["tool_call_count"]
+            r["pinned"]
+            or r["conversation_count"] or r["workspace_count"] or r["tool_call_count"]
             or r["exchange_count"] or r["prompt_count"] or r["response_count"]
         )]
     return rows

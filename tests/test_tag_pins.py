@@ -109,3 +109,66 @@ def test_list_tags_unpinned_when_table_absent(tmp_path):
         assert rows and all(r["pinned"] is False for r in rows)
     finally:
         conn.close()
+
+
+def test_pinned_tag_survives_when_owner_stops_using_it(tmp_path):
+    """Regression: a pinned tag the owner no longer uses must stay visible (and
+    therefore un-pinnable). Untagging doesn't cascade to tag_pins, so dropping it
+    by the zero-count filter would orphan the pin — unreachable forever."""
+    from siftd.storage.tags import get_tag_id, remove_tag
+
+    db, cid = _db_with_tag(tmp_path / "t.db")
+    conn = open_database(db)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_owners (conversation_id TEXT,"
+        " user_id TEXT, push_id TEXT, assigned_at TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO conversation_owners VALUES (?,?,?,?)",
+        (cid, "alice", None, "2026-01-15T10:00:00Z"),
+    )
+    conn.commit()
+    conn.close()
+
+    assert set_tag_pin("alpha", pinned=True, db_path=db, owner="alice") is True
+
+    conn = open_database(db)
+    remove_tag(conn, "conversation", cid, get_tag_id(conn, "alpha"), commit=True)
+    conn.close()
+
+    tags = list_tags(db_path=db, owner="alice")
+    alpha = next((t for t in tags if t.name == "alpha"), None)
+    assert alpha is not None, "pinned tag was orphaned by the zero-count filter"
+    assert alpha.pinned is True
+    assert alpha.conversation_count == 0  # shown with a zero count, still unpinnable
+
+
+def test_render_tags_dominant_unit_per_grain():
+    """The headline 'most used' logic: each tag shows its DOMINANT count with the
+    true unit, and a tie resolves to 'conv'. Fixtures elsewhere are conv-only, so
+    the calls/prompts branches + tie-break would otherwise be wholly untested."""
+    from siftd.api.tags import TagInfo
+    from siftd.output.html_fmt import _tag_weight, render_tags
+
+    def mk(name: str, **counts) -> TagInfo:
+        base = dict(
+            conversation_count=0, workspace_count=0, tool_call_count=0,
+            exchange_count=0, prompt_count=0, response_count=0,
+        )
+        base.update(counts)
+        return TagInfo(name=name, description=None, created_at="", **base)
+
+    calls = mk("shell:test", tool_call_count=198)
+    prompts = mk("ask", prompt_count=40)
+    tie = mk("both", conversation_count=5, tool_call_count=5)
+
+    assert _tag_weight(calls) == (198, "calls")
+    assert _tag_weight(prompts) == (40, "prompts")
+    assert _tag_weight(tie) == (5, "conv")  # strict-greater + conv-first → ties to conv
+
+    html = render_tags(
+        [calls, prompts, tie], list_base="/find", shell_base="/", pin_action_url="/tag/pin"
+    )
+    assert '>198<span class="ledger__unit"> calls' in html
+    assert '>40<span class="ledger__unit"> prompts' in html
+    assert '>5<span class="ledger__unit"> conv' in html

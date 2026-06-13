@@ -23,18 +23,26 @@ name = "html"
 media_type = "text/html"
 
 
-def _hx_detail(detail_base: str, conv_id: str, shell_base: str = "") -> str:
-    """Build htmx attributes for a detail link, or empty string if no base.
+def _hx_detail(detail_base: str, value: str, shell_base: str = "", *, key: str = "id") -> str:
+    """Build htmx attributes that mount a surface into ``#main``, or "" if no base.
 
-    Rows mount the detail surface into ``#main`` — the Swiss shell's single
-    swap target. The old two-pane ``#detail`` container no longer exists, so
-    anything still targeting it is a dead click (htmx targetError).
+    Rows mount into ``#main`` — the Swiss shell's single swap target (the old
+    two-pane ``#detail`` is gone, so anything still targeting it is a dead click).
+    ``key`` is the query param: ``id`` for a conversation folio, ``tag`` for a
+    tag-filtered Find. ``value`` is URL-encoded with ``quote`` (not html-escape)
+    so a value carrying ``:``/``&``/spaces yields a valid query string — quote's
+    output is also attribute-safe, so the whole attribute stays html-safe. (For
+    ULIDs quote and escape are identical, so existing ``?id=`` callers are
+    unaffected.)
     """
+    from urllib.parse import quote as _q
+
     if not detail_base:
         return ""
-    push = f' hx-push-url="{escape(shell_base)}?id={escape(conv_id)}"' if shell_base else ""
+    qv = _q(value)
+    push = f' hx-push-url="{escape(shell_base)}?{key}={qv}"' if shell_base else ""
     return (
-        f' hx-get="{escape(detail_base)}?id={escape(conv_id)}"'
+        f' hx-get="{escape(detail_base)}?{key}={qv}"'
         f' hx-target="#main" hx-swap="innerHTML"'
         f'{push}'
     )
@@ -1165,19 +1173,14 @@ def _tag_row(
     full tag ``name``; ``display`` is only the visible label (a leaf in the tree).
     """
     import json as _json
-    from urllib.parse import quote as _q
 
     name = t.name
     pinned = bool(getattr(t, "pinned", False))
     weight, unit = _tag_weight(t)
 
-    drill = ""
-    if list_base:
-        push = f' hx-push-url="{escape(shell_base)}?tag={_q(name)}"' if shell_base else ""
-        drill = (
-            f' hx-get="{escape(list_base)}?tag={_q(name)}"'
-            f' hx-target="#main" hx-swap="innerHTML"{push}'
-        )
+    # Drill into Find pre-filtered by this tag — reuses the shared #main-mount
+    # primitive (same contract as the folio rows), keyed on ``tag``.
+    drill = _hx_detail(list_base, name, shell_base, key="tag")
 
     pin_btn = ""
     if pin_action_url:
@@ -1243,7 +1246,7 @@ def render_tags(tags: list, **context: Any) -> str:
     if not tags:
         return (
             '<section class="tags" data-view="tags" data-title="Tags"'
-            ' data-count="0" data-kick="pinned · tree">'
+            ' data-count="0" data-kick="">'
             '<p class="empty">No tags yet.</p></section>'
         )
 
@@ -1279,9 +1282,12 @@ def render_tags(tags: list, **context: Any) -> str:
         label = f"{ns}:" if ns else "ungrouped"
         parts.append(_zone(label, f"{len(members)} tags", _ledger(rows)))
 
+    # kick tracks what actually rendered (mirrors render_sessions): "pinned"
+    # only appears when a Pinned zone does.
+    kick = " · ".join(filter(None, ["pinned" if pinned else "", "tree"]))
     return (
         f'<section class="tags" data-view="tags" data-title="Tags"'
-        f' data-count="{len(tags)}" data-kick="pinned · tree">'
+        f' data-count="{len(tags)}" data-kick="{kick}">'
         f'{"".join(parts)}</section>'
     )
 
