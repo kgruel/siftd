@@ -25,6 +25,8 @@ from siftd.serve.html_routes import (
     ui_sessions,
     ui_shell,
     ui_tag,
+    ui_tag_pin,
+    ui_tags,
     ui_tags_suggest,
     ui_view_stub,
 )
@@ -215,9 +217,9 @@ def create_app(
         push, pull, sync_status_route, conversation_detail, conversation_list,
         event_detail_route, search_route,
         ui_shell, ui_auth_config, ui_folio, ui_dashboard, ui_sessions,
-        ui_view_stub,
+        ui_tags, ui_view_stub,
         ui_find, ui_meta, ui_query, ui_search,
-        ui_tag, ui_tags_suggest, ui_export,
+        ui_tag, ui_tag_pin, ui_tags_suggest, ui_export,
         static_router,
     ]
     if allow_live_endpoints:

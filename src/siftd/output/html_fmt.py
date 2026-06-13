@@ -1106,6 +1106,186 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Tags view — pinned zone + most-used zone over a namespace tree
+# ---------------------------------------------------------------------------
+
+# Order matters: the first kind with the largest count wins ties, so a tag used
+# equally on conversations and tool_calls reads as a conversation tag.
+_TAG_COUNT_KINDS: tuple[tuple[str, str], ...] = (
+    ("conversation_count", "conv"),
+    ("tool_call_count", "calls"),
+    ("prompt_count", "prompts"),
+    ("response_count", "resp"),
+    ("exchange_count", "exch"),
+    ("workspace_count", "ws"),
+)
+
+
+def _tag_namespace(name: str) -> tuple[str, str]:
+    """Split a flat tag name into ``(namespace, leaf)`` on the first ``:``.
+
+    The corpus uses a ``namespace:leaf`` naming convention (``shell:test``,
+    ``siftd:derivative``) but stores names flat — the tree is synthesized here at
+    render time, not in storage. Names with no ``:`` fall in the ``''``
+    (ungrouped) namespace.
+    """
+    if ":" in name:
+        ns, leaf = name.split(":", 1)
+        return ns, leaf
+    return "", name
+
+
+def _tag_weight(t: Any) -> tuple[int, str]:
+    """A tag's dominant usage count + its unit.
+
+    ``list_tags`` keeps six per-grain counts separate (a tag on conversations vs
+    on tool_calls). There is no single 'total' that isn't either a double-count
+    or a grain-mix lie, so the row shows the DOMINANT count with its true unit —
+    ``312 conv`` for a conversation tag, ``198 calls`` for a shell tool tag. The
+    bar (relative magnitude within its ledger) is sized by the same number, and
+    'most used' ranks by it.
+    """
+    best_n, best_u = 0, "conv"
+    for attr, unit in _TAG_COUNT_KINDS:
+        n = getattr(t, attr, 0) or 0
+        if n > best_n:
+            best_n, best_u = n, unit
+    return best_n, best_u
+
+
+def _tag_row(
+    t: Any, *, display: str, list_base: str, shell_base: str, pin_action_url: str
+) -> str:
+    """One tag as a ``.ledger__row``: pin toggle · name (drills to Find) · bar · count.
+
+    The drill mounts Find pre-filtered by this tag into ``#main`` (so the chrome
+    + filter strip come along and the user can refine); the pin toggle posts and
+    swaps the whole view back so the pinned zone updates in place. Both use the
+    full tag ``name``; ``display`` is only the visible label (a leaf in the tree).
+    """
+    import json as _json
+    from urllib.parse import quote as _q
+
+    name = t.name
+    pinned = bool(getattr(t, "pinned", False))
+    weight, unit = _tag_weight(t)
+
+    drill = ""
+    if list_base:
+        push = f' hx-push-url="{escape(shell_base)}?tag={_q(name)}"' if shell_base else ""
+        drill = (
+            f' hx-get="{escape(list_base)}?tag={_q(name)}"'
+            f' hx-target="#main" hx-swap="innerHTML"{push}'
+        )
+
+    pin_btn = ""
+    if pin_action_url:
+        vals = _json.dumps({"action": "unpin" if pinned else "pin", "tag": name})
+        star = "★" if pinned else "☆"
+        pin_cls = "pin pin--on" if pinned else "pin"
+        verb = "Unpin" if pinned else "Pin"
+        pressed = "true" if pinned else "false"
+        pin_btn = (
+            f'<button class="{pin_cls}" type="button"'
+            f' hx-post="{escape(pin_action_url)}" hx-vals="{escape(vals)}"'
+            f' hx-target="#main" hx-swap="innerHTML"'
+            f' aria-pressed="{pressed}" title="{verb} {escape(name)}">{star}</button>'
+        )
+
+    return (
+        f'<li class="ledger__row">'
+        f"{pin_btn}"
+        f'<a class="ledger__name"{drill}>{escape(display)}</a>'
+        f'<span class="ledger__bar" data-n="{weight}"></span>'
+        f'<span class="ledger__n">{weight}'
+        f'<span class="ledger__unit"> {escape(unit)}</span></span>'
+        f"</li>"
+    )
+
+
+def render_tags(tags: list, **context: Any) -> str:
+    """Render the Swiss 'Tags' view: a pinned zone + most-used zone over a
+    namespace tree.
+
+    Composition over data: every number comes from owner-scoped
+    ``api.tags.list_tags``. 'pinned' is the only stored state; the 'tree' is
+    synthesized by splitting flat names on ``:`` (sibling magnitudes normalise
+    within each namespace ledger, which is the meaningful comparison). Rows
+    pin/unpin in place and drill into Find pre-filtered by the tag.
+
+    Context keys: ``list_base`` (drill target, e.g. ``/find``), ``shell_base``
+    (deep-link push prefix), ``pin_action_url`` (pin/unpin POST).
+    """
+    from collections import OrderedDict
+
+    list_base = context.get("list_base", "")
+    shell_base = context.get("shell_base", "")
+    pin_action_url = context.get("pin_action_url", "")
+    row_kw = {
+        "list_base": list_base,
+        "shell_base": shell_base,
+        "pin_action_url": pin_action_url,
+    }
+
+    def _ledger(rows: list[str]) -> str:
+        return f'<ul class="ledger ledger--tags">{"".join(rows)}</ul>'
+
+    def _zone(label: str, count_txt: str, body: str, *, mod: str = "") -> str:
+        zcls = f"zone {mod}" if mod else "zone"
+        return (
+            f'<section class="{zcls}"><div class="zone__head">'
+            f'<span class="micro">{escape(label)}</span>'
+            f'<span class="zone__count">{escape(count_txt)}</span>'
+            f'<span class="zone__rule"></span></div>{body}</section>'
+        )
+
+    if not tags:
+        return (
+            '<section class="tags" data-view="tags" data-title="Tags"'
+            ' data-count="0" data-kick="pinned · tree">'
+            '<p class="empty">No tags yet.</p></section>'
+        )
+
+    parts: list[str] = []
+
+    # pinned zone (full names) — only when something is pinned
+    pinned = [t for t in tags if getattr(t, "pinned", False)]
+    if pinned:
+        rows = [_tag_row(t, display=t.name, **row_kw) for t in pinned]
+        parts.append(_zone("Pinned", str(len(pinned)), _ledger(rows), mod="zone--pinned"))
+
+    # most-used zone — top non-pinned tags by dominant count (skip zero-count)
+    unpinned = [t for t in tags if not getattr(t, "pinned", False)]
+    top = [t for t in sorted(unpinned, key=lambda t: _tag_weight(t)[0], reverse=True)[:8]
+           if _tag_weight(t)[0] > 0]
+    if top:
+        rows = [_tag_row(t, display=t.name, **row_kw) for t in top]
+        parts.append(_zone("Most used", str(len(top)), _ledger(rows)))
+
+    # namespace tree — every tag grouped by ':' prefix; namespaces alphabetical,
+    # the ungrouped bucket last. Leaf labels in groups, full names ungrouped.
+    groups: OrderedDict[str, list] = OrderedDict()
+    for t in tags:
+        ns, _leaf = _tag_namespace(t.name)
+        groups.setdefault(ns, []).append(t)
+    ordered_ns = sorted(k for k in groups if k) + ([""] if "" in groups else [])
+    for ns in ordered_ns:
+        members = sorted(groups[ns], key=lambda t: _tag_weight(t)[0], reverse=True)
+        rows = [
+            _tag_row(t, display=(_tag_namespace(t.name)[1] if ns else t.name), **row_kw)
+            for t in members
+        ]
+        label = f"{ns}:" if ns else "ungrouped"
+        parts.append(_zone(label, f"{len(members)} tags", _ledger(rows)))
+
+    return (
+        f'<section class="tags" data-view="tags" data-title="Tags"'
+        f' data-count="{len(tags)}" data-kick="pinned · tree">'
+        f'{"".join(parts)}</section>'
+    )
+
+
 def _dash_usage_rows(groups: list, *, label_fn=None, limit: int = 10) -> str:
     """Render a usage breakdown (model or workspace) as ``.ledger`` rows.
 

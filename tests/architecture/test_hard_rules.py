@@ -825,6 +825,7 @@ class TestSchemaStability:
         "event_content",
         "attributes",
         "tag_assignments",
+        "tag_pins",
     }
 
     def test_expected_tables_exist(self, db):

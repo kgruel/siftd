@@ -215,6 +215,83 @@ def tag_used_by_other_owners(
     return False
 
 
+def ensure_tag_pins_table(conn: sqlite3.Connection) -> None:
+    """Create the per-owner tag-pin table if absent. Idempotent.
+
+    Pins are owner-scoped UI preference state (which tags a user keeps in their
+    'pinned' zone). The ``tags`` table is global — it has no owner column — so a
+    pin cannot live there without pinning a tag for *every* tenant. This mirrors
+    how ``conversation_owners`` is handled: ensured on every write-open (see
+    ``open_database``), guarded by :func:`has_tag_pins_table` on reads so a
+    read-only open of a DB that has had no write since this shipped degrades to
+    'nothing pinned' instead of raising 'no such table'.
+
+    ``owner`` is stored as ``''`` for the unscoped/local (no-auth) case, matching
+    the ``if owner`` scoping convention used everywhere else — keeping the column
+    NOT NULL so the composite PRIMARY KEY de-dupes correctly (SQLite treats NULLs
+    as distinct, which would let the same tag be pinned twice).
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tag_pins (
+            owner      TEXT NOT NULL,
+            tag_id     TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            pinned_at  TEXT NOT NULL,
+            PRIMARY KEY (owner, tag_id)
+        )
+        """
+    )
+
+
+def has_tag_pins_table(conn: sqlite3.Connection) -> bool:
+    """Return True if the tag_pins table exists (created lazily on write-open)."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tag_pins'"
+        ).fetchone()
+        is not None
+    )
+
+
+def pin_tag(
+    conn: sqlite3.Connection,
+    *,
+    owner: str | None,
+    tag_id: str,
+    pinned_at: str | None = None,
+    commit: bool = False,
+) -> bool:
+    """Pin a tag for an owner. Returns True if newly pinned, False if already pinned."""
+    ensure_tag_pins_table(conn)
+    ts = pinned_at or datetime.now(UTC).isoformat()
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO tag_pins (owner, tag_id, pinned_at) VALUES (?, ?, ?)",
+        (owner or "", tag_id, ts),
+    )
+    if commit:
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def unpin_tag(
+    conn: sqlite3.Connection,
+    *,
+    owner: str | None,
+    tag_id: str,
+    commit: bool = False,
+) -> bool:
+    """Unpin a tag for an owner. Returns True if a pin was removed."""
+    if not has_tag_pins_table(conn):
+        return False
+    cur = conn.execute(
+        "DELETE FROM tag_pins WHERE owner = ? AND tag_id = ?",
+        (owner or "", tag_id),
+    )
+    if commit:
+        conn.commit()
+    return cur.rowcount > 0
+
+
 def list_tags(
     conn: sqlite3.Connection,
     *,
@@ -356,6 +433,18 @@ def list_tags(
         f"WHERE {' AND '.join(response_where)}"
     )
 
+    # pinned flag (owner-scoped). tag_pins is created lazily on a write-open and
+    # may be absent on a read-only open of a DB unwritten since this shipped —
+    # guard the join so the read degrades to "nothing pinned" rather than raising.
+    if has_tag_pins_table(conn):
+        pin_select = "(tp.tag_id IS NOT NULL)"
+        pin_join = "LEFT JOIN tag_pins tp ON tp.tag_id = t.id AND tp.owner = ?"
+        pin_params: list[object] = [owner or ""]
+    else:
+        pin_select = "0"
+        pin_join = ""
+        pin_params = []
+
     sql = f"""
         SELECT
             t.name,
@@ -366,11 +455,16 @@ def list_tags(
             ({tool_call_count_sql}) as tool_call_count,
             ({exchange_count_sql}) as exchange_count,
             ({prompt_count_sql}) as prompt_count,
-            ({response_count_sql}) as response_count
+            ({response_count_sql}) as response_count,
+            {pin_select} as pinned
         FROM tags t
+        {pin_join}
         ORDER BY t.name
     """
-    all_params = [*conv_params, *ws_params, *tc_params, *exchange_params, *prompt_params, *response_params]
+    all_params = [
+        *conv_params, *ws_params, *tc_params, *exchange_params,
+        *prompt_params, *response_params, *pin_params,
+    ]
 
     cur = conn.execute(sql, all_params)
     rows = [
@@ -384,6 +478,7 @@ def list_tags(
             "exchange_count": row["exchange_count"],
             "prompt_count": row["prompt_count"],
             "response_count": row["response_count"],
+            "pinned": bool(row["pinned"]),
         }
         for row in cur.fetchall()
     ]

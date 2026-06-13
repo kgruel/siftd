@@ -128,6 +128,20 @@ A single interaction through one harness
 | `description` | TEXT |  |  |
 | `created_at` | TEXT | NOT NULL |  |
 
+### tag_pins
+
+Per-owner tag pins (serve-side UI preference state). tags is global (no owner
+-- column), so which tags a user keeps in their "pinned" zone lives here, keyed
+-- by owner. owner='' is the unscoped/local (no-auth) case. Existing DBs get this
+-- table from ensure_tag_pins_table on the next write-open (no version bump);
+-- reads guard on its presence (storage.tags.has_tag_pins_table).
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `owner` | TEXT | NOT NULL |  |
+| `tag_id` | TEXT | NOT NULL REFERENCES tags(id) ON DELETE CASCADE |  |
+| `pinned_at` | TEXT | NOT NULL |  |
+
 ## OPERATIONAL TABLES
 
 ### ingested_files

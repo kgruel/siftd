@@ -63,6 +63,7 @@ __all__ = [
     "rename_tag_safe",
     "remove_tag",
     "rename_tag",
+    "set_tag_pin",
     "tag_info_from_dict",
     "tag_info_list_from_dict",
 ]
@@ -90,6 +91,7 @@ class TagInfo:
     exchange_count: int
     prompt_count: int
     response_count: int
+    pinned: bool = False
     activity: list[int] | None = None
 
 
@@ -186,6 +188,7 @@ def list_tags(
                 exchange_count=r["exchange_count"],
                 prompt_count=r["prompt_count"],
                 response_count=r["response_count"],
+                pinned=r.get("pinned", False),
             )
             for r in rows
         ]
@@ -463,6 +466,44 @@ def modify_conversation_tag(
 
         conn.commit()
         return fetch_conversation_tags(conn, resolved)
+    finally:
+        conn.close()
+
+
+def set_tag_pin(
+    tag_name: str,
+    *,
+    pinned: bool,
+    db_path: Path | None = None,
+    owner: str | None = None,
+) -> bool:
+    """Pin or unpin a tag (by name) for an owner. Returns True if state changed.
+
+    Owner-scoped: the pin lives under the effective identity, so one tenant's
+    pins never touch another's view. Resolves the tag by name; a nonexistent tag
+    is a no-op (returns False) — you cannot pin what isn't there. Manages its own
+    connection and transaction.
+    """
+    from siftd.storage.tags import pin_tag as _pin
+    from siftd.storage.tags import unpin_tag as _unpin
+
+    name = (tag_name or "").strip()
+    if not name:
+        return False
+
+    path = db_path or _db_path()
+    conn = _open_database(path)
+    try:
+        tag_id = _get_tag_id(conn, name)
+        if not tag_id:
+            return False
+        changed = (
+            _pin(conn, owner=owner, tag_id=tag_id)
+            if pinned
+            else _unpin(conn, owner=owner, tag_id=tag_id)
+        )
+        conn.commit()
+        return changed
     finally:
         conn.close()
 

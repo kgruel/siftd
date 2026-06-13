@@ -192,6 +192,18 @@ body { margin: 0; }
 .ledger__n { text-align:right; color:var(--mid); font-variant-numeric:tabular-nums; }
 .ledger__empty { color:var(--faint); }
 .ledger__empty .ledger__name { color:var(--faint); }
+
+/* Tags view — pin toggle · name · bar · count, grouped into namespace zones */
+.ledger--tags .ledger__row { grid-template-columns:auto 1fr 60px auto; gap:10px; }
+.ledger--tags .ledger__row:hover { background:var(--sel-bg); }
+.ledger--tags .ledger__name { cursor:pointer; }
+.ledger--tags .ledger__name:hover { color:var(--accent); }
+.ledger__unit { color:var(--faint); font-size:var(--fs-micro); }
+.pin { appearance:none; background:none; border:0; padding:0 2px; line-height:1;
+  font-size:calc(var(--fs-base) + 1px); color:var(--faint); cursor:pointer; }
+.pin:hover { color:var(--accent); }
+.pin--on { color:var(--accent); }
+
 .folio__stats { display:flex; gap:8px; padding:14px 18px; }
 .ledger__stat { flex:1; display:flex; flex-direction:column; gap:4px; }
 .ledger__statn { font-family:var(--font-mono); font-weight:600; color:var(--ink); }

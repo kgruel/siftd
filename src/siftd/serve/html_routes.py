@@ -108,6 +108,7 @@ def _page_shell(
     *,
     conv_id: str | None = None,
     search_q: str | None = None,
+    tag: str | None = None,
     follow_sid: str | None = None,
     footer: dict | None = None,
     live_enabled: bool = False,
@@ -115,7 +116,8 @@ def _page_shell(
     """Build the Swiss page shell (left rail + surface) with deep-link state.
 
     The rail mounts one of six views into ``#main`` via htmx. Deep links remap
-    to a view: ``?id=`` → Transcript folio, ``?q=`` → Search, ``?follow=`` →
+    to a view: ``?id=`` → Transcript folio, ``?q=`` → Search, ``?tag=`` → Find
+    pre-filtered by that tag (the Tags view's drill-down target), ``?follow=`` →
     the live follow tail (Sessions). When live endpoints are disabled (public
     bind — F7), ``?follow=`` degrades to the Sessions view itself rather than
     pointing at an unregistered route.
@@ -127,6 +129,8 @@ def _page_shell(
         active, main_url = "transcript", f"/folio?id={urlquote(conv_id)}"
     elif search_q:
         active, main_url = "search", f"/find?q={urlquote(search_q)}"
+    elif tag:
+        active, main_url = "search", f"/find?tag={urlquote(tag)}"
     elif follow_sid and live_enabled:
         active, main_url = "sessions", f"/follow?sid={urlquote(follow_sid)}"
     elif follow_sid:
@@ -214,6 +218,7 @@ def ui_shell(
     auth_config: dict | None = None,
     id: str | None = Parameter(query="id", default=None),
     q: str | None = Parameter(query="q", default=None),
+    tag: str | None = Parameter(query="tag", default=None),
     follow: str | None = Parameter(query="follow", default=None),
 ) -> Response:
     """Serve the Swiss page shell — the single full-page HTML response.
@@ -221,13 +226,14 @@ def ui_shell(
     Accepts optional params for deep-linkable URLs:
         ?id=     — open a conversation (Transcript folio)
         ?q=      — pre-populate Search
+        ?tag=    — Find pre-filtered by a tag (Tags view drill-down)
         ?follow= — follow a live session (Sessions; degrades to the Sessions
                    view when live endpoints are off)
     """
     footer = _shell_footer(db_path, with_counts=auth_config is None)
     return Response(
         content=_page_shell(
-            conv_id=id, search_q=q, follow_sid=follow, footer=footer,
+            conv_id=id, search_q=q, tag=tag, follow_sid=follow, footer=footer,
             live_enabled=live_enabled,
         ),
         media_type="text/html",
@@ -375,6 +381,33 @@ def ui_sessions(
     ))
 
 
+@get("/view/tags", sync_to_thread=True)
+def ui_tags(request: Request, db_path: Path) -> Response:
+    """The Swiss 'Tags' view: a pinned zone + most-used zone over a namespace
+    tree (flat names split on ``:``). Owner-scoped like every DB read. Rows
+    pin/unpin in place and drill into Find pre-filtered by the tag.
+
+    Reads ``list_tags`` live (read-only open). Its six correlated count
+    subqueries are heavier than the name-only callers (``/meta``,
+    ``/tags/suggest``); if this proves slow on a large corpus it can route
+    through the per-owner stats cache like the dashboard, but that is
+    measure-gated — not pre-optimized. ``sync_to_thread=True`` keeps the blocking
+    read off the event loop meanwhile.
+    """
+    from siftd.api.tags import list_tags
+    from siftd.output.format_registry import get_format
+
+    owner = _effective_owner(request, None)
+    tags = list_tags(db_path=db_path, owner=owner)
+    fmt = get_format("html")
+    return _html_response(fmt.render_tags(
+        tags,
+        list_base="/find",
+        shell_base="/",
+        pin_action_url="/tag/pin",
+    ))
+
+
 @get("/view/{name:str}", sync_to_thread=False)
 def ui_view_stub(
     name: str,
@@ -391,6 +424,7 @@ def ui_view_stub(
 @get("/find", sync_to_thread=False)
 def ui_find(
     q: str | None = Parameter(query="q", default=None),
+    tag: str | None = Parameter(query="tag", default=None),
 ) -> Response:
     """The Swiss 'Find' view: one surface unifying metadata facets + content search.
 
@@ -401,13 +435,22 @@ def ui_find(
     ``#filters``, so keyword + facets resolve as one ``list_conversations`` call.
 
     A deep-linked ``?q=`` pre-fills the box and the initial list (FTS5-sanitized
-    in ``ui_query``). Content search here is keyword/FTS only; semantic ranking
-    (CLI ``search``) is a deliberate follow-up that swaps in behind this same box.
+    in ``ui_query``); a ``?tag=`` (the Tags view's drill-down) pre-selects that
+    tag in the filter strip and pre-filters the list — so a tag click lands on a
+    real Find surface the user can refine, not a dead-end table. Content search
+    here is keyword/FTS only; semantic ranking (CLI ``search``) is a deliberate
+    follow-up that swaps in behind this same box.
     """
     from urllib.parse import quote as urlquote
 
+    parts: list[str] = []
     term = (q or "").strip()
-    qs = f"?search={urlquote(term)}" if term else ""
+    if term:
+        parts.append(f"search={urlquote(term)}")
+    tag_v = (tag or "").strip()
+    if tag_v:
+        parts.append(f"tag={urlquote(tag_v)}")
+    qs = ("?" + "&".join(parts)) if parts else ""
     return _html_response(
         '<div class="find" data-view="search" data-title="Search"'
         ' data-kick="query · facets">'
@@ -460,12 +503,15 @@ def ui_meta(
     request: Request,
     db_path: Path,
     search: str | None = Parameter(query="search", default=None),
+    tag: str | None = Parameter(query="tag", default=None),
 ) -> Response:
     """Return the find control strip: a content-search box + filter dropdowns.
 
-    ``search`` pre-fills the box for deep-linked ``?q=`` loads. Every control
-    targets ``#list`` and includes ``#filters``, so the box and the dropdowns
-    compose into one query — keyword + metadata facets in a single request.
+    ``search`` pre-fills the box for deep-linked ``?q=`` loads; ``tag``
+    pre-selects the tag dropdown for the Tags view's ``?tag=`` drill-down, so the
+    filter is visible and the user can refine from there. Every control targets
+    ``#list`` and includes ``#filters``, so the box and the dropdowns compose
+    into one query — keyword + metadata facets in a single request.
     """
     from html import escape
 
@@ -492,12 +538,15 @@ def ui_meta(
     except Exception:
         pass
 
-    def _select(name: str, label: str, options: list[tuple[str, str]]) -> str:
+    def _select(
+        name: str, label: str, options: list[tuple[str, str]], *, selected: str = ""
+    ) -> str:
         """Build a <select> from (value, display_text) tuples."""
         opts = [f'<option value="">All {label}</option>']
         for val, display in options:
             if val:
-                opts.append(f'<option value="{escape(val)}">{escape(display)}</option>')
+                sel = " selected" if val == selected else ""
+                opts.append(f'<option value="{escape(val)}"{sel}>{escape(display)}</option>')
         return (
             f'<select name="{name}"'
             f' hx-get="/query" hx-target="#list" hx-trigger="change"'
@@ -531,7 +580,7 @@ def ui_meta(
         search_box,
         _select("workspace", "workspaces", ws_opts),
         _select("model", "models", model_opts),
-        _select("tag", "tags", tag_opts),
+        _select("tag", "tags", tag_opts, selected=(tag or "")),
         (
             '<input type="text" name="owner" placeholder="Owner"'
             ' hx-get="/query" hx-target="#list" hx-trigger="change"'
@@ -819,6 +868,48 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
     return _html_response(render_tag_section(
         conv_id, tags,
         tag_action_url="/tag", tag_suggest_url="/tags/suggest",
+    ))
+
+
+@post("/tag/pin")
+async def ui_tag_pin(request: Request, db_path: Path) -> Response:
+    """Pin or unpin a tag for the effective owner; return the re-rendered Tags view.
+
+    Mirrors ``ui_tag``: write-scoped, owner-scoped, audited. Returns the whole
+    view fragment (swapped into ``#main``) rather than a single row so the pinned
+    zone reflects the change immediately — a pinned tag jumps to the top, an
+    unpinned one drops back into the tree. Async because it ``await``s the form
+    body; the pin itself is one tiny INSERT/DELETE.
+    """
+    from siftd.serve.auth import require_write
+
+    require_write(request)
+
+    from siftd.api import record_audit_event
+    from siftd.api.tags import list_tags, set_tag_pin
+    from siftd.output.format_registry import get_format
+    from siftd.serve.routes import _actor_identity, _client_ip
+
+    owner = _effective_owner(request, None)
+    form = await request.form()
+    action = "unpin" if str(form.get("action", "pin")) == "unpin" else "pin"
+    tag_name = str(form.get("tag", "")).strip()
+
+    if tag_name:
+        set_tag_pin(tag_name, pinned=(action == "pin"), db_path=db_path, owner=owner)
+        record_audit_event(
+            db_path=db_path,
+            actor=_actor_identity(request),
+            action=f"tag.{action}",
+            target_type="tag",
+            target=tag_name,
+            source_ip=_client_ip(request),
+        )
+
+    tags = list_tags(db_path=db_path, owner=owner)
+    fmt = get_format("html")
+    return _html_response(fmt.render_tags(
+        tags, list_base="/find", shell_base="/", pin_action_url="/tag/pin",
     ))
 
 

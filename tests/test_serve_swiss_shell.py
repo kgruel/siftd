@@ -133,11 +133,12 @@ def test_folio_hosts_tag_and_export_curation(ctx):
 
 
 def test_stub_view_carries_head_metadata(ctx):
+    # Workspaces is the remaining stub now that Tags has gone live.
     client, _cid = ctx
-    body = client.get("/view/tags").text
+    body = client.get("/view/workspaces").text
     assert 'class="stub"' in body
-    assert 'data-view="tags"' in body
-    assert 'data-title="Tags"' in body
+    assert 'data-view="workspaces"' in body
+    assert 'data-title="Workspaces"' in body
 
 
 def test_sessions_view_is_live(ctx):
@@ -350,3 +351,120 @@ def test_dashboard_reads_through_stats_cache(tmp_path, monkeypatch):
         body = client.get("/dashboard", headers=hdrs).text
         assert calls["n"] == 3  # cache miss — bob computes his own
         assert "alice-proj" not in body and "bob-proj" in body
+
+
+# ---------------------------------------------------------------------------
+# Tags view (Phase B slice) — live index, drill into Find, owner-scoped pins
+# ---------------------------------------------------------------------------
+
+
+def _make_tagged_db(path: Path) -> Path:
+    """One conversation bearing three conversation tags: two under the
+    ``research:`` namespace + one ungrouped (``bug``) — enough to exercise the
+    namespace tree, the most-used zone, and the ungrouped bucket."""
+    from siftd.storage.tags import apply_tag, get_or_create_tag
+
+    conn = create_database(path)
+    h = get_or_create_harness(conn, "claude_code", source="anthropic", log_format="jsonl")
+    w = get_or_create_workspace(conn, "/proj", "2026-01-01T00:00:00Z")
+    cid = insert_conversation(
+        conn, external_id="c-tags", harness_id=h, workspace_id=w,
+        started_at="2026-01-15T10:00:00Z",
+    )
+    for name in ("research:auth", "research:embeddings", "bug"):
+        apply_tag(conn, "conversation", cid, get_or_create_tag(conn, name))
+    conn.commit()
+    conn.close()
+    return path
+
+
+@pytest.fixture
+def tags_ctx(tmp_path):
+    db = _make_tagged_db(tmp_path / "tags.db")
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as c:
+        yield c
+
+
+def test_tags_view_is_live_not_stub(tags_ctx):
+    body = tags_ctx.get("/view/tags").text
+    assert 'class="stub"' not in body
+    assert 'data-view="tags"' in body and 'data-title="Tags"' in body
+    assert 'data-count="3"' in body
+    assert 'class="ledger ledger--tags"' in body
+    # namespace tree: a research: band groups its two leaves; bug is ungrouped
+    assert "research:</span>" in body
+    assert "2 tags" in body
+    assert ">ungrouped<" in body
+    # derived zones
+    assert "Most used" in body
+
+
+def test_tags_rows_drill_into_find(tags_ctx):
+    body = tags_ctx.get("/view/tags").text
+    assert 'hx-get="/find?tag=research%3Aauth"' in body
+    assert 'hx-target="#main"' in body
+    assert 'hx-push-url="/?tag=research%3Aauth"' in body
+    # an unpinned tag offers the pin affordance
+    assert 'class="pin"' in body
+
+
+def test_tag_deep_link_propagates_through_shell_and_find(tags_ctx):
+    shell = tags_ctx.get("/", params={"tag": "research:auth"}).text
+    assert 'hx-get="/find?tag=research%3Aauth"' in shell
+    find = tags_ctx.get("/find", params={"tag": "research:auth"}).text
+    assert "/meta?tag=research%3Aauth" in find and "/query?tag=research%3Aauth" in find
+    meta = tags_ctx.get("/meta", params={"tag": "research:auth"}).text
+    assert 'value="research:auth" selected' in meta
+
+
+def _make_owned_tagged_db(path: Path) -> Path:
+    """Two tenants, both bearing one shared tag. A pin is per-owner: alice
+    pinning ``shared`` must never make it pinned in bob's view."""
+    from siftd.storage.tags import apply_tag, get_or_create_tag
+
+    conn = create_database(path)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_owners (conversation_id TEXT,"
+        " user_id TEXT, push_id TEXT, assigned_at TEXT)"
+    )
+    h = get_or_create_harness(conn, "claude_code", source="anthropic", log_format="jsonl")
+    w = get_or_create_workspace(conn, "/proj", "2026-01-01T00:00:00Z")
+    shared = get_or_create_tag(conn, "shared")
+    for ext, owner in (("cA", "alice"), ("cB", "bob")):
+        cid = insert_conversation(
+            conn, external_id=ext, harness_id=h, workspace_id=w,
+            started_at="2026-01-15T10:00:00Z",
+        )
+        apply_tag(conn, "conversation", cid, shared)
+        conn.execute(
+            "INSERT INTO conversation_owners VALUES (?,?,?,?)",
+            (cid, owner, None, "2026-01-15T10:00:00Z"),
+        )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_tags_pin_is_owner_scoped(tmp_path):
+    """The pin write + read are owner-scoped end-to-end: alice's pin shows in her
+    pinned zone and persists, but bob — who shares the tag — never sees it."""
+    db = _make_owned_tagged_db(tmp_path / "owned-tags.db")
+    hdrs = {"Authorization": "Bearer s3cret"}
+    alice_auth = {"static_token": "s3cret", "identity": "alice"}
+    bob_auth = {"static_token": "s3cret", "identity": "bob"}
+
+    with TestClient(app=create_app(db_path=db, auth_config=alice_auth)) as alice:
+        assert "zone--pinned" not in alice.get("/view/tags", headers=hdrs).text
+        r = alice.post("/tag/pin", headers=hdrs, data={"action": "pin", "tag": "shared"})
+        assert r.status_code == 201  # Litestar POST default; htmx swaps any 2xx
+        assert "zone--pinned" in r.text and "pin--on" in r.text  # re-rendered view
+        assert "zone--pinned" in alice.get("/view/tags", headers=hdrs).text  # persists
+
+    with TestClient(app=create_app(db_path=db, auth_config=bob_auth)) as bob:
+        body = bob.get("/view/tags", headers=hdrs).text
+        assert "shared" in body              # bob sees the shared tag
+        assert "zone--pinned" not in body    # but not alice's pin
+
+    with TestClient(app=create_app(db_path=db, auth_config=alice_auth)) as alice:
+        r = alice.post("/tag/pin", headers=hdrs, data={"action": "unpin", "tag": "shared"})
+        assert "zone--pinned" not in r.text
