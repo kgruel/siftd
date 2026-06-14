@@ -505,13 +505,11 @@ def build_query_parser(subparsers) -> None:
         help="List and filter conversations by metadata",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""List and filter conversations by metadata (workspace, model, date, tags).
-For semantic content search, use: siftd search <query>
+To read one conversation: siftd show <id>.  For content search: siftd search <query>.
 
 Conversation IDs in lists are truncated to 12 characters for display; any unambiguous
-prefix works — e.g. 'siftd query 01ABCDEF01AB --summary' resolves without a full 26-character ID.
+prefix works — e.g. 'siftd show 01ABCDEF01AB --summary' resolves without a full 26-character ID.
 If a prefix matches multiple conversations, the command exits with code 2 and lists the matched IDs.
-
-Navigation: --exchanges and --turns require an anchor flag. No anchor shows the whole conversation.
 
 examples:
   siftd query                                   # list recent conversations
@@ -522,17 +520,10 @@ examples:
   siftd query --all-tags important --all-tags reviewed  # AND — must have both
   siftd query -l research: --no-tag archived    # combine OR + NOT
   siftd query --tool-tag shell:test             # conversations with test commands
-  siftd query <id>                              # show full conversation
-  siftd query <id> --summary                    # metadata only, no turns
-  siftd query <id> --from-start --exchanges 3   # first 3 turns
-  siftd query <id> --from-end --exchanges 5     # last 5 turns (replaces bare --exchanges)
-  siftd query <id> --at-turn 4                  # show only turn 4
-  siftd query <id> --at-turn 4 --turns=-1:+2    # turns 3-6 (relative to turn 4)
-  siftd query <id> --around "error message" --turns=-2:+2  # context around phrase match
-  siftd query <id> --brief                     # compact view (80 char truncation)
-  siftd query <id> -b                          # short alias for --brief
-  siftd query <id> --full                      # full text, no truncation
-  siftd query <id> -F                          # short alias for --full
+
+read one conversation (canonical verb is 'siftd show'; see 'siftd show --help'):
+  siftd show <id>                               # read a conversation in detail
+  siftd query <id>                              # alias for 'siftd show <id>'
 
 named SQL reports moved to 'siftd report' ('query sql' still works, deprecated):
   siftd report                                 # list saved SQL reports

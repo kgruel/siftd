@@ -113,7 +113,7 @@ def _validate_search_axes(args) -> str | None:
     if getattr(args, "turns_range", None) is not None and getattr(args, "around", None) is None:
         return (
             "--turns requires --around PHRASE on search; "
-            "use 'siftd query <id> --turns A:B' for conversation-detail navigation"
+            "use 'siftd show <id> --turns A:B' for conversation-detail navigation"
         )
     return None
 
