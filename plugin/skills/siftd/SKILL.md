@@ -13,9 +13,9 @@ siftd searches your past coding conversations (Claude Code, Codex, Gemini CLI, P
 
 When this skill is auto-loaded by research-intent detection (user did not type `/siftd`):
 
-1. Run a best-guess search with `--thread --context 2` (add `-w <workspace>` if implied).
+1. Run a best-guess search with `--mode=thread` (add `-w <workspace>` if implied).
 2. Summarize findings in natural language — do not dump raw output.
-3. Offer next steps: drill into a conversation (`siftd query <id>`), refine the search, or tag useful results (`siftd tag <id> research:<topic>`).
+3. Offer next steps: drill into a conversation (`siftd show <id>`), refine the search, or tag useful results (`siftd tag <id> research:<topic>`).
 
 When the user explicitly invokes `/siftd`, follow the mode detection below.
 
@@ -29,18 +29,18 @@ If the user invokes `/siftd:tag`, skip search — run `siftd tag --current <tags
 
 | User input | Command to run |
 |------------|----------------|
-| `/siftd "query"` | `siftd search "query" --thread` |
-| `/siftd -w proj "query"` | `siftd search -w proj "query" --thread` |
+| `/siftd "query"` | `siftd search "query" --mode=thread` |
+| `/siftd -w proj "query"` | `siftd search -w proj "query" --mode=thread` |
 | `/siftd --recent` | `siftd query -n 5` |
 | `/siftd --recent -w proj` | `siftd query -n 5 -w proj` |
-| `/siftd --genesis "concept"` | `siftd search --first --by-time "concept"` |
+| `/siftd --genesis "concept"` | `siftd search --select=first --sort=time "concept"` |
 
 **Default**: If arguments don't match a flag pattern, treat as semantic search query.
 
 ### After running the search
 
 1. Show results
-2. Offer drill-down: `siftd query <id>`
+2. Offer drill-down: `siftd show <id>`
 3. If results are useful, suggest tagging: `siftd tag <id> research:<topic>`
 
 ## Live tagging: `/siftd:tag`

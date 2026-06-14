@@ -95,30 +95,32 @@ siftd query -w myproject --tool-tag shell:test # combine with workspace filter
 
 ## Conversation drill-down
 
-Pass a conversation ID to see its full timeline:
+Pass a conversation ID to `show` to see its full timeline (`query 01HX...` still
+works as an alias):
 ```bash
-siftd query 01HX...
+siftd show 01HX...
 ```
 
 Shows prompts, responses, and tool calls in chronological order with tags displayed.
 
-## SQL queries
+## SQL reports
 
-Run user-defined `.sql` files from `~/.config/siftd/queries/`:
+Run user-defined `.sql` files from `~/.config/siftd/queries/` with `siftd report`
+(the older `query sql` alias still works but is deprecated):
 
 **List available queries:**
 ```bash
-siftd query sql
+siftd report
 ```
 
 **Run a query:**
 ```bash
-siftd query sql cost
+siftd report cost
 ```
 
 **Run with variables:**
 ```bash
-siftd query sql cost --var ws=myproject
+siftd report cost --var ws=myproject
 ```
 
 ### Variable syntax
@@ -148,7 +150,7 @@ WHERE workspace LIKE '%' || :ws || '%'
 SELECT * FROM $table WHERE name = :filter
 ```
 ```bash
-siftd query sql myquery --var table=conversations --var filter="project's name"
+siftd report myquery --var table=conversations --var filter="project's name"
 ```
 
 The `:var` syntax handles quotes and special characters safely — no SQL injection risk for values.

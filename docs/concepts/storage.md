@@ -138,11 +138,11 @@ JOIN tools t ON t.id = tc.tool_id
 GROUP BY t.id ORDER BY count DESC;
 ```
 
-siftd also supports named SQL queries:
+siftd also supports named SQL reports:
 
 ```bash
-siftd query sql              # list available queries
-siftd query sql cost         # run the 'cost' query
+siftd report                 # list available reports
+siftd report cost            # run the 'cost' report
 ```
 
 Drop custom queries in `~/.config/siftd/queries/` as `.sql` files.
