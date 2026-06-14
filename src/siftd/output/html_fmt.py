@@ -300,7 +300,9 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
 
     if not summaries:
-        return '<div class="empty-state"><div class="empty-icon">&#x2205;</div><p>No conversations found</p><p class="empty-hint">Try adjusting your filters</p></div>'
+        # Reuse the canonical .empty primitive — the bespoke .empty-state/
+        # .empty-icon/.empty-hint classes have no skin rule and rendered naked.
+        return '<p class="empty">No conversations found. Try adjusting your filters.</p>'
 
     detail_base = context.get("detail_base", "")
     shell_base = context.get("shell_base", "")
@@ -1287,7 +1289,7 @@ def render_tags(tags: list, **context: Any) -> str:
     kick = " · ".join(filter(None, ["pinned" if pinned else "", "tree"]))
     return (
         f'<section class="tags" data-view="tags" data-title="Tags"'
-        f' data-count="{len(tags)}" data-kick="{kick}">'
+        f' data-count="{len(tags):,}" data-kick="{kick}">'
         f'{"".join(parts)}</section>'
     )
 

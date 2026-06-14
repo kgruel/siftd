@@ -271,6 +271,10 @@ body { margin: 0; }
 .zone__rule { flex:1; height:1px; background:var(--hair); }
 .zone__empty { margin:0 0 8px; color:var(--faint); font-family:var(--font-mono);
   font-size:var(--fs-micro); letter-spacing:.08em; }
+/* Pinned leads "pinned · tree" — mark it the primary zone in-language: accent
+   the label + rule so it reads ahead of "most used" and the namespace tree. */
+.zone--pinned .micro { color:var(--accent); }
+.zone--pinned .zone__rule { background:var(--accent); opacity:.45; }
 
 /* live cards */
 .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr));

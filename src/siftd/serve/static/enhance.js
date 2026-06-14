@@ -71,7 +71,16 @@
     var h = document.getElementById('sw-title');
     if (h && title) h.textContent = title;
     var c = document.getElementById('sw-count');
-    if (c) c.textContent = count || '';
+    if (c) {
+      if (!count && view === 'search') {
+        // Find sets no data-count on its host (the result list loads as a
+        // separate #list fragment). Derive the shown count from the rendered
+        // rows once they settle — honest "showing N" for the paged list.
+        var n = document.querySelectorAll('#main #list .conversation-list tbody tr').length;
+        count = n ? String(n) : '';
+      }
+      c.textContent = count || '';
+    }
     var k = document.getElementById('sw-kick');
     if (k) k.textContent = kick || '';
     document.querySelectorAll('.sw-nav a[data-view]').forEach(function (a) {

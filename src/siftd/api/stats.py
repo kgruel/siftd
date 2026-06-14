@@ -749,9 +749,12 @@ def get_usage_by_workspace(*, db_path: Path | None = None, owner: str | None = N
             )
             for r in rows
         ]
-        # None (unpriced) sorts as 0 here — ordering only; the row still renders
-        # its honest "unknown", it just lands among the zero-cost groups.
-        results.sort(key=lambda g: g.cost or 0.0, reverse=True)
+        # Sort by total tokens (not cost) so row order matches the token-sized
+        # bars the dashboard draws — the same key get_usage_by_model uses, which
+        # keeps bar length monotonic with rank. Ordering by cost let a high-token
+        # cheap workspace sink below a low-token expensive one, so the bars read
+        # as non-descending against the row order.
+        results.sort(key=lambda g: g.input_tokens + g.output_tokens, reverse=True)
         return results
     finally:
         conn.close()

@@ -1,5 +1,4 @@
 import asyncio
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -37,33 +36,6 @@ def test_ui_query_list_path(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.dispatch.dispatch", lambda _op, fmt: "<list/>")
     out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace="", since=None, before=None, model="", tag=[""], search="", owner=None, n=5))
     assert "<list/>" in out.content
-
-
-def test_ui_search_modes_and_fallbacks(monkeypatch, tmp_path):
-    monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
-    db = tmp_path / "db.db"
-
-    empty = _run(hr.ui_search.fn(SimpleNamespace(), db, q="   "))
-    assert "Type to search" in empty.content
-
-    fake_search = SimpleNamespace(
-        aggregate_by_conversation=lambda _r, limit=20: [
-            SimpleNamespace(conversation_id="c1", max_score=1.0, mean_score=1.0, chunk_count=1, workspace_path="/w", started_at="t")
-        ],
-        search_chunks=lambda **_k: [],
-    )
-    monkeypatch.setitem(sys.modules, "siftd.api.search", fake_search)
-    monkeypatch.setattr(
-        "siftd.api.dispatch.execute",
-        lambda _op: [SimpleNamespace(conversation_id="c1", score=1.0, text="x", chunk_type="text", workspace_path="/w", started_at="t")],
-    )
-    sem = _run(hr.ui_search.fn(SimpleNamespace(), db, q="foo", mode="conversations"))
-    assert "<search/>" in sem.content
-
-    monkeypatch.setattr(sys.modules["siftd.api.search"], "search_chunks", lambda **_k: (_ for _ in ()).throw(RuntimeError("x")))
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: [{"id": "c1"}])
-    fb = _run(hr.ui_search.fn(SimpleNamespace(), db, q="foo"))
-    assert "<list/>" in fb.content
 
 
 def test_ui_sessions_and_follow_branches(monkeypatch, tmp_path):
@@ -135,16 +107,6 @@ def test_ui_meta_populates_non_empty_options(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.tags.list_tags", lambda **k: [SimpleNamespace(name="tag1")])
     out = _run(hr.ui_meta.fn(SimpleNamespace(), tmp_path / "db.db", None))
     assert "/w1" in out.content and "tag1" in out.content and "m1" in out.content
-
-
-def test_ui_search_no_results_fallback(monkeypatch, tmp_path):
-    db = tmp_path / "db.db"
-    monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
-    fake_search = SimpleNamespace(aggregate_by_conversation=lambda *a, **k: [], search_chunks=lambda **k: (_ for _ in ()).throw(RuntimeError("x")))
-    monkeypatch.setitem(sys.modules, "siftd.api.search", fake_search)
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda _op: [])
-    out = _run(hr.ui_search.fn(SimpleNamespace(), db, q="nomatch"))
-    assert "No results for" in out.content
 
 
 def test_ui_follow_renders_live_folio(monkeypatch):

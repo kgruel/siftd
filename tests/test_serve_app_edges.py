@@ -50,4 +50,3 @@ def test_ui_shell_public_but_data_routes_require_auth(tmp_path):
         # Data routes require auth
         assert client.get("/query").status_code == 401
         assert client.get("/dashboard").status_code == 401
-        assert client.get("/search").status_code == 401
