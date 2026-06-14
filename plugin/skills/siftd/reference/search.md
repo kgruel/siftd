@@ -4,24 +4,26 @@ Semantic search over past conversations. Hybrid retrieval: FTS5 recall → embed
 
 ## Output modes
 
-Control how results render. Modes are mutually exclusive except where noted.
+Control how results render. Render modes (`--mode`) are mutually exclusive.
 
 **Default** — ranked chunks with snippet, score, workspace, date:
 ```bash
 siftd search "error handling"
 ```
 
-**`--thread`** — two-tier narrative: top conversations expanded, rest as shortlist:
+**`--mode=thread`** — two-tier narrative: top conversations expanded, rest as shortlist:
 ```bash
-siftd search "why we chose JWT" --thread
+siftd search "why we chose JWT" --mode=thread
 ```
 Best mode for research. Shows the reasoning in context, not isolated chunks.
 
-**`--context N`** — show ±N exchanges around the matching chunk:
+**Surrounding discussion** — to see the turns around a match, drill into the
+conversation with `show` and anchor on the phrase:
 ```bash
-siftd search "token refresh" --context 3
+siftd show <id> --around "token refresh" --turns -3:+3
 ```
-Use when you found the right area but need the surrounding discussion.
+Use when you found the right area but need the surrounding discussion. (The old
+`search --context N` was removed in 0.9.x — anchor on a phrase in `show` instead.)
 
 **`-v` / `--verbose`** — full chunk text instead of snippet:
 ```bash
@@ -33,7 +35,7 @@ Use when you need exact wording to quote or verify.
 ```bash
 siftd search --full "schema migration"
 ```
-Dumps entire exchanges. Useful for reproduction, too noisy for research. Prefer `--thread`.
+Dumps entire exchanges. Useful for reproduction, too noisy for research. Prefer `--mode=thread`.
 
 **`--refs [FILES]`** — file references from tool calls in matching conversations:
 ```bash
@@ -43,10 +45,10 @@ siftd search --refs HANDOFF.md,schema.sql "setup" # comma-separated file filter
 ```
 Shows files as they were when the LLM read/wrote them — point-in-time snapshots, no git needed.
 
-**`--by-time`** — sort by time instead of relevance score:
+**`--sort=time`** — sort by time instead of relevance score:
 ```bash
-siftd search --by-time "state management"
-siftd search --by-time --since 2024-06 "state management"
+siftd search --sort=time "state management"
+siftd search --sort=time --since 2024-06 "state management"
 ```
 Traces how a concept evolved across sessions.
 
@@ -68,7 +70,7 @@ Narrow the candidate set before ranking. All filters compose with each other and
 **`-w` / `--workspace SUBSTR`** — filter by workspace path substring:
 ```bash
 siftd search -w myproject "auth flow"
-siftd search -w myproject --thread "auth flow"      # workspace + output mode
+siftd search -w myproject --mode=thread "auth flow"   # workspace + output mode
 ```
 The single most impactful filter. Always use when you know the project.
 
@@ -115,15 +117,15 @@ siftd search -n 20 "error handling"
 
 Change the unit of search or the ranking strategy.
 
-**`--first`** — return chronologically earliest match above threshold:
+**`--select=first`** — return chronologically earliest match above threshold:
 ```bash
-siftd search --first "event sourcing"
+siftd search --select=first "event sourcing"
 ```
 Finds when a concept was first discussed. Combine with `--threshold` to control noise.
 
-**`--conversations`** — aggregate scores per conversation, rank whole conversations:
+**`--mode=conversations`** — aggregate scores per conversation, rank whole conversations:
 ```bash
-siftd search --conversations "state management"
+siftd search --mode=conversations "state management"
 ```
 Returns conversations, not chunks. Use when you want to find which session discussed a topic most.
 
@@ -190,26 +192,26 @@ Filters, modes, and search options compose freely:
 
 ```bash
 # Research a decision in a specific project, narrative view
-siftd search -w myproject --thread "why we chose JWT"
+siftd search -w myproject --mode=thread "why we chose JWT"
 
 # Trace evolution of an idea over time in one workspace
-siftd search -w myproject --by-time --since 2024-06 "state management"
+siftd search -w myproject --sort=time --since 2024-06 "state management"
 
 # High-relevance results only, with file references
 siftd search --threshold 0.7 --refs "schema migration"
 
-# Search tagged conversations with context
-siftd search -l research:auth --context 2 "token rotation"
+# Search tagged conversations, narrative view for context
+siftd search -l research:auth --mode=thread "token rotation"
 
 # Find earliest mention across all workspaces
-siftd search --first --threshold 0.65 "event sourcing"
+siftd search --select=first --threshold 0.65 "event sourcing"
 
 # Cross-workspace comparison
 siftd search -w projectA "caching strategy"
 siftd search -w projectB "caching strategy"
 
 # Exclude archived conversations, narrative view
-siftd search --no-tag archived --thread "authentication redesign"
+siftd search --no-tag archived --mode=thread "authentication redesign"
 
 # Date-filtered search
 siftd search --since 2025-01 "what should we do about"

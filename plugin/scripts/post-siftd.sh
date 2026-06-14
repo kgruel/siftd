@@ -19,8 +19,8 @@ STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/siftd/hook-hints"
 mkdir -p "$STATE_DIR" 2>/dev/null
 
 HINT_KEY="$SUBCOMMAND"
-# For search, distinguish plain vs --thread (different tips)
-if [ "$SUBCOMMAND" = "search" ] && echo "$COMMAND" | grep -q '\-\-thread'; then
+# For search, distinguish plain vs narrative (--mode=thread) (different tips)
+if [ "$SUBCOMMAND" = "search" ] && echo "$COMMAND" | grep -qE '\-\-mode[ =]thread'; then
   HINT_KEY="search-thread"
 fi
 
@@ -32,12 +32,12 @@ touch "$MARKER" 2>/dev/null
 
 case "$SUBCOMMAND" in
   search)
-    if echo "$COMMAND" | grep -q '\-\-thread'; then
+    if echo "$COMMAND" | grep -qE '\-\-mode[ =]thread'; then
       cat <<'JSON'
 {
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "Tip: drill into a specific result with `siftd query <id>`. To bookmark: `siftd tag <id> research:<topic>`."
+    "additionalContext": "Tip: drill into a specific result with `siftd show <id>`. To bookmark: `siftd tag <id> research:<topic>`."
   }
 }
 JSON
@@ -48,7 +48,7 @@ JSON
 {
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "Tip: for narrative results, add `--thread`. To bookmark results: `siftd tag <id> research:<topic>`."
+    "additionalContext": "Tip: for narrative results, add `--mode=thread`. To bookmark results: `siftd tag <id> research:<topic>`."
   }
 }
 JSON
@@ -69,7 +69,7 @@ JSON
 {
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "Tip: drill into a conversation with `siftd query <full-id>`. Filter by project with `-w <workspace>`."
+    "additionalContext": "Tip: drill into a conversation with `siftd show <full-id>`. Filter by project with `-w <workspace>`."
   }
 }
 JSON
