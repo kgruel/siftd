@@ -42,11 +42,57 @@ def _configure_cli_logging() -> None:
         logger.setLevel(logging.INFO)
 
 
+# Top-level command lanes — the story `siftd --help` tells. The lane legend
+# rides the epilog; the per-command descriptions remain in the listing above it.
+_LANES: tuple[tuple[str, str], ...] = (
+    ("EXPLORE", "query search show report peek"),
+    ("CURATE", "tag export"),
+    ("INGEST", "ingest adapters"),
+    ("MAINTAIN", "doctor db"),
+    ("SHARE", "serve auth"),
+    ("SETUP", "install config"),
+)
+# Plumbing: hook machinery + power-user tools. Hidden from the lane view but
+# fully runnable — they stay registered; only the help listing drops them.
+_PLUMBING: frozenset[str] = frozenset(
+    {"register", "session-id", "id", "backfill", "migrate", "copy", "upgrade"}
+)
+
+
+def _lanes_epilog() -> str:
+    width = max(len(name) for name, _ in _LANES)
+    lines = ["lanes:"]
+    lines += [f"  {name:<{width}}  {cmds.replace(' ', ' · ')}" for name, cmds in _LANES]
+    lines += [
+        "",
+        "Run 'siftd <command> --help' for details.",
+        "Advanced (hidden): " + ", ".join(sorted(_PLUMBING)),
+    ]
+    return "\n".join(lines)
+
+
+def _hide_plumbing(subparsers) -> None:
+    """Drop plumbing commands from the parent --help listing without
+    unregistering them: they stay in ``choices``, so ``siftd <plumbing>`` and the
+    SessionStart hook's ``siftd register ...`` still parse and run. Filters
+    argparse's ``_choices_actions`` (the help-display list); guarded so a future
+    argparse internal change degrades to listing them rather than crashing.
+    """
+    actions = getattr(subparsers, "_choices_actions", None)
+    if actions is None:
+        return
+    subparsers._choices_actions = [
+        a for a in actions if getattr(a, "dest", None) not in _PLUMBING
+    ]
+
+
 def main(argv=None) -> int:
     _configure_cli_logging()
     parser = argparse.ArgumentParser(
         prog="siftd",
         description="Aggregate and query LLM conversation logs",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_lanes_epilog(),
     )
     parser.add_argument(
         "--version",
@@ -59,24 +105,30 @@ def main(argv=None) -> int:
         help=f"Database path (default: {db_path()})",
     )
 
-    subparsers = parser.add_subparsers(dest="command")
+    subparsers = parser.add_subparsers(dest="command", metavar="<command>")
 
-    build_sessions_parser(subparsers)
-    build_meta_parser(subparsers)
-    build_db_parser(subparsers)
-    build_tags_parser(subparsers)
-    build_id_parser(subparsers)
+    # Registered in lane order so the help listing reads top-to-bottom as the
+    # lanes do. Multi-command builders (data, meta, sessions) span lanes; the
+    # epilog legend is the authoritative lane view. Plumbing verbs are hidden
+    # from the listing by _hide_plumbing() below but remain fully runnable.
     build_query_parser(subparsers)
     build_show_parser(subparsers)
     build_report_parser(subparsers)
-    build_data_parser(subparsers)
     build_search_parser(subparsers)
-    build_install_parser(subparsers)
     build_peek_parser(subparsers)
+    build_tags_parser(subparsers)
     build_export_parser(subparsers)
+    build_data_parser(subparsers)  # ingest (+ backfill/migrate/copy hidden) + doctor
+    build_meta_parser(subparsers)  # config + adapters
+    build_db_parser(subparsers)
     build_serve_parser(subparsers)
     build_auth_parser(subparsers)
-    build_upgrade_parser(subparsers)
+    build_install_parser(subparsers)
+    build_sessions_parser(subparsers)  # register, session-id (hidden)
+    build_id_parser(subparsers)  # hidden
+    build_upgrade_parser(subparsers)  # hidden
+
+    _hide_plumbing(subparsers)
 
     args, unknowns = parser.parse_known_args(argv)
     if unknowns:
