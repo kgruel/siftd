@@ -652,11 +652,21 @@ def fetch_top_workspaces(
     limit: int = 10,
     *,
     owner: str | None = None,
+    with_usage: bool = False,
 ) -> list[sqlite3.Row]:
     """Fetch workspaces with conversation counts and last activity.
 
     Uses subquery pattern: aggregate first on indexed column (workspace_id),
     then join only the top N rows with the workspaces table for paths.
+
+    ``with_usage`` adds ``inp``/``out``/``cost`` columns from the rollup
+    (``usage_by_conv_model``), aggregated at the *workspace_id* (ULID) grain so
+    duplicate workspaces that share a git_remote stay distinct rows rather than
+    collapsing the way the path-grouped dashboard mix does. Cost carries no
+    COALESCE: a workspace with no priced usage sums to NULL → ``None``
+    ("unknown"), never a fabricated $0. Default off keeps the query byte-identical
+    for the name-only callers (the workspaces CLI listing, ``/meta``, the JSON
+    master route) — it is the depth-gated enrichment the Workspaces view opts into.
     """
     if owner and not has_conversation_owners_table(conn):
         return []
@@ -667,15 +677,31 @@ def fetch_top_workspaces(
         join_type = "LEFT JOIN"
         owner_where = f"WHERE {owner_predicate('c.id')}"
         owner_params = (owner,)
+    if with_usage:
+        # COUNT(DISTINCT c.id) — the rollup LEFT JOIN fans each conversation by
+        # model, so a plain COUNT(*) would overcount sessions; MAX/SUM are
+        # fan-stable so last_activity and the token/cost sums stay correct.
+        convs_expr = "COUNT(DISTINCT c.id)"
+        usage_inner = (
+            ", COALESCE(SUM(u.input_tokens), 0) AS inp"
+            ", COALESCE(SUM(u.output_tokens), 0) AS out"
+            ", SUM(u.cost) AS cost"
+        )
+        usage_join = "LEFT JOIN usage_by_conv_model u ON u.conversation_id = c.id"
+        usage_outer = ", counts.inp, counts.out, counts.cost"
+    else:
+        convs_expr = "COUNT(*)"
+        usage_inner = usage_join = usage_outer = ""
     return conn.execute(
         f"""
-        SELECT w.id, w.path, w.git_remote, counts.convs, counts.last_activity
+        SELECT w.id, w.path, w.git_remote, counts.convs, counts.last_activity{usage_outer}
         FROM (
             SELECT
                 c.workspace_id,
-                COUNT(*) as convs,
-                MAX(COALESCE(c.ended_at, c.started_at)) as last_activity
+                {convs_expr} as convs,
+                MAX(COALESCE(c.ended_at, c.started_at)) as last_activity{usage_inner}
             FROM conversations c
+            {usage_join}
             {owner_where}
             GROUP BY c.workspace_id
             ORDER BY convs DESC

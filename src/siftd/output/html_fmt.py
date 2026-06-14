@@ -1436,3 +1436,208 @@ def render_dashboard(
         '</article>',
     ]
     return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Workspaces view — a drillable master ledger + a per-workspace detail
+# ---------------------------------------------------------------------------
+
+
+def _ws_label(path: str | None) -> tuple[str, str]:
+    """Split a workspace path into ``(leaf, home-relative parent)`` for display.
+
+    The master ledger shows the leaf as the primary label and the parent dimmed
+    beneath it, so two workspaces sharing a basename (the legacy ``painted``
+    twin: ``~/Code/painted`` vs ``~/Code/loops/libs/painted``) stay
+    distinguishable instead of collapsing to one indistinguishable row.
+    """
+    if not path or path in ("/", ""):
+        return ("(root)", "")
+    from pathlib import Path
+
+    p = path.rstrip("/")
+    leaf = p.rsplit("/", 1)[-1] or "(root)"
+    parent = p[: len(p) - len(leaf)].rstrip("/")
+    home = str(Path.home())
+    if home and parent.startswith(home):
+        parent = "~" + parent[len(home):]
+    return (leaf, parent)
+
+
+def _workspace_row(row: Any, *, detail_base: str, shell_base: str) -> str:
+    """One workspace as a drillable ``.ledger--ws`` row.
+
+    leaf + parent/sessions/last-active · token bar · tokens · honest cost. The
+    row carries the workspace ULID, so the drill mounts the per-workspace detail
+    keyed on ``ws`` (distinct from the folio's ``id``). Assumes a ``with_usage``
+    row (``inp``/``out``/``cost`` present) — the view always opts in.
+    """
+    from siftd.output.common import fmt_tokens
+
+    ws_id = row["id"]
+    leaf, parent = _ws_label(row["path"])
+    tok = (row["inp"] or 0) + (row["out"] or 0)
+    cost = row["cost"]
+    cost_str = "&mdash;" if cost is None else f"${cost:,.2f}"
+
+    meta_bits: list[str] = []
+    if parent:
+        meta_bits.append(parent)
+    meta_bits.append(f"{row['convs'] or 0:,} sessions")
+    last = _ago(_iso_epoch(row["last_activity"]))
+    if last:
+        meta_bits.append(f"active {last} ago")
+    sub = " · ".join(meta_bits)
+
+    drill = _hx_detail(detail_base, ws_id, shell_base, key="ws")
+    return (
+        f'<li class="ledger__row">'
+        f'<a class="ledger__name"{drill}>'
+        f'<span class="ws__name">{escape(leaf)}</span>'
+        f'<span class="ws__sub">{escape(sub)}</span></a>'
+        f'<span class="ledger__bar" data-n="{tok}"></span>'
+        f'<span class="ledger__n">{escape(fmt_tokens(tok))}</span>'
+        f'<span class="ledger__cost">{cost_str}</span>'
+        f"</li>"
+    )
+
+
+def render_workspaces(rows: list, **context: Any) -> str:
+    """Render the Swiss 'Workspaces' view: a drillable master ledger.
+
+    Each row is one workspace (ULID identity), ranked by conversation count, with
+    a token-sized bar and honest cost (``&mdash;`` when the workspace has no
+    priced usage — never a fabricated $0). Rows mount the per-workspace detail
+    into ``#main`` via the shared ``_hx_detail`` contract, keyed on ``ws``.
+
+    Legacy duplicate workspaces (sharing a git remote) are surfaced as a caveat
+    strip advertising the count + the ``siftd migrate --merge-workspaces``
+    remediation, not silently merged: the dedup is a data migration with one
+    keeper, not a render-time guess (and read-time collapse would make the drill
+    target ambiguous). The strip rides ``context['duplicates']`` as ``(groups,
+    extras)``; the view passes it only when unscoped (local), where the
+    remediation is runnable.
+    """
+    detail_base = context.get("detail_base", "")
+    shell_base = context.get("shell_base", "")
+    dup_groups, dup_extras = context.get("duplicates", (0, 0))
+
+    parts: list[str] = []
+
+    if dup_groups:
+        grp = "groups" if dup_groups != 1 else "group"
+        rw = "rows" if dup_extras != 1 else "row"
+        parts.append(
+            '<div class="ws-caveat" role="note">'
+            '<span class="ws-caveat__mark" aria-hidden="true"></span>'
+            f"<span>{dup_groups} workspace {grp} share a git remote "
+            f"({dup_extras} duplicate {rw}) — run "
+            "<code>siftd migrate --merge-workspaces</code> to collapse.</span>"
+            "</div>"
+        )
+
+    if rows:
+        body = "".join(
+            _workspace_row(row, detail_base=detail_base, shell_base=shell_base)
+            for row in rows
+        )
+    else:
+        body = (
+            '<li class="ledger__row ledger__empty">'
+            '<span class="ledger__name">no workspaces yet</span></li>'
+        )
+    parts.append(f'<ul class="ledger ledger--usage ledger--ws">{body}</ul>')
+
+    return (
+        '<section class="workspaces" data-view="workspaces" data-title="Workspaces"'
+        f' data-count="{len(rows)}" data-kick="explorer">'
+        f'{"".join(parts)}</section>'
+    )
+
+
+def render_workspace_detail(detail: Any, fidelity: Fidelity, **context: Any) -> str:
+    """Render one workspace's detail — a dashboard scoped to a single workspace.
+
+    Reuses the dashboard's stat-grid head and ``_dash_usage_rows`` ledger (cost
+    honesty + the token-bar primitive carry over verbatim), then lists the
+    workspace's recent conversations as folio-drilling rows (same ``_hx_detail``
+    contract as Sessions/Find). The fragment root carries the
+    data-view/title/count/kick chrome contract like every view; ``data-view`` is
+    ``workspaces`` so the rail keeps the Workspaces tab lit while a detail shows.
+    """
+    from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens
+
+    detail_base = context.get("detail_base", "")  # /folio for recent rows
+    shell_base = context.get("shell_base", "")
+
+    leaf, parent = _ws_label(detail.path)
+    in_tok = detail.input_tokens or 0
+    out_tok = detail.output_tokens or 0
+    headline_cost = "&mdash;" if detail.cost is None else f"${detail.cost:,.2f}"
+    kick = parent or (detail.git_remote or "workspace")
+
+    bar = (
+        '<div class="ws-detail__bar">'
+        '<a class="ws-detail__back" hx-get="/view/workspaces" hx-target="#main"'
+        ' hx-swap="innerHTML" hx-push-url="/">&larr; Workspaces</a>'
+        f'<span class="ws-detail__path">{escape(detail.path or "(root)")}</span>'
+        "</div>"
+    )
+
+    head = (
+        '<section class="dash__head">'
+        '<div class="dash__stat"><span class="micro">Sessions</span>'
+        f'<span class="dash__statn">{detail.sessions:,}</span></div>'
+        '<div class="dash__stat"><span class="micro">Tokens</span>'
+        f'<span class="dash__statn">{escape(fmt_tokens(in_tok + out_tok))}</span>'
+        f'<span class="dash__sub">{escape(fmt_tokens(in_tok))} in &middot; '
+        f'{escape(fmt_tokens(out_tok))} out</span></div>'
+        '<div class="dash__stat"><span class="micro">Cost</span>'
+        f'<span class="dash__statn">{headline_cost}</span></div>'
+        "</section>"
+    )
+
+    models = (
+        '<section class="dash__panel ws-detail__panel">'
+        '<div class="folio__navhead"><span class="micro">Model mix</span>'
+        f'<span class="folio__navmeta">{len(detail.model_mix)}</span></div>'
+        f'<ul class="ledger ledger--usage">{_dash_usage_rows(detail.model_mix, limit=20)}</ul>'
+        "</section>"
+    )
+
+    recent_rows: list[str] = []
+    for c in detail.recent:
+        # All recent share this workspace, so the primary label is the start time
+        # (not the workspace name, which would be constant down the column).
+        when = fmt_timestamp(getattr(c, "started_at", None)) or c.id[:12]
+        model = fmt_model(getattr(c, "model", None)) or ""
+        rc = getattr(c, "cost", None)
+        rc_str = f"${rc:,.2f}" if rc is not None else "&mdash;"
+        recent_rows.append(
+            f'<li class="row"{_hx_detail(detail_base, c.id, shell_base)}>'
+            f'<span class="row__ws">{escape(when)}</span>'
+            f'<span class="row__model">{escape(model)}</span>'
+            f'<span class="row__turns">{getattr(c, "prompt_count", 0)}</span>'
+            f'<span class="row__tok">{escape(fmt_tokens(getattr(c, "total_tokens", 0) or 0))}</span>'
+            f'<span class="cost">{rc_str}</span>'
+            f"</li>"
+        )
+    recent_body = (
+        "".join(recent_rows)
+        if recent_rows
+        else '<li class="row"><span class="row__ws">no conversations</span></li>'
+    )
+    recent = (
+        '<section class="ws-detail__recent">'
+        '<div class="zone__head"><span class="micro">Recent</span>'
+        f'<span class="zone__count">{len(recent_rows)}</span>'
+        '<span class="zone__rule"></span></div>'
+        f'<ul class="rows">{recent_body}</ul>'
+        "</section>"
+    )
+
+    return (
+        f'<article class="dash ws-detail" data-view="workspaces" data-title="{escape(leaf)}"'
+        f' data-count="{detail.sessions}" data-kick="{escape(kick)}">'
+        f"{bar}{head}{models}{recent}</article>"
+    )

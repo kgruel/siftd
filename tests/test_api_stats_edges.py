@@ -28,7 +28,7 @@ def test_open_close_and_cache_cleanup_paths(monkeypatch, tmp_path):
 
     c2 = _SeqConn([])
     monkeypatch.setattr("siftd.api.stats.open_database", lambda *a, **k: c2)
-    monkeypatch.setattr("siftd.api.stats.fetch_top_workspaces", lambda conn, limit=10: [{"path": "p", "convs": 1}])
+    monkeypatch.setattr("siftd.api.stats.fetch_top_workspaces", lambda conn, limit=10, **k: [{"path": "p", "convs": 1}])
     assert list_workspaces(n=1, db_path=tmp_path / "db.sqlite") and c2.closed
 
     db = tmp_path / "s.db"

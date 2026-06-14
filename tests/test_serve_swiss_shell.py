@@ -133,12 +133,24 @@ def test_folio_hosts_tag_and_export_curation(ctx):
 
 
 def test_stub_view_carries_head_metadata(ctx):
-    # Workspaces is the remaining stub now that Tags has gone live.
+    # Every nav view is live now; the /view/{name} stub still answers unknown
+    # names (defensive) and must carry the head metadata enhance.js needs.
+    client, _cid = ctx
+    body = client.get("/view/nonexistent").text
+    assert 'class="stub"' in body
+    assert 'data-view="nonexistent"' in body
+    assert 'data-title="Nonexistent"' in body
+
+
+def test_workspaces_view_is_live(ctx):
+    """Workspaces is no longer a stub: a drillable master ledger whose rows mount
+    the per-workspace detail keyed on ``ws`` (distinct from the folio's id)."""
     client, _cid = ctx
     body = client.get("/view/workspaces").text
-    assert 'class="stub"' in body
-    assert 'data-view="workspaces"' in body
-    assert 'data-title="Workspaces"' in body
+    assert 'class="stub"' not in body
+    assert 'data-view="workspaces"' in body and 'data-title="Workspaces"' in body
+    assert 'class="ledger ledger--usage ledger--ws"' in body
+    assert 'hx-get="/workspace?ws=' in body and 'hx-target="#main"' in body
 
 
 def test_sessions_view_is_live(ctx):

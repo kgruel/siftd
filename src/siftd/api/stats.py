@@ -201,6 +201,7 @@ def list_workspaces(
     *,
     db_path: Path | None = None,
     owner: str | None = None,
+    with_usage: bool = False,
 ) -> list[sqlite3.Row]:
     """List workspaces with conversation counts.
 
@@ -208,12 +209,16 @@ def list_workspaces(
         conn: Database connection. Opened from db_path if not provided.
         n: Maximum workspaces to return.
         db_path: Path to database. Ignored if conn provided.
+        with_usage: Also return ``inp``/``out``/``cost`` columns from the rollup
+            (cost ``None`` when the workspace has no priced usage). Off by default
+            so the name-only callers stay on the lean query; the Workspaces view
+            opts in.
 
     Returns:
         Rows with 'id' (workspace ULID), 'path', 'git_remote', 'convs', and
-        'last_activity' keys. The ULID 'id' is the workspace's stable identity
-        (workspaces.id) — the read API addresses workspaces by it, not by the
-        slash-containing path.
+        'last_activity' keys (plus 'inp'/'out'/'cost' when ``with_usage``). The
+        ULID 'id' is the workspace's stable identity (workspaces.id) — the read
+        API addresses workspaces by it, not by the slash-containing path.
     """
     should_close = False
     if conn is None:
@@ -222,7 +227,7 @@ def list_workspaces(
         should_close = True
     try:
         owner_kw = {"owner": owner} if owner else {}
-        return fetch_top_workspaces(conn, limit=n, **owner_kw)
+        return fetch_top_workspaces(conn, limit=n, with_usage=with_usage, **owner_kw)
     finally:
         if should_close:
             conn.close()
@@ -482,8 +487,9 @@ def get_stats(*, db_path: Path | None = None, owner: str | None = None) -> Datab
             for row in harness_rows
         ]
 
-        # Top workspaces
-        workspace_rows = fetch_top_workspaces(conn, limit=10, **owner_kw)
+        # Top workspaces (owner passed explicitly so the bool with_usage kwarg
+        # isn't shadowed by the str-typed **owner_kw spread).
+        workspace_rows = fetch_top_workspaces(conn, limit=10, owner=owner)
         top_workspaces = [
             WorkspaceStats(
                 path=row["path"],
@@ -767,7 +773,7 @@ class WorkspaceDetail:
     sessions: int
     input_tokens: int
     output_tokens: int
-    cost: float
+    cost: float | None
     model_mix: list[GroupUsage]
     recent: list
 
@@ -819,7 +825,10 @@ def workspace_detail(
             " COUNT(DISTINCT u.conversation_id) AS convs,"
             " COALESCE(SUM(u.input_tokens), 0) AS inp,"
             " COALESCE(SUM(u.output_tokens), 0) AS out,"
-            " COALESCE(SUM(u.cost), 0) AS cost"
+            # No COALESCE on cost: an all-unpriced model sums to NULL → cost=None,
+            # rendered "unknown" not a fabricated $0 (the GroupUsage rule the
+            # dashboard already honors; this is the detail twin that lagged it).
+            " SUM(u.cost) AS cost"
             " FROM usage_by_conv_model u"
             " JOIN conversations c ON c.id = u.conversation_id"
             " LEFT JOIN models m ON m.id = u.model_id"
@@ -861,8 +870,11 @@ def workspace_detail(
         fidelity=fidelity, db_path=path, workspace_id=ws["id"], owner=owner, n=recent_n,
     )
     # Headline cost is the sum of the model mix — one source, so the headline
-    # can never disagree with the per-model rows shown beneath it (the old
-    # separate cs.cost headline could, and the model rows read 0.0).
+    # can never disagree with the per-model rows shown beneath it. It stays None
+    # (not a fabricated $0) when no model in the workspace has priced usage,
+    # matching the dashboard headline; a genuine summed $0 with priced rows
+    # present is distinct from "unknown".
+    priced = [g.cost for g in model_mix if g.cost is not None]
     return WorkspaceDetail(
         id=ws["id"],
         path=ws["path"],
@@ -870,7 +882,7 @@ def workspace_detail(
         sessions=sessions,
         input_tokens=sum(g.input_tokens for g in model_mix),
         output_tokens=sum(g.output_tokens for g in model_mix),
-        cost=sum(g.cost or 0.0 for g in model_mix),
+        cost=sum(priced) if priced else None,
         model_mix=model_mix,
         recent=recent,
     )

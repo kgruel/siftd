@@ -311,6 +311,45 @@ body { margin: 0; }
 .row .cost { width:9ch; text-align:right; font-variant-numeric:tabular-nums; color:var(--ink); }
 
 /* ========================================================================= */
+/* WORKSPACES — drillable master ledger + a per-workspace detail              */
+/* ========================================================================= */
+.workspaces { height:100%; overflow-y:auto; min-height:0; background:var(--paper);
+  padding:8px 0 48px; }
+
+/* duplicate-workspace caveat — surfaces the legacy same-remote condition and
+   the migrate remediation rather than silently collapsing the twin rows. */
+.ws-caveat { display:flex; align-items:flex-start; gap:10px; margin:14px 18px 2px;
+  padding:11px 14px; border:1px solid var(--hair); border-left:2px solid var(--accent);
+  background:var(--panel); font-family:var(--font-mono);
+  font-size:calc(var(--fs-base) - 0.5px); color:var(--mid); line-height:1.5; }
+.ws-caveat__mark { flex:0 0 auto; width:8px; height:8px; margin-top:5px;
+  background:var(--accent); opacity:.6; }
+.ws-caveat code { color:var(--ink); background:var(--sel-bg); padding:1px 5px; }
+
+/* master rows inherit the 4-col usage grid; the name cell stacks the leaf over
+   a dimmed parent/sessions/last-active line so same-basename twins stay legible. */
+.ledger--ws .ledger__row:hover { background:var(--sel-bg); }
+.ledger--ws .ledger__name { display:flex; flex-direction:column; gap:2px;
+  cursor:pointer; white-space:normal; min-width:0; }
+.ledger--ws .ledger__name:hover .ws__name { color:var(--accent); }
+.ws__name { color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ws__sub { color:var(--faint); font-size:var(--fs-micro); letter-spacing:.02em;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* detail reuses .dash (head grid + usage ledger); these add the back bar and
+   the recent-conversations region beneath the model mix. */
+.ws-detail__bar { display:flex; align-items:center; gap:14px;
+  padding:14px 28px; border-bottom:1px solid var(--hair); }
+.ws-detail__back { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.1em; text-transform:uppercase; text-decoration:none;
+  color:var(--mid); cursor:pointer; white-space:nowrap; }
+.ws-detail__back:hover { color:var(--accent); }
+.ws-detail__path { font-family:var(--font-mono); font-size:var(--fs-micro);
+  color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ws-detail__panel { border-right:0; border-bottom:1px solid var(--hair); }
+.ws-detail__recent .zone__head { padding:14px 32px 8px; margin:0; }
+
+/* ========================================================================= */
 /* STUB — views not yet authored in this slice                              */
 /* ========================================================================= */
 .stub { height:100%; display:flex; flex-direction:column; align-items:center;

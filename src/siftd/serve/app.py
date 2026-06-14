@@ -29,6 +29,8 @@ from siftd.serve.html_routes import (
     ui_tags,
     ui_tags_suggest,
     ui_view_stub,
+    ui_workspace_detail,
+    ui_workspaces,
 )
 from siftd.serve.routes import (
     conversation_detail,
@@ -217,7 +219,7 @@ def create_app(
         push, pull, sync_status_route, conversation_detail, conversation_list,
         event_detail_route, search_route,
         ui_shell, ui_auth_config, ui_folio, ui_dashboard, ui_sessions,
-        ui_tags, ui_view_stub,
+        ui_tags, ui_workspaces, ui_workspace_detail, ui_view_stub,
         ui_find, ui_meta, ui_query, ui_search,
         ui_tag, ui_tag_pin, ui_tags_suggest, ui_export,
         static_router,

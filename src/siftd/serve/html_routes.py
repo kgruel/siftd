@@ -110,6 +110,7 @@ def _page_shell(
     search_q: str | None = None,
     tag: str | None = None,
     follow_sid: str | None = None,
+    workspace_id: str | None = None,
     footer: dict | None = None,
     live_enabled: bool = False,
 ) -> str:
@@ -117,7 +118,8 @@ def _page_shell(
 
     The rail mounts one of six views into ``#main`` via htmx. Deep links remap
     to a view: ``?id=`` → Transcript folio, ``?q=`` → Search, ``?tag=`` → Find
-    pre-filtered by that tag (the Tags view's drill-down target), ``?follow=`` →
+    pre-filtered by that tag (the Tags view's drill-down target), ``?ws=`` → a
+    workspace detail (the Workspaces view's drill-down target), ``?follow=`` →
     the live follow tail (Sessions). When live endpoints are disabled (public
     bind — F7), ``?follow=`` degrades to the Sessions view itself rather than
     pointing at an unregistered route.
@@ -131,6 +133,8 @@ def _page_shell(
         active, main_url = "search", f"/find?q={urlquote(search_q)}"
     elif tag:
         active, main_url = "search", f"/find?tag={urlquote(tag)}"
+    elif workspace_id:
+        active, main_url = "workspaces", f"/workspace?ws={urlquote(workspace_id)}"
     elif follow_sid and live_enabled:
         active, main_url = "sessions", f"/follow?sid={urlquote(follow_sid)}"
     elif follow_sid:
@@ -143,7 +147,7 @@ def _page_shell(
         cur = ' aria-current="page"' if vid == active else ""
         # Live views push a clean URL; stubs leave the address bar untouched
         # (their deep-link contract returns with their slice).
-        push_attr = ' hx-push-url="/"' if vid in ("transcript", "sessions") else ""
+        push_attr = ' hx-push-url="/"' if vid in ("transcript", "sessions", "workspaces") else ""
         nav_parts.append(
             f'<a data-view="{vid}"{cur} hx-get="{esc(url)}" hx-target="#main"'
             f' hx-swap="innerHTML"{push_attr}>'
@@ -219,6 +223,7 @@ def ui_shell(
     id: str | None = Parameter(query="id", default=None),
     q: str | None = Parameter(query="q", default=None),
     tag: str | None = Parameter(query="tag", default=None),
+    ws: str | None = Parameter(query="ws", default=None),
     follow: str | None = Parameter(query="follow", default=None),
 ) -> Response:
     """Serve the Swiss page shell — the single full-page HTML response.
@@ -227,14 +232,15 @@ def ui_shell(
         ?id=     — open a conversation (Transcript folio)
         ?q=      — pre-populate Search
         ?tag=    — Find pre-filtered by a tag (Tags view drill-down)
+        ?ws=     — open a workspace detail (Workspaces view drill-down)
         ?follow= — follow a live session (Sessions; degrades to the Sessions
                    view when live endpoints are off)
     """
     footer = _shell_footer(db_path, with_counts=auth_config is None)
     return Response(
         content=_page_shell(
-            conv_id=id, search_q=q, tag=tag, follow_sid=follow, footer=footer,
-            live_enabled=live_enabled,
+            conv_id=id, search_q=q, tag=tag, workspace_id=ws, follow_sid=follow,
+            footer=footer, live_enabled=live_enabled,
         ),
         media_type="text/html",
     )
@@ -405,6 +411,73 @@ def ui_tags(request: Request, db_path: Path) -> Response:
         list_base="/find",
         shell_base="/",
         pin_action_url="/tag/pin",
+    ))
+
+
+@get("/view/workspaces", sync_to_thread=True)
+def ui_workspaces(request: Request, db_path: Path) -> Response:
+    """The Swiss 'Workspaces' view: a drillable master ledger of workspaces.
+
+    Rows are ULID-identified (so each drills into its own detail) and carry the
+    rollup's tokens + honest cost via ``list_workspaces(with_usage=True)``. The
+    duplicate-workspace caveat (workspaces sharing a git remote) is surfaced only
+    when unscoped (local), where ``siftd migrate --merge-workspaces`` is runnable;
+    it is count-only, so it leaks no path or remote. ``sync_to_thread=True`` keeps
+    the blocking read off the event loop.
+    """
+    from siftd.api.migrations import workspace_duplicate_count
+    from siftd.api.stats import list_workspaces
+    from siftd.output.format_registry import get_format
+
+    owner = _effective_owner(request, None)
+    rows = list_workspaces(db_path=db_path, owner=owner, n=1000, with_usage=True)
+    # Local-only: the remediation is a local migration, and suppressing it under
+    # an owner scope also avoids advertising cross-tenant corpus shape.
+    duplicates = workspace_duplicate_count(db_path) if owner is None else (0, 0)
+    fmt = get_format("html")
+    return _html_response(fmt.render_workspaces(
+        rows,
+        detail_base="/workspace",
+        shell_base="/",
+        duplicates=duplicates,
+    ))
+
+
+@get("/workspace", sync_to_thread=True)
+def ui_workspace_detail(
+    request: Request,
+    db_path: Path,
+    ws: str | None = Parameter(query="ws", default=None),
+) -> Response:
+    """Render one workspace's detail (the Workspaces master's drill target).
+
+    With ``?ws=`` renders that workspace; without, the most active one so the
+    view is never empty (mirrors the folio's latest-conversation fallback).
+    Owner-scoped: ``workspace_detail`` returns None for a workspace the owner
+    doesn't participate in, which degrades to the not-found stub (no IDOR leak).
+    """
+    from siftd.api.stats import list_workspaces, workspace_detail
+    from siftd.output.format_registry import get_format
+
+    owner = _effective_owner(request, None)
+    # depth=3 so the recent rows carry the rollup's canonical cost, like the folio.
+    fidelity = _fidelity(depth=3, chars=0)
+
+    ws_id = ws
+    if not ws_id:
+        top = list_workspaces(db_path=db_path, owner=owner, n=1)
+        if not top:
+            return _html_response(_stub("workspaces", "Workspaces", "no workspaces yet"))
+        ws_id = top[0]["id"]
+
+    detail = workspace_detail(ws_id, fidelity=fidelity, db_path=db_path, owner=owner)
+    if detail is None:
+        return _html_response(_stub("workspaces", "Workspaces", f"not found: {ws_id[:12]}"))
+    fmt = get_format("html")
+    return _html_response(fmt.render_workspace_detail(
+        detail, fidelity,
+        detail_base="/folio",
+        shell_base="/",
     ))
 
 
