@@ -6,12 +6,12 @@ _Auto-generated from `--help` output._
 
 ```
 usage: siftd [-h] [--version] [--db PATH]
-             {register,session-id,config,adapters,db,tag,id,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,auth,upgrade} ...
+             {register,session-id,config,adapters,db,tag,id,query,report,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,auth,upgrade} ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {register,session-id,config,adapters,db,tag,id,query,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,auth,upgrade}
+  {register,session-id,config,adapters,db,tag,id,query,report,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,auth,upgrade}
     register            Register an active session for live tagging
     session-id          Print the session ID for the current workspace
     config              View or modify config settings
@@ -22,6 +22,7 @@ positional arguments:
     tag                 Manage tags: apply, remove, list, rename, delete
     id                  Classify a ULID and show its type and context
     query               List and filter conversations by metadata
+    report              Run saved SQL reports (parameterized .sql queries)
     ingest              Ingest logs from all sources
     backfill            Backfill derived data from existing records
     migrate             Run data migrations
@@ -296,13 +297,11 @@ usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                    [--tools [FILTER]] [--tool-chars N] [--from-start |
                    --from-end | --at-turn N | --around PHRASE]
                    [--exchanges N | --turns A:B] [-v] [--oldest] [--stats]
-                   [--summary] [--neighbors] [--var KEY=VALUE]
-                   [conversation_id] [sql_name]
+                   [--summary] [--neighbors]
+                   [conversation_id]
 
 positional arguments:
-  conversation_id       Conversation ID for detail view, or 'sql' for SQL
-                        query mode
-  sql_name              SQL query name (when using 'sql' subcommand)
+  conversation_id       Conversation ID for detail view
 
 options:
   -h, --help            show this help message and exit
@@ -363,9 +362,6 @@ detail view:
   --neighbors           Include prev_event_id/next_event_id in event detail
                         output
 
-sql queries:
-  --var KEY=VALUE       Substitute $KEY with VALUE in SQL
-
 List and filter conversations by metadata (workspace, model, date, tags).
 For semantic content search, use: siftd search <query>
 
@@ -395,9 +391,35 @@ examples:
   siftd query <id> -b                          # short alias for --brief
   siftd query <id> --full                      # full text, no truncation
   siftd query <id> -F                          # short alias for --full
-  siftd query sql                              # list available .sql files
-  siftd query sql cost                         # run the 'cost' query
-  siftd query sql cost --var ws=proj           # run with variable substitution
+
+named SQL reports moved to 'siftd report' ('query sql' still works, deprecated):
+  siftd report                                 # list saved SQL reports
+  siftd report cost                            # run the 'cost' report
+  siftd report cost --var ws=proj              # run with variable substitution
+```
+
+## siftd report
+
+```
+usage: siftd report [-h] [--var KEY=VALUE] [name]
+
+positional arguments:
+  name             Report name (omit to list available reports)
+
+options:
+  -h, --help       show this help message and exit
+  --var KEY=VALUE  Substitute $KEY with VALUE in the report SQL
+
+Run saved SQL reports from ~/.config/siftd/queries/*.sql.
+
+A report is a named .sql file with optional $KEY placeholders. Run without a
+name to list available reports. Copy the built-ins to customize:
+  siftd copy query cost            # copy the 'cost' report to your queries dir
+
+examples:
+  siftd report                          # list available reports
+  siftd report cost                     # run the 'cost' report
+  siftd report cost --var ws=proj       # run with variable substitution
 ```
 
 ## siftd ingest

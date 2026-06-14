@@ -71,6 +71,7 @@ SUBCOMMANDS = [
     "tag",
     "id",
     "query",
+    "report",
     "backfill",
     "path",
     "config",

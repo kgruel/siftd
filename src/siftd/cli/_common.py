@@ -284,6 +284,32 @@ def add_anchor_window_args(
         )
 
 
+# Deprecated-surface registry. Each entry is (old_surface, new_surface).
+# Kept as a single list so a test can snapshot the full deprecated set and
+# prevent silent accretion of shims — the migration-cost discipline from the
+# CLI UX audit. Notices fire at most once per process (per old surface).
+DEPRECATED_SURFACES: list[tuple[str, str]] = [
+    ("query sql", "report"),
+]
+_DEPRECATION_EMITTED: set[str] = set()
+
+
+def deprecation_notice(old: str, new: str) -> None:
+    """Print a one-line deprecation notice to stderr, once per process.
+
+    Keeps the old surface working (alias-first migration) while steering
+    callers to the canonical one. stderr so it never pollutes piped stdout
+    or --json output.
+    """
+    if old in _DEPRECATION_EMITTED:
+        return
+    _DEPRECATION_EMITTED.add(old)
+    print(
+        f"note: '{old}' is deprecated and will be removed in a future release; use '{new}'.",
+        file=sys.stderr,
+    )
+
+
 def _get_version() -> str:
     """Get package version from metadata."""
     try:

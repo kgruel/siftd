@@ -15,6 +15,7 @@ from siftd.cli.install import build_install_parser
 from siftd.cli.meta import build_meta_parser
 from siftd.cli.peek import build_peek_parser
 from siftd.cli.query import build_query_parser
+from siftd.cli.report import build_report_parser
 from siftd.cli.search import build_search_parser
 from siftd.cli.serve import build_serve_parser
 from siftd.cli.sessions import build_sessions_parser
@@ -65,6 +66,7 @@ def main(argv=None) -> int:
     build_tags_parser(subparsers)
     build_id_parser(subparsers)
     build_query_parser(subparsers)
+    build_report_parser(subparsers)
     build_data_parser(subparsers)
     build_search_parser(subparsers)
     build_install_parser(subparsers)

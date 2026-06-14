@@ -13,9 +13,8 @@ from siftd.cli._common import (
     print_ambiguous_error,
     resolve_db,
 )
-from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, print_table
+from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace
 from siftd.output.painted_bridge import emit_output
-from siftd.paths import queries_dir
 
 
 def _dispatch_detail(args) -> int:
@@ -343,68 +342,18 @@ def _query_detail(args) -> int:
 
 
 def _query_sql(args) -> int:
-    """List or run .sql query files (formerly 'queries' command)."""
-    from siftd.api import QueryError, list_query_files, run_query_file
+    """Deprecated alias for `siftd report`. Routes named-SQL to the report handler.
 
-    # List mode: no name provided
-    if not args.sql_name:
-        query_files = list_query_files()
-        if not query_files:
-            print(f"No queries found in {queries_dir()}")
-            return 0
-        for qf in query_files:
-            suffix = f"  (vars: {', '.join(qf.variables)})" if qf.variables else "  (no vars)"
-            print(f"{qf.name}{suffix}")
-        return 0
+    Named-SQL composes from neither the conversation list nor the detail view;
+    it only looked unified by squatting query's positional slot. Kept working
+    (alias-first migration) with a one-time deprecation notice to stderr.
+    """
+    from siftd.cli._common import deprecation_notice
+    from siftd.cli.report import run_report
 
-    # Run mode: parse variables
-    variables = None
-    if args.var:
-        variables = {}
-        for v in args.var:
-            if "=" not in v:
-                print(f"Invalid --var format (expected key=value): {v}")
-                return 1
-            key, value = v.split("=", 1)
-            variables[key] = value
-
+    deprecation_notice("query sql", "report")
     db = Path(args.db) if args.db else None
-
-    try:
-        result = run_query_file(args.sql_name, variables, db_path=db)
-    except FileNotFoundError as e:
-        if "Query file not found" in str(e):
-            print(f"Query not found: {e}")
-            print("Available queries:")
-            for qf in list_query_files():
-                print(f"  {qf.name}")
-            return 1
-        print(str(e))
-        print("Run 'siftd ingest' to create it.")
-        return 1
-    except QueryError as e:
-        if "Missing variables" in str(e):
-            # Extract missing vars for usage hint
-            import re
-            match = re.search(r"Missing variables: (.+)", str(e))
-            missing = match.group(1).split(", ") if match else []
-            print(f"Query '{args.sql_name}' requires variables not provided: {', '.join(missing)}")
-            print(f"Usage: siftd query sql {args.sql_name} " + " ".join(f"--var {v}=<value>" for v in missing))
-        else:
-            print(str(e))
-        return 1
-
-    # Format output
-    if result.rows:
-        str_rows = [
-            [str(v) if v is not None else "" for v in row]
-            for row in result.rows
-        ]
-        print_table(result.columns, str_rows)
-    else:
-        print("OK (no results)")
-
-    return 0
+    return run_report(args.sql_name, args.var, db)
 
 
 def cmd_query(args) -> int:
@@ -584,14 +533,17 @@ examples:
   siftd query <id> -b                          # short alias for --brief
   siftd query <id> --full                      # full text, no truncation
   siftd query <id> -F                          # short alias for --full
-  siftd query sql                              # list available .sql files
-  siftd query sql cost                         # run the 'cost' query
-  siftd query sql cost --var ws=proj           # run with variable substitution""",
+
+named SQL reports moved to 'siftd report' ('query sql' still works, deprecated):
+  siftd report                                 # list saved SQL reports
+  siftd report cost                            # run the 'cost' report
+  siftd report cost --var ws=proj              # run with variable substitution""",
     )
 
     # Positional arguments
-    p_query.add_argument("conversation_id", nargs="?", help="Conversation ID for detail view, or 'sql' for SQL query mode")
-    p_query.add_argument("sql_name", nargs="?", help="SQL query name (when using 'sql' subcommand)")
+    p_query.add_argument("conversation_id", nargs="?", help="Conversation ID for detail view")
+    # 'sql_name' supports the deprecated `query sql <name>` alias; use `siftd report`.
+    p_query.add_argument("sql_name", nargs="?", help=argparse.SUPPRESS)
 
     # Filtering options
     from siftd.cli._common import add_anchor_window_args, add_fidelity_args, add_output_args
@@ -616,9 +568,8 @@ examples:
     detail_group.add_argument("--neighbors", action="store_true",
         help="Include prev_event_id/next_event_id in event detail output")
 
-    # SQL query options
-    sql_group = p_query.add_argument_group("sql queries")
-    sql_group.add_argument("--var", action="append", metavar="KEY=VALUE", help="Substitute $KEY with VALUE in SQL")
+    # Deprecated `query sql <name> --var` alias support (use `siftd report`).
+    p_query.add_argument("--var", action="append", metavar="KEY=VALUE", help=argparse.SUPPRESS)
 
     _SEARCH_HINT_FLAGS = frozenset(["-s", "--search", "--fts", "--semantic"])
 

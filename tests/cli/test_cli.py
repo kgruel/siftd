@@ -365,7 +365,8 @@ class TestQuerySqlCommand:
 
         assert rc == 0
         captured = capsys.readouterr()
-        assert "No queries found" in captured.out
+        # 'query sql' now routes to the report subsystem (deprecated alias).
+        assert "No reports found" in captured.out
 
 
 class TestAdaptersCommand:

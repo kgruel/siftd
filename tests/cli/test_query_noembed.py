@@ -125,7 +125,7 @@ def test_query_sql_and_cmd_query_list_branches(monkeypatch, capsys, tmp_path):
 
     monkeypatch.setattr("siftd.api.run_query_file", lambda *a, **k: SimpleNamespace(rows=[[1, None]], columns=["a", "b"]))
     printed = []
-    monkeypatch.setattr("siftd.cli.query.print_table", lambda cols, rows: printed.append((cols, rows)))
+    monkeypatch.setattr("siftd.output.print_table", lambda cols, rows: printed.append((cols, rows)))
     assert _query_sql(_args(sql_name="cost")) == 0
     assert printed
 
