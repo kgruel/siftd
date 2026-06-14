@@ -219,6 +219,13 @@ class TestCommandReferences:
             for cmd in brace_match.group(1).split(","):
                 valid_subcommands.add(cmd.strip())
 
+        # Plumbing commands are hidden from the lane listing but remain valid;
+        # the help advertises them on the epilog 'Advanced (hidden): ...' line.
+        hidden_match = re.search(r"Advanced \(hidden\):\s*(.+)", result.stdout)
+        if hidden_match:
+            for cmd in hidden_match.group(1).split(","):
+                valid_subcommands.add(cmd.strip())
+
         assert valid_subcommands, "Failed to parse subcommands from help output"
 
         # Scan source files for 'siftd <subcommand>' patterns
