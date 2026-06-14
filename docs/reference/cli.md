@@ -6,12 +6,12 @@ _Auto-generated from `--help` output._
 
 ```
 usage: siftd [-h] [--version] [--db PATH]
-             {register,session-id,config,adapters,db,tag,id,query,report,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,auth,upgrade} ...
+             {register,session-id,config,adapters,db,tag,id,query,show,report,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,auth,upgrade} ...
 
 Aggregate and query LLM conversation logs
 
 positional arguments:
-  {register,session-id,config,adapters,db,tag,id,query,report,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,auth,upgrade}
+  {register,session-id,config,adapters,db,tag,id,query,show,report,ingest,backfill,migrate,copy,doctor,search,install,peek,export,serve,auth,upgrade}
     register            Register an active session for live tagging
     session-id          Print the session ID for the current workspace
     config              View or modify config settings
@@ -22,6 +22,7 @@ positional arguments:
     tag                 Manage tags: apply, remove, list, rename, delete
     id                  Classify a ULID and show its type and context
     query               List and filter conversations by metadata
+    show                Read one conversation (or event) in detail
     report              Run saved SQL reports (parameterized .sql queries)
     ingest              Ingest logs from all sources
     backfill            Backfill derived data from existing records
@@ -363,13 +364,11 @@ detail view:
                         output
 
 List and filter conversations by metadata (workspace, model, date, tags).
-For semantic content search, use: siftd search <query>
+To read one conversation: siftd show <id>.  For content search: siftd search <query>.
 
 Conversation IDs in lists are truncated to 12 characters for display; any unambiguous
-prefix works — e.g. 'siftd query 01ABCDEF01AB --summary' resolves without a full 26-character ID.
+prefix works — e.g. 'siftd show 01ABCDEF01AB --summary' resolves without a full 26-character ID.
 If a prefix matches multiple conversations, the command exits with code 2 and lists the matched IDs.
-
-Navigation: --exchanges and --turns require an anchor flag. No anchor shows the whole conversation.
 
 examples:
   siftd query                                   # list recent conversations
@@ -380,22 +379,77 @@ examples:
   siftd query --all-tags important --all-tags reviewed  # AND — must have both
   siftd query -l research: --no-tag archived    # combine OR + NOT
   siftd query --tool-tag shell:test             # conversations with test commands
-  siftd query <id>                              # show full conversation
-  siftd query <id> --summary                    # metadata only, no turns
-  siftd query <id> --from-start --exchanges 3   # first 3 turns
-  siftd query <id> --from-end --exchanges 5     # last 5 turns (replaces bare --exchanges)
-  siftd query <id> --at-turn 4                  # show only turn 4
-  siftd query <id> --at-turn 4 --turns=-1:+2    # turns 3-6 (relative to turn 4)
-  siftd query <id> --around "error message" --turns=-2:+2  # context around phrase match
-  siftd query <id> --brief                     # compact view (80 char truncation)
-  siftd query <id> -b                          # short alias for --brief
-  siftd query <id> --full                      # full text, no truncation
-  siftd query <id> -F                          # short alias for --full
+
+read one conversation (canonical verb is 'siftd show'; see 'siftd show --help'):
+  siftd show <id>                               # read a conversation in detail
+  siftd query <id>                              # alias for 'siftd show <id>'
 
 named SQL reports moved to 'siftd report' ('query sql' still works, deprecated):
   siftd report                                 # list saved SQL reports
   siftd report cost                            # run the 'cost' report
   siftd report cost --var ws=proj              # run with variable substitution
+```
+
+## siftd show
+
+```
+usage: siftd show [-h] [--json] [-F] [-b] [--chars N] [--thinking]
+                  [--tools [FILTER]] [--tool-chars N] [--from-start |
+                  --from-end | --at-turn N | --around PHRASE] [--exchanges N |
+                  --turns A:B] [--summary] [--neighbors]
+                  conversation_id
+
+positional arguments:
+  conversation_id   Conversation or event ID (any unambiguous prefix)
+
+options:
+  -h, --help        show this help message and exit
+
+output:
+  --json            Output as JSON
+
+fidelity:
+  -F, --full        Full text (no truncation)
+  -b, --brief       Compact view (80 char truncation)
+  --chars N         Truncate text at N characters
+  --thinking        Show model thinking/reasoning blocks
+  --tools [FILTER]  Show tool inputs/results (optional filter: tool name
+                    prefix or 'errors')
+  --tool-chars N    Truncate tool input/result at N characters (default: 120)
+
+navigation:
+  --from-start      Anchor at the start of the conversation (turn 0)
+  --from-end        Anchor at the end of the conversation (last turn)
+  --at-turn N       Anchor at the N-th turn (0-indexed)
+  --around PHRASE   Anchor at the first FTS5 phrase match in the conversation
+  --exchanges N     Number of turns to show from anchor (requires an anchor
+                    flag)
+  --turns A:B       Turn range relative to anchor, e.g. -2:+2 or 5:10
+                    (requires an anchor flag)
+
+detail view:
+  --summary         Summary only (metadata, no turns)
+  --neighbors       Include prev_event_id/next_event_id in event detail output
+
+Read a single conversation (or event) by ID, with navigation.
+
+IDs may be any unambiguous prefix — the 12-char display IDs from `siftd query`
+and `siftd search` resolve directly. Use `siftd query` to browse by metadata or
+`siftd search <text>` to find conversations by content, then `show` to read one.
+
+Navigation: --exchanges and --turns require an anchor flag. No anchor shows the
+whole conversation.
+
+examples:
+  siftd show 01HX4G7K                              # full conversation
+  siftd show 01HX4G7K --summary                    # metadata only, no turns
+  siftd show 01HX4G7K --from-start --exchanges 3   # first 3 turns
+  siftd show 01HX4G7K --from-end --exchanges 5     # last 5 turns
+  siftd show 01HX4G7K --at-turn 4                  # show only turn 4
+  siftd show 01HX4G7K --at-turn 4 --turns=-1:+2    # turns 3-6 (relative to turn 4)
+  siftd show 01HX4G7K --around "error" --turns=-2:+2   # context around a phrase
+  siftd show 01HX4G7K --brief                      # compact view (80 char truncation)
+  siftd show 01HX4G7K --full                       # full text, no truncation
 ```
 
 ## siftd report
