@@ -130,6 +130,19 @@ CREATE TABLE tag_pins (
     PRIMARY KEY (owner, tag_id)
 );
 
+-- Per-owner workspace pins — same shape and lifecycle as tag_pins (serve-side UI
+-- preference state for the Workspaces head). owner='' is the unscoped/local case;
+-- existing DBs get this table from ensure_workspace_pins_table on the next
+-- write-open (no version bump); reads guard on its presence
+-- (storage.queries.has_workspace_pins_table). ON DELETE CASCADE drops a pin when
+-- its workspace is merged/removed, so a pin can never orphan a missing target.
+CREATE TABLE workspace_pins (
+    owner         TEXT NOT NULL,
+    workspace_id  TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    pinned_at     TEXT NOT NULL,
+    PRIMARY KEY (owner, workspace_id)
+);
+
 --------------------------------------------------------------------------------
 -- OPERATIONAL TABLES
 -- Ingestion tracking

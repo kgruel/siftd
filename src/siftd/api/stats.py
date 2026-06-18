@@ -202,6 +202,7 @@ def list_workspaces(
     db_path: Path | None = None,
     owner: str | None = None,
     with_usage: bool = False,
+    sort: str = "sessions",
 ) -> list[sqlite3.Row]:
     """List workspaces with conversation counts.
 
@@ -213,12 +214,16 @@ def list_workspaces(
             (cost ``None`` when the workspace has no priced usage). Off by default
             so the name-only callers stay on the lean query; the Workspaces view
             opts in.
+        sort: Ordering — ``sessions`` (default), ``recent``, ``tokens``, or
+            ``cost``. ``tokens``/``cost`` require ``with_usage`` and fall back to
+            ``sessions`` otherwise.
 
     Returns:
-        Rows with 'id' (workspace ULID), 'path', 'git_remote', 'convs', and
-        'last_activity' keys (plus 'inp'/'out'/'cost' when ``with_usage``). The
-        ULID 'id' is the workspace's stable identity (workspaces.id) — the read
-        API addresses workspaces by it, not by the slash-containing path.
+        Rows with 'id' (workspace ULID), 'path', 'git_remote', 'convs',
+        'last_activity', and 'pinned' (0/1, owner-scoped) keys (plus
+        'inp'/'out'/'cost' when ``with_usage``). The ULID 'id' is the workspace's
+        stable identity (workspaces.id) — the read API addresses workspaces by
+        it, not by the slash-containing path.
     """
     should_close = False
     if conn is None:
@@ -227,10 +232,52 @@ def list_workspaces(
         should_close = True
     try:
         owner_kw = {"owner": owner} if owner else {}
-        return fetch_top_workspaces(conn, limit=n, with_usage=with_usage, **owner_kw)
+        return fetch_top_workspaces(
+            conn, limit=n, with_usage=with_usage, sort=sort, **owner_kw
+        )
     finally:
         if should_close:
             conn.close()
+
+
+def set_workspace_pin(
+    workspace_id: str,
+    *,
+    pinned: bool,
+    db_path: Path | None = None,
+    owner: str | None = None,
+) -> bool:
+    """Pin or unpin a workspace (by ULID) for an owner. Returns True if state changed.
+
+    Mirrors :func:`siftd.api.tags.set_tag_pin`. Owner-scoped, so one tenant's
+    pins never touch another's view. Guards on workspace existence: a bogus id is
+    a no-op (returns False) rather than a foreign-key violation. Manages its own
+    connection and transaction. Pinning is inert for a workspace the owner does
+    not participate in — the Workspaces list is owner-scoped, so a foreign pin
+    never renders — but pinning still requires the workspace to exist.
+    """
+    from siftd.storage.queries import pin_workspace as _pin
+    from siftd.storage.queries import unpin_workspace as _unpin
+    from siftd.storage.queries import workspace_exists as _exists
+
+    wid = (workspace_id or "").strip()
+    if not wid:
+        return False
+
+    path = db_path or default_db_path()
+    conn = open_database(path)
+    try:
+        if not _exists(conn, wid):
+            return False
+        changed = (
+            _pin(conn, owner=owner, workspace_id=wid)
+            if pinned
+            else _unpin(conn, owner=owner, workspace_id=wid)
+        )
+        conn.commit()
+        return changed
+    finally:
+        conn.close()
 
 
 def stats_cache_path(owner: str | None = None) -> Path:

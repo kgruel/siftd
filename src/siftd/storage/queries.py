@@ -11,6 +11,7 @@ The API layer handles parameter validation and dataclass mapping.
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from siftd.storage.sql_helpers import (
     batched_in_query,
@@ -647,12 +648,120 @@ def fetch_harnesses(conn: sqlite3.Connection, *, owner: str | None = None) -> li
     return conn.execute("SELECT name, source, log_format FROM harnesses").fetchall()
 
 
+# Workspace pins — per-owner UI preference state for the Workspaces head, an
+# exact mirror of the tag_pins slice (storage.tags): lazy-ensured on write-open,
+# guarded by has_workspace_pins_table on reads so a read-only open of an
+# older DB degrades to "nothing pinned" rather than raising "no such table".
+def ensure_workspace_pins_table(conn: sqlite3.Connection) -> None:
+    """Create the per-owner workspace-pin table if absent. Idempotent.
+
+    Same rationale as ``ensure_tag_pins_table``: pins are owner-scoped UI state
+    and the ``workspaces`` table is global (no owner column). ``owner`` is stored
+    as ``''`` for the unscoped/local case so the composite PRIMARY KEY de-dupes
+    (SQLite treats NULLs as distinct). Ensured on every write-open; reads guard.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workspace_pins (
+            owner         TEXT NOT NULL,
+            workspace_id  TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            pinned_at     TEXT NOT NULL,
+            PRIMARY KEY (owner, workspace_id)
+        )
+        """
+    )
+
+
+def has_workspace_pins_table(conn: sqlite3.Connection) -> bool:
+    """Return True if the workspace_pins table exists (created lazily on write-open)."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspace_pins'"
+        ).fetchone()
+        is not None
+    )
+
+
+def workspace_exists(conn: sqlite3.Connection, workspace_id: str) -> bool:
+    """Return True if a workspace with this ULID exists.
+
+    The pin write guards on this so a bogus id is a clean no-op rather than a
+    foreign-key violation (FK enforcement is on for normal opens).
+    """
+    return (
+        conn.execute(
+            "SELECT 1 FROM workspaces WHERE id = ?", (workspace_id,)
+        ).fetchone()
+        is not None
+    )
+
+
+def pin_workspace(
+    conn: sqlite3.Connection,
+    *,
+    owner: str | None,
+    workspace_id: str,
+    pinned_at: str | None = None,
+    commit: bool = False,
+) -> bool:
+    """Pin a workspace for an owner. Returns True if newly pinned, False if already pinned."""
+    ensure_workspace_pins_table(conn)
+    ts = pinned_at or datetime.now(UTC).isoformat()
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO workspace_pins (owner, workspace_id, pinned_at) VALUES (?, ?, ?)",
+        (owner or "", workspace_id, ts),
+    )
+    if commit:
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def unpin_workspace(
+    conn: sqlite3.Connection,
+    *,
+    owner: str | None,
+    workspace_id: str,
+    commit: bool = False,
+) -> bool:
+    """Unpin a workspace for an owner. Returns True if a pin was removed."""
+    if not has_workspace_pins_table(conn):
+        return False
+    cur = conn.execute(
+        "DELETE FROM workspace_pins WHERE owner = ? AND workspace_id = ?",
+        (owner or "", workspace_id),
+    )
+    if commit:
+        conn.commit()
+    return cur.rowcount > 0
+
+
+# Workspace list sort → ORDER BY measure. Magnitude sorts (sessions/tokens/cost)
+# also drive the render-layer bar; "recent" is the recency sort (no bar). The
+# inner form orders the aggregate subquery (so LIMIT picks the right top-N), the
+# outer form re-orders the final join; both DESC. tokens/cost need the usage
+# columns, so they fall back to sessions when with_usage is off.
+_WS_SORT_INNER = {
+    "sessions": "convs",
+    "recent": "last_activity",
+    "tokens": "(inp + out)",
+    "cost": "cost",
+}
+_WS_SORT_OUTER = {
+    "sessions": "counts.convs",
+    "recent": "counts.last_activity",
+    "tokens": "(counts.inp + counts.out)",
+    "cost": "counts.cost",
+}
+_WS_USAGE_SORTS = frozenset({"tokens", "cost"})
+
+
 def fetch_top_workspaces(
     conn: sqlite3.Connection,
     limit: int = 10,
     *,
     owner: str | None = None,
     with_usage: bool = False,
+    sort: str = "sessions",
 ) -> list[sqlite3.Row]:
     """Fetch workspaces with conversation counts and last activity.
 
@@ -667,9 +776,20 @@ def fetch_top_workspaces(
     ("unknown"), never a fabricated $0. Default off keeps the query byte-identical
     for the name-only callers (the workspaces CLI listing, ``/meta``, the JSON
     master route) — it is the depth-gated enrichment the Workspaces view opts into.
+
+    ``sort`` is one of ``sessions`` (default, conversation count), ``recent``
+    (last activity), ``tokens``, or ``cost``; the token/cost sorts fall back to
+    ``sessions`` when ``with_usage`` is off (those columns don't exist then).
+    A ``pinned`` column (0/1) rides every row via a guarded LEFT JOIN on
+    workspace_pins (owner-scoped), so the view can lift pinned workspaces into
+    the head without a second query.
     """
     if owner and not has_conversation_owners_table(conn):
         return []
+    if sort in _WS_USAGE_SORTS and not with_usage:
+        sort = "sessions"
+    inner_order = _WS_SORT_INNER.get(sort, "convs")
+    outer_order = _WS_SORT_OUTER.get(sort, "counts.convs")
     owner_where = ""
     owner_params: tuple[object, ...] = ()
     join_type = "JOIN"
@@ -692,9 +812,18 @@ def fetch_top_workspaces(
     else:
         convs_expr = "COUNT(*)"
         usage_inner = usage_join = usage_outer = ""
+    # Guarded pin join (outer): a pinned column the view reads to seed the head.
+    if has_workspace_pins_table(conn):
+        pin_outer = ", (wp.workspace_id IS NOT NULL) AS pinned"
+        pin_join = "LEFT JOIN workspace_pins wp ON wp.workspace_id = w.id AND wp.owner = ?"
+        pin_params: tuple[object, ...] = (owner or "",)
+    else:
+        pin_outer = ", 0 AS pinned"
+        pin_join = ""
+        pin_params = ()
     return conn.execute(
         f"""
-        SELECT w.id, w.path, w.git_remote, counts.convs, counts.last_activity{usage_outer}
+        SELECT w.id, w.path, w.git_remote, counts.convs, counts.last_activity{usage_outer}{pin_outer}
         FROM (
             SELECT
                 c.workspace_id,
@@ -704,13 +833,14 @@ def fetch_top_workspaces(
             {usage_join}
             {owner_where}
             GROUP BY c.workspace_id
-            ORDER BY convs DESC
+            ORDER BY {inner_order} DESC
             LIMIT ?
         ) counts
         {join_type} workspaces w ON w.id = counts.workspace_id
-        ORDER BY counts.convs DESC
+        {pin_join}
+        ORDER BY {outer_order} DESC
         """,
-        (*owner_params, limit),
+        (*owner_params, limit, *pin_params),
     ).fetchall()
 
 

@@ -826,6 +826,7 @@ class TestSchemaStability:
         "attributes",
         "tag_assignments",
         "tag_pins",
+        "workspace_pins",
     }
 
     def test_expected_tables_exist(self, db):
