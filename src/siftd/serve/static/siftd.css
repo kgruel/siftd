@@ -313,6 +313,13 @@ body { margin: 0; }
 .row__turns { width:4ch; text-align:right; color:var(--mid); font-variant-numeric:tabular-nums; }
 .row__tok { width:8ch; text-align:right; color:var(--ink); font-variant-numeric:tabular-nums; }
 .row .cost { width:9ch; text-align:right; font-variant-numeric:tabular-nums; color:var(--ink); }
+/* sub-agent rows nested under their parent session */
+.row--sub { padding-left:52px; background:var(--sel-bg); }
+.row--sub .row__ws { color:var(--mid); font-family:var(--font-mono); }
+.row__caret { color:var(--faint); margin-right:6px; }
+.row__agents { margin-left:10px; padding:0 6px; font-size:var(--fs-micro);
+  font-family:var(--font-mono); color:var(--faint);
+  border:1px solid var(--hair); border-radius:3px; }
 
 /* ========================================================================= */
 /* WORKSPACES — drillable master ledger + a per-workspace detail              */

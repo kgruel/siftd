@@ -1047,14 +1047,64 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
         )
 
     # --- ingested timeline ---------------------------------------------------
-    days: OrderedDict[str, list] = OrderedDict()
+    # Sub-agent conversations carry their root session in external_id
+    # ("claude_code::<uuid>::agent::<id>" -> root "claude_code::<uuid>"), so
+    # list_conversations derives parent_external_id render-side already. Nest
+    # them under their parent row instead of scattering them through the
+    # timeline. Pure render-layer: no schema column, no extra query.
+    present = {
+        c.external_id for c in summaries if getattr(c, "external_id", None)
+    }
+    children: dict[str, list] = {}
+    roots: list = []
     for c in summaries:
+        parent_ext = getattr(c, "parent_external_id", None)
+        if parent_ext and parent_ext in present:
+            children.setdefault(parent_ext, []).append(c)
+        else:
+            # Top-level session, or an orphan sub-agent whose parent fell outside
+            # this page (n=50) — render at top level, flagged as a sub-agent.
+            roots.append(c)
+
+    def _session_row(c, *, sub: bool, agents: int = 0) -> str:
+        model = fmt_model(getattr(c, "model", None)) or ""
+        ws = getattr(c, "workspace_path", None)
+        ws_name = ws.rstrip("/").rsplit("/", 1)[-1] if ws else "?"
+        row_cost = getattr(c, "cost", None)
+        row_cost_str = f"${row_cost:,.2f}" if row_cost is not None else "&mdash;"
+        cls = "row row--sub" if sub else "row"
+        caret = '<span class="row__caret" aria-hidden="true">&#8627;</span>' if sub else ""
+        chip = (
+            f'<span class="row__agents">{agents} agent{"" if agents == 1 else "s"}</span>'
+            if agents else ""
+        )
+        return (
+            f'<li class="{cls}"{_hx_detail(detail_base, c.id, shell_base)}>'
+            f'<span class="row__ws">{caret}{escape(ws_name)}{chip}</span>'
+            f'<span class="row__model">{escape(model)}</span>'
+            f'<span class="row__turns">{getattr(c, "prompt_count", 0)}</span>'
+            f'<span class="row__tok">{escape(fmt_tokens(getattr(c, "total_tokens", 0) or 0))}</span>'
+            f'<span class="cost">{row_cost_str}</span>'
+            f"</li>"
+        )
+
+    days: OrderedDict[str, list] = OrderedDict()
+    for c in roots:
         epoch = _iso_epoch(getattr(c, "started_at", None))
         key = datetime.fromtimestamp(epoch).strftime("%Y-%m-%d") if epoch else "unknown"
         days.setdefault(key, []).append(c)
 
     day_parts: list[str] = []
     for key, convs in days.items():
+        # Fold each root's nested sub-agents back into the day totals, so token
+        # and cost numbers still account for all work done that day.
+        day_kids: list = []
+        for c in convs:
+            ext = getattr(c, "external_id", None)
+            if ext:
+                day_kids.extend(children.get(ext, []))
+        in_day = convs + day_kids
+
         if key == "unknown":
             label = "undated"
             hist = ""
@@ -1066,27 +1116,22 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
                 if e is not None:
                     hours.append(datetime.fromtimestamp(e).hour)
             hist = _hour_hist(hours)
-        tok = sum(getattr(c, "total_tokens", 0) or 0 for c in convs)
-        priced = [c.cost for c in convs if getattr(c, "cost", None) is not None]
+        tok = sum(getattr(c, "total_tokens", 0) or 0 for c in in_day)
+        priced = [c.cost for c in in_day if getattr(c, "cost", None) is not None]
         cost_str = f"${sum(priced):,.2f}" if priced else "&mdash;"
-        sub = f"{len(convs)} sessions · {fmt_tokens(tok)} tok · {cost_str}"
+        sub = f"{len(convs)} sessions"
+        if day_kids:
+            sub += f" &middot; {len(day_kids)} sub-agents"
+        sub += f" &middot; {fmt_tokens(tok)} tok &middot; {cost_str}"
 
         rows: list[str] = []
         for c in convs:
-            model = fmt_model(getattr(c, "model", None)) or ""
-            ws = getattr(c, "workspace_path", None)
-            ws_name = ws.rstrip("/").rsplit("/", 1)[-1] if ws else "?"
-            row_cost = getattr(c, "cost", None)
-            row_cost_str = f"${row_cost:,.2f}" if row_cost is not None else "&mdash;"
-            rows.append(
-                f"<li class=\"row\"{_hx_detail(detail_base, c.id, shell_base)}>"
-                f'<span class="row__ws">{escape(ws_name)}</span>'
-                f'<span class="row__model">{escape(model)}</span>'
-                f'<span class="row__turns">{getattr(c, "prompt_count", 0)}</span>'
-                f'<span class="row__tok">{escape(fmt_tokens(getattr(c, "total_tokens", 0) or 0))}</span>'
-                f'<span class="cost">{row_cost_str}</span>'
-                f"</li>"
-            )
+            ext = getattr(c, "external_id", None)
+            kids = children.get(ext, []) if ext else []
+            is_orphan = bool(getattr(c, "parent_external_id", None))
+            rows.append(_session_row(c, sub=is_orphan, agents=len(kids)))
+            for kid in kids:
+                rows.append(_session_row(kid, sub=True))
         day_parts.append(
             f'<div class="day"><div class="day__head">'
             f'<span class="day__date">{escape(label)}</span>'

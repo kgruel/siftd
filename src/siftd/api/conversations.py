@@ -169,6 +169,11 @@ class ConversationSummary:
     cost: float | None
     tags: list[str] = field(default_factory=list)
     owner: str | None = None
+    # Adapter-scoped identity (e.g. "claude_code::<uuid>"). A spawned sub-agent
+    # encodes its root session here as "<root>::agent::<agentId>", so the parent
+    # link is derivable without a schema column (see parent_external_id).
+    external_id: str | None = None
+    parent_external_id: str | None = None
 
 
 @dataclass
@@ -369,7 +374,7 @@ def _list_conversations_impl(
         # table (e.g. conversations inserted since the last ingest rebuild).
         rows = conn.execute(
             f"""SELECT c.id AS conversation_id, w.path AS workspace,
-                    c.started_at,
+                    c.started_at, c.external_id AS external_id,
                     COALESCE(cs.prompt_count,
                         (SELECT COUNT(*) FROM events WHERE kind = 'prompt' AND conversation_id = c.id)
                     ) AS prompts,
@@ -414,7 +419,7 @@ def _list_conversations_impl(
                      LEFT JOIN models m2 ON m2.id = er2.model_id
                      WHERE e2.kind = 'response' AND e2.conversation_id = c.id
                      GROUP BY m2.name ORDER BY COUNT(*) DESC LIMIT 1) AS model,
-                    c.started_at,
+                    c.started_at, c.external_id AS external_id,
                     (SELECT COUNT(*) FROM events WHERE kind = 'prompt' AND conversation_id = c.id) AS prompts,
                     (SELECT COUNT(*) FROM events WHERE kind = 'response' AND conversation_id = c.id) AS responses,
                     (SELECT COALESCE(SUM(er2.input_tokens), 0) + COALESCE(SUM(er2.output_tokens), 0)
@@ -432,21 +437,29 @@ def _list_conversations_impl(
     tags_by_conv = fetch_tags_for_conversations(conn, conv_ids)
     owner_by_conv = _fetch_owners_for_conversations(conn, conv_ids)
 
-    return [
-        ConversationSummary(
-            id=row["conversation_id"],
-            workspace_path=row["workspace"],
-            model=row["model"],
-            started_at=row["started_at"],
-            prompt_count=row["prompts"],
-            response_count=row["responses"],
-            total_tokens=row["tokens"],
-            cost=row["cost"],
-            tags=tags_by_conv.get(row["conversation_id"], []),
-            owner=owner_by_conv.get(row["conversation_id"]),
+    summaries: list[ConversationSummary] = []
+    for row in rows:
+        ext = row["external_id"]
+        # Sub-agent identity is "<root>::agent::<agentId>"; the root before the
+        # marker is the parent session's external_id. None for a top-level conv.
+        parent_ext = ext.split("::agent::")[0] if ext and "::agent::" in ext else None
+        summaries.append(
+            ConversationSummary(
+                id=row["conversation_id"],
+                workspace_path=row["workspace"],
+                model=row["model"],
+                started_at=row["started_at"],
+                prompt_count=row["prompts"],
+                response_count=row["responses"],
+                total_tokens=row["tokens"],
+                cost=row["cost"],
+                tags=tags_by_conv.get(row["conversation_id"], []),
+                owner=owner_by_conv.get(row["conversation_id"]),
+                external_id=ext,
+                parent_external_id=parent_ext,
+            )
         )
-        for row in rows
-    ]
+    return summaries
 
 
 def _fetch_owners_for_conversations(
