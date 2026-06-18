@@ -230,6 +230,7 @@ def list_conversations(
     n: int = 10,
     oldest: bool = False,
     owner: str | None = None,
+    group_subagents: bool = False,
 ) -> list[ConversationSummary]:
     """List conversations with optional filtering.
 
@@ -260,6 +261,11 @@ def list_conversations(
         n: Maximum results to return (0 = unlimited).
         oldest: Sort by oldest first instead of newest.
         owner: Filter to conversations owned by this user_id.
+        group_subagents: Page by root session — ``n`` then counts only
+            top-level sessions, and every sub-agent of a paged root is pulled
+            in (owner-scoped) regardless of the limit, so the renderer can nest
+            them. Sub-agents are identified by the ``::agent::`` marker in
+            external_id. Off by default (flat listing).
 
     Returns:
         List of ConversationSummary objects.
@@ -274,7 +280,7 @@ def list_conversations(
 
     conn = open_database(db, read_only=True)
     try:
-        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest, fidelity, owner, tag_kind, workspace_id)
+        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest, fidelity, owner, tag_kind, workspace_id, group_subagents)
     finally:
         conn.close()
 
@@ -297,6 +303,7 @@ def _list_conversations_impl(
     owner: str | None = None,
     tag_kind: list[str] | None = None,
     workspace_id: str | None = None,
+    group_subagents: bool = False,
 ) -> list[ConversationSummary]:
     """Implementation of list_conversations with connection already open."""
     # Build WHERE clauses
@@ -342,6 +349,13 @@ def _list_conversations_impl(
             val,
         )
 
+    if group_subagents:
+        # Page by ROOT session: a sub-agent's external_id is "<root>::agent::…",
+        # so excluding it here makes the n-limit count top-level sessions only.
+        # Their sub-agents are pulled in unconditionally below, so a parent and
+        # its children always travel together regardless of the page boundary.
+        wb.add("c.external_id NOT LIKE '%::agent::%'")
+
     where = wb.where_sql()
     params = wb.params
     order = "ASC" if oldest else "DESC"
@@ -352,7 +366,7 @@ def _list_conversations_impl(
     # join responses/models when a filter (e.g. --model) requires them.
     phase1_joins = wb.joins_sql()
     id_sql = f"""
-        SELECT c.id
+        SELECT c.id, c.external_id
         FROM conversations c
         {phase1_joins}
         {where}
@@ -364,6 +378,16 @@ def _list_conversations_impl(
 
     if not conv_ids:
         return []
+
+    if group_subagents:
+        # Pull every sub-agent of the paged roots (owner-scoped, no n-limit) so
+        # the renderer can nest them — they were excluded from the count above.
+        root_exts = [row["external_id"] for row in id_rows if row["external_id"]]
+        seen = set(conv_ids)
+        for cid in _fetch_subagent_ids(conn, root_exts, owner):
+            if cid not in seen:
+                conv_ids.append(cid)
+                seen.add(cid)
 
     placeholders = ",".join("?" * len(conv_ids))
     use_stats = has_conversation_stats_table(conn)
@@ -460,6 +484,32 @@ def _list_conversations_impl(
             )
         )
     return summaries
+
+
+def _fetch_subagent_ids(conn, root_external_ids: list[str], owner: str | None) -> list[str]:
+    """IDs of every sub-agent conversation whose root session is in the page.
+
+    A sub-agent's external_id is ``<root>::agent::<agentId>``; match the prefix
+    before ``::agent::`` against the paged roots. Owner-scoped exactly like the
+    main query — a visible parent must not grant access to a child owned by
+    someone else (IDOR), and an absent owners table with an owner filter yields
+    nothing, matching the caller's own short-circuit.
+    """
+    if not root_external_ids:
+        return []
+    if owner and not has_conversation_owners_table(conn):
+        return []
+    cwb = WhereBuilder()
+    cwb.owner(owner)
+    placeholders = ",".join("?" * len(root_external_ids))
+    cwb.add(
+        "c.external_id LIKE '%::agent::%'"
+        " AND substr(c.external_id, 1, instr(c.external_id, '::agent::') - 1)"
+        f" IN ({placeholders})",
+        *root_external_ids,
+    )
+    sql = f"SELECT c.id FROM conversations c {cwb.joins_sql()} {cwb.where_sql()}"
+    return [row["id"] for row in conn.execute(sql, cwb.params).fetchall()]
 
 
 def _fetch_owners_for_conversations(

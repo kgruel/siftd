@@ -189,6 +189,72 @@ class TestGetCostCoverage:
         assert result.pct_covered == 50.0
 
 
+class TestListConversationsGroupSubagents:
+    """group_subagents pages by ROOT session; sub-agents ride along, unlimited."""
+
+    def _db(self, tmp_path):
+        from siftd.storage.sqlite import (
+            create_database,
+            get_or_create_harness,
+            get_or_create_workspace,
+            insert_conversation,
+        )
+
+        conn = create_database(tmp_path / "g.db")
+        h = get_or_create_harness(conn, "claude_code", source="anthropic")
+        w = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+        # Newest root r1 + 2 sub-agents; older root r2 + 1 sub-agent.
+        insert_conversation(conn, "claude_code::r1", h, w, "2024-02-02T00:00:00Z")
+        insert_conversation(conn, "claude_code::r1::agent::a", h, w, "2024-02-02T00:01:00Z")
+        insert_conversation(conn, "claude_code::r1::agent::b", h, w, "2024-02-02T00:02:00Z")
+        insert_conversation(conn, "claude_code::r2", h, w, "2024-01-01T00:00:00Z")
+        insert_conversation(conn, "claude_code::r2::agent::c", h, w, "2024-01-01T00:01:00Z")
+        conn.commit()
+        conn.close()
+        return tmp_path / "g.db"
+
+    def test_n_limits_roots_not_children(self, tmp_path):
+        db = self._db(tmp_path)
+        # n=1 -> only the newest ROOT (r1), but BOTH its sub-agents come along.
+        rows = list_conversations(
+            fidelity=Fidelity(), db_path=db, n=1, group_subagents=True
+        )
+        exts = {r.external_id for r in rows}
+        assert exts == {
+            "claude_code::r1",
+            "claude_code::r1::agent::a",
+            "claude_code::r1::agent::b",
+        }
+        # r2 (root #2) and its child are past the n=1 page -> excluded entirely.
+        assert not any(e.startswith("claude_code::r2") for e in exts)
+
+    def test_parent_external_id_derived(self, tmp_path):
+        db = self._db(tmp_path)
+        rows = list_conversations(
+            fidelity=Fidelity(), db_path=db, n=1, group_subagents=True
+        )
+        by_ext = {r.external_id: r for r in rows}
+        assert by_ext["claude_code::r1"].parent_external_id is None
+        assert by_ext["claude_code::r1::agent::a"].parent_external_id == "claude_code::r1"
+        assert by_ext["claude_code::r1::agent::b"].parent_external_id == "claude_code::r1"
+
+    def test_two_roots_pull_all_their_children(self, tmp_path):
+        db = self._db(tmp_path)
+        rows = list_conversations(
+            fidelity=Fidelity(), db_path=db, n=2, group_subagents=True
+        )
+        assert {r.external_id for r in rows} == {
+            "claude_code::r1", "claude_code::r1::agent::a", "claude_code::r1::agent::b",
+            "claude_code::r2", "claude_code::r2::agent::c",
+        }
+
+    def test_flat_mode_counts_all_conversations(self, tmp_path):
+        db = self._db(tmp_path)
+        # Without grouping, n=1 is a flat limit over ALL conversations.
+        rows = list_conversations(fidelity=Fidelity(), db_path=db, n=1)
+        assert len(rows) == 1
+
+
 class TestListConversations:
     def test_returns_conversations(self, test_db):
         conversations = list_conversations(fidelity=Fidelity(), db_path=test_db)

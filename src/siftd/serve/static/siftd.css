@@ -315,13 +315,15 @@ body { margin: 0; }
 .row__tok { width:8ch; text-align:right; color:var(--ink); font-variant-numeric:tabular-nums; }
 .row .cost { width:9ch; text-align:right; font-variant-numeric:tabular-nums; color:var(--ink); }
 /* sub-agent disclosure: parents toggle, children nest indented (hidden until shown) */
-.row__toggle, .row__caret { flex:none; width:14px; text-align:center; color:var(--faint);
-  font-family:var(--font-mono); font-size:var(--fs-micro); line-height:1; }
+.row__toggle, .row__caret { flex:none; width:16px; text-align:center; color:var(--faint);
+  font-family:var(--font-mono); line-height:1; }
+.row__caret { font-size:var(--fs-micro); }
 .row__toggle { appearance:none; -webkit-appearance:none; background:none; border:0;
-  padding:0; margin:0; cursor:pointer; }
-.row__toggle::before { content:"\25B8"; }
+  padding:0; margin:0; cursor:pointer; font-size:14px; }
+.row__toggle::before { content:"\203A"; display:inline-block; transition:transform .12s ease; }
+.row__toggle:hover { color:var(--ink); }
 .row__toggle[aria-expanded="true"] { color:var(--mid); }
-.row__toggle[aria-expanded="true"]::before { content:"\25BE"; }
+.row__toggle[aria-expanded="true"]::before { transform:rotate(90deg); }
 .row__agents { flex:none; padding:0 6px; font-size:var(--fs-micro); font-family:var(--font-mono);
   color:var(--faint); border:1px solid var(--hair); border-radius:3px; white-space:nowrap; }
 .row--sub { padding-left:48px; background:var(--sel-bg); }

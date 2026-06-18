@@ -373,8 +373,12 @@ def ui_sessions(
         live = list_active_sessions(include_inactive=False, limit=12)
 
     owner = _effective_owner(request, None)
+    # n=50 counts top-level sessions; each one's sub-agents come along for free
+    # and nest under it (so a parent and its children never split across the
+    # page boundary).
     summaries = list_conversations(
         fidelity=_fidelity(), db_path=db_path, n=50, owner=owner,
+        group_subagents=True,
     )
 
     fmt = get_format("html")
