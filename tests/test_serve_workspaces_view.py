@@ -36,7 +36,9 @@ def test_view_workspaces_is_live_with_drill_and_honest_cost(tmp_path):
 
     assert 'class="stub"' not in body
     assert 'data-view="workspaces"' in body and 'data-title="Workspaces"' in body
-    assert 'class="ledger ledger--usage ledger--ws"' in body
+    # Body list; default sort is a magnitude (sessions), so the bar column rides
+    # via the is-ranked modifier.
+    assert 'ledger ledger--usage ledger--ws is-ranked' in body
     # Rows drill into the per-workspace detail, keyed on ws (not the folio's id).
     assert 'hx-get="/workspace?ws=' in body and 'hx-target="#main"' in body
     # Honest cost: the priced workspace shows a dollar figure, the unpriced one
@@ -55,9 +57,10 @@ def test_view_workspaces_surfaces_duplicate_caveat_when_unscoped(tmp_path):
     assert 'class="ws-caveat"' in body
     assert "share a git remote" in body
     assert "siftd migrate --merge-workspaces" in body
-    # The same-remote twins stay as two distinguishable rows (same basename,
-    # different parent), not collapsed.
-    assert body.count('hx-get="/workspace?ws=') == 2
+    # The same-remote twins stay as two distinguishable body rows (same basename,
+    # different parent), not collapsed. (The head cards drill too, so count the
+    # body ledger rows, which uniquely carry class="ledger__row".)
+    assert body.count('class="ledger__row"') == 2
 
 
 def test_view_workspaces_no_caveat_without_duplicates(tmp_path):

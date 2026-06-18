@@ -175,7 +175,28 @@
     });
   }
 
-  function enhance() { wireTone(); drawLedgers(); drawHists(); syncChrome(); initSpy(); highlight(); tailLiveFolio(); wireSessionToggles(); }
+  // --- workspaces filter ----------------------------------------------------
+  // The Workspaces body carries a [data-ws-filter] input; typing hides master
+  // rows whose text doesn't match. CSP-safe: .hidden writes only (the row's
+  // display:grid is defeated by a .ledger__row[hidden]{display:none} rule, the
+  // same fix the sub-agent rows needed). Re-wired per settle; a sort swap
+  // replaces the fragment, so the new input starts fresh (filter not preserved).
+  function wireWorkspaceFilter(root) {
+    (root || document).querySelectorAll('[data-ws-filter]').forEach(function (inp) {
+      if (inp._wired) return;
+      inp._wired = true;
+      var scope = inp.closest('.workspaces') || document;
+      inp.addEventListener('input', function () {
+        var q = inp.value.trim().toLowerCase();
+        scope.querySelectorAll('.ledger--ws .ledger__row').forEach(function (r) {
+          if (r.classList.contains('ledger__empty')) return;
+          r.hidden = !!q && r.textContent.toLowerCase().indexOf(q) === -1;
+        });
+      });
+    });
+  }
+
+  function enhance() { wireTone(); drawLedgers(); drawHists(); syncChrome(); initSpy(); highlight(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); }
 
   document.body.addEventListener('htmx:afterSettle', enhance);
   applyTone();

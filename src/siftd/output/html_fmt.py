@@ -1557,13 +1557,43 @@ def _ws_label(path: str | None) -> tuple[str, str]:
     return (leaf, parent)
 
 
-def _workspace_row(row: Any, *, detail_base: str, shell_base: str) -> str:
+def _ws_pin_btn(ws_id: str, *, pinned: bool, pin_action_url: str, sort: str) -> str:
+    """A pin/unpin toggle for a workspace. Mirrors ``_tag_row``'s pin: posts to
+    the whole-view re-render (``#main`` swap) so a pinned workspace lifts into the
+    head and an unpinned one drops back. Carries the active ``sort`` so the swap
+    preserves the list ordering. Empty when no ``pin_action_url`` (e.g. JSON).
+    """
+    if not pin_action_url:
+        return ""
+    import json as _json
+
+    vals = _json.dumps({"action": "unpin" if pinned else "pin", "ws": ws_id, "sort": sort})
+    star = "★" if pinned else "☆"
+    cls = "pin pin--on" if pinned else "pin"
+    verb = "Unpin" if pinned else "Pin"
+    pressed = "true" if pinned else "false"
+    return (
+        f'<button class="{cls}" type="button"'
+        f' hx-post="{escape(pin_action_url)}" hx-vals="{escape(vals)}"'
+        f' hx-target="#main" hx-swap="innerHTML"'
+        f' aria-pressed="{pressed}" title="{verb} workspace">{star}</button>'
+    )
+
+
+def _workspace_row(
+    row: Any, *, detail_base: str, shell_base: str, pin_action_url: str, sort: str
+) -> str:
     """One workspace as a drillable ``.ledger--ws`` row.
 
-    leaf + parent/sessions/last-active · token bar · tokens · honest cost. The
+    pin · leaf + parent/sessions/last-active · [bar] · tokens · honest cost. The
     row carries the workspace ULID, so the drill mounts the per-workspace detail
     keyed on ``ws`` (distinct from the folio's ``id``). Assumes a ``with_usage``
     row (``inp``/``out``/``cost`` present) — the view always opts in.
+
+    The bar encodes the ACTIVE ``sort`` measure (sessions/tokens/cost), so the
+    row order always matches the bar — never the order≠bar lie. The recency sort
+    has no magnitude, so it drops the bar entirely; the ``.is-ranked`` modifier on
+    the ``<ul>`` keeps the column grid aligned in both cases.
     """
     from siftd.output.common import fmt_tokens
 
@@ -1582,17 +1612,95 @@ def _workspace_row(row: Any, *, detail_base: str, shell_base: str) -> str:
         meta_bits.append(f"active {last} ago")
     sub = " · ".join(meta_bits)
 
+    pin = _ws_pin_btn(ws_id, pinned=bool(row["pinned"]), pin_action_url=pin_action_url, sort=sort)
     drill = _hx_detail(detail_base, ws_id, shell_base, key="ws")
+    bar = ""
+    if sort != "recent":
+        measure = {"sessions": row["convs"] or 0, "tokens": tok, "cost": cost or 0}.get(sort, tok)
+        bar = f'<span class="ledger__bar" data-n="{measure}"></span>'
     return (
-        f'<li class="ledger__row">'
+        f'<li class="ledger__row">{pin}'
         f'<a class="ledger__name"{drill}>'
         f'<span class="ws__name">{escape(leaf)}</span>'
         f'<span class="ws__sub">{escape(sub)}</span></a>'
-        f'<span class="ledger__bar" data-n="{tok}"></span>'
+        f"{bar}"
         f'<span class="ledger__n">{escape(fmt_tokens(tok))}</span>'
         f'<span class="ledger__cost">{cost_str}</span>'
         f"</li>"
     )
+
+
+def _workspace_card(
+    row: Any, *, detail_base: str, shell_base: str, pin_action_url: str, sort: str
+) -> str:
+    """One workspace as a head card (Pinned / Recent zones). Reuses the Sessions
+    ``.cards`` grid: name, parent · active-ago, and sessions·tokens·cost — no bar
+    (cards are shortcuts, not a ranking). The ``.card__link`` is the drill target
+    (so the pin button, a sibling, doesn't fire it); the pin sits in the corner.
+    """
+    from siftd.output.common import fmt_tokens
+
+    ws_id = row["id"]
+    leaf, parent = _ws_label(row["path"])
+    convs = row["convs"] or 0
+    tok = (row["inp"] or 0) + (row["out"] or 0)
+    cost = row["cost"]
+    cost_str = "&mdash;" if cost is None else f"${cost:,.2f}"
+    last = _ago(_iso_epoch(row["last_activity"]))
+    meta_bits = [b for b in (parent, (f"active {last} ago" if last else "")) if b]
+
+    pin = _ws_pin_btn(ws_id, pinned=bool(row["pinned"]), pin_action_url=pin_action_url, sort=sort)
+    drill = _hx_detail(detail_base, ws_id, shell_base, key="ws")
+    return (
+        f'<li class="card card--ws">{pin}'
+        f'<a class="card__link"{drill}>'
+        f'<div class="card__ws">{escape(leaf)}</div>'
+        f'<div class="card__meta">{escape(" · ".join(meta_bits))}</div>'
+        f'<div class="card__nums">'
+        f'<span class="stat"><span class="stat__n">{convs:,}</span>'
+        f'<span class="micro">sessions</span></span>'
+        f'<span class="stat"><span class="stat__n">{escape(fmt_tokens(tok))}</span>'
+        f'<span class="micro">tokens</span></span>'
+        f'<span class="stat"><span class="stat__n">{cost_str}</span>'
+        f'<span class="micro">cost</span></span>'
+        f"</div></a></li>"
+    )
+
+
+_WS_SORT_OPTS: tuple[tuple[str, str], ...] = (
+    ("recent", "Recent"),
+    ("sessions", "Sessions"),
+    ("tokens", "Tokens"),
+    ("cost", "Cost"),
+)
+
+
+def _ws_controls(*, sort: str, sort_base: str) -> str:
+    """The body controls: a client-side filter box + a server-side sort group.
+
+    The sort options hx-get the view with ``?sort=`` and swap ``#main`` (the same
+    whole-fragment pattern as pins); the active one is marked ``is-active``. The
+    filter is wired in enhance.js (``wireWorkspaceFilter``) — CSP-safe, hides
+    non-matching rows client-side.
+    """
+    links: list[str] = []
+    for key, label in _WS_SORT_OPTS:
+        active = " is-active" if key == sort else ""
+        hx = (
+            f' hx-get="{escape(sort_base)}?sort={key}" hx-target="#main" hx-swap="innerHTML"'
+            if sort_base
+            else ""
+        )
+        aria = ' aria-current="true"' if key == sort else ""
+        links.append(f'<a class="ws-sort__opt{active}"{hx}{aria}>{escape(label)}</a>')
+    sort_ctrl = (
+        f'<div class="ws-sort" role="group" aria-label="Sort by">{"".join(links)}</div>'
+    )
+    filt = (
+        '<input class="ws-filter" type="search" placeholder="Filter workspaces…"'
+        ' data-ws-filter aria-label="Filter workspaces" autocomplete="off">'
+    )
+    return f'<div class="ws-controls">{filt}{sort_ctrl}</div>'
 
 
 def render_workspaces(rows: list, **context: Any) -> str:
@@ -1613,7 +1721,26 @@ def render_workspaces(rows: list, **context: Any) -> str:
     """
     detail_base = context.get("detail_base", "")
     shell_base = context.get("shell_base", "")
+    pin_action_url = context.get("pin_action_url", "")
+    sort_base = context.get("sort_base", "")
+    sort = context.get("sort", "sessions")
     dup_groups, dup_extras = context.get("duplicates", (0, 0))
+
+    row_kw = {
+        "detail_base": detail_base,
+        "shell_base": shell_base,
+        "pin_action_url": pin_action_url,
+        "sort": sort,
+    }
+
+    def _zone(label: str, count_txt: str, body: str, *, mod: str = "") -> str:
+        zcls = f"zone {mod}" if mod else "zone"
+        return (
+            f'<section class="{zcls}"><div class="zone__head">'
+            f'<span class="micro">{escape(label)}</span>'
+            f'<span class="zone__count">{escape(count_txt)}</span>'
+            f'<span class="zone__rule"></span></div>{body}</section>'
+        )
 
     parts: list[str] = []
 
@@ -1629,21 +1756,46 @@ def render_workspaces(rows: list, **context: Any) -> str:
             "</div>"
         )
 
+    pinned = [r for r in rows if r["pinned"]] if rows else []
+
     if rows:
-        body = "".join(
-            _workspace_row(row, detail_base=detail_base, shell_base=shell_base)
-            for row in rows
+        # Head — cards as shortcuts OVER the body list (not a partition): pinned,
+        # then a Recent strip (most-recently-active, not pinned) ordered by
+        # recency regardless of the body's active sort.
+        if pinned:
+            cards = "".join(_workspace_card(r, **row_kw) for r in pinned)
+            parts.append(
+                _zone("Pinned", str(len(pinned)), f'<ul class="cards">{cards}</ul>',
+                      mod="zone--pinned")
+            )
+        unpinned = [r for r in rows if not r["pinned"]]
+        recent = sorted(unpinned, key=lambda r: r["last_activity"] or "", reverse=True)[:12]
+        if recent:
+            cards = "".join(_workspace_card(r, **row_kw) for r in recent)
+            parts.append(_zone("Recent", str(len(recent)), f'<ul class="cards">{cards}</ul>'))
+
+        # Body — the full canonical list under a filter + sort. ``is-ranked`` adds
+        # the bar column for magnitude sorts; recency drops it.
+        controls = _ws_controls(sort=sort, sort_base=sort_base)
+        ranked = "" if sort == "recent" else " is-ranked"
+        listing = "".join(_workspace_row(r, **row_kw) for r in rows)
+        parts.append(
+            _zone(
+                "All workspaces", f"{len(rows):,}",
+                controls + f'<ul class="ledger ledger--usage ledger--ws{ranked}">{listing}</ul>',
+            )
         )
     else:
-        body = (
+        parts.append(
+            '<ul class="ledger ledger--usage ledger--ws">'
             '<li class="ledger__row ledger__empty">'
-            '<span class="ledger__name">no workspaces yet</span></li>'
+            '<span class="ledger__name">no workspaces yet</span></li></ul>'
         )
-    parts.append(f'<ul class="ledger ledger--usage ledger--ws">{body}</ul>')
 
+    kick = " · ".join(filter(None, ["pinned" if pinned else "", "explorer"]))
     return (
         '<section class="workspaces" data-view="workspaces" data-title="Workspaces"'
-        f' data-count="{len(rows)}" data-kick="explorer">'
+        f' data-count="{len(rows)}" data-kick="{kick}">'
         f'{"".join(parts)}</section>'
     )
 

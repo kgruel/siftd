@@ -351,8 +351,15 @@ body { margin: 0; }
   background:var(--accent); opacity:.6; }
 .ws-caveat code { color:var(--ink); background:var(--sel-bg); padding:1px 5px; }
 
-/* master rows inherit the 4-col usage grid; the name cell stacks the leaf over
-   a dimmed parent/sessions/last-active line so same-basename twins stay legible. */
+/* Master rows: pin · name · [bar] · tokens · cost. The body sits in a .zone, so
+   rows drop their own horizontal padding to align with the head labels + cards
+   at the 32px inset. The name cell stacks the leaf over a dimmed
+   parent/sessions/last-active line so same-basename twins stay legible. The bar
+   column appears only under a magnitude sort (.is-ranked) — recency has no
+   magnitude, so it drops the bar (and the column), never the order≠bar lie. */
+.ledger--ws .ledger__row { grid-template-columns:auto 1fr 82px 92px;
+  padding-left:0; padding-right:0; }
+.ledger--ws.is-ranked .ledger__row { grid-template-columns:auto 1fr 44px 82px 92px; }
 .ledger--ws .ledger__row:hover { background:var(--sel-bg); }
 .ledger--ws .ledger__name { display:flex; flex-direction:column; gap:2px;
   cursor:pointer; white-space:normal; min-width:0; }
@@ -360,6 +367,32 @@ body { margin: 0; }
 .ws__name { color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ws__sub { color:var(--faint); font-size:var(--fs-micro); letter-spacing:.02em;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* the filter hides rows via .hidden; .ledger__row is display:grid, which beats
+   the UA [hidden] rule, so re-assert it (same fix the sub-agent rows needed). */
+.ledger__row[hidden] { display:none; }
+
+/* head cards (Pinned / Recent) reuse .card; .card__link is the drill target so
+   the corner pin (a sibling) never fires the drill. */
+.card--ws { cursor:default; }
+.card--ws:hover { background:var(--sel-bg); }
+.card__link { display:block; text-decoration:none; color:inherit; cursor:pointer; }
+.card .pin { position:absolute; top:10px; right:12px; z-index:1; }
+
+/* body controls — client-side filter + server-side sort group, zone-inset. */
+.ws-controls { display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:10px; }
+.ws-filter { appearance:none; background:transparent; border:0;
+  border-bottom:1px solid var(--hair); border-radius:0; flex:1; min-width:14ch;
+  font-family:var(--font-mono); font-size:var(--fs-micro); letter-spacing:.04em;
+  color:var(--ink); padding:4px 2px; }
+.ws-filter:focus { outline:none; border-bottom-color:var(--accent); }
+.ws-filter::placeholder { color:var(--faint); }
+.ws-sort { display:flex; gap:4px; margin-left:auto; }
+.ws-sort__opt { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.08em; text-transform:uppercase; text-decoration:none;
+  border:1px solid var(--hair); padding:4px 9px; color:var(--mid); cursor:pointer; }
+.ws-sort__opt:hover { border-color:var(--accent); color:var(--accent); }
+.ws-sort__opt.is-active { border-color:var(--accent); color:var(--accent);
+  background:var(--sel-bg); }
 
 /* detail reuses .dash (head grid + usage ledger); these add the back bar and
    the recent-conversations region beneath the model mix. */

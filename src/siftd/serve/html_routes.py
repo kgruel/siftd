@@ -418,13 +418,23 @@ def ui_tags(request: Request, db_path: Path) -> Response:
     ))
 
 
-@get("/view/workspaces", sync_to_thread=True)
-def ui_workspaces(request: Request, db_path: Path) -> Response:
-    """The Swiss 'Workspaces' view: a drillable master ledger of workspaces.
+_WS_SORTS = frozenset({"sessions", "recent", "tokens", "cost"})
 
-    Rows are ULID-identified (so each drills into its own detail) and carry the
-    rollup's tokens + honest cost via ``list_workspaces(with_usage=True)``. The
-    duplicate-workspace caveat (workspaces sharing a git remote) is surfaced only
+
+@get("/view/workspaces", sync_to_thread=True)
+def ui_workspaces(
+    request: Request,
+    db_path: Path,
+    sort: str = Parameter(query="sort", default="sessions"),
+) -> Response:
+    """The Swiss 'Workspaces' view: a two-tier nav (head cards + body list).
+
+    The head lifts pinned workspaces + a recent strip into ``.cards``; the body
+    is the full canonical list under a filter + sort. Rows are ULID-identified
+    (so each drills into its own detail) and carry the rollup's tokens + honest
+    cost via ``list_workspaces(with_usage=True)``, plus an owner-scoped ``pinned``
+    flag. ``?sort=`` ∈ {sessions, recent, tokens, cost} reorders the body (and the
+    magnitude bar follows it). The duplicate-workspace caveat is surfaced only
     when unscoped (local), where ``siftd migrate --merge-workspaces`` is runnable;
     it is count-only, so it leaks no path or remote. ``sync_to_thread=True`` keeps
     the blocking read off the event loop.
@@ -433,8 +443,9 @@ def ui_workspaces(request: Request, db_path: Path) -> Response:
     from siftd.api.stats import list_workspaces
     from siftd.output.format_registry import get_format
 
+    sort = sort if sort in _WS_SORTS else "sessions"
     owner = _effective_owner(request, None)
-    rows = list_workspaces(db_path=db_path, owner=owner, n=1000, with_usage=True)
+    rows = list_workspaces(db_path=db_path, owner=owner, n=1000, with_usage=True, sort=sort)
     # Local-only: the remediation is a local migration, and suppressing it under
     # an owner scope also avoids advertising cross-tenant corpus shape.
     duplicates = workspace_duplicate_count(db_path) if owner is None else (0, 0)
@@ -443,6 +454,9 @@ def ui_workspaces(request: Request, db_path: Path) -> Response:
         rows,
         detail_base="/workspace",
         shell_base="/",
+        pin_action_url="/workspace/pin",
+        sort_base="/view/workspaces",
+        sort=sort,
         duplicates=duplicates,
     ))
 
@@ -876,6 +890,55 @@ async def ui_tag_pin(request: Request, db_path: Path) -> Response:
     fmt = get_format("html")
     return _html_response(fmt.render_tags(
         tags, list_base="/find", shell_base="/", pin_action_url="/tag/pin",
+    ))
+
+
+@post("/workspace/pin")
+async def ui_workspace_pin(request: Request, db_path: Path) -> Response:
+    """Pin or unpin a workspace for the effective owner; return the re-rendered
+    Workspaces view. Mirrors ``ui_tag_pin``: write-scoped, owner-scoped, audited,
+    whole-fragment swap (so the head's Pinned/Recent zones reflect the change).
+    The active ``sort`` rides the form so the re-render preserves the body order.
+    """
+    from siftd.serve.auth import require_write
+
+    require_write(request)
+
+    from siftd.api import record_audit_event
+    from siftd.api.migrations import workspace_duplicate_count
+    from siftd.api.stats import list_workspaces, set_workspace_pin
+    from siftd.output.format_registry import get_format
+    from siftd.serve.routes import _actor_identity, _client_ip
+
+    owner = _effective_owner(request, None)
+    form = await request.form()
+    action = "unpin" if str(form.get("action", "pin")) == "unpin" else "pin"
+    ws_id = str(form.get("ws", "")).strip()
+    sort = str(form.get("sort", "sessions"))
+    sort = sort if sort in _WS_SORTS else "sessions"
+
+    if ws_id:
+        set_workspace_pin(ws_id, pinned=(action == "pin"), db_path=db_path, owner=owner)
+        record_audit_event(
+            db_path=db_path,
+            actor=_actor_identity(request),
+            action=f"workspace.{action}",
+            target_type="workspace",
+            target=ws_id,
+            source_ip=_client_ip(request),
+        )
+
+    rows = list_workspaces(db_path=db_path, owner=owner, n=1000, with_usage=True, sort=sort)
+    duplicates = workspace_duplicate_count(db_path) if owner is None else (0, 0)
+    fmt = get_format("html")
+    return _html_response(fmt.render_workspaces(
+        rows,
+        detail_base="/workspace",
+        shell_base="/",
+        pin_action_url="/workspace/pin",
+        sort_base="/view/workspaces",
+        sort=sort,
+        duplicates=duplicates,
     ))
 
 

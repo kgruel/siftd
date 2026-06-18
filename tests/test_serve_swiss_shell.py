@@ -149,7 +149,8 @@ def test_workspaces_view_is_live(ctx):
     body = client.get("/view/workspaces").text
     assert 'class="stub"' not in body
     assert 'data-view="workspaces"' in body and 'data-title="Workspaces"' in body
-    assert 'class="ledger ledger--usage ledger--ws"' in body
+    # body list (default magnitude sort → is-ranked bar column)
+    assert 'ledger ledger--usage ledger--ws is-ranked' in body
     assert 'hx-get="/workspace?ws=' in body and 'hx-target="#main"' in body
 
 
@@ -480,3 +481,73 @@ def test_tags_pin_is_owner_scoped(tmp_path):
     with TestClient(app=create_app(db_path=db, auth_config=alice_auth)) as alice:
         r = alice.post("/tag/pin", headers=hdrs, data={"action": "unpin", "tag": "shared"})
         assert "zone--pinned" not in r.text
+
+
+def _make_owned_ws_db(path: Path) -> tuple[Path, str]:
+    """Two tenants, both participating in one workspace. A pin is per-owner:
+    alice pinning the workspace must never make it pinned in bob's view."""
+    conn = create_database(path)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_owners (conversation_id TEXT,"
+        " user_id TEXT, push_id TEXT, assigned_at TEXT)"
+    )
+    h = get_or_create_harness(conn, "claude_code", source="anthropic", log_format="jsonl")
+    w = get_or_create_workspace(conn, "/proj", "2026-01-01T00:00:00Z")
+    for ext, owner in (("cA", "alice"), ("cB", "bob")):
+        cid = insert_conversation(
+            conn, external_id=ext, harness_id=h, workspace_id=w,
+            started_at="2026-01-15T10:00:00Z",
+        )
+        conn.execute(
+            "INSERT INTO conversation_owners VALUES (?,?,?,?)",
+            (cid, owner, None, "2026-01-15T10:00:00Z"),
+        )
+    conn.commit()
+    conn.close()
+    return path, w
+
+
+def test_workspace_pin_is_owner_scoped(tmp_path):
+    """The workspace pin write + read are owner-scoped end-to-end: alice's pin
+    lifts the workspace into her head zone and persists, but bob — who shares the
+    workspace — never sees it pinned."""
+    db, wid = _make_owned_ws_db(tmp_path / "owned-ws.db")
+    hdrs = {"Authorization": "Bearer s3cret"}
+    alice_auth = {"static_token": "s3cret", "identity": "alice"}
+    bob_auth = {"static_token": "s3cret", "identity": "bob"}
+
+    with TestClient(app=create_app(db_path=db, auth_config=alice_auth)) as alice:
+        assert "zone--pinned" not in alice.get("/view/workspaces", headers=hdrs).text
+        r = alice.post(
+            "/workspace/pin", headers=hdrs,
+            data={"action": "pin", "ws": wid, "sort": "sessions"},
+        )
+        assert r.status_code == 201  # Litestar POST default; htmx swaps any 2xx
+        assert "zone--pinned" in r.text and "pin--on" in r.text  # re-rendered view
+        assert "zone--pinned" in alice.get("/view/workspaces", headers=hdrs).text  # persists
+
+    with TestClient(app=create_app(db_path=db, auth_config=bob_auth)) as bob:
+        body = bob.get("/view/workspaces", headers=hdrs).text
+        assert "proj" in body              # bob sees the shared workspace
+        assert "zone--pinned" not in body  # but not alice's pin
+
+    with TestClient(app=create_app(db_path=db, auth_config=alice_auth)) as alice:
+        r = alice.post(
+            "/workspace/pin", headers=hdrs,
+            data={"action": "unpin", "ws": wid, "sort": "sessions"},
+        )
+        assert "zone--pinned" not in r.text
+
+
+def test_workspace_sort_param(tmp_path):
+    """?sort= reorders the body and toggles the magnitude bar: a magnitude sort
+    is is-ranked (bar column present); the recency sort drops it."""
+    db, _ = _make_owned_ws_db(tmp_path / "ws-sort.db")
+    hdrs = {"Authorization": "Bearer s3cret"}
+    auth = {"static_token": "s3cret", "identity": "alice"}
+    with TestClient(app=create_app(db_path=db, auth_config=auth)) as c:
+        ranked = c.get("/view/workspaces?sort=tokens", headers=hdrs).text
+        assert "ledger--ws is-ranked" in ranked
+        assert 'class="ws-sort__opt is-active"' in ranked
+        recent = c.get("/view/workspaces?sort=recent", headers=hdrs).text
+        assert "is-ranked" not in recent

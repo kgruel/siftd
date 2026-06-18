@@ -133,6 +133,24 @@ def build_fixture(db_path: Path) -> str:
     )
     insert_response_content(conn, srid, 0, "text", json.dumps({"text": "sub-agent response"}))
 
+    # A second workspace so the Workspaces view lists >1 row — the body filter
+    # check needs something to hide while keeping a match shown.
+    w2 = get_or_create_workspace(conn, "/work/other-proj", "2024-01-01T00:00:00Z")
+    cid2 = insert_conversation(
+        conn, external_id="other-0", harness_id=h, workspace_id=w2,
+        started_at="2024-02-05T10:00:00Z",
+    )
+    pid2 = insert_prompt(conn, cid2, "p-other", "2024-02-05T10:00:00Z")
+    insert_prompt_content(
+        conn, pid2, 0, "text",
+        json.dumps({"text": "other-proj prompt anchor-find-needle"}),
+    )
+    rid2 = insert_response(
+        conn, cid2, pid2, m, p, "r-other", "2024-02-05T10:00:01Z",
+        input_tokens=20, output_tokens=10,
+    )
+    insert_response_content(conn, rid2, 0, "text", json.dumps({"text": "other-proj response"}))
+
     rebuild_fts_index(conn)
     conn.commit()
     conn.close()
@@ -315,6 +333,32 @@ async def flow(cdp, check, goto, code_conv):
     await cdp.drain(1.5)
     srow = await cdp.eval("!!document.querySelector('#main .folio')")
     check("sessions row click mounts folio", bool(srow))
+
+    # workspaces view: the body filter hides master rows. Guards the
+    # `.ledger__row[hidden]` vs display:grid trap (a grid display beats the UA
+    # [hidden] rule) — same class of bug as the sub-agent rows, invisible to unit
+    # tests. Then the recency sort re-render must drop the magnitude bar.
+    await cdp.click('a[data-view="workspaces"]')
+    await cdp.drain(1.5)
+    ws_rows = await cdp.eval(
+        "document.querySelectorAll('#main .ledger--ws .ledger__row').length"
+    )
+    check("workspaces body lists rows", ws_rows is not None and ws_rows >= 2, f"rows={ws_rows}")
+    await cdp.click("#main [data-ws-filter]")
+    await cdp.type_text("other")
+    await cdp.drain(0.8)
+    filtered = await cdp.eval(
+        "(function(){var rows=document.querySelectorAll('#main .ledger--ws .ledger__row');"
+        "var shown=0,hid=0;rows.forEach(function(r){"
+        "if(r.offsetParent===null)hid++;else shown++;});"
+        "return hid>0 && shown>0;})()"
+    )
+    check("workspace filter hides non-matching rows", filtered is True, f"ok={filtered}")
+    await cdp.click('#main .ws-sort__opt[hx-get*="sort=recent"]')
+    await cdp.drain(1.2)
+    no_bar = await cdp.eval("!document.querySelector('#main .ledger--ws .ledger__bar')")
+    still_ws = await cdp.eval("!!document.querySelector('#main .workspaces')")
+    check("recency sort drops the magnitude bar", bool(no_bar) and bool(still_ws), f"no_bar={no_bar}")
 
     # folio with the rust fence -> Prism autoloader under CSP
     await goto(f"{BASE}/?id={code_conv}", 3.5)
