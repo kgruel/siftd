@@ -116,6 +116,23 @@ def build_fixture(db_path: Path) -> str:
             body = RUST if (ci == 2 and ti == 1) else f"plain response conv={ci} turn={ti}"
             insert_response_content(conn, rid, 0, "text", json.dumps({"text": body}))
 
+    # A sub-agent of the newest root (csp-2), to exercise Sessions nesting:
+    # collapsed-by-default + chevron expand. external_id is "<root>::agent::<id>".
+    sub = insert_conversation(
+        conn, external_id="csp-2::agent::sub1", harness_id=h, workspace_id=w,
+        started_at="2024-02-03T10:05:00Z",
+    )
+    spid = insert_prompt(conn, sub, "p-sub", "2024-02-03T10:05:00Z")
+    insert_prompt_content(
+        conn, spid, 0, "text",
+        json.dumps({"text": "sub-agent prompt anchor-find-needle"}),
+    )
+    srid = insert_response(
+        conn, sub, spid, m, p, "r-sub", "2024-02-03T10:05:01Z",
+        input_tokens=10, output_tokens=5,
+    )
+    insert_response_content(conn, srid, 0, "text", json.dumps({"text": "sub-agent response"}))
+
     rebuild_fts_index(conn)
     conn.commit()
     conn.close()
@@ -273,6 +290,27 @@ async def flow(cdp, check, goto, code_conv):
         "return s ? s.style.height !== '' : false;})()"
     )
     check("day hist bars scaled by enhance.js", bool(hist_drawn))
+
+    # sub-agent nesting: collapsed by default, chevron expands. Guards the
+    # `[hidden]` vs `.row { display:flex }` specificity trap (a class selector
+    # beats the UA [hidden] rule) that unit tests can't see — and that the
+    # chevron toggle does NOT navigate (stopPropagation keeps the row's hx-get
+    # from firing on a caret click).
+    sub_hidden = await cdp.eval(
+        "(function(){var r=document.querySelector('#main .row--sub');"
+        "return r ? (r.offsetParent === null) : null;})()"
+    )
+    check("sub-agents collapsed by default", sub_hidden is True, f"hidden={sub_hidden}")
+    await cdp.click("#main .row__toggle")
+    await cdp.drain(1.0)
+    sub_shown = await cdp.eval(
+        "(function(){var r=document.querySelector('#main .row--sub');"
+        "return r ? (r.offsetParent !== null) : null;})()"
+    )
+    still_sessions = await cdp.eval("!!document.querySelector('#main .sessions')")
+    check("chevron expands sub-agents", sub_shown is True, f"shown={sub_shown}")
+    check("chevron toggle does not navigate away", bool(still_sessions))
+
     await cdp.click("#main .rows .row")
     await cdp.drain(1.5)
     srow = await cdp.eval("!!document.querySelector('#main .folio')")
