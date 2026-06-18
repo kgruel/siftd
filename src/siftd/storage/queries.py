@@ -696,6 +696,28 @@ def workspace_exists(conn: sqlite3.Connection, workspace_id: str) -> bool:
     )
 
 
+def owner_participates_in_workspace(
+    conn: sqlite3.Connection, owner: str, workspace_id: str
+) -> bool:
+    """Return True if ``owner`` has at least one conversation in this workspace.
+
+    The owner-scoped analogue of :func:`workspace_exists`: the Workspaces list is
+    owner-scoped (a workspace renders only where the owner participates), so the
+    pin write guards on participation too — otherwise a crafted request could
+    pin a workspace the owner can't see, stranding the pin until access changes.
+    """
+    if not has_conversation_owners_table(conn):
+        return False
+    return (
+        conn.execute(
+            f"SELECT 1 FROM conversations c"
+            f" WHERE c.workspace_id = ? AND {owner_predicate('c.id')} LIMIT 1",
+            (workspace_id, owner),
+        ).fetchone()
+        is not None
+    )
+
+
 def pin_workspace(
     conn: sqlite3.Connection,
     *,

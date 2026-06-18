@@ -113,6 +113,39 @@ def test_set_workspace_pin_nonexistent_is_noop(tmp_path):
     assert set_workspace_pin("", pinned=True, db_path=db) is False
 
 
+def test_pin_requires_owner_participation(tmp_path):
+    """Under an owner scope a pin requires participation (a conversation there),
+    so a crafted request can't strand a pin on a workspace the owner can't see.
+    Unpin is always allowed (it only removes state)."""
+    db, ids = _seed(tmp_path / "t.db")
+    conn = open_database(db)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_owners (conversation_id TEXT,"
+        " user_id TEXT, push_id TEXT, assigned_at TEXT)"
+    )
+    # alice owns /a's conversations; bob owns /b's — alice participates in /a only.
+    rows = conn.execute(
+        "SELECT c.id, w.path FROM conversations c JOIN workspaces w ON w.id = c.workspace_id"
+    ).fetchall()
+    for cid, path in rows:
+        owner = "alice" if path == "/a" else "bob"
+        conn.execute(
+            "INSERT INTO conversation_owners VALUES (?,?,?,?)",
+            (cid, owner, None, "2026-01-15T10:00:00Z"),
+        )
+    conn.commit()
+    conn.close()
+
+    assert set_workspace_pin(ids["/a"], pinned=True, db_path=db, owner="alice") is True
+    # /b is bob's — alice can't pin what her owner-scoped list can't show.
+    assert set_workspace_pin(ids["/b"], pinned=True, db_path=db, owner="alice") is False
+    paths = {r["path"]: r for r in list_workspaces(db_path=db, owner="alice", with_usage=True)}
+    assert "/b" not in paths
+    assert paths["/a"]["pinned"] == 1
+    # unpin needs no participation check (removes state); a no-op pin returns False.
+    assert set_workspace_pin(ids["/b"], pinned=False, db_path=db, owner="alice") is False
+
+
 def test_pins_are_owner_scoped(tmp_path):
     db, ids = _seed(tmp_path / "t.db")
     # Give alice ownership of every conversation so her owner-scoped list is non-empty.

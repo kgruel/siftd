@@ -249,13 +249,17 @@ def set_workspace_pin(
 ) -> bool:
     """Pin or unpin a workspace (by ULID) for an owner. Returns True if state changed.
 
-    Mirrors :func:`siftd.api.tags.set_tag_pin`. Owner-scoped, so one tenant's
-    pins never touch another's view. Guards on workspace existence: a bogus id is
-    a no-op (returns False) rather than a foreign-key violation. Manages its own
-    connection and transaction. Pinning is inert for a workspace the owner does
-    not participate in — the Workspaces list is owner-scoped, so a foreign pin
-    never renders — but pinning still requires the workspace to exist.
+    Mirrors :func:`siftd.api.tags.set_tag_pin`, where the workspace analogue of
+    "the tag exists" is "the owner participates": a *pin* requires the workspace
+    to exist and — under an owner scope — that the owner has a conversation there,
+    so you can only pin what your owner-scoped list can show (no stranded pin, no
+    surfacing a foreign workspace later). The local/unscoped case (``owner`` None)
+    keeps the existence-only guard, matching its see-everything view. *Unpin* is
+    always allowed (it only removes state), so a pin can never become unreachable.
+    Owner-scoped, so one tenant's pins never touch another's view. Manages its own
+    connection and transaction.
     """
+    from siftd.storage.queries import owner_participates_in_workspace as _participates
     from siftd.storage.queries import pin_workspace as _pin
     from siftd.storage.queries import unpin_workspace as _unpin
     from siftd.storage.queries import workspace_exists as _exists
@@ -267,13 +271,16 @@ def set_workspace_pin(
     path = db_path or default_db_path()
     conn = open_database(path)
     try:
-        if not _exists(conn, wid):
+        if not pinned:
+            # Unpin always allowed: it only removes the owner's own state, and
+            # gating it could strand a pin whose workspace dropped from the list.
+            changed = _unpin(conn, owner=owner, workspace_id=wid)
+        elif not _exists(conn, wid):
             return False
-        changed = (
-            _pin(conn, owner=owner, workspace_id=wid)
-            if pinned
-            else _unpin(conn, owner=owner, workspace_id=wid)
-        )
+        elif owner and not _participates(conn, owner, wid):
+            return False  # can't pin a workspace this owner can't see
+        else:
+            changed = _pin(conn, owner=owner, workspace_id=wid)
         conn.commit()
         return changed
     finally:
