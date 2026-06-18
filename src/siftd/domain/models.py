@@ -76,3 +76,8 @@ class Conversation:
     workspace_path: str | None = None
     branch: str | None = None
     ended_at: str | None = None
+    # Conversation-level key/value attributes, persisted to the polymorphic
+    # `attributes` table (mirrors Response.attributes). Adapters populate this
+    # with derived facts that have no first-class column — e.g. the Claude Code
+    # sub-agent type/description read from the agent-<id>.meta.json sidecar.
+    attributes: dict[str, str] = field(default_factory=dict)

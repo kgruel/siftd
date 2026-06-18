@@ -1081,6 +1081,21 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
         row_cost = getattr(c, "cost", None)
         row_cost_str = f"${row_cost:,.2f}" if row_cost is not None else "&mdash;"
         is_sub = parent_id is not None or flagged
+        if is_sub:
+            # Children inherit the parent's workspace, so repeating its name on
+            # every sibling is pure noise. Identify a child by what differs: its
+            # agent type (when captured from the sidecar) and its spawn
+            # clock-time (always present — distinguishes siblings, adds order).
+            atype = (getattr(c, "agent_type", None) or "").strip()
+            if ":" in atype:  # feature-dev:code-reviewer -> code-reviewer
+                atype = atype.rsplit(":", 1)[-1]
+            e = _iso_epoch(getattr(c, "started_at", None))
+            when = datetime.fromtimestamp(e).strftime("%H:%M") if e is not None else ""
+            time_html = f'<span class="row__when">{when}</span>' if when else ""
+            label = escape(atype)
+            name_html = f"{label} {time_html}".strip() if label else (time_html or "sub-agent")
+        else:
+            name_html = escape(ws_name)
         cls = "row row--sub" if is_sub else "row"
         attrs = _hx_detail(detail_base, c.id, shell_base)
         if parent_id is not None:
@@ -1101,7 +1116,7 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
         return (
             f'<li class="{cls}"{attrs}>'
             f'<span class="row__ws">{disc}'
-            f'<span class="row__name">{escape(ws_name)}</span>{chip}</span>'
+            f'<span class="row__name">{name_html}</span>{chip}</span>'
             f'<span class="row__model">{escape(model)}</span>'
             f'<span class="row__turns">{getattr(c, "prompt_count", 0)}</span>'
             f'<span class="row__tok">{escape(fmt_tokens(getattr(c, "total_tokens", 0) or 0))}</span>'

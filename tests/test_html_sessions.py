@@ -15,7 +15,7 @@ _CTX = dict(
 )
 
 
-def _summary(cid, ext, *, parent=None, tokens=10, cost=None):
+def _summary(cid, ext, *, parent=None, tokens=10, cost=None, agent_type=None):
     return ConversationSummary(
         id=cid,
         workspace_path="/proj",
@@ -27,6 +27,7 @@ def _summary(cid, ext, *, parent=None, tokens=10, cost=None):
         cost=cost,
         external_id=ext,
         parent_external_id=parent,
+        agent_type=agent_type,
     )
 
 
@@ -85,3 +86,39 @@ def test_sessions_flat_without_subagents():
     assert "row--sub" not in html
     assert "sub-agents" not in html
     assert html.count('class="row"') == 2
+
+
+def test_sessions_child_shows_agent_type_not_workspace():
+    # A child identifies by its agent type + spawn time, never by the parent's
+    # workspace name (which every sibling would otherwise repeat).
+    parent = _summary("c-root", "claude_code::r1")
+    kid = _summary(
+        "c-a1", "claude_code::r1::agent::a1", parent="claude_code::r1",
+        agent_type="Explore",
+    )
+    html = render_sessions([], [parent, kid], **_CTX)
+    assert "Explore" in html
+    assert 'class="row__when">' in html  # spawn-time disambiguator rendered
+    # Workspace basename appears once — on the parent, never echoed onto the child.
+    assert html.count(">proj<") == 1
+
+
+def test_sessions_child_strips_plugin_namespace():
+    parent = _summary("c-root", "claude_code::r1")
+    kid = _summary(
+        "c-a1", "claude_code::r1::agent::a1", parent="claude_code::r1",
+        agent_type="feature-dev:code-reviewer",
+    )
+    html = render_sessions([], [parent, kid], **_CTX)
+    assert "code-reviewer" in html
+    assert "feature-dev:code-reviewer" not in html
+
+
+def test_sessions_child_falls_back_to_time_without_agent_type():
+    # No sidecar type (historical / rotated-off) — the spawn time still replaces
+    # the repeated workspace so siblings stay distinguishable.
+    parent = _summary("c-root", "claude_code::r1")
+    kid = _summary("c-a1", "claude_code::r1::agent::a1", parent="claude_code::r1")
+    html = render_sessions([], [parent, kid], **_CTX)
+    assert 'class="row__when">' in html
+    assert html.count(">proj<") == 1

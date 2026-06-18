@@ -328,6 +328,8 @@ body { margin: 0; }
   color:var(--faint); border:1px solid var(--hair); border-radius:3px; white-space:nowrap; }
 .row--sub { padding-left:48px; background:var(--sel-bg); }
 .row--sub .row__name { color:var(--mid); font-family:var(--font-mono); }
+/* spawn-time disambiguator on a sub-agent row — recedes behind the agent type */
+.row__when { color:var(--faint); }
 /* The `hidden` attribute must beat `.row { display:flex }`: a class selector
    outranks the UA [hidden] rule, so without this the collapsed sub-agents
    render anyway and the toggle appears to do nothing. */

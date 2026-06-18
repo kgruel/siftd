@@ -174,6 +174,11 @@ class ConversationSummary:
     # link is derivable without a schema column (see parent_external_id).
     external_id: str | None = None
     parent_external_id: str | None = None
+    # Sub-agent type (e.g. "Explore", "feature-dev:code-reviewer"), captured at
+    # ingest from the Claude Code agent-<id>.meta.json sidecar (scope='analyzer'
+    # 'subagent_type' attribute). None for top-level sessions and for historical
+    # sub-agents whose sidecar had rotated off disk before ingest.
+    agent_type: str | None = None
 
 
 @dataclass
@@ -457,9 +462,10 @@ def _list_conversations_impl(
             conv_ids,
         ).fetchall()
 
-    # Bulk-fetch tags and owners
+    # Bulk-fetch tags, owners, and sub-agent types
     tags_by_conv = fetch_tags_for_conversations(conn, conv_ids)
     owner_by_conv = _fetch_owners_for_conversations(conn, conv_ids)
+    agent_type_by_conv = _fetch_agent_types_for_conversations(conn, conv_ids)
 
     summaries: list[ConversationSummary] = []
     for row in rows:
@@ -481,6 +487,7 @@ def _list_conversations_impl(
                 owner=owner_by_conv.get(row["conversation_id"]),
                 external_id=ext,
                 parent_external_id=parent_ext,
+                agent_type=agent_type_by_conv.get(row["conversation_id"]),
             )
         )
     return summaries
@@ -510,6 +517,33 @@ def _fetch_subagent_ids(conn, root_external_ids: list[str], owner: str | None) -
     )
     sql = f"SELECT c.id FROM conversations c {cwb.joins_sql()} {cwb.where_sql()}"
     return [row["id"] for row in conn.execute(sql, cwb.params).fetchall()]
+
+
+def _fetch_agent_types_for_conversations(
+    conn,
+    conversation_ids: list[str],
+) -> dict[str, str]:
+    """Map conversation_id -> sub-agent type, from the 'subagent_type' attribute.
+
+    Captured at ingest from the Claude Code agent-<id>.meta.json sidecar (see the
+    claude_code adapter). Absent for top-level sessions and for historical
+    sub-agents whose sidecar rotated off disk before ingest. Defensive against a
+    pre-v4 DB with no attributes table (read-only opens) — returns {} rather
+    than raising, matching the owners fetcher's degrade-don't-crash contract.
+    """
+    if not conversation_ids:
+        return {}
+    placeholders = ",".join("?" * len(conversation_ids))
+    try:
+        rows = conn.execute(
+            "SELECT target_id, value FROM attributes"
+            " WHERE target_kind = 'conversation' AND key = 'subagent_type'"
+            f" AND target_id IN ({placeholders})",
+            conversation_ids,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {row["target_id"]: row["value"] for row in rows}
 
 
 def _fetch_owners_for_conversations(

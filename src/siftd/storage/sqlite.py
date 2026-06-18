@@ -2741,6 +2741,12 @@ def store_conversation(
         ended_at=conversation.ended_at,
     )
 
+    # Conversation-level derived attributes (e.g. sub-agent type/description
+    # from the Claude Code sidecar). scope='analyzer' marks them as adapter-
+    # derived; set_attribute upserts so re-ingest is idempotent.
+    for attr_key, attr_value in conversation.attributes.items():
+        set_attribute(conn, "conversation", conversation_id, attr_key, attr_value, scope="analyzer")
+
     # Process prompts
     for prompt in conversation.prompts:
         prompt_id = insert_prompt(conn, conversation_id, prompt.external_id, prompt.timestamp)
