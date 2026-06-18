@@ -1345,9 +1345,15 @@ def render_tags(tags: list, **context: Any) -> str:
         rows = [_tag_row(t, display=t.name, **row_kw) for t in pinned]
         parts.append(_zone("Pinned", str(len(pinned)), _ledger(rows), mod="zone--pinned"))
 
-    # most-used zone — top non-pinned tags by dominant count (skip zero-count)
+    # most-used zone — top non-pinned tags by dominant count (skip zero-count).
+    # "Most used" is a curation headline, so auto-applied vocabulary (shell:*
+    # categories + siftd:derivative, flagged ``auto`` by list_tags) is demoted:
+    # its tool-call grain counts in the thousands would structurally swamp the
+    # tens of hand-applied conversation tags. The auto names still appear in the
+    # namespace tree below — demoted from the headline, not lost.
     unpinned = [t for t in tags if not getattr(t, "pinned", False)]
-    top = [t for t in sorted(unpinned, key=lambda t: _tag_weight(t)[0], reverse=True)[:8]
+    curated = [t for t in unpinned if not getattr(t, "auto", False)]
+    top = [t for t in sorted(curated, key=lambda t: _tag_weight(t)[0], reverse=True)[:8]
            if _tag_weight(t)[0] > 0]
     if top:
         rows = [_tag_row(t, display=t.name, **row_kw) for t in top]

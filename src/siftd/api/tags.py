@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from painted import Fidelity
 
+from siftd.domain.shell_categories import shell_tag_names
 from siftd.paths import db_path as _db_path
 from siftd.storage.sqlite import open_database as _open_database
 from siftd.storage.tags import DERIVATIVE_TAG
@@ -71,10 +72,21 @@ __all__ = [
 _GRANULAR_KINDS = frozenset({"prompt", "response", "tool_call", "exchange"})
 _ALL_ENTITY_TYPES = frozenset({"conversation", "workspace"}) | _GRANULAR_KINDS
 
+# Auto-applied tag names: the closed shell:* category vocabulary (written
+# automatically at ingest/backfill) plus the derivative marker. Membership is a pure
+# predicate over the name — no stored auto-vs-user flag, no migration. Surfaces
+# (e.g. the Swiss "Most used" headline) read TagInfo.auto to demote auto-applied
+# vocabulary from curation views; the names still appear in the namespace tree.
+_AUTO_TAG_VOCABULARY = shell_tag_names() | {DERIVATIVE_TAG}
+
 
 @dataclass
 class TagInfo:
     """Tag with usage counts.
+
+    ``auto`` marks a tag whose name is in the closed auto-applied vocabulary
+    (``shell:*`` categories + ``siftd:derivative``); curation views demote these
+    from "most used" rankings while keeping them in the namespace tree.
 
     ``activity`` is an optional Fidelity-gated enrichment (a per-week
     conversation-activity sparkline, oldest→newest); it is ``None`` unless the
@@ -92,6 +104,7 @@ class TagInfo:
     prompt_count: int
     response_count: int
     pinned: bool = False
+    auto: bool = False
     activity: list[int] | None = None
 
 
@@ -189,6 +202,7 @@ def list_tags(
                 prompt_count=r["prompt_count"],
                 response_count=r["response_count"],
                 pinned=r.get("pinned", False),
+                auto=r["name"] in _AUTO_TAG_VOCABULARY,
             )
             for r in rows
         ]
