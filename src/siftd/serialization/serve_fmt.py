@@ -81,13 +81,16 @@ def render_tags(tags: list, fidelity: Fidelity) -> dict:
     }
 
 
-def render_search(results: list, fidelity: Fidelity, debug_ids: bool = True) -> dict:
-    """Serialize SearchResult list to JSON-safe dict.
+def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
+    """Serialize SearchResult list to JSON-safe dict (the serve/REST envelope).
 
-    chunk_id and source_ids are emitted by default. The debug_ids kwarg is
-    accepted for backward compatibility through v0.9.x and removed in v0.10.0.
+    context keys:
+        mode: str — resolved search engine that ran ("fts"/"semantic"/"hybrid");
+            lets REST callers tell which engine produced the results.
+        view: str — render shape (always "chunks" on the serve search route).
+    chunk_id and source_ids are emitted by default; any ``debug_ids`` in context
+    is accepted and ignored.
     """
-    del debug_ids
     serialized = []
     for r in results:
         if isinstance(r, dict):
@@ -95,6 +98,8 @@ def render_search(results: list, fidelity: Fidelity, debug_ids: bool = True) -> 
         else:
             serialized.append(dataclasses.asdict(r))
     return {
+        "mode": context.get("mode"),
+        "view": context.get("view", "chunks"),
         "result_count": len(serialized),
         "results": serialized,
     }

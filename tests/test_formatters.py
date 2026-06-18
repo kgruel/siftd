@@ -111,12 +111,12 @@ class TestJsonRenderSearch:
         from siftd.output import json_fmt
 
         result = json_fmt.render_search(
-            enriched_results, Fidelity(), query="caching", mode="chunks"
+            enriched_results, Fidelity(), query="caching", view="chunks"
         )
 
         assert isinstance(result, dict)
         assert result["query"] == "caching"
-        assert result["mode"] == "chunks"
+        assert result["view"] == "chunks"
         assert result["result_count"] == 2
         assert len(result["results"]) == 2
 
@@ -124,7 +124,7 @@ class TestJsonRenderSearch:
         from siftd.output import json_fmt
 
         result = json_fmt.render_search(
-            enriched_results, Fidelity(), query="caching", mode="chunks"
+            enriched_results, Fidelity(), query="caching", view="chunks"
         )
 
         chunk = result["results"][0]
@@ -142,7 +142,7 @@ class TestJsonRenderSearch:
         from siftd.output import json_fmt
 
         result = json_fmt.render_search(
-            enriched_results, Fidelity(), query="caching", mode="chunks", debug_ids=False,
+            enriched_results, Fidelity(), query="caching", view="chunks", debug_ids=False,
         )
 
         chunk = result["results"][0]
@@ -155,10 +155,10 @@ class TestJsonRenderSearch:
 
         conv_results = _aggregate_conversations(enriched_results, limit=10)
         result = json_fmt.render_search(
-            conv_results, Fidelity(), query="caching", mode="conversations"
+            conv_results, Fidelity(), query="caching", view="conversations"
         )
 
-        assert result["mode"] == "conversations"
+        assert result["view"] == "conversations"
         assert len(result["results"]) == 1  # Both chunks same conversation
 
         conv = result["results"][0]
@@ -171,7 +171,7 @@ class TestJsonRenderSearch:
         from siftd.output import json_fmt
 
         result = json_fmt.render_search(
-            enriched_results, Fidelity(), query="test", mode="chunks"
+            enriched_results, Fidelity(), query="test", view="chunks"
         )
 
         assert "timestamp" in result
@@ -182,11 +182,11 @@ class TestJsonRenderSearch:
 
         result = json_fmt.render_search(
             enriched_results, Fidelity(),
-            query="caching", mode="thread",
+            query="caching", view="thread",
             tier1=enriched_results[:1], tier2=enriched_results[1:],
         )
 
-        assert result["mode"] == "thread"
+        assert result["view"] == "thread"
         assert "tier1" in result
         assert "tier2" in result
 
@@ -194,7 +194,7 @@ class TestJsonRenderSearch:
         from siftd.output import json_fmt
 
         result = json_fmt.render_search(
-            [], Fidelity(), query="nothing", mode="chunks"
+            [], Fidelity(), query="nothing", view="chunks"
         )
 
         assert result["query"] == "nothing"
@@ -209,7 +209,7 @@ class TestTerminalRenderSearch:
         from siftd.output import terminal_fmt
 
         output = terminal_fmt.render_search(
-            enriched_results, Fidelity(), query="caching", mode="chunks"
+            enriched_results, Fidelity(), query="caching", view="chunks"
         )
 
         assert isinstance(output, str)
@@ -228,7 +228,7 @@ class TestTerminalRenderSearch:
 
         fidelity = Fidelity(depth=3, chars=0)  # --full equivalent
         output = terminal_fmt.render_search(
-            enriched_results, fidelity, query="caching", mode="chunks"
+            enriched_results, fidelity, query="caching", view="chunks"
         )
 
         assert "How do I implement caching?" in output
@@ -250,7 +250,7 @@ class TestTerminalRenderSearch:
         }]
 
         output = terminal_fmt.render_search(
-            results, Fidelity(), query="test", mode="chunks"
+            results, Fidelity(), query="test", view="chunks"
         )
 
         # Should be truncated (200 chars + "...")
@@ -263,7 +263,7 @@ class TestTerminalRenderSearch:
 
         conv_results = _aggregate_conversations(enriched_results, limit=10)
         output = terminal_fmt.render_search(
-            conv_results, Fidelity(), query="caching", mode="conversations"
+            conv_results, Fidelity(), query="caching", view="conversations"
         )
 
         assert "Conversations for: caching" in output
@@ -278,7 +278,7 @@ class TestTerminalRenderSearch:
         tier1, tier2 = _compute_thread_tiers(enriched_results)
         output = terminal_fmt.render_search(
             enriched_results, Fidelity(),
-            query="caching", mode="thread",
+            query="caching", view="thread",
             tier1=tier1, tier2=tier2,
         )
 
@@ -303,7 +303,7 @@ class TestTerminalRenderSearch:
         tier1, tier2 = _compute_thread_tiers(results)
         output = terminal_fmt.render_search(
             results, Fidelity(),
-            query="caching", mode="thread",
+            query="caching", view="thread",
             tier1=tier1, tier2=tier2,
         )
 
@@ -318,7 +318,7 @@ class TestTerminalRenderSearch:
         tier1, tier2 = _compute_thread_tiers(single)
         output = terminal_fmt.render_search(
             single, Fidelity(),
-            query="caching", mode="thread",
+            query="caching", view="thread",
             tier1=tier1, tier2=tier2,
         )
 
@@ -329,7 +329,7 @@ class TestTerminalRenderSearch:
         from siftd.output import terminal_fmt
 
         output = terminal_fmt.render_search(
-            [], Fidelity(), query="nothing", mode="chunks"
+            [], Fidelity(), query="nothing", view="chunks"
         )
 
         assert "Results for: nothing" in output
@@ -351,7 +351,7 @@ class TestTerminalRenderSearch:
 
         fidelity = Fidelity(depth=3, chars=0)
         output = terminal_fmt.render_search(
-            results, fidelity, query="test", mode="chunks"
+            results, fidelity, query="test", view="chunks"
         )
 
         assert "Line one" in output
@@ -373,7 +373,7 @@ class TestTerminalRenderSearch:
         }]
 
         output = terminal_fmt.render_search(
-            results, Fidelity(), query="test", mode="chunks"
+            results, Fidelity(), query="test", view="chunks"
         )
 
         assert "No workspace" in output
@@ -397,7 +397,7 @@ class TestTerminalRenderSearch:
 
         output = terminal_fmt.render_search(
             results, Fidelity(depth=3, chars=0),
-            query="test", mode="chunks",
+            query="test", view="chunks",
         )
 
         assert "> What is caching?" in output
@@ -423,7 +423,7 @@ class TestTerminalRenderSearch:
         }]
 
         output = terminal_fmt.render_search(
-            results, Fidelity(), query="test", mode="chunks",
+            results, Fidelity(), query="test", view="chunks",
         )
 
         assert ">>>" in output
@@ -437,7 +437,7 @@ class TestMarkdownRenderSearch:
         from siftd.output import markdown_fmt
 
         output = markdown_fmt.render_search(
-            enriched_results, Fidelity(), query="caching", mode="chunks"
+            enriched_results, Fidelity(), query="caching", view="chunks"
         )
 
         assert isinstance(output, str)
@@ -450,7 +450,7 @@ class TestMarkdownRenderSearch:
 
         conv_results = _aggregate_conversations(enriched_results, limit=10)
         output = markdown_fmt.render_search(
-            conv_results, Fidelity(), query="caching", mode="conversations"
+            conv_results, Fidelity(), query="caching", view="conversations"
         )
 
         assert "## Conversations for: caching" in output
@@ -473,7 +473,7 @@ class TestMarkdownRenderSearch:
         tier1, tier2 = _compute_thread_tiers(results)
         output = markdown_fmt.render_search(
             results, Fidelity(),
-            query="caching", mode="thread",
+            query="caching", view="thread",
             tier1=tier1, tier2=tier2,
         )
 

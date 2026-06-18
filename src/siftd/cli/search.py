@@ -17,8 +17,8 @@ from siftd.cli._filters import extract_filter_args
 from siftd.paths import embeddings_db_path
 
 
-def _print_empty_json_results(args, query: str, db: Path, caveats: list | None = None) -> None:
-    """Emit empty JSON results for --json output modes."""
+def _print_empty_json_results(args, query: str, db: Path, *, mode: str = "fts", caveats: list | None = None) -> None:
+    """Emit empty JSON results for --json output modes. ``mode`` is the resolved engine."""
     import json
 
     from painted import Fidelity
@@ -26,7 +26,7 @@ def _print_empty_json_results(args, query: str, db: Path, caveats: list | None =
     from siftd.output.format_registry import select_format
 
     fmt = select_format(json_mode=True, is_tty=False)
-    result = fmt.render_search([], Fidelity(), query=query, mode="chunks", caveats=caveats or [])
+    result = fmt.render_search([], Fidelity(), query=query, view="chunks", mode=mode, caveats=caveats or [])
     if isinstance(result, dict):
         print(json.dumps(result, indent=2))
     else:
@@ -108,8 +108,8 @@ def _enrich_exchanges(conn, results):
 
 def _validate_search_axes(args) -> str | None:
     """Return an error string if the axis combination is invalid, else None."""
-    if args.mode in ("thread", "conversations") and args.sort == "time":
-        return f"--mode={args.mode} is incompatible with --sort=time ({args.mode} mode imposes its own ordering)"
+    if args.view in ("thread", "conversations") and args.sort == "time":
+        return f"--view={args.view} is incompatible with --sort=time ({args.view} imposes its own ordering)"
     if getattr(args, "turns_range", None) is not None and getattr(args, "around", None) is None:
         return (
             "--turns requires --around PHRASE on search; "
@@ -159,68 +159,64 @@ def cmd_search(args) -> int:
         print("Error: --refs is not supported with --json", file=sys.stderr)
         return 1
 
-    # --mode=thread with --json: warn and ignore (JSON formatter doesn't use thread grouping)
-    if args.json and args.mode == "thread":
-        print("Note: --mode=thread is ignored with --json output", file=sys.stderr)
+    # --view=thread with --json: warn and ignore (JSON formatter doesn't use thread grouping)
+    if args.json and args.view == "thread":
+        print("Note: --view=thread is ignored with --json output", file=sys.stderr)
 
     # Extract standard filters once for delegation and candidate resolution
     filters = extract_filter_args(args)
 
-    # Determine search mode: FTS5-only, semantic-only, or hybrid
-    use_fts = getattr(args, "fts", False)
-    use_semantic = getattr(args, "semantic", False)
+    # Determine the engine that will run. --mode is the engine selector
+    # (auto|fts|semantic|hybrid); 'auto' resolves against local availability.
+    # The resolved value is what gets reported back as output.mode — never 'auto'.
+    from siftd.api.search import EmbeddingsRequiredError, resolve_search_mode
 
-    # Mutual exclusivity check
-    if use_fts and use_semantic:
-        print("Error: --fts and --semantic are mutually exclusive", file=sys.stderr)
-        return 1
-
-    # --fts mode: pure FTS5, no embeddings required
-    if use_fts:
-        return _search_fts_only(args, db, query, filters)
-
-    # --semantic mode: force embeddings-only (no FTS5 recall), error if unavailable
-    if use_semantic:
-        # Force embeddings-only mode (skip FTS5 recall)
-        args.embeddings_only = True
-
-    # Determine search mode — check embeddings availability
+    requested_mode = getattr(args, "mode", "auto")
     has_embeddings = embeddings_available() and embed_db.exists()
 
-    if use_semantic:
-        # --semantic: require embeddings, error if unavailable. Keep stdout
-        # clean so `siftd search --json | jq` stays valid — human text goes to
-        # stderr, and --json gets a structured error envelope on stdout.
+    # Explicit semantic/hybrid without embeddings: surface the precise reason
+    # (extra missing vs index missing). Keep stdout clean so `--json | jq` stays
+    # valid — human text to stderr, structured error envelope on stdout.
+    if requested_mode in ("semantic", "hybrid") and not has_embeddings:
         import json
         if not embeddings_available():
             if args.json:
-                msg = "Semantic search requires the [embed] extra. Install with: siftd install embed"
-                print(json.dumps({"error": msg}))
+                print(json.dumps({"error": f"Mode '{requested_mode}' requires the [embed] extra. Install with: siftd install embed"}))
             else:
-                print("Semantic search requires the [embed] extra.", file=sys.stderr)
+                print(f"Mode '{requested_mode}' requires the [embed] extra.", file=sys.stderr)
                 print(file=sys.stderr)
                 print("Install with:", file=sys.stderr)
                 print("  siftd install embed", file=sys.stderr)
-            return 1
-        if not embed_db.exists():
+        else:
             if args.json:
-                msg = "No embeddings index found. Run 'siftd search --index' to build it."
-                print(json.dumps({"error": msg}))
+                print(json.dumps({"error": "No embeddings index found. Run 'siftd search --index' to build it."}))
             else:
                 print("No embeddings index found.", file=sys.stderr)
                 print("Run 'siftd search --index' to build it.", file=sys.stderr)
-            return 1
-        search_mode = "semantic"
-    elif not has_embeddings:
-        search_mode = "fts"
-    else:
-        search_mode = "hybrid"
+        return 1
 
-    # Widen limit for modes that aggregate or filter post-hoc
+    try:
+        search_mode = resolve_search_mode(requested_mode, has_embeddings=has_embeddings)
+    except EmbeddingsRequiredError:
+        # Covered by the explicit pre-check above; defensive.
+        print(f"Mode '{requested_mode}' requires embeddings.", file=sys.stderr)
+        return 1
+    except ValueError as e:
+        print(f"siftd: error: {e}", file=sys.stderr)
+        return 1
+
+    # Explicit `--mode fts` uses the dedicated lean keyword path (which warns
+    # about embeddings-only flags). auto-resolved fts (no embeddings installed)
+    # stays on the main path below, keeping full view/flag support — it just
+    # ranks by FTS5 instead of semantic.
+    if requested_mode == "fts":
+        return _search_fts_only(args, db, query, filters)
+
+    # Widen limit for views that aggregate or filter post-hoc
     widened_limit = args.limit
-    if args.mode == "thread":
+    if args.view == "thread":
         widened_limit = max(args.limit, 40)
-    elif args.select == "first" or args.mode == "conversations":
+    elif args.select == "first" or args.view == "conversations":
         widened_limit = max(args.limit * 10, 100)
 
     from siftd.api.dispatch import Operation, deserialize_caveats, execute_for_render
@@ -265,8 +261,6 @@ def cmd_search(args) -> int:
             "recency_half_life": args.recency_half_life,
             "recency_max_boost": args.recency_max_boost,
             "backend": args.backend,
-            # Deprecated alias kept for old-server compat; route now uses mode= directly (ST-4a).
-            "embeddings_only": search_mode == "semantic",
             "raw_fts": getattr(args, "raw_fts", False),
             "debug_ids": getattr(args, "debug_ids", False),
             "around": getattr(args, "around", None),
@@ -311,7 +305,7 @@ def cmd_search(args) -> int:
 
     if not chunks:
         if args.json:
-            _print_empty_json_results(args, query, db, caveats=caveats)
+            _print_empty_json_results(args, query, db, mode=search_mode, caveats=caveats)
         else:
             print(f"No results for: {query}")
             for c in caveats:
@@ -323,7 +317,7 @@ def cmd_search(args) -> int:
         chunks = filter_by_threshold(chunks, threshold=args.threshold)
         if not chunks:
             if args.json:
-                _print_empty_json_results(args, query, db, caveats=caveats)
+                _print_empty_json_results(args, query, db, mode=search_mode, caveats=caveats)
             else:
                 print(f"No results above threshold {args.threshold} for: {query}")
                 for c in caveats:
@@ -337,7 +331,7 @@ def cmd_search(args) -> int:
         earliest = first_mention(chunks, threshold=effective_threshold, db_path=db)
         if not earliest:
             if args.json:
-                _print_empty_json_results(args, query, db, caveats=caveats)
+                _print_empty_json_results(args, query, db, mode=search_mode, caveats=caveats)
             else:
                 print(f"No results above relevance threshold for: {query}")
                 for c in caveats:
@@ -349,15 +343,15 @@ def cmd_search(args) -> int:
     # Skip for modes that manage their own candidate pools:
     # - conversations: aggregates per conversation, handles own limit
     # - thread: widened pool for grouping, formatter handles presentation
-    if args.mode == "chunks":
+    if args.view == "chunks":
         chunks = chunks[:args.limit]
     results = _rows_from_chunks(chunks)
 
     # Enrich results with metadata from main DB
     main_conn = open_database(db, read_only=True)
 
-    # Enrich results with file refs (skip for conversations mode)
-    if args.mode != "conversations":
+    # Enrich results with file refs (skip for conversations view)
+    if args.view != "conversations":
         file_ref_chunks = _chunks_from_rows(results)
         enrich_file_refs(main_conn, file_ref_chunks)
         results = _rows_from_chunks(file_ref_chunks)
@@ -382,7 +376,7 @@ def cmd_search(args) -> int:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    mode = args.mode
+    view = args.view
 
     try:
         # Metadata enrichment
@@ -392,12 +386,13 @@ def cmd_search(args) -> int:
         if args.sort == "time":
             results = _rows_from_chunks(sort_chunks_by_time(results))
 
-        # Mode-specific data processing
-        ctx_kwargs: dict = {"query": query, "mode": mode, "debug_ids": getattr(args, "debug_ids", False)}
+        # View-specific data processing. ctx "mode" = resolved engine (truthful
+        # report of what ran); ctx "view" = render shape.
+        ctx_kwargs: dict = {"query": query, "view": view, "mode": search_mode, "debug_ids": getattr(args, "debug_ids", False)}
 
-        if mode == "conversations":
+        if view == "conversations":
             render_results = _aggregate_conversations(results, limit=getattr(args, "limit", 10))
-        elif mode == "thread":
+        elif view == "thread":
             # Enrich tier1 exchanges for thread display
             _enrich_exchanges(main_conn, results)
             tier1, tier2 = _compute_thread_tiers(results)
@@ -408,12 +403,12 @@ def cmd_search(args) -> int:
             render_results = results
 
         # Exchange enrichment for --full
-        if args.full and mode == "chunks":
+        if args.full and view == "chunks":
             _enrich_exchanges(main_conn, results)
             render_results = results
 
         # Phrase-anchored window for --around + --turns
-        if getattr(args, "around", None) is not None and getattr(args, "turns_range", None) is not None and mode == "chunks":
+        if getattr(args, "around", None) is not None and getattr(args, "turns_range", None) is not None and view == "chunks":
             window_start, window_end = _parse_turns_range(args.turns_range)
             around_chunks = _chunks_from_rows(results)
             from siftd.api.search import enrich_around_window
@@ -431,7 +426,7 @@ def cmd_search(args) -> int:
         emit_output(output)
 
         # --refs content dump (post-processor, not part of formatter)
-        if args.refs and args.mode != "conversations":
+        if args.refs and args.view != "conversations":
             all_refs = []
             for r in render_results:
                 all_refs.extend(r.get("file_refs") or [])
@@ -459,10 +454,10 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
 
     # Warn about flags that are ignored in FTS5-only mode
     unsupported_flags = []
-    if args.mode == "thread":
-        unsupported_flags.append("--mode=thread")
-    if args.mode == "conversations":
-        unsupported_flags.append("--mode=conversations")
+    if args.view == "thread":
+        unsupported_flags.append("--view=thread")
+    if args.view == "conversations":
+        unsupported_flags.append("--view=conversations")
     if args.full:
         unsupported_flags.append("--full")
     if args.verbose:
@@ -502,7 +497,6 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             "owner": filters.owner,
             "exclude_active": not args.no_exclude_active,
             "include_derivative": args.include_derivative,
-            "embeddings_only": False,
             "raw_fts": getattr(args, "raw_fts", False),
             "debug_ids": getattr(args, "debug_ids", False),
             "around": getattr(args, "around", None),
@@ -555,7 +549,8 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
 
             out = {
                 "query": query,
-                "mode": "fts5",
+                "mode": "fts",
+                "view": "chunks",
                 "results": [],
                 "caveats": [asdict(c) for c in caveats],
             }
@@ -603,15 +598,13 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         is_tty=sys.stdout.isatty(),
     )
 
-    output = fmt.render_search(results, fidelity, query=query, mode="chunks", debug_ids=getattr(args, "debug_ids", False), caveats=caveats)
+    output = fmt.render_search(results, fidelity, query=query, view="chunks", mode="fts", debug_ids=getattr(args, "debug_ids", False), caveats=caveats)
     if isinstance(output, dict):
-        # Preserve FTS5-specific fields for JSON
         if unsupported_flags:
             output["warnings"] = [
                 f"{flag} ignored in FTS5 mode (requires embeddings)"
                 for flag in unsupported_flags
             ]
-        output["mode"] = "fts5"
         print(json_mod.dumps(output, indent=2, default=str))
     else:
         from siftd.output.painted_bridge import emit_output
@@ -650,6 +643,22 @@ def _search_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name
     return 0
 
 
+def _engine_mode(value: str) -> str:
+    """argparse type for ``--mode``: validate the engine selector and redirect the
+    old render values to ``--view`` with a clear hint (clean-break migration)."""
+    if value in ("chunks", "thread", "conversations"):
+        raise argparse.ArgumentTypeError(
+            f"--mode now selects the search engine; use --view {value} for result shape"
+        )
+    from siftd.api.search import SEARCH_MODES
+
+    if value not in SEARCH_MODES:
+        raise argparse.ArgumentTypeError(
+            f"invalid engine {value!r}; choose from {', '.join(SEARCH_MODES)}"
+        )
+    return value
+
+
 def build_search_parser(subparsers) -> None:
     """Add the 'search' subparser to the CLI."""
     p_search = subparsers.add_parser(
@@ -666,14 +675,14 @@ examples:
   siftd search -w myproject "auth flow"                # filter by workspace
   siftd search --since 2024-06 "testing"               # filter by date
 
-  # explicit mode selection
-  siftd search --fts "error handling"                  # force FTS5 keyword search
-  siftd search --semantic "auth flow"                  # force semantic search
+  # explicit engine selection
+  siftd search --mode fts "error handling"             # force FTS5 keyword search
+  siftd search --mode semantic "auth flow"             # force semantic search
 
   # refine
-  siftd search "design decision" --mode=thread         # narrative: top conversations expanded
+  siftd search "design decision" --view=thread         # narrative: top conversations expanded
   siftd search "why we chose X" --around "why" --turns -2:+2  # ±2 turns around phrase
-  siftd search "event sourcing" --mode=conversations   # rank whole conversations, not chunks
+  siftd search "event sourcing" --view=conversations   # rank whole conversations, not chunks
   siftd search "when first discussed Y" --select=first # earliest match above threshold
   siftd search --threshold 0.7 "architecture"          # only high-relevance results
 
@@ -695,7 +704,6 @@ examples:
   siftd query -l research:auth                      # retrieve tagged conversations
 
   # tuning
-  siftd search --embeddings-only "chunking"            # skip FTS5, pure embeddings
   siftd search --recall 200 "error"                    # widen FTS5 candidate pool
   siftd search --sort=time "chunking"                   # sort by time instead of score
 
@@ -725,8 +733,6 @@ note: --context N was removed in v0.9.x. Use --around PHRASE --turns -N:+N inste
 
     search_display = p_search.add_argument_group("search display")
     search_display.add_argument("-v", "--verbose", action="store_true", help="Show full chunk text")
-    # --debug-ids: deprecated no-op; chunk_id/source_ids ship by default. Accepted through v0.9.x, removed in v0.10.0.
-    search_display.add_argument("--debug-ids", action="store_true", dest="debug_ids", help=argparse.SUPPRESS)
     search_display.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
 
     # Navigation: phrase-anchored window (--around + --turns only; query-specific anchors not on search)
@@ -750,22 +756,26 @@ note: --context N was removed in v0.9.x. Use --around PHRASE --turns -N:+N inste
         help="Sort order: score (default, relevance) or time (chronological). Incompatible with --mode=thread/conversations.",
     )
     mode_group.add_argument(
-        "--mode",
+        "--view",
         choices=["chunks", "thread", "conversations"],
         default="chunks",
-        metavar="MODE",
-        help="Render mode: chunks (default), thread (narrative drill-down), or conversations (aggregated ranking)",
+        metavar="VIEW",
+        help="Result shape: chunks (default), thread (narrative drill-down), or conversations (aggregated ranking)",
     )
     mode_group.add_argument("--refs", nargs="?", const=True, metavar="FILES", help="Show file references; optionally filter by comma-separated basenames")
 
-    # Search mode selection
-    mode_selection = p_search.add_argument_group("search mode")
-    mode_selection.add_argument("--fts", action="store_true", help="Force FTS5 keyword search (no embeddings)")
-    mode_selection.add_argument("--semantic", action="store_true", help="Force semantic search (requires embeddings)")
+    # Engine selection
+    engine_group = p_search.add_argument_group("search engine")
+    engine_group.add_argument(
+        "--mode",
+        type=_engine_mode,
+        default="auto",
+        metavar="ENGINE",
+        help="Search engine: auto (default), fts, semantic, or hybrid. auto picks hybrid when embeddings are installed, else fts.",
+    )
 
     # Search tuning
     tuning_group = p_search.add_argument_group("search tuning")
-    tuning_group.add_argument("--embeddings-only", action="store_true", help="Skip FTS5 recall, use pure embeddings")
     tuning_group.add_argument("--recall", type=int, default=80, metavar="N", help="FTS5 conversation recall limit (default: 80)")
     tuning_group.add_argument("--threshold", type=float, metavar="SCORE", help="Filter results below this score (e.g., 0.7)")
     tuning_group.add_argument("--raw-fts", action="store_true", help="Pass query directly to FTS5 without tokenization (advanced: skips OR fallback)")

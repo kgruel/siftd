@@ -860,21 +860,6 @@ class TestSearchJsonChunkIds:
         assert out[0]["source_ids"] == ["e1", "e2"]
 
 
-class TestDebugIdsBackcompat:
-    def test_debug_ids_flag_still_parses(self):
-        import argparse
-
-        from siftd.cli.search import build_search_parser
-
-        # Build a minimal parser with the search subcommand
-        root = argparse.ArgumentParser()
-        sub = root.add_subparsers(dest="command")
-        build_search_parser(sub)
-        # --debug-ids is suppressed in --help but still accepts and sets the flag
-        args = root.parse_args(["search", "q", "--debug-ids"])
-        assert args.debug_ids is True
-
-
 class TestIngestTimeShellTagging:
     """Test that shell commands are automatically tagged at ingest time."""
 

@@ -977,7 +977,6 @@ def search_route(
     model: str | None = Parameter(query="model", default=None),
     n: int = Parameter(query="n", default=10),
     recall: int = Parameter(query="recall", default=80),
-    embeddings_only: bool = Parameter(query="embeddings_only", default=True),
     exclude_active: bool = Parameter(query="exclude_active", default=True),
     rerank: str = Parameter(query="rerank", default="mmr"),
     lambda_: float = Parameter(query="lambda", default=0.7),
@@ -993,13 +992,17 @@ def search_route(
     owner: str | None = Parameter(query="owner", default=None),
     debug_ids: bool = Parameter(query="debug_ids", default=False),
     raw_fts: bool = Parameter(query="raw_fts", default=False),
-    # Canonical mode selector — takes precedence over embeddings_only when provided.
-    # embeddings_only is a deprecated backward-compat alias (remove in a future slice).
-    mode: str | None = Parameter(query="mode", default=None),
+    # Engine selector: auto|fts|semantic|hybrid. 'auto' resolves to hybrid when
+    # this server has embeddings, else fts (resolve_search_mode is shared with the CLI).
+    mode: str = Parameter(query="mode", default="auto"),
 ) -> dict | Response:
     """Semantic + FTS search against team DB."""
     try:
-        from siftd.api.search import search_chunks
+        from siftd.api.search import (
+            EmbeddingsRequiredError,
+            resolve_search_mode,
+            search_chunks,
+        )
     except ImportError:
         return Response(
             content={"error": "search requires siftd[embed]"},
@@ -1007,15 +1010,23 @@ def search_route(
         )
 
     owner = _effective_owner(request, owner)
-    if mode is not None:
-        if mode not in ("semantic", "hybrid", "fts"):
-            return Response(
-                content={"error": f"invalid mode: {mode!r}; expected semantic, hybrid, or fts"},
-                status_code=400,
-            )
-    else:
-        # Derive from deprecated embeddings_only alias.
-        mode = "semantic" if embeddings_only else "hybrid"
+
+    # Resolve the engine and report the concrete value back via the envelope.
+    # embeddings_available comes through the api boundary (serve must not import
+    # siftd.embeddings directly — see tests/architecture/test_imports.py).
+    from siftd.api import embeddings_available
+    from siftd.paths import embeddings_db_path
+
+    has_embed = embeddings_available() and embeddings_db_path().exists()
+    try:
+        mode = resolve_search_mode(mode, has_embeddings=has_embed)
+    except EmbeddingsRequiredError as e:
+        return Response(
+            content={"error": f"mode {e.mode!r} requires embeddings (siftd[embed] + a built index)"},
+            status_code=400,
+        )
+    except ValueError as e:
+        return Response(content={"error": str(e)}, status_code=400)
     try:
         return _dispatch(
             "/api/v1/search", "GET", search_chunks,
@@ -1031,7 +1042,7 @@ def search_route(
              "include_derivative": include_derivative,
              "owner": owner, "raw_fts": raw_fts},
             "search", db_path,
-            render_context={"debug_ids": debug_ids},
+            render_context={"debug_ids": debug_ids, "mode": mode, "view": "chunks"},
         )
     except Exception:
         import logging

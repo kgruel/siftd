@@ -151,22 +151,25 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
 
     Context keys:
         query: str — the search query
-        mode: str — "chunks", "conversations", or "thread"
-        tier1: list — expanded results (thread mode)
-        tier2: list — compact results (thread mode)
+        mode: str — resolved search engine that ran: "fts", "semantic", or "hybrid"
+        view: str — render shape: "chunks" (default), "conversations", or "thread"
+        tier1: list — expanded results (thread view)
+        tier2: list — compact results (thread view)
         caveats: list[Finding] — threaded from dispatch; appended as a
             blockquote note section after the last result.
     """
     from siftd.output.common import truncate_text
 
     query = context.get("query", "")
-    mode = context.get("mode", "chunks")
+    view = context.get("view", "chunks")
+    engine = context.get("mode")
+    engine_tag = f" [{engine}]" if engine else ""
     caveats = context.get("caveats") or []
 
     lines: list[str] = []
 
-    if mode == "conversations":
-        lines.append(f"## Conversations for: {query}")
+    if view == "conversations":
+        lines.append(f"## Conversations for: {query}{engine_tag}")
         lines.append("")
         headers = ["ID", "Max Score", "Mean Score", "Chunks", "Started", "Workspace"]
         lines.append("| " + " | ".join(headers) + " |")
@@ -183,10 +186,10 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             ]
             lines.append("| " + " | ".join(row) + " |")
 
-    elif mode == "thread":
+    elif view == "thread":
         tier1 = context.get("tier1", [])
         tier2 = context.get("tier2", [])
-        lines.append(f"## Results for: {query}")
+        lines.append(f"## Results for: {query}{engine_tag}")
         lines.append("")
 
         for r in tier1:
@@ -226,8 +229,8 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             lines.append("")
 
     else:
-        # Chunks mode
-        lines.append(f"## Results for: {query}")
+        # Chunks view
+        lines.append(f"## Results for: {query}{engine_tag}")
         lines.append("")
         for r in results:
             conv_id = r.get("conversation_id", "")

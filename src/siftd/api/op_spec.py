@@ -79,7 +79,7 @@ class OpSpec:
 # path params (today: only ``/api/v1/conversations/{id}``), see
 # :func:`_normalize_path`.
 
-_LOCAL_FN_EXCLUDE_SEARCH = frozenset({"action", "embeddings_only", "debug_ids", "around"})
+_LOCAL_FN_EXCLUDE_SEARCH = frozenset({"action", "debug_ids", "around"})
 _WIRE_EXCLUDE_COMMON = frozenset({"db_path", "around"})
 
 

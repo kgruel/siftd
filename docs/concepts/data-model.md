@@ -127,7 +127,7 @@ siftd query --tool-tag shell:test     # by tool usage patterns
 
 **Search across all content:**
 ```bash
-siftd search --fts "authentication"       # FTS5 keyword search
+siftd search --mode fts "authentication"  # FTS5 keyword search
 siftd search "how to handle tokens"       # semantic search (requires embeddings)
 ```
 

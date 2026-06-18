@@ -80,7 +80,7 @@ class TestJsonFmtRenderSearch:
 
     def test_default_includes_chunk_ids(self):
         from painted import Fidelity
-        out = json_fmt.render_search(self._results(), Fidelity(), query="q", mode="chunks")
+        out = json_fmt.render_search(self._results(), Fidelity(), query="q", view="chunks")
         chunk = out["results"][0]
         assert chunk["chunk_id"] == "chunk-xyz"
         assert chunk["source_ids"] == ["src-001", "src-002"]
@@ -92,7 +92,7 @@ class TestJsonFmtRenderSearch:
         """--debug-ids no longer gates IDs; flag accepted for back-compat."""
         from painted import Fidelity
         out = json_fmt.render_search(
-            self._results(), Fidelity(), query="q", mode="chunks", debug_ids=False,
+            self._results(), Fidelity(), query="q", view="chunks", debug_ids=False,
         )
         chunk = out["results"][0]
         assert chunk["chunk_id"] == "chunk-xyz"
@@ -102,7 +102,7 @@ class TestJsonFmtRenderSearch:
         from painted import Fidelity
         rows = self._results()
         out = json_fmt.render_search(
-            rows, Fidelity(), query="q", mode="thread", tier1=rows, tier2=[],
+            rows, Fidelity(), query="q", view="thread", tier1=rows, tier2=[],
         )
         assert out["tier1"][0]["chunk_id"] == "chunk-xyz"
 
@@ -153,7 +153,7 @@ def test_search_route_still_accepts_debug_ids(monkeypatch, tmp_path):
         return {"result_count": 0, "results": []}
 
     monkeypatch.setattr(routes, "_dispatch", fake_dispatch)
-    routes.search_route.fn(SimpleNamespace(), tmp_path / "db.db", q="hi", debug_ids=False, mode=None)
+    routes.search_route.fn(SimpleNamespace(), tmp_path / "db.db", q="hi", debug_ids=False, mode="fts")
     assert "debug_ids" in seen_rc[0]
 
 

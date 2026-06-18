@@ -68,22 +68,25 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
 
     Context keys:
         query: str — the search query
-        mode: str — "chunks", "conversations", or "thread"
-        tier1: list — expanded results (thread mode)
-        tier2: list — compact results (thread mode)
+        mode: str — resolved search engine that ran: "fts", "semantic", or "hybrid"
+        view: str — render shape: "chunks" (default), "conversations", or "thread"
+        tier1: list — expanded results (thread view)
+        tier2: list — compact results (thread view)
         caveats: list[Finding] — threaded from dispatch; appended as
             ``note: <message>`` lines after the last result.
     """
     from siftd.output.common import format_refs_annotation, truncate_text
 
     query = context.get("query", "")
-    mode = context.get("mode", "chunks")
+    view = context.get("view", "chunks")
+    engine = context.get("mode")
+    engine_tag = f"  [{engine}]" if engine else ""
     caveats = context.get("caveats") or []
 
     lines: list[str] = []
 
-    if mode == "conversations":
-        lines.append(f"Conversations for: {query}\n")
+    if view == "conversations":
+        lines.append(f"Conversations for: {query}{engine_tag}\n")
         for r in results:
             conv_id = r.get("conversation_id", "")
             ws = r.get("_workspace", "")
@@ -102,10 +105,10 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             lines.append(f"    {snippet}")
             lines.append("")
 
-    elif mode == "thread":
+    elif view == "thread":
         tier1 = context.get("tier1", [])
         tier2 = context.get("tier2", [])
-        lines.append(f"Results for: {query}\n")
+        lines.append(f"Results for: {query}{engine_tag}\n")
 
         for r in tier1:
             ws = r.get("_workspace", "")
@@ -154,8 +157,8 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             lines.append("")
 
     else:
-        # Default: chunks mode (handles default, verbose, full, context)
-        lines.append(f"Results for: {query}\n")
+        # Default: chunks view (handles default, verbose, full, context)
+        lines.append(f"Results for: {query}{engine_tag}\n")
         for r in results:
             conv_id = r.get("conversation_id", "")
             ws = r.get("_workspace", "")

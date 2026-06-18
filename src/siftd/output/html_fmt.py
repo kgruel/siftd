@@ -352,7 +352,8 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
 
     Context keys:
         query: str — the search query
-        mode: str — "chunks", "conversations", or "thread"
+        mode: str — resolved search engine that ran: "fts", "semantic", or "hybrid"
+        view: str — render shape: "chunks" (default), "conversations", or "thread"
         detail_base: str — URL prefix for detail links
         caveats: list[Finding] — threaded from dispatch; appended as an
             ``<aside class="caveats">`` fragment after the results section.
@@ -360,16 +361,18 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
     from siftd.output.common import truncate_text
 
     query = context.get("query", "")
-    mode = context.get("mode", "chunks")
+    view = context.get("view", "chunks")
+    engine = context.get("mode")
+    engine_tag = f' <span class="engine">[{escape(engine)}]</span>' if engine else ""
     detail_base = context.get("detail_base", "")
     shell_base = context.get("shell_base", "")
     caveats = context.get("caveats") or []
 
     parts: list[str] = []
 
-    if mode == "conversations":
+    if view == "conversations":
         parts.append('<section class="search-results conversations">')
-        parts.append(f"<h2>Conversations for: {escape(query)}</h2>")
+        parts.append(f"<h2>Conversations for: {escape(query)}{engine_tag}</h2>")
         parts.append('<table class="conversation-list">')
         parts.append(
             "<thead><tr>"
@@ -391,11 +394,11 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             parts.append("</tr>")
         parts.append("</tbody></table></section>")
 
-    elif mode == "thread":
+    elif view == "thread":
         tier1 = context.get("tier1", [])
         tier2 = context.get("tier2", [])
         parts.append('<section class="search-results thread">')
-        parts.append(f"<h2>Results for: {escape(query)}</h2>")
+        parts.append(f"<h2>Results for: {escape(query)}{engine_tag}</h2>")
 
         for r in tier1:
             ws = r.get("_workspace", "")
@@ -444,9 +447,9 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         parts.append("</section>")
 
     else:
-        # Chunks mode
+        # Chunks view
         parts.append('<section class="search-results chunks">')
-        parts.append(f"<h2>Results for: {escape(query)}</h2>")
+        parts.append(f"<h2>Results for: {escape(query)}{engine_tag}</h2>")
         for r in results:
             conv_id = r.get("conversation_id", "")
             display_label = r["display_label"]

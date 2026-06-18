@@ -53,7 +53,6 @@ def test_to_local_strips_annotation_keys():
             "n": 10,
             "around": "delta",          # excluded — CLI annotation
             "debug_ids": True,           # excluded — render-context annotation
-            "embeddings_only": False,    # excluded — routing key
             "action": "search",          # excluded — routing key
             "db_path": Path("/tmp/x"),   # NOT excluded — fn takes db_path
         },
@@ -64,7 +63,6 @@ def test_to_local_strips_annotation_keys():
     out = op.to_local()
     assert "around" not in out
     assert "debug_ids" not in out
-    assert "embeddings_only" not in out
     assert "action" not in out
     assert out["q"] == "hello"
     assert out["n"] == 10

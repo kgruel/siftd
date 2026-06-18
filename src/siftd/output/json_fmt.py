@@ -88,9 +88,10 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
 
     Context keys:
         query: str — the search query
-        mode: str — "chunks", "conversations", or "thread"
-        tier1: list — expanded results (thread mode)
-        tier2: list — compact results (thread mode)
+        mode: str — resolved search engine that ran: "fts", "semantic", or "hybrid"
+        view: str — render shape: "chunks" (default), "conversations", or "thread"
+        tier1: list — expanded results (thread view)
+        tier2: list — compact results (thread view)
         caveats: list[Finding] — threaded from dispatch; serialized as
             ``"caveats": [...]`` in the envelope (empty list when absent).
     """
@@ -98,18 +99,20 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
     from datetime import UTC, datetime
 
     query = context.get("query", "")
-    mode = context.get("mode", "chunks")
+    view = context.get("view", "chunks")
+    mode = context.get("mode")  # resolved engine; None only for legacy callers
     caveats = context.get("caveats") or []
 
     output: dict[str, Any] = {
         "query": query,
         "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "mode": mode,
+        "view": view,
         "result_count": len(results),
         "caveats": [asdict(c) for c in caveats],
     }
 
-    if mode == "conversations":
+    if view == "conversations":
         output["results"] = [
             {
                 "conversation_id": r.get("conversation_id"),
@@ -124,7 +127,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
         ]
         return output
 
-    if mode == "thread":
+    if view == "thread":
         tier1 = context.get("tier1", [])
         tier2 = context.get("tier2", [])
         output["result_count"] = len(tier1) + len(tier2)
@@ -132,7 +135,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
         output["tier2"] = _json_chunk_list(tier2)
         return output
 
-    # Chunks mode
+    # Chunks view
     output["results"] = _json_chunk_list(results)
     return output
 

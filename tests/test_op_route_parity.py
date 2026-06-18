@@ -201,7 +201,6 @@ def test_search_op_keys_accepted_by_route():
             "recency_half_life": 30.0,
             "recency_max_boost": 1.15,
             "backend": "fastembed",
-            "embeddings_only": False,            # deprecated alias; still sent for old-server compat
             "raw_fts": False,
             "debug_ids": False,                  # CLI annotation
             "around": None,                      # CLI annotation

@@ -369,9 +369,9 @@ class TestJsonRenderSearch:
         from siftd.output.json_fmt import render_search
 
         result = render_search(
-            [_chunk_result()], Fidelity(depth=1), query="meaning of life", mode="chunks"
+            [_chunk_result()], Fidelity(depth=1), query="meaning of life", view="chunks"
         )
-        assert result["mode"] == "chunks"
+        assert result["view"] == "chunks"
         assert result["query"] == "meaning of life"
         assert result["result_count"] == 1
         assert result["results"][0]["score"] == 0.85
@@ -380,9 +380,9 @@ class TestJsonRenderSearch:
         from siftd.output.json_fmt import render_search
 
         result = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations"
+            [_conv_result()], Fidelity(depth=1), query="q", view="conversations"
         )
-        assert result["mode"] == "conversations"
+        assert result["view"] == "conversations"
         assert result["results"][0]["max_score"] == 0.92
         assert result["results"][0]["chunk_count"] == 3
 
@@ -392,9 +392,9 @@ class TestJsonRenderSearch:
         tier1 = [_chunk_result(text="expanded")]
         tier2 = [_chunk_result(text="compact", score=0.5)]
         result = render_search(
-            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1, tier2=tier2
+            [], Fidelity(depth=1), query="q", view="thread", tier1=tier1, tier2=tier2
         )
-        assert result["mode"] == "thread"
+        assert result["view"] == "thread"
         assert result["result_count"] == 2
         assert len(result["tier1"]) == 1
         assert len(result["tier2"]) == 1
@@ -482,7 +482,7 @@ class TestMarkdownRenderSearch:
         from siftd.output.markdown_fmt import render_search
 
         output = render_search(
-            [_chunk_result()], Fidelity(depth=1), query="test query", mode="chunks"
+            [_chunk_result()], Fidelity(depth=1), query="test query", view="chunks"
         )
         assert "## Results for: test query" in output
         assert "01ABC123" in output
@@ -492,7 +492,7 @@ class TestMarkdownRenderSearch:
         from siftd.output.markdown_fmt import render_search
 
         output = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations"
+            [_conv_result()], Fidelity(depth=1), query="q", view="conversations"
         )
         assert "## Conversations for: q" in output
         assert "0.920" in output
@@ -502,7 +502,7 @@ class TestMarkdownRenderSearch:
 
         tier1 = [_chunk_result(_exchanges=[("p1", "What?", "That.")])]
         output = render_search(
-            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1
+            [], Fidelity(depth=1), query="q", view="thread", tier1=tier1
         )
         assert "> What?" in output
         assert "That." in output
@@ -513,7 +513,7 @@ class TestMarkdownRenderSearch:
         tier1 = [_chunk_result(text="fallback text")]
         tier2 = [_chunk_result(text="compact", score=0.4)]
         output = render_search(
-            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1, tier2=tier2
+            [], Fidelity(depth=1), query="q", view="thread", tier1=tier1, tier2=tier2
         )
         assert "fallback text" in output
         assert "compact" in output
@@ -572,7 +572,7 @@ class TestMarkdownRenderSearch:
             check="fts-stale", severity="warning", message="FTS stale", fix_available=False
         )
         output = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations", caveats=[caveat]
+            [_conv_result()], Fidelity(depth=1), query="q", view="conversations", caveats=[caveat]
         )
         assert "> **Note:** FTS stale" in output
 
@@ -582,7 +582,7 @@ class TestTerminalRenderSearch:
         from siftd.output.terminal_fmt import render_search
 
         output = render_search(
-            [_chunk_result()], Fidelity(depth=1), query="test query", mode="chunks"
+            [_chunk_result()], Fidelity(depth=1), query="test query", view="chunks"
         )
         assert "Results for: test query" in output
         assert "01ABC123" in output
@@ -592,7 +592,7 @@ class TestTerminalRenderSearch:
         from siftd.output.terminal_fmt import render_search
 
         output = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations"
+            [_conv_result()], Fidelity(depth=1), query="q", view="conversations"
         )
         assert "Conversations for: q" in output
         assert "0.920" in output
@@ -602,7 +602,7 @@ class TestTerminalRenderSearch:
 
         tier1 = [_chunk_result(_exchanges=[("p1", "What?", "That.")])]
         output = render_search(
-            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1
+            [], Fidelity(depth=1), query="q", view="thread", tier1=tier1
         )
         assert "[user] What?" in output
         assert "[asst] That." in output
@@ -619,7 +619,7 @@ class TestTerminalRenderSearch:
         tier1 = [_chunk_result(text="fallback", file_refs=[Ref("a.py", "/a.py", "r")])]
         tier2 = [_chunk_result(text="compact", score=0.4, file_refs=[Ref("b.py", "/b.py", "w")])]
         output = render_search(
-            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1, tier2=tier2
+            [], Fidelity(depth=1), query="q", view="thread", tier1=tier1, tier2=tier2
         )
         assert "fallback" in output
         assert "refs:" in output
@@ -687,7 +687,7 @@ class TestTerminalRenderSearch:
             check="fts-stale", severity="warning", message="FTS stale", fix_available=False
         )
         output = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations", caveats=[caveat]
+            [_conv_result()], Fidelity(depth=1), query="q", view="conversations", caveats=[caveat]
         )
         assert "note: FTS stale" in output
 
@@ -697,7 +697,7 @@ class TestHtmlRenderSearch:
         from siftd.output.html_fmt import render_search
 
         output = render_search(
-            [_chunk_result()], Fidelity(depth=1), query="test query", mode="chunks"
+            [_chunk_result()], Fidelity(depth=1), query="test query", view="chunks"
         )
         assert 'class="search-results chunks"' in output
         assert "01ABC123" in output
@@ -707,7 +707,7 @@ class TestHtmlRenderSearch:
         from siftd.output.html_fmt import render_search
 
         output = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations"
+            [_conv_result()], Fidelity(depth=1), query="q", view="conversations"
         )
         assert 'class="search-results conversations"' in output
         assert "0.920" in output
@@ -717,7 +717,7 @@ class TestHtmlRenderSearch:
 
         tier1 = [_chunk_result(_exchanges=[("p1", "What?", "That.")])]
         output = render_search(
-            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1
+            [], Fidelity(depth=1), query="q", view="thread", tier1=tier1
         )
         assert 'class="search-results thread"' in output
         assert "What?" in output
@@ -752,7 +752,7 @@ class TestHtmlRenderSearch:
             check="fts-stale", severity="warning", message="FTS stale", fix_available=False
         )
         output = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations", caveats=[caveat]
+            [_conv_result()], Fidelity(depth=1), query="q", view="conversations", caveats=[caveat]
         )
         assert '<aside class="caveats">' in output
         assert "FTS stale" in output

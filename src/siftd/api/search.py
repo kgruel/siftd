@@ -738,6 +738,45 @@ def build_index(
     return {"chunks_added": stats.chunks_added, "total_chunks": stats.total_chunks}
 
 
+SEARCH_MODES = ("auto", "fts", "semantic", "hybrid")
+"""Valid engine-mode selectors. ``auto`` resolves to a concrete engine at
+request time; ``fts``/``semantic``/``hybrid`` name the engine directly."""
+
+
+class EmbeddingsRequiredError(ValueError):
+    """Raised when an explicit ``semantic``/``hybrid`` mode is requested but
+    embeddings are unavailable. Distinct from a plain ``ValueError`` so callers
+    can map it to an install/index hint (CLI) or a 4xx (route) rather than a
+    generic invalid-argument message."""
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+        super().__init__(f"mode {mode!r} requires embeddings")
+
+
+def resolve_search_mode(requested: str, *, has_embeddings: bool) -> str:
+    """Resolve a requested engine mode to the concrete engine that will run.
+
+    The single source of truth for ``auto`` resolution, shared by the CLI and
+    the serve route so the two surfaces cannot drift. ``auto`` → ``hybrid``
+    when embeddings are available, else ``fts``. Explicit ``semantic``/
+    ``hybrid`` require embeddings and raise :class:`EmbeddingsRequiredError`
+    when absent; ``fts`` always resolves to ``fts``.
+
+    The returned value is what should be reported back to the caller as the
+    engine that actually ran (``output["mode"]``) — never ``auto``.
+    """
+    if requested not in SEARCH_MODES:
+        raise ValueError(
+            f"invalid mode: {requested!r}; expected one of {', '.join(SEARCH_MODES)}"
+        )
+    if requested == "auto":
+        return "hybrid" if has_embeddings else "fts"
+    if requested in ("semantic", "hybrid") and not has_embeddings:
+        raise EmbeddingsRequiredError(requested)
+    return requested
+
+
 def search_chunks(
     q: str,
     *,

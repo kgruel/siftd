@@ -77,7 +77,8 @@ def make_search_args(**kwargs):
         "full": False,
         "select": "all",
         "sort": "score",
-        "mode": "chunks",
+        "mode": "auto",
+        "view": "chunks",
         "workspace": None,
         "model": None,
         "since": None,
@@ -85,7 +86,6 @@ def make_search_args(**kwargs):
         "index": False,
         "rebuild": False,
         "backend": None,
-        "embeddings_only": False,
         "recall": 80,
         "role": None,
         "refs": None,
@@ -102,33 +102,9 @@ def make_search_args(**kwargs):
         "tag": None,
         "all_tags": None,
         "no_tag": None,
-        "fts": False,
-        "semantic": False,
     }
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
-
-
-class TestFtsAndSemanticMutualExclusivity:
-    """Test that --fts and --semantic flags are mutually exclusive."""
-
-    def test_fts_and_semantic_together_errors(self, fts_db, capsys):
-        """Using both --fts and --semantic returns error."""
-        from siftd.cli.search import cmd_search
-
-        args = make_search_args(
-            query=["error"],
-            db=str(fts_db["db_path"]),
-            embed_db=str(fts_db["embed_db_path"]),
-            fts=True,
-            semantic=True,
-        )
-
-        result = cmd_search(args)
-        captured = capsys.readouterr()
-
-        assert result == 1
-        assert "--fts and --semantic are mutually exclusive" in captured.err
 
 
 class TestNoEmbeddingsInstalled:
@@ -166,7 +142,7 @@ class TestNoEmbeddingsInstalled:
             query=["error"],
             db=str(fts_db["db_path"]),
             embed_db=str(fts_db["embed_db_path"]),
-            fts=True,
+            mode="fts",
         )
 
         result = cmd_search(args)
@@ -188,14 +164,14 @@ class TestNoEmbeddingsInstalled:
             query=["error"],
             db=str(fts_db["db_path"]),
             embed_db=str(fts_db["embed_db_path"]),
-            semantic=True,
+            mode="semantic",
         )
 
         result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 1
-        assert "Semantic search requires the [embed] extra" in captured.err
+        assert "requires the [embed] extra" in captured.err
         assert "siftd install embed" in captured.err
 
 
@@ -213,7 +189,7 @@ class TestFtsOnlyMode:
         args = make_search_args(
             query=["error"],
             db=str(fts_db["db_path"]),
-            fts=True,
+            mode="fts",
         )
 
         result = cmd_search(args)
@@ -234,7 +210,7 @@ class TestFtsOnlyMode:
         args = make_search_args(
             query=["error"],
             db=str(fts_db["db_path"]),
-            fts=True,
+            mode="fts",
             json=True,
         )
 
@@ -243,7 +219,7 @@ class TestFtsOnlyMode:
 
         assert result == 0
         data = json.loads(captured.out)
-        assert data["mode"] == "fts5"
+        assert data["mode"] == "fts"
         assert "results" in data
         assert data["query"] == "error"
 
@@ -257,7 +233,7 @@ class TestFtsOnlyMode:
         args = make_search_args(
             query=["xyzzynonexistent"],
             db=str(fts_db["db_path"]),
-            fts=True,
+            mode="fts",
         )
 
         result = cmd_search(args)
@@ -319,7 +295,7 @@ class TestFtsOnlyMode:
         args = make_search_args(
             query=["error"],
             db=str(db_path),
-            fts=True,
+            mode="fts",
             workspace="alpha",
             json=True,
         )
@@ -416,7 +392,7 @@ class TestWithEmbeddingsInstalled:
             query=["error"],
             db=str(indexed_db["db_path"]),
             embed_db=str(indexed_db["embed_db_path"]),
-            fts=True,
+            mode="fts",
             json=True,
         )
 
@@ -426,7 +402,7 @@ class TestWithEmbeddingsInstalled:
         assert result == 0
         import json
         data = json.loads(captured.out)
-        assert data["mode"] == "fts5"
+        assert data["mode"] == "fts"
 
     def test_semantic_flag_uses_pure_embeddings(self, indexed_db, capsys):
         """--semantic flag uses pure embeddings search (auto-sets embeddings_only)."""
@@ -436,7 +412,7 @@ class TestWithEmbeddingsInstalled:
             query=["error", "handling"],
             db=str(indexed_db["db_path"]),
             embed_db=str(indexed_db["embed_db_path"]),
-            semantic=True,
+            mode="semantic",
             # Note: NOT setting embeddings_only - --semantic should set it automatically
         )
 
@@ -444,8 +420,6 @@ class TestWithEmbeddingsInstalled:
         captured = capsys.readouterr()
 
         assert result == 0
-        # Verify embeddings_only was set by --semantic
-        assert args.embeddings_only is True
         # Should NOT print FTS5 fallback message (pure embeddings mode)
         assert "FTS5 found no matches" not in captured.err
 
@@ -467,8 +441,8 @@ class TestHelpText:
         help_text = search_parser.format_help()
 
         assert "auto-select" in help_text.lower() or "unified" in help_text.lower()
-        assert "--fts" in help_text
-        assert "--semantic" in help_text
+        assert "--mode" in help_text
+        assert "--view" in help_text
 
     def test_query_search_flag_removed(self):
         """Query no longer has a -s/--search flag."""
@@ -542,8 +516,8 @@ class TestFtsOnlyModeWarnings:
         args = make_search_args(
             query=["error"],
             db=str(fts_db["db_path"]),
-            fts=True,
-            mode="thread",  # Unsupported in FTS mode
+            mode="fts",
+            view="thread",  # Unsupported in FTS mode
             full=True,      # Unsupported
         )
 
@@ -552,7 +526,7 @@ class TestFtsOnlyModeWarnings:
 
         assert result == 0
         assert "ignored in FTS5 mode" in captured.err
-        assert "--mode=thread" in captured.err
+        assert "--view=thread" in captured.err
         assert "--full" in captured.err
 
     def test_supported_flags_no_warning(self, fts_db, capsys, monkeypatch):
@@ -565,7 +539,7 @@ class TestFtsOnlyModeWarnings:
         args = make_search_args(
             query=["error"],
             db=str(fts_db["db_path"]),
-            fts=True,
+            mode="fts",
             json=True,  # Supported in FTS mode
             limit=5,    # Supported
         )
@@ -598,7 +572,7 @@ class TestFtsMissingTableError:
         args = make_search_args(
             query=["error"],
             db=str(db_path),
-            fts=True,
+            mode="fts",
         )
 
         result = cmd_search(args)
@@ -647,7 +621,7 @@ class TestFtsOnlyDelegation:
         args = make_search_args(
             query=["testquery"],
             db=str(db_path),
-            fts=True,
+            mode="fts",
         )
 
         result = cmd_search(args)

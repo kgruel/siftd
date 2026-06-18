@@ -842,38 +842,15 @@ class TestSearchModeWireContract:
             )
         assert resp.status_code == 200, resp.text
 
-    def test_search_embeddings_only_alias_still_works(self, tmp_path):
-        """embeddings_only= continues to work when mode= is absent (backward compat)."""
-        _init_empty_embed_db()
-        db, _ = _make_multi_turn_db(tmp_path / "team.db")
-        app = create_app(db_path=db, auth_config=None)
-        with TestClient(app) as client:
-            # embeddings_only=false → mode="hybrid" via the deprecated alias path.
-            # In a no-embed test env this will 501 or 200 — either is acceptable;
-            # the key assertion is that the route doesn't 400 or 422.
-            resp = client.get(
-                "/api/v1/search",
-                params={"q": "alpha", "embeddings_only": "false"},
-            )
-        assert resp.status_code in (200, 501), (
-            f"embeddings_only alias should not cause 400/422; got {resp.status_code}: {resp.text}"
-        )
-
-    def test_mode_param_overrides_embeddings_only(self, tmp_path):
-        """mode=fts wins over embeddings_only=true at the route level (precedence pin).
-
-        If mode= is correctly checked first and embeddings_only= is only consulted as a
-        fallback, mode=fts with embeddings_only=true → FTS execution → 200 (no embed needed).
-        If the precedence were reversed, embeddings_only=true → mode='semantic' → embed
-        lookup → 501 in a no-embed test env. A 200 here proves mode= takes precedence.
-        """
+    def test_mode_fts_returns_200_without_embeddings(self, tmp_path):
+        """mode=fts executes keyword search and returns 200 in a no-embed env."""
         db, _ = _make_multi_turn_db(tmp_path / "team.db")
         app = create_app(db_path=db, auth_config=None)
         with TestClient(app) as client:
             resp = client.get(
                 "/api/v1/search",
-                params={"q": "alpha", "mode": "fts", "embeddings_only": "true"},
+                params={"q": "alpha", "mode": "fts"},
             )
         assert resp.status_code == 200, (
-            f"mode=fts must override embeddings_only=true; got {resp.status_code}: {resp.text}"
+            f"mode=fts must return 200 without embeddings; got {resp.status_code}: {resp.text}"
         )
