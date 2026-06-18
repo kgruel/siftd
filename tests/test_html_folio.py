@@ -118,6 +118,40 @@ def test_folio_escapes_user_prompt():
     assert "<b>danger</b>" not in html
 
 
+def test_folio_renders_user_prompt_markdown():
+    # A spawned sub-agent's "user" turn is an orchestration-authored markdown
+    # document (headers, lists, fenced code), so user prompts render as markdown
+    # like the assistant narrative — not as escaped plaintext. Raw HTML stays
+    # neutralized by mistune escape=True, so the new path opens no XSS hole.
+    turn = Turn(
+        timestamp="2026-03-15T10:30:00Z",
+        prompt_text=(
+            "## Task\n\n- step one\n- step two\n\n"
+            "```py\nprint(1)\n```\n\n<script>alert(1)</script>"
+        ),
+        total_input_tokens=10,
+        total_output_tokens=0,
+        narrative=[],  # no assistant turn → any markdown must come from the prompt
+        _tool_call_summaries=[],
+    )
+    detail = ConversationDetail(
+        id="01SUBAGENT00000000",
+        workspace_path="/proj",
+        model="claude-opus",
+        started_at="2026-03-15T10:30:00Z",
+        total_input_tokens=10,
+        total_output_tokens=0,
+        turns=[turn],
+    )
+    html = render_folio(detail, _FID)
+    assert "<h2>Task</h2>" in html
+    assert "<li>step one</li>" in html
+    assert 'class="language-py"' in html  # fenced code → Prism-highlightable
+    # Markdown rendering did not bypass HTML escaping.
+    assert "&lt;script&gt;" in html
+    assert "<script>alert(1)</script>" not in html
+
+
 def test_folio_empty_conversation_renders_without_crash():
     detail = ConversationDetail(
         id="01EMPTY00000000000",

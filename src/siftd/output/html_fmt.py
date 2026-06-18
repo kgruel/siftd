@@ -636,7 +636,16 @@ def render_stats(stats: Any, fidelity: Fidelity, **context: Any) -> str:
 
 
 def _md_to_html(content: str) -> str:
-    """Render assistant prose as HTML (markdown when mistune is available)."""
+    """Render message content as HTML (markdown via mistune, escape=True).
+
+    Used for both user prompts and assistant prose: a spawned sub-agent's
+    "user" turn is an orchestration-authored markdown document (headers, lists,
+    fenced code), so user turns get the same markdown treatment as the
+    assistant narrative. escape=True keeps it XSS-safe — raw HTML and
+    javascript: links are neutralized — which is the real control here since
+    the serve CSP allows 'unsafe-inline' scripts. Do not swap in a renderer
+    that passes raw HTML through.
+    """
     try:
         import mistune
 
@@ -651,16 +660,6 @@ def _md_to_html(content: str) -> str:
             if stripped:
                 out.append(f"<p>{escape(stripped)}</p>")
         return "".join(out)
-
-
-def _plain_paragraphs(text: str) -> str:
-    """User prompts: escaped, paragraph-split, never markdown-interpreted."""
-    out: list[str] = []
-    for para in text.strip().split("\n\n"):
-        stripped = para.strip()
-        if stripped:
-            out.append(f"<p>{escape(stripped)}</p>")
-    return "".join(out) or "<p></p>"
 
 
 class _FolioEmitter:
@@ -815,7 +814,7 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
                 f'<div class="turn" data-role="user" id="{anchor}">'
                 f'<header class="turn__head"><span class="turn__role">User</span>'
                 f'<span class="turn__time">{escape(t_time)}</span></header>'
-                f'<div class="turn__text">{_plain_paragraphs(prompt_text)}</div>'
+                f'<div class="turn__text">{_md_to_html(prompt_text)}</div>'
                 f"</div>"
             )
 
