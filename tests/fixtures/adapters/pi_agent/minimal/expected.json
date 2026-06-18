@@ -1,6 +1,5 @@
 [
   {
-    "branch": null,
     "ended_at": "2024-03-10T14:00:05Z",
     "external_id": "pi_agent::pi-session-001",
     "harness": {
@@ -19,7 +18,6 @@
             }
           }
         ],
-        "external_id": null,
         "responses": [
           {
             "attributes": {
@@ -51,9 +49,7 @@
                 }
               }
             ],
-            "external_id": null,
             "model": "claude-opus-4-6",
-            "provider": null,
             "timestamp": "2024-03-10T14:00:03Z",
             "tool_calls": [
               {
@@ -88,11 +84,8 @@
                 }
               }
             ],
-            "external_id": null,
             "model": "claude-opus-4-6",
-            "provider": null,
             "timestamp": "2024-03-10T14:00:05Z",
-            "tool_calls": [],
             "usage": {
               "input_tokens": 700,
               "output_tokens": 30

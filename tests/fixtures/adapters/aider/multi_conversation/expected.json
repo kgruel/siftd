@@ -1,7 +1,5 @@
 [
   {
-    "branch": null,
-    "ended_at": null,
     "external_id": "aider::73f8afad1280::2025-07-15 14:32:01",
     "harness": {
       "display_name": "Aider",
@@ -19,7 +17,6 @@
             }
           }
         ],
-        "external_id": null,
         "responses": [
           {
             "attributes": {
@@ -41,12 +38,7 @@
                 }
               }
             ],
-            "external_id": null,
-            "model": null,
-            "provider": null,
-            "timestamp": "2025-07-15T14:32:01",
-            "tool_calls": [],
-            "usage": null
+            "timestamp": "2025-07-15T14:32:01"
           }
         ],
         "timestamp": "2025-07-15T14:32:01"
@@ -60,7 +52,6 @@
             }
           }
         ],
-        "external_id": null,
         "responses": [
           {
             "attributes": {
@@ -82,12 +73,7 @@
                 }
               }
             ],
-            "external_id": null,
-            "model": null,
-            "provider": null,
-            "timestamp": "2025-07-15T14:32:01",
-            "tool_calls": [],
-            "usage": null
+            "timestamp": "2025-07-15T14:32:01"
           }
         ],
         "timestamp": "2025-07-15T14:32:01"
@@ -97,8 +83,6 @@
     "workspace_path": "tests/fixtures/adapters/aider/multi_conversation"
   },
   {
-    "branch": null,
-    "ended_at": null,
     "external_id": "aider::73f8afad1280::2025-07-15 15:10:00",
     "harness": {
       "display_name": "Aider",
@@ -116,7 +100,6 @@
             }
           }
         ],
-        "external_id": null,
         "responses": [
           {
             "attributes": {
@@ -138,12 +121,7 @@
                 }
               }
             ],
-            "external_id": null,
-            "model": null,
-            "provider": null,
-            "timestamp": "2025-07-15T15:10:00",
-            "tool_calls": [],
-            "usage": null
+            "timestamp": "2025-07-15T15:10:00"
           }
         ],
         "timestamp": "2025-07-15T15:10:00"

@@ -1,7 +1,5 @@
 [
   {
-    "branch": null,
-    "ended_at": null,
     "external_id": "aider::170f9bf11af0::2025-07-15 14:32:01",
     "harness": {
       "display_name": "Aider",
@@ -19,7 +17,6 @@
             }
           }
         ],
-        "external_id": null,
         "responses": [
           {
             "attributes": {
@@ -41,12 +38,7 @@
                 }
               }
             ],
-            "external_id": null,
-            "model": null,
-            "provider": null,
-            "timestamp": "2025-07-15T14:32:01",
-            "tool_calls": [],
-            "usage": null
+            "timestamp": "2025-07-15T14:32:01"
           }
         ],
         "timestamp": "2025-07-15T14:32:01"

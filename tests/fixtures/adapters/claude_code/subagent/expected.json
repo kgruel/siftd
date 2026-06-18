@@ -1,6 +1,5 @@
 [
   {
-    "branch": null,
     "ended_at": "2024-01-15T10:00:03Z",
     "external_id": "claude_code::parent-session-1::agent::sub-agent-1",
     "harness": {
@@ -23,7 +22,6 @@
         "external_id": "claude_code::msg-001",
         "responses": [
           {
-            "attributes": {},
             "content": [
               {
                 "block_type": "text",
@@ -46,7 +44,6 @@
             ],
             "external_id": "claude_code::msg-002",
             "model": "claude-3-opus-20240229",
-            "provider": null,
             "timestamp": "2024-01-15T10:00:01Z",
             "tool_calls": [
               {
@@ -68,7 +65,6 @@
             }
           },
           {
-            "attributes": {},
             "content": [
               {
                 "block_type": "text",
@@ -80,9 +76,7 @@
             ],
             "external_id": "claude_code::msg-004",
             "model": "claude-3-opus-20240229",
-            "provider": null,
             "timestamp": "2024-01-15T10:00:03Z",
-            "tool_calls": [],
             "usage": {
               "input_tokens": 120,
               "output_tokens": 15
