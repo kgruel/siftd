@@ -154,7 +154,28 @@
     liveScroll = null;
   }
 
-  function enhance() { wireTone(); drawLedgers(); drawHists(); syncChrome(); initSpy(); highlight(); tailLiveFolio(); }
+  // --- sessions sub-agent toggles -------------------------------------------
+  // Parent rows carry a .row__toggle button; clicking it shows/hides that
+  // session's nested sub-agent rows (.row--sub[data-parent=<id>]). CSP-safe:
+  // attribute/.hidden writes only. stopPropagation keeps the row's hx-get
+  // (open folio) from firing when the disclosure caret is clicked.
+  function wireSessionToggles(root) {
+    (root || document).querySelectorAll('.row__toggle').forEach(function (btn) {
+      if (btn._wired) return;
+      btn._wired = true;
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var gid = btn.getAttribute('data-group');
+        var expanded = btn.getAttribute('aria-expanded') === 'true';
+        btn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+        document.querySelectorAll('.row--sub[data-parent="' + gid + '"]')
+          .forEach(function (r) { r.hidden = expanded; });
+      });
+    });
+  }
+
+  function enhance() { wireTone(); drawLedgers(); drawHists(); syncChrome(); initSpy(); highlight(); tailLiveFolio(); wireSessionToggles(); }
 
   document.body.addEventListener('htmx:afterSettle', enhance);
   applyTone();

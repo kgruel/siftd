@@ -984,7 +984,10 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
     hour-of-day histogram; all derived render-side from started_at /
     total_tokens / cost — no new data surface. Cost honesty as everywhere:
     sum of priced rows, ``&mdash;`` when nothing in the day is priced.
-    Rows mount the folio via the same _hx_detail contract as Find.
+    Rows mount the folio via the same _hx_detail contract as Find. Sub-agent
+    conversations (external_id ``<root>::agent::<id>``) nest under their parent
+    session, collapsed by default and expanded from the parent's disclosure
+    button (enhance.js); their tokens/cost still fold into the day totals.
     """
     from collections import OrderedDict
     from datetime import datetime
@@ -1066,21 +1069,39 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
             # this page (n=50) — render at top level, flagged as a sub-agent.
             roots.append(c)
 
-    def _session_row(c, *, sub: bool, agents: int = 0) -> str:
+    def _session_row(c, *, agents: int = 0, group_id=None, parent_id=None, flagged=False) -> str:
+        # group_id  -> expandable parent: disclosure button + agent-count chip.
+        # parent_id -> nested sub-agent: hidden by default, data-parent link
+        #              (enhance.js toggles it from the parent's button).
+        # flagged   -> orphan sub-agent (parent off the n=50 page): sub styling,
+        #              but visible, since it has no parent row to hang under.
         model = fmt_model(getattr(c, "model", None)) or ""
         ws = getattr(c, "workspace_path", None)
         ws_name = ws.rstrip("/").rsplit("/", 1)[-1] if ws else "?"
         row_cost = getattr(c, "cost", None)
         row_cost_str = f"${row_cost:,.2f}" if row_cost is not None else "&mdash;"
-        cls = "row row--sub" if sub else "row"
-        caret = '<span class="row__caret" aria-hidden="true">&#8627;</span>' if sub else ""
+        is_sub = parent_id is not None or flagged
+        cls = "row row--sub" if is_sub else "row"
+        attrs = _hx_detail(detail_base, c.id, shell_base)
+        if parent_id is not None:
+            attrs += f' data-parent="{escape(parent_id)}" hidden'
+        if group_id is not None:
+            disc = (
+                f'<button class="row__toggle" type="button" data-group="{escape(group_id)}"'
+                f' aria-expanded="false" aria-label="Toggle sub-agents"></button>'
+            )
+        elif is_sub:
+            disc = '<span class="row__caret" aria-hidden="true">&#8627;</span>'
+        else:
+            disc = '<span class="row__caret row__caret--none" aria-hidden="true"></span>'
         chip = (
             f'<span class="row__agents">{agents} agent{"" if agents == 1 else "s"}</span>'
             if agents else ""
         )
         return (
-            f'<li class="{cls}"{_hx_detail(detail_base, c.id, shell_base)}>'
-            f'<span class="row__ws">{caret}{escape(ws_name)}{chip}</span>'
+            f'<li class="{cls}"{attrs}>'
+            f'<span class="row__ws">{disc}'
+            f'<span class="row__name">{escape(ws_name)}</span>{chip}</span>'
             f'<span class="row__model">{escape(model)}</span>'
             f'<span class="row__turns">{getattr(c, "prompt_count", 0)}</span>'
             f'<span class="row__tok">{escape(fmt_tokens(getattr(c, "total_tokens", 0) or 0))}</span>'
@@ -1128,10 +1149,15 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
         for c in convs:
             ext = getattr(c, "external_id", None)
             kids = children.get(ext, []) if ext else []
-            is_orphan = bool(getattr(c, "parent_external_id", None))
-            rows.append(_session_row(c, sub=is_orphan, agents=len(kids)))
-            for kid in kids:
-                rows.append(_session_row(kid, sub=True))
+            if kids:
+                rows.append(_session_row(c, agents=len(kids), group_id=c.id))
+                for kid in kids:
+                    rows.append(_session_row(kid, parent_id=c.id))
+            else:
+                # childless top-level session, or an orphan sub-agent (flagged)
+                rows.append(
+                    _session_row(c, flagged=bool(getattr(c, "parent_external_id", None)))
+                )
         day_parts.append(
             f'<div class="day"><div class="day__head">'
             f'<span class="day__date">{escape(label)}</span>'

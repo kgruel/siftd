@@ -38,8 +38,12 @@ def test_sessions_nests_subagents_under_parent():
     # One top-level row (exact class="row"); two nested sub rows.
     assert html.count('class="row"') == 1
     assert html.count("row--sub") == 2
-    # Parent carries an agent-count chip.
+    # Parent carries an agent-count chip in its own cell (not jammed into name).
     assert "2 agents</span>" in html
+    # Parent is an expandable group; children collapse under it by default.
+    assert 'class="row__toggle"' in html
+    assert 'data-group="c-root"' in html
+    assert html.count('data-parent="c-root" hidden') == 2
     # Day head counts roots as sessions, sub-agents separately.
     assert "1 sessions" in html
     assert "2 sub-agents" in html
@@ -56,6 +60,10 @@ def test_sessions_orphan_subagent_flagged_at_top_level():
     html = render_sessions([], [orphan], **_CTX)
     assert "row--sub" in html
     assert "c-orphan" in html
+    # Orphan stays visible (no parent row to nest under) — not collapsed, not a child.
+    assert " hidden>" not in html
+    assert "data-parent" not in html
+    assert 'class="row__toggle"' not in html
 
 
 def test_sessions_day_totals_fold_in_subagents():
