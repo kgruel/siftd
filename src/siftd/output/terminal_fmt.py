@@ -63,22 +63,25 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> Any:
     return render_list_block(summaries, fidelity, caveats=context.get("caveats"))
 
 
-def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
-    """Render search results as terminal text.
+def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
+    """Render a :class:`SearchView` as terminal text.
 
-    Context keys:
+    The positional argument is a ``SearchView`` (a bare list of render-dicts is
+    tolerated and wrapped as a chunks view); the view shape and the thread
+    ``tier1``/``tier2`` split ride the SearchView. Context keys:
+
         query: str — the search query
         mode: str — resolved search engine that ran: "fts", "semantic", or "hybrid"
-        view: str — render shape: "chunks" (default), "conversations", or "thread"
-        tier1: list — expanded results (thread view)
-        tier2: list — compact results (thread view)
         caveats: list[Finding] — threaded from dispatch; appended as
             ``note: <message>`` lines after the last result.
     """
+    from siftd.domain.search_types import as_search_view
     from siftd.output.common import format_refs_annotation, truncate_text
 
+    sv = as_search_view(result, view=context.get("view", "chunks"))
+    results = sv.results
     query = context.get("query", "")
-    view = context.get("view", "chunks")
+    view = sv.view
     engine = context.get("mode")
     engine_tag = f"  [{engine}]" if engine else ""
     caveats = context.get("caveats") or []
@@ -106,8 +109,8 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             lines.append("")
 
     elif view == "thread":
-        tier1 = context.get("tier1", [])
-        tier2 = context.get("tier2", [])
+        tier1 = sv.tier1 or []
+        tier2 = sv.tier2 or []
         lines.append(f"Results for: {query}{engine_tag}\n")
 
         for r in tier1:

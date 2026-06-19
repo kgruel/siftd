@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 import pytest
 from painted import Fidelity
 
+from siftd.domain.search_types import SearchView
+
 
 @dataclass
 class FakeSummary:
@@ -392,7 +394,8 @@ class TestJsonRenderSearch:
         tier1 = [_chunk_result(text="expanded")]
         tier2 = [_chunk_result(text="compact", score=0.5)]
         result = render_search(
-            [], Fidelity(depth=1), query="q", view="thread", tier1=tier1, tier2=tier2
+            SearchView(results=[], view="thread", tier1=tier1, tier2=tier2),
+            Fidelity(depth=1), query="q",
         )
         assert result["view"] == "thread"
         assert result["result_count"] == 2
@@ -502,7 +505,8 @@ class TestMarkdownRenderSearch:
 
         tier1 = [_chunk_result(_exchanges=[("p1", "What?", "That.")])]
         output = render_search(
-            [], Fidelity(depth=1), query="q", view="thread", tier1=tier1
+            SearchView(results=[], view="thread", tier1=tier1, tier2=[]),
+            Fidelity(depth=1), query="q",
         )
         assert "> What?" in output
         assert "That." in output
@@ -513,7 +517,8 @@ class TestMarkdownRenderSearch:
         tier1 = [_chunk_result(text="fallback text")]
         tier2 = [_chunk_result(text="compact", score=0.4)]
         output = render_search(
-            [], Fidelity(depth=1), query="q", view="thread", tier1=tier1, tier2=tier2
+            SearchView(results=[], view="thread", tier1=tier1, tier2=tier2),
+            Fidelity(depth=1), query="q",
         )
         assert "fallback text" in output
         assert "compact" in output
@@ -602,7 +607,8 @@ class TestTerminalRenderSearch:
 
         tier1 = [_chunk_result(_exchanges=[("p1", "What?", "That.")])]
         output = render_search(
-            [], Fidelity(depth=1), query="q", view="thread", tier1=tier1
+            SearchView(results=[], view="thread", tier1=tier1, tier2=[]),
+            Fidelity(depth=1), query="q",
         )
         assert "[user] What?" in output
         assert "[asst] That." in output
@@ -619,7 +625,8 @@ class TestTerminalRenderSearch:
         tier1 = [_chunk_result(text="fallback", file_refs=[Ref("a.py", "/a.py", "r")])]
         tier2 = [_chunk_result(text="compact", score=0.4, file_refs=[Ref("b.py", "/b.py", "w")])]
         output = render_search(
-            [], Fidelity(depth=1), query="q", view="thread", tier1=tier1, tier2=tier2
+            SearchView(results=[], view="thread", tier1=tier1, tier2=tier2),
+            Fidelity(depth=1), query="q",
         )
         assert "fallback" in output
         assert "refs:" in output
@@ -717,7 +724,8 @@ class TestHtmlRenderSearch:
 
         tier1 = [_chunk_result(_exchanges=[("p1", "What?", "That.")])]
         output = render_search(
-            [], Fidelity(depth=1), query="q", view="thread", tier1=tier1
+            SearchView(results=[], view="thread", tier1=tier1, tier2=[]),
+            Fidelity(depth=1), query="q",
         )
         assert 'class="search-results thread"' in output
         assert "What?" in output

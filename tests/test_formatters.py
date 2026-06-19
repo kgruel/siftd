@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from painted import Fidelity
 
+from siftd.domain.search_types import SearchView
 from siftd.output.validation import validate_formatter
 
 
@@ -198,9 +199,9 @@ class TestJsonRenderSearch:
         from siftd.output import json_fmt
 
         result = json_fmt.render_search(
-            enriched_results, Fidelity(),
-            query="caching", view="thread",
-            tier1=enriched_results[:1], tier2=enriched_results[1:],
+            SearchView(results=enriched_results, view="thread", tier1=enriched_results[:1], tier2=enriched_results[1:]),
+            Fidelity(),
+            query="caching",
         )
 
         assert result["view"] == "thread"
@@ -292,9 +293,9 @@ class TestTerminalRenderSearch:
 
         tier1, tier2 = _compute_thread_tiers(enriched_results)
         output = terminal_fmt.render_search(
-            enriched_results, Fidelity(),
-            query="caching", view="thread",
-            tier1=tier1, tier2=tier2,
+            SearchView(results=enriched_results, view="thread", tier1=tier1, tier2=tier2),
+            Fidelity(),
+            query="caching",
         )
 
         assert "Results for: caching" in output
@@ -316,9 +317,9 @@ class TestTerminalRenderSearch:
 
         tier1, tier2 = _compute_thread_tiers(results)
         output = terminal_fmt.render_search(
-            results, Fidelity(),
-            query="caching", view="thread",
-            tier1=tier1, tier2=tier2,
+            SearchView(results=results, view="thread", tier1=tier1, tier2=tier2),
+            Fidelity(),
+            query="caching",
         )
 
         assert "More results:" in output
@@ -330,9 +331,9 @@ class TestTerminalRenderSearch:
         single = enriched_results[:1]
         tier1, tier2 = _compute_thread_tiers(single)
         output = terminal_fmt.render_search(
-            single, Fidelity(),
-            query="caching", view="thread",
-            tier1=tier1, tier2=tier2,
+            SearchView(results=single, view="thread", tier1=tier1, tier2=tier2),
+            Fidelity(),
+            query="caching",
         )
 
         # Single result at mean goes to tier2
@@ -483,9 +484,9 @@ class TestMarkdownRenderSearch:
         ]
         tier1, tier2 = _compute_thread_tiers(results)
         output = markdown_fmt.render_search(
-            results, Fidelity(),
-            query="caching", view="thread",
-            tier1=tier1, tier2=tier2,
+            SearchView(results=results, view="thread", tier1=tier1, tier2=tier2),
+            Fidelity(),
+            query="caching",
         )
 
         assert "## Results for: caching" in output

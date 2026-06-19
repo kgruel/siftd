@@ -10,7 +10,6 @@ import argparse
 import sys
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
 
 from siftd.cli._common import _parse_turns_range, add_anchor_window_args, resolve_db
 from siftd.cli._filters import extract_filter_args
@@ -47,17 +46,6 @@ def _can_delegate_to_serve(args, *, db: Path, embed_db: Path) -> bool:
 
     return True
 
-def _chunks_from_rows(rows) -> list[Any]:
-    from siftd.api.search import SearchChunk
-
-    chunks: list[Any] = []
-    for r in rows:
-        if hasattr(r, "conversation_id") and hasattr(r, "score") and hasattr(r, "to_render_dict"):
-            chunks.append(r)
-        else:
-            chunks.append(SearchChunk.from_mapping(r))
-    return chunks
-
 
 def _validate_search_axes(args) -> str | None:
     """Return an error string if the axis combination is invalid, else None."""
@@ -73,7 +61,7 @@ def _validate_search_axes(args) -> str | None:
 
 def cmd_search(args) -> int:
     """Unified search over conversations — auto-selects FTS5 or semantic based on availability."""
-    from siftd.api import embeddings_available, open_database
+    from siftd.api import embeddings_available
 
     db = resolve_db(args)
     embed_db = Path(args.embed_db).expanduser() if args.embed_db else embeddings_db_path()
@@ -106,6 +94,11 @@ def cmd_search(args) -> int:
     if axis_err:
         print(f"siftd: error: {axis_err}", file=sys.stderr)
         sys.exit(2)
+
+    # Validate the --turns window format early for a friendly exit(2); search_view
+    # re-parses the raw string when it runs the recipe (on the wire or locally).
+    if getattr(args, "around", None) is not None and getattr(args, "turns_range", None) is not None:
+        _parse_turns_range(args.turns_range)
 
     # --refs with --json is not supported (refs dump would break JSON validity)
     if args.json and args.refs:
@@ -165,31 +158,47 @@ def cmd_search(args) -> int:
     if requested_mode == "fts":
         return _search_fts_only(args, db, query, filters)
 
-    # Widen limit for views that aggregate or filter post-hoc
-    widened_limit = args.limit
-    if args.view == "thread":
-        widened_limit = max(args.limit, 40)
-    elif args.select == "first" or args.view == "conversations":
-        widened_limit = max(args.limit * 10, 100)
-
-    from siftd.api.dispatch import Operation, deserialize_caveats, execute_for_render
-    from siftd.api.search import search_chunks
+    from siftd.api.dispatch import (
+        Operation,
+        deserialize_caveats,
+        execute_for_render,
+        from_wire,
+    )
+    from siftd.api.search import search_view
     from siftd.cli._common import fidelity_from_args
+
+    # Validate the output format up front — fail fast before any search work.
+    from siftd.output.format_registry import select_format
     from siftd.serve.client import ServeRequest4xx
     from siftd.serve.delegation import print_serve_4xx, try_serve
+
+    try:
+        fmt = select_format(
+            name=getattr(args, "format", None),
+            json_mode=args.json,
+            is_tty=sys.stdout.isatty(),
+        )
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
     fidelity = fidelity_from_args(args)
     rerank = "mmr" if not args.no_diversity else "relevance"
 
+    # One Operation now carries the whole search: engine + the post-processing
+    # recipe (search_view = search_chunks ∘ process_search_view). ``n`` is the
+    # FINAL result count; search_view widens the engine pool internally. The
+    # recipe controls (view/sort/select/threshold/full/around/turns) travel on
+    # the wire so a delegated or REST search runs the identical recipe.
     op = Operation(
         path="/api/v1/search",
         method="GET",
-        fn=search_chunks,
+        fn=search_view,
         params={
             "q": query,
             "db_path": db,
             "embed_db": embed_db,
-            "n": widened_limit,
+            "n": args.limit,
             "mode": search_mode,
             "workspace": filters.workspace,
             "model": filters.model,
@@ -211,110 +220,57 @@ def cmd_search(args) -> int:
             "backend": args.backend,
             "raw_fts": getattr(args, "raw_fts", False),
             "debug_ids": getattr(args, "debug_ids", False),
+            "view": args.view,
+            "sort": args.sort,
+            "select": args.select,
+            "threshold": args.threshold,
+            "full": args.full,
             "around": getattr(args, "around", None),
+            "turns": getattr(args, "turns_range", None),
         },
         render_method="search",
         fidelity=fidelity,
         db=db,
     )
 
-    # Try serve delegation (warm caches, embeddings loaded).
-    # All three modes (fts/hybrid/semantic) now travel on the wire via op.params["mode"].
-    raw_results: Any | None = None
+    # --refs dumps file CONTENT, which never rides the wire (privacy + the JSON
+    # envelope omits it), so run locally to keep file_refs content-bearing.
+    # Otherwise try serve delegation (warm caches, embeddings loaded) and
+    # reconstruct the SearchView from the wire — indistinguishable from local.
+    view_result = None
     caveats: list = []
-    if _can_delegate_to_serve(args, db=db, embed_db=embed_db):
+    if not args.refs and _can_delegate_to_serve(args, db=db, embed_db=embed_db):
         try:
-            raw_results = try_serve(op)
+            body = try_serve(op)
         except ServeRequest4xx as e:
             print_serve_4xx(e)
             return 1
-        if isinstance(raw_results, dict):
+        if isinstance(body, dict):
             # I5: surface the server's caveats (stale index, degraded mode) on
             # the delegated path — without this the thin client always shows none.
-            caveats = deserialize_caveats(raw_results)
+            caveats = deserialize_caveats(body)
+            view_result = from_wire(op, body)
 
-    # Local execution
-    if raw_results is None:
+    # Local execution (or a wire body that failed to deserialize → fall back).
+    if view_result is None:
         try:
-            raw_results, caveats = execute_for_render(op)
-        except RuntimeError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return 1
-        except ValueError as e:
+            view_result, caveats = execute_for_render(op)
+        except (RuntimeError, ValueError) as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
 
-    if isinstance(raw_results, dict):
-        chunks = _chunks_from_rows(raw_results.get("results", []))
-    elif isinstance(raw_results, list):
-        chunks = _chunks_from_rows(raw_results)
-    else:
-        chunks = []
-
-    if not chunks:
+    # Empty results: distinguish a genuinely empty engine result from a
+    # deliberately-emptied one (threshold / select=first) for a precise message.
+    if not view_result.results:
         if args.json:
             _print_empty_json_results(args, query, db, mode=search_mode, caveats=caveats)
         else:
-            print(f"No results for: {query}")
-            for c in caveats:
-                print(f"note: {c.message}")
-        return 0
-
-    # Validate the output format up front — fail fast before any enrichment work,
-    # so a bad --format never depends on enrichment happening to be a no-op.
-    from siftd.output.format_registry import select_format
-
-    try:
-        fmt = select_format(
-            name=getattr(args, "format", None),
-            json_mode=args.json,
-            is_tty=sys.stdout.isatty(),
-        )
-    except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-
-    # Run the shared post-processing recipe. The CLI no longer sequences the
-    # steps inline — api.process_search_view owns threshold/select/sort/views/
-    # full/around so serve surfaces compose the same path. Engine chunks in →
-    # render-ready SearchView out.
-    from siftd.api.search import process_search_view
-
-    turns_range = (
-        _parse_turns_range(args.turns_range)
-        if getattr(args, "around", None) is not None and getattr(args, "turns_range", None) is not None
-        else None
-    )
-    main_conn = open_database(db, read_only=True)
-    try:
-        view_result = process_search_view(
-            chunks,
-            main_conn,
-            view=args.view,
-            sort=args.sort,
-            select=args.select,
-            threshold=args.threshold,
-            limit=args.limit,
-            full=args.full,
-            around=getattr(args, "around", None),
-            turns_range=turns_range,
-            db_path=db,
-        )
-    finally:
-        main_conn.close()
-
-    # A deliberately-emptied result carries its reason so the message is precise
-    # (engine-empty was handled above; this is threshold/select=first emptying).
-    if view_result.empty_reason in ("threshold", "first"):
-        if args.json:
-            _print_empty_json_results(args, query, db, mode=search_mode, caveats=caveats)
-        else:
-            msg = (
-                f"No results above threshold {args.threshold} for: {query}"
-                if view_result.empty_reason == "threshold"
-                else f"No results above relevance threshold for: {query}"
-            )
-            print(msg)
+            if view_result.empty_reason == "threshold":
+                print(f"No results above threshold {args.threshold} for: {query}")
+            elif view_result.empty_reason == "first":
+                print(f"No results above relevance threshold for: {query}")
+            else:
+                print(f"No results for: {query}")
             for c in caveats:
                 print(f"note: {c.message}")
         return 0
@@ -330,21 +286,16 @@ def cmd_search(args) -> int:
     if args.full or args.refs:
         print("Note: Showing full content which may contain sensitive information.", file=sys.stderr)
 
-    # ctx "mode" = resolved engine (truthful report of what ran); ctx "view" =
-    # render shape; tier1/tier2 ride the context for the thread view only.
-    ctx_kwargs: dict = {
-        "query": query,
-        "view": view_result.view,
-        "mode": search_mode,
-        "debug_ids": getattr(args, "debug_ids", False),
-    }
-    if view_result.tier1 is not None:
-        ctx_kwargs["tier1"] = view_result.tier1
-        ctx_kwargs["tier2"] = view_result.tier2
-    if caveats:
-        ctx_kwargs["caveats"] = caveats
-
-    output = fmt.render_search(view_result.results, fidelity, **ctx_kwargs)
+    # ctx "mode" = resolved engine (truthful report of what ran); the view shape
+    # and the thread tier1/tier2 split ride the SearchView itself.
+    output = fmt.render_search(
+        view_result,
+        fidelity,
+        query=query,
+        mode=search_mode,
+        debug_ids=getattr(args, "debug_ids", False),
+        caveats=caveats,
+    )
     from siftd.output.painted_bridge import emit_output
 
     emit_output(output)
@@ -370,9 +321,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
 
     from painted import Fidelity
 
-    from siftd.api import open_database
     from siftd.api.dispatch import Operation, deserialize_caveats, execute_for_render
-    from siftd.api.search import search_chunks
     from siftd.cli._common import fidelity_from_args
 
     # Warn about flags that are ignored in FTS5-only mode
@@ -400,10 +349,12 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     if filters is None:
         filters = extract_filter_args(args)
 
+    from siftd.api.search import search_view
+
     op = Operation(
         path="/api/v1/search",
         method="GET",
-        fn=search_chunks,
+        fn=search_view,
         params={
             "q": query,
             "db_path": db,
@@ -422,33 +373,44 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             "include_derivative": args.include_derivative,
             "raw_fts": getattr(args, "raw_fts", False),
             "debug_ids": getattr(args, "debug_ids", False),
+            # FTS only ever produces the chunks shape; the embeddings-dependent
+            # recipe steps (views/threshold/select/full) were warned-and-dropped
+            # above. --sort and --around still apply.
+            "view": "chunks",
+            "sort": args.sort,
             "around": getattr(args, "around", None),
+            "turns": getattr(args, "turns_range", None),
         },
         render_method="search",
         fidelity=fidelity_from_args(args),
         db=db,
     )
 
+    from siftd.api.dispatch import from_wire
+
     caveats: list = []
-    raw_results: Any | None = None
+    view_result = None
     # Resolve embed_db same as cmd_search so the custom --embed-db guard fires correctly.
     _raw_embed_db = getattr(args, "embed_db", None)
     _embed_db = Path(_raw_embed_db).expanduser() if _raw_embed_db else embeddings_db_path()
-    if _can_delegate_to_serve(args, db=db, embed_db=_embed_db):
+    # --refs forces local (file content never rides the wire); else delegate and
+    # reconstruct the SearchView, indistinguishable from local execution.
+    if not args.refs and _can_delegate_to_serve(args, db=db, embed_db=_embed_db):
         from siftd.serve.client import ServeRequest4xx
         from siftd.serve.delegation import print_serve_4xx, try_serve
         try:
-            raw_results = try_serve(op)
+            body = try_serve(op)
         except ServeRequest4xx as e:
             print_serve_4xx(e)
             return 1
-        if isinstance(raw_results, dict):
+        if isinstance(body, dict):
             # I5: surface the server's caveats on the delegated path.
-            caveats = deserialize_caveats(raw_results)
+            caveats = deserialize_caveats(body)
+            view_result = from_wire(op, body)
 
-    if raw_results is None:
+    if view_result is None:
         try:
-            raw_results, caveats = execute_for_render(op)
+            view_result, caveats = execute_for_render(op)
         except sqlite3.OperationalError as e:
             err_msg = str(e).lower()
             if "no such table" in err_msg and "fts" in err_msg:
@@ -460,15 +422,13 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
                 print(f"Database error: {e}", file=sys.stderr)
             return 1
 
-    # serve returns {results: [...]}, local returns a list
-    if isinstance(raw_results, dict):
-        raw_results = raw_results.get("results", [])
-    chunks = _chunks_from_rows(raw_results)
+    import json as json_mod
 
-    if not chunks:
+    # Empty results don't need a formatter — emit the manual FTS envelope (or
+    # text) and return before validating --format (which is ignored in FTS mode
+    # anyway), preserving the prior no-results behavior.
+    if not view_result.results:
         if args.json:
-            import json
-
             out = {
                 "query": query,
                 "mode": "fts",
@@ -481,48 +441,20 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
                     f"{flag} ignored in FTS5 mode (requires embeddings)"
                     for flag in unsupported_flags
                 ]
-            print(json.dumps(out, indent=2))
+            print(json_mod.dumps(out, indent=2))
         else:
             print(f"No results for: {query}")
             for c in caveats:
                 print(f"note: {c.message}")
         return 0
 
-    # Shared post-processing recipe, lean keyword spec: metadata + --sort +
-    # --around only. The embeddings-dependent steps (views/threshold/select/
-    # full) were warned-and-dropped above; FTS only ever produces the chunks
-    # shape. file-ref/exchange enrichment no-ops here (FTS chunks have no
-    # source_ids), so the lean spec and the full recipe converge on one owner.
-    import json as json_mod
-
-    from siftd.api.search import process_search_view
-    from siftd.output.format_registry import select_format
-
-    turns_range = (
-        _parse_turns_range(args.turns_range)
-        if getattr(args, "around", None) is not None and getattr(args, "turns_range", None) is not None
-        else None
-    )
-    conn = open_database(db, read_only=True)
-    try:
-        view_result = process_search_view(
-            chunks,
-            conn,
-            view="chunks",
-            sort=args.sort,
-            limit=args.limit,
-            around=getattr(args, "around", None),
-            turns_range=turns_range,
-            db_path=db,
-        )
-    finally:
-        conn.close()
-
     if view_result.n_skipped > 0:
         print(
             f"note: filtered {view_result.n_skipped} result(s) without --around phrase '{args.around}' in conversation",
             file=sys.stderr,
         )
+
+    from siftd.output.format_registry import select_format
 
     fidelity = Fidelity()
     fmt = select_format(
@@ -531,7 +463,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         is_tty=sys.stdout.isatty(),
     )
 
-    output = fmt.render_search(view_result.results, fidelity, query=query, view="chunks", mode="fts", debug_ids=getattr(args, "debug_ids", False), caveats=caveats)
+    output = fmt.render_search(view_result, fidelity, query=query, mode="fts", debug_ids=getattr(args, "debug_ids", False), caveats=caveats)
     if isinstance(output, dict):
         if unsupported_flags:
             output["warnings"] = [

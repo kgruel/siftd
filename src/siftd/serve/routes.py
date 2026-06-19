@@ -995,13 +995,23 @@ def search_route(
     # Engine selector: auto|fts|semantic|hybrid. 'auto' resolves to hybrid when
     # this server has embeddings, else fts (resolve_search_mode is shared with the CLI).
     mode: str = Parameter(query="mode", default="auto"),
+    # Post-processing recipe controls (Slice 4): the route runs the same
+    # search_view recipe the CLI does, so REST/HTML inherit the full view
+    # repertoire. Defaults reproduce the prior flat chunks envelope.
+    view: str = Parameter(query="view", default="chunks"),
+    sort: str = Parameter(query="sort", default="score"),
+    select: str = Parameter(query="select", default="all"),
+    threshold: float | None = Parameter(query="threshold", default=None),
+    full: bool = Parameter(query="full", default=False),
+    around: str | None = Parameter(query="around", default=None),
+    turns: str | None = Parameter(query="turns", default=None),
 ) -> dict | Response:
     """Semantic + FTS search against team DB."""
     try:
         from siftd.api.search import (
             EmbeddingsRequiredError,
             resolve_search_mode,
-            search_chunks,
+            search_view,
         )
     except ImportError:
         return Response(
@@ -1029,7 +1039,7 @@ def search_route(
         return Response(content={"error": str(e)}, status_code=400)
     try:
         return _dispatch(
-            "/api/v1/search", "GET", search_chunks,
+            "/api/v1/search", "GET", search_view,
             {"q": q, "db_path": db_path, "n": n, "recall": recall,
              "mode": mode, "workspace": workspace,
              "model": model, "since": since, "before": before,
@@ -1040,9 +1050,13 @@ def search_route(
              "tag": tag, "all_tags": all_tags,
              "no_tag": no_tag, "tag_kind": tag_kind,
              "include_derivative": include_derivative,
-             "owner": owner, "raw_fts": raw_fts},
+             "owner": owner, "raw_fts": raw_fts,
+             # Recipe controls — search_view runs the post-processing recipe.
+             "view": view, "sort": sort, "select": select,
+             "threshold": threshold, "full": full,
+             "around": around, "turns": turns},
             "search", db_path,
-            render_context={"debug_ids": debug_ids, "mode": mode, "view": "chunks"},
+            render_context={"debug_ids": debug_ids, "mode": mode},
         )
     except Exception:
         import logging

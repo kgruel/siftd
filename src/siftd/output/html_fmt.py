@@ -347,21 +347,26 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     return "\n".join(parts)
 
 
-def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
-    """Render search results as HTML fragments.
+def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
+    """Render a :class:`SearchView` as HTML fragments.
 
-    Context keys:
+    The positional argument is a ``SearchView`` (a bare list of render-dicts is
+    tolerated and wrapped as a chunks view); the view shape and the thread
+    ``tier1``/``tier2`` split ride the SearchView. Context keys:
+
         query: str — the search query
         mode: str — resolved search engine that ran: "fts", "semantic", or "hybrid"
-        view: str — render shape: "chunks" (default), "conversations", or "thread"
         detail_base: str — URL prefix for detail links
         caveats: list[Finding] — threaded from dispatch; appended as an
             ``<aside class="caveats">`` fragment after the results section.
     """
+    from siftd.domain.search_types import as_search_view
     from siftd.output.common import truncate_text
 
+    sv = as_search_view(result, view=context.get("view", "chunks"))
+    results = sv.results
     query = context.get("query", "")
-    view = context.get("view", "chunks")
+    view = sv.view
     engine = context.get("mode")
     engine_tag = f' <span class="engine">[{escape(engine)}]</span>' if engine else ""
     detail_base = context.get("detail_base", "")
@@ -395,8 +400,8 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         parts.append("</tbody></table></section>")
 
     elif view == "thread":
-        tier1 = context.get("tier1", [])
-        tier2 = context.get("tier2", [])
+        tier1 = sv.tier1 or []
+        tier2 = sv.tier2 or []
         parts.append('<section class="search-results thread">')
         parts.append(f"<h2>Results for: {escape(query)}{engine_tag}</h2>")
 

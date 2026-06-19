@@ -370,6 +370,128 @@ def deserialize_export_artifact(body: dict[str, Any]) -> ExportArtifact | None:
 
 
 # ---------------------------------------------------------------------------
+# Search view
+# ---------------------------------------------------------------------------
+
+
+def _ref_from_wire(d: Any) -> Any:
+    """Reconstruct a :class:`FileRef` from a wire ref dict (metadata, no content).
+
+    The wire carries ``{basename, path, op, content_length}`` (content is never
+    serialized — ``--refs`` content dumps run against the local DB). The
+    renderers read ``.basename``/``.op``/``.path`` attributes, so we rebuild a
+    typed FileRef with ``content=None`` rather than leave a bare dict.
+    """
+    from siftd.api.file_refs import FileRef
+
+    if not isinstance(d, dict):
+        return None
+    return FileRef(
+        path=d.get("path", "") or "",
+        basename=d.get("basename", "") or "",
+        op=d.get("op", "") or "",
+        content=None,
+    )
+
+
+def _chunk_render_dict(c: dict[str, Any]) -> dict[str, Any]:
+    """Inverse of ``serve_fmt._wire_chunk`` — rebuild a renderer render-dict.
+
+    Restores the ``_workspace``/``_started_at``/``_exchanges``/``_context``
+    keys (and a typed breakdown / file-ref list) the output formatters consume,
+    so a delegated render is byte-identical to a local one.
+    """
+    from siftd.domain.search_types import ScoreBreakdown
+
+    conv = c.get("conversation") if isinstance(c.get("conversation"), dict) else {}
+    rd: dict[str, Any] = {
+        "conversation_id": c.get("conversation_id"),
+        "score": c.get("score", 0.0),
+        "chunk_type": c.get("chunk_type", ""),
+        "display_label": c.get("display_label", ""),
+        "text": c.get("text", ""),
+        "_workspace": conv.get("workspace") or "",
+        "_started_at": conv.get("started_at") or "",
+        "chunk_id": c.get("chunk_id"),
+        "source_ids": _coerce_list(c.get("source_ids")),
+        "turn_index": c.get("turn_index"),
+    }
+    if c.get("event_id") is not None:
+        rd["event_id"] = c.get("event_id")
+    breakdown = c.get("breakdown")
+    if isinstance(breakdown, dict):
+        rd["breakdown"] = ScoreBreakdown.from_mapping(breakdown)
+    file_refs = c.get("file_refs")
+    if file_refs:
+        rd["file_refs"] = [r for r in (_ref_from_wire(x) for x in file_refs) if r is not None]
+    exchanges = c.get("exchanges")
+    if exchanges:
+        rd["_exchanges"] = [tuple(ex) for ex in exchanges if isinstance(ex, list)]
+    context_window = c.get("context")
+    if context_window:
+        rd["_context"] = [tuple(x) for x in context_window if isinstance(x, list)]
+    return rd
+
+
+def _conv_render_dict(c: dict[str, Any]) -> dict[str, Any]:
+    """Inverse of ``serve_fmt._wire_conv`` — rebuild a conversations render-dict."""
+    return {
+        "conversation_id": c.get("conversation_id"),
+        "max_score": c.get("max_score", 0.0),
+        "mean_score": c.get("mean_score", 0.0),
+        "chunk_count": c.get("chunk_count", 0),
+        "best_excerpt": c.get("best_excerpt", ""),
+        "_workspace": c.get("workspace") or "",
+        "_started_at": c.get("started_at") or "",
+        "file_refs": [],
+    }
+
+
+def deserialize_search_view(body: dict[str, Any]) -> Any:
+    """Inverse of ``serve_fmt.render_search`` — rebuild a :class:`SearchView`.
+
+    Branches on the envelope's ``view`` (chunks/thread/conversations),
+    reconstructing render-dicts plus the ``tier1``/``tier2`` split,
+    ``n_skipped`` and ``empty_reason`` so the delegated CLI renders identically
+    to local execution. Returns ``None`` on schema mismatch (caller falls back
+    to local execute), matching the other deserializers' contract.
+    """
+    if not isinstance(body, dict):
+        return None
+    from siftd.domain.search_types import SearchView
+
+    view = body.get("view", "chunks")
+    n_skipped = _coerce_int(body.get("n_skipped"))
+    empty_reason = body.get("empty_reason")
+
+    try:
+        if view == "thread":
+            tier1 = [_chunk_render_dict(c) for c in _coerce_list(body.get("tier1")) if isinstance(c, dict)]
+            tier2 = [_chunk_render_dict(c) for c in _coerce_list(body.get("tier2")) if isinstance(c, dict)]
+            return SearchView(
+                results=tier1 + tier2,
+                view="thread",
+                tier1=tier1,
+                tier2=tier2,
+                n_skipped=n_skipped,
+                empty_reason=empty_reason,
+            )
+        rows = _coerce_list(body.get("results"))
+        if view == "conversations":
+            results = [_conv_render_dict(c) for c in rows if isinstance(c, dict)]
+        else:
+            results = [_chunk_render_dict(c) for c in rows if isinstance(c, dict)]
+        return SearchView(
+            results=results,
+            view=view,
+            n_skipped=n_skipped,
+            empty_reason=empty_reason,
+        )
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -386,8 +508,10 @@ def from_wire(render_method: str, body: dict[str, Any]) -> Any:
         return deserialize_conversation_detail(body)
     if render_method == "export-artifact":
         return deserialize_export_artifact(body)
-    # No registered deserializer — caller handles the raw dict (e.g. search,
-    # stats, tags, raw).
+    if render_method == "search":
+        return deserialize_search_view(body)
+    # No registered deserializer — caller handles the raw dict (e.g. stats,
+    # tags, raw).
     return body
 
 

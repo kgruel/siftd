@@ -83,23 +83,27 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     return json.dumps(envelope, indent=2)
 
 
-def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
-    """Render search results as a dict (caller serializes).
+def render_search(result: Any, fidelity: Fidelity, **context: Any) -> dict:
+    """Render a :class:`SearchView` as a dict (caller serializes).
 
-    Context keys:
+    The positional argument is a ``SearchView`` (a bare list of render-dicts is
+    tolerated and wrapped as a chunks view). The view shape and the thread
+    ``tier1``/``tier2`` split ride the SearchView itself; ``context`` carries
+    only the input-context framing:
+
         query: str — the search query
         mode: str — resolved search engine that ran: "fts", "semantic", or "hybrid"
-        view: str — render shape: "chunks" (default), "conversations", or "thread"
-        tier1: list — expanded results (thread view)
-        tier2: list — compact results (thread view)
         caveats: list[Finding] — threaded from dispatch; serialized as
             ``"caveats": [...]`` in the envelope (empty list when absent).
     """
     from dataclasses import asdict
     from datetime import UTC, datetime
 
+    from siftd.domain.search_types import as_search_view
+
+    sv = as_search_view(result, view=context.get("view", "chunks"))
     query = context.get("query", "")
-    view = context.get("view", "chunks")
+    view = sv.view
     mode = context.get("mode")  # resolved engine; None only for legacy callers
     caveats = context.get("caveats") or []
 
@@ -108,7 +112,7 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
         "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "mode": mode,
         "view": view,
-        "result_count": len(results),
+        "result_count": len(sv.results),
         "caveats": [asdict(c) for c in caveats],
     }
 
@@ -123,20 +127,20 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> dict:
                 "workspace": r.get("_workspace"),
                 "best_excerpt": r.get("best_excerpt", ""),
             }
-            for r in results
+            for r in sv.results
         ]
         return output
 
     if view == "thread":
-        tier1 = context.get("tier1", [])
-        tier2 = context.get("tier2", [])
+        tier1 = sv.tier1 or []
+        tier2 = sv.tier2 or []
         output["result_count"] = len(tier1) + len(tier2)
         output["tier1"] = _json_chunk_list(tier1)
         output["tier2"] = _json_chunk_list(tier2)
         return output
 
     # Chunks view
-    output["results"] = _json_chunk_list(results)
+    output["results"] = _json_chunk_list(sv.results)
     return output
 
 

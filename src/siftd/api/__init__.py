@@ -173,8 +173,10 @@ _LAZY_SEARCH_NAMES = {
     "filter_by_threshold",
     "first_mention",
     "hybrid_search",
+    "parse_turns_range",
     "process_search_view",
     "search_chunks",
+    "search_view",
     "sort_chunks_by_time",
 }
 
@@ -284,6 +286,8 @@ __all__ = [
     "IndexCompatError",
     "IncrementalCompatError",
     "search_chunks",
+    "search_view",
+    "parse_turns_range",
     "hybrid_search",
     "process_search_view",
     "aggregate_by_conversation",

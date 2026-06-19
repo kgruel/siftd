@@ -12,6 +12,7 @@ from siftd.cli.search import (
     _search_fts_only,
     cmd_search,
 )
+from siftd.domain.search_types import SearchView
 
 
 def make_args(**kwargs):
@@ -267,15 +268,17 @@ def test_cmd_search_threshold_and_first_json_empty(test_db, tmp_path, monkeypatc
     embed = tmp_path / "embed.db"
     embed.write_text("x")
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [{"conversation_id": "c1", "score": 0.1, "source_ids": []}])
 
     called = []
     monkeypatch.setattr("siftd.cli.search._print_empty_json_results", lambda *a, **k: called.append(True))
 
+    # threshold empties the recipe → search_view returns empty_reason="threshold"
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: SearchView(results=[], view="chunks", empty_reason="threshold"))
     assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), json=True, threshold=0.9)) == 0
     assert called
 
-    monkeypatch.setattr("siftd.api.search.first_mention", lambda *a, **k: None)
+    # select=first with no match → empty_reason="first"
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: SearchView(results=[], view="chunks", empty_reason="first"))
     assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), json=True, select="first")) == 0
 
 
@@ -283,7 +286,13 @@ def test_cmd_search_mode_processing_and_refs(test_db, tmp_path, monkeypatch):
     embed = tmp_path / "embed.db"
     embed.write_text("x")
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [{"conversation_id": "c1", "score": 0.9, "source_ids": ["p1"], "chunk_id": "ch1", "text": "hello"}])
+    monkeypatch.setattr(
+        "siftd.api.dispatch.execute",
+        lambda op: SearchView(
+            results=[{"conversation_id": "c1", "score": 0.9, "source_ids": ["p1"], "chunk_id": "ch1", "text": "hello", "display_label": "USER", "file_refs": [{"basename": "a.py"}]}],
+            view="chunks",
+        ),
+    )
 
     class _Conn:
         def close(self):
@@ -349,7 +358,7 @@ def test_cmd_search_index_semantic_and_output_edges(test_db, tmp_path, monkeypat
     assert "error" in payload and "embeddings index" in payload["error"]
 
     # json+mode=thread warning
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: SearchView(results=[], view="chunks"))
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: False)
     assert cmd_search(make_args(query=["x"], db=str(test_db), json=True, view="thread")) == 0
     assert "ignored with --json output" in capsys.readouterr().err
@@ -363,11 +372,11 @@ def test_cmd_search_index_semantic_and_output_edges(test_db, tmp_path, monkeypat
     # lines 354/366: non-json threshold/first no-match messages
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
     embed.write_text("x")
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [{"conversation_id": "c1", "score": 0.1, "source_ids": []}])
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: SearchView(results=[], view="chunks", empty_reason="threshold"))
     assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), threshold=0.9)) == 0
     assert "No results above threshold" in capsys.readouterr().out
 
-    monkeypatch.setattr("siftd.api.search.first_mention", lambda *a, **k: None)
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: SearchView(results=[], view="chunks", empty_reason="first"))
     assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), select="first")) == 0
     assert "No results above relevance threshold" in capsys.readouterr().out
 
@@ -416,7 +425,7 @@ def test_search_fts_only_sort_time_orders_results(monkeypatch, tmp_path, capsys)
     )
     monkeypatch.setattr(
         "siftd.output.format_registry.select_format",
-        lambda **k: SimpleNamespace(render_search=lambda results, *_a, **_k: {"results": results}),
+        lambda **k: SimpleNamespace(render_search=lambda sv, *_a, **_k: {"results": sv.results}),
     )
 
     args = make_args(query=["q"], db=str(db), json=True, sort="time")
@@ -465,7 +474,7 @@ def test_cmd_search_semantic_mode_path(test_db, tmp_path, monkeypatch):
     embed = tmp_path / "embed.db"
     embed.write_text("x")
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
+    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: SearchView(results=[], view="chunks"))
     # mode=semantic with existing embed db reaches the search_mode='semantic' resolution
     assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), mode="semantic")) == 0
 
@@ -474,8 +483,13 @@ def test_cmd_search_first_result_kept_branch(test_db, tmp_path, monkeypatch):
     embed = tmp_path / "embed.db"
     embed.write_text("x")
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
-    monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [{"conversation_id": "c1", "score": 0.9, "source_ids": [], "chunk_id": "ch1", "text": "hello"}])
-    monkeypatch.setattr("siftd.api.search.first_mention", lambda *a, **k: {"conversation_id": "c1", "score": 0.9, "source_ids": [], "chunk_id": "ch1", "text": "hello"})
+    monkeypatch.setattr(
+        "siftd.api.dispatch.execute",
+        lambda op: SearchView(
+            results=[{"conversation_id": "c1", "score": 0.9, "source_ids": [], "chunk_id": "ch1", "text": "hello", "display_label": "USER"}],
+            view="chunks",
+        ),
+    )
 
     class _Conn:
         def close(self):
@@ -499,7 +513,7 @@ def test_empty_search_json_results_with_caveats(test_db, monkeypatch, capsys):
         fix_available=False,
     )
 
-    monkeypatch.setattr("siftd.api.dispatch.execute_for_render", lambda op: ([], [stub_caveat]))
+    monkeypatch.setattr("siftd.api.dispatch.execute_for_render", lambda op: (SearchView(results=[], view="chunks"), [stub_caveat]))
 
     args = make_args(query=["nonexistent"], db=str(test_db), json=True)
     assert cmd_search(args) == 0
@@ -522,7 +536,7 @@ def test_empty_search_text_results_with_caveats(test_db, monkeypatch, capsys):
         fix_available=False,
     )
 
-    monkeypatch.setattr("siftd.api.dispatch.execute_for_render", lambda op: ([], [stub_caveat]))
+    monkeypatch.setattr("siftd.api.dispatch.execute_for_render", lambda op: (SearchView(results=[], view="chunks"), [stub_caveat]))
 
     args = make_args(query=["nonexistent"], db=str(test_db), json=False)
     assert cmd_search(args) == 0
@@ -543,7 +557,7 @@ def test_fts_only_empty_results_with_caveats(test_db, monkeypatch, capsys):
         fix_available=False,
     )
 
-    monkeypatch.setattr("siftd.api.dispatch.execute_for_render", lambda op: ([], [stub_caveat]))
+    monkeypatch.setattr("siftd.api.dispatch.execute_for_render", lambda op: (SearchView(results=[], view="chunks"), [stub_caveat]))
     monkeypatch.setattr("siftd.api.search.fts5_search_content", lambda *a, **k: [])
 
     args = make_args(query=["nonexistent"], db=str(test_db), json=True, mode="fts")

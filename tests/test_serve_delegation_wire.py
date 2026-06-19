@@ -51,7 +51,7 @@ def test_to_local_strips_annotation_keys():
         params={
             "q": "hello",
             "n": 10,
-            "around": "delta",          # excluded — CLI annotation
+            "around": "delta",          # NOT excluded — search_view recipe param (Slice 4)
             "debug_ids": True,           # excluded — render-context annotation
             "action": "search",          # excluded — routing key
             "db_path": Path("/tmp/x"),   # NOT excluded — fn takes db_path
@@ -61,7 +61,7 @@ def test_to_local_strips_annotation_keys():
         db=Path("/tmp/x"),
     )
     out = op.to_local()
-    assert "around" not in out
+    assert out["around"] == "delta"  # search_view takes around (Slice 4)
     assert "debug_ids" not in out
     assert "action" not in out
     assert out["q"] == "hello"
@@ -129,7 +129,7 @@ def test_to_wire_strips_local_paths_and_translates_fidelity():
             "lambda_": 0.5,                  # renamed → lambda
             "db_path": Path("/tmp/x"),       # dropped (local-only)
             "embed_db": Path("/tmp/e.db"),   # dropped (local-only)
-            "around": "phrase",              # dropped (CLI annotation)
+            "around": "phrase",              # travels — search_view recipe param (Slice 4)
         },
         render_method="search",
         fidelity=fid,
@@ -138,7 +138,7 @@ def test_to_wire_strips_local_paths_and_translates_fidelity():
     q = op.to_wire()
     assert "db_path" not in q
     assert "embed_db" not in q
-    assert "around" not in q
+    assert q["around"] == "phrase"  # around now travels on the wire (Slice 4)
     assert "tool_filter" not in q
     assert "fidelity" not in q
     assert "lambda_" not in q

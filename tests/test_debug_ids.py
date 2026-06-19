@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from siftd.domain.search_types import SearchChunk
+from siftd.domain.search_types import SearchChunk, SearchView
 from siftd.output import json_fmt
 from siftd.serialization.serve_fmt import render_search as serve_render_search
 
@@ -102,7 +102,8 @@ class TestJsonFmtRenderSearch:
         from painted import Fidelity
         rows = self._results()
         out = json_fmt.render_search(
-            rows, Fidelity(), query="q", view="thread", tier1=rows, tier2=[],
+            SearchView(results=rows, view="thread", tier1=rows, tier2=[]),
+            Fidelity(), query="q",
         )
         assert out["tier1"][0]["chunk_id"] == "chunk-xyz"
 
