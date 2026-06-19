@@ -9,6 +9,7 @@ lazy-imported so that non-search CLI commands don't pull in numpy.
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean as _mean
 from typing import TYPE_CHECKING, Any, Protocol
@@ -81,7 +82,10 @@ __all__ = [
     "enrich_file_refs",
     "enrich_exchanges",
     "enrich_context_window",
+    "enrich_around_window",
     "first_mention",
+    "SearchView",
+    "process_search_view",
     "build_index",
     # Temporal weighting
     "apply_temporal_weight",
@@ -692,6 +696,121 @@ def first_mention(
     above.sort(key=lambda r: (earliest_prompt_time(r), _get(r, "chunk_id") or ""))
 
     return above[0]
+
+
+@dataclass(frozen=True)
+class SearchView:
+    """Post-processed, render-ready search output — the recipe's single product.
+
+    ``results`` is what a formatter consumes as its positional argument, in
+    render-dict shape: chunk dicts for the ``chunks``/``thread`` views,
+    per-conversation dicts for ``conversations``. ``tier1``/``tier2`` carry the
+    thread split (``None`` outside the thread view; the thread renderers read
+    *them*, not ``results``). ``n_skipped`` counts results dropped by the
+    ``--around`` phrase filter. ``empty_reason`` distinguishes a deliberately
+    emptied result (``"threshold"`` / ``"first"``) from an ordinary empty one,
+    so a caller can phrase the right message; it is never set while ``results``
+    is non-empty.
+    """
+
+    results: list[dict[str, Any]]
+    view: str
+    tier1: list[dict[str, Any]] | None = None
+    tier2: list[dict[str, Any]] | None = None
+    n_skipped: int = 0
+    empty_reason: str | None = None
+
+
+def process_search_view(
+    chunks: list[SearchChunk],
+    conn: sqlite3.Connection,
+    *,
+    view: str = "chunks",
+    sort: str = "score",
+    select: str = "all",
+    threshold: float | None = None,
+    limit: int = 10,
+    full: bool = False,
+    around: str | None = None,
+    turns_range: tuple[int, int] | None = None,
+    db_path: Path | None = None,
+) -> SearchView:
+    """Run the shared search post-processing recipe over engine chunks.
+
+    The single owner of the steps that used to live inline in the CLI handler:
+    threshold filter → ``--select first`` → limit trim → metadata/file-ref
+    enrichment → ``--sort time`` → the conversations/thread view shape →
+    ``--full`` exchanges → the ``--around`` window. Operating on
+    :class:`SearchChunk` objects end-to-end (one dict conversion, at the render
+    boundary), it is the location every surface composes, so the recipe cannot
+    drift between the CLI's two paths or any serve surface that adopts it. Steps
+    are opt-in via the keyword controls — a caller wanting only a subset (e.g.
+    the keyword-only path, which excludes embeddings-dependent richness) leaves
+    the rest at their defaults.
+
+    ``conn`` is a read-only main-DB connection for the enrichment steps;
+    ``db_path`` is consulted only by ``--select first`` (which opens its own
+    connection for the timestamp lookup).
+    """
+    # 1. Score threshold (client-side post-filter).
+    if threshold is not None:
+        chunks = filter_by_threshold(chunks, threshold=threshold)
+        if not chunks:
+            return SearchView(results=[], view=view, empty_reason="threshold")
+
+    # 2. --select first: chronologically earliest match above the threshold.
+    if select == "first":
+        effective_threshold = threshold if threshold is not None else 0.65
+        earliest = first_mention(chunks, threshold=effective_threshold, db_path=db_path)
+        if earliest is None:
+            return SearchView(results=[], view=view, empty_reason="first")
+        chunks = [_as_chunk(earliest)]
+
+    # 3. Trim to the requested count — only the chunks view; the aggregate and
+    #    thread views manage their own (widened) candidate pools downstream.
+    if view == "chunks":
+        chunks = chunks[:limit]
+
+    # 4. Enrich with conversation metadata (+ file refs, except the aggregate
+    #    view, which never displays them). Both mutate the chunks in place.
+    enrich_search_metadata(conn, chunks)
+    if view != "conversations":
+        enrich_file_refs(conn, chunks)
+
+    # 5. --sort time (chunks view only; the other views impose their own order
+    #    and reject --sort=time at axis validation).
+    if sort == "time" and view == "chunks":
+        chunks = sort_chunks_by_time(chunks)
+
+    # 6. View shape.
+    if view == "conversations":
+        convs = aggregate_by_conversation(chunks, limit=limit)
+        return SearchView(results=[c.to_render_dict() for c in convs], view=view)
+
+    if view == "thread":
+        enrich_exchanges(conn, chunks)  # tier1 displays full exchanges
+        tier1, tier2 = compute_thread_tiers(chunks)
+        return SearchView(
+            results=[c.to_render_dict() for c in chunks],
+            view=view,
+            tier1=[c.to_render_dict() for c in tier1],
+            tier2=[c.to_render_dict() for c in tier2],
+        )
+
+    # Chunks view: optional full-exchange and phrase-anchored window enrichment.
+    if full:
+        enrich_exchanges(conn, chunks)
+
+    n_skipped = 0
+    if around is not None and turns_range is not None:
+        window_start, window_end = turns_range
+        chunks, n_skipped = enrich_around_window(conn, chunks, around, window_start, window_end)
+
+    return SearchView(
+        results=[c.to_render_dict() for c in chunks],
+        view=view,
+        n_skipped=n_skipped,
+    )
 
 
 def build_index(

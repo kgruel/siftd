@@ -67,6 +67,34 @@ def test_package_level_search_api_exports_are_lazy_and_complete():
     assert callable(enrich_context_window)
 
 
+def test_lazy_search_names_are_a_subset_of_all():
+    """Every lazily-resolved search symbol must also be declared in __all__, or
+    the documented public surface silently disagrees with what __getattr__ will
+    resolve (and `from pkg import *` drops it). Pins the invariant for both the
+    top-level package and the api package."""
+    import siftd
+    import siftd.api
+
+    for mod in (siftd, siftd.api):
+        missing = mod._LAZY_SEARCH_NAMES - set(mod.__all__)
+        assert not missing, f"{mod.__name__}: lazy search names absent from __all__: {sorted(missing)}"
+
+
+def test_process_search_view_resolves_through_api_boundaries():
+    """The Slice-3 orchestrator + its result type are reachable from both the
+    package boundary and the top level (and are the same object)."""
+    from siftd import SearchView as TopSearchView
+    from siftd import process_search_view as top_process
+    from siftd.api import SearchView, process_search_view
+
+    assert TopSearchView is SearchView
+    assert top_process is process_search_view
+    assert callable(process_search_view)
+    assert {"results", "view", "tier1", "tier2", "n_skipped", "empty_reason"} <= set(
+        SearchView.__dataclass_fields__
+    )
+
+
 class TestGetStats:
     def test_returns_database_stats(self, test_db):
         stats = get_stats(db_path=test_db)

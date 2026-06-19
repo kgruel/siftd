@@ -59,53 +59,6 @@ def _chunks_from_rows(rows) -> list[Any]:
     return chunks
 
 
-def _rows_from_chunks(chunks: list[Any]) -> list[dict]:
-    return [c.to_render_dict(debug_ids=True) for c in chunks]
-
-
-def _fetch_search_metadata(conn, results):
-    """Fetch conversation metadata and enrich results in-place via API primitive."""
-    from siftd.api.search import enrich_search_metadata
-
-    chunks = _chunks_from_rows(results)
-    enrich_search_metadata(conn, chunks)
-    if results and isinstance(results[0], dict):
-        rendered = _rows_from_chunks(chunks)
-        for i, row in enumerate(rendered):
-            results[i].update(row)
-
-
-def _aggregate_conversations(results, *, limit=10):
-    """Aggregate search results by conversation via API primitive."""
-    from siftd.api.search import aggregate_by_conversation
-
-    chunks = _chunks_from_rows(results)
-    convs = aggregate_by_conversation(chunks, limit=limit)
-    return [c.to_render_dict() for c in convs]
-
-
-def _compute_thread_tiers(results):
-    """Split results into thread tiers via API primitive."""
-    from siftd.api.search import compute_thread_tiers
-
-    chunks = _chunks_from_rows(results)
-    tier1, tier2 = compute_thread_tiers(chunks)
-    return _rows_from_chunks(tier1), _rows_from_chunks(tier2)
-
-
-def _enrich_exchanges(conn, results):
-    """Fetch full prompt+response texts via API primitive."""
-    from siftd.api.search import enrich_exchanges
-
-    chunks = _chunks_from_rows(results)
-    enrich_exchanges(conn, chunks)
-    if results and isinstance(results[0], dict):
-        rendered = _rows_from_chunks(chunks)
-        for i, row in enumerate(rendered):
-            results[i].update(row)
-
-
-
 def _validate_search_axes(args) -> str | None:
     """Return an error string if the axis combination is invalid, else None."""
     if args.view in ("thread", "conversations") and args.sort == "time":
@@ -220,12 +173,7 @@ def cmd_search(args) -> int:
         widened_limit = max(args.limit * 10, 100)
 
     from siftd.api.dispatch import Operation, deserialize_caveats, execute_for_render
-    from siftd.api.search import (
-        enrich_file_refs,
-        filter_by_threshold,
-        search_chunks,
-        sort_chunks_by_time,
-    )
+    from siftd.api.search import search_chunks
     from siftd.cli._common import fidelity_from_args
     from siftd.serve.client import ServeRequest4xx
     from siftd.serve.delegation import print_serve_4xx, try_serve
@@ -312,57 +260,8 @@ def cmd_search(args) -> int:
                 print(f"note: {c.message}")
         return 0
 
-    # Apply threshold filter if specified
-    if args.threshold is not None:
-        chunks = filter_by_threshold(chunks, threshold=args.threshold)
-        if not chunks:
-            if args.json:
-                _print_empty_json_results(args, query, db, mode=search_mode, caveats=caveats)
-            else:
-                print(f"No results above threshold {args.threshold} for: {query}")
-                for c in caveats:
-                    print(f"note: {c.message}")
-            return 0
-
-    # Post-processing: --select=first (earliest match above threshold)
-    if args.select == "first":
-        from siftd.api.search import first_mention
-        effective_threshold = args.threshold if args.threshold is not None else 0.65
-        earliest = first_mention(chunks, threshold=effective_threshold, db_path=db)
-        if not earliest:
-            if args.json:
-                _print_empty_json_results(args, query, db, mode=search_mode, caveats=caveats)
-            else:
-                print(f"No results above relevance threshold for: {query}")
-                for c in caveats:
-                    print(f"note: {c.message}")
-            return 0
-        chunks = _chunks_from_rows([earliest])
-
-    # Trim to requested limit after post-processing
-    # Skip for modes that manage their own candidate pools:
-    # - conversations: aggregates per conversation, handles own limit
-    # - thread: widened pool for grouping, formatter handles presentation
-    if args.view == "chunks":
-        chunks = chunks[:args.limit]
-    results = _rows_from_chunks(chunks)
-
-    # Enrich results with metadata from main DB
-    main_conn = open_database(db, read_only=True)
-
-    # Enrich results with file refs (skip for conversations view)
-    if args.view != "conversations":
-        file_ref_chunks = _chunks_from_rows(results)
-        enrich_file_refs(main_conn, file_ref_chunks)
-        results = _rows_from_chunks(file_ref_chunks)
-
-    # Privacy warning for full content display
-    if args.full or args.refs:
-        print("Note: Showing full content which may contain sensitive information.", file=sys.stderr)
-
-    # Select output format and determine mode
-
-    from siftd.output.common import print_refs_content
+    # Validate the output format up front — fail fast before any enrichment work,
+    # so a bad --format never depends on enrichment happening to be a no-op.
     from siftd.output.format_registry import select_format
 
     try:
@@ -372,71 +271,95 @@ def cmd_search(args) -> int:
             is_tty=sys.stdout.isatty(),
         )
     except ValueError as e:
-        main_conn.close()
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    view = args.view
+    # Run the shared post-processing recipe. The CLI no longer sequences the
+    # steps inline — api.process_search_view owns threshold/select/sort/views/
+    # full/around so serve surfaces compose the same path. Engine chunks in →
+    # render-ready SearchView out.
+    from siftd.api.search import process_search_view
 
+    turns_range = (
+        _parse_turns_range(args.turns_range)
+        if getattr(args, "around", None) is not None and getattr(args, "turns_range", None) is not None
+        else None
+    )
+    main_conn = open_database(db, read_only=True)
     try:
-        # Metadata enrichment
-        _fetch_search_metadata(main_conn, results)
-
-        # Sort by time if requested (only valid for chunks mode; other modes rejected at validation)
-        if args.sort == "time":
-            results = _rows_from_chunks(sort_chunks_by_time(results))
-
-        # View-specific data processing. ctx "mode" = resolved engine (truthful
-        # report of what ran); ctx "view" = render shape.
-        ctx_kwargs: dict = {"query": query, "view": view, "mode": search_mode, "debug_ids": getattr(args, "debug_ids", False)}
-
-        if view == "conversations":
-            render_results = _aggregate_conversations(results, limit=getattr(args, "limit", 10))
-        elif view == "thread":
-            # Enrich tier1 exchanges for thread display
-            _enrich_exchanges(main_conn, results)
-            tier1, tier2 = _compute_thread_tiers(results)
-            ctx_kwargs["tier1"] = tier1
-            ctx_kwargs["tier2"] = tier2
-            render_results = results
-        else:
-            render_results = results
-
-        # Exchange enrichment for --full
-        if args.full and view == "chunks":
-            _enrich_exchanges(main_conn, results)
-            render_results = results
-
-        # Phrase-anchored window for --around + --turns
-        if getattr(args, "around", None) is not None and getattr(args, "turns_range", None) is not None and view == "chunks":
-            window_start, window_end = _parse_turns_range(args.turns_range)
-            around_chunks = _chunks_from_rows(results)
-            from siftd.api.search import enrich_around_window
-            around_chunks, n_skipped = enrich_around_window(main_conn, around_chunks, args.around, window_start, window_end)
-            if n_skipped > 0:
-                print(f"note: filtered {n_skipped} result(s) without --around phrase '{args.around}' in conversation", file=sys.stderr)
-            results = _rows_from_chunks(around_chunks)
-            render_results = results
-
-        if caveats:
-            ctx_kwargs["caveats"] = caveats
-        output = fmt.render_search(render_results, op.fidelity, **ctx_kwargs)
-        from siftd.output.painted_bridge import emit_output
-
-        emit_output(output)
-
-        # --refs content dump (post-processor, not part of formatter)
-        if args.refs and args.view != "conversations":
-            all_refs = []
-            for r in render_results:
-                all_refs.extend(r.get("file_refs") or [])
-            filter_basenames = None
-            if isinstance(args.refs, str):
-                filter_basenames = [b.strip() for b in args.refs.split(",") if b.strip()]
-            print_refs_content(all_refs, filter_basenames)
-
+        view_result = process_search_view(
+            chunks,
+            main_conn,
+            view=args.view,
+            sort=args.sort,
+            select=args.select,
+            threshold=args.threshold,
+            limit=args.limit,
+            full=args.full,
+            around=getattr(args, "around", None),
+            turns_range=turns_range,
+            db_path=db,
+        )
     finally:
         main_conn.close()
+
+    # A deliberately-emptied result carries its reason so the message is precise
+    # (engine-empty was handled above; this is threshold/select=first emptying).
+    if view_result.empty_reason in ("threshold", "first"):
+        if args.json:
+            _print_empty_json_results(args, query, db, mode=search_mode, caveats=caveats)
+        else:
+            msg = (
+                f"No results above threshold {args.threshold} for: {query}"
+                if view_result.empty_reason == "threshold"
+                else f"No results above relevance threshold for: {query}"
+            )
+            print(msg)
+            for c in caveats:
+                print(f"note: {c.message}")
+        return 0
+
+    # --around dropped results whose conversation lacked the anchor phrase.
+    if view_result.n_skipped > 0:
+        print(
+            f"note: filtered {view_result.n_skipped} result(s) without --around phrase '{args.around}' in conversation",
+            file=sys.stderr,
+        )
+
+    # Privacy warning for full content display
+    if args.full or args.refs:
+        print("Note: Showing full content which may contain sensitive information.", file=sys.stderr)
+
+    # ctx "mode" = resolved engine (truthful report of what ran); ctx "view" =
+    # render shape; tier1/tier2 ride the context for the thread view only.
+    ctx_kwargs: dict = {
+        "query": query,
+        "view": view_result.view,
+        "mode": search_mode,
+        "debug_ids": getattr(args, "debug_ids", False),
+    }
+    if view_result.tier1 is not None:
+        ctx_kwargs["tier1"] = view_result.tier1
+        ctx_kwargs["tier2"] = view_result.tier2
+    if caveats:
+        ctx_kwargs["caveats"] = caveats
+
+    output = fmt.render_search(view_result.results, fidelity, **ctx_kwargs)
+    from siftd.output.painted_bridge import emit_output
+
+    emit_output(output)
+
+    # --refs content dump (post-processor, not part of formatter)
+    if args.refs and args.view != "conversations":
+        from siftd.output.common import print_refs_content
+
+        all_refs = []
+        for r in view_result.results:
+            all_refs.extend(r.get("file_refs") or [])
+        filter_basenames = None
+        if isinstance(args.refs, str):
+            filter_basenames = [b.strip() for b in args.refs.split(",") if b.strip()]
+        print_refs_content(all_refs, filter_basenames)
 
     return 0
 
@@ -537,13 +460,12 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
                 print(f"Database error: {e}", file=sys.stderr)
             return 1
 
-    # Limit results — serve returns {results: [...]}, local returns list
+    # serve returns {results: [...]}, local returns a list
     if isinstance(raw_results, dict):
         raw_results = raw_results.get("results", [])
-    chunks = _chunks_from_rows(raw_results)[:args.limit]
-    results = _rows_from_chunks(chunks)
+    chunks = _chunks_from_rows(raw_results)
 
-    if not results:
+    if not chunks:
         if args.json:
             import json
 
@@ -566,30 +488,41 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
                 print(f"note: {c.message}")
         return 0
 
-    # Enrich with metadata and render via unified formatter system
+    # Shared post-processing recipe, lean keyword spec: metadata + --sort +
+    # --around only. The embeddings-dependent steps (views/threshold/select/
+    # full) were warned-and-dropped above; FTS only ever produces the chunks
+    # shape. file-ref/exchange enrichment no-ops here (FTS chunks have no
+    # source_ids), so the lean spec and the full recipe converge on one owner.
     import json as json_mod
 
+    from siftd.api.search import process_search_view
     from siftd.output.format_registry import select_format
 
+    turns_range = (
+        _parse_turns_range(args.turns_range)
+        if getattr(args, "around", None) is not None and getattr(args, "turns_range", None) is not None
+        else None
+    )
     conn = open_database(db, read_only=True)
     try:
-        _fetch_search_metadata(conn, results)
-        # Phrase-anchored window for --around + --turns
-        if getattr(args, "around", None) is not None and getattr(args, "turns_range", None) is not None:
-            window_start, window_end = _parse_turns_range(args.turns_range)
-            around_chunks = _chunks_from_rows(results)
-            from siftd.api.search import enrich_around_window
-            around_chunks, n_skipped = enrich_around_window(conn, around_chunks, args.around, window_start, window_end)
-            if n_skipped > 0:
-                print(f"note: filtered {n_skipped} result(s) without --around phrase '{args.around}' in conversation", file=sys.stderr)
-            results = _rows_from_chunks(around_chunks)
+        view_result = process_search_view(
+            chunks,
+            conn,
+            view="chunks",
+            sort=args.sort,
+            limit=args.limit,
+            around=getattr(args, "around", None),
+            turns_range=turns_range,
+            db_path=db,
+        )
     finally:
         conn.close()
 
-    if args.sort == "time":
-        from siftd.api.search import sort_chunks_by_time
-
-        results = _rows_from_chunks(sort_chunks_by_time(results))
+    if view_result.n_skipped > 0:
+        print(
+            f"note: filtered {view_result.n_skipped} result(s) without --around phrase '{args.around}' in conversation",
+            file=sys.stderr,
+        )
 
     fidelity = Fidelity()
     fmt = select_format(
@@ -598,7 +531,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         is_tty=sys.stdout.isatty(),
     )
 
-    output = fmt.render_search(results, fidelity, query=query, view="chunks", mode="fts", debug_ids=getattr(args, "debug_ids", False), caveats=caveats)
+    output = fmt.render_search(view_result.results, fidelity, query=query, view="chunks", mode="fts", debug_ids=getattr(args, "debug_ids", False), caveats=caveats)
     if isinstance(output, dict):
         if unsupported_flags:
             output["warnings"] = [
