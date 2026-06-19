@@ -122,17 +122,18 @@ body { margin: 0; }
   padding:14px 18px; border-bottom:1px solid var(--hair); }
 .folio__navmeta { font-family:var(--font-mono); font-size:var(--fs-micro); color:var(--faint); }
 
-/* Reading↔trace mode toggle (segmented). Each button re-fetches the folio so
-   the route re-resolves fidelity (trace needs tool I/O fetched). */
-.folio-mode { display:flex; padding:10px 14px; border-bottom:1px solid var(--hair); }
-.folio-mode__btn { flex:1; appearance:none; cursor:pointer; background:transparent;
-  border:1px solid var(--hair); color:var(--mid); font-family:var(--font-mono);
-  font-size:var(--fs-micro); letter-spacing:.08em; text-transform:uppercase;
-  padding:5px 8px; }
-.folio-mode__btn + .folio-mode__btn { border-left:0; }
-.folio-mode__btn:hover { color:var(--accent); border-color:var(--accent); }
-.folio-mode__btn.is-active { background:var(--sel-bg); color:var(--ink);
-  border-color:var(--mid); }
+/* Reading↔trace mode toggle — mirrors the .ws-sort__opt segmented vocabulary
+   (mono micro caps, hairline box, accent on hover/active; appearance:none +
+   radius:0 kills the UA button chrome). Each button re-fetches the folio so the
+   route re-resolves fidelity (trace needs tool I/O fetched). */
+.folio-mode { display:flex; gap:4px; padding:10px 14px; border-bottom:1px solid var(--hair); }
+.folio-mode__btn { appearance:none; cursor:pointer; background:transparent;
+  border:1px solid var(--hair); border-radius:0; color:var(--mid);
+  font-family:var(--font-mono); font-size:var(--fs-micro); letter-spacing:.08em;
+  text-transform:uppercase; padding:4px 9px; }
+.folio-mode__btn:hover { border-color:var(--accent); color:var(--accent); }
+.folio-mode__btn.is-active { border-color:var(--accent); color:var(--accent);
+  background:var(--sel-bg); }
 
 .turns { margin:0; padding:0; }
 .turn-item { display:flex; align-items:baseline; gap:10px; padding:9px 18px;
@@ -196,20 +197,28 @@ body { margin: 0; }
 
 /* Trace body — the interleaved emitter (folio [data-mode="trace"] + the
    search-context unfold) inlines the agent's event flow: prose (.narrative-text)
-   interleaved with tool calls (.tool-call), each a collapsed <details> you
-   expand on demand. Recedes next to prose; payloads stay folded so the trace
-   reads as a skim, not a wall. */
-.narrative-text { margin:0 0 14px; }
+   interleaved with tool calls (.tool-call). Prose reads as the assistant
+   speaking; each tool call is a distinct EVENT CARD — its own info rail + a
+   tinted, clickable header that expands to the result. The contrast (flowing
+   prose vs. bordered mono card) is what separates them; the caret signals the
+   payload is one click away (folded by default so the trace skims, not walls). */
+.narrative-text { margin:0 0 16px; }
 .narrative-text:last-child { margin-bottom:0; }
-.tool-call { margin:0 0 12px; font-family:var(--font-mono);
-  font-size:calc(var(--fs-base) - 1px); background:var(--panel);
-  border:1px solid var(--hair); border-left:3px solid var(--mid); }
+.tool-call { margin:16px 0; font-family:var(--font-mono);
+  font-size:calc(var(--fs-base) - 1px); background:var(--paper);
+  border:1px solid var(--hair); border-left:3px solid var(--info); }
 .tool-call.tool-error { border-left-color:var(--accent); }
-.tool-call > summary, div.tool-call { padding:7px 12px; display:flex;
-  align-items:baseline; gap:8px; flex-wrap:wrap; }
+/* The clickable header is tinted (var(--panel)) so it reads as a control even
+   where --panel barely differs from --paper; the result below stays on --paper. */
+.tool-call > summary, div.tool-call { padding:8px 12px; display:flex;
+  align-items:center; gap:8px; flex-wrap:wrap; background:var(--panel); }
 .tool-call > summary { cursor:pointer; list-style:none; }
 .tool-call > summary::-webkit-details-marker { display:none; }
-.tool-call > summary::marker { content:''; }
+/* Explicit caret — the default disclosure marker is hidden, so this IS the
+   expand affordance (▸ folded → ▾ open). Pure CSS content swap (CSP-safe). */
+.tool-call > summary::before { content:'\25B8'; color:var(--faint);
+  font-size:.85em; line-height:1; }
+.tool-call[open] > summary::before { content:'\25BE'; }
 .tool-name { color:var(--info); letter-spacing:.04em; }
 .tool-call.tool-error .tool-name { color:var(--accent); }
 .tool-headline { color:var(--ink); font-size:inherit; background:none;
@@ -217,12 +226,12 @@ body { margin: 0; }
 .tool-meta { color:var(--faint); font-size:var(--fs-micro); margin-left:auto; }
 .tool-result, .tool-diff { white-space:pre-wrap; line-height:1.5; margin:0;
   padding:10px 12px; overflow-x:auto; color:var(--ink); }
-/* Inside a .tool-call box the border-top separates the summary from the payload.
+/* Inside a .tool-call card the border-top separates the header from the payload.
    A standalone tool_output (HtmlEmitter.tool_output — no .tool-call wrapper, e.g.
-   aider) gets its own self-contained box instead of an orphaned floating rule. */
+   aider) gets its own self-contained card instead of an orphaned floating rule. */
 .tool-call .tool-result, .tool-call .tool-diff { border-top:1px solid var(--hair); }
-.turn__text > pre.tool-result { margin:0 0 12px; border:1px solid var(--hair);
-  border-left:3px solid var(--mid); background:var(--panel); }
+.turn__text > pre.tool-result { margin:16px 0; border:1px solid var(--hair);
+  border-left:3px solid var(--info); background:var(--paper); }
 .tool-result code, .tool-diff code { color:inherit; background:none;
   font-size:inherit; }
 .tool-removed { border-left:3px solid var(--accent); }
@@ -236,14 +245,18 @@ pre.tool-error { white-space:pre-wrap; margin:0; padding:10px 12px;
   border-top:1px solid var(--hair); color:var(--accent); }
 .tool-overflow { display:block; padding:6px 12px; color:var(--faint);
   font-size:var(--fs-micro); }
-/* HtmlEmitter thinking (distinct from the reading view's .turn-think) + the
-   consolidated tool chip HtmlEmitter emits when tools are NOT shown. A folio/
-   unfold trace always shows tools, so .tool-summary never appears there — it is
-   reachable only via a tools-hidden HtmlEmitter walk (the unrouted render_detail). */
-.thinking { margin:0 0 12px; }
-.thinking > summary { cursor:pointer; font-family:var(--font-mono);
+/* HtmlEmitter thinking (distinct from the reading view's .turn-think) — also an
+   expandable card, same caret affordance. + the consolidated tool chip
+   HtmlEmitter emits when tools are NOT shown (a trace always shows tools, so
+   .tool-summary appears only via the unrouted render_detail). */
+.thinking { margin:16px 0; }
+.thinking > summary { cursor:pointer; list-style:none; display:flex;
+  align-items:center; gap:6px; font-family:var(--font-mono);
   font-size:var(--fs-micro); letter-spacing:.1em; text-transform:uppercase;
   color:var(--faint); }
+.thinking > summary::-webkit-details-marker { display:none; }
+.thinking > summary::before { content:'\25B8'; font-size:.85em; line-height:1; }
+.thinking[open] > summary::before { content:'\25BE'; }
 .thinking pre { white-space:pre-wrap; font-family:var(--font-mono);
   font-size:calc(var(--fs-base) - 1px); color:var(--mid); margin:8px 0 0;
   padding-left:14px; border-left:2px solid var(--hair); }
