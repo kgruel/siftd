@@ -105,6 +105,23 @@ def _shell_footer(db_path: Path, *, with_counts: bool) -> dict:
     return foot
 
 
+def _asset_v(rel: str) -> str:
+    """Cache-bust query for one of our own static assets, keyed on file mtime.
+
+    The served file is unchanged — litestar's static router ignores the query —
+    but the browser refetches when the byte content changes. Computed at render
+    time, so a CSS/JS edit busts on the next page load with no server restart
+    (the un-versioned ``<link>`` was why a stale cached siftd.css survived an
+    edit). Vendored assets (htmx, prism) live in version-pinned dirs and are
+    left alone.
+    """
+    try:
+        mtime = int((Path(__file__).parent / "static" / rel).stat().st_mtime)
+    except OSError:
+        return ""
+    return f"?v={mtime}"
+
+
 def _page_shell(
     *,
     conv_id: str | None = None,
@@ -173,6 +190,9 @@ def _page_shell(
     ver_html = f'<div class="ver">{esc(version)}</div>' if version else ""
 
     init_title = _VIEW_TITLES.get(active, "siftd")
+    css_v, enhance_v, auth_v = (
+        _asset_v("siftd.css"), _asset_v("enhance.js"), _asset_v("auth.js")
+    )
 
     return f"""\
 <!DOCTYPE html>
@@ -186,7 +206,7 @@ def _page_shell(
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="/static/vendor/htmx.min.js"></script>
 <link href="/static/vendor/prism/prism-tomorrow.min.css" rel="stylesheet">
-<link rel="stylesheet" href="/static/siftd.css">
+<link rel="stylesheet" href="/static/siftd.css{css_v}">
 </head>
 <body data-theme="swiss" data-tone="light">
 <div class="chrome chrome--swiss">
@@ -210,8 +230,8 @@ def _page_shell(
 </div>
 <script src="/static/vendor/prism/prism-core.min.js"></script>
 <script src="/static/vendor/prism/autoloader.min.js" data-autoloader-path="/static/vendor/prism/components/"></script>
-<script src="/static/enhance.js"></script>
-<script src="/static/auth.js"></script>
+<script src="/static/enhance.js{enhance_v}"></script>
+<script src="/static/auth.js{auth_v}"></script>
 </body>
 </html>"""
 

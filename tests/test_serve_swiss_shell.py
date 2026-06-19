@@ -98,6 +98,20 @@ def test_shell_is_swiss_single_surface(ctx):
     assert "/static/auth.js" in body
 
 
+def test_shell_versions_own_static_assets(ctx):
+    # Cache-bust query on our own CSS/JS so a stale browser cache can't survive
+    # an edit; the static router ignores the query and still serves the file.
+    client, _cid = ctx
+    body = client.get("/").text
+    assert "/static/siftd.css?v=" in body
+    assert "/static/enhance.js?v=" in body
+    assert "/static/auth.js?v=" in body
+    # The asset still loads with the query (router ignores it).
+    assert client.get("/static/siftd.css?v=123").status_code == 200
+    # Vendored, version-pinned assets are left un-queried.
+    assert '/static/vendor/htmx.min.js"' in body
+
+
 def test_shell_exposes_auth_dom_hooks(ctx):
     """auth.js (rebound this slice) targets .sw-foot for sign-out and #main for
     the login overlay — if these hooks vanish, a 401 leaves a dead login box."""

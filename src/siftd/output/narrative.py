@@ -198,7 +198,10 @@ class HtmlEmitter:
         from siftd.output.tool_presenters import extract_tool_presentation
 
         e = self._escape
-        pres = extract_tool_presentation(name, raw_input, raw_result, status)
+        # tool_chars=0 → the FULL result (no 120-char preview cut). This emitter
+        # is the trace/detail view: the result lives behind a collapsed
+        # <details>, so expanding it should show everything, not a stub.
+        pres = extract_tool_presentation(name, raw_input, raw_result, status, tool_chars=0)
 
         count_suffix = f" &times;{count}" if count > 1 else ""
         status_css = " tool-error" if status and status != "success" else ""

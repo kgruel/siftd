@@ -380,3 +380,30 @@ def test_search_context_unfold_escapes_inlined_tool_io():
     )
     assert "<script>alert" not in html
     assert "&lt;script&gt;" in html
+
+
+def test_folio_trace_mode_shows_full_tool_result_not_truncated():
+    # The trace's tool result sits behind a collapsed <details>; expanding it
+    # must reveal the FULL result, not the 120-char/6-line compact preview.
+    long_result = "\n".join(f"RESULTLINE{i:02d}" for i in range(20))
+    turn = Turn(
+        timestamp="2026-03-15T10:30:00Z", prompt_text="go",
+        total_input_tokens=1, total_output_tokens=1,
+        narrative=[NarrativeBlock(
+            block_type="tool_calls",
+            tool_calls=[ToolCallDetail(
+                tool_name="custom.tool", status="success",
+                input="x", result=long_result,
+            )],
+        )],
+        _tool_call_summaries=[ToolCallSummary("custom.tool", "success", 1)],
+    )
+    detail = ConversationDetail(
+        id="01FULL000000000000", workspace_path="/p", model="m",
+        started_at="2026-03-15T10:30:00Z",
+        total_input_tokens=1, total_output_tokens=1, turns=[turn],
+    )
+    html = render_folio(detail, _FID_TRACE, mode="trace")
+    assert "RESULTLINE00" in html
+    assert "RESULTLINE19" in html  # the last line survives → result not cut
+    assert "more lines" not in html  # no overflow stub when full
