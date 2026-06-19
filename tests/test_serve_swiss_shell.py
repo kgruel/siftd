@@ -208,6 +208,46 @@ def test_meta_has_content_search_box(ctx):
     assert 'value="needle"' in client.get("/meta", params={"search": "needle"}).text
 
 
+def test_meta_has_view_toggle(ctx):
+    """The control strip carries a view toggle (result shape) on every server —
+    the chunks/thread/conversations shapes are post-processing, engine-agnostic."""
+    client, _cid = ctx
+    body = client.get("/meta").text
+    assert 'name="view"' in body and 'class="search-toggle"' in body
+    # All three shapes are offered; chunks is the default selection.
+    for shape in ("chunks", "thread", "conversations"):
+        assert f'value="{shape}"' in body
+    assert 'value="chunks" selected' in body
+    # The view toggle survives a deep-link pre-select.
+    assert 'value="thread" selected' in client.get("/meta", params={"view": "thread"}).text
+
+
+def test_meta_hides_engine_toggle_without_embeddings(ctx):
+    """No embeddings → every engine collapses to keyword, so the mode toggle is
+    a no-op and is omitted (the header's truthful [fts] label is the only signal
+    needed). The default ctx server has no embeddings."""
+    client, _cid = ctx
+    body = client.get("/meta").text
+    assert 'name="mode"' not in body
+
+
+def test_meta_shows_engine_toggle_with_embeddings(ctx, monkeypatch, tmp_path):
+    """With embeddings the engine choice is real, so the mode toggle appears
+    (auto/hybrid/semantic/keyword). Only the control strip is exercised — no
+    search runs — so faking availability is sufficient."""
+    client, _cid = ctx
+    existing = tmp_path / "embeds.db"
+    existing.write_bytes(b"")
+    monkeypatch.setattr("siftd.api.embeddings_available", lambda: True)
+    monkeypatch.setattr("siftd.paths.embeddings_db_path", lambda: existing)
+
+    body = client.get("/meta").text
+    assert 'name="mode"' in body
+    for engine in ("auto", "hybrid", "semantic", "fts"):
+        assert f'value="{engine}"' in body
+    assert 'value="auto" selected' in body
+
+
 def test_find_box_punctuation_does_not_500(ctx):
     """The find box is untrusted text fed into FTS5 MATCH. Bare punctuation
     (", :, *, (, AND) must sanitize to a clean list, never an fts5 syntax 500."""
@@ -272,6 +312,90 @@ def test_query_search_no_match_shows_empty_not_500(tmp_path):
     assert 'class="search-results chunks"' in body
     assert "[fts]" in body
     assert "No matches" in body
+
+
+def _searchable_db(tmp_path: Path) -> Path:
+    """A _make_db DB with the FTS index built, so the engine returns hits."""
+    from siftd.api import open_database
+    from siftd.api.search import rebuild_fts_index
+
+    db, _cid = _make_db(tmp_path / "team.db")
+    conn = open_database(db, read_only=False)
+    try:
+        rebuild_fts_index(conn)
+        conn.commit()
+    finally:
+        conn.close()
+    return db
+
+
+def test_query_search_thread_view(tmp_path):
+    """view=thread runs the same engine + the thread recipe server-side, so the
+    browser inherits the tier1/tier2 thread shape — not just chunks. The view
+    toggle's value rides #filters into /query."""
+    db = _searchable_db(tmp_path)
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+        body = client.get("/query", params={"search": "reply", "view": "thread"}).text
+
+    assert 'class="search-results thread"' in body   # thread shape, not chunks
+    assert 'class="search-results chunks"' not in body
+    assert "[fts]" in body                            # engine still named truthfully
+    assert 'class="conversation-list"' not in body    # not the recency browse table
+
+
+def test_query_search_conversations_view(tmp_path):
+    """view=conversations aggregates engine chunks per conversation (Max/Mean/
+    Chunks) — distinct from the no-query recency browse, which is also a
+    .conversation-list but carries no search-results section or engine tag."""
+    db = _searchable_db(tmp_path)
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+        body = client.get(
+            "/query", params={"search": "reply", "view": "conversations"}
+        ).text
+
+    assert 'class="search-results conversations"' in body
+    assert 'class="search-results chunks"' not in body
+    assert "[fts]" in body
+    assert "Conversations for:" in body               # the aggregate heading
+
+
+def test_query_view_defaults_to_chunks(tmp_path):
+    """An engine query with no view param keeps the chunks shape (the default),
+    so the toggle is purely additive — existing deep links are unaffected."""
+    db = _searchable_db(tmp_path)
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+        body = client.get("/query", params={"search": "reply"}).text
+    assert 'class="search-results chunks"' in body
+
+
+def test_query_bad_view_falls_back_to_chunks_results(tmp_path):
+    """A hand-crafted out-of-vocab ?view= must not mask real hits. ui_query
+    clamps view to the canonical vocabulary (mirroring the control strip), so a
+    bogus view returns the same chunks results as no view param — never a
+    misleading empty '[fts] No matches' pane. Regression guard for the
+    strip-vs-results clamp asymmetry the review caught."""
+    db = _searchable_db(tmp_path)
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+        bogus = client.get("/query", params={"search": "reply", "view": "bogus"}).text
+    assert 'class="search-results chunks"' in bogus   # clamped to the default shape
+    assert 'class="search-hit"' in bogus              # real hits, not an empty pane
+    assert "No matches" not in bogus                  # the masking bug, were it unfixed
+
+
+def test_query_empty_thread_and_conversations_show_no_matches(tmp_path):
+    """A zero-hit content query in thread/conversations view renders an explicit
+    'No matches' affordance, not a headed-but-bodyless pane — parity with the
+    chunks empty state, now that the toggle exposes these paths to the browser."""
+    db = _searchable_db(tmp_path)
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+        thread = client.get(
+            "/query", params={"search": "zzzznomatch", "view": "thread"}
+        ).text
+        convs = client.get(
+            "/query", params={"search": "zzzznomatch", "view": "conversations"}
+        ).text
+    assert 'class="search-results thread"' in thread and "No matches" in thread
+    assert 'class="search-results conversations"' in convs and "No matches" in convs
 
 
 def test_deep_link_id_mounts_folio(ctx):

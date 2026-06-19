@@ -472,6 +472,34 @@ body { margin: 0; }
 .search-hit .excerpt { color:var(--ink); line-height:1.5; white-space:pre-wrap;
   overflow-wrap:anywhere; }
 
+/* Search toggles (view shape + engine) sit in the filter strip but modify the
+   query rather than narrow it — an accent underline sets them apart from the
+   neutral facet dropdowns. */
+.find__filters .search-toggle { border-bottom:2px solid var(--accent); }
+
+/* Thread view (render_search, thread) — tier1 renders full prompt/response
+   exchanges; tier2 is a compact "more results" list. Chunks + conversations
+   are skinned above (.search-hit / .conversation-list). */
+.search-results.thread .search-hit.expanded { cursor:default; }
+.search-results.thread .search-hit.expanded:hover {
+  background:transparent; box-shadow:none; }
+.search-hit.expanded header { margin-bottom:8px; }
+.search-hit.expanded .prompt { margin:0 0 8px; padding:8px 12px;
+  border-left:2px solid var(--accent); background:var(--panel); color:var(--ink);
+  white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
+.search-hit.expanded .assistant { margin:0 0 10px; padding:0 0 0 12px;
+  color:var(--mid); white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
+.search-more { border-top:1px solid var(--hair-strong); }
+.search-more h3 { margin:0; padding:11px 18px 5px; font-family:var(--font-ui);
+  font-size:var(--fs-micro); font-weight:600; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--faint); }
+.search-hit.compact { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px;
+  font-size:var(--fs-micro); padding:8px 18px; }
+.search-hit.compact .identifier { color:var(--accent); }
+.search-hit.compact .metric { color:var(--ink); font-variant-numeric:tabular-nums; }
+.search-hit.compact .workspace, .search-hit.compact .temporal { color:var(--mid); }
+.search-hit.compact .summary { flex:1 1 100%; color:var(--ink); }
+
 /* ========================================================================= */
 /* AUTH — sign-out (rail foot) + login overlay (mounted in #main)            */
 /* ========================================================================= */

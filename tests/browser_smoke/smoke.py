@@ -278,6 +278,28 @@ async def flow(cdp, check, goto, code_conv):
     )
     check("find search names the engine that ran", bool(engine_named))
 
+    # view toggle: changing the result-shape <select> re-runs the query through
+    # the same recipe server-side and swaps #list to the thread shape. Guards
+    # the htmx wiring — the toggle must include into #filters and fire on change
+    # — which the unit tests (firing /query?view= directly) can't see. Must
+    # reset to chunks after: the thread view's tier1 .search-hit.expanded has no
+    # detail link, so the downstream row-click test needs the clickable chunks
+    # view back.
+    await cdp.eval(
+        "(function(){var s=document.querySelector('select[name=\"view\"]');"
+        "if(s){s.value='thread';s.dispatchEvent(new Event('change'));}})()"
+    )
+    await cdp.drain(1.5)
+    thread_shape = await cdp.eval(
+        "!!document.querySelector('#list .search-results.thread')"
+    )
+    check("view toggle swaps result shape to thread", bool(thread_shape), f"ok={thread_shape}")
+    await cdp.eval(
+        "(function(){var s=document.querySelector('select[name=\"view\"]');"
+        "if(s){s.value='chunks';s.dispatchEvent(new Event('change'));}})()"
+    )
+    await cdp.drain(1.0)
+
     # FTS5 footgun characters must not error the list pane
     await cdp.eval("document.querySelector('input[name=\"search\"]').value=''")
     await cdp.click('input[name="search"]')

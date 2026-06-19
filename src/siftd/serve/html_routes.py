@@ -600,21 +600,37 @@ def ui_meta(
     db_path: Path,
     search: str | None = Parameter(query="search", default=None),
     tag: str | None = Parameter(query="tag", default=None),
+    view: str = Parameter(query="view", default="chunks"),
+    mode: str = Parameter(query="mode", default="auto"),
 ) -> Response:
-    """Return the find control strip: a content-search box + filter dropdowns.
+    """Return the find control strip: a content-search box + search/facet controls.
 
     ``search`` pre-fills the box for deep-linked ``?q=`` loads; ``tag``
     pre-selects the tag dropdown for the Tags view's ``?tag=`` drill-down, so the
-    filter is visible and the user can refine from there. Every control targets
-    ``#list`` and includes ``#filters``, so the box and the dropdowns compose
-    into one query — keyword + metadata facets in a single request.
+    filter is visible and the user can refine from there. ``view``/``mode``
+    pre-select the result-shape and engine toggles (defaults chunks/auto). Every
+    control targets ``#list`` and includes ``#filters``, so the box, the search
+    toggles, and the metadata facets compose into one query in a single request.
+
+    The strip carries two kinds of control. The *search* toggles modify the
+    content query — ``view`` (excerpts / thread / conversations: the same shapes
+    the CLI's ``--view`` exposes) and ``mode`` (the engine: auto / hybrid /
+    semantic / keyword). The engine toggle is shown only when this server has
+    embeddings — without them every engine collapses to keyword, so the knob
+    would be a no-op that contradicts the header's truthful ``[fts]`` label. The
+    *facet* dropdowns (workspace / model / tag / owner / since / before) filter
+    which conversations the query (or the bare browse) draws from.
     """
     from html import escape
 
+    from siftd.api import embeddings_available
+    from siftd.api.search import SEARCH_MODES, SEARCH_VIEWS
     from siftd.api.stats import list_models, list_workspaces
     from siftd.api.tags import list_tags
+    from siftd.paths import embeddings_db_path
 
     owner = _effective_owner(request, None)
+    has_embed = embeddings_available() and embeddings_db_path().exists()
 
     model_names: list[str] = []
     try:
@@ -637,7 +653,7 @@ def ui_meta(
     def _select(
         name: str, label: str, options: list[tuple[str, str]], *, selected: str = ""
     ) -> str:
-        """Build a <select> from (value, display_text) tuples."""
+        """Build a facet <select> (with an 'All' clear option) from (value, text)."""
         opts = [f'<option value="">All {label}</option>']
         for val, display in options:
             if val:
@@ -645,6 +661,26 @@ def ui_meta(
                 opts.append(f'<option value="{escape(val)}"{sel}>{escape(display)}</option>')
         return (
             f'<select name="{name}"'
+            f' hx-get="/query" hx-target="#list" hx-trigger="change"'
+            f' hx-include="#filters">'
+            f'{"".join(opts)}</select>'
+        )
+
+    def _toggle(
+        name: str, title: str, options: list[tuple[str, str]], *, selected: str
+    ) -> str:
+        """Build a search toggle: a required single-choice <select> (no 'All').
+
+        Unlike a facet, a toggle always carries a value — it modifies how the
+        content query renders/runs rather than narrowing the result set — so it
+        defaults to ``selected`` and has no clear option.
+        """
+        opts = []
+        for val, display in options:
+            sel = " selected" if val == selected else ""
+            opts.append(f'<option value="{escape(val)}"{sel}>{escape(display)}</option>')
+        return (
+            f'<select name="{name}" title="{escape(title)}" class="search-toggle"'
             f' hx-get="/query" hx-target="#list" hx-trigger="change"'
             f' hx-include="#filters">'
             f'{"".join(opts)}</select>'
@@ -672,8 +708,28 @@ def ui_meta(
         ' hx-include="#filters" class="filter-input filter-input--q">'
     )
 
+    # Search toggles: result shape (always) + engine (only when embeddings make
+    # the choice real). Values are the canonical CLI/REST tokens; labels read
+    # for a human. ``view`` defaults to chunks, ``mode`` to auto.
+    view_toggle = _toggle(
+        "view", "Result shape",
+        [("chunks", "Excerpts"), ("thread", "Thread"), ("conversations", "Conversations")],
+        selected=(view if view in SEARCH_VIEWS else "chunks"),
+    )
+    search_toggles = [view_toggle]
+    if has_embed:
+        search_toggles.append(
+            _toggle(
+                "mode", "Search engine",
+                [("auto", "Auto"), ("hybrid", "Hybrid"),
+                 ("semantic", "Semantic"), ("fts", "Keyword")],
+                selected=(mode if mode in SEARCH_MODES else "auto"),
+            )
+        )
+
     parts = [
         search_box,
+        *search_toggles,
         _select("workspace", "workspaces", ws_opts),
         _select("model", "models", model_opts),
         _select("tag", "tags", tag_opts, selected=(tag or "")),
@@ -702,39 +758,46 @@ def _find_search_fragment(
     owner: str | None,
     n: int,
     mode: str,
+    view: str,
 ) -> Response:
-    """Render a Find content query through the real search ENGINE.
+    """Render a Find content query through the real search ENGINE + recipe.
 
-    Composes existing api primitives — the engine (``search_chunks`` →
-    hybrid/fts) and metadata enrichment (``enrich_search_metadata``) — into the
-    orphaned ``render_search`` HTML view, so the browser sees the same ranked
-    excerpt hits the CLI/REST surfaces do (chunks shape only; the CLI's
-    threshold/--around/thread post-processing is out of scope for this slice).
+    Delegates to ``api.search.search_view`` — the same Operation function the
+    CLI and the REST ``/api/v1/search`` route run — so the browser inherits the
+    *whole* repertoire, not just chunks: ``search_view`` is
+    ``search_chunks`` (engine) ∘ ``process_search_view`` (the post-processing
+    recipe), and it owns candidate-pool widening, axis validation, metadata
+    enrichment, and the ``chunks``/``thread``/``conversations`` view shapes,
+    returning a render-ready ``SearchView``. This function adds only the two
+    concerns the shared api fn correctly lacks and that are specific to a
+    multi-tenant browser pane:
 
-    ``mode`` resolves to hybrid when this server has embeddings, else fts — a
-    graceful fallback that needs neither the ``[embed]`` extra nor a built
-    index. The resolved engine rides the render envelope (``mode=``) so the
-    header can truthfully state which engine ran; it is owner-safe (an envelope
-    field, never a caveat, which the multi-tenant guard blanks).
+    1. *Graceful mode resolution.* ``mode`` resolves to hybrid when this server
+       has embeddings, else fts. An explicit semantic/hybrid request against a
+       no-embed server degrades to fts rather than erroring (the api fn raises
+       ``EmbeddingsRequiredError`` for the CLI/REST 4xx; the pane never errors).
+    2. *Degrade-to-fts on engine failure* (the "never 500 the pane" promise —
+       there is no app-level exception handler). A hybrid/semantic failure
+       (index drift after an upgrade, embedding backend down) drops to the
+       keyword engine — the same fallback a no-embed server gets, reported
+       truthfully as ``[fts]``; a keyword failure renders an empty pane.
 
-    Engine scoping excludes active (live) and derivative (sub-agent)
-    conversations by default — matching CLI/REST ``search``, and unlike the
-    bare facet list (the no-content-query browse), which still shows them. Any
-    engine failure degrades the pane rather than 500ing it: a hybrid/semantic
-    failure (index drift after an upgrade, embedding backend unavailable) drops
-    to the keyword engine — the same fallback a no-embed server gets, reported
-    truthfully as ``[fts]`` — and a keyword failure (malformed FTS5) renders an
-    empty result.
+    The resolved engine rides the render envelope (``mode=``) so the header can
+    truthfully state which engine ran; it is owner-safe (an envelope field,
+    never a caveat, which the multi-tenant guard blanks). Engine scoping
+    excludes active (live) and derivative (sub-agent) conversations by default —
+    matching CLI/REST ``search``, and unlike the bare facet list (the
+    no-content-query browse), which still shows them.
     """
     import sqlite3
 
-    from siftd.api import embeddings_available, open_database
+    from siftd.api import embeddings_available
     from siftd.api.search import (
         EmbeddingsRequiredError,
-        enrich_search_metadata,
         resolve_search_mode,
-        search_chunks,
+        search_view,
     )
+    from siftd.domain.search_types import SearchView
     from siftd.paths import embeddings_db_path
 
     has_embed = embeddings_available() and embeddings_db_path().exists()
@@ -745,14 +808,16 @@ def _find_search_fragment(
         # embeddings degrades to keyword search rather than erroring the pane.
         engine = "fts"
 
-    def _run(eng: str) -> list:
+    def _run(eng: str) -> SearchView:
         # Pass the raw term (the engine tokenizes/sanitizes it for parity with
-        # the CLI; ``raw_fts`` defaults False) and let it own the FTS contract.
-        return search_chunks(
+        # the CLI; ``raw_fts`` defaults False) and let search_view own the FTS
+        # contract, the recipe, and the view shape.
+        return search_view(
             term,
             db_path=db_path,
             n=n,
             mode=eng,
+            view=view,
             workspace=workspace,
             model=model,
             since=since,
@@ -761,11 +826,16 @@ def _find_search_fragment(
             owner=owner,
         )
 
-    # The catch tuple includes the embed-path drift error only when this server
-    # has embeddings — IndexCompatError lives in the embed module (numpy), which
-    # is neither importable nor raisable on a no-embed install.
+    # sqlite3.DatabaseError (not OperationalError) is the family root — it also
+    # covers the corrupt-image errors a malformed main DB / FTS index raises at
+    # query time, which a bare OperationalError catch would let escape and 500
+    # the pane. The embed-path drift error (IndexCompatError) lives in the embed
+    # module (numpy) and is only importable/raisable when this server has
+    # embeddings. ValueError covers search_view's axis validation: ui_query
+    # clamps view to SEARCH_VIEWS, so the only residual bad combo is a
+    # hand-crafted query string, which then degrades to an empty pane (not a 500).
     engine_errors: tuple[type[Exception], ...] = (
-        sqlite3.OperationalError, ValueError, RuntimeError, OSError,
+        sqlite3.DatabaseError, ValueError, RuntimeError, OSError,
     )
     if has_embed:
         from siftd.api.search import IndexCompatError
@@ -773,31 +843,24 @@ def _find_search_fragment(
         engine_errors = (*engine_errors, IndexCompatError)
 
     try:
-        chunks = _run(engine)
+        sv = _run(engine)
     except engine_errors:
         # A hybrid/semantic failure degrades to keyword search (still useful;
         # header then truthfully reads [fts]); a keyword failure → empty pane.
         if engine != "fts":
             engine = "fts"
             try:
-                chunks = _run("fts")
-            except (sqlite3.OperationalError, ValueError, RuntimeError):
-                chunks = []
+                sv = _run("fts")
+            except (sqlite3.DatabaseError, ValueError, RuntimeError):
+                sv = SearchView(results=[], view=view)
         else:
-            chunks = []
-
-    if chunks:
-        conn = open_database(db_path, read_only=True)
-        try:
-            enrich_search_metadata(conn, chunks)
-        finally:
-            conn.close()
+            sv = SearchView(results=[], view=view)
 
     fidelity = _fidelity()
-    # Enriched SearchChunk objects satisfy render_search's dict-style access
-    # (.get/["_workspace"]/["display_label"]) directly — no render-dict needed.
+    # search_view returns a render-ready SearchView; render_search reads the
+    # view shape and the thread tier1/tier2 split off it (not context).
     return _html_response(
-        fmt.render_search(chunks, fidelity, query=term, view="chunks", mode=engine, **ctx)
+        fmt.render_search(sv, fidelity, query=term, mode=engine, **ctx)
     )
 
 
@@ -814,16 +877,19 @@ def ui_query(
     owner: str | None = Parameter(query="owner", default=None),
     n: int = Parameter(query="n", default=50),
     mode: str = Parameter(query="mode", default="auto"),
+    view: str = Parameter(query="view", default="chunks"),
 ) -> Response:
     """The Find results fragment — rows/hits mount the folio into ``#main``.
 
     Two shapes behind the one ``#list`` target:
 
-    - A content query (``search``) runs the real search ENGINE
-      (``search_chunks`` → hybrid/fts), rendering ranked excerpt hits — so the
+    - A content query (``search``) runs the real search ENGINE + recipe
+      (``search_view`` → hybrid/fts), rendering ranked excerpt hits — so the
       browser gets the same relevance ranking the CLI and REST surfaces do, not
       a recency-ordered keyword *filter*. ``mode`` resolves to hybrid when this
-      server has embeddings, else fts (graceful fallback).
+      server has embeddings, else fts (graceful fallback). ``view`` selects the
+      result shape (``chunks``/``thread``/``conversations``), the same repertoire
+      the CLI's ``--view`` and the REST ``view=`` param expose.
     - No content query → the facet-filtered conversation list (recency order).
 
     Facets (workspace/model/tag/date/owner) compose into either shape. The old
@@ -838,6 +904,17 @@ def ui_query(
     before = before or None
     owner = _effective_owner(request, owner or None)
     tag = [t for t in (tag or []) if t] or None
+
+    # Clamp the result shape to the canonical vocabulary BEFORE delegating —
+    # mirrors the control strip, which clamps the toggle's selected value. An
+    # out-of-vocab view (only reachable by hand-editing the URL) would otherwise
+    # make search_view's axis validation raise, degrade to an empty pane, and
+    # mask the real hits behind a truthful-looking [fts] "No matches"; clamping
+    # to the default returns the chunks results instead. ``mode`` needs no clamp:
+    # an invalid engine resolves gracefully to fts and still runs a real search.
+    from siftd.api.search import SEARCH_VIEWS
+
+    view = view if view in SEARCH_VIEWS else "chunks"
 
     fmt = get_format("html")
     ctx = {"detail_base": "/folio", "shell_base": "/"}
@@ -854,7 +931,7 @@ def ui_query(
             return _find_search_fragment(
                 db_path, term, fmt, ctx,
                 workspace=workspace, model=model, tag=tag,
-                since=since, before=before, owner=owner, n=n, mode=mode,
+                since=since, before=before, owner=owner, n=n, mode=mode, view=view,
             )
 
     from siftd.api.conversations import list_conversations
