@@ -10,6 +10,7 @@ JSON API routes in routes.py remain untouched.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from litestar import Request, get, post
 from litestar.params import Parameter
@@ -521,16 +522,20 @@ def ui_find(
 
     A host fragment, not a renderer — it composes the two existing reads it has
     no new logic over: ``/meta`` (the control strip: search box + filter
-    dropdowns) loads into ``#filters``, ``/query`` (the conversation list) loads
-    into ``#list``. Every control in the strip targets ``#list`` and includes
-    ``#filters``, so keyword + facets resolve as one ``list_conversations`` call.
+    dropdowns) loads into ``#filters``, ``/query`` (the results pane) loads into
+    ``#list``. Every control in the strip targets ``#list`` and includes
+    ``#filters``, so the box and the facets compose into one request: facets
+    alone browse via ``list_conversations``; a content query additionally routes
+    ``#list`` through the search engine (see below).
 
-    A deep-linked ``?q=`` pre-fills the box and the initial list (FTS5-sanitized
-    in ``ui_query``); a ``?tag=`` (the Tags view's drill-down) pre-selects that
-    tag in the filter strip and pre-filters the list — so a tag click lands on a
-    real Find surface the user can refine, not a dead-end table. Content search
-    here is keyword/FTS only; semantic ranking (CLI ``search``) is a deliberate
-    follow-up that swaps in behind this same box.
+    A deep-linked ``?q=`` pre-fills the box and the initial results; a ``?tag=``
+    (the Tags view's drill-down) pre-selects that tag in the filter strip and
+    pre-filters the list — so a tag click lands on a real Find surface the user
+    can refine, not a dead-end table. A content query routes ``#list`` through
+    the real search ENGINE (``ui_query`` → ``search_chunks``): ranked excerpt
+    hits, hybrid when this server has embeddings and a graceful keyword (fts)
+    fallback otherwise — the same ranking the CLI/REST surfaces serve, with the
+    engine that ran named in the result header.
     """
     from urllib.parse import quote as urlquote
 
@@ -683,6 +688,119 @@ def ui_meta(
     return _html_response("".join(parts))
 
 
+def _find_search_fragment(
+    db_path: Path,
+    term: str,
+    fmt: Any,
+    ctx: dict,
+    *,
+    workspace: str | None,
+    model: str | None,
+    tag: list[str] | None,
+    since: str | None,
+    before: str | None,
+    owner: str | None,
+    n: int,
+    mode: str,
+) -> Response:
+    """Render a Find content query through the real search ENGINE.
+
+    Composes existing api primitives — the engine (``search_chunks`` →
+    hybrid/fts) and metadata enrichment (``enrich_search_metadata``) — into the
+    orphaned ``render_search`` HTML view, so the browser sees the same ranked
+    excerpt hits the CLI/REST surfaces do (chunks shape only; the CLI's
+    threshold/--around/thread post-processing is out of scope for this slice).
+
+    ``mode`` resolves to hybrid when this server has embeddings, else fts — a
+    graceful fallback that needs neither the ``[embed]`` extra nor a built
+    index. The resolved engine rides the render envelope (``mode=``) so the
+    header can truthfully state which engine ran; it is owner-safe (an envelope
+    field, never a caveat, which the multi-tenant guard blanks).
+
+    Engine scoping excludes active (live) and derivative (sub-agent)
+    conversations by default — matching CLI/REST ``search``, and unlike the
+    bare facet list (the no-content-query browse), which still shows them. Any
+    engine failure degrades the pane rather than 500ing it: a hybrid/semantic
+    failure (index drift after an upgrade, embedding backend unavailable) drops
+    to the keyword engine — the same fallback a no-embed server gets, reported
+    truthfully as ``[fts]`` — and a keyword failure (malformed FTS5) renders an
+    empty result.
+    """
+    import sqlite3
+
+    from siftd.api import embeddings_available, open_database
+    from siftd.api.search import (
+        EmbeddingsRequiredError,
+        enrich_search_metadata,
+        resolve_search_mode,
+        search_chunks,
+    )
+    from siftd.paths import embeddings_db_path
+
+    has_embed = embeddings_available() and embeddings_db_path().exists()
+    try:
+        engine = resolve_search_mode(mode, has_embeddings=has_embed)
+    except (EmbeddingsRequiredError, ValueError):
+        # An explicit semantic/hybrid request against a server without
+        # embeddings degrades to keyword search rather than erroring the pane.
+        engine = "fts"
+
+    def _run(eng: str) -> list:
+        # Pass the raw term (the engine tokenizes/sanitizes it for parity with
+        # the CLI; ``raw_fts`` defaults False) and let it own the FTS contract.
+        return search_chunks(
+            term,
+            db_path=db_path,
+            n=n,
+            mode=eng,
+            workspace=workspace,
+            model=model,
+            since=since,
+            before=before,
+            tag=tag,
+            owner=owner,
+        )
+
+    # The catch tuple includes the embed-path drift error only when this server
+    # has embeddings — IndexCompatError lives in the embed module (numpy), which
+    # is neither importable nor raisable on a no-embed install.
+    engine_errors: tuple[type[Exception], ...] = (
+        sqlite3.OperationalError, ValueError, RuntimeError, OSError,
+    )
+    if has_embed:
+        from siftd.api.search import IndexCompatError
+
+        engine_errors = (*engine_errors, IndexCompatError)
+
+    try:
+        chunks = _run(engine)
+    except engine_errors:
+        # A hybrid/semantic failure degrades to keyword search (still useful;
+        # header then truthfully reads [fts]); a keyword failure → empty pane.
+        if engine != "fts":
+            engine = "fts"
+            try:
+                chunks = _run("fts")
+            except (sqlite3.OperationalError, ValueError, RuntimeError):
+                chunks = []
+        else:
+            chunks = []
+
+    if chunks:
+        conn = open_database(db_path, read_only=True)
+        try:
+            enrich_search_metadata(conn, chunks)
+        finally:
+            conn.close()
+
+    fidelity = _fidelity()
+    # Enriched SearchChunk objects satisfy render_search's dict-style access
+    # (.get/["_workspace"]/["display_label"]) directly — no render-dict needed.
+    return _html_response(
+        fmt.render_search(chunks, fidelity, query=term, view="chunks", mode=engine, **ctx)
+    )
+
+
 @get("/query", sync_to_thread=True)
 def ui_query(
     request: Request,
@@ -695,37 +813,52 @@ def ui_query(
     search: str | None = Parameter(query="search", default=None),
     owner: str | None = Parameter(query="owner", default=None),
     n: int = Parameter(query="n", default=50),
+    mode: str = Parameter(query="mode", default="auto"),
 ) -> Response:
-    """List conversations as an HTML fragment (rows link to the folio).
+    """The Find results fragment — rows/hits mount the folio into ``#main``.
 
-    List-only: the old ``?id=`` detail mode is gone — the folio is the single
-    detail surface, and rows mount it into ``#main``.
+    Two shapes behind the one ``#list`` target:
+
+    - A content query (``search``) runs the real search ENGINE
+      (``search_chunks`` → hybrid/fts), rendering ranked excerpt hits — so the
+      browser gets the same relevance ranking the CLI and REST surfaces do, not
+      a recency-ordered keyword *filter*. ``mode`` resolves to hybrid when this
+      server has embeddings, else fts (graceful fallback).
+    - No content query → the facet-filtered conversation list (recency order).
+
+    Facets (workspace/model/tag/date/owner) compose into either shape. The old
+    ``?id=`` detail mode is gone — the folio is the single detail surface.
     """
-    from siftd.api.conversations import list_conversations
-    from siftd.api.dispatch import Operation, dispatch
     from siftd.output.format_registry import get_format
 
     # Normalize empty strings to None (htmx sends "" for blank inputs)
     workspace = workspace or None
     model = model or None
-    search = search or None
     since = since or None
     before = before or None
     owner = _effective_owner(request, owner or None)
     tag = [t for t in (tag or []) if t] or None
 
-    # FTS5 safety: the find box is untrusted text fed straight into a MATCH
-    # clause. Tokenize+quote it so bare punctuation (", :, *, (, or the word
-    # AND) can't raise an fts5 syntax error → a 500 in the user's face.
-    # Punctuation-only input sanitizes to None → the search filter is dropped.
-    # The api keeps its raw-FTS contract; sanitization lives at the serve edge.
-    if search:
-        from siftd.api import sanitize_fts5_query
-
-        search = sanitize_fts5_query(search).fts_query
-
     fmt = get_format("html")
     ctx = {"detail_base": "/folio", "shell_base": "/"}
+
+    # A content query routes through the engine. The find box is untrusted text;
+    # sanitize_fts5_query is used here only to test for a *meaningful* query —
+    # punctuation-only input (which sanitizes to empty) drops to the facet list
+    # below, matching the no-query browse UX and never raising an fts5 500.
+    term = (search or "").strip()
+    if term:
+        from siftd.api import sanitize_fts5_query
+
+        if sanitize_fts5_query(term).fts_query:
+            return _find_search_fragment(
+                db_path, term, fmt, ctx,
+                workspace=workspace, model=model, tag=tag,
+                since=since, before=before, owner=owner, n=n, mode=mode,
+            )
+
+    from siftd.api.conversations import list_conversations
+    from siftd.api.dispatch import Operation, dispatch
 
     list_fidelity = _fidelity()
     op = Operation(
@@ -739,7 +872,7 @@ def ui_query(
             "model": model,
             "since": since,
             "before": before,
-            "search": search,
+            "search": None,
             "tag": tag,
             "owner": owner,
             "n": n,

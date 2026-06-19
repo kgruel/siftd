@@ -217,6 +217,63 @@ def test_find_box_punctuation_does_not_500(ctx):
         assert resp.status_code == 200, f"{raw!r} -> {resp.status_code}"
 
 
+def test_query_no_search_is_facet_list(ctx):
+    """Without a content query the Find list is the facet-filtered conversation
+    table (recency order) — the engine path only kicks in for a real query."""
+    client, _cid = ctx
+    body = client.get("/query").text
+    assert 'class="conversation-list"' in body
+    assert "search-results" not in body
+
+
+def test_query_search_routes_through_engine(tmp_path):
+    """A content query in Find runs the real search ENGINE: ranked excerpt hits
+    (not the recency-ordered keyword filter), with the resolved engine reported
+    in the header (truthfulness) and hits drilling into the folio."""
+    from siftd.api import open_database
+    from siftd.api.search import rebuild_fts_index
+
+    db, _cid = _make_db(tmp_path / "team.db")
+    conn = open_database(db, read_only=False)
+    try:
+        rebuild_fts_index(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+        body = client.get("/query", params={"search": "reply"}).text
+
+    assert 'class="search-results chunks"' in body   # ranked-chunk shape
+    assert "[fts]" in body                            # no embeddings here → fts engine, named
+    assert 'class="search-hit"' in body               # an excerpt hit, not a table row
+    assert 'hx-get="/folio?id=' in body               # hit drills into the folio
+    assert 'class="conversation-list"' not in body    # not the recency list table
+
+
+def test_query_search_no_match_shows_empty_not_500(tmp_path):
+    """A content query with no FTS hits renders an empty search result (named
+    engine + 'No matches'), never the recency list and never a 500."""
+    from siftd.api import open_database
+    from siftd.api.search import rebuild_fts_index
+
+    db, _cid = _make_db(tmp_path / "team.db")
+    conn = open_database(db, read_only=False)
+    try:
+        rebuild_fts_index(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+        resp = client.get("/query", params={"search": "zzzznomatch"})
+    assert resp.status_code == 200
+    body = resp.text
+    assert 'class="search-results chunks"' in body
+    assert "[fts]" in body
+    assert "No matches" in body
+
+
 def test_deep_link_id_mounts_folio(ctx):
     client, cid = ctx
     body = client.get("/", params={"id": cid}).text

@@ -267,10 +267,16 @@ async def flow(cdp, check, goto, code_conv):
     await cdp.click('input[name="search"]')
     await cdp.type_text("needle")
     await cdp.drain(1.5)
-    rows = await cdp.eval(
-        "document.querySelectorAll('#list table tbody tr, #list .conv-row, #list tr').length"
+    # A content query now runs the real engine: ranked excerpt hits, not the
+    # recency list table. Each hit is a .search-hit article.
+    hits = await cdp.eval(
+        "document.querySelectorAll('#list .search-results .search-hit').length"
     )
-    check("find keystrokes filter list", rows is not None and rows > 0, f"rows={rows}")
+    check("find keystrokes run engine search", hits is not None and hits > 0, f"hits={hits}")
+    engine_named = await cdp.eval(
+        "/\\[(fts|hybrid|semantic)\\]/.test(document.getElementById('list').textContent)"
+    )
+    check("find search names the engine that ran", bool(engine_named))
 
     # FTS5 footgun characters must not error the list pane
     await cdp.eval("document.querySelector('input[name=\"search\"]').value=''")
@@ -287,12 +293,15 @@ async def flow(cdp, check, goto, code_conv):
     # (htmx targetError: clicks silently did nothing).
     await cdp.click('a[data-view="search"]')
     await cdp.drain(1.5)
-    await cdp.click("#list tbody tr")
+    await cdp.click('input[name="search"]')
+    await cdp.type_text("needle")
+    await cdp.drain(1.5)
+    await cdp.click("#list .search-hit")
     await cdp.drain(1.5)
     folio = await cdp.eval("!!document.querySelector('#main .folio')")
     pushed = await cdp.eval("location.search.includes('id=')")
-    check("find row click mounts folio in #main", bool(folio))
-    check("find row click pushes /?id= deep link", bool(pushed))
+    check("find hit click mounts folio in #main", bool(folio))
+    check("find hit click pushes /?id= deep link", bool(pushed))
 
     # sessions view: live zone (loopback server -> live on, sandbox -> empty)
     # over the day-grouped ingested timeline; hist bars scaled by enhance.js

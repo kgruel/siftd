@@ -450,6 +450,8 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         # Chunks view
         parts.append('<section class="search-results chunks">')
         parts.append(f"<h2>Results for: {escape(query)}{engine_tag}</h2>")
+        if not results:
+            parts.append('<p class="empty">No matches.</p>')
         for r in results:
             conv_id = r.get("conversation_id", "")
             display_label = r["display_label"]

@@ -451,6 +451,27 @@ body { margin: 0; }
 .conversation-list .metric.missing { color:var(--faint); }
 .conversation-list .tag { color:var(--faint); }
 
+/* Search results (render_search, chunks) — when the box carries a content
+   query the #list pane swaps from the recency table to ranked excerpt hits off
+   the real engine. The heading names the engine that ran ([fts]/[hybrid]) so
+   the surface is honest about which ranking produced it. */
+.search-results { font-family:var(--font-mono); font-size:calc(var(--fs-base) - 0.5px); }
+.search-results > h2 { margin:0; padding:12px 18px; border-bottom:1px solid var(--hair);
+  font-family:var(--font-ui); font-size:13px; font-weight:600; letter-spacing:-.01em;
+  color:var(--ink); position:sticky; top:0; background:var(--paper); z-index:1; }
+.search-results .engine { color:var(--faint); font-family:var(--font-mono);
+  font-size:var(--fs-micro); letter-spacing:.08em; text-transform:uppercase; }
+.search-hit { padding:11px 18px; border-bottom:1px solid var(--hair); cursor:pointer; }
+.search-hit:hover { background:var(--sel-bg); box-shadow:var(--row-marker); }
+.search-hit header { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px;
+  font-size:var(--fs-micro); margin-bottom:5px; }
+.search-hit .identifier { color:var(--accent); }
+.search-hit .metric { color:var(--ink); font-variant-numeric:tabular-nums; }
+.search-hit .adapter { color:var(--faint); letter-spacing:.06em; text-transform:uppercase; }
+.search-hit .temporal, .search-hit .workspace { color:var(--mid); }
+.search-hit .excerpt { color:var(--ink); line-height:1.5; white-space:pre-wrap;
+  overflow-wrap:anywhere; }
+
 /* ========================================================================= */
 /* AUTH — sign-out (rail foot) + login overlay (mounted in #main)            */
 /* ========================================================================= */
