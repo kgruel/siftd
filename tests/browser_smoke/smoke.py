@@ -300,6 +300,34 @@ async def flow(cdp, check, goto, code_conv):
     )
     await cdp.drain(1.0)
 
+    # context unfold: clicking a hit's unfold control expands the surrounding
+    # exchanges IN PLACE (the #list result list stays — no navigation), proving
+    # the windowed read + that the control (a sibling of the folio-navigable
+    # block) does not bubble to the folio jump. Then unfold a second, still-
+    # collapsed hit and confirm the first stays open (independent per-hit state).
+    await cdp.click("#list .search-hit .hit-unfold")
+    await cdp.drain(1.5)
+    unfolded = await cdp.eval(
+        "document.querySelectorAll('#list .hit-context__slice .turn').length"
+    )
+    still_list = await cdp.eval("!!document.querySelector('#list .search-results.chunks')")
+    no_nav = await cdp.eval("!document.querySelector('#main .folio')")
+    check("hit unfold expands context in place", unfolded is not None and unfolded > 0,
+          f"turns={unfolded}")
+    check("unfold does not navigate to the folio", bool(still_list) and bool(no_nav))
+    # Unfold a different, still-collapsed hit (one whose control still reads
+    # "unfold context"); the first must remain expanded.
+    await cdp.eval(
+        "(function(){var hits=document.querySelectorAll('#list .search-hit');"
+        "for(var i=0;i<hits.length;i++){var b=hits[i].querySelector('.hit-unfold');"
+        "if(b&&b.textContent.indexOf('unfold context')>=0){b.click();return true;}}"
+        "return false;})()"
+    )
+    await cdp.drain(1.5)
+    slices = await cdp.eval("document.querySelectorAll('#list .hit-context__slice').length")
+    check("multiple hits unfold independently", slices is not None and slices >= 2,
+          f"slices={slices}")
+
     # FTS5 footgun characters must not error the list pane
     await cdp.eval("document.querySelector('input[name=\"search\"]').value=''")
     await cdp.click('input[name="search"]')
@@ -318,7 +346,7 @@ async def flow(cdp, check, goto, code_conv):
     await cdp.click('input[name="search"]')
     await cdp.type_text("needle")
     await cdp.drain(1.5)
-    await cdp.click("#list .search-hit")
+    await cdp.click("#list .search-hit__main")
     await cdp.drain(1.5)
     folio = await cdp.eval("!!document.querySelector('#main .folio')")
     pushed = await cdp.eval("location.search.includes('id=')")

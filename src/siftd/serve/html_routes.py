@@ -962,6 +962,74 @@ def ui_query(
     return _html_response(dispatch(op, fmt=fmt))
 
 
+@get("/find/context", sync_to_thread=True)
+def ui_find_context(
+    request: Request,
+    db_path: Path,
+    id: str | None = Parameter(query="id", default=None),
+    at: int = Parameter(query="at", default=0),
+    w: int = Parameter(query="w", default=0),
+) -> Response:
+    """Render one search hit's inline context slice — the chunks-view 'unfold'.
+
+    A search result is a seed (its conversation + matched ``turn_index``); this
+    unfolds a window of surrounding exchanges *in place*, so the user reads the
+    context without leaving the results. It runs the SAME windowed read the CLI's
+    ``--at-turn``/``--around`` drive — ``get_conversation(anchor='at_turn',
+    window=±w)`` — the Operation IR's read exposed as progressive disclosure
+    rather than up-front flags. The matched exchange is flagged in the slice; the
+    last ring defers to the full folio (the deliberate jump).
+
+    ``w`` is the stepped ring (clamped to ``SEARCH_CONTEXT_RINGS``); ``w=0`` is
+    the collapsed trigger and skips the DB entirely. Owner-scoped — the read
+    resolves the id under the effective identity, so a hit's context can't leak a
+    conversation the requester doesn't own (an unowned/ambiguous id, or an
+    out-of-range/failed anchor, degrades to the collapsed trigger, never a 500).
+    """
+    from siftd.output.format_registry import get_format
+    from siftd.output.html_fmt import SEARCH_CONTEXT_RINGS
+
+    fmt = get_format("html")
+    # Clamp untrusted inputs: w to the allowed rings (else collapsed), at >= 0.
+    w = w if w in SEARCH_CONTEXT_RINGS else 0
+    conv_id = (id or "").strip()
+    ctx: dict[str, Any] = {"conv_id": conv_id, "at": at, "w": w}
+
+    if w <= 0 or at < 0 or not conv_id:
+        return _html_response(fmt.render_search_context(None, _fidelity(), **ctx))
+
+    import sqlite3
+
+    from siftd.api.conversations import (
+        AmbiguousPrefix,
+        AnchorError,
+        get_conversation,
+    )
+
+    owner = _effective_owner(request, None)
+    fidelity = _fidelity(depth=1, chars=0)  # full prose; no tags/cost fetch needed
+    try:
+        detail = get_conversation(
+            conv_id, fidelity=fidelity, db_path=db_path, owner=owner,
+            anchor="at_turn", anchor_value=at, window_start=-w, window_end=w,
+        )
+    except (AmbiguousPrefix, AnchorError, ValueError, OSError, sqlite3.DatabaseError):
+        # A bad/ambiguous id, an out-of-range anchor, or a corrupt DB/FTS image
+        # (sqlite3.DatabaseError — the family root, NOT an OSError subclass)
+        # collapses the region rather than erroring the pane (the never-500
+        # promise, mirroring _find_search_fragment's engine catch).
+        detail = None
+
+    turns = getattr(detail, "turns", []) or [] if detail is not None else []
+    # The anchor exchange sits at offset min(at, w) in the returned window
+    # (get_conversation slices turns[max(0, at-w) : at+w+1]); clamp defensively.
+    anchor_pos = min(at, w)
+    if anchor_pos >= len(turns):
+        anchor_pos = len(turns) - 1 if turns else 0
+    ctx["anchor_pos"] = anchor_pos
+    return _html_response(fmt.render_search_context(detail, fidelity, **ctx))
+
+
 # ---------------------------------------------------------------------------
 # Live session endpoints — peek/follow
 # ---------------------------------------------------------------------------

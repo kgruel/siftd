@@ -398,6 +398,147 @@ def test_query_empty_thread_and_conversations_show_no_matches(tmp_path):
     assert 'class="search-results conversations"' in convs and "No matches" in convs
 
 
+def _searchable_db_cid(tmp_path: Path) -> tuple[Path, str]:
+    """A searchable DB plus the conversation id, for the context-unfold tests."""
+    from siftd.api import open_database
+    from siftd.api.search import rebuild_fts_index
+
+    db, cid = _make_db(tmp_path / "team.db")
+    conn = open_database(db, read_only=False)
+    try:
+        rebuild_fts_index(conn)
+        conn.commit()
+    finally:
+        conn.close()
+    return db, cid
+
+
+def test_chunks_hit_carries_unfold_trigger(tmp_path):
+    """Each chunks hit splits into a __main block (the folio jump) + a
+    .hit-context unfold control anchored on the matched turn — the in-place
+    context view. The control fetches the first ring (w=2)."""
+    db, _cid = _searchable_db_cid(tmp_path)
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+        body = client.get("/query", params={"search": "reply", "view": "chunks"}).text
+    assert 'class="search-hit__main"' in body          # the navigable block
+    assert 'hx-get="/folio?id=' in body                # folio jump on __main
+    assert 'class="hit-context"' in body
+    assert 'hx-get="/find/context?id=' in body and "w=2" in body  # unfold trigger
+
+
+def test_find_context_unfolds_window_with_anchor(tmp_path):
+    """The context endpoint runs the anchored windowed read and renders the
+    surrounding exchanges with the matched turn flagged + stepped controls."""
+    db, cid = _searchable_db_cid(tmp_path)
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+        sl = client.get("/find/context", params={"id": cid, "at": 0, "w": 2}).text
+    assert 'class="hit-context__slice"' in sl          # the inline context region
+    assert 'class="turn' in sl                         # rendered exchanges
+    assert "is-anchor" in sl                            # the matched turn is flagged
+    assert "more context" in sl and "w=5" in sl        # stepped: widen to next ring
+    assert "collapse" in sl and "w=0" in sl
+
+
+def test_find_context_last_ring_defers_to_folio(tmp_path):
+    """At the final ring the progression terminates in the deliberate folio jump
+    (its own #main swap), not another widen."""
+    db, cid = _searchable_db_cid(tmp_path)
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+        sl = client.get("/find/context", params={"id": cid, "at": 0, "w": 10}).text
+    assert "open in folio" in sl and 'hx-target="#main"' in sl
+    assert "more context" not in sl
+
+
+def test_find_context_collapse_and_clamp_return_trigger(tmp_path):
+    """w=0 (collapse), an out-of-range w (clamped), and a missing id all return
+    the harmless collapsed trigger — never a windowed slice, never a 500."""
+    db, cid = _searchable_db_cid(tmp_path)
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+        collapse = client.get("/find/context", params={"id": cid, "at": 0, "w": 0})
+        clamp = client.get("/find/context", params={"id": cid, "at": 0, "w": 999})
+        noid = client.get("/find/context", params={"at": 0, "w": 2})
+    for resp in (collapse, clamp, noid):
+        assert resp.status_code == 200
+        assert "unfold context" in resp.text and 'hit-context__slice' not in resp.text
+
+
+def test_find_context_is_owner_scoped(tmp_path):
+    """A hit's context can't leak a conversation the requester doesn't own.
+    get_conversation resolves the id under the effective owner, so bob's
+    conversation id — fetched while authed as alice — yields the collapsed
+    trigger (no window), never bob's exchange text."""
+    conn = create_database(tmp_path / "owned.db")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_owners (conversation_id TEXT,"
+        " user_id TEXT, push_id TEXT, assigned_at TEXT)"
+    )
+    h = get_or_create_harness(conn, "claude_code", source="anthropic", log_format="jsonl")
+    m = get_or_create_model(conn, "claude-x")
+    p = get_or_create_provider(conn, "anthropic")
+    ws = get_or_create_workspace(conn, "/bob-proj", "2026-01-01T00:00:00Z")
+    bob_cid = insert_conversation(
+        conn, external_id="cB", harness_id=h, workspace_id=ws,
+        started_at="2026-01-15T10:00:00Z",
+    )
+    pid = insert_prompt(conn, bob_cid, "cBp", "2026-01-15T10:00:00Z")
+    insert_prompt_content(conn, pid, 0, "text", '{"text": "bobs secret prompt"}')
+    rid = insert_response(
+        conn, bob_cid, pid, m, p, "cBr", "2026-01-15T10:00:00Z",
+        input_tokens=10, output_tokens=5,
+    )
+    insert_response_content(conn, rid, 0, "text", '{"text": "bobs secret reply"}')
+    conn.execute(
+        "INSERT INTO conversation_owners VALUES (?,?,?,?)",
+        (bob_cid, "bob", None, "2026-01-15T10:00:00Z"),
+    )
+    conn.commit()
+    conn.close()
+
+    auth = {"static_token": "s3cret", "identity": "alice"}
+    with TestClient(app=create_app(db_path=tmp_path / "owned.db", auth_config=auth)) as client:
+        sl = client.get(
+            "/find/context", params={"id": bob_cid, "at": 0, "w": 2},
+            headers={"Authorization": "Bearer s3cret"},
+        ).text
+    assert "bobs secret" not in sl              # no cross-tenant content leak
+    assert 'hit-context__slice' not in sl       # no window rendered
+    assert "unfold context" in sl               # just the harmless trigger
+
+
+def test_find_context_flags_correct_anchor_with_offset(tmp_path):
+    """anchor_pos = min(at, w): with turns BEFORE the anchor inside the window,
+    the is-anchor flag must land on the matched exchange (the at-th), not the
+    window's first turn. Guards the offset arithmetic against a real >w anchor."""
+    import re
+
+    conn = create_database(tmp_path / "long.db")
+    h = get_or_create_harness(conn, "claude_code", source="anthropic", log_format="jsonl")
+    ws = get_or_create_workspace(conn, "/proj", "2026-01-01T00:00:00Z")
+    m = get_or_create_model(conn, "claude-x")
+    p = get_or_create_provider(conn, "anthropic")
+    cid = insert_conversation(
+        conn, external_id="long", harness_id=h, workspace_id=ws,
+        started_at="2026-01-15T10:00:00Z",
+    )
+    for i in range(6):  # six exchanges so at=3,w=2 has turns on both sides
+        ts = f"2026-01-15T10:0{i}:00Z"
+        pid = insert_prompt(conn, cid, f"p{i}", ts)
+        insert_prompt_content(conn, pid, 0, "text", f'{{"text": "anchormark{i}"}}')
+        rid = insert_response(conn, cid, pid, m, p, f"r{i}", ts, input_tokens=10, output_tokens=5)
+        insert_response_content(conn, rid, 0, "text", f'{{"text": "resp{i}"}}')
+    conn.commit()
+    conn.close()
+
+    with TestClient(app=create_app(db_path=tmp_path / "long.db", auth_config=None)) as client:
+        # at=3, w=2 → window = exchanges 1..5; anchor at offset min(3,2)=2 (3rd shown).
+        sl = client.get("/find/context", params={"id": cid, "at": 3, "w": 2}).text
+
+    assert "anchormark3" in sl                    # the anchor turn is in the window
+    # The first is-anchor block must be the at=3 prompt, not the window start (mark1).
+    flagged = re.search(r"is-anchor.*?anchormark(\d)", sl, re.DOTALL)
+    assert flagged and flagged.group(1) == "3", f"anchor flagged the wrong turn: {flagged}"
+
+
 def test_deep_link_id_mounts_folio(ctx):
     client, cid = ctx
     body = client.get("/", params={"id": cid}).text

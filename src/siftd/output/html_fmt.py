@@ -10,6 +10,7 @@ becomes the class namespace here.
 
 from __future__ import annotations
 
+from collections import Counter
 from html import escape
 from typing import TYPE_CHECKING, Any
 
@@ -469,9 +470,15 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
             score = r.get("score", 0.0)
             ws = r.get("_workspace", "")
             started = r.get("_started_at", "")
+            turn_index = r.get("turn_index")
 
+            # The hit splits into two siblings: __main carries the folio nav (the
+            # deliberate jump); .hit-context holds the inline unfold control. They
+            # are siblings — not nested — so an unfold click never bubbles to the
+            # folio-navigable block (no stopPropagation / JS needed, CSP-clean).
+            parts.append('<article class="search-hit">')
             parts.append(
-                f'<article class="search-hit"'
+                f'<div class="search-hit__main"'
                 f'{_hx_detail(detail_base, conv_id, shell_base)}>'
             )
             parts.append(
@@ -491,6 +498,15 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
             if chars > 0:
                 text = truncate_text(text, chars)
             parts.append(f'<div class="excerpt">{escape(text)}</div>')
+            parts.append("</div>")  # .search-hit__main
+
+            # Unfold context in place — only when the chunk knows its turn anchor
+            # (turn_index None means enrichment couldn't place it; no anchor → no
+            # unfold, the hit still navigates to the folio).
+            if conv_id and turn_index is not None:
+                parts.append(
+                    f'<div class="hit-context">{_unfold_trigger(conv_id, int(turn_index))}</div>'
+                )
             parts.append("</article>")
 
         parts.append("</section>")
@@ -502,6 +518,91 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
         parts.append("</aside>")
 
     return "\n".join(parts)
+
+
+# Stepped context rings for the search "unfold" view: window half-widths (turn
+# offsets) the inline context widens through before deferring to the full folio.
+SEARCH_CONTEXT_RINGS: tuple[int, ...] = (2, 5, 10)
+
+
+def _unfold_button(label: str, attrs: str, *, classes: str = "") -> str:
+    """One shape for every context control — the single place the unfold
+    buttons' (CSP-relevant) attribute surface lives. ``attrs`` is a pre-built
+    htmx attribute string with a leading space (from :func:`_ctx_attrs` for a
+    same-region ring step, or :func:`_hx_detail` for the folio jump)."""
+    cls = "hit-unfold" + (f" {classes}" if classes else "")
+    return f'<button class="{cls}" type="button"{attrs}>{escape(label)}</button>'
+
+
+def _ctx_attrs(conv_id: str, at: int, w: int) -> str:
+    """htmx attrs for a same-region context step: fetch ring ``w`` and swap it
+    into the closest ``.hit-context`` (so hits unfold independently, no id
+    plumbing). ``w=0`` is the collapsed trigger."""
+    return (
+        f' hx-get="/find/context?id={escape(conv_id)}&at={at}&w={w}"'
+        f' hx-target="closest .hit-context" hx-swap="innerHTML"'
+    )
+
+
+def _unfold_trigger(conv_id: str, at: int) -> str:
+    """The collapsed state of a chunk's context region — a single control that
+    fetches the first ring. Shared by the initial hit render and the 'collapse'
+    action (which restores exactly this)."""
+    return _unfold_button(
+        "unfold context", _ctx_attrs(conv_id, at, SEARCH_CONTEXT_RINGS[0])
+    )
+
+
+def render_search_context(detail: Any, fidelity: Fidelity, **context: Any) -> str:
+    """Render one search hit's unfolded context slice — the inline 'unfold' view.
+
+    The seed is a matched chunk; this renders a window of surrounding exchanges
+    (``get_conversation`` anchored at the chunk's turn, the matched one flagged
+    ``is-anchor``) plus the stepped controls: widen to the next ring, or — at the
+    last ring — defer to the full folio (the deliberate jump), and always
+    collapse. State rides the control URLs (the current ``w``), so no session is
+    needed; ``w <= 0`` (or a missing/short read) renders the collapsed trigger.
+
+    Context keys: ``conv_id``, ``at`` (anchor turn_index), ``w`` (current
+    window half-width), ``anchor_pos`` (matched exchange's index in the window).
+    """
+    conv_id = context.get("conv_id", "")
+    at = int(context.get("at", 0))
+    w = int(context.get("w", 0))
+    anchor_pos = context.get("anchor_pos")
+
+    if w <= 0 or detail is None:
+        return _unfold_trigger(conv_id, at)
+
+    turns = getattr(detail, "turns", []) or []
+    body, _rail, _n, _tc = _render_turn_blocks(
+        turns, fidelity, id_prefix=None, anchor_pos=anchor_pos
+    )
+    if not body:
+        return _unfold_trigger(conv_id, at)
+
+    parts: list[str] = ['<div class="hit-context__slice">', *body, "</div>"]
+    parts.append('<div class="hit-context__controls">')
+    next_w = next((r for r in SEARCH_CONTEXT_RINGS if r > w), None)
+    if next_w is not None:
+        parts.append(_unfold_button("more context", _ctx_attrs(conv_id, at, next_w)))
+    else:
+        # Last ring → the deliberate jump into the full folio. Reuse _hx_detail
+        # so the folio-jump contract (target #main, push-url, quote()-encoded id)
+        # lives in exactly one place.
+        parts.append(
+            _unfold_button(
+                "open in folio", _hx_detail("/folio", conv_id, "/"),
+                classes="hit-unfold--folio",
+            )
+        )
+    parts.append(
+        _unfold_button(
+            "collapse", _ctx_attrs(conv_id, at, 0), classes="hit-unfold--collapse"
+        )
+    )
+    parts.append("</div>")
+    return "".join(parts)
 
 
 def render_stats(stats: Any, fidelity: Fidelity, **context: Any) -> str:
@@ -730,6 +831,88 @@ def _folio_rail_item(n: int, role: str, label: str, time: str, anchor: str) -> s
     )
 
 
+def _render_turn_blocks(
+    turns: list[Any],
+    fidelity: Fidelity,
+    *,
+    id_prefix: str | None = None,
+    anchor_pos: int | None = None,
+) -> tuple[list[str], list[str], int, Counter[str]]:
+    """Render exchanges as user/assistant ``.turn`` blocks — shared by the folio
+    body and the search context slice (the unfold view).
+
+    Each exchange (one ``Turn``) renders up to two ``.turn`` divs: the user
+    prompt and the assistant narrative. ``id_prefix`` (e.g. ``"t"``) emits
+    ``id="t-{n}"`` anchors + a parallel turn-rail (the folio needs both for its
+    ``:target`` highlight and scroll-spy); leaving it ``None`` emits neither (the
+    inline context slice has no rail and needs no anchors). ``anchor_pos`` is the
+    *exchange* index to flag with ``is-anchor`` — the matched turn in an unfold.
+
+    Returns ``(body, rail, n, tool_counter)``: the body divs, the rail items
+    (empty unless ``id_prefix``), the rail-item count (= the folio's "Turns N"),
+    and the tool-call ``Counter`` (the folio's ledger).
+    """
+    from siftd.output.common import fmt_timestamp
+    from siftd.output.narrative import walk_narrative
+
+    body: list[str] = []
+    rail: list[str] = []
+    tool_counter: Counter[str] = Counter()
+    n = 0
+
+    for i, turn in enumerate(turns):
+        amark = " is-anchor" if anchor_pos is not None and i == anchor_pos else ""
+        t_time = fmt_timestamp(getattr(turn, "timestamp", None), time_only=True) or ""
+        prompt_text = getattr(turn, "prompt_text", None)
+        narrative = getattr(turn, "narrative", []) or []
+        summaries = getattr(turn, "tool_call_summaries", []) or []
+
+        if prompt_text:
+            n += 1
+            idattr = ""
+            if id_prefix:
+                anchor = f"{id_prefix}-{n}"
+                idattr = f' id="{anchor}"'
+                rail.append(_folio_rail_item(n, "user", "User", t_time, anchor))
+            body.append(
+                f'<div class="turn{amark}" data-role="user"{idattr}>'
+                f'<header class="turn__head"><span class="turn__role">User</span>'
+                f'<span class="turn__time">{escape(t_time)}</span></header>'
+                f'<div class="turn__text">{_md_to_html(prompt_text)}</div>'
+                f"</div>"
+            )
+
+        if narrative:
+            n += 1
+            tool_parts: list[str] = []
+            for s in summaries:
+                tool_counter[s.tool_name] += s.count
+                lbl = escape(s.tool_name)
+                if s.count > 1:
+                    lbl += f"&times;{s.count}"
+                tool_parts.append(lbl)
+            tools_html = (
+                f'<span class="turn__tools">{" &middot; ".join(tool_parts)}</span>'
+                if tool_parts else ""
+            )
+            idattr = ""
+            if id_prefix:
+                anchor = f"{id_prefix}-{n}"
+                idattr = f' id="{anchor}"'
+                rail.append(_folio_rail_item(n, "assistant", "Assistant", t_time, anchor))
+            emitter = _FolioEmitter()
+            walk_narrative(narrative, emitter, fidelity=fidelity, tool_chars=0)
+            body.append(
+                f'<div class="turn{amark}" data-role="assistant"{idattr}>'
+                f'<header class="turn__head"><span class="turn__role">Assistant</span>'
+                f'<span class="turn__time">{escape(t_time)}</span>{tools_html}</header>'
+                f'<div class="turn__text">{emitter.to_html()}</div>'
+                f"</div>"
+            )
+
+    return body, rail, n, tool_counter
+
+
 def folio_detail_from_session(detail: Any) -> Any:
     """Project a peek ``SessionDetail`` onto the folio's duck shape.
 
@@ -802,62 +985,15 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
             (htmx outerHTML swap) from this URL, and curation is suppressed
             (tags/export need ingest; a live session has neither)
     """
-    from collections import Counter
-
-    from siftd.output.common import fmt_timestamp, fmt_tokens
-    from siftd.output.narrative import walk_narrative
+    from siftd.output.common import fmt_tokens
 
     turns = getattr(detail, "turns", []) or []
     conv_id = getattr(detail, "id", "") or ""
     short = short_id(conv_id) if conv_id else ""
 
-    rail: list[str] = []
-    body: list[str] = []
-    tool_counter: Counter[str] = Counter()
-    n = 0
-
-    for turn in turns:
-        t_time = fmt_timestamp(getattr(turn, "timestamp", None), time_only=True) or ""
-        prompt_text = getattr(turn, "prompt_text", None)
-        narrative = getattr(turn, "narrative", []) or []
-        summaries = getattr(turn, "tool_call_summaries", []) or []
-
-        if prompt_text:
-            n += 1
-            anchor = f"t-{n}"
-            rail.append(_folio_rail_item(n, "user", "User", t_time, anchor))
-            body.append(
-                f'<div class="turn" data-role="user" id="{anchor}">'
-                f'<header class="turn__head"><span class="turn__role">User</span>'
-                f'<span class="turn__time">{escape(t_time)}</span></header>'
-                f'<div class="turn__text">{_md_to_html(prompt_text)}</div>'
-                f"</div>"
-            )
-
-        if narrative:
-            n += 1
-            anchor = f"t-{n}"
-            tool_parts: list[str] = []
-            for s in summaries:
-                tool_counter[s.tool_name] += s.count
-                lbl = escape(s.tool_name)
-                if s.count > 1:
-                    lbl += f"&times;{s.count}"
-                tool_parts.append(lbl)
-            tools_html = (
-                f'<span class="turn__tools">{" &middot; ".join(tool_parts)}</span>'
-                if tool_parts else ""
-            )
-            emitter = _FolioEmitter()
-            walk_narrative(narrative, emitter, fidelity=fidelity, tool_chars=0)
-            rail.append(_folio_rail_item(n, "assistant", "Assistant", t_time, anchor))
-            body.append(
-                f'<div class="turn" data-role="assistant" id="{anchor}">'
-                f'<header class="turn__head"><span class="turn__role">Assistant</span>'
-                f'<span class="turn__time">{escape(t_time)}</span>{tools_html}</header>'
-                f'<div class="turn__text">{emitter.to_html()}</div>'
-                f"</div>"
-            )
+    # Turn blocks (body + rail) are shared with the search context slice; the
+    # folio passes id_prefix="t" for its :target anchors + scroll-spy rail.
+    body, rail, n, tool_counter = _render_turn_blocks(turns, fidelity, id_prefix="t")
 
     total_tokens = (
         getattr(detail, "total_input_tokens", 0) + getattr(detail, "total_output_tokens", 0)
