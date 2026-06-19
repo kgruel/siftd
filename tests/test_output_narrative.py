@@ -43,7 +43,7 @@ def test_html_emitter_full_branch_sweep(monkeypatch):
 
     html = e.to_html()
     for frag in [
-        '<details class="thinking" open>',
+        '<details class="thinking">',
         "thinking placeholder",
         "tool-summary",
         '<details class="tool-call tool-error">',

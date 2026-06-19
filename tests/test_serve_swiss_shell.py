@@ -29,6 +29,7 @@ from siftd.storage.sqlite import (
     insert_prompt_content,
     insert_response,
     insert_response_content,
+    insert_tool_call,
 )
 from siftd.storage.usage_rollup import rebuild_rollups
 
@@ -51,6 +52,21 @@ def _make_db(path: Path) -> tuple[Path, str]:
         insert_prompt_content(conn, pid, 0, "text", f'{{"text": "ask number {i}"}}')
         rid = insert_response(conn, cid, pid, m, p, f"r-{i}", ts, input_tokens=10, output_tokens=5)
         insert_response_content(conn, rid, 0, "text", f'{{"text": "reply number {i}"}}')
+        if i == 0:
+            # A tool call so trace mode has interleaved I/O to inline. Reading
+            # mode keeps it out of the body (the ledger/chip own it) — the two
+            # modes are exercised against the same conversation below.
+            insert_response_content(
+                conn, rid, 1, "tool_use",
+                '{"id": "toolu_1", "name": "Read", "input": {"file_path": "x.py"}}',
+            )
+            insert_tool_call(
+                conn, rid, cid, None, "toolu_1",
+                '{"file_path": "x.py"}', '{"text": "file body"}', "success", ts,
+            )
+            insert_response_content(
+                conn, rid, 2, "thinking", '{"thinking": "considering the approach"}',
+            )
     conn.commit()
     conn.close()
     return path, cid
@@ -107,6 +123,46 @@ def test_folio_by_id(ctx):
     body = client.get("/folio", params={"id": cid}).text
     assert 'class="folio"' in body
     assert "ask number 1" in body
+
+
+def test_folio_reading_mode_keeps_tool_io_out_of_body(ctx):
+    client, cid = ctx
+    body = client.get("/folio", params={"id": cid}).text
+    assert 'data-mode="reading"' in body
+    assert "tool-call" not in body  # reading body: tools in the ledger, not inline
+    assert "considering the approach" not in body  # thinking not fetched in reading
+
+
+def test_folio_trace_mode_inlines_tool_io(ctx):
+    # The route must resolve a tools/thinking-visible fidelity from ?mode=trace
+    # so get_conversation actually FETCHES tool input/result + thinking (it gates
+    # both on fidelity.shows). Unit tests pass fidelity directly and can't prove
+    # this route-level resolution — if the route dropped tools= or thinking=, the
+    # tool I/O or the agent's reasoning would silently vanish from the trace.
+    client, cid = ctx
+    body = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+    assert 'data-mode="trace"' in body
+    assert 'class="tool-call"' in body
+    assert "Read" in body
+    assert '<details class="thinking">' in body
+    assert "considering the approach" in body
+
+
+def test_folio_mode_toggle_offers_both_modes(ctx):
+    client, cid = ctx
+    body = client.get("/folio", params={"id": cid}).text
+    assert 'class="folio-mode"' in body
+    assert "mode=trace" in body and "mode=reading" in body
+
+
+def test_find_context_unfold_renders_trace(ctx):
+    # The unfold route fetches with a tools/thinking-visible fidelity, so the
+    # in-place context slice IS the trace (inline tool I/O), not prose-only.
+    client, cid = ctx
+    r = client.get("/find/context", params={"id": cid, "at": 0, "w": 2})
+    assert r.status_code == 200
+    assert 'class="hit-context__slice"' in r.text
+    assert 'class="tool-call"' in r.text
 
 
 def test_query_rows_mount_folio_in_main(ctx):

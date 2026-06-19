@@ -86,7 +86,7 @@ def build_fixture(db_path: Path) -> str:
         create_database, get_or_create_harness, get_or_create_model,
         get_or_create_provider, get_or_create_workspace, insert_conversation,
         insert_prompt, insert_prompt_content, insert_response,
-        insert_response_content,
+        insert_response_content, insert_tool_call,
     )
 
     conn = create_database(db_path)
@@ -115,6 +115,19 @@ def build_fixture(db_path: Path) -> str:
             )
             body = RUST if (ci == 2 and ti == 1) else f"plain response conv={ci} turn={ti}"
             insert_response_content(conn, rid, 0, "text", json.dumps({"text": body}))
+            if ci == 2 and ti == 0:
+                # A tool call in the code_conv so the folio's trace mode has
+                # interleaved I/O to inline (the reading→trace toggle smoke).
+                insert_response_content(
+                    conn, rid, 1, "tool_use",
+                    json.dumps({"id": "toolu_smoke", "name": "Read",
+                                "input": {"file_path": "x.py"}}),
+                )
+                insert_tool_call(
+                    conn, rid, cid, None, "toolu_smoke",
+                    json.dumps({"file_path": "x.py"}),
+                    json.dumps({"text": "file body"}), "success", ts,
+                )
 
     # A sub-agent of the newest root (csp-2), to exercise Sessions nesting:
     # collapsed-by-default + chevron expand. external_id is "<root>::agent::<id>".
@@ -425,6 +438,27 @@ async def flow(cdp, check, goto, code_conv):
     tokens = await cdp.eval("document.querySelectorAll('#main .token').length")
     check("folio code block present", pre and pre > 0, f"pre/code={pre}")
     check("prism highlighted under CSP", tokens and tokens > 0, f"tokens={tokens}")
+
+    # folio reading↔trace toggle: reading mode keeps tool I/O out of the body;
+    # clicking Trace re-fetches the folio (the route re-resolves a tools-visible
+    # fidelity so get_conversation FETCHES tool input/result) and inlines it.
+    # Guards the htmx wiring + the fetch-fidelity resolution under CSP — neither
+    # visible to the unit tests (which pass fidelity directly).
+    reading_no_tools = await cdp.eval(
+        "!document.querySelector('#main .folio[data-mode=\"reading\"] .tool-call')"
+    )
+    check("folio reading mode keeps tool I/O out of body", bool(reading_no_tools))
+    await cdp.click('#main .folio-mode__btn[hx-get*="mode=trace"]')
+    await cdp.drain(1.8)
+    trace_on = await cdp.eval(
+        "!!document.querySelector('#main .folio[data-mode=\"trace\"]')"
+    )
+    trace_tools = await cdp.eval(
+        "document.querySelectorAll('#main .folio[data-mode=\"trace\"] .tool-call').length"
+    )
+    check("folio trace toggle re-renders in trace mode", bool(trace_on))
+    check("folio trace mode inlines tool I/O", trace_tools is not None and trace_tools > 0,
+          f"tool-calls={trace_tools}")
 
     # tone toggle (enhance.js listener under CSP)
     before = await cdp.eval("document.body.dataset.tone")

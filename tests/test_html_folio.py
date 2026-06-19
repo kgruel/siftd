@@ -13,12 +13,48 @@ from painted import Fidelity
 from siftd.api.conversations import (
     ConversationDetail,
     NarrativeBlock,
+    ToolCallDetail,
     ToolCallSummary,
     Turn,
 )
-from siftd.output.html_fmt import render_folio
+from siftd.output.html_fmt import render_folio, render_search_context
 
 _FID = Fidelity(depth=2, visible=frozenset({"text"}), chars=0)
+# Trace mode needs a tools/thinking-visible fidelity (the route resolves this);
+# walk_narrative keys inline tool_content off fidelity.shows("tools").
+_FID_TRACE = Fidelity(depth=3, visible=frozenset({"text", "tools", "thinking"}), chars=0)
+
+
+def _trace_detail() -> ConversationDetail:
+    """One exchange whose assistant turn interleaves prose → tool call → prose."""
+    turn = Turn(
+        timestamp="2026-03-15T10:30:00Z",
+        prompt_text="run the thing",
+        total_input_tokens=10,
+        total_output_tokens=5,
+        narrative=[
+            NarrativeBlock(block_type="thinking", content="weighing the options"),
+            NarrativeBlock(block_type="text", content="before the tool"),
+            NarrativeBlock(
+                block_type="tool_calls",
+                tool_calls=[ToolCallDetail(
+                    tool_name="Read", status="success",
+                    input="path/x.py", result="file contents",
+                )],
+            ),
+            NarrativeBlock(block_type="text", content="after the tool"),
+        ],
+        _tool_call_summaries=[ToolCallSummary("Read", "success", 1)],
+    )
+    return ConversationDetail(
+        id="01TRACE00000000000",
+        workspace_path="/proj",
+        model="claude-opus",
+        started_at="2026-03-15T10:30:00Z",
+        total_input_tokens=10,
+        total_output_tokens=5,
+        turns=[turn],
+    )
 
 
 def _detail() -> ConversationDetail:
@@ -197,3 +233,150 @@ def test_folio_without_context_renders_passive_tags_only():
     assert 'class="tag">decision' in html
     assert "hx-post" not in html
     assert "export-actions" not in html
+
+
+# ---------------------------------------------------------------------------
+# Reading ↔ trace mode (Phase 1): the body emitter flips; the frame stays shared
+# ---------------------------------------------------------------------------
+
+
+def test_folio_reading_mode_is_default_and_drops_inline_tools():
+    # Reading view: tool I/O is not in the body (the ledger + per-turn chip own
+    # it), and the article advertises the mode for the chrome + the toggle.
+    html = render_folio(_trace_detail(), _FID)
+    assert 'data-mode="reading"' in html
+    assert "tool-call" not in html
+    assert 'class="turn__tools"' in html  # chip stands in for the inlined tools
+
+
+def test_folio_trace_mode_inlines_tool_calls_in_sequence():
+    # Trace view: the same exchange now inlines the tool call between the prose
+    # segments, and the redundant per-turn chip is suppressed.
+    html = render_folio(_trace_detail(), _FID_TRACE, mode="trace")
+    assert 'data-mode="trace"' in html
+    assert 'class="tool-call"' in html
+    assert 'class="turn__tools"' not in html
+    assert "before the tool" in html and "after the tool" in html
+
+
+def test_folio_trace_mode_shows_thinking_collapsed():
+    # Trace inlines the agent's reasoning (collapsed, not open). Guards the
+    # render side of the route's thinking=trace fidelity resolution — if that
+    # were dropped, the reasoning would silently vanish from the trace.
+    html = render_folio(_trace_detail(), _FID_TRACE, mode="trace")
+    assert '<details class="thinking">' in html
+    assert '<details class="thinking" open>' not in html
+    assert "weighing the options" in html
+
+
+def test_reading_emitter_drops_present_tools_independent_of_fidelity():
+    # Isolate the emitter choice from the fidelity gate: render reading mode at a
+    # TOOLS-VISIBLE fidelity. The tool data is present (would be fetched), but the
+    # reading emitter must still keep it out of the body (the ledger owns it) and
+    # not emit the trace's inline classes.
+    from siftd.output.html_fmt import _render_turn_blocks
+
+    body, _rail, _n, _counter = _render_turn_blocks(
+        _trace_detail().turns, _FID_TRACE, id_prefix="t", mode="reading",
+    )
+    html = "".join(body)
+    assert "tool-call" not in html
+    assert 'class="turn__tools"' in html
+    assert '<details class="thinking">' not in html  # HtmlEmitter's class, not used
+
+
+def test_folio_trace_mode_keeps_the_ledger():
+    # The ledger is a different lens (frequency) than the inline trace
+    # (sequence); it stays in trace mode.
+    html = render_folio(_trace_detail(), _FID_TRACE, mode="trace")
+    assert 'class="folio__ledger"' in html
+    assert 'class="ledger__name">Read' in html
+
+
+def test_folio_mode_toggle_marks_the_active_mode():
+    reading = render_folio(_trace_detail(), _FID)
+    assert 'class="folio-mode"' in reading
+    # Both buttons re-fetch /folio with the mode on the URL; the active one
+    # (reading, the default) carries is-active.
+    assert (
+        'folio-mode__btn is-active"'
+        ' hx-get="/folio?id=01TRACE00000000000&mode=reading"' in reading
+    )
+    assert 'hx-get="/folio?id=01TRACE00000000000&mode=trace"' in reading
+
+    trace = render_folio(_trace_detail(), _FID_TRACE, mode="trace")
+    assert (
+        'folio-mode__btn is-active"'
+        ' hx-get="/folio?id=01TRACE00000000000&mode=trace"' in trace
+    )
+
+
+def test_folio_unknown_mode_falls_back_to_reading():
+    html = render_folio(_trace_detail(), _FID, mode="bogus")
+    assert 'data-mode="reading"' in html
+    assert "tool-call" not in html
+
+
+def test_search_context_unfold_renders_the_trace():
+    # The unfold IS the trace (Q2): it inlines tool I/O rather than reusing the
+    # folio's prose-only body. The matched exchange is flagged is-anchor.
+    detail = _trace_detail()
+    html = render_search_context(
+        detail, _FID_TRACE,
+        conv_id="01TRACE00000000000", at=0, w=2, anchor_pos=0,
+    )
+    assert 'class="hit-context__slice"' in html
+    assert 'class="tool-call"' in html
+    assert "is-anchor" in html
+    assert "turn__tools" not in html
+
+
+def _xss_trace_detail() -> ConversationDetail:
+    """A tool call whose input + result carry markup — agent/user content the
+    trace inlines into the served HTML body for the first time."""
+    turn = Turn(
+        timestamp="2026-03-15T10:30:00Z",
+        prompt_text="go",
+        total_input_tokens=10,
+        total_output_tokens=5,
+        narrative=[
+            NarrativeBlock(block_type="thinking",
+                           content="<script>alert('think')</script>"),
+            NarrativeBlock(
+                block_type="tool_calls",
+                tool_calls=[ToolCallDetail(
+                    tool_name="Read", status="success",
+                    input='{"file_path": "<script>alert(1)</script>.py"}',
+                    result="<script>alert('xss')</script>",
+                )],
+            ),
+        ],
+        _tool_call_summaries=[ToolCallSummary("Read", "success", 1)],
+    )
+    return ConversationDetail(
+        id="01XSS0000000000000",
+        workspace_path="/p",
+        model="m",
+        started_at="2026-03-15T10:30:00Z",
+        total_input_tokens=10,
+        total_output_tokens=5,
+        turns=[turn],
+    )
+
+
+def test_folio_trace_mode_escapes_inlined_tool_io():
+    # Trace is a NEW XSS surface — the reading view never put tool I/O in the
+    # body. Inlined tool input/result/headline must be escaped.
+    html = render_folio(_xss_trace_detail(), _FID_TRACE, mode="trace")
+    assert "<script>alert" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_search_context_unfold_escapes_inlined_tool_io():
+    # Same surface via the search unfold (always trace).
+    html = render_search_context(
+        _xss_trace_detail(), _FID_TRACE,
+        conv_id="01XSS0000000000000", at=0, w=2, anchor_pos=0,
+    )
+    assert "<script>alert" not in html
+    assert "&lt;script&gt;" in html

@@ -252,11 +252,17 @@ def ui_folio(
     request: Request,
     db_path: Path,
     id: str | None = Parameter(query="id", default=None),
+    mode: str = Parameter(query="mode", default="reading"),
 ) -> Response:
     """Render the Swiss transcript folio for one conversation.
 
     With ``?id=`` renders that conversation; without, the most recent one so
     the view is never empty. Owner-scoped via the effective identity.
+
+    ``mode`` selects the body shape: ``reading`` (default — prose, tools in the
+    ledger) or ``trace`` (tool I/O inlined in sequence, the agent's actual event
+    flow). The toggle re-fetches this route so the fidelity is re-resolved from
+    the mode — see below.
     """
     from siftd.api.conversations import (
         AmbiguousPrefix,
@@ -267,10 +273,15 @@ def ui_folio(
 
     owner = _effective_owner(request, None)
     fmt = get_format("html")
+    mode = mode if mode in ("reading", "trace") else "reading"
     # depth=3 fetches the rollup's canonical cost (+ tags) for the ledger foot.
-    # shows() is membership-based, so tools/thinking stay unfetched — the bump
-    # only flips the cost/tag gates, not the body's prose-only rendering.
-    fidelity = _fidelity(depth=3, chars=0)
+    # The body mode rides the fidelity's visibility axis: reading needs only
+    # text; trace inlines tool I/O + thinking, which get_conversation populates
+    # ONLY when they are visible (conversations.py gates input/result + thinking
+    # blocks on fidelity.shows). So trace resolves a tools/thinking-visible
+    # fidelity here — one fidelity, fetch and render agree.
+    trace = mode == "trace"
+    fidelity = _fidelity(depth=3, chars=0, tools=trace, thinking=trace)
 
     conv_id = id
     if not conv_id:
@@ -291,6 +302,7 @@ def ui_folio(
         return _html_response(_stub("transcript", "Transcript", f"not found: {conv_id[:12]}"))
     return _html_response(fmt.render_folio(
         detail, fidelity,
+        mode=mode,
         interactive_tags=True,
         tag_action_url="/tag",
         tag_suggest_url="/tags/suggest",
@@ -1007,7 +1019,10 @@ def ui_find_context(
     )
 
     owner = _effective_owner(request, None)
-    fidelity = _fidelity(depth=1, chars=0)  # full prose; no tags/cost fetch needed
+    # The unfold IS the trace (render_search_context renders mode="trace"), so
+    # fetch tool I/O + thinking — get_conversation populates them only at a
+    # tools/thinking-visible fidelity. depth=1: no tags/cost needed in a slice.
+    fidelity = _fidelity(depth=1, chars=0, tools=True, thinking=True)
     try:
         detail = get_conversation(
             conv_id, fidelity=fidelity, db_path=db_path, owner=owner,

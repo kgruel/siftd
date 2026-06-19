@@ -575,8 +575,11 @@ def render_search_context(detail: Any, fidelity: Fidelity, **context: Any) -> st
         return _unfold_trigger(conv_id, at)
 
     turns = getattr(detail, "turns", []) or []
+    # The unfold IS the trace: it answers "what did the agent actually do here",
+    # so it inlines tool I/O in sequence rather than the folio's prose-only body.
+    # The route fetches it with a tools/thinking-visible fidelity to match.
     body, _rail, _n, _tc = _render_turn_blocks(
-        turns, fidelity, id_prefix=None, anchor_pos=anchor_pos
+        turns, fidelity, id_prefix=None, anchor_pos=anchor_pos, mode="trace"
     )
     if not body:
         return _unfold_trigger(conv_id, at)
@@ -831,12 +834,40 @@ def _folio_rail_item(n: int, role: str, label: str, time: str, anchor: str) -> s
     )
 
 
+def _folio_mode_toggle(conv_id: str, mode: str) -> str:
+    """Segmented control switching the folio body between the reading view
+    (prose; tool I/O in the ledger) and the trace view (tool I/O inlined in
+    sequence — the agent's actual event flow).
+
+    Stateless: the active mode rides the re-fetch URL and the *whole* folio
+    re-renders into ``#main``. The re-fetch (not a client-side toggle) is
+    load-bearing — trace mode needs ``get_conversation`` to fetch tool
+    input/result, which it only does at a tools-visible fidelity, so the route
+    must re-resolve the fidelity from the URL ``mode``.
+    """
+    from urllib.parse import quote as _q
+
+    qv = _q(conv_id)
+    btns = [
+        f'<button type="button" class="folio-mode__btn'
+        f'{" is-active" if val == mode else ""}"'
+        f' hx-get="/folio?id={qv}&mode={val}"'
+        f' hx-target="#main" hx-swap="innerHTML">{label}</button>'
+        for val, label in (("reading", "Reading"), ("trace", "Trace"))
+    ]
+    return (
+        '<div class="folio-mode" role="group" aria-label="View mode">'
+        f'{"".join(btns)}</div>'
+    )
+
+
 def _render_turn_blocks(
     turns: list[Any],
     fidelity: Fidelity,
     *,
     id_prefix: str | None = None,
     anchor_pos: int | None = None,
+    mode: str = "reading",
 ) -> tuple[list[str], list[str], int, Counter[str]]:
     """Render exchanges as user/assistant ``.turn`` blocks — shared by the folio
     body and the search context slice (the unfold view).
@@ -848,12 +879,28 @@ def _render_turn_blocks(
     inline context slice has no rail and needs no anchors). ``anchor_pos`` is the
     *exchange* index to flag with ``is-anchor`` — the matched turn in an unfold.
 
+    ``mode`` selects the assistant-body emitter (the only axis that differs
+    between the two body shapes — header/framing stay shared):
+
+    - ``"reading"`` (default): :class:`_FolioEmitter` — prose + thinking only;
+      tool I/O is dropped from the body and surfaced as the per-turn ``__tools``
+      chip + the folio ledger. The reading view.
+    - ``"trace"``: :class:`HtmlEmitter` — tool I/O inlined *in sequence* (each
+      tool a collapsed ``<details>``), the agent's actual event flow. The
+      per-turn chip is suppressed (the tools are inline now). The caller MUST
+      fetch with a tools/thinking-visible ``fidelity`` (``walk_narrative`` keys
+      ``tool_content`` vs ``tool_summary`` off ``fidelity.shows("tools")``, and
+      ``get_conversation`` only populates tool input/result when it does), so
+      ``mode`` and ``fidelity`` are resolved together at the route.
+
     Returns ``(body, rail, n, tool_counter)``: the body divs, the rail items
     (empty unless ``id_prefix``), the rail-item count (= the folio's "Turns N"),
     and the tool-call ``Counter`` (the folio's ledger).
     """
     from siftd.output.common import fmt_timestamp
-    from siftd.output.narrative import walk_narrative
+    from siftd.output.narrative import HtmlEmitter, walk_narrative
+
+    trace = mode == "trace"
 
     body: list[str] = []
     rail: list[str] = []
@@ -893,14 +940,14 @@ def _render_turn_blocks(
                 tool_parts.append(lbl)
             tools_html = (
                 f'<span class="turn__tools">{" &middot; ".join(tool_parts)}</span>'
-                if tool_parts else ""
+                if tool_parts and not trace else ""
             )
             idattr = ""
             if id_prefix:
                 anchor = f"{id_prefix}-{n}"
                 idattr = f' id="{anchor}"'
                 rail.append(_folio_rail_item(n, "assistant", "Assistant", t_time, anchor))
-            emitter = _FolioEmitter()
+            emitter = HtmlEmitter() if trace else _FolioEmitter()
             walk_narrative(narrative, emitter, fidelity=fidelity, tool_chars=0)
             body.append(
                 f'<div class="turn{amark}" data-role="assistant"{idattr}>'
@@ -991,9 +1038,18 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     conv_id = getattr(detail, "id", "") or ""
     short = short_id(conv_id) if conv_id else ""
 
+    # Reading (default) vs trace body. The route resolves mode→fidelity (trace
+    # needs tool I/O fetched), so by here the fidelity already matches the mode;
+    # _render_turn_blocks only picks the emitter.
+    mode = context.get("mode", "reading")
+    if mode not in ("reading", "trace"):
+        mode = "reading"
+
     # Turn blocks (body + rail) are shared with the search context slice; the
     # folio passes id_prefix="t" for its :target anchors + scroll-spy rail.
-    body, rail, n, tool_counter = _render_turn_blocks(turns, fidelity, id_prefix="t")
+    body, rail, n, tool_counter = _render_turn_blocks(
+        turns, fidelity, id_prefix="t", mode=mode
+    )
 
     total_tokens = (
         getattr(detail, "total_input_tokens", 0) + getattr(detail, "total_output_tokens", 0)
@@ -1045,13 +1101,20 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
         if live_poll_url else ""
     )
     folio_cls = "folio folio--live" if live_poll_url else "folio"
+    # The reading↔trace toggle re-fetches the folio (so the route re-resolves
+    # fidelity). Suppressed on a live folio: it isn't in the DB yet, so the
+    # /folio re-fetch would 404 — same gate as curation.
+    mode_toggle = (
+        _folio_mode_toggle(conv_id, mode) if conv_id and not live_poll_url else ""
+    )
     parts: list[str] = [
         f'<article class="{folio_cls}" data-view="{escape(view)}"'
-        f' data-title="{escape(title)}"'
+        f' data-title="{escape(title)}" data-mode="{escape(mode)}"'
         f' data-count="{turn_count}" data-kick="{kick}"{live_attrs}>',
         '<nav class="folio__nav" aria-label="Turns">',
         '<div class="folio__navhead"><span class="micro">Turns</span>'
         f'<span class="folio__navmeta">{turn_count}</span></div>',
+        mode_toggle,
         f'<div class="turns">{"".join(rail)}</div>',
         "</nav>",
         '<div class="folio__body">',

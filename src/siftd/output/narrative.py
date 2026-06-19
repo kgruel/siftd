@@ -130,8 +130,11 @@ class HtmlEmitter:
 
     def thinking(self, content: str, *, event_id: str | None = None) -> None:
         del event_id
+        # Collapsed by default, like the inline tool calls: the trace shows the
+        # agent's flow as a skim, with thinking/tool payloads expanded on demand
+        # rather than dumped as a wall.
         self.parts.append(
-            f'<details class="thinking" open>'
+            f'<details class="thinking">'
             f"<summary>Thinking</summary>"
             f"<pre>{self._escape(content)}</pre>"
             f"</details>"
