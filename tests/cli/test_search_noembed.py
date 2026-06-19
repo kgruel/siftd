@@ -217,7 +217,7 @@ def test_search_fts_only_branches(monkeypatch, tmp_path, capsys):
     args = make_args(
         query=["q"], db=str(db), json=True, view="thread",
         full=True, verbose=True, select="first",
-        refs=True, sort="time", format="x",
+        refs=True, sort="time",
     )
 
     class _Conn:
@@ -226,6 +226,10 @@ def test_search_fts_only_branches(monkeypatch, tmp_path, capsys):
 
     monkeypatch.setattr("siftd.api.open_database", lambda *a, **k: _Conn())
     monkeypatch.setattr("siftd.search.resolve_candidates", lambda *a, **k: None)
+
+    # invalid --format fails fast (before any search), matching cmd_search
+    assert _search_fts_only(make_args(query=["q"], db=str(db), format="bogus"), db, "q") == 1
+    assert "Error" in capsys.readouterr().err
 
     # error path: fts table missing
     import sqlite3

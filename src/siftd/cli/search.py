@@ -349,6 +349,22 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     if filters is None:
         filters = extract_filter_args(args)
 
+    # Validate the output format up front — fail fast before any search work,
+    # matching cmd_search (the slice-3 fail-fast principle). fmt is consumed by
+    # the non-empty render below; the empty path emits a manual envelope.
+    from siftd.output.format_registry import select_format
+
+    try:
+        fmt = select_format(
+            name=getattr(args, "format", None),
+            json_mode=args.json,
+            is_tty=sys.stdout.isatty(),
+        )
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    fidelity = Fidelity()
+
     from siftd.api.search import search_view
 
     op = Operation(
@@ -453,15 +469,6 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             f"note: filtered {view_result.n_skipped} result(s) without --around phrase '{args.around}' in conversation",
             file=sys.stderr,
         )
-
-    from siftd.output.format_registry import select_format
-
-    fidelity = Fidelity()
-    fmt = select_format(
-        name=getattr(args, "format", None),
-        json_mode=args.json,
-        is_tty=sys.stdout.isatty(),
-    )
 
     output = fmt.render_search(view_result, fidelity, query=query, mode="fts", debug_ids=getattr(args, "debug_ids", False), caveats=caveats)
     if isinstance(output, dict):
