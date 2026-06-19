@@ -204,14 +204,22 @@ body { margin: 0; }
    payload is one click away (folded by default so the trace skims, not walls). */
 .narrative-text { margin:0 0 16px; }
 .narrative-text:last-child { margin-bottom:0; }
+/* CALL vs RESULT on one continuous left edge: the summary (the call) carries a
+   BLUE rail, the result a RED rail — so it reads call→result top-to-bottom down a
+   single rail, not a card-rail + result-rail double lap. The card itself has no
+   left border. The result rules set their box in FULL so they win over the
+   reading-view `.turn__text pre` (which would otherwise repaint the result with
+   its own accent rail + nested box). */
 .tool-call { margin:16px 0; font-family:var(--font-mono);
   font-size:calc(var(--fs-base) - 1px); background:var(--paper);
-  border:1px solid var(--hair); border-left:3px solid var(--info); }
-.tool-call.tool-error { border-left-color:var(--accent); }
-/* The clickable header is tinted (var(--panel)) so it reads as a control even
-   where --panel barely differs from --paper; the result below stays on --paper. */
+  border:1px solid var(--hair); border-left:0; }
+/* The clickable header (the call) is tinted + blue-railed so it reads as a
+   control even where --panel barely differs from --paper. */
 .tool-call > summary, div.tool-call { padding:8px 12px; display:flex;
-  align-items:center; gap:8px; flex-wrap:wrap; background:var(--panel); }
+  align-items:center; gap:8px; flex-wrap:wrap; background:var(--panel);
+  border-left:3px solid var(--info); }
+.tool-call.tool-error > summary,
+div.tool-call.tool-error { border-left-color:var(--accent); }
 .tool-call > summary { cursor:pointer; list-style:none; }
 .tool-call > summary::-webkit-details-marker { display:none; }
 /* Explicit caret — the default disclosure marker is hidden, so this IS the
@@ -224,27 +232,36 @@ body { margin: 0; }
 .tool-headline { color:var(--ink); font-size:inherit; background:none;
   word-break:break-all; }
 .tool-meta { color:var(--faint); font-size:var(--fs-micro); margin-left:auto; }
-.tool-result, .tool-diff { white-space:pre-wrap; line-height:1.5; margin:0;
-  padding:10px 12px; overflow-x:auto; color:var(--ink); }
-/* Inside a .tool-call card the border-top separates the header from the payload.
-   A standalone tool_output (HtmlEmitter.tool_output — no .tool-call wrapper, e.g.
-   aider) gets its own self-contained card instead of an orphaned floating rule. */
-.tool-call .tool-result, .tool-call .tool-diff { border-top:1px solid var(--hair); }
-.turn__text > pre.tool-result { margin:16px 0; border:1px solid var(--hair);
-  border-left:3px solid var(--info); background:var(--paper); }
+/* The result builds on the call: a RED rail continuing below the blue header,
+   flush in the card (top separator, no nested box). Full box props beat
+   `.turn__text pre`. */
+.tool-call .tool-result, .tool-call .tool-diff,
+.tool-call pre.tool-error, .tool-call .tool-tasks {
+  margin:0; padding:10px 12px; border:0; border-top:1px solid var(--hair);
+  border-left:3px solid var(--accent); background:transparent; }
+.tool-call .tool-result, .tool-call .tool-diff {
+  white-space:pre-wrap; line-height:1.5; overflow-x:auto; color:var(--ink); }
+.tool-call .tool-removed { border-left-color:var(--accent); }
+.tool-call .tool-added { border-left-color:var(--ok); }
+.tool-call pre.tool-error { color:var(--accent); white-space:pre-wrap; }
 .tool-result code, .tool-diff code { color:inherit; background:none;
   font-size:inherit; }
-.tool-removed { border-left:3px solid var(--accent); }
-.tool-added { border-left:3px solid var(--ok); }
 .diff-pair { display:grid; grid-template-columns:1fr 1fr; }
-.tool-tasks { list-style:none; margin:0; padding:8px 12px;
-  border-top:1px solid var(--hair); }
+.tool-tasks { list-style:none; }
 .tool-tasks .task-done::before { content:'\2713\00a0'; color:var(--ok); }
 .tool-tasks .task-pending::before { content:'\25cb\00a0'; color:var(--faint); }
-pre.tool-error { white-space:pre-wrap; margin:0; padding:10px 12px;
-  border-top:1px solid var(--hair); color:var(--accent); }
 .tool-overflow { display:block; padding:6px 12px; color:var(--faint);
   font-size:var(--fs-micro); }
+/* Standalone tool_output (no .tool-call wrapper, e.g. aider): a self-contained
+   result card with the red result rail. */
+.turn__text > pre.tool-result { margin:16px 0; border:1px solid var(--hair);
+  border-left:3px solid var(--accent); background:var(--paper); }
+/* Trace mode uses the screen: the reading-view 68ch turn cap (right for prose)
+   wastes a wide screen on code/tool output. Drop the turn cap in trace so tool
+   cards + code fill the body column; keep PROSE readable at a line length. */
+.folio[data-mode="trace"] .turn { max-width:none; }
+.folio[data-mode="trace"] .narrative-text,
+.folio[data-mode="trace"] .turn[data-role="user"] .turn__text { max-width:74ch; }
 /* HtmlEmitter thinking (distinct from the reading view's .turn-think) — also an
    expandable card, same caret affordance. + the consolidated tool chip
    HtmlEmitter emits when tools are NOT shown (a trace always shows tools, so
