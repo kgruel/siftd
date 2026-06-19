@@ -524,3 +524,46 @@ def test_unfold_last_ring_jump_is_event_precise():
     )
     assert "open in folio" in html
     assert "mode=trace" in html and "event=01EVT" in html
+
+
+def test_unfold_empty_window_still_threads_event():
+    # A successful fetch whose window has no renderable turns (prompt-less,
+    # narrative-less) falls back to the collapsed trigger — which must still carry
+    # the event so a re-unfold stays event-precise. Regression guard: the two
+    # collapsed-trigger early returns in render_search_context must be identical.
+    empty_turn = Turn(
+        timestamp=None, prompt_text=None, narrative=[],
+        total_input_tokens=0, total_output_tokens=0, _tool_call_summaries=[],
+    )
+    detail = ConversationDetail(
+        id="01CONV", workspace_path=None, model=None, started_at=None,
+        total_input_tokens=0, total_output_tokens=0, turns=[empty_turn],
+    )
+    html = render_search_context(
+        detail, _FID_TRACE, conv_id="01CONV", at=2, w=5, anchor_pos=0, event="01EVT",
+    )
+    assert "/find/context?id=01CONV&at=2&w=2&event=01EVT" in html
+
+
+def test_reading_mode_ignores_event_target():
+    # The event target is a trace-mode affordance. A reading-mode folio with a
+    # target must not emit is-target or an unscrollable data-scroll-to, even
+    # though the prompt div still carries its (always-laid) data-event-id anchor.
+    html = render_folio(
+        _anchored_detail(), _FID_TRACE, mode="reading", target_event_id="01PROMPT",
+    )
+    assert "data-scroll-to" not in html
+    assert "is-target" not in html
+    assert 'data-event-id="01PROMPT"' in html
+
+
+def test_search_thread_tier2_jump_opens_trace_at_event():
+    # Thread-view tier2 (compact) hits are SearchChunks too — their folio jump
+    # must be event-precise, same as the chunks view.
+    sv = SearchView(
+        results=[], view="thread", tier1=[],
+        tier2=[_chunk(conversation_id="01CONV2", event_id="01EVT2")],
+    )
+    html = render_search(sv, _FID, query="q", detail_base="/folio", shell_base="/")
+    assert "search-hit compact" in html
+    assert "mode=trace" in html and "event=01EVT2" in html

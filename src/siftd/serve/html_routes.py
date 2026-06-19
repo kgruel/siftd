@@ -168,8 +168,10 @@ def _page_shell(
         active, main_url = "transcript", f"/folio?id={urlquote(conv_id)}"
         if folio_mode == "trace":
             main_url += "&mode=trace"
-        if folio_event:
-            main_url += f"&event={urlquote(folio_event)}"
+            # event is a trace-only target (nested under mode=trace), so a reading
+            # mount never carries an unrenderable anchor.
+            if folio_event:
+                main_url += f"&event={urlquote(folio_event)}"
     elif search_q:
         active, main_url = "search", f"/find?q={urlquote(search_q)}"
     elif tag:

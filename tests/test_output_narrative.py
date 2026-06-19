@@ -90,3 +90,27 @@ def test_html_emitter_escapes_event_id():
     html = e.to_html()
     assert 'data-event-id="a"b<c"' not in html
     assert "a&quot;b&lt;c" in html
+
+
+def test_html_emitter_anchors_tool_first_run(monkeypatch):
+    # A response whose FIRST emitted block is a tool call (no preceding prose — a
+    # common agent shape) must anchor on the tool element itself, not silently
+    # skip the run. Guards the anchor branch on tool_content/tool_output, which
+    # the text-driven run test never reaches.
+    pres = SimpleNamespace(
+        headline="x.py", meta=None, removed=None, added=None,
+        output="result body", overflow=0, error=None, tasks=[],
+    )
+    monkeypatch.setattr(
+        "siftd.output.tool_presenters.extract_tool_presentation",
+        lambda *a, **k: pres,
+    )
+    e = HtmlEmitter(target_event_id="01T")
+    e.tool_content("Read", 1, "x.py", "result body", "success", event_id="01T")
+    e.tool_output("tool_result", "standalone", event_id="01TO")
+    html = e.to_html()
+    # The tool-call container (first block of run 01T) is anchored + targeted.
+    assert 'data-event-id="01T"' in html
+    assert "is-target" in html
+    # A standalone tool_output opening a new run is anchored too.
+    assert 'class="tool-result" data-event-id="01TO"' in html

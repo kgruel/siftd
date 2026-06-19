@@ -1013,3 +1013,27 @@ def test_shell_drops_unsafe_event_from_mount(ctx):
     assert "mode=trace" in body      # mode still rides
     assert "event=" not in body      # the bad event does not
     assert '"><x' not in body
+
+
+def test_folio_reading_mode_ignores_event(ctx):
+    # The event target is trace-only: a reading-mode folio with ?event= must not
+    # emit a data-scroll-to hint (no element to scroll to in reading).
+    import re
+
+    client, cid = ctx
+    trace = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+    ev = re.search(r'data-event-id="([^"]+)"', trace).group(1)
+    body = client.get("/folio", params={"id": cid, "mode": "reading", "event": ev}).text
+    assert "data-scroll-to" not in body
+    assert "is-target" not in body
+
+
+def test_shell_reading_deep_link_drops_event(ctx):
+    # event is nested under mode=trace in the mount, so a reading deep-link never
+    # carries an unrenderable target.
+    client, cid = ctx
+    body = client.get(
+        "/", params={"id": cid, "mode": "reading", "event": "01EVENTID"}
+    ).text
+    assert "/folio?id=" in body
+    assert "event=" not in body

@@ -612,7 +612,9 @@ def render_search_context(detail: Any, fidelity: Fidelity, **context: Any) -> st
         turns, fidelity, id_prefix=None, anchor_pos=anchor_pos, mode="trace"
     )
     if not body:
-        return _unfold_trigger(conv_id, at)
+        # Same collapsed-trigger fallback as the w<=0 path above — must thread
+        # `event` identically, else a re-unfold from here loses event-precision.
+        return _unfold_trigger(conv_id, at, event)
 
     parts: list[str] = ['<div class="hit-context__slice">', *body, "</div>"]
     parts.append('<div class="hit-context__controls">')
@@ -1087,8 +1089,11 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     # The search → "open in folio" jump passes the matched event (a ULID): the
     # body marks that element is-target and the article root carries
     # data-scroll-to, so enhance.js scrolls it into view after the htmx swap
-    # (event-precise landing). Validated at the route; escaped on emit.
-    target_event_id = context.get("target_event_id") or None
+    # (event-precise landing). Validated at the route; escaped on emit. The
+    # target is a TRACE-mode affordance — response anchors only exist in trace,
+    # and the entry-point rule always opens search jumps in trace — so a
+    # reading-mode folio ignores it (no unscrollable hint on a hand-crafted URL).
+    target_event_id = (context.get("target_event_id") or None) if mode == "trace" else None
 
     # Turn blocks (body + rail) are shared with the search context slice; the
     # folio passes id_prefix="t" for its :target anchors + scroll-spy rail.

@@ -124,7 +124,12 @@ class HtmlEmitter:
         """Return ``(attrs, extra_class)`` for the first element of a new event
         run — the anchor the folio jump scrolls/highlights to. Emitted once per
         ``event_id`` run; an empty/repeat id yields no anchor (so a multi-block
-        response gets exactly one ``data-event-id``)."""
+        response gets exactly one ``data-event-id``).
+
+        Uniqueness relies on an upstream invariant: ``_build_narrative`` emits all
+        blocks of one response contiguously under that response's id, and each
+        assistant turn gets a fresh emitter — so an id never recurs after another
+        intervenes, and a single ``_last_event_id`` suffices to dedupe a run."""
         if not event_id or event_id == self._last_event_id:
             return "", ""
         self._last_event_id = event_id
