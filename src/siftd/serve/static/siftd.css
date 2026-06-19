@@ -151,6 +151,15 @@ body { margin: 0; }
 .turn { margin-bottom:32px; max-width:68ch; scroll-margin-top:24px; }
 .turn:target { background:var(--sel-bg); box-shadow:var(--row-marker); padding:8px 12px;
   margin-left:-12px; }
+/* Search → folio jump landing. The matched event's first element (the prompt
+   div, or the first prose/tool/thinking element of the matched response) carries
+   data-event-id; the route marks it .is-target and sets data-scroll-to so
+   enhance.js scrolls it under the chrome. The outline marks "you landed here"
+   without reflow (works on prose, a tool card, or the prompt div alike); the
+   scroll-margin clears the (independently scrolling) folio body's top edge. */
+[data-event-id] { scroll-margin-top:24px; }
+.is-target { background:var(--sel-bg); outline:2px solid var(--accent);
+  outline-offset:3px; }
 .turn__head { display:flex; align-items:baseline; gap:12px; margin-bottom:11px; }
 .turn__role { font-size:var(--fs-micro); letter-spacing:.16em; text-transform:uppercase;
   font-weight:700; color:var(--mid); }

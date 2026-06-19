@@ -366,6 +366,21 @@ async def flow(cdp, check, goto, code_conv):
     check("find hit click mounts folio in #main", bool(folio))
     check("find hit click pushes /?id= deep link", bool(pushed))
 
+    # Event-precise jump: a search hit opens the folio in TRACE mode (the
+    # entry-point rule) anchored at the matched event. The route marks that
+    # element .is-target and emits data-scroll-to, which enhance.js consumes
+    # (scrollIntoView) then removes — so the reader lands ON the match, not the
+    # top. "needle" occurs only in prompts, so every hit carries a prompt
+    # event_id → the landing is deterministic. Proves the whole chain (button →
+    # route → enhance.js) fires in a real browser under CSP; the consume is also
+    # the only in-browser proof scrollToEvent() actually ran.
+    jump_trace = await cdp.eval('!!document.querySelector(\'#main .folio[data-mode="trace"]\')')
+    is_target = await cdp.eval("!!document.querySelector('#main .is-target')")
+    hint_consumed = await cdp.eval("!document.querySelector('#main [data-scroll-to]')")
+    check("find hit opens folio in trace mode", bool(jump_trace))
+    check("search jump marks + lands on the matched event",
+          bool(is_target) and bool(hint_consumed), f"target={is_target} consumed={hint_consumed}")
+
     # sessions view: live zone (loopback server -> live on, sandbox -> empty)
     # over the day-grouped ingested timeline; hist bars scaled by enhance.js
     await cdp.click('a[data-view="sessions"]')

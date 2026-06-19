@@ -943,3 +943,73 @@ def test_workspace_sort_param(tmp_path):
         assert 'class="ws-sort__opt is-active"' in ranked
         recent = c.get("/view/workspaces?sort=recent", headers=hdrs).text
         assert "is-ranked" not in recent
+
+
+def test_folio_trace_anchors_events(ctx):
+    # Trace mode anchors each response/prompt by its event ULID — the substrate
+    # the search → folio jump targets (event_id is already threaded through
+    # walk_narrative; this proves the route renders it as an anchor).
+    client, cid = ctx
+    body = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+    assert "data-event-id=" in body
+
+
+def test_folio_event_jump_scrolls_and_marks(ctx):
+    # A search hit jumps with ?event=<ULID>; the route marks that element
+    # is-target and emits data-scroll-to so enhance.js lands ON the match, not
+    # the folio top. Pull a real anchor the trace emitted and feed it back.
+    import re
+
+    client, cid = ctx
+    trace = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+    m = re.search(r'data-event-id="([^"]+)"', trace)
+    assert m, "trace should anchor at least one event"
+    ev = m.group(1)
+    body = client.get("/folio", params={"id": cid, "mode": "trace", "event": ev}).text
+    assert f'data-scroll-to="{ev}"' in body
+    assert "is-target" in body
+
+
+def test_folio_rejects_unsafe_event(ctx):
+    # A hostile/selector-breaking ?event= is validated away: no data-scroll-to, no
+    # reflection, no crash (the value never reaches the attribute or the client
+    # querySelector).
+    client, cid = ctx
+    r = client.get(
+        "/folio", params={"id": cid, "mode": "trace", "event": '"]<script>'}
+    )
+    assert r.status_code == 200
+    assert "data-scroll-to" not in r.text
+    assert "<script>" not in r.text
+
+
+def test_find_context_threads_event_through_rings(ctx):
+    # The matched event rides the unfold's ring URLs so the last ring's "open in
+    # folio" jump stays event-precise across in-place steps.
+    client, cid = ctx
+    r = client.get(
+        "/find/context", params={"id": cid, "at": 0, "w": 2, "event": "01EVENTID"}
+    )
+    assert r.status_code == 200
+    assert "event=01EVENTID" in r.text
+
+
+def test_shell_deep_link_carries_trace_jump(ctx):
+    # A hard reload of a search → folio jump URL must re-mount the folio in trace
+    # mode at the matched event: the shell carries mode+event onto the inner
+    # /folio mount (the htmx push-url already put them in the address bar).
+    client, cid = ctx
+    body = client.get("/", params={"id": cid, "mode": "trace", "event": "01EVENTID"}).text
+    assert "/folio?id=" in body
+    assert "mode=trace" in body
+    assert "event=01EVENTID" in body
+
+
+def test_shell_drops_unsafe_event_from_mount(ctx):
+    # A hostile ?event= is validated away before it reaches the mount URL — never
+    # reflected into the page.
+    client, cid = ctx
+    body = client.get("/", params={"id": cid, "mode": "trace", "event": '"><x'}).text
+    assert "mode=trace" in body      # mode still rides
+    assert "event=" not in body      # the bad event does not
+    assert '"><x' not in body

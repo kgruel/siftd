@@ -9,6 +9,7 @@ JSON API routes in routes.py remain untouched.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,19 @@ from litestar.response import Response
 
 from siftd.output._id_format import short_id
 from siftd.serve.routes import _effective_owner
+
+# An event anchor is an events-table ULID; this charset also covers any adapter
+# id we might anchor on. Validating here keeps a malformed/hostile ``?event=``
+# out of the rendered ``data-event-id`` / ``data-scroll-to`` and the client-side
+# selector entirely (defense in depth — the values are also escaped on emit).
+_EVENT_ID_RE = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
+
+
+def _safe_event_id(value: str | None) -> str | None:
+    """Return ``value`` if it is a safe anchor token, else ``None``."""
+    if isinstance(value, str) and _EVENT_ID_RE.match(value):
+        return value
+    return None
 
 
 def _html_response(content: str) -> Response:
@@ -125,6 +139,8 @@ def _asset_v(rel: str) -> str:
 def _page_shell(
     *,
     conv_id: str | None = None,
+    folio_mode: str | None = None,
+    folio_event: str | None = None,
     search_q: str | None = None,
     tag: str | None = None,
     follow_sid: str | None = None,
@@ -146,7 +162,14 @@ def _page_shell(
     from urllib.parse import quote as urlquote
 
     if conv_id:
+        # A search → folio jump deep-links with mode=trace + the matched event;
+        # carry them onto the inner /folio mount so a hard reload lands on the
+        # match too (the htmx push-url already put them in the address bar).
         active, main_url = "transcript", f"/folio?id={urlquote(conv_id)}"
+        if folio_mode == "trace":
+            main_url += "&mode=trace"
+        if folio_event:
+            main_url += f"&event={urlquote(folio_event)}"
     elif search_q:
         active, main_url = "search", f"/find?q={urlquote(search_q)}"
     elif tag:
@@ -242,6 +265,8 @@ def ui_shell(
     live_enabled: bool,
     auth_config: dict | None = None,
     id: str | None = Parameter(query="id", default=None),
+    mode: str = Parameter(query="mode", default="reading"),
+    event: str | None = Parameter(query="event", default=None),
     q: str | None = Parameter(query="q", default=None),
     tag: str | None = Parameter(query="tag", default=None),
     ws: str | None = Parameter(query="ws", default=None),
@@ -250,7 +275,9 @@ def ui_shell(
     """Serve the Swiss page shell — the single full-page HTML response.
 
     Accepts optional params for deep-linkable URLs:
-        ?id=     — open a conversation (Transcript folio)
+        ?id=     — open a conversation (Transcript folio); ?mode=trace + ?event=
+                   carry a search → folio jump so a hard reload re-lands on the
+                   matched event (event validated to a safe anchor token)
         ?q=      — pre-populate Search
         ?tag=    — Find pre-filtered by a tag (Tags view drill-down)
         ?ws=     — open a workspace detail (Workspaces view drill-down)
@@ -260,7 +287,8 @@ def ui_shell(
     footer = _shell_footer(db_path, with_counts=auth_config is None)
     return Response(
         content=_page_shell(
-            conv_id=id, search_q=q, tag=tag, workspace_id=ws, follow_sid=follow,
+            conv_id=id, folio_mode=mode, folio_event=_safe_event_id(event),
+            search_q=q, tag=tag, workspace_id=ws, follow_sid=follow,
             footer=footer, live_enabled=live_enabled,
         ),
         media_type="text/html",
@@ -273,6 +301,7 @@ def ui_folio(
     db_path: Path,
     id: str | None = Parameter(query="id", default=None),
     mode: str = Parameter(query="mode", default="reading"),
+    event: str | None = Parameter(query="event", default=None),
 ) -> Response:
     """Render the Swiss transcript folio for one conversation.
 
@@ -283,6 +312,11 @@ def ui_folio(
     ledger) or ``trace`` (tool I/O inlined in sequence, the agent's actual event
     flow). The toggle re-fetches this route so the fidelity is re-resolved from
     the mode — see below.
+
+    ``event`` (the matched chunk's ULID, from a search → folio jump) marks that
+    event ``is-target`` and rides out as ``data-scroll-to`` so enhance.js scrolls
+    it into view after the swap — the jump lands on the match, not the top.
+    Validated to a safe anchor token; a bad value is simply ignored (no scroll).
     """
     from siftd.api.conversations import (
         AmbiguousPrefix,
@@ -323,6 +357,7 @@ def ui_folio(
     return _html_response(fmt.render_folio(
         detail, fidelity,
         mode=mode,
+        target_event_id=_safe_event_id(event),
         interactive_tags=True,
         tag_action_url="/tag",
         tag_suggest_url="/tags/suggest",
@@ -1001,6 +1036,7 @@ def ui_find_context(
     id: str | None = Parameter(query="id", default=None),
     at: int = Parameter(query="at", default=0),
     w: int = Parameter(query="w", default=0),
+    event: str | None = Parameter(query="event", default=None),
 ) -> Response:
     """Render one search hit's inline context slice — the chunks-view 'unfold'.
 
@@ -1025,7 +1061,9 @@ def ui_find_context(
     # Clamp untrusted inputs: w to the allowed rings (else collapsed), at >= 0.
     w = w if w in SEARCH_CONTEXT_RINGS else 0
     conv_id = (id or "").strip()
-    ctx: dict[str, Any] = {"conv_id": conv_id, "at": at, "w": w}
+    # The matched event rides the ring URLs so the last ring's 'open in folio'
+    # jump stays event-precise; validated to a safe anchor token.
+    ctx: dict[str, Any] = {"conv_id": conv_id, "at": at, "w": w, "event": _safe_event_id(event)}
 
     if w <= 0 or at < 0 or not conv_id:
         return _html_response(fmt.render_search_context(None, _fidelity(), **ctx))

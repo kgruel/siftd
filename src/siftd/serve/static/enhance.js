@@ -123,6 +123,23 @@
     turns.forEach(function (t) { spyObserver.observe(t); });
   }
 
+  // --- search → folio jump: land on the matched event ----------------------
+  // A folio mounted from a search hit carries data-scroll-to=<event ULID> on its
+  // root; scroll that event's element into view once, then consume the hint so
+  // later settles (tag edits, the live poll, an unfold swap) don't re-jump.
+  // CSP-safe: querySelector + scrollIntoView, no eval/inline. The matched
+  // element also renders .is-target, so it's visually marked once landed.
+  function scrollToEvent() {
+    var root = document.querySelector('#main [data-scroll-to]');
+    if (!root) return;
+    var id = root.getAttribute('data-scroll-to');
+    root.removeAttribute('data-scroll-to');  // fire once
+    if (!id) return;
+    var safe = (window.CSS && CSS.escape) ? CSS.escape(id) : id;
+    var el = root.querySelector('[data-event-id="' + safe + '"]');
+    if (el) el.scrollIntoView({ block: 'start' });
+  }
+
   // --- prism syntax highlighting --------------------------------------------
   // The folio's markdown emitter produces fenced <pre><code class="language-*">
   // blocks; prism (vendored, autoloader-driven) colorizes them. CSP-safe: prism
@@ -196,7 +213,7 @@
     });
   }
 
-  function enhance() { wireTone(); drawLedgers(); drawHists(); syncChrome(); initSpy(); highlight(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); }
+  function enhance() { wireTone(); drawLedgers(); drawHists(); syncChrome(); initSpy(); highlight(); scrollToEvent(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); }
 
   document.body.addEventListener('htmx:afterSettle', enhance);
   applyTone();

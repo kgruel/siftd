@@ -61,3 +61,32 @@ def test_html_emitter_full_branch_sweep(monkeypatch):
         '<p class="narrative-text">para2</p>',
     ]:
         assert frag in html
+
+
+def test_html_emitter_anchors_once_per_event_run():
+    # A response = many blocks under one event_id → exactly one data-event-id for
+    # it (a unique anchor / jump target, not one per block). A new event_id opens
+    # a new anchor; a None id anchors nothing. target_event_id marks the matched
+    # run .is-target.
+    e = HtmlEmitter(target_event_id="01B")
+    e.text("a1", event_id="01A")
+    e.text("a2 same run", event_id="01A")   # same event → no second anchor
+    e.text("b1", event_id="01B")            # new event → new anchor + is-target
+    e.thinking("b-think", event_id="01B")   # still 01B → no extra anchor
+    e.text("loose", event_id=None)          # no id → no anchor
+    html = e.to_html()
+    assert html.count('data-event-id="01A"') == 1
+    assert html.count('data-event-id="01B"') == 1
+    assert html.count("data-event-id") == 2
+    assert html.count("is-target") == 1
+    assert 'class="narrative-text is-target" data-event-id="01B"' in html
+
+
+def test_html_emitter_escapes_event_id():
+    # The route validates ?event= to a ULID charset, but the emitter still escapes
+    # defensively — an event_id can never break out of the attribute.
+    e = HtmlEmitter()
+    e.text("x", event_id='a"b<c')
+    html = e.to_html()
+    assert 'data-event-id="a"b<c"' not in html
+    assert "a&quot;b&lt;c" in html

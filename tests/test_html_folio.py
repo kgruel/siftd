@@ -17,7 +17,8 @@ from siftd.api.conversations import (
     ToolCallSummary,
     Turn,
 )
-from siftd.output.html_fmt import render_folio, render_search_context
+from siftd.domain.search_types import SearchView
+from siftd.output.html_fmt import render_folio, render_search, render_search_context
 
 _FID = Fidelity(depth=2, visible=frozenset({"text"}), chars=0)
 # Trace mode needs a tools/thinking-visible fidelity (the route resolves this);
@@ -407,3 +408,119 @@ def test_folio_trace_mode_shows_full_tool_result_not_truncated():
     assert "RESULTLINE00" in html
     assert "RESULTLINE19" in html  # the last line survives → result not cut
     assert "more lines" not in html  # no overflow stub when full
+
+
+# ---------------------------------------------------------------------------
+# Event-precise "open in folio" jump (Phase 2 / slice 2). The trace anchors each
+# response (and each prompt) by its event ULID; a search hit jumps to mode=trace
+# targeting one, so the folio lands ON the match (data-scroll-to + is-target),
+# not the folio top. Pure render-layer — the event_id is already threaded through
+# walk_narrative; this proves the anchors/jump markup ride that substrate.
+# ---------------------------------------------------------------------------
+
+
+def _anchored_detail() -> ConversationDetail:
+    """A trace conv whose blocks carry event_ids — the anchor substrate the jump
+    targets. One response (01RESP) spans thinking → text → tool → text (one
+    event, many blocks); the prompt is its own event (01PROMPT)."""
+    turn = Turn(
+        timestamp="2026-03-15T10:30:00Z",
+        prompt_text="run it",
+        prompt_id="01PROMPT",
+        response_ids=["01RESP"],
+        total_input_tokens=10,
+        total_output_tokens=5,
+        narrative=[
+            NarrativeBlock(block_type="thinking", content="hmm", event_id="01RESP"),
+            NarrativeBlock(block_type="text", content="before", event_id="01RESP"),
+            NarrativeBlock(
+                block_type="tool_calls", event_id="01RESP",
+                tool_calls=[ToolCallDetail(
+                    tool_name="Read", status="success",
+                    input="x.py", result="body",
+                )],
+            ),
+            NarrativeBlock(block_type="text", content="after", event_id="01RESP"),
+        ],
+        _tool_call_summaries=[ToolCallSummary("Read", "success", 1)],
+    )
+    return ConversationDetail(
+        id="01TRACE00000000000", workspace_path="/proj", model="claude-opus",
+        started_at="2026-03-15T10:30:00Z",
+        total_input_tokens=10, total_output_tokens=5, turns=[turn],
+    )
+
+
+def test_trace_anchors_each_response_once():
+    # One response = many blocks under one event_id → exactly one data-event-id
+    # for it, so the anchor (and the jump's target) is unique, not duplicated
+    # across every block of the response.
+    html = render_folio(_anchored_detail(), _FID_TRACE, mode="trace")
+    assert html.count('data-event-id="01RESP"') == 1
+    # The prompt is its own event, anchored on the user div.
+    assert 'data-event-id="01PROMPT"' in html
+
+
+def test_trace_target_marks_is_target_and_scroll_hint():
+    html = render_folio(
+        _anchored_detail(), _FID_TRACE, mode="trace", target_event_id="01RESP",
+    )
+    assert 'data-scroll-to="01RESP"' in html  # enhance.js consumes this once
+    assert "is-target" in html                # the landed element is marked
+
+
+def test_no_target_means_no_scroll_hint():
+    html = render_folio(_anchored_detail(), _FID_TRACE, mode="trace")
+    assert "data-scroll-to" not in html
+    assert "is-target" not in html
+
+
+def test_reading_mode_anchors_prompt_but_not_response_body():
+    # Reading uses the FolioEmitter (tools live in the ledger), which does not
+    # anchor response blocks; only the prompt div (rendered by _render_turn_blocks)
+    # is anchored. Response anchoring is a trace-mode affordance — the jump's
+    # target — so the search jump opens trace, not reading.
+    html = render_folio(_anchored_detail(), _FID_TRACE, mode="reading")
+    assert 'data-event-id="01PROMPT"' in html
+    assert 'data-event-id="01RESP"' not in html
+
+
+def _chunk(**over: object) -> dict:
+    base = {
+        "conversation_id": "01CONV", "display_label": "ASSISTANT", "score": 0.9,
+        "_workspace": "p", "_started_at": "2026-06-19", "text": "match",
+        "turn_index": 3, "event_id": "01EVT",
+    }
+    base.update(over)
+    return base
+
+
+def test_search_chunk_jump_opens_trace_at_event():
+    html = render_search(
+        SearchView(results=[_chunk()], view="chunks"),
+        _FID, query="q", detail_base="/folio", shell_base="/",
+    )
+    # The hit's folio jump is a trace jump anchored at the matched event.
+    assert "mode=trace" in html and "event=01EVT" in html
+    # The unfold trigger carries the event so the in-place rings stay event-aware.
+    assert "/find/context?id=01CONV&at=3&w=2&event=01EVT" in html
+
+
+def test_search_chunk_without_event_still_opens_trace():
+    chunk = _chunk()
+    del chunk["event_id"]
+    html = render_search(
+        SearchView(results=[chunk], view="chunks"),
+        _FID, query="q", detail_base="/folio", shell_base="/",
+    )
+    assert "mode=trace" in html   # the entry-point rule (search → trace) still holds
+    assert "event=" not in html   # but there's no matched event to anchor
+
+
+def test_unfold_last_ring_jump_is_event_precise():
+    html = render_search_context(
+        _anchored_detail(), _FID_TRACE,
+        conv_id="01CONV", at=0, w=10, anchor_pos=0, event="01EVT",
+    )
+    assert "open in folio" in html
+    assert "mode=trace" in html and "event=01EVT" in html

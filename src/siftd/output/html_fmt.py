@@ -24,7 +24,15 @@ name = "html"
 media_type = "text/html"
 
 
-def _hx_detail(detail_base: str, value: str, shell_base: str = "", *, key: str = "id") -> str:
+def _hx_detail(
+    detail_base: str,
+    value: str,
+    shell_base: str = "",
+    *,
+    key: str = "id",
+    mode: str | None = None,
+    event: str | None = None,
+) -> str:
     """Build htmx attributes that mount a surface into ``#main``, or "" if no base.
 
     Rows mount into ``#main`` — the Swiss shell's single swap target (the old
@@ -35,15 +43,27 @@ def _hx_detail(detail_base: str, value: str, shell_base: str = "", *, key: str =
     output is also attribute-safe, so the whole attribute stays html-safe. (For
     ULIDs quote and escape are identical, so existing ``?id=`` callers are
     unaffected.)
+
+    A folio jump from a search hit carries ``mode="trace"`` (the entry-point
+    default: you came from a match, so show the agent's actual event flow) and,
+    when the matched chunk knows it, ``event=<ULID>`` — the route marks that
+    event ``is-target`` and scrolls it into view, so the jump lands *on the
+    match*, not the folio top. Both ride the push-url too, so a reload
+    deep-links to the same spot.
     """
     from urllib.parse import quote as _q
 
     if not detail_base:
         return ""
     qv = _q(value)
-    push = f' hx-push-url="{escape(shell_base)}?{key}={qv}"' if shell_base else ""
+    suffix = ""
+    if mode:
+        suffix += f"&mode={_q(mode)}"
+    if event:
+        suffix += f"&event={_q(event)}"
+    push = f' hx-push-url="{escape(shell_base)}?{key}={qv}{suffix}"' if shell_base else ""
     return (
-        f' hx-get="{escape(detail_base)}?{key}={qv}"'
+        f' hx-get="{escape(detail_base)}?{key}={qv}{suffix}"'
         f' hx-target="#main" hx-swap="innerHTML"'
         f'{push}'
     )
@@ -446,7 +466,7 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
                 snippet = truncate_text(r.get("text", ""), 120).replace("\n", " ")
                 parts.append(
                     f'<div class="search-hit compact"'
-                    f'{_hx_detail(detail_base, conv_id, shell_base)}>'
+                    f'{_hx_detail(detail_base, conv_id, shell_base, mode="trace", event=r.get("event_id"))}>'
                     f'<span class="identifier">{escape(short_id(conv_id))}</span>'
                     f' <span class="metric">{score:.3f}</span>'
                     f' <span class="workspace">{escape(ws)}</span>'
@@ -471,15 +491,18 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
             ws = r.get("_workspace", "")
             started = r.get("_started_at", "")
             turn_index = r.get("turn_index")
+            event_id = r.get("event_id")
 
             # The hit splits into two siblings: __main carries the folio nav (the
             # deliberate jump); .hit-context holds the inline unfold control. They
             # are siblings — not nested — so an unfold click never bubbles to the
             # folio-navigable block (no stopPropagation / JS needed, CSP-clean).
+            # The jump opens the trace anchored at the matched event (search →
+            # trace; lands on the match, not the folio top).
             parts.append('<article class="search-hit">')
             parts.append(
                 f'<div class="search-hit__main"'
-                f'{_hx_detail(detail_base, conv_id, shell_base)}>'
+                f'{_hx_detail(detail_base, conv_id, shell_base, mode="trace", event=event_id)}>'
             )
             parts.append(
                 f'<header>'
@@ -505,7 +528,8 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
             # unfold, the hit still navigates to the folio).
             if conv_id and turn_index is not None:
                 parts.append(
-                    f'<div class="hit-context">{_unfold_trigger(conv_id, int(turn_index))}</div>'
+                    f'<div class="hit-context">'
+                    f'{_unfold_trigger(conv_id, int(turn_index), event_id)}</div>'
                 )
             parts.append("</article>")
 
@@ -534,22 +558,25 @@ def _unfold_button(label: str, attrs: str, *, classes: str = "") -> str:
     return f'<button class="{cls}" type="button"{attrs}>{escape(label)}</button>'
 
 
-def _ctx_attrs(conv_id: str, at: int, w: int) -> str:
+def _ctx_attrs(conv_id: str, at: int, w: int, event: str | None = None) -> str:
     """htmx attrs for a same-region context step: fetch ring ``w`` and swap it
     into the closest ``.hit-context`` (so hits unfold independently, no id
-    plumbing). ``w=0`` is the collapsed trigger."""
+    plumbing). ``w=0`` is the collapsed trigger. ``event`` (the matched chunk's
+    ULID) rides every ring URL so it survives the re-render and the last ring's
+    'open in folio' jump stays event-precise."""
+    evt = f"&event={escape(event)}" if event else ""
     return (
-        f' hx-get="/find/context?id={escape(conv_id)}&at={at}&w={w}"'
+        f' hx-get="/find/context?id={escape(conv_id)}&at={at}&w={w}{evt}"'
         f' hx-target="closest .hit-context" hx-swap="innerHTML"'
     )
 
 
-def _unfold_trigger(conv_id: str, at: int) -> str:
+def _unfold_trigger(conv_id: str, at: int, event: str | None = None) -> str:
     """The collapsed state of a chunk's context region — a single control that
     fetches the first ring. Shared by the initial hit render and the 'collapse'
     action (which restores exactly this)."""
     return _unfold_button(
-        "unfold context", _ctx_attrs(conv_id, at, SEARCH_CONTEXT_RINGS[0])
+        "unfold context", _ctx_attrs(conv_id, at, SEARCH_CONTEXT_RINGS[0], event)
     )
 
 
@@ -564,15 +591,18 @@ def render_search_context(detail: Any, fidelity: Fidelity, **context: Any) -> st
     needed; ``w <= 0`` (or a missing/short read) renders the collapsed trigger.
 
     Context keys: ``conv_id``, ``at`` (anchor turn_index), ``w`` (current
-    window half-width), ``anchor_pos`` (matched exchange's index in the window).
+    window half-width), ``anchor_pos`` (matched exchange's index in the window),
+    ``event`` (the matched chunk's ULID — rides the ring URLs so the last ring's
+    'open in folio' jump lands event-precise).
     """
     conv_id = context.get("conv_id", "")
     at = int(context.get("at", 0))
     w = int(context.get("w", 0))
     anchor_pos = context.get("anchor_pos")
+    event = context.get("event") or None
 
     if w <= 0 or detail is None:
-        return _unfold_trigger(conv_id, at)
+        return _unfold_trigger(conv_id, at, event)
 
     turns = getattr(detail, "turns", []) or []
     # The unfold IS the trace: it answers "what did the agent actually do here",
@@ -588,20 +618,22 @@ def render_search_context(detail: Any, fidelity: Fidelity, **context: Any) -> st
     parts.append('<div class="hit-context__controls">')
     next_w = next((r for r in SEARCH_CONTEXT_RINGS if r > w), None)
     if next_w is not None:
-        parts.append(_unfold_button("more context", _ctx_attrs(conv_id, at, next_w)))
+        parts.append(_unfold_button("more context", _ctx_attrs(conv_id, at, next_w, event)))
     else:
         # Last ring → the deliberate jump into the full folio. Reuse _hx_detail
         # so the folio-jump contract (target #main, push-url, quote()-encoded id)
-        # lives in exactly one place.
+        # lives in exactly one place. mode=trace + the matched event so the jump
+        # lands on the match, consistent with the hit's own folio nav.
         parts.append(
             _unfold_button(
-                "open in folio", _hx_detail("/folio", conv_id, "/"),
+                "open in folio",
+                _hx_detail("/folio", conv_id, "/", mode="trace", event=event),
                 classes="hit-unfold--folio",
             )
         )
     parts.append(
         _unfold_button(
-            "collapse", _ctx_attrs(conv_id, at, 0), classes="hit-unfold--collapse"
+            "collapse", _ctx_attrs(conv_id, at, 0, event), classes="hit-unfold--collapse"
         )
     )
     parts.append("</div>")
@@ -868,6 +900,7 @@ def _render_turn_blocks(
     id_prefix: str | None = None,
     anchor_pos: int | None = None,
     mode: str = "reading",
+    target_event_id: str | None = None,
 ) -> tuple[list[str], list[str], int, Counter[str]]:
     """Render exchanges as user/assistant ``.turn`` blocks — shared by the folio
     body and the search context slice (the unfold view).
@@ -921,8 +954,14 @@ def _render_turn_blocks(
                 anchor = f"{id_prefix}-{n}"
                 idattr = f' id="{anchor}"'
                 rail.append(_folio_rail_item(n, "user", "User", t_time, anchor))
+            # A prompt is a single event: anchor the whole user div by its
+            # prompt_id (a ULID) so the search → folio jump can scroll/highlight
+            # it. The assistant body's events are anchored inside, by the emitter.
+            pid = getattr(turn, "prompt_id", None)
+            evt_attrs = f' data-event-id="{escape(pid)}"' if pid else ""
+            evt_cls = " is-target" if pid and pid == target_event_id else ""
             body.append(
-                f'<div class="turn{amark}" data-role="user"{idattr}>'
+                f'<div class="turn{amark}{evt_cls}" data-role="user"{idattr}{evt_attrs}>'
                 f'<header class="turn__head"><span class="turn__role">User</span>'
                 f'<span class="turn__time">{escape(t_time)}</span></header>'
                 f'<div class="turn__text">{_md_to_html(prompt_text)}</div>'
@@ -947,7 +986,7 @@ def _render_turn_blocks(
                 anchor = f"{id_prefix}-{n}"
                 idattr = f' id="{anchor}"'
                 rail.append(_folio_rail_item(n, "assistant", "Assistant", t_time, anchor))
-            emitter = HtmlEmitter() if trace else _FolioEmitter()
+            emitter = HtmlEmitter(target_event_id) if trace else _FolioEmitter()
             walk_narrative(narrative, emitter, fidelity=fidelity, tool_chars=0)
             body.append(
                 f'<div class="turn{amark}" data-role="assistant"{idattr}>'
@@ -1045,10 +1084,16 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     if mode not in ("reading", "trace"):
         mode = "reading"
 
+    # The search → "open in folio" jump passes the matched event (a ULID): the
+    # body marks that element is-target and the article root carries
+    # data-scroll-to, so enhance.js scrolls it into view after the htmx swap
+    # (event-precise landing). Validated at the route; escaped on emit.
+    target_event_id = context.get("target_event_id") or None
+
     # Turn blocks (body + rail) are shared with the search context slice; the
     # folio passes id_prefix="t" for its :target anchors + scroll-spy rail.
     body, rail, n, tool_counter = _render_turn_blocks(
-        turns, fidelity, id_prefix="t", mode=mode
+        turns, fidelity, id_prefix="t", mode=mode, target_event_id=target_event_id
     )
 
     total_tokens = (
@@ -1101,6 +1146,7 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
         if live_poll_url else ""
     )
     folio_cls = "folio folio--live" if live_poll_url else "folio"
+    scroll_attr = f' data-scroll-to="{escape(target_event_id)}"' if target_event_id else ""
     # The reading↔trace toggle re-fetches the folio (so the route re-resolves
     # fidelity). Suppressed on a live folio: it isn't in the DB yet, so the
     # /folio re-fetch would 404 — same gate as curation.
@@ -1110,7 +1156,7 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     parts: list[str] = [
         f'<article class="{folio_cls}" data-view="{escape(view)}"'
         f' data-title="{escape(title)}" data-mode="{escape(mode)}"'
-        f' data-count="{turn_count}" data-kick="{kick}"{live_attrs}>',
+        f' data-count="{turn_count}" data-kick="{kick}"{scroll_attr}{live_attrs}>',
         '<nav class="folio__nav" aria-label="Turns">',
         '<div class="folio__navhead"><span class="micro">Turns</span>'
         f'<span class="folio__navmeta">{turn_count}</span></div>',
