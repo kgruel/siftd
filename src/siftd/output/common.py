@@ -3,8 +3,21 @@
 Shared by peek, query, search, and export commands.
 """
 
+import shutil
 from datetime import datetime, tzinfo
 from pathlib import Path
+
+
+def term_width(fallback: int = 80) -> int:
+    """Current terminal width in columns.
+
+    The single terminal-width helper for the whole output layer (tables,
+    search snippets, doctor progress). Uses ``shutil.get_terminal_size`` so the
+    ``COLUMNS`` env var is honored — which lets callers and tests pin a width
+    (e.g. eyeballing at ``COLUMNS=80``) and degenerate ptys fall back cleanly
+    instead of reporting 0.
+    """
+    return shutil.get_terminal_size((fallback, 24)).columns
 
 
 def fmt_tokens(n: int) -> str:
@@ -153,11 +166,6 @@ def format_table(columns: list[str], rows: list[list[str]], *, sep: str = "  ") 
     for row in rows:
         lines.append(sep.join(val.ljust(widths[i]) for i, val in enumerate(row)))
     return "\n".join(lines)
-
-
-def print_table(columns: list[str], rows: list[list[str]], *, sep: str = "  ") -> None:
-    """Print column-aligned table with header and separator line."""
-    print(format_table(columns, rows, sep=sep))
 
 
 def print_indented(text: str, indent: str = "  ") -> None:

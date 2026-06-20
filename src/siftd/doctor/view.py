@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import os
-
 from siftd.doctor.checks import Finding
+from siftd.output.common import term_width
 
 
 def _painted():
@@ -53,13 +52,6 @@ def _style_for(key: str):
     return {"error": p.error, "warning": p.warning, "success": p.success, "muted": p.muted}[key]
 
 
-def _term_width() -> int:
-    try:
-        return os.get_terminal_size().columns
-    except OSError:
-        return 80
-
-
 def render_progress_block(
     check_names: list[str],
     completed: dict[str, list[Finding]],
@@ -88,7 +80,7 @@ def render_progress_block(
     # terminal — a pty that reports 0 columns (e.g. under `script`) crashes
     # painted with "Block row width != block width". 40 is the narrowest width
     # the layout stays coherent at; wider real terminals are unaffected.
-    tw = max(_term_width(), 40)
+    tw = max(term_width(), 40)
     total = len(check_names)
     done = len(completed)
     pct = done / total if total > 0 else 0.0

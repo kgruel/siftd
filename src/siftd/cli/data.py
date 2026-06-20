@@ -754,7 +754,7 @@ def _doctor_list(args) -> int:
         ]
         print(json.dumps(out, indent=2))
         return 0
-    from siftd.output.common import print_table
+    from siftd.output import print_table
 
     rows = [
         [c.name, c.description, "[fix]" if c.has_fix else ""]

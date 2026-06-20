@@ -38,7 +38,7 @@ def test_render_progress_block_survives_any_terminal_width(reported_cols, monkey
     0/negative/tiny widths are the degenerate-pty case that used to crash; 40+
     are normal terminals. All must produce a non-empty Block.
     """
-    monkeypatch.setattr("siftd.doctor.view._term_width", lambda: reported_cols)
+    monkeypatch.setattr("siftd.doctor.view.term_width", lambda: reported_cols)
 
     block = render_progress_block(
         ["schema-version", "ingest-errors", "pricing-provenance"],
@@ -52,7 +52,7 @@ def test_render_progress_block_survives_any_terminal_width(reported_cols, monkey
 
 def test_render_progress_block_zero_width_no_issues(monkeypatch):
     """The all-passed path (empty left column) also survives a 0-width pty."""
-    monkeypatch.setattr("siftd.doctor.view._term_width", lambda: 0)
+    monkeypatch.setattr("siftd.doctor.view.term_width", lambda: 0)
 
     block = render_progress_block(
         ["schema-version", "fts-stale"],

@@ -96,7 +96,11 @@ class TestTerminalRenderList:
         assert "my-project" in line
         assert "claude-opus-4-5" in line  # model with date stripped
         assert "3p/5r" not in line  # old Xp/Yr format removed
-        assert "│    3│" in line    # turns = prompt_count, right-aligned
+        # turns = prompt_count, right-aligned in its gutter-separated column,
+        # sitting before the tokens column
+        import re
+
+        assert re.search(r"\s3\s+1\.2k", line), line
         assert "1.2k" in line
         # Cost lives at depth>=3; tags too
         assert "$" not in line
@@ -318,8 +322,8 @@ class TestFormatTable:
         assert len(lines) == 4  # header + sep + 2 rows
         assert "---" in lines[1]
 
-    def test_print_table_delegates(self, capsys):
-        from siftd.output.common import print_table
+    def test_print_table_renders_through_painted(self, capsys):
+        from siftd.output import print_table
 
         print_table(["x"], [["y"]])
         captured = capsys.readouterr()

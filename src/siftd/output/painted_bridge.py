@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -15,11 +14,12 @@ from siftd.output.common import (
     fmt_tokens,
     fmt_workspace,
     format_refs_annotation,
+    term_width,
     truncate_text,
 )
 
 if TYPE_CHECKING:
-    from painted import Align, Block, Fidelity, Line, Style
+    from painted import Block, Fidelity, Line, Style
 
     from siftd.output.theme import DomainStyles
     from siftd.output.tool_presenters import ToolPresentation
@@ -642,50 +642,6 @@ def render_follow_event_block(
     return join_vertical(*parts)
 
 
-def _styled_table(
-    col_defs: list[tuple[str, Callable, Style, Align]],
-    items: list,
-) -> Block:
-    """Build a painted table from column definitions and data items.
-
-    Each col_def is (header, cell_fn, cell_style, alignment).
-    cell_fn(item) -> str for each row.
-
-    Styling comes from the ambient Theme (palette + borders).
-    Selection highlight is disabled (static table, not interactive).
-    """
-    from painted import Style as PStyle
-    from painted.views import Column, TableState, table
-
-    # Build cell text grid and compute column widths from content
-    cell_texts: list[list[str]] = []
-    for item in items:
-        cell_texts.append([col_fn(item) for _, col_fn, _, _ in col_defs])
-
-    widths = [len(header) for header, _, _, _ in col_defs]
-    for row in cell_texts:
-        for i, cell in enumerate(row):
-            widths[i] = max(widths[i], len(cell))
-
-    # Build painted Column definitions and styled rows
-    columns: list[Column] = []
-    for i, (header, _, _, align) in enumerate(col_defs):
-        columns.append(Column(
-            header=_line((header, PStyle())),
-            width=widths[i],
-            align=align,
-        ))
-
-    rows: list[list[Line]] = []
-    for row_texts in cell_texts:
-        rows.append([
-            _line((text, col_def[2])) for text, col_def in zip(row_texts, col_defs)
-        ])
-
-    state = TableState().with_count(len(rows)).with_visible(len(rows))
-    return table(state, columns, rows, visible_height=len(rows), selected_style=PStyle())
-
-
 def _fmt_cost(c) -> str:
     """Cost cell — '?' when cost is unknown, else dollar amount.
 
@@ -707,9 +663,14 @@ def _caveat_footer_block(caveats: list, fidelity: Fidelity) -> Block | None:
     if not caveats:
         return None
 
+    import sys
+
     from painted import current_palette
 
     p = current_palette()
+    # Wrap to the terminal so a long caveat message doesn't overflow the line
+    # right under the now-width-budgeted table. None (piped) = natural width.
+    width = term_width() if sys.stdout.isatty() else None
 
     by_kind_rows: dict[str, int] = {}
     by_kind_query: list[str] = []
@@ -720,12 +681,18 @@ def _caveat_footer_block(caveats: list, fidelity: Fidelity) -> Block | None:
             by_kind_query.append(c.message)
 
     lines: list[Line] = []
+
+    def _emit(text: str) -> None:
+        line = _line((text, p.muted))
+        if width is not None and line.width > width:
+            lines.extend(_wrap_spans(list(line.spans), width))
+        else:
+            lines.append(line)
+
     for kind, count in sorted(by_kind_rows.items()):
-        lines.append(_line(
-            (f"{count} row(s) with {kind}", p.muted),
-        ))
+        _emit(f"{count} row(s) with {kind}")
     for msg in by_kind_query:
-        lines.append(_line((msg, p.muted)))
+        _emit(msg)
 
     if not lines:
         return None
@@ -754,33 +721,42 @@ def render_list_block(
     if not summaries:
         return None
 
+    import sys
+
     from painted import Align, current_palette, join_vertical
-    from painted import Style as PStyle
 
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
+    from siftd.output.table import Col, render_table
 
     p = current_palette()
     depth = fidelity.depth
 
-    col_defs: list[tuple[str, Callable, PStyle, Align]] = [
-        ("id", lambda c: short_id(c.id) if c.id else "", p.accent, Align.START),
-        ("started_at", lambda c: fmt_timestamp(c.started_at), p.muted, Align.START),
-        ("workspace", lambda c: fmt_workspace(c.workspace_path), PStyle(), Align.START),
+    cols: list[Col] = [
+        Col("id", lambda c: short_id(c.id) if c.id else "", style=p.accent),
+        Col("started_at", lambda c: fmt_timestamp(c.started_at), style=p.muted),
+        Col(
+            "workspace",
+            lambda c: fmt_workspace(c.workspace_path),
+            fill=True,
+            min_width=12,
+            ellipsis_left=True,
+        ),
     ]
     if depth >= 1:
-        col_defs.extend([
-            ("model", lambda c: fmt_model(c.model) if c.model else "", PStyle(), Align.START),
-            ("turns", lambda c: str(c.prompt_count), p.muted, Align.END),
-            ("tokens", lambda c: fmt_tokens(c.total_tokens), p.muted, Align.END),
+        cols.extend([
+            Col("model", lambda c: fmt_model(c.model) if c.model else ""),
+            Col("turns", lambda c: str(c.prompt_count), style=p.muted, align=Align.END),
+            Col("tokens", lambda c: fmt_tokens(c.total_tokens), style=p.muted, align=Align.END),
         ])
     if depth >= 3:
-        col_defs.extend([
-            ("cost", lambda c: _fmt_cost(c), p.muted, Align.END),
-            ("responses", lambda c: str(c.response_count), p.muted, Align.END),
-            ("tags", lambda c: ", ".join(c.tags) if c.tags else "", p.accent, Align.START),
+        cols.extend([
+            Col("cost", lambda c: _fmt_cost(c), style=p.muted, align=Align.END),
+            Col("responses", lambda c: str(c.response_count), style=p.muted, align=Align.END),
+            Col("tags", lambda c: ", ".join(c.tags) if c.tags else "", style=p.accent),
         ])
 
-    table_block = _styled_table(col_defs, summaries)
+    width = term_width() if sys.stdout.isatty() else None
+    table_block = render_table(cols, summaries, width=width)
     footer = _caveat_footer_block(caveats or [], fidelity)
     if footer is None:
         return table_block
@@ -798,12 +774,13 @@ def render_peek_list_block(
     if not sessions:
         return None
 
+    import sys
     import time
 
-    from painted import Align, current_palette
-    from painted import Style as PStyle
+    from painted import current_palette
 
     from siftd.output import fmt_ago, fmt_model
+    from siftd.output.table import Col, render_table
 
     p = current_palette()
     now = time.time()
@@ -823,17 +800,18 @@ def render_peek_list_block(
         child_count = len(children_by_parent.get(s.session_id, []))
         return f"+{child_count} agents" if child_count > 0 else ""
 
-    col_defs: list[tuple[str, Callable, PStyle, Align]] = [
-        ("session", lambda s: short_id(s.session_id), p.accent, Align.START),
-        ("workspace", _workspace, PStyle(), Align.START),
-        ("activity", lambda s: fmt_ago(now - s.last_activity), p.muted, Align.START),
-        ("exchanges", _exchanges, p.muted, Align.START),
-        ("model", lambda s: fmt_model(s.model), PStyle(), Align.START),
-        ("adapter", lambda s: s.adapter_name or "", p.muted, Align.START),
-        ("agents", _suffix, p.accent, Align.START),
+    cols: list[Col] = [
+        Col("session", lambda s: short_id(s.session_id), style=p.accent),
+        Col("workspace", _workspace, fill=True, min_width=12, ellipsis_left=True),
+        Col("activity", lambda s: fmt_ago(now - s.last_activity), style=p.muted),
+        Col("exchanges", _exchanges, style=p.muted),
+        Col("model", lambda s: fmt_model(s.model)),
+        Col("adapter", lambda s: s.adapter_name or "", style=p.muted),
+        Col("agents", _suffix, style=p.accent),
     ]
 
-    return _styled_table(col_defs, sessions)
+    width = term_width() if sys.stdout.isatty() else None
+    return render_table(cols, sessions, width=width)
 
 
 # ---------------------------------------------------------------------------
@@ -861,14 +839,13 @@ def _search_width(fidelity: Fidelity) -> tuple[int | None, bool]:
     (no char limit at depth >= 2) returns ``None`` — the natural-sizing escape
     that shows full, untruncated text for piping/review.
     """
-    import shutil
     import sys
 
     full = not (fidelity.chars == 0 and fidelity.depth < 2)
     if full:
         return None, False
     if sys.stdout.isatty():
-        return shutil.get_terminal_size((100, 24)).columns, True
+        return term_width(100), True
     return 100, True
 
 
