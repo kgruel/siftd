@@ -22,7 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "asyncssh",
-    "painted>=0.1.7",
+    "painted>=0.3.1",
     "tomlkit",
     # Client-side HTTP: sync push/pull, serve delegation, and device-code token
     # refresh all need an HTTP client. In base (not [serve]) so a thin client
