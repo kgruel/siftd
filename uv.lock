@@ -1071,13 +1071,22 @@ wheels = [
 [[package]]
 name = "painted"
 version = "0.3.1"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../painted" }
 dependencies = [
     { name = "wcwidth" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/18/a5/b57e518f41af75784310aecd4731d17eff357ae210e2138dbac0ea949d71/painted-0.3.1.tar.gz", hash = "sha256:7d1b0393c1d29387895a35f232b5c6cce2518a1a0723fc97040588f72270e372", size = 1121054, upload-time = "2026-06-15T20:19:39.454Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/c6/ae01e8a034b9751b19d10405f0f60600fe51d04772ca08c975d56aec399c/painted-0.3.1-py3-none-any.whl", hash = "sha256:9016cbfd175697963072e4b5abfac2f797e16ecec67ecce745309088c38bd1b1", size = 162592, upload-time = "2026-06-15T20:19:38.138Z" },
+
+[package.metadata]
+requires-dist = [{ name = "wcwidth", specifier = ">=0.2" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "hypothesis", specifier = ">=6.0" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.23" },
+    { name = "pytest-cov", specifier = ">=6.0" },
+    { name = "ruff", specifier = ">=0.8" },
+    { name = "ty", specifier = ">=0.0.1a11" },
 ]
 
 [[package]]
@@ -1502,7 +1511,7 @@ requires-dist = [
     { name = "mistune", marker = "extra == 'serve'", specifier = ">=3.0" },
     { name = "numpy", marker = "extra == 'embed'" },
     { name = "onnxruntime", marker = "extra == 'embed'" },
-    { name = "painted", specifier = ">=0.3.1" },
+    { name = "painted", editable = "../painted" },
     { name = "prysk", marker = "extra == 'dev'" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'serve'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },

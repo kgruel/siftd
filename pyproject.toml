@@ -65,6 +65,12 @@ dev = [
     "chardet<6",
 ]
 
+# DEV ONLY — iterate against the local painted feat/table-overflow-ellipsis
+# branch (Overflow.FIT + Column.ellipsis), unpublished. Revert this source and
+# bump the `painted>=` pin to the published release before merging this branch.
+[tool.uv.sources]
+painted = { path = "../painted", editable = true }
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/siftd"]
 
