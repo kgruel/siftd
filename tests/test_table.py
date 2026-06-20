@@ -11,7 +11,6 @@ import pytest
 
 from siftd.output.table import (
     Col,
-    _ellipsize,
     _is_numeric_col,
     render_string_table,
     render_table,
@@ -103,16 +102,3 @@ def test_fill_left_ellipsis_keeps_leaf():
     row = _text(block).splitlines()[2]
     assert "…" in row
     assert row.rstrip().endswith("siftd--7")  # leaf survived; head was trimmed
-
-
-# --- _ellipsize both sides --------------------------------------------------
-
-
-def test_ellipsize_sides():
-    assert _ellipsize("abcdefghij", 5, left=False) == "abcd…"
-    assert _ellipsize("abcdefghij", 5, left=True) == "…ghij"
-    assert _ellipsize("short", 20, left=False) == "short"  # no-op when it fits
-    # display-width aware: never overruns the slot for wide chars
-    from painted.core._text_width import display_width
-
-    assert display_width(_ellipsize("日本語テスト", 5, left=True)) <= 5

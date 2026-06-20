@@ -8,16 +8,19 @@ layout discipline:
 - exactly one free-text column flexes to absorb the leftover budget (``Fill``),
   with a ``min_width`` floor so it never collapses;
 - quantities right-align, labels left-align;
-- the whole grid is budgeted to the terminal width, so deep workspace paths
-  ellipsize instead of overflowing the line.
+- the table is budgeted to the terminal via painted's ``Overflow.FIT`` — the
+  ``Fill`` column shrinks (ellipsized) to absorb overflow, and the table
+  overflows rather than clipping when it can't, so deep workspace paths
+  ellipsize and no column is ever silently dropped.
 
 Separators are spaced gutters, not box rules — *box a fixed set, never a feed*.
 On a non-TTY the width budget drops to ``None`` (natural sizing) so piped /
 machine output is never truncated.
 
-This is the general form of three hand-rolled, ``len()``-based width algorithms
+This is the general form of two hand-rolled, ``len()``-based table algorithms
 (``painted_bridge._styled_table``, ``common.format_table``): one painted
-``table()`` call, the responsive width resolution owned by painted.
+``table(overflow=FIT)`` call — the responsive width resolution, the shrink-to-fit
+policy, and the ellipsis all owned by painted.
 """
 
 from __future__ import annotations
@@ -65,21 +68,19 @@ class Col:
 
 
 def render_table(cols: list[Col], items: list, *, width: int | None) -> Block:
-    """Render ``items`` as a painted table from ``Col`` specs.
+    """Render ``items`` as a width-honest painted table from ``Col`` specs.
 
     ``width`` is the terminal budget, or ``None`` for natural sizing (the piped /
-    non-TTY escape). The budget is only *engaged* — letting the one ``fill``
-    column flex — when the natural table is wider than the terminal AND the
-    non-fill columns fit so the fill can absorb the overflow. When the content
-    already fits, or when there are simply too many columns for the terminal,
-    the table renders at natural width: compact, or soft-wrapping, but never
-    clipping data. So painted's whole-block right-clip can't silently drop
-    columns or values. The fill cell is pre-ellipsized to its resolved width
-    (tail kept for paths via ``ellipsis_left``, head kept for prose).
+    non-TTY escape — never truncates). The layout policy lives in painted's
+    ``Overflow.FIT``: a ``Fill`` column sizes to its content and shrinks
+    (ellipsized on its side) to absorb overflow, never stretching into slack;
+    and when the non-fill columns alone exceed the budget the table overflows at
+    natural width rather than clipping — so no column or value is silently
+    dropped. ``ellipsis_left`` keeps the tail (a workspace leaf survives);
+    otherwise the head is kept (prose).
     """
     from painted import Align, Line, Span, Style
-    from painted.core._text_width import display_width
-    from painted.views import AUTO, Column, Fill, TableState, table
+    from painted.views import AUTO, Column, Fill, Overflow, TableState, table
 
     style_for = lambda c: c.style if c.style is not None else Style()  # noqa: E731
     align_for = lambda c: c.align if c.align is not None else Align.START  # noqa: E731
@@ -90,34 +91,14 @@ def render_table(cols: list[Col], items: list, *, width: int | None) -> Block:
             width=Fill() if c.fill else AUTO,
             align=align_for(c),
             min_width=c.min_width,
+            ellipsis=True,
+            ellipsis_side=Align.START if c.ellipsis_left else Align.END,
         )
         for c in cols
     ]
 
-    # Cell text grid (one pass over the data).
-    grid: list[list[str]] = [[c.cell(item) for c in cols] for item in items]
-
-    fill_idx = next((j for j, c in enumerate(cols) if c.fill), None)
-    sep_w = display_width(_gutter_borders().vertical)
-    eff = _effective_width(columns, grid, width, fill_idx, cols, sep_w)
-
-    # When the budget is engaged, pre-ellipsize the fill cell to its resolved
-    # width via painted's own resolver (no duplicated budget math), since the
-    # non-fill columns are guaranteed to fit and only the fill cell can exceed
-    # its slot — painted would right-clip it with no marker.
-    if eff is not None and fill_idx is not None:
-        from painted.views.components._table import resolve_column_widths
-
-        line_rows = [[Line.plain(cell) for cell in row] for row in grid]
-        resolved = resolve_column_widths(columns, line_rows, available=eff, sep_width=sep_w)
-        wj = resolved[fill_idx]
-        left = cols[fill_idx].ellipsis_left
-        for row in grid:
-            row[fill_idx] = _ellipsize(row[fill_idx], wj, left=left)
-
     rows: list[list[Line]] = [
-        [_styled_line(cell, style_for(c)) for cell, c in zip(row, cols)]
-        for row in grid
+        [_styled_line(c.cell(item), style_for(c)) for c in cols] for item in items
     ]
 
     state = TableState().with_count(len(rows)).with_visible(len(rows))
@@ -126,38 +107,11 @@ def render_table(cols: list[Col], items: list, *, width: int | None) -> Block:
         columns,
         rows,
         visible_height=len(rows),
-        width=eff,
+        width=width,
+        overflow=Overflow.FIT,
         borders=_gutter_borders(),
         selected_style=Style(),
     )
-
-
-def _effective_width(columns, grid, width, fill_idx, cols, sep_w):
-    """The width to render at: the budget when the fill can absorb real overflow,
-    else ``None`` (natural — compact if it fits, soft-wrapping if it can't).
-
-    Engaging painted's budget makes the single fill column flex to consume the
-    leftover space; doing that when the table already fits would *balloon* a
-    narrow column to full width, and doing it when the bounded columns alone
-    overflow would *clip* trailing columns. Both are avoided here.
-    """
-    if width is None:
-        return None
-    from painted import Line
-    from painted.views.components._table import resolve_column_widths
-
-    line_rows = [[Line.plain(cell) for cell in row] for row in grid]
-    natural = resolve_column_widths(columns, line_rows, available=None, sep_width=sep_w)
-    natural_total = sum(natural) + sep_w * (len(columns) - 1)
-    if natural_total <= width:
-        return None  # already fits — natural, no ballooning
-    if fill_idx is None:
-        return None  # nothing to absorb overflow — natural, soft-wrap (no clip)
-    floor = cols[fill_idx].min_width or 1
-    nonfill_total = natural_total - natural[fill_idx]
-    if nonfill_total + floor <= width:
-        return width  # the fill column can absorb the overflow
-    return None  # bounded columns already overflow — natural, don't clip data
 
 
 def render_string_table(
@@ -236,32 +190,3 @@ def _styled_line(text: str, style: Style):
     from painted import Line, Span
 
     return Line(spans=(Span(text, style),)) if text else Line(spans=())
-
-
-def _ellipsize(text: str, max_width: int, *, left: bool, ellipsis: str = "…") -> str:
-    """Truncate ``text`` to ``max_width`` display columns with an ellipsis.
-
-    ``left=True`` keeps the *tail* (a path leaf — the inverse of painted's
-    right-only ``truncate``); ``left=False`` keeps the *head* (prose). Always
-    display-width aware so a CJK/emoji cell never overruns its slot.
-    """
-    from painted.core._text_width import display_width
-
-    if display_width(text) <= max_width:
-        return text
-    ell_w = display_width(ellipsis)
-    budget = max_width - ell_w if max_width > ell_w else max_width
-    show_ellipsis = max_width > ell_w
-    kept: list[str] = []
-    used = 0
-    for ch in reversed(text) if left else text:
-        cw = display_width(ch) or 1
-        if used + cw > budget:
-            break
-        kept.append(ch)
-        used += cw
-    if left:
-        body = "".join(reversed(kept))
-        return (ellipsis + body) if show_ellipsis else body
-    body = "".join(kept)
-    return (body + ellipsis) if show_ellipsis else body
