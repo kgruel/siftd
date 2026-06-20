@@ -83,7 +83,12 @@ def render_progress_block(
     from painted import ROUNDED
     from painted.views import ProgressState, progress_bar
 
-    tw = _term_width()
+    # Floor the width: the two-column layout below derives several widths by
+    # subtraction (bar_width, left_width), which go negative on a degenerate
+    # terminal — a pty that reports 0 columns (e.g. under `script`) crashes
+    # painted with "Block row width != block width". 40 is the narrowest width
+    # the layout stays coherent at; wider real terminals are unaffected.
+    tw = max(_term_width(), 40)
     total = len(check_names)
     done = len(completed)
     pct = done / total if total > 0 else 0.0
