@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -9,7 +10,13 @@ from typing import TYPE_CHECKING
 
 from siftd.domain.search_types import ROLE_ASSISTANT, ROLE_USER
 from siftd.output._id_format import short_id
-from siftd.output.common import fmt_timestamp, fmt_tokens, fmt_workspace, truncate_text
+from siftd.output.common import (
+    fmt_timestamp,
+    fmt_tokens,
+    fmt_workspace,
+    format_refs_annotation,
+    truncate_text,
+)
 
 if TYPE_CHECKING:
     from painted import Align, Block, Fidelity, Line, Style
@@ -827,3 +834,235 @@ def render_peek_list_block(
     ]
 
     return _styled_table(col_defs, sessions)
+
+
+# ---------------------------------------------------------------------------
+# Search results → painted Block
+#
+# Matched terms arrive wrapped in FTS5 snippet() delimiters (>>>...<<<); they
+# become accent spans instead of literal markers. A left rail encodes relevance
+# rank (top hit promoted, tail dim) so the score stops competing for attention.
+# ---------------------------------------------------------------------------
+
+_SEARCH_MARKER = re.compile(r">>>(.*?)<<<", re.DOTALL)
+_ROLE_ABBREV = {"assistant": "asst", "user": "user"}
+
+
+def _search_width(fidelity: Fidelity) -> tuple[int | None, bool]:
+    """Return (width, oneline) for search rendering.
+
+    Default truncates each snippet to one line at the terminal width; --full
+    (no char limit at depth >= 2) returns ``None`` — the natural-sizing escape
+    that shows full, untruncated text for piping/review.
+    """
+    import shutil
+    import sys
+
+    full = not (fidelity.chars == 0 and fidelity.depth < 2)
+    if full:
+        return None, False
+    if sys.stdout.isatty():
+        return shutil.get_terminal_size((100, 24)).columns, True
+    return 100, True
+
+
+def _match_spans(text: str) -> list:
+    """Split text on >>>match<<< into spans — matched terms in accent."""
+    _, _, Span, Style, current_palette, _, _ = _painted()
+    accent = current_palette().accent
+    spans = []
+    last = 0
+    for m in _SEARCH_MARKER.finditer(text):
+        if m.start() > last:
+            spans.append(Span(text[last : m.start()], Style()))
+        spans.append(Span(m.group(1), accent))
+        last = m.end()
+    if last < len(text):
+        spans.append(Span(text[last:], Style()))
+    return spans or [Span(text, Style())]
+
+
+def _snippet_block(text: str, width: int | None, *, oneline: bool) -> Block:
+    """Render search text with matched terms highlighted, fit to width."""
+    _, Line, _, _, _, join_vertical, _ = _painted()
+    from painted import truncate
+
+    if oneline:
+        flat = " ".join(text.split())
+        line = Line(spans=tuple(_match_spans(flat)))
+        block = _line_block(line)
+        if width is not None and line.width > width:
+            return truncate(block, width)
+        return block
+    rows = [_line_block(Line(spans=tuple(_match_spans(ln)))) for ln in (text.splitlines() or [text])]
+    return join_vertical(*rows) if rows else _blank_block()
+
+
+def _relevance_rail(rank: int, height: int) -> Block:
+    """Left rail encoding relevance rank: top hit promoted, tail dim.
+
+    The glyph carries the rank even when color is stripped (NO_COLOR), matching
+    doctor's unconditional severity glyphs. ASCII-only fallback is deferred to
+    the painted IconSet route.
+    """
+    Block, _, _, Style, current_palette, _, _ = _painted()
+    p = current_palette()
+    if rank == 0:
+        head, style = "◆ ", p.accent
+    elif rank <= 2:
+        head, style = "│ ", p.accent
+    else:
+        head, style = "· ", p.muted
+    rows = [(head, style)] + [("  ", Style())] * max(0, height - 1)
+    return Block.column(rows)
+
+
+def _railed(content: Block, rank: int) -> Block:
+    """Prefix a content block with its relevance rail."""
+    from painted import join_horizontal
+
+    return join_horizontal(_relevance_rail(rank, content.height), content)
+
+
+def _meta_header(left_parts: list, score: float | None, inner: int | None) -> Block:
+    """A record header: left metadata + a right-aligned quiet score."""
+    _, _, _, Style, current_palette, _, _ = _painted()
+    p = current_palette()
+    line = _line(*left_parts)
+    score_str = "" if score is None else f"{score:.2f}"
+    if not score_str:
+        if inner is None:
+            return _line_block(line)
+        return line.truncate(inner).to_block(inner)
+    if inner is None:
+        return _line_block(_line(*left_parts, ("  ", Style()), (score_str, p.muted)))
+    pad = max(1, inner - line.width - len(score_str))
+    return _line(*left_parts, (" " * pad, Style()), (score_str, p.muted)).to_block(inner)
+
+
+def render_search_block(
+    results: list,
+    fidelity: Fidelity,
+    *,
+    query: str = "",
+    mode: str = "chunks",
+    tier1: list | None = None,
+    tier2: list | None = None,
+    caveats: list | None = None,
+    **_ignore,
+) -> Block:
+    """Render search results as a painted Block (chunks / conversations / thread).
+
+    Matched terms render as accent spans; a left rail encodes relevance rank.
+    Returns a Block consumed by emit_output (CLI) like render_detail/render_list.
+    """
+    from painted import Style as PStyle
+    from painted import current_palette, join_vertical
+
+    p = current_palette()
+    caveats = caveats or []
+    width, oneline = _search_width(fidelity)
+    inner = None if width is None else max(width - 2, 1)
+
+    out: list[Block] = []
+    title_label = "Conversations for: " if mode == "conversations" else "Results for: "
+    out.append(_line_block(_line((title_label, p.muted), (query, p.accent))))
+    out.append(_blank_block())
+
+    if mode == "conversations":
+        for rank, r in enumerate(results):
+            conv_id = r.get("conversation_id", "")
+            left = [
+                (f"{short_id(conv_id)}  ", p.accent),
+                (f"{r.get('_started_at', '')}  ", p.muted),
+                (r.get("_workspace", ""), p.muted),
+                (f"  ({r.get('chunk_count', 0)} chunks)", PStyle(dim=True)),
+            ]
+            header = _meta_header(left, r.get("max_score"), inner)
+            excerpt = _snippet_block(r.get("best_excerpt", ""), inner, oneline=oneline)
+            out.append(_railed(join_vertical(header, excerpt), rank))
+            out.append(_blank_block())
+
+    elif mode == "thread":
+        for r in tier1 or []:
+            ws = r.get("_workspace", "")
+            started = r.get("_started_at", "")
+            out.append(_line_block(_line((f"── {ws}  {started} ", p.accent.merge(PStyle(bold=True))))))
+            exchanges = r.get("_exchanges")
+            if exchanges:
+                for _pid, ptext, rtext in exchanges:
+                    if ptext:
+                        out.append(_snippet_block(f"  [user] {ptext}", inner, oneline=oneline))
+                    if rtext:
+                        out.append(_snippet_block(f"  [asst] {rtext}", inner, oneline=oneline))
+            else:
+                label = r.get("display_label", "")
+                out.append(_snippet_block(f"  [{label.lower()}] {r.get('text', '')}", inner, oneline=oneline))
+            file_refs = r.get("file_refs")
+            if file_refs:
+                out.append(_line_block(_line((f"  {format_refs_annotation(file_refs)}", p.muted))))
+            out.append(_blank_block())
+        if tier2:
+            out.append(_line_block(_line(("More results:", p.muted))))
+            out.append(_blank_block())
+            for rank, r in enumerate(tier2):
+                conv_id = r.get("conversation_id", "")
+                left = [
+                    (f"{short_id(conv_id)}  ", p.accent),
+                    (f"{r.get('_workspace', '')}  ", p.muted),
+                    (r.get("_started_at", ""), p.muted),
+                ]
+                header = _meta_header(left, r.get("score"), inner)
+                snippet = _snippet_block(r.get("text", ""), inner, oneline=True)
+                out.append(_railed(join_vertical(header, snippet), rank + 3))
+                out.append(_blank_block())
+
+    else:  # chunks (default, --around context, exchanges)
+        for rank, r in enumerate(results):
+            conv_id = r.get("conversation_id", "")
+            label = r.get("display_label", "")
+            role = _ROLE_ABBREV.get(label.lower(), label.lower())
+            left = [
+                ("[", p.muted),
+                (role, p.accent if role == "user" else PStyle()),
+                ("] ", p.muted),
+                (f"{r.get('_started_at', '')}  ", p.muted),
+                (r.get("_workspace", ""), p.muted),
+            ]
+            rows = [_meta_header(left, r.get("score"), inner)]
+
+            exchanges = r.get("_exchanges")
+            context_data = r.get("_context")
+            if exchanges:
+                for _pid, ptext, rtext in exchanges:
+                    if ptext:
+                        rows.append(_snippet_block(f"> {ptext}", inner, oneline=oneline))
+                    if rtext:
+                        rows.append(_snippet_block(rtext, inner, oneline=oneline))
+            elif context_data:
+                for _pid, ptext, rtext, is_match in context_data:
+                    prefix = "▸ " if is_match else "  "
+                    if ptext:
+                        rows.append(_snippet_block(f"{prefix}> {ptext}", inner, oneline=oneline))
+                    if rtext:
+                        rows.append(_snippet_block(f"{prefix}{rtext}", inner, oneline=oneline))
+            else:
+                rows.append(_snippet_block(r.get("text", ""), inner, oneline=oneline))
+
+            file_refs = r.get("file_refs")
+            if file_refs:
+                rows.append(_line_block(_line((format_refs_annotation(file_refs), p.muted))))
+
+            turn_index = r.get("turn_index")
+            hint = f"> siftd show {short_id(conv_id)}"
+            if turn_index is not None:
+                hint += f" --at-turn {turn_index}"
+            rows.append(_line_block(_line((hint, PStyle(dim=True)))))
+
+            out.append(_railed(join_vertical(*rows), rank))
+            out.append(_blank_block())
+
+    for c in caveats:
+        out.append(_line_block(_line((f"note: {c.message}", p.muted))))
+
+    return join_vertical(*out) if out else _blank_block()
