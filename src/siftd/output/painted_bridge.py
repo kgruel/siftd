@@ -847,12 +847,11 @@ def render_peek_list_block(
 _SEARCH_MARKER = re.compile(r">>>(.*?)<<<", re.DOTALL)
 _ROLE_ABBREV = {"assistant": "asst", "user": "user"}
 
-# Disclosure gradient for chunk results: the top _EXPAND_TOP hits render a
-# multi-line snippet (up to _EXPAND_LINES lines) so the first screen is useful at
-# a glance; the rest collapse to one line. _EXPAND_TOP also drives the rail tiers
-# (◆ top hit / │ rest of the expanded tier / · the collapsed tail).
+# Disclosure gradient for chunk results: the top _EXPAND_TOP hits render the full
+# snippet (word-wrapped to the width, untruncated) so the first screen is useful
+# at a glance; the rest collapse to one line. _EXPAND_TOP also drives the rail
+# tiers (◆ top hit / │ rest of the expanded tier / · the collapsed tail).
 _EXPAND_TOP = 3
-_EXPAND_LINES = 5
 
 
 def _search_width(fidelity: Fidelity) -> tuple[int | None, bool]:
@@ -889,16 +888,64 @@ def _match_spans(text: str) -> list:
     return spans or [Span(text, Style())]
 
 
-def _snippet_block(
-    text: str, width: int | None, *, oneline: bool, max_lines: int | None = None
-) -> Block:
-    """Render search text with matched terms highlighted, fit to width.
+def _wrap_spans(spans: list, width: int) -> list:
+    """Word-wrap styled spans into Lines of <= width display columns.
 
-    oneline: collapse to a single truncated line. Otherwise render the snippet's
-    natural lines (each width-truncated), capped at ``max_lines`` with a trailing
-    ``…`` when more were elided (``max_lines=None`` = uncapped, for --full).
+    Preserves each span's style across wrap boundaries; a single token wider than
+    width (e.g. an unbroken JSON blob) is hard-split. Lets the top-tier snippet
+    show in full — untruncated and without overflowing the terminal.
     """
-    _, Line, _, _, current_palette, join_vertical, _ = _painted()
+    _, Line, Span, _, _, _, _ = _painted()
+    from painted.core._text_width import display_width
+
+    out_lines: list = []
+    cur: list = []
+    cur_w = 0
+    for sp in spans:
+        for tok in re.findall(r"\S+|\s+", sp.text):
+            tw = display_width(tok)
+            if tok.isspace():
+                if cur_w + tw <= width:
+                    cur.append(Span(tok, sp.style))
+                    cur_w += tw
+                else:
+                    out_lines.append(cur)
+                    cur, cur_w = [], 0
+                continue
+            if cur and cur_w + tw > width:
+                out_lines.append(cur)
+                cur, cur_w = [], 0
+            if tw > width:  # token longer than a whole line — hard-split it
+                buf, bw = "", 0
+                for ch in tok:
+                    cw = display_width(ch)
+                    if buf and bw + cw > width:
+                        cur.append(Span(buf, sp.style))
+                        out_lines.append(cur)
+                        cur, cur_w = [], 0
+                        buf, bw = "", 0
+                    buf += ch
+                    bw += cw
+                if buf:
+                    cur.append(Span(buf, sp.style))
+                    cur_w += bw
+            else:
+                cur.append(Span(tok, sp.style))
+                cur_w += tw
+    if cur:
+        out_lines.append(cur)
+    return [Line(spans=tuple(line)) for line in out_lines] or [Line(spans=())]
+
+
+def _snippet_block(text: str, width: int | None, *, oneline: bool, wrap: bool = False) -> Block:
+    """Render search text with matched terms highlighted.
+
+    oneline: collapse to one truncated line. Otherwise render the snippet's
+    natural lines. With ``wrap`` (and a known width) long lines word-wrap to the
+    width so the full snippet shows untruncated; without it lines are
+    width-truncated (``width=None`` = natural sizing, for --full / piping).
+    """
+    _, Line, _, _, _, join_vertical, _ = _painted()
     from painted import truncate
 
     if oneline:
@@ -909,17 +956,17 @@ def _snippet_block(
             return truncate(block, width)
         return block
 
-    src_lines = text.splitlines() or [text]
-    shown = src_lines[:max_lines] if max_lines else src_lines
     rows = []
-    for ln in shown:
-        line = Line(spans=tuple(_match_spans(ln)))
-        block = _line_block(line)
-        if width is not None and line.width > width:
-            block = truncate(block, width)
-        rows.append(block)
-    if max_lines and len(src_lines) > max_lines:
-        rows.append(_line_block(_line(("  …", current_palette().muted))))
+    for ln in text.splitlines() or [text]:
+        spans = _match_spans(ln)
+        if wrap and width is not None:
+            rows.extend(_line_block(wl) for wl in _wrap_spans(spans, width))
+        else:
+            line = Line(spans=tuple(spans))
+            block = _line_block(line)
+            if width is not None and line.width > width:
+                block = truncate(block, width)
+            rows.append(block)
     return join_vertical(*rows) if rows else _blank_block()
 
 
@@ -1109,14 +1156,8 @@ def render_search_block(
                     if rtext:
                         rows.append(_snippet_block(f"{prefix}{rtext}", inner, oneline=oneline))
             else:
-                rows.append(
-                    _snippet_block(
-                        r.get("text", ""),
-                        inner,
-                        oneline=False,
-                        max_lines=None if inner is None else _EXPAND_LINES,
-                    )
-                )
+                # Top-tier hits show the full snippet, word-wrapped (untruncated).
+                rows.append(_snippet_block(r.get("text", ""), inner, oneline=False, wrap=True))
 
             file_refs = r.get("file_refs")
             if file_refs:

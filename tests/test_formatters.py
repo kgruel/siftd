@@ -246,27 +246,32 @@ class TestTerminalRenderSearch:
         assert "How do I implement caching?" in output
         assert "You can use Redis or in-memory caching..." in output
 
-    def test_default_truncation(self):
-        """Default fidelity truncates each snippet to one line at the width."""
+    def test_tail_results_collapse_and_truncate(self):
+        """Tail hits (beyond the top tier) collapse to a single truncated line.
+
+        The top tier shows full snippets now, so only the tail truncates.
+        """
         from siftd.output import terminal_fmt
 
         long_text = "x" * 500
-        results = [{
-            "conversation_id": "abc123",
-            "score": 0.8,
-            "chunk_type": "prompt",
-            "display_label": "USER",
-            "text": long_text,
-            "_workspace": "test",
-            "_started_at": "2024-01-15",
-        }]
+        results = [
+            {
+                "conversation_id": f"01CONV{i}0000000000000000000",
+                "score": 5.0 - i,
+                "chunk_type": "prompt",
+                "display_label": "USER",
+                "text": long_text if i == 4 else f"hit {i}",
+                "_workspace": "w",
+                "_started_at": "2024-01-15",
+            }
+            for i in range(5)
+        ]
 
         output = _search_text(
-            terminal_fmt.render_search(results, Fidelity(), query="test", mode="chunks")
+            terminal_fmt.render_search(results, Fidelity(), query="x", mode="chunks")
         )
 
-        # Truncated with a display-width ellipsis; the full text never appears.
-        assert "…" in output
+        # The tail's long snippet is clipped to its one-line form; never shown whole.
         assert long_text not in output
 
     def test_conversations_mode(self, enriched_results):

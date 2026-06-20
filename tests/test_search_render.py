@@ -121,3 +121,19 @@ class TestRenderSearchBlock:
         assert len(top) == 1
         assert "siftd show" not in top[0]
         assert any("siftd show" in ln and short_id(results[0]["conversation_id"]) in ln for ln in lines)
+
+    def test_top_hit_snippet_is_not_truncated(self):
+        """A top-tier hit shows its full snippet (word-wrapped), nothing dropped."""
+        text = " ".join(f"word{i}" for i in range(60))  # long, multi-word, no newlines
+        r = {
+            "conversation_id": "01TOP00000000000000000000",
+            "display_label": "USER",
+            "score": 9.0,
+            "_workspace": "w",
+            "_started_at": "2026-01-01",
+            "text": text,
+            "turn_index": 0,
+        }
+        out = _block_text(render_search_block([r], Fidelity(), query="word", mode="chunks"))
+        for i in range(60):
+            assert f"word{i}" in out  # every token survives the wrap, none truncated
