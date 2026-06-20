@@ -847,6 +847,13 @@ def render_peek_list_block(
 _SEARCH_MARKER = re.compile(r">>>(.*?)<<<", re.DOTALL)
 _ROLE_ABBREV = {"assistant": "asst", "user": "user"}
 
+# Disclosure gradient for chunk results: the top _EXPAND_TOP hits render a
+# multi-line snippet (up to _EXPAND_LINES lines) so the first screen is useful at
+# a glance; the rest collapse to one line. _EXPAND_TOP also drives the rail tiers
+# (◆ top hit / │ rest of the expanded tier / · the collapsed tail).
+_EXPAND_TOP = 3
+_EXPAND_LINES = 5
+
 
 def _search_width(fidelity: Fidelity) -> tuple[int | None, bool]:
     """Return (width, oneline) for search rendering.
@@ -882,9 +889,16 @@ def _match_spans(text: str) -> list:
     return spans or [Span(text, Style())]
 
 
-def _snippet_block(text: str, width: int | None, *, oneline: bool) -> Block:
-    """Render search text with matched terms highlighted, fit to width."""
-    _, Line, _, _, _, join_vertical, _ = _painted()
+def _snippet_block(
+    text: str, width: int | None, *, oneline: bool, max_lines: int | None = None
+) -> Block:
+    """Render search text with matched terms highlighted, fit to width.
+
+    oneline: collapse to a single truncated line. Otherwise render the snippet's
+    natural lines (each width-truncated), capped at ``max_lines`` with a trailing
+    ``…`` when more were elided (``max_lines=None`` = uncapped, for --full).
+    """
+    _, Line, _, _, current_palette, join_vertical, _ = _painted()
     from painted import truncate
 
     if oneline:
@@ -894,7 +908,18 @@ def _snippet_block(text: str, width: int | None, *, oneline: bool) -> Block:
         if width is not None and line.width > width:
             return truncate(block, width)
         return block
-    rows = [_line_block(Line(spans=tuple(_match_spans(ln)))) for ln in (text.splitlines() or [text])]
+
+    src_lines = text.splitlines() or [text]
+    shown = src_lines[:max_lines] if max_lines else src_lines
+    rows = []
+    for ln in shown:
+        line = Line(spans=tuple(_match_spans(ln)))
+        block = _line_block(line)
+        if width is not None and line.width > width:
+            block = truncate(block, width)
+        rows.append(block)
+    if max_lines and len(src_lines) > max_lines:
+        rows.append(_line_block(_line(("  …", current_palette().muted))))
     return join_vertical(*rows) if rows else _blank_block()
 
 
@@ -909,7 +934,7 @@ def _relevance_rail(rank: int, height: int) -> Block:
     p = current_palette()
     if rank == 0:
         head, style = "◆ ", p.accent
-    elif rank <= 2:
+    elif rank < _EXPAND_TOP:
         head, style = "│ ", p.accent
     else:
         head, style = "· ", p.muted
@@ -938,6 +963,35 @@ def _meta_header(left_parts: list, score: float | None, inner: int | None) -> Bl
         return _line_block(_line(*left_parts, ("  ", Style()), (score_str, p.muted)))
     pad = max(1, inner - line.width - len(score_str))
     return _line(*left_parts, (" " * pad, Style()), (score_str, p.muted)).to_block(inner)
+
+
+def _minimal_chunk_line(r: dict, inner: int) -> Block:
+    """Collapsed one-line form for tail hits: [role] id ws  snippet…  score."""
+    _, Line, Span, Style, current_palette, _, _ = _painted()
+    p = current_palette()
+    label = r.get("display_label", "")
+    role = _ROLE_ABBREV.get(label.lower(), label.lower())
+    score = r.get("score")
+    score_str = "" if score is None else f"{score:.2f}"
+
+    prefix = [
+        Span("[", p.muted),
+        Span(role, p.accent if role == "user" else Style()),
+        Span("] ", p.muted),
+        Span(f"{short_id(r.get('conversation_id', ''))}  ", p.accent),
+    ]
+    ws = r.get("_workspace", "")
+    if ws:
+        prefix.append(Span(f"{ws}  ", p.muted))
+    prefix_w = sum(s.width for s in prefix)
+
+    snip = Line(spans=tuple(_match_spans(" ".join(r.get("text", "").split()))))
+    avail = max(1, inner - prefix_w - len(score_str) - 1)
+    if snip.width > avail:
+        snip = snip.truncate(avail)
+    pad = max(1, inner - prefix_w - snip.width - len(score_str))
+    spans = tuple(prefix) + snip.spans + (Span(" " * pad, Style()), Span(score_str, p.muted))
+    return Line(spans=spans).to_block(inner)
 
 
 def render_search_block(
@@ -1019,6 +1073,16 @@ def render_search_block(
 
     else:  # chunks (default, --around context, exchanges)
         for rank, r in enumerate(results):
+            exchanges = r.get("_exchanges")
+            context_data = r.get("_context")
+            # Disclosure gradient: the top tier expands (multi-line snippet); the
+            # tail collapses to one line. --around results (exchanges/context) and
+            # --full (inner is None) always expand.
+            if inner is not None and rank >= _EXPAND_TOP and not exchanges and not context_data:
+                out.append(_railed(_minimal_chunk_line(r, inner), rank))
+                out.append(_blank_block())
+                continue
+
             conv_id = r.get("conversation_id", "")
             label = r.get("display_label", "")
             role = _ROLE_ABBREV.get(label.lower(), label.lower())
@@ -1031,8 +1095,6 @@ def render_search_block(
             ]
             rows = [_meta_header(left, r.get("score"), inner)]
 
-            exchanges = r.get("_exchanges")
-            context_data = r.get("_context")
             if exchanges:
                 for _pid, ptext, rtext in exchanges:
                     if ptext:
@@ -1047,7 +1109,14 @@ def render_search_block(
                     if rtext:
                         rows.append(_snippet_block(f"{prefix}{rtext}", inner, oneline=oneline))
             else:
-                rows.append(_snippet_block(r.get("text", ""), inner, oneline=oneline))
+                rows.append(
+                    _snippet_block(
+                        r.get("text", ""),
+                        inner,
+                        oneline=False,
+                        max_lines=None if inner is None else _EXPAND_LINES,
+                    )
+                )
 
             file_refs = r.get("file_refs")
             if file_refs:
