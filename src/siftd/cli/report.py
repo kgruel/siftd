@@ -91,10 +91,12 @@ def build_report_parser(subparsers) -> None:
         "report",
         help="Run saved SQL reports (parameterized .sql queries)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""Run saved SQL reports from ~/.config/siftd/queries/*.sql.
+        epilog="""Run saved SQL reports. Built-in reports work out of the box;
+.sql files in ~/.config/siftd/queries/ add your own or override a built-in
+(same filename wins).
 
 A report is a named .sql file with optional $KEY placeholders. Run without a
-name to list available reports. Copy the built-ins to customize:
+name to list available reports. To customize a built-in, copy it first:
   siftd copy query cost            # copy the 'cost' report to your queries dir
 
 examples:

@@ -981,18 +981,18 @@ def _collapse_tool_details(
 
 @dataclass
 class QueryFile:
-    """Metadata about a user-defined SQL query file.
+    """Metadata about an available SQL report (builtin or user-defined).
 
     Attributes:
         name: Query file stem (without .sql extension).
-        path: Full path to the .sql file.
+        path: Path to the .sql file, or None for a packaged builtin.
         template_vars: Variables using $var syntax (text substitution).
         param_vars: Variables using :var syntax (parameterized, safe).
         variables: All variable names (union of template_vars and param_vars).
     """
 
     name: str
-    path: Path
+    path: Path | None
     template_vars: list[str]
     param_vars: list[str]
 
@@ -1010,50 +1010,76 @@ class QueryResult:
     rows: list[list]
 
 
-def list_query_files() -> list[QueryFile]:
-    """List available user-defined SQL query files.
-
-    Scans the queries directory for .sql files and extracts variable names.
-    Distinguishes between:
-    - Template variables ($var): text substitution, for structural elements
-    - Param variables (:var): parameterized, for values (safe quoting)
-
-    Returns:
-        List of QueryFile with name, path, and required variables.
-    """
+def _extract_query_vars(sql: str) -> tuple[list[str], list[str]]:
+    """Split a report's variables into ($var template, :var param) name lists."""
     import re
-
-    from siftd.paths import queries_dir
-
-    qdir = queries_dir()
-    if not qdir.exists():
-        return []
 
     template_pattern = re.compile(r"\$\{(\w+)\}|\$(\w+)")
     # Match :var but not ::var (Postgres cast) or :=var (assignment)
     param_pattern = re.compile(r"(?<!:):(\w+)\b(?!=)")
-    result = []
+    template_vars = sorted(set(m[0] or m[1] for m in template_pattern.findall(sql)))
+    param_vars = sorted(set(param_pattern.findall(sql)))
+    return template_vars, param_vars
 
-    for f in sorted(qdir.glob("*.sql")):
-        sql = _safe_read_text(f, context="list_query_files")
+
+def _read_builtin_query(name: str) -> str | None:
+    """Return a packaged builtin report's SQL, or None if there is no such builtin.
+
+    Builtins are the fresh source of truth; unlike copied-and-forked files in the
+    user queries dir they track the current schema automatically.
+    """
+    import importlib.resources
+
+    try:
+        ref = importlib.resources.files("siftd.builtin_queries").joinpath(f"{name}.sql")
+        if ref.is_file():
+            return ref.read_text(encoding="utf-8")
+    except (ModuleNotFoundError, TypeError, OSError, UnicodeDecodeError):
+        return None
+    return None
+
+
+def list_query_files() -> list[QueryFile]:
+    """List available SQL reports — packaged builtins plus user overrides.
+
+    Resolution mirrors how pricing and adapters work (builtin + user override),
+    so reports never go stale the way copied-and-forked files do:
+    - Builtins are packaged with the tool and always available (the fresh source).
+    - Files in the user queries dir overlay them: a file with the same stem
+      overrides the builtin; user-only files add new reports.
+
+    Returns:
+        List of QueryFile (sorted by name) with name, path, and required vars.
+        ``path`` is None for a builtin, or the user file's path for an override.
+    """
+    from siftd.api.resources import list_builtin_queries
+    from siftd.paths import queries_dir
+
+    by_name: dict[str, QueryFile] = {}
+
+    # 1. Builtins first — the fresh source of truth.
+    for name in list_builtin_queries():
+        sql = _read_builtin_query(name)
         if sql is None:
             continue
-        template_matches = template_pattern.findall(sql)
-        template_vars = sorted(set(m[0] or m[1] for m in template_matches))
-
-        param_matches = param_pattern.findall(sql)
-        param_vars = sorted(set(param_matches))
-
-        result.append(
-            QueryFile(
-                name=f.stem,
-                path=f,
-                template_vars=template_vars,
-                param_vars=param_vars,
-            )
+        template_vars, param_vars = _extract_query_vars(sql)
+        by_name[name] = QueryFile(
+            name=name, path=None, template_vars=template_vars, param_vars=param_vars
         )
 
-    return result
+    # 2. User dir overlays — override a builtin by stem, or add a new report.
+    qdir = queries_dir()
+    if qdir.exists():
+        for f in sorted(qdir.glob("*.sql")):
+            sql = _safe_read_text(f, context="list_query_files")
+            if sql is None:
+                continue
+            template_vars, param_vars = _extract_query_vars(sql)
+            by_name[f.stem] = QueryFile(
+                name=f.stem, path=f, template_vars=template_vars, param_vars=param_vars
+            )
+
+    return [by_name[name] for name in sorted(by_name)]
 
 
 class QueryError(Exception):
@@ -1108,13 +1134,18 @@ def run_query_file(
 
     qdir = queries_dir()
     sql_file = qdir / f"{name}.sql"
-    if not sql_file.exists():
-        raise QueryError(f"Query file not found: {sql_file}")
-
-    try:
-        sql = sql_file.read_text()
-    except (OSError, UnicodeDecodeError) as e:
-        raise QueryError(f"Cannot read query file {sql_file}: {e}") from e
+    if sql_file.exists():
+        # User dir overrides the builtin (intentional customization).
+        try:
+            sql = sql_file.read_text()
+        except (OSError, UnicodeDecodeError) as e:
+            raise QueryError(f"Cannot read query file {sql_file}: {e}") from e
+    else:
+        # Fall back to the packaged builtin — the fresh source of truth, so
+        # builtins run without a copy-and-fork step and never go stale.
+        sql = _read_builtin_query(name)
+        if sql is None:
+            raise QueryError(f"Query file not found: {sql_file}")
     variables = variables or {}
 
     # 1. Extract :param names before $var substitution

@@ -47,10 +47,9 @@ class TestListQueryFiles:
         )
         monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
 
-        result = list_query_files()
-        assert len(result) == 1
-        assert result[0].template_vars == ["table", "value"]
-        assert result[0].param_vars == []
+        by_name = {qf.name: qf for qf in list_query_files()}
+        assert by_name["test"].template_vars == ["table", "value"]
+        assert by_name["test"].param_vars == []
 
     def test_detects_param_vars(self, tmp_path, monkeypatch):
         """Detects :var syntax for parameterized queries."""
@@ -61,10 +60,9 @@ class TestListQueryFiles:
         )
         monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
 
-        result = list_query_files()
-        assert len(result) == 1
-        assert result[0].template_vars == []
-        assert result[0].param_vars == ["age", "name"]
+        by_name = {qf.name: qf for qf in list_query_files()}
+        assert by_name["test"].template_vars == []
+        assert by_name["test"].param_vars == ["age", "name"]
 
     def test_detects_both_syntaxes(self, tmp_path, monkeypatch):
         """Detects mixed $var and :var syntax."""
@@ -75,10 +73,9 @@ class TestListQueryFiles:
         )
         monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
 
-        result = list_query_files()
-        assert len(result) == 1
-        assert result[0].template_vars == ["table"]
-        assert result[0].param_vars == ["ws"]
+        by_name = {qf.name: qf for qf in list_query_files()}
+        assert by_name["mixed"].template_vars == ["table"]
+        assert by_name["mixed"].param_vars == ["ws"]
 
     def test_ignores_postgres_cast(self, tmp_path, monkeypatch):
         """Does not match ::type (Postgres cast) as :type."""
@@ -89,22 +86,36 @@ class TestListQueryFiles:
         )
         monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
 
-        result = list_query_files()
-        assert result[0].param_vars == ["actual_param"]
+        by_name = {qf.name: qf for qf in list_query_files()}
+        assert by_name["cast"].param_vars == ["actual_param"]
 
-    def test_empty_dir(self, tmp_path, monkeypatch):
-        """Returns empty list for empty queries dir."""
+    def test_empty_user_dir_still_lists_builtins(self, tmp_path, monkeypatch):
+        """An empty user dir still surfaces the packaged builtins (always available)."""
         queries = tmp_path / "queries"
         queries.mkdir()
         monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
 
-        assert list_query_files() == []
+        names = {qf.name for qf in list_query_files()}
+        assert "cost" in names  # a builtin report
 
-    def test_missing_dir(self, tmp_path, monkeypatch):
-        """Returns empty list if queries dir doesn't exist."""
+    def test_missing_user_dir_still_lists_builtins(self, tmp_path, monkeypatch):
+        """Builtins are listed even if the user queries dir doesn't exist."""
         monkeypatch.setattr("siftd.paths.queries_dir", lambda: tmp_path / "nope")
 
-        assert list_query_files() == []
+        names = {qf.name for qf in list_query_files()}
+        assert "cost" in names  # a builtin report
+
+    def test_user_file_overrides_builtin(self, tmp_path, monkeypatch):
+        """A user file with a builtin's stem overrides it (path set, not None)."""
+        queries = tmp_path / "queries"
+        queries.mkdir()
+        (queries / "cost.sql").write_text("SELECT :limit")
+        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+
+        by_name = {qf.name: qf for qf in list_query_files()}
+        # The user copy won — a builtin would have path=None.
+        assert by_name["cost"].path is not None
+        assert by_name["cost"].param_vars == ["limit"]
 
     def test_skips_unreadable_file(self, tmp_path, monkeypatch):
         """Unreadable (invalid UTF-8) query files are skipped, others still returned."""
@@ -114,9 +125,9 @@ class TestListQueryFiles:
         (queries / "bad.sql").write_bytes(b"\xff\xfe not valid utf-8 \x80")
         monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
 
-        result = list_query_files()
-        assert len(result) == 1
-        assert result[0].name == "good"
+        names = {qf.name for qf in list_query_files()}
+        assert "good" in names
+        assert "bad" not in names  # unreadable file skipped
 
 
 class TestRunQueryFile:
@@ -278,3 +289,30 @@ class TestRunQueryFile:
         # Extra vars don't cause error
         result = run_query_file("simple", {"unused": "value"}, db_path=test_db)
         assert result.rows[0][0] == 2
+
+    def test_falls_back_to_builtin(self, test_db, tmp_path, monkeypatch):
+        """An absent user file falls back to the packaged builtin (fresh source)."""
+        queries = tmp_path / "queries"
+        queries.mkdir()
+        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+        monkeypatch.setattr(
+            "siftd.api.conversations._read_builtin_query",
+            lambda name: "SELECT COUNT(*) as n FROM conversations" if name == "demo" else None,
+        )
+
+        result = run_query_file("demo", db_path=test_db)
+        assert result.rows[0][0] == 2  # builtin resolved and ran
+
+    def test_user_file_shadows_builtin_on_run(self, test_db, tmp_path, monkeypatch):
+        """A user file with the same stem shadows the builtin when running."""
+        queries = tmp_path / "queries"
+        queries.mkdir()
+        (queries / "demo.sql").write_text("SELECT 99 as n")
+        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+        monkeypatch.setattr(
+            "siftd.api.conversations._read_builtin_query",
+            lambda _name: "SELECT COUNT(*) as n FROM conversations",
+        )
+
+        result = run_query_file("demo", db_path=test_db)
+        assert result.rows[0][0] == 99  # user override wins, not the builtin

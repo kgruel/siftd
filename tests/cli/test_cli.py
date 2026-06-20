@@ -356,7 +356,7 @@ class TestQuerySqlCommand:
         assert "not found" in captured.out.lower()
 
     def test_query_sql_empty_queries_dir(self, test_db, tmp_path, monkeypatch, capsys):
-        """siftd query sql with no query files shows message."""
+        """siftd query sql with an empty user dir still lists the builtins."""
         queries = tmp_path / "queries"
         queries.mkdir()
         monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
@@ -365,8 +365,9 @@ class TestQuerySqlCommand:
 
         assert rc == 0
         captured = capsys.readouterr()
-        # 'query sql' now routes to the report subsystem (deprecated alias).
-        assert "No reports found" in captured.out
+        # 'query sql' now routes to the report subsystem (deprecated alias);
+        # builtins are always available even with an empty user dir.
+        assert "cost" in captured.out
 
 
 class TestAdaptersCommand:

@@ -78,8 +78,8 @@ class TestReportCommand:
         assert rc == 1
         assert "not found" in capsys.readouterr().out.lower()
 
-    def test_report_empty_dir(self, test_db, tmp_path, monkeypatch, capsys):
-        """No report files shows a friendly message."""
+    def test_report_empty_user_dir_lists_builtins(self, test_db, tmp_path, monkeypatch, capsys):
+        """An empty user dir still lists the built-in reports (always available)."""
         queries = tmp_path / "queries"
         queries.mkdir()
         monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
@@ -87,7 +87,7 @@ class TestReportCommand:
         rc = main(["--db", str(test_db), "report"])
 
         assert rc == 0
-        assert "No reports found" in capsys.readouterr().out
+        assert "cost" in capsys.readouterr().out  # a built-in report
 
 
 def test_query_sql_alias_warns_and_runs(test_db, tmp_path, monkeypatch, capsys):
