@@ -2001,6 +2001,7 @@ def render_dashboard(
     coverage: Any,
     stats: Any,
     distributions: Any = None,
+    economy: Any = None,
     owner: str | None = None,
     scope_model: str | None = None,
     brush_base: str = "",
@@ -2078,6 +2079,18 @@ def render_dashboard(
         if cost_pct is not None
         else ""
     )
+    # The Tokens holding acknowledges the cache split it's part of: a one-line
+    # GLOBAL cache-hit headline under the in/out legend (the detailed, brushable
+    # breakdown lives under the charts). Shown only when the corpus reports cache.
+    g_cread = getattr(usage, "total_cache_read_tokens", 0) or 0
+    tokens_cache = ""
+    if in_tok > 0 and g_cread > 0:
+        import math as _math
+
+        g_hit = _math.floor((g_cread / in_tok) * 1000) / 10
+        tokens_cache = (
+            f'<span class="standing__gathered">{g_hit:.1f}% of input from cache</span>'
+        )
     standing = (
         '<section class="reck__standing">'
         f'{period}'
@@ -2089,41 +2102,12 @@ def render_dashboard(
         f'<div class="standing__ratio"><i class="seg-in" style="flex:{in_tok or 1}"></i>'
         f'<i class="seg-out" style="flex:{out_tok or 1}"></i></div>'
         f'<span class="standing__legend"><span><i class="seg-in"></i>{escape(fmt_tokens(in_tok))} in</span>'
-        f'<span><i class="seg-out"></i>{escape(fmt_tokens(out_tok))} out</span></span></div>'
+        f'<span><i class="seg-out"></i>{escape(fmt_tokens(out_tok))} out</span></span>'
+        f'{tokens_cache}</div>'
         '<div class="standing__fig standing__fig--hero"><span class="micro">Cost</span>'
         f'<span class="standing__fign">{headline_cost}</span>{cost_gathered}</div>'
         '</div></section>'
     )
-
-    # --- input economy: the cache lever (unique to LLM usage) -----------------
-    # input_tokens is the TRUE TOTAL (uncached + cache_read + cache_creation),
-    # so the cache reads are input we DIDN'T pay full freight for — the single
-    # biggest cost lever, and otherwise invisible. Only shown when the corpus
-    # actually reports cache tokens (many providers don't); honest absence.
-    cread = getattr(usage, "total_cache_read_tokens", 0) or 0
-    ccreate = getattr(usage, "total_cache_creation_tokens", 0) or 0
-    economy = ""
-    if in_tok > 0 and (cread + ccreate) > 0:
-        uncached = max(0, in_tok - cread - ccreate)
-        import math as _math
-
-        hit = _math.floor((cread / in_tok) * 1000) / 10  # 1dp, never rounds up
-        economy = (
-            '<div class="reck__sechead"><span class="micro">Input economy</span>'
-            '<span class="zone__rule"></span><span class="reck__ctl">'
-            f'<span class="trend__peak">{hit:.1f}% of input served from cache</span>'
-            '</span></div>'
-            '<section class="reck__econ">'
-            '<div class="standing__ratio reck__econbar">'
-            f'<i class="seg-in" style="flex:{uncached or 1}"></i>'
-            f'<i class="seg-cache" style="flex:{cread or 1}"></i>'
-            f'<i class="seg-fresh" style="flex:{ccreate or 1}"></i></div>'
-            '<span class="standing__legend">'
-            f'<span><i class="seg-in"></i>{escape(fmt_tokens(uncached))} uncached</span>'
-            f'<span><i class="seg-cache"></i>{escape(fmt_tokens(cread))} cache reads</span>'
-            f'<span><i class="seg-fresh"></i>{escape(fmt_tokens(ccreate))} cache writes</span>'
-            '</span></section>'
-        )
 
     # --- activity over the period + the hour/weekday rhythm ---
     by_day = getattr(distributions, "by_day", []) or []
@@ -2188,11 +2172,40 @@ def render_dashboard(
         '<div class="chart__unit" id="dow-unit">tokens per weekday</div></section></div>'
     )
 
+    # --- input economy (the cache lever), under the charts so it scopes WITH
+    # the model brushing: input_tokens is the TRUE TOTAL, so cache reads are
+    # input we didn't pay full freight for. The ``economy`` arg is owner- and
+    # model-scoped (it follows the Model-mix selection), so brushing a model
+    # re-draws this for that model. Shown only when cache is reported (honest).
+    economy_section = ""
+    if economy is not None and getattr(economy, "has_cache", False):
+        import math as _m
+
+        unc = economy.uncached_tokens
+        er = economy.cache_read_tokens
+        ew = economy.cache_creation_tokens
+        ehit = _m.floor(economy.cache_hit_pct * 10) / 10
+        economy_section = (
+            '<div class="reck__sechead"><span class="micro">Input economy</span>'
+            '<span class="zone__rule"></span><span class="reck__ctl">'
+            f'<span class="trend__peak">{ehit:.1f}% of input served from cache</span>'
+            '</span></div>'
+            '<section class="reck__econ">'
+            '<div class="standing__ratio reck__econbar">'
+            f'<i class="seg-in" style="flex:{unc or 1}"></i>'
+            f'<i class="seg-cache" style="flex:{er or 1}"></i>'
+            f'<i class="seg-fresh" style="flex:{ew or 1}"></i></div>'
+            '<span class="standing__legend">'
+            f'<span><i class="seg-in"></i>{escape(fmt_tokens(unc))} uncached</span>'
+            f'<span><i class="seg-cache"></i>{escape(fmt_tokens(er))} cache reads</span>'
+            f'<span><i class="seg-fresh"></i>{escape(fmt_tokens(ew))} cache writes</span>'
+            '</span></section>'
+        )
+
     # --- breakdown: the two footed accounts (model mix · workspace mix) ---
     books = (
         '<div class="reck__sechead"><span class="micro">Breakdown</span>'
-        '<span class="zone__rule"></span><span class="reck__ctl">'
-        '<span class="trend__peak">ranked by the measure above</span></span></div>'
+        '<span class="zone__rule"></span></div>'
         '<div class="reck__books">'
         f'{_reck_account(by_model, title="Model mix", noun="models", brush_base=brush_base or None, active=scope_model)}'
         f'{_reck_account(by_workspace, title="Workspace mix", noun="workspaces", label_fn=fmt_workspace)}'
@@ -2254,7 +2267,7 @@ def render_dashboard(
     return (
         '<article class="reck by-tokens" data-view="stats" data-title="Stats"'
         f' data-count="{convs}" data-kick="{kick}">'
-        f'{standing}{economy}{trend}{rhythm}{books}{colophon}</article>'
+        f'{standing}{trend}{rhythm}{economy_section}{books}{colophon}</article>'
     )
 
 

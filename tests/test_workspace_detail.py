@@ -142,6 +142,25 @@ def test_usage_distributions_shape_totals_and_scoping(tmp_path):
     assert sum(b.tokens for b in nope.by_day) == 0
 
 
+def test_input_economy_owner_and_model_scoping(tmp_path):
+    """get_input_economy sums the true-total input + cache components, scopable by
+    owner and model (so the strip follows the brush). This fixture seeds no cache,
+    so has_cache is False, but the input total scopes correctly."""
+    from siftd.api.stats import get_input_economy
+
+    db = tmp_path / "d.db"
+    _build(db)
+    glob = get_input_economy(db_path=db)
+    assert glob.input_tokens == 1107  # 100 + 1000 + 7 (input only)
+    assert glob.cache_read_tokens == 0 and not glob.has_cache
+    assert glob.uncached_tokens == 1107  # no cache → all uncached
+    # owner-scoped (alice: cA1 input 100 + cB1 input 7 = 107)
+    assert get_input_economy(db_path=db, owner="alice").input_tokens == 107
+    # model-scoped to the one model = whole corpus; unknown model = empty
+    assert get_input_economy(db_path=db, model_name="claude-3-opus").input_tokens == 1107
+    assert get_input_economy(db_path=db, model_name="ghost").input_tokens == 0
+
+
 def test_usage_summary_carries_cache_totals(tmp_path):
     """get_usage_summary sums the rollup's broken-out cache components (the
     input-economy source). This fixture seeds no cache tokens, so they're 0 —

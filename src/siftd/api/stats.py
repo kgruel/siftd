@@ -863,6 +863,76 @@ class UsageDistributions:
     by_dow: list[Bucket]
 
 
+@dataclass
+class InputEconomy:
+    """The input token economy — how the (true-total) input splits into freshly
+    paid (uncached), cheaply re-served (cache reads), and one-time written
+    (cache creation) tokens. ``input_tokens`` is the rollup's TRUE TOTAL, so
+    ``uncached = input - cache_read - cache_creation``. Owner- and model-
+    scopable, so the reckoning can show it for the whole corpus or one brushed
+    model.
+    """
+
+    input_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+
+    @property
+    def uncached_tokens(self) -> int:
+        return max(0, self.input_tokens - self.cache_read_tokens - self.cache_creation_tokens)
+
+    @property
+    def cache_hit_pct(self) -> float:
+        return (self.cache_read_tokens / self.input_tokens * 100) if self.input_tokens else 0.0
+
+    @property
+    def has_cache(self) -> bool:
+        return self.input_tokens > 0 and (self.cache_read_tokens + self.cache_creation_tokens) > 0
+
+
+def get_input_economy(
+    *,
+    db_path: Path | None = None,
+    owner: str | None = None,
+    model_name: str | None = None,
+) -> InputEconomy:
+    """Input-token economy over the rollup (the reckoning's cache lever).
+
+    Three SUMs over ``usage_by_conv_model``: true-total input + the two broken-
+    out cache components. ``owner`` scopes to a tenant; ``model_name`` scopes to
+    one canonical model (the chart-brushing — same COALESCE key as the other
+    reads) so the strip can follow the Model-mix selection.
+    """
+    from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
+
+    path = db_path or default_db_path()
+    conn = open_database(path, read_only=True)
+    try:
+        if owner and not has_conversation_owners_table(conn):
+            return InputEconomy(0, 0, 0)
+        clauses: list[str] = []
+        params: list = []
+        if owner:
+            clauses.append(owner_predicate("u.conversation_id"))
+            params.append(owner)
+        model_join = ""
+        if model_name is not None:
+            model_join = " LEFT JOIN models m ON m.id = u.model_id"
+            clauses.append("COALESCE(m.name, m.raw_name, 'unknown') = ?")
+            params.append(model_name)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        row = conn.execute(
+            "SELECT COALESCE(SUM(u.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(u.cache_read_tokens), 0) AS cread,"
+            " COALESCE(SUM(u.cache_creation_tokens), 0) AS ccreate"
+            f" FROM usage_by_conv_model u{model_join}{where}",
+            params,
+        ).fetchone()
+        return InputEconomy(row["inp"], row["cread"], row["ccreate"])
+    finally:
+        conn.close()
+
+
 _DOW_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 

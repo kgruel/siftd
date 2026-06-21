@@ -1165,14 +1165,17 @@ details.hit-context[open] > summary::before { content:'\25BE'; color:var(--accen
 .account:last-child { border-right:0; }
 .account__head { display:grid; grid-template-columns:2ch 1fr 58px 76px;
   gap:14px; align-items:baseline; padding:16px 20px 11px;
-  border-bottom:1px solid var(--hair-strong); }
+  border-bottom:1px solid var(--hair); }
 .account__title { grid-column:1 / 3; display:flex; align-items:baseline; gap:9px;
   min-width:0; }
-.account__title .micro { white-space:nowrap; }
-.account__hcount { font-family:var(--font-mono); font-size:var(--fs-micro);
+/* the section name leads (ink); its count + the column headers recede (faint,
+   smaller) so the head reads as one title with quiet labels, not four equal
+   lines competing for the eye. */
+.account__title .micro { white-space:nowrap; color:var(--ink); }
+.account__hcount { font-family:var(--font-mono); font-size:9px;
   letter-spacing:.04em; color:var(--faint); overflow:hidden;
   text-overflow:ellipsis; white-space:nowrap; }
-.account__hk { font-family:var(--font-mono); font-size:var(--fs-micro);
+.account__hk { font-family:var(--font-mono); font-size:9px;
   letter-spacing:.1em; text-transform:uppercase; color:var(--faint); text-align:right; }
 
 /* the books foot their figures with no inline bars — a column of reckoned
@@ -1219,13 +1222,22 @@ details.hit-context[open] > summary::before { content:'\25BE'; color:var(--accen
 .reck__ctl { display:flex; align-items:center; gap:16px; }
 .trend__peak { font-family:var(--font-mono); font-size:var(--fs-micro);
   letter-spacing:.04em; color:var(--mid); white-space:nowrap; }
-/* chart-brushing: clickable model names + the active row + the "show all" reset */
+/* chart-brushing: clickable model names + the active row + the "show all" reset.
+   The reset matches the page's micro vocabulary (uppercase mono, like the column
+   headers + measure labels), accented to read as the live action. */
 .reck__clear { font-family:var(--font-mono); font-size:var(--fs-micro);
-  letter-spacing:.04em; color:var(--accent); cursor:pointer; white-space:nowrap; }
+  letter-spacing:.1em; text-transform:uppercase; color:var(--accent);
+  cursor:pointer; white-space:nowrap; }
+.reck__clear:hover { text-decoration:underline; }
 .ledger--account a.ledger__name { cursor:pointer; }
 .ledger--account a.ledger__name:hover { color:var(--accent); }
-.ledger--account .ledger__row.is-current { background:var(--sel-bg); box-shadow:var(--row-marker); }
-.ledger--account .ledger__row.is-current .ledger__name { color:var(--accent); }
+/* the SELECTED model reads stronger than a passing hover: an accent edge + an
+   accent-tinted fill + bold name, so the current brush is unmistakable. */
+.ledger--account .ledger__row.is-current { background:var(--sel-bg);
+  box-shadow:inset 3px 0 0 var(--accent); }
+.ledger--account .ledger__row.is-current .ledger__name { color:var(--accent); font-weight:600; }
+.ledger--account .ledger__row.is-current .account__rank { color:var(--accent); }
+.ledger--account .ledger__row.is-current .account__tok { color:var(--ink); }
 
 /* the measure toggle — recuts the trend, the rhythm + the book ranking
    (Tokens / Cost). folio-variants vocabulary, one page-wide control. */

@@ -388,6 +388,7 @@ def ui_dashboard(
     """
     from siftd.api.stats import (
         get_cost_coverage,
+        get_input_economy,
         get_stats,
         get_usage_by_model,
         get_usage_by_workspace,
@@ -421,6 +422,9 @@ def ui_dashboard(
     distributions = get_usage_distributions(
         db_path=db_path, owner=owner, model_name=scope_model
     )
+    # The input-economy strip follows the brush selection (scoped to the same
+    # model), so it re-draws when a Model-mix row is clicked.
+    economy = get_input_economy(db_path=db_path, owner=owner, model_name=scope_model)
 
     return _html_response(
         render_dashboard(
@@ -430,6 +434,7 @@ def ui_dashboard(
             coverage=get_cost_coverage(db_path=db_path, owner=owner),
             stats=stats,
             distributions=distributions,
+            economy=economy,
             owner=owner,
             scope_model=scope_model,
             brush_base="/dashboard",

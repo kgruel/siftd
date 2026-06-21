@@ -16,6 +16,7 @@ from siftd.api.stats import (
     Bucket,
     DatabaseStats,
     GroupUsage,
+    InputEconomy,
     TableCounts,
     TokenCoverage,
     UsageDistributions,
@@ -64,7 +65,8 @@ def _dist() -> UsageDistributions:
 
 
 def _render(
-    *, usage, by_model, by_workspace, coverage=None, stats=None, distributions=None, owner=None
+    *, usage, by_model, by_workspace, coverage=None, stats=None, distributions=None,
+    economy=None, owner=None,
 ) -> str:
     return render_dashboard(
         usage=usage,
@@ -73,6 +75,7 @@ def _render(
         coverage=coverage if coverage is not None else CostCoverage(5, 4, 1, 80.0),
         stats=stats if stats is not None else _stats(),
         distributions=distributions,
+        economy=economy,
         owner=owner,
     )
 
@@ -117,10 +120,11 @@ def test_dashboard_trend_bars_carry_tokens_cost_and_cost_honesty():
     assert 'data-tokens="0" data-cost=""' in html
 
 
-def test_dashboard_input_economy_strip_when_cache_present():
-    """The cache lever: when the corpus reports cache tokens, the standing block
-    is followed by an Input economy strip splitting input into uncached / cache
-    reads / cache writes, with the cache-hit headline (floored, never rounds up)."""
+def test_dashboard_input_economy_strip_under_graphs():
+    """The cache lever rides under the activity charts (so it scopes with the
+    model brush): an Input economy strip splitting input into uncached / cache
+    reads / cache writes, with the cache-hit headline (floored, never rounds up).
+    It comes from the (scopable) economy arg, after the rhythm, before Breakdown."""
     html = _render(
         usage=UsageSummary(
             2, 1_000_000, 0, 12.5,
@@ -129,6 +133,7 @@ def test_dashboard_input_economy_strip_when_cache_present():
         by_model=[GroupUsage("claude-x", 2, 1_000_000, 0, 12.5)],
         by_workspace=[GroupUsage("/proj", 2, 1_000_000, 0, 12.5)],
         distributions=_dist(),
+        economy=InputEconomy(1_000_000, 700_000, 100_000),
     )
     assert "Input economy" in html
     assert 'class="seg-cache"' in html and 'class="seg-fresh"' in html
@@ -136,17 +141,23 @@ def test_dashboard_input_economy_strip_when_cache_present():
     # uncached = 1.0M - 700k - 100k = 200k
     assert "200.0k uncached" in html
     assert "700.0k cache reads" in html and "100.0k cache writes" in html
+    # position: under the rhythm (dow-plot), above the Breakdown books
+    assert html.find('id="dow-plot"') < html.find('class="reck__econ"') < html.find("Breakdown")
+    # and the Tokens holding carries the GLOBAL cache headline (Image 1)
+    assert "70.0% of input from cache" in html
 
 
-def test_dashboard_no_economy_strip_without_cache_tokens():
-    """A corpus that reports no cache tokens (default UsageSummary) shows no
-    Input economy strip — honest absence, not a fabricated 0% cache row."""
+def test_dashboard_no_economy_strip_without_cache():
+    """No economy arg / no cache → no Input economy strip and no Tokens cache
+    caption — honest absence, not a fabricated 0% cache row."""
     html = _render(
         usage=UsageSummary(2, 1_000_000, 500_000, 12.5),
         by_model=[GroupUsage("claude-x", 2, 1_000_000, 500_000, 12.5)],
         by_workspace=[GroupUsage("/proj", 2, 1_000_000, 500_000, 12.5)],
+        economy=InputEconomy(1_000_000, 0, 0),
     )
     assert "Input economy" not in html
+    assert "of input from cache" not in html
 
 
 def test_dashboard_rhythm_active_days_and_streak():
