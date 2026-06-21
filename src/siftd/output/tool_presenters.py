@@ -15,6 +15,8 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from siftd.output.common import truncate_text
+
 MAX_PREVIEW_LINES = 6
 
 
@@ -76,13 +78,8 @@ def _preview(text: str, tool_chars: int) -> tuple[str, int]:
         return "", 0
     max_lines = 0 if tool_chars == 0 else MAX_PREVIEW_LINES
     if max_lines == 0 or len(lines) <= max_lines:
-        content = "\n".join(lines)
-        if tool_chars > 0 and len(content) > tool_chars:
-            return content[:tool_chars] + "...", 0
-        return content, 0
-    preview = "\n".join(lines[:max_lines])
-    if tool_chars > 0 and len(preview) > tool_chars:
-        preview = preview[:tool_chars] + "..."
+        return truncate_text("\n".join(lines), tool_chars), 0
+    preview = truncate_text("\n".join(lines[:max_lines]), tool_chars)
     return preview, len(lines) - max_lines
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from siftd.output._id_format import short_id
+from siftd.output.common import truncate_text
 
 if TYPE_CHECKING:
     from painted import Fidelity
@@ -76,9 +77,7 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
         if prompt_text:
             lines.append(f"### {ts_prefix}User")
             lines.append("")
-            prompt = prompt_text.strip()
-            if fidelity.chars > 0 and len(prompt) > fidelity.chars:
-                prompt = prompt[:fidelity.chars] + "..."
+            prompt = truncate_text(prompt_text.strip(), fidelity.chars)
             lines.append(prompt)
             lines.append("")
 
@@ -157,8 +156,6 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         caveats: list[Finding] — threaded from dispatch; appended as a
             blockquote note section after the last result.
     """
-    from siftd.output.common import truncate_text
-
     query = context.get("query", "")
     mode = context.get("mode", "chunks")
     caveats = context.get("caveats") or []

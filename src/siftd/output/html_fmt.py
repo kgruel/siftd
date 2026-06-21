@@ -14,6 +14,7 @@ from html import escape
 from typing import TYPE_CHECKING, Any
 
 from siftd.output._id_format import short_id
+from siftd.output.common import truncate_text
 
 if TYPE_CHECKING:
     from painted import Fidelity
@@ -275,9 +276,7 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
 
         prompt_text = getattr(turn, "prompt_text", None)
         if prompt_text:
-            preview_text = prompt_text.strip().replace("\n", " ")[:80]
-            if len(prompt_text.strip()) > 80:
-                preview_text += "\u2026"
+            preview_text = truncate_text(prompt_text.strip().replace("\n", " "), 80, suffix="\u2026")
             preview = f' <span class="turn-preview">{escape(preview_text)}</span>'
 
             parts.append('<details class="turn-block prompt-block" open>')
@@ -286,9 +285,7 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
                 f'{summary_ts}{preview}{nav}</summary>'
             )
             parts.append('<div class="prompt">')
-            text = prompt_text.strip()
-            if fidelity.chars > 0 and len(text) > fidelity.chars:
-                text = text[: fidelity.chars] + "..."
+            text = truncate_text(prompt_text.strip(), fidelity.chars)
             parts.append(f"<p>{escape(text)}</p>")
             parts.append("</div>")
             parts.append("</details>")
@@ -317,9 +314,7 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
                 f'{summary_ts}{response_nav}</summary>'
             )
             parts.append('<div class="assistant">')
-            text = turn.response_text.strip()
-            if fidelity.chars > 0 and len(text) > fidelity.chars:
-                text = text[: fidelity.chars] + "..."
+            text = truncate_text(turn.response_text.strip(), fidelity.chars)
             parts.append(f"<p>{escape(text)}</p>")
             parts.append("</div>")
             parts.append("</details>")
@@ -401,8 +396,6 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
         caveats: list[Finding] — threaded from dispatch; appended as an
             ``<aside class="caveats">`` fragment after the results section.
     """
-    from siftd.output.common import truncate_text
-
     query = context.get("query", "")
     mode = context.get("mode", "chunks")
     detail_base = context.get("detail_base", "")

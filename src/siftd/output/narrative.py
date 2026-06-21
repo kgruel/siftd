@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from siftd.output.common import truncate_text
+
 # Re-export from serialization layer for backward compatibility
 from siftd.serialization.narrative import (
     JsonEmitter,
@@ -77,17 +79,13 @@ class MarkdownEmitter:
         header = f"- **{name}**{count_suffix}{status_suffix}"
 
         if raw_input:
-            first_line = raw_input.strip().split("\n")[0]
-            if len(first_line) > 100:
-                first_line = first_line[:100] + "..."
+            first_line = truncate_text(raw_input.strip().split("\n")[0], 100)
             header += f" `{first_line}`"
 
         self.lines.append(header)
 
         if raw_result:
-            result_text = raw_result.strip()
-            if len(result_text) > 200:
-                result_text = result_text[:200] + "..."
+            result_text = truncate_text(raw_result.strip(), 200)
             for rline in result_text.split("\n"):
                 self.lines.append(f"  {rline}")
 
