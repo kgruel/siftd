@@ -815,6 +815,147 @@ def get_usage_by_workspace(*, db_path: Path | None = None, owner: str | None = N
 
 
 @dataclass
+class Bucket:
+    """One time-bucket of usage: a label plus summed tokens and honest cost.
+
+    ``cost`` is ``None`` when no row in the bucket was priced (the GroupUsage
+    rule), never a fabricated ``0.0`` — so the cost measure can render ``&mdash;``
+    for an idle/unpriced bucket instead of a false zero.
+    """
+
+    label: str
+    tokens: int
+    cost: float | None
+
+
+@dataclass
+class UsageDistributions:
+    """Activity over time: the daily series + hour-of-day and day-of-week rhythms.
+
+    All three are projections of ``usage_by_conv_model`` joined to the
+    conversation's start time (``localtime``). Tokens attribute to the
+    conversation's START day/hour — the same coarse grain the Sessions daybook
+    groups by; finer per-event attribution would need the rollup re-keyed by
+    event, which it isn't (a 0.11.0 substrate concern).
+
+    ``by_day`` is gap-filled (every calendar day in ``[first, last]`` present,
+    zeroed where idle) so the trend reads as real elapsed time. ``by_hour`` (24,
+    ``00``..``23``) and ``by_dow`` (7, ``Mon``..``Sun``) are dense by
+    construction. Empty corpus → all three empty / all-zero.
+    """
+
+    by_day: list[Bucket]
+    by_hour: list[Bucket]
+    by_dow: list[Bucket]
+
+
+_DOW_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _fill_days(rows: list) -> list[Bucket]:
+    """Gap-fill a sparse ``date -> (tok, cost)`` series into a dense daily run.
+
+    Every calendar day between the first and last active day gets a bucket;
+    idle days are zeroed (cost ``None``, not ``0`` — they were never priced).
+    """
+    from datetime import date, timedelta
+
+    present = {r["k"]: r for r in rows if r["k"]}
+    if not present:
+        return []
+    keys = sorted(present)
+    start, end = date.fromisoformat(keys[0]), date.fromisoformat(keys[-1])
+    out: list[Bucket] = []
+    d = start
+    while d <= end:
+        key = d.isoformat()
+        r = present.get(key)
+        out.append(Bucket(key, r["tok"] if r else 0, r["cost"] if r else None))
+        d += timedelta(days=1)
+    return out
+
+
+def get_usage_distributions(
+    *,
+    db_path: Path | None = None,
+    owner: str | None = None,
+    workspace_id: str | None = None,
+) -> UsageDistributions:
+    """Daily / hourly / weekday token+cost distributions over the rollup.
+
+    Three GROUP BYs over ``usage_by_conv_model`` joined up to
+    ``conversations.started_at`` (no schema, no new fact — the dashboard
+    reckoning's activity charts and the per-workspace cadence strip are both
+    projections of this). ``workspace_id`` scopes to one workspace (the cadence
+    strip); ``owner`` scopes to a tenant, matching every other read here.
+    """
+    from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
+
+    empty_hours = [Bucket(f"{h:02d}", 0, None) for h in range(24)]
+    empty_dows = [Bucket(label, 0, None) for label in _DOW_LABELS]
+
+    path = db_path or default_db_path()
+    conn = open_database(path, read_only=True)
+    try:
+        if owner and not has_conversation_owners_table(conn):
+            return UsageDistributions([], empty_hours, empty_dows)
+
+        clauses: list[str] = []
+        params: list = []
+        if owner:
+            clauses.append(owner_predicate("c.id"))
+            params.append(owner)
+        if workspace_id:
+            clauses.append("c.workspace_id = ?")
+            params.append(workspace_id)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+
+        def run(grain: str) -> list:
+            # tokens = the rollup's TRUE-TOTAL input + output (same as every other
+            # GROUP BY here); cost left un-COALESCEd so an unpriced bucket sums to
+            # NULL → Bucket.cost None, never a fabricated $0.
+            return conn.execute(
+                f"SELECT {grain} AS k,"
+                " COALESCE(SUM(u.input_tokens + u.output_tokens), 0) AS tok,"
+                " SUM(u.cost) AS cost"
+                " FROM usage_by_conv_model u"
+                " JOIN conversations c ON c.id = u.conversation_id"
+                f"{where}"
+                " GROUP BY k",
+                params,
+            ).fetchall()
+
+        day_rows = run("date(c.started_at, 'localtime')")
+        hour_rows = run("strftime('%H', c.started_at, 'localtime')")
+        dow_rows = run("strftime('%w', c.started_at, 'localtime')")
+    finally:
+        conn.close()
+
+    by_day = _fill_days(day_rows)
+
+    hour_present = {r["k"]: r for r in hour_rows if r["k"] is not None}
+    by_hour = [
+        Bucket(f"{h:02d}", (r["tok"] if (r := hour_present.get(f"{h:02d}")) else 0),
+               r["cost"] if r else None)
+        for h in range(24)
+    ]
+
+    # SQLite %w is 0=Sunday..6=Saturday; remap to 0=Mon..6=Sun for the rhythm.
+    dow_present: dict[int, dict] = {}
+    for r in dow_rows:
+        if r["k"] is None:
+            continue
+        dow_present[(int(r["k"]) + 6) % 7] = r
+    by_dow = [
+        Bucket(_DOW_LABELS[i], (r["tok"] if (r := dow_present.get(i)) else 0),
+               r["cost"] if r else None)
+        for i in range(7)
+    ]
+
+    return UsageDistributions(by_day, by_hour, by_dow)
+
+
+@dataclass
 class WorkspaceDetail:
     """Per-workspace detail, keyed by the workspace ULID.
 
@@ -833,6 +974,8 @@ class WorkspaceDetail:
     cost: float | None
     model_mix: list[GroupUsage]
     recent: list
+    cadence: list[Bucket]
+    tags: list[tuple[str, int]]
 
 
 def workspace_detail(
@@ -920,8 +1063,31 @@ def workspace_detail(
         # owner=None (single-tenant/local) stays fully unscoped.
         if owner and sessions == 0:
             return None
+
+        # "What it's about": conversation-level tags on this workspace's
+        # conversations, counted by conversation (the subject-index grain), most
+        # used first. Owner-scoped via the conversation, same as the rest.
+        tag_rows = conn.execute(
+            "SELECT t.name AS name, COUNT(DISTINCT ta.target_id) AS n"
+            " FROM tag_assignments ta"
+            " JOIN tags t ON t.id = ta.tag_id"
+            " JOIN conversations c ON c.id = ta.target_id"
+            " WHERE ta.target_kind = 'conversation' AND c.workspace_id = ?"
+            f"{conv_owner}"
+            " GROUP BY t.name"
+            " ORDER BY n DESC, t.name"
+            " LIMIT 12",
+            [workspace_id, *owner_params],
+        ).fetchall()
+        tags = [(r["name"], r["n"]) for r in tag_rows]
     finally:
         conn.close()
+
+    # Cadence: the reckoning's daily trend scoped to this one workspace (its own
+    # GROUP BY over the rollup — see get_usage_distributions).
+    cadence = get_usage_distributions(
+        db_path=path, owner=owner, workspace_id=workspace_id
+    ).by_day
 
     recent = list_conversations(
         fidelity=fidelity, db_path=path, workspace_id=ws["id"], owner=owner, n=recent_n,
@@ -942,4 +1108,6 @@ def workspace_detail(
         cost=sum(priced) if priced else None,
         model_mix=model_mix,
         recent=recent,
+        cadence=cadence,
+        tags=tags,
     )

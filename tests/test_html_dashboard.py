@@ -13,10 +13,12 @@ ConversationDetail.cost carry.
 from __future__ import annotations
 
 from siftd.api.stats import (
+    Bucket,
     DatabaseStats,
     GroupUsage,
     TableCounts,
     TokenCoverage,
+    UsageDistributions,
     UsageSummary,
 )
 from siftd.output.html_fmt import render_dashboard
@@ -49,35 +51,70 @@ def _stats() -> DatabaseStats:
     )
 
 
-def _render(*, usage, by_model, by_workspace, coverage=None, stats=None, owner=None) -> str:
+def _dist() -> UsageDistributions:
+    return UsageDistributions(
+        by_day=[
+            Bucket("2026-01-01", 1_000_000, 12.5),
+            Bucket("2026-01-02", 0, None),  # idle day: zero tokens, unpriced
+            Bucket("2026-01-03", 2_000_000, 24.0),
+        ],
+        by_hour=[Bucket(f"{h:02d}", h * 1000, h * 0.01) for h in range(24)],
+        by_dow=[Bucket(d, 0, None) for d in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")],
+    )
+
+
+def _render(
+    *, usage, by_model, by_workspace, coverage=None, stats=None, distributions=None, owner=None
+) -> str:
     return render_dashboard(
         usage=usage,
         by_model=by_model,
         by_workspace=by_workspace,
         coverage=coverage if coverage is not None else CostCoverage(5, 4, 1, 80.0),
         stats=stats if stats is not None else _stats(),
+        distributions=distributions,
         owner=owner,
     )
 
 
-def test_dashboard_has_three_regions_and_chrome_contract():
+def test_dashboard_has_regions_and_chrome_contract():
     html = _render(
         usage=UsageSummary(2, 1_000_000, 500_000, 12.5),
         by_model=[GroupUsage("claude-x", 2, 1_000_000, 500_000, 12.5)],
         by_workspace=[GroupUsage("/proj", 2, 1_000_000, 500_000, 12.5)],
     )
     # Fragment root carries the chrome-sync contract enhance.js reads.
-    assert 'class="dash"' in html
+    assert 'class="reck' in html
     assert 'data-view="stats"' in html
     assert 'data-title="Stats"' in html
     assert 'data-count="2"' in html
-    # Three regions.
-    assert 'class="dash__head"' in html
+    # Reckoning regions: standing, the activity/rhythm charts, the books, colophon.
+    assert 'class="reck__standing"' in html
+    assert 'id="trend-plot"' in html
+    assert 'id="hod-plot"' in html and 'id="dow-plot"' in html
+    assert 'name="measure"' in html  # the Tokens|Cost toggle
     assert "Model mix" in html and "Workspace mix" in html
+    assert 'class="ledger ledger--account"' in html
     assert "Corpus" in html
-    # Corpus footnotes from get_stats.
-    assert "Token coverage" in html and "83.3%" in html
-    assert "Cost coverage" in html and "80.0%" in html
+    # Coverage footnotes from get_stats, now in the colophon note.
+    assert "83.3%" in html  # token coverage
+    assert "80.0%" in html  # cost coverage
+
+
+def test_dashboard_trend_bars_carry_tokens_cost_and_cost_honesty():
+    """The trend bars are server-emitted with data-tokens/data-cost so the
+    enhance.js measure toggle re-draws without a round-trip; an idle/unpriced
+    day carries a blank data-cost (never a fabricated 0)."""
+    html = _render(
+        usage=UsageSummary(2, 3_000_000, 0, 36.5),
+        by_model=[GroupUsage("claude-x", 2, 3_000_000, 0, 36.5)],
+        by_workspace=[GroupUsage("/proj", 2, 3_000_000, 0, 36.5)],
+        distributions=_dist(),
+    )
+    assert 'class="trend__bar" data-tokens="1000000" data-cost="12.50"' in html
+    assert 'data-date="1 Jan"' in html
+    # the idle day: zero tokens, blank cost (not "0.00")
+    assert 'data-tokens="0" data-cost=""' in html
 
 
 def test_dashboard_headline_and_row_cost_when_priced():
@@ -89,7 +126,7 @@ def test_dashboard_headline_and_row_cost_when_priced():
     assert "$12.50" in html  # headline, 2dp
     assert "$12.35" in html  # per-row, 2dp (money column, not 4dp folio precision)
     assert "$12.3456" not in html
-    assert "ledger--usage" in html
+    assert "ledger--account" in html
 
 
 def test_dashboard_row_cost_unpriced_is_dash_not_zero():
@@ -142,5 +179,5 @@ def test_dashboard_empty_corpus_renders_without_error():
         by_workspace=[],
         coverage=None,
     )
-    assert 'class="dash"' in html
+    assert 'class="reck' in html
     assert "no usage" in html  # empty ledger rows

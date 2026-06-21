@@ -622,9 +622,13 @@ def test_deep_link_id_mounts_folio(ctx):
 def test_dashboard_route_renders_swiss_dashboard(ctx):
     client, _cid = ctx
     body = client.get("/dashboard").text
-    assert 'class="dash"' in body
+    assert 'class="reck' in body  # the reckoning (Stats) article
     assert 'data-view="stats"' in body
     assert "Model mix" in body and "Workspace mix" in body
+    # the activity/rhythm charts + the measure toggle ride the reckoning
+    assert 'id="trend-plot"' in body
+    assert 'id="hod-plot"' in body and 'id="dow-plot"' in body
+    assert 'name="measure"' in body
 
 
 def test_stats_nav_links_live_dashboard_not_stub(ctx):

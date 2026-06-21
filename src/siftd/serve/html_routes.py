@@ -387,6 +387,7 @@ def ui_dashboard(request: Request, db_path: Path) -> Response:
         get_stats,
         get_usage_by_model,
         get_usage_by_workspace,
+        get_usage_distributions,
         get_usage_summary,
         read_stats_cache,
         write_stats_cache,
@@ -414,6 +415,7 @@ def ui_dashboard(request: Request, db_path: Path) -> Response:
             by_workspace=get_usage_by_workspace(db_path=db_path, owner=owner),
             coverage=get_cost_coverage(db_path=db_path, owner=owner),
             stats=stats,
+            distributions=get_usage_distributions(db_path=db_path, owner=owner),
             owner=owner,
         )
     )
@@ -566,6 +568,7 @@ def ui_workspace_detail(
         detail, fidelity,
         detail_base="/folio",
         shell_base="/",
+        find_base="/find",
     ))
 
 

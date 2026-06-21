@@ -1815,6 +1815,160 @@ def _dash_usage_rows(groups: list, *, label_fn=None, limit: int = 10) -> str:
     return "".join(rows)
 
 
+def _fmt_short_date(iso_day: str) -> str:
+    """``2026-06-21`` → ``21 Jun`` (the trend bar's data-date / axis label)."""
+    from datetime import date
+
+    try:
+        d = date.fromisoformat(iso_day)
+    except ValueError:
+        return iso_day
+    return f"{d.day} {d.strftime('%b')}"
+
+
+def _reck_bars(buckets: list, cls: str, *, dated: bool = False) -> str:
+    """Server-emit one chart's bars carrying ``data-tokens``/``data-cost``.
+
+    The bar HEIGHTS are not set here — ``initReck`` in enhance.js scales each
+    plot per the active measure (tokens|cost) and marks the peak, so the same
+    bars re-draw on a measure toggle without a round-trip. ``dated`` adds a
+    ``data-date`` (the daily trend; the rhythm dists key off a static axis).
+    Cost is blank when ``None`` so the cost measure reads ``&mdash;``, not $0.
+    """
+    from siftd.output.common import fmt_tokens
+
+    out: list[str] = []
+    for b in buckets:
+        cost_attr = "" if b.cost is None else f"{b.cost:.2f}"
+        date_attr = ""
+        title_lead = f"{b.label} &middot; "
+        if dated:
+            short = _fmt_short_date(b.label)
+            date_attr = f' data-date="{escape(short)}"'
+            title_lead = f"{escape(short)} &middot; "
+        cost_bit = "" if b.cost is None else f" &middot; ${b.cost:,.2f}"
+        title = f"{title_lead}{escape(fmt_tokens(b.tokens))}{cost_bit}"
+        out.append(
+            f'<div class="{cls}" data-tokens="{b.tokens}" data-cost="{cost_attr}"'
+            f'{date_attr} title="{title}"></div>'
+        )
+    return "".join(out)
+
+
+def _reck_account(
+    groups: list,
+    *,
+    title: str,
+    noun: str,
+    label_fn=None,
+    limit: int = 8,
+) -> str:
+    """A footed, ranked account (model mix / workspace mix) for the reckoning.
+
+    Rows carry ``data-tokens``/``data-cost`` so ``initReck`` re-sorts them when
+    the measure toggles. The overflow beyond ``limit`` collapses into one
+    ``account__row--rest`` carrying the summed remainder (so the foot still
+    reconciles to the whole), and the foot totals over ALL groups — never just
+    the shown head. Cost honesty: a ``None``-cost group renders ``&mdash;``.
+    """
+    from siftd.output.common import fmt_tokens
+
+    def _tok(g: Any) -> int:
+        return (g.input_tokens or 0) + (g.output_tokens or 0)
+
+    def _cost_cell(cost: float | None) -> str:
+        if cost is None:
+            return '<span class="account__cost account__cost--none">&mdash;</span>'
+        return f'<span class="account__cost">${cost:,.2f}</span>'
+
+    head = groups[:limit]
+    rest = groups[limit:]
+    rows: list[str] = []
+    for g in head:
+        name = label_fn(g.name) if label_fn else g.name
+        tok = _tok(g)
+        cost_attr = "" if g.cost is None else f"{g.cost:.2f}"
+        rows.append(
+            f'<li class="ledger__row" data-tokens="{tok}" data-cost="{cost_attr}">'
+            f'<span class="account__rank"></span>'
+            f'<span class="ledger__name">{escape(name)}</span>'
+            f'<span class="account__tok">{escape(fmt_tokens(tok))}</span>'
+            f'{_cost_cell(g.cost)}</li>'
+        )
+    if rest:
+        rest_tok = sum(_tok(g) for g in rest)
+        rest_priced = [g.cost for g in rest if g.cost is not None]
+        rest_cost = sum(rest_priced) if rest_priced else None
+        cost_attr = "" if rest_cost is None else f"{rest_cost:.2f}"
+        rows.append(
+            f'<li class="ledger__row account__row--rest" data-tokens="{rest_tok}"'
+            f' data-cost="{cost_attr}"><span class="account__rank"></span>'
+            f'<span class="ledger__name">{len(rest):,} more {escape(noun)} carried forward</span>'
+            f'<span class="account__tok">{escape(fmt_tokens(rest_tok))}</span>'
+            f'{_cost_cell(rest_cost)}</li>'
+        )
+    if not rows:
+        rows.append(
+            '<li class="ledger__row ledger__empty"><span class="account__rank"></span>'
+            '<span class="ledger__name">no usage</span></li>'
+        )
+
+    total_tok = sum(_tok(g) for g in groups)
+    total_priced = [g.cost for g in groups if g.cost is not None]
+    total_cost = sum(total_priced) if total_priced else None
+
+    return (
+        '<section class="account">'
+        '<div class="account__head">'
+        f'<span class="account__title"><span class="micro">{escape(title)}</span>'
+        f'<span class="account__hcount">{len(groups):,} {escape(noun)}</span></span>'
+        '<span class="account__hk">Tokens</span><span class="account__hk">Cost</span></div>'
+        f'<ul class="ledger ledger--account">{"".join(rows)}</ul>'
+        '<div class="account__foot">'
+        f'<span class="account__flabel">Total &middot; {len(groups):,} {escape(noun)}</span>'
+        f'<span class="account__tok">{escape(fmt_tokens(total_tok))}</span>'
+        f'{_cost_cell(total_cost)}</div>'
+        '</section>'
+    )
+
+
+def _cadence_section(buckets: list) -> str:
+    """The reckoning's daily trend, scoped to one workspace and frozen.
+
+    Unlike the Stats reckoning, the cadence has a single measure (activity), so
+    bar heights are computed SERVER-side (``--h``) — no measure toggle, no
+    enhance.js dependency. The busiest day is marked. Empty span → nothing.
+    """
+    if not buckets:
+        return ""
+    peak_tok = max(b.tokens for b in buckets)
+    peak = max(buckets, key=lambda b: b.tokens)
+    bars: list[str] = []
+    for b in buckets:
+        h = max(7, round(b.tokens / peak_tok * 100)) if peak_tok else 7
+        is_peak = " is-peak" if b is peak else ""
+        title = f"{escape(_fmt_short_date(b.label))} &middot; {escape(_fmt_tokens_safe(b.tokens))}"
+        bars.append(f'<div class="trend__bar{is_peak}" style="--h:{h}%" title="{title}"></div>')
+    span = (
+        f"{escape(_fmt_short_date(buckets[0].label))} &ndash; "
+        f"{escape(_fmt_short_date(buckets[-1].label))}"
+    )
+    return (
+        '<section class="dossier__cad"><div class="zone__head"><span class="micro">Cadence</span>'
+        f'<span class="zone__count">{span} &middot; {len(buckets):,} days &middot; '
+        f'busiest {escape(_fmt_short_date(peak.label))}</span>'
+        '<span class="zone__rule"></span></div>'
+        f'<div class="trend__plot dossier__cadplot">{"".join(bars)}</div>'
+        '<div class="chart__unit">activity per day, across the workspace&rsquo;s span</div></section>'
+    )
+
+
+def _fmt_tokens_safe(n: int) -> str:
+    from siftd.output.common import fmt_tokens
+
+    return fmt_tokens(n)
+
+
 def render_dashboard(
     *,
     usage: Any,
@@ -1822,6 +1976,7 @@ def render_dashboard(
     by_workspace: list,
     coverage: Any,
     stats: Any,
+    distributions: Any = None,
     owner: str | None = None,
 ) -> str:
     """Render the Swiss 'Stats' dashboard fragment.
@@ -1861,12 +2016,6 @@ def render_dashboard(
     window = getattr(stats, "activity_window", (None, None)) or (None, None)
     last_ingest = getattr(stats, "last_ingest_at", None)
 
-    def _meta(k: str, v: str) -> str:
-        return (
-            f'<div class="dash__metarow"><span class="dash__metak">{escape(k)}</span>'
-            f'<span class="dash__metav">{v}</span></div>'
-        )
-
     def _pct(p: float) -> str:
         # 1dp, and never round UP to a false 100% — 99.87% is not "complete".
         # Coverage measures token *presence* per response, not completeness of
@@ -1877,58 +2026,156 @@ def render_dashboard(
         shown = math.floor(p * 10) / 10 if p < 100 else 100.0
         return f"{shown:.1f}%"
 
-    meta_rows: list[str] = []
-    if tok_pct is not None:
-        meta_rows.append(_meta("Token coverage", _pct(tok_pct)))
-    if cost_pct is not None:
-        meta_rows.append(_meta("Cost coverage", _pct(cost_pct)))
-    if counts is not None:
-        meta_rows.append(_meta("Responses", f"{counts.responses:,}"))
-        meta_rows.append(_meta("Tool calls", f"{counts.tool_calls:,}"))
-        meta_rows.append(_meta("Models", f"{counts.models:,}"))
-        meta_rows.append(_meta("Workspaces", f"{counts.workspaces:,}"))
+    # --- standing: the period of account + the three holdings ---
     start, end = window
+    period_bits: list[str] = []
     if start or end:
-        # fmt_timestamp emits ISO-ish text (no markup); the &ndash; is a literal
-        # entity, so the value is assembled pre-escaped rather than run through escape().
-        span = f"{escape(fmt_timestamp(start) or '?')} &ndash; {escape(fmt_timestamp(end) or '?')}"
-        meta_rows.append(_meta("Activity", span))
-    if last_ingest:
-        meta_rows.append(_meta("Last ingest", escape(fmt_timestamp(last_ingest) or "")))
+        s = escape(fmt_timestamp(start) or "?")
+        e = escape(fmt_timestamp(end) or "?")
+        period_bits.append(
+            f'<span class="standing__dates"><b>{s}</b><span>through</span><b>{e}</b></span>'
+        )
+    gathered = _ago(_iso_epoch(last_ingest)) if last_ingest else None
+    if gathered:
+        period_bits.append(
+            f'<span class="standing__gathered">last gathered {escape(gathered)} ago</span>'
+        )
+    period = (
+        '<div class="standing__period"><span class="micro">Period of account</span>'
+        f'{"".join(period_bits)}</div>'
+        if period_bits
+        else ""
+    )
 
-    parts: list[str] = [
-        f'<article class="dash" data-view="stats" data-title="Stats"'
-        f' data-count="{convs}" data-kick="{kick}">',
-        '<section class="dash__head">',
-        '<div class="dash__stat"><span class="micro">Conversations</span>'
-        f'<span class="dash__statn">{convs:,}</span></div>',
-        '<div class="dash__stat"><span class="micro">Tokens</span>'
-        f'<span class="dash__statn">{escape(fmt_tokens(in_tok + out_tok))}</span>'
-        f'<span class="dash__sub">{escape(fmt_tokens(in_tok))} in &middot; '
-        f'{escape(fmt_tokens(out_tok))} out</span></div>',
-        '<div class="dash__stat"><span class="micro">Cost</span>'
-        f'<span class="dash__statn">{headline_cost}</span></div>',
-        '</section>',
-        '<div class="dash__cols">',
-        '<section class="dash__panel">',
-        '<div class="folio__navhead"><span class="micro">Model mix</span>'
-        f'<span class="folio__navmeta">{len(by_model)}</span></div>',
-        f'<ul class="ledger ledger--usage">{_dash_usage_rows(by_model)}</ul>',
-        '</section>',
-        '<section class="dash__panel">',
-        '<div class="folio__navhead"><span class="micro">Workspace mix</span>'
-        f'<span class="folio__navmeta">{len(by_workspace)}</span></div>',
-        '<ul class="ledger ledger--usage">'
-        f'{_dash_usage_rows(by_workspace, label_fn=fmt_workspace, limit=8)}</ul>',
-        '</section>',
-        '</div>',
-        '<section class="dash__meta">',
-        '<div class="folio__navhead"><span class="micro">Corpus</span></div>',
-        f'<div class="dash__metagrid">{"".join(meta_rows)}</div>',
-        '</section>',
-        '</article>',
-    ]
-    return "".join(parts)
+    cost_gathered = (
+        f'<span class="standing__gathered">priced on {_pct(cost_pct)} of usage</span>'
+        if cost_pct is not None
+        else ""
+    )
+    standing = (
+        '<section class="reck__standing">'
+        f'{period}'
+        '<div class="standing__figs">'
+        '<div class="standing__fig"><span class="micro">Conversations</span>'
+        f'<span class="standing__fign">{convs:,}</span></div>'
+        '<div class="standing__fig"><span class="micro">Tokens</span>'
+        f'<span class="standing__fign">{escape(fmt_tokens(in_tok + out_tok))}</span>'
+        f'<div class="standing__ratio"><i class="seg-in" style="flex:{in_tok or 1}"></i>'
+        f'<i class="seg-out" style="flex:{out_tok or 1}"></i></div>'
+        f'<span class="standing__legend"><span><i class="seg-in"></i>{escape(fmt_tokens(in_tok))} in</span>'
+        f'<span><i class="seg-out"></i>{escape(fmt_tokens(out_tok))} out</span></span></div>'
+        '<div class="standing__fig standing__fig--hero"><span class="micro">Cost</span>'
+        f'<span class="standing__fign">{headline_cost}</span>{cost_gathered}</div>'
+        '</div></section>'
+    )
+
+    # --- activity over the period + the hour/weekday rhythm ---
+    by_day = getattr(distributions, "by_day", []) or []
+    by_hour = getattr(distributions, "by_hour", []) or []
+    by_dow = getattr(distributions, "by_dow", []) or []
+
+    axis_ticks = ""
+    if by_day:
+        first = _fmt_short_date(by_day[0].label)
+        last = _fmt_short_date(by_day[-1].label)
+        mid = _fmt_short_date(by_day[len(by_day) // 2].label)
+        axis_ticks = (
+            f'<span>{escape(first)}</span><span>{escape(mid)}</span><span>{escape(last)}</span>'
+        )
+
+    trend = (
+        '<div class="reck__sechead"><span class="micro">Activity over the period</span>'
+        '<span class="zone__rule"></span><span class="reck__ctl">'
+        '<span class="trend__peak" id="trend-peak"></span>'
+        '<div class="measure" role="radiogroup" aria-label="Measure">'
+        '<input type="radio" name="measure" id="m-tok" checked><label for="m-tok">Tokens</label>'
+        '<input type="radio" name="measure" id="m-cost"><label for="m-cost">Cost</label>'
+        '</div></span></div>'
+        '<section class="trend"><div class="chart">'
+        '<div class="chart__y"><span id="trend-ymax"></span><span class="chart__y0">0</span></div>'
+        '<div class="chart__main">'
+        f'<div class="trend__plot" id="trend-plot">{_reck_bars(by_day, "trend__bar", dated=True)}</div>'
+        f'<div class="trend__axis">{axis_ticks}</div></div></div>'
+        '<div class="chart__unit" id="trend-unit">tokens per day</div></section>'
+    )
+
+    rhythm = (
+        '<div class="reck__rhythm">'
+        '<section class="dist"><div class="zone__head"><span class="micro">By hour of day</span>'
+        '<span class="zone__rule"></span></div><div class="chart">'
+        '<div class="chart__y chart__y--sm"><span id="hod-ymax"></span>'
+        '<span class="chart__y0">0</span></div><div class="chart__main">'
+        f'<div class="dist__plot" id="hod-plot">{_reck_bars(by_hour, "dist__bar")}</div>'
+        '<div class="dist__axis"><span>00</span><span>06</span><span>12</span>'
+        '<span>18</span><span>23</span></div></div></div>'
+        '<div class="chart__unit" id="hod-unit">tokens per hour</div></section>'
+        '<section class="dist"><div class="zone__head"><span class="micro">By day of week</span>'
+        '<span class="zone__rule"></span></div><div class="chart">'
+        '<div class="chart__y chart__y--sm"><span id="dow-ymax"></span>'
+        '<span class="chart__y0">0</span></div><div class="chart__main">'
+        f'<div class="dist__plot dist__plot--dow" id="dow-plot">{_reck_bars(by_dow, "dist__bar")}</div>'
+        '<div class="dist__axis"><span>Mon</span><span>Tue</span><span>Wed</span>'
+        '<span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div></div></div>'
+        '<div class="chart__unit" id="dow-unit">tokens per weekday</div></section></div>'
+    )
+
+    # --- breakdown: the two footed accounts (model mix · workspace mix) ---
+    books = (
+        '<div class="reck__sechead"><span class="micro">Breakdown</span>'
+        '<span class="zone__rule"></span><span class="reck__ctl">'
+        '<span class="trend__peak">ranked by the measure above</span></span></div>'
+        '<div class="reck__books">'
+        f'{_reck_account(by_model, title="Model mix", noun="models")}'
+        f'{_reck_account(by_workspace, title="Workspace mix", noun="workspaces", label_fn=fmt_workspace)}'
+        '</div>'
+    )
+
+    # --- colophon: the corpus counts + the trust footnote ---
+    cells: list[str] = []
+
+    def _cell(label: str, value: str) -> None:
+        cells.append(
+            f'<div class="colophon__cell"><span class="micro">{escape(label)}</span>'
+            f'<span class="colophon__celln">{escape(value)}</span></div>'
+        )
+
+    if counts is not None:
+        _cell("Responses", f"{counts.responses:,}")
+        _cell("Prompts", f"{counts.prompts:,}")
+        _cell("Tool calls", f"{counts.tool_calls:,}")
+        _cell("Models", f"{counts.models:,}")
+        _cell("Workspaces", f"{counts.workspaces:,}")
+        _cell("Harnesses", f"{counts.harnesses:,}")
+        _cell("Tools", f"{counts.tools:,}")
+    note_bits: list[str] = []
+    if tok_pct is not None:
+        note_bits.append(
+            f"Tokens accounted on <b>{_pct(tok_pct)}</b> of responses, floored "
+            "&mdash; cache reads sit off this axis."
+        )
+    if cost_pct is not None:
+        note_bits.append(
+            f"Cost priced on <b>{_pct(cost_pct)}</b>; the remainder is set as "
+            "<b>&mdash;</b>, never <b>$0</b>."
+        )
+    note = f'<p class="colophon__note">{" ".join(note_bits)}</p>' if note_bits else ""
+    sign_bits: list[str] = []
+    if last_ingest:
+        sign_bits.append(
+            f"<span>Last gathered <b>{escape(fmt_timestamp(last_ingest) or '')}</b></span>"
+        )
+    sign = f'<div class="colophon__sign">{"".join(sign_bits)}</div>' if sign_bits else ""
+    colophon = (
+        '<section class="reck__colophon"><div class="zone__head">'
+        '<span class="micro">Corpus</span><span class="zone__rule"></span></div>'
+        f'<div class="colophon__grid">{"".join(cells)}</div>{note}{sign}</section>'
+    )
+
+    return (
+        '<article class="reck by-tokens" data-view="stats" data-title="Stats"'
+        f' data-count="{convs}" data-kick="{kick}">'
+        f'{standing}{trend}{rhythm}{books}{colophon}</article>'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2214,6 +2461,7 @@ def render_workspace_detail(detail: Any, fidelity: Fidelity, **context: Any) -> 
 
     detail_base = context.get("detail_base", "")  # /folio for recent rows
     shell_base = context.get("shell_base", "")
+    find_base = context.get("find_base", "")  # /find for the tag chips
 
     leaf, parent = _ws_label(detail.path)
     in_tok = detail.input_tokens or 0
@@ -2250,6 +2498,26 @@ def render_workspace_detail(detail: Any, fidelity: Fidelity, **context: Any) -> 
         "</section>"
     )
 
+    cadence_sec = _cadence_section(getattr(detail, "cadence", []) or [])
+
+    tags_sec = ""
+    ws_tags = getattr(detail, "tags", []) or []
+    if ws_tags:
+        chips: list[str] = []
+        for name, n in ws_tags:
+            drill = _hx_detail(find_base, name, shell_base, key="tag")
+            chips.append(
+                f'<a class="dossier__tag"{drill}>{escape(name)}'
+                f'<span class="dossier__tagn">{n:,}</span></a>'
+            )
+        tags_sec = (
+            '<section class="dossier__tags"><div class="zone__head">'
+            '<span class="micro">What it&rsquo;s about</span>'
+            f'<span class="zone__count">{len(ws_tags):,} tags</span>'
+            '<span class="zone__rule"></span></div>'
+            f'<div class="dossier__chips">{"".join(chips)}</div></section>'
+        )
+
     recent_rows: list[str] = []
     for c in detail.recent:
         # All recent share this workspace, so the primary label is the start time
@@ -2284,5 +2552,5 @@ def render_workspace_detail(detail: Any, fidelity: Fidelity, **context: Any) -> 
     return (
         f'<article class="dash ws-detail" data-view="workspaces" data-title="{escape(leaf)}"'
         f' data-count="{detail.sessions}" data-kick="{escape(kick)}">'
-        f"{bar}{head}{models}{recent}</article>"
+        f"{bar}{head}{cadence_sec}{tags_sec}{models}{recent}</article>"
     )

@@ -68,6 +68,8 @@ def render_workspace_detail(detail: Any, fidelity: Fidelity) -> dict:
         "cost": detail.cost,
         "model_mix": [dataclasses.asdict(g) for g in detail.model_mix],
         "recent": serialize_conversation_list(detail.recent),
+        "cadence": [dataclasses.asdict(b) for b in detail.cadence],
+        "tags": [{"name": name, "count": n} for name, n in detail.tags],
     }
 
 

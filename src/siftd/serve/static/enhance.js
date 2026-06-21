@@ -60,6 +60,95 @@
     });
   }
 
+  // --- reckoning (Stats) charts + measure toggle ----------------------------
+  // The renderer emits the trend/rhythm bars and the account rows server-side
+  // with data-tokens/data-cost; this scales each plot for the active measure,
+  // marks the peak, and re-sorts the accounts — so the Tokens|Cost toggle
+  // re-draws with no round-trip. CSP-safe: CSSOM .style + classList only.
+  // A fresh .reck arrives with every #main swap, so listeners never stack.
+  function initReck(root) {
+    var reck = (root || document).querySelector('.reck');
+    if (!reck) return;
+    var trendPlot = reck.querySelector('#trend-plot');
+    var hodPlot = reck.querySelector('#hod-plot');
+    var dowPlot = reck.querySelector('#dow-plot');
+    var peakEl = reck.querySelector('#trend-peak');
+
+    function fmtTok(n) {
+      return n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : '' + n;
+    }
+    function fmtCost(n) { return '$' + n.toFixed(2); }
+
+    // round the axis ceiling up to a clean 1/1.5/2/2.5/3/4/5/6/8/10 ×10^n.
+    function niceMax(v) {
+      if (v <= 0) return 1;
+      var base = Math.pow(10, Math.floor(Math.log10(v))), f = v / base;
+      var steps = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+      for (var i = 0; i < steps.length; i++) if (f <= steps[i] + 1e-9) return steps[i] * base;
+      return 10 * base;
+    }
+
+    function scale(plot, measure) {
+      if (!plot) return { peak: null, max: 1 };
+      var bars = [].slice.call(plot.children), peakRaw = 0, peak = null;
+      bars.forEach(function (b) { var v = +b.dataset[measure] || 0; if (v > peakRaw) peakRaw = v; });
+      var max = niceMax(peakRaw);
+      bars.forEach(function (b) {
+        var v = +b.dataset[measure] || 0;
+        b.style.setProperty('--h', Math.max(2, Math.round(v / max * 100)) + '%');
+        b.classList.remove('is-peak');
+        if (!peak || v > (+peak.dataset[measure] || 0)) peak = b;
+      });
+      return { peak: peak, max: max };
+    }
+
+    function num(row, measure) {
+      var v = row.dataset[measure];
+      return (v === '' || v == null) ? null : parseFloat(v);
+    }
+    function sortBook(ul, measure) {
+      var rows = [].slice.call(ul.querySelectorAll('.ledger__row:not(.account__row--rest)'));
+      var rest = ul.querySelector('.account__row--rest');
+      rows.sort(function (a, b) {
+        var va = num(a, measure), vb = num(b, measure);
+        if (va === null && vb === null) return 0;
+        if (va === null) return 1;
+        if (vb === null) return -1;
+        return vb - va;
+      });
+      rows.forEach(function (r) { ul.appendChild(r); });
+      if (rest) ul.appendChild(rest);
+    }
+
+    function setText(id, txt) { var el = reck.querySelector('#' + id); if (el) el.textContent = txt; }
+
+    function recut(measure) {
+      reck.classList.remove('by-tokens', 'by-cost');
+      reck.classList.add('by-' + measure);
+      var t = scale(trendPlot, measure), hh = scale(hodPlot, measure), dd = scale(dowPlot, measure);
+      var fmt = measure === 'cost' ? fmtCost : fmtTok, word = measure === 'cost' ? 'cost' : 'tokens';
+      setText('trend-ymax', fmt(t.max));
+      setText('hod-ymax', fmt(hh.max));
+      setText('dow-ymax', fmt(dd.max));
+      setText('trend-unit', word + ' per day');
+      setText('hod-unit', word + ' per hour');
+      setText('dow-unit', word + ' per weekday');
+      if (peakEl && t.peak) {
+        t.peak.classList.add('is-peak');
+        var v = +t.peak.dataset[measure];
+        var d = t.peak.dataset.date;
+        peakEl.textContent = 'Peak ' + (d ? d + ' · ' : '') + fmt(v);
+      }
+      reck.querySelectorAll('.ledger--account').forEach(function (ul) { sortBook(ul, measure); });
+    }
+
+    reck.querySelectorAll('input[name="measure"]').forEach(function (r) {
+      r.addEventListener('change', function () { recut(r.id === 'm-cost' ? 'cost' : 'tokens'); });
+    });
+    var checked = reck.querySelector('input[name="measure"]:checked');
+    recut(checked && checked.id === 'm-cost' ? 'cost' : 'tokens');
+  }
+
   // --- chrome head + active nav from the mounted fragment -------------------
   function syncChrome() {
     var v = document.querySelector('#main [data-view]');
@@ -250,7 +339,7 @@
     });
   }
 
-  function enhance() { wireTone(); drawLedgers(); drawHists(); syncChrome(); initSpy(); initToolSpy(); highlight(); scrollToEvent(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); }
+  function enhance() { wireTone(); drawLedgers(); drawHists(); initReck(); syncChrome(); initSpy(); initToolSpy(); highlight(); scrollToEvent(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); }
 
   document.body.addEventListener('htmx:afterSettle', enhance);
   applyTone();

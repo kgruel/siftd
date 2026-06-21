@@ -93,3 +93,43 @@ def test_workspace_detail_unknown_id_returns_none(tmp_path):
     db = tmp_path / "d.db"
     _build(db)
     assert workspace_detail("01HNOPE", fidelity=_F, db_path=db) is None
+
+
+def test_workspace_detail_carries_scoped_cadence(tmp_path):
+    """The cadence strip is the daily series scoped to the workspace, so its
+    token sum reconciles to the workspace's tokens (whole-workspace, unscoped)."""
+    db = tmp_path / "d.db"
+    ws_a, _ = _build(db)
+    d = workspace_detail(ws_a, fidelity=_F, db_path=db)
+    assert d is not None
+    assert d.cadence  # a non-empty daily series
+    assert sum(b.tokens for b in d.cadence) == d.input_tokens + d.output_tokens
+    # Gap-filled: a strictly increasing, contiguous run of ISO days.
+    from datetime import date
+
+    days = [date.fromisoformat(b.label) for b in d.cadence]
+    assert days == sorted(days)
+    for prev, nxt in zip(days, days[1:], strict=False):
+        assert (nxt - prev).days == 1
+
+
+def test_usage_distributions_shape_totals_and_scoping(tmp_path):
+    from siftd.api.stats import get_usage_distributions
+
+    db = tmp_path / "d.db"
+    _ws_a, ws_b = _build(db)
+
+    glob = get_usage_distributions(db_path=db)
+    assert len(glob.by_hour) == 24 and len(glob.by_dow) == 7
+    # Whole corpus: 1650 (ws_a) + 10 (ws_b).
+    assert sum(b.tokens for b in glob.by_day) == 1660
+    assert sum(b.tokens for b in glob.by_hour) == 1660
+    assert sum(b.tokens for b in glob.by_dow) == 1660
+
+    # Workspace-scoped (the cadence source) sums to that workspace only.
+    only_b = get_usage_distributions(db_path=db, workspace_id=ws_b)
+    assert sum(b.tokens for b in only_b.by_day) == 10
+
+    # Owner-scoped to alice: cA1 (150 in ws_a) + cB1 (10 in ws_b) = 160.
+    alice = get_usage_distributions(db_path=db, owner="alice")
+    assert sum(b.tokens for b in alice.by_day) == 160

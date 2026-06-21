@@ -82,6 +82,7 @@ RUST = (
 def build_fixture(db_path: Path) -> str:
     """Create the fixture DB; return the conversation id with the code fence."""
     from siftd.api.search import rebuild_fts_index
+    from siftd.storage.usage_rollup import rebuild_rollups
     from siftd.storage.sqlite import (
         create_database, get_or_create_harness, get_or_create_model,
         get_or_create_provider, get_or_create_workspace, insert_conversation,
@@ -165,6 +166,9 @@ def build_fixture(db_path: Path) -> str:
     insert_response_content(conn, rid2, 0, "text", json.dumps({"text": "other-proj response"}))
 
     rebuild_fts_index(conn)
+    # The reckoning + workspace cadence read usage_by_conv_model (a real ingest
+    # builds it); build it here so the Stats charts have data to scale.
+    rebuild_rollups(conn)
     conn.commit()
     conn.close()
     return ids[2]
@@ -446,6 +450,28 @@ async def flow(cdp, check, goto, code_conv):
     no_bar = await cdp.eval("!document.querySelector('#main .ledger--ws .ledger__bar')")
     still_ws = await cdp.eval("!!document.querySelector('#main .workspaces')")
     check("recency sort drops the magnitude bar", bool(no_bar) and bool(still_ws), f"no_bar={no_bar}")
+
+    # stats reckoning: initReck must scale the server-emitted trend bars (set
+    # --h under CSP, CSSOM-only) and the Tokens|Cost toggle must re-draw the
+    # charts + re-sort the accounts with no round-trip. Invisible to the unit
+    # tests (which render markup but never run enhance.js). Guards the new JS.
+    await cdp.click('a[data-view="stats"]')
+    await cdp.drain(1.5)
+    bars_scaled = await cdp.eval(
+        "(function(){var p=document.querySelector('#main #trend-plot');"
+        "if(!p||!p.children.length)return false;"
+        "return [].some.call(p.children,function(b){return b.style.getPropertyValue('--h');});})()"
+    )
+    check("reckoning trend bars scaled by initReck under CSP", bars_scaled is True)
+    # the radios are visually hidden (label-styled), so drive the visible label
+    await cdp.click('#main .measure label[for="m-cost"]')
+    await cdp.drain(0.6)
+    by_cost = await cdp.eval(
+        "!!document.querySelector('#main .reck.by-cost') && "
+        "!!document.querySelector('#main #trend-unit') && "
+        "/cost/.test(document.querySelector('#main #trend-unit').textContent)"
+    )
+    check("reckoning measure toggle re-draws to cost", by_cost is True)
 
     # folio with the rust fence -> Prism autoloader under CSP
     await goto(f"{BASE}/?id={code_conv}", 3.5)
