@@ -1225,6 +1225,33 @@ class TestRenderQueryDetailBlock:
         assert "[user]" in text
         assert "[assistant]" in text
 
+    def test_grand_total_uses_loud_amber_breakdown_uses_quiet(self):
+        # The two-tier amber payload: the conversation grand-total token figure takes
+        # the bright metric_strong tier (#c9a84c) while its (input/output) breakdown
+        # stays the quiet metric tier (#8a7a3a). Guards painted_bridge.py:428/431 — the
+        # nearby tests read cell.char only, so a swap or collapse to one tier passes
+        # them; this reads cell.style.fg, the only place the mapping is pinned.
+        from painted import use_theme
+        from siftd.output.painted_bridge import render_query_detail_block
+        from siftd.output.theme import siftd_theme
+
+        detail = FakeDetail(total_input_tokens=500, total_output_tokens=1000)
+        with use_theme(siftd_theme):
+            result = render_query_detail_block(
+                detail, turns=[FakeTurn()], fidelity=Fidelity(depth=1)
+            )
+
+        tokens_row_fgs = None
+        for y in range(result.height):
+            if "Tokens:" in "".join(cell.char for cell in result.row(y)):
+                tokens_row_fgs = [cell.style.fg for cell in result.row(y)]
+                break
+        assert tokens_row_fgs is not None, "no Tokens: row rendered"
+        # Both tiers present, and the loud grand-total precedes the quiet breakdown.
+        assert "#c9a84c" in tokens_row_fgs  # metric_strong — the grand total
+        assert "#8a7a3a" in tokens_row_fgs  # metric — the input/output breakdown
+        assert tokens_row_fgs.index("#c9a84c") < tokens_row_fgs.index("#8a7a3a")
+
     def test_turn_with_tool_summaries(self):
         from siftd.output.painted_bridge import render_query_detail_block
 

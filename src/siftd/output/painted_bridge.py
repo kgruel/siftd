@@ -425,7 +425,7 @@ def render_query_detail_block(
     header_lines.append(
         _line(
             ("Tokens: ", ds.temporal),
-            (fmt_tokens(total_tokens), ds.metric),
+            (fmt_tokens(total_tokens), ds.metric_strong),
             (
                 f" (input: {fmt_tokens(detail.total_input_tokens)} / output: {fmt_tokens(detail.total_output_tokens)})",
                 ds.metric,
@@ -724,17 +724,20 @@ def render_list_block(
 
     import sys
 
-    from painted import Align, current_palette, join_vertical
+    from painted import Align, join_vertical
 
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
     from siftd.output.table import Col, render_table
+    from siftd.output.theme import domain_styles
 
-    p = current_palette()
+    ds = domain_styles(fidelity)
     depth = fidelity.depth
 
+    # Columns name their semantic role (ds.*), not a raw palette slot: temporal and
+    # metric both rode `p.muted` before the theme split them (metric → amber thread).
     cols: list[Col] = [
-        Col("id", lambda c: short_id(c.id) if c.id else "", style=p.accent),
-        Col("started_at", lambda c: fmt_timestamp(c.started_at), style=p.muted),
+        Col("id", lambda c: short_id(c.id) if c.id else "", style=ds.identifier),
+        Col("started_at", lambda c: fmt_timestamp(c.started_at), style=ds.temporal),
         Col(
             "workspace",
             lambda c: fmt_workspace(c.workspace_path),
@@ -745,15 +748,15 @@ def render_list_block(
     ]
     if depth >= 1:
         cols.extend([
-            Col("model", lambda c: fmt_model(c.model) if c.model else ""),
-            Col("turns", lambda c: str(c.prompt_count), style=p.muted, align=Align.END),
-            Col("tokens", lambda c: fmt_tokens(c.total_tokens), style=p.muted, align=Align.END),
+            Col("model", lambda c: fmt_model(c.model) if c.model else "", style=ds.model),
+            Col("turns", lambda c: str(c.prompt_count), style=ds.metric, align=Align.END),
+            Col("tokens", lambda c: fmt_tokens(c.total_tokens), style=ds.metric, align=Align.END),
         ])
     if depth >= 3:
         cols.extend([
-            Col("cost", lambda c: _fmt_cost(c), style=p.muted, align=Align.END),
-            Col("responses", lambda c: str(c.response_count), style=p.muted, align=Align.END),
-            Col("tags", lambda c: ", ".join(c.tags) if c.tags else "", style=p.accent),
+            Col("cost", lambda c: _fmt_cost(c), style=ds.metric, align=Align.END),
+            Col("responses", lambda c: str(c.response_count), style=ds.metric, align=Align.END),
+            Col("tags", lambda c: ", ".join(c.tags) if c.tags else "", style=ds.tag),
         ])
 
     width = term_width() if sys.stdout.isatty() else None
@@ -778,12 +781,11 @@ def render_peek_list_block(
     import sys
     import time
 
-    from painted import current_palette
-
     from siftd.output import fmt_ago, fmt_model
     from siftd.output.table import Col, render_table
+    from siftd.output.theme import domain_styles
 
-    p = current_palette()
+    ds = domain_styles()
     now = time.time()
 
     def _workspace(s) -> str:
@@ -802,13 +804,13 @@ def render_peek_list_block(
         return f"+{child_count} agents" if child_count > 0 else ""
 
     cols: list[Col] = [
-        Col("session", lambda s: short_id(s.session_id), style=p.accent),
+        Col("session", lambda s: short_id(s.session_id), style=ds.identifier),
         Col("workspace", _workspace, fill=True, min_width=12, ellipsis_left=True),
-        Col("activity", lambda s: fmt_ago(now - s.last_activity), style=p.muted),
-        Col("exchanges", _exchanges, style=p.muted),
-        Col("model", lambda s: fmt_model(s.model)),
-        Col("adapter", lambda s: s.adapter_name or "", style=p.muted),
-        Col("agents", _suffix, style=p.accent),
+        Col("activity", lambda s: fmt_ago(now - s.last_activity), style=ds.temporal),
+        Col("exchanges", _exchanges, style=ds.metric),
+        Col("model", lambda s: fmt_model(s.model), style=ds.model),
+        Col("adapter", lambda s: s.adapter_name or "", style=ds.adapter),
+        Col("agents", _suffix, style=ds.agent),
     ]
 
     width = term_width() if sys.stdout.isatty() else None

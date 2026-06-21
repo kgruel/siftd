@@ -51,7 +51,9 @@ class DomainStyles:
 
     # --- Table / list data ---
     temporal: Style      # timestamps, "ago" values — recedes
-    metric: Style        # tokens, cost, counts — recedes
+    metric: Style        # tokens, cost, counts — the quiet amber thread (amber-dim)
+    metric_strong: Style # headline totals — loud amber (the conversation grand-total
+                         # today; reserved for a future stats/report surface)
     workspace: Style     # project context — moderate prominence
     model: Style         # AI model name — informational
     adapter: Style       # source tool adapter — supporting detail
@@ -68,16 +70,44 @@ class DomainStyles:
 
 
 def _make_theme():
-    import dataclasses
+    from painted import LIGHT, ROUNDED, Palette, Style, Theme
 
-    from painted import LIGHT, NORD_PALETTE, ROUNDED, Style, Theme
-
-    # The palette rides painted's canonical Nord values rather than hand-tuning
-    # its own near-Nord codes. The single deliberate deviation: a bold accent —
-    # identifiers and prompts are copy-paste targets and should stay loud (Nord's
-    # accent is the same hue, 110, just not bold).
-    palette = dataclasses.replace(
-        NORD_PALETTE, accent=NORD_PALETTE.accent.merge(Style(bold=True))
+    # The bespoke "warm obsidian" palette, ported from the served Swiss UI
+    # stylesheet (serve/static/siftd.css). painted carries the five universal
+    # semantic roles; the two siftd-identity tones the role vocabulary can't name
+    # — the amber "sifting for gold" thread and a third (secondary) text weight —
+    # live in domain_styles(), which maps roles onto the domain vocabulary.
+    #
+    # The hex values render truecolor and downsample on lesser terminals.
+    # Backgrounds are deliberately omitted: the terminal owns its substrate, so
+    # only the foreground hues cross over from the web surface. Those hues assume a
+    # dark background (the Swiss "warm obsidian"); on a light terminal they lose
+    # contrast — notably the bright amber, which can read fainter than its dim
+    # sibling (there is no terminal-background detection to mitigate).
+    #
+    # The `accent` role carries NO hue, only bold: the one cool note (a blue) read
+    # as an intruder in an otherwise-warm identity, so structural elements —
+    # identifiers, prompt markers, tool-names — pop by WEIGHT while field labels
+    # recede to `secondary`. Gold/amber stays the only structural colour ("the gold
+    # is the point"); tags/agents keep their teal; success/warning/error keep their
+    # meaning-colours. Because every accent consumer (the search rank rail, follow
+    # headers, ingest counts) reads this one role, dropping the hue here drops it
+    # everywhere at once.
+    palette = Palette(
+        success=Style(fg="#5ba8a0"),   # teal
+        warning=Style(fg="#d4a843"),   # gold
+        error=Style(fg="#c85050"),     # soft red
+        accent=Style(bold=True),       # no hue — structure pops by weight, not colour
+        muted=Style(fg="#505862"),     # slate
+        # Categorical ramp in the identity hues (error/warning/success + the bright
+        # amber). Unused today (no flame surface) but kept blue-free so a future
+        # chart inherits the warm identity rather than reviving the dropped accent.
+        series=(
+            Style(fg="#c85050"),
+            Style(fg="#d4a843"),
+            Style(fg="#5ba8a0"),
+            Style(fg="#c9a84c"),
+        ),
     )
     return Theme(palette=palette, borders=LIGHT), ROUNDED
 
@@ -98,17 +128,25 @@ def domain_styles(fidelity: Fidelity | None = None) -> DomainStyles:
 
     p = current_palette()
 
-    # Thinking prominence: dim italic by default, less dim when explicitly shown
+    # siftd-identity tones the painted role vocabulary can't name (see _make_theme):
+    # the amber "sifting for gold" thread at two weights, a third text weight, and
+    # the teal used for tags/agents. Hex renders truecolor and downsamples.
+    amber = Style(fg="#c9a84c")        # bright — headline figures (the loud tier)
+    amber_dim = Style(fg="#8a7a3a")    # dim — inline metrics (tokens/cost/counts)
+    secondary = Style(fg="#8a8a9a")    # third text weight, between fg and muted
+    teal = Style(fg="#5ba8a0")         # tags, agents
+
+    # Thinking prominence: secondary italic by default, brighter when explicitly shown
     thinking_visible = fidelity is not None and fidelity.shows("thinking")
     if thinking_visible:
         thinking = Style(italic=True)
     else:
-        thinking = p.muted.merge(Style(italic=True))
+        thinking = secondary.merge(Style(italic=True))
 
     return DomainStyles(
         # Identifiers & labels
         identifier=p.accent,
-        tag=Style(fg=72),  # teal — distinct from accent blue
+        tag=teal,
 
         # Narrative roles
         prompt=p.accent,
@@ -123,15 +161,17 @@ def domain_styles(fidelity: Fidelity | None = None) -> DomainStyles:
 
         # Table / list data
         temporal=p.muted,
-        metric=p.muted,
+        metric=amber_dim,
+        metric_strong=amber,
         workspace=Style(),
-        model=Style(),
+        model=secondary,
         adapter=p.muted,
-        agent=Style(fg=72),  # teal — matches tags
+        agent=teal,
 
-        # Structural
-        label=p.accent,
-        summary=p.muted,
+        # Structural — labels recede to secondary (the structural accent is weight,
+        # carried by identifier/prompt/tool_name above, not a colour on the labels).
+        label=secondary,
+        summary=secondary,
         separator=p.muted,
 
         # Borders — tool I/O gets LIGHT, thinking gets ROUNDED
