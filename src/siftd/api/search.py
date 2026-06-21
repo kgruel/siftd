@@ -269,6 +269,8 @@ def resolve_candidates(
     exclude_active: bool = True,
     include_derivative: bool = False,
     owner: str | None = None,
+    tool: str | None = None,
+    tool_tag: str | None = None,
 ) -> set[str] | None:
     """Resolve candidate conversation IDs from filters + scope options.
 
@@ -290,6 +292,8 @@ def resolve_candidates(
         exclude_active=exclude_active,
         include_derivative=include_derivative,
         owner=owner,
+        tool=tool,
+        tool_tag=tool_tag,
     )
 
 
@@ -897,6 +901,8 @@ def search_chunks(
     exclude_active: bool = True,
     include_derivative: bool = False,
     owner: str | None = None,
+    tool: str | None = None,
+    tool_tag: str | None = None,
     recall: int = 80,
     rerank: str = "mmr",
     lambda_: float = 0.7,
@@ -926,6 +932,8 @@ def search_chunks(
         exclude_active=exclude_active,
         include_derivative=include_derivative,
         owner=owner,
+        tool=tool,
+        tool_tag=tool_tag,
         recall=recall,
         rerank=rerank,
         lambda_=lambda_,
@@ -958,6 +966,8 @@ def hybrid_search(
     exclude_active: bool = True,
     include_derivative: bool = False,
     owner: str | None = None,
+    tool: str | None = None,
+    tool_tag: str | None = None,
     # FTS5 tuning
     recall: int = 80,
     raw_fts: bool = False,
@@ -1010,7 +1020,7 @@ def hybrid_search(
             workspace=workspace, model=model, since=since, before=before,
             tag=tag, all_tags=all_tags, no_tag=no_tag, tag_kind=tag_kind,
             exclude_active=exclude_active, include_derivative=include_derivative,
-            owner=owner,
+            owner=owner, tool=tool, tool_tag=tool_tag,
         )
         conn = open_database(db_path, read_only=True)
         try:
@@ -1078,7 +1088,7 @@ def hybrid_search(
         workspace=workspace, model=model, since=since, before=before,
         tag=tag, all_tags=all_tags, no_tag=no_tag, tag_kind=tag_kind,
         exclude_active=exclude_active, include_derivative=include_derivative,
-        owner=owner,
+        owner=owner, tool=tool, tool_tag=tool_tag,
     )
 
     # FTS5 recall (hybrid mode only — narrows candidates before embeddings)
@@ -1273,6 +1283,8 @@ def search_view(
     exclude_active: bool = True,
     include_derivative: bool = False,
     owner: str | None = None,
+    tool: str | None = None,
+    tool_tag: str | None = None,
     # Engine tuning
     recall: int = 80,
     rerank: str = "mmr",
@@ -1332,6 +1344,8 @@ def search_view(
         exclude_active=exclude_active,
         include_derivative=include_derivative,
         owner=owner,
+        tool=tool,
+        tool_tag=tool_tag,
         recall=recall,
         rerank=rerank,
         lambda_=lambda_,

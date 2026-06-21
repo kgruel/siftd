@@ -19,7 +19,6 @@ from siftd.storage.conversation_stats import (
     has_conversation_stats_table,
 )
 from siftd.storage.filters import WhereBuilder
-from siftd.storage.filters import tag_condition as _tag_condition
 from siftd.storage.fts import fts5_first_event_in_conversation
 from siftd.storage.fts import sanitize_fts5_query as sanitize_fts5_query  # re-export for the api boundary
 from siftd.storage.queries import (
@@ -328,14 +327,7 @@ def _list_conversations_impl(
             search,
         )
 
-    if tool:
-        wb.add(
-            "c.id IN (SELECT e.conversation_id FROM events e"
-            " JOIN event_tool_call etc ON etc.event_id = e.id"
-            " JOIN tools t ON t.id = etc.tool_id"
-            " WHERE e.kind = 'tool_call' AND t.name = ?)",
-            tool,
-        )
+    wb.tool(tool)
 
     # Normalize tag: accept str (single) or list (OR filter)
     effective_tags = [tag] if isinstance(tag, str) else list(tag or [])
@@ -344,15 +336,7 @@ def _list_conversations_impl(
     wb.tags_all(all_tags, kinds=tag_kind)
     wb.tags_none(no_tag, kinds=tag_kind)
 
-    if tool_tag:
-        op, val = _tag_condition(tool_tag)
-        wb.add(
-            "c.id IN (SELECT e.conversation_id FROM tag_assignments ta"
-            " JOIN events e ON e.id = ta.target_id"
-            " JOIN tags tg ON tg.id = ta.tag_id"
-            f" WHERE ta.target_kind = 'tool_call' AND {op})",
-            val,
-        )
+    wb.tool_tag(tool_tag)
 
     if group_subagents:
         # Page by ROOT session: a sub-agent's external_id is "<root>::agent::…",
