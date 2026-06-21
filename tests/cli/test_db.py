@@ -235,7 +235,7 @@ class TestDbRemoteSubcommands:
         monkeypatch.setattr("siftd.config_sync.get_sync_remotes", lambda: [])
         rc = main(["db", "remote", "list"])
         assert rc == 0
-        assert "No remotes configured" in capsys.readouterr().out
+        assert "No remotes configured" in capsys.readouterr().err
 
     def test_remote_list_with_entries(self, monkeypatch, capsys):
         monkeypatch.setattr(
@@ -277,7 +277,7 @@ class TestDbPushPull:
         monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: _remote_cfg())
         rc = main(["--db", str(tmp_path / "missing.db"), "db", "push", "r"])
         assert rc == 1
-        assert "Database not found" in capsys.readouterr().out
+        assert "Database not found" in capsys.readouterr().err
 
     def test_push_sync_error(self, test_db, monkeypatch, capsys):
         from siftd.api.sync import SyncError
@@ -347,7 +347,7 @@ class TestDbPushPull:
         monkeypatch.setattr("siftd.api.sync.sync_push", lambda **kw: (_ for _ in ()).throw(FileNotFoundError("no db")))
         rc = main(["--db", str(test_db), "db", "push", "r"])
         assert rc == 1
-        assert "no db" in capsys.readouterr().out
+        assert "no db" in capsys.readouterr().err
 
         monkeypatch.setattr(
             "siftd.api.sync.sync_push",
@@ -505,7 +505,7 @@ class TestDbErrorPaths:
         monkeypatch.setattr("siftd.api.slice.slice_database", _missing)
         rc = main(["--db", str(test_db), "db", "slice", str(out), "--force"])
         assert rc == 1
-        assert "source gone" in capsys.readouterr().out
+        assert "source gone" in capsys.readouterr().err
 
     def test_merge_missing_db_source_runtime_and_detail_lines(self, test_db, tmp_path, monkeypatch, capsys):
         # source file missing
@@ -642,8 +642,8 @@ class TestDbSchemaVersion:
         """Non-existent DB returns 1 with a helpful message."""
         rc = main(["--db", str(tmp_path / "missing.db"), "db", "schema-version"])
         assert rc == 1
-        out = capsys.readouterr().out
-        assert "Database not found" in out
+        err = capsys.readouterr().err
+        assert "Database not found" in err
 
 
 class TestPullMergeErrorCli:

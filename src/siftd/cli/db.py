@@ -18,6 +18,7 @@ from pathlib import Path
 
 from siftd.cli._common import resolve_db
 from siftd.dateparse import parse_date
+from siftd.output import status
 
 
 def _database_artifacts(db_path: Path) -> list[Path]:
@@ -46,8 +47,7 @@ def cmd_db_info(args) -> int:
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     from siftd.api import open_database
@@ -84,8 +84,7 @@ def cmd_db_schema_version(args) -> int:
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     from siftd.api import open_database
@@ -173,7 +172,7 @@ def cmd_db_vacuum(args) -> int:
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
+        status.error(f"Database not found: {db}")
         return 1
 
     size_before = db.stat().st_size
@@ -204,13 +203,12 @@ def cmd_db_backup(args) -> int:
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
+        status.error(f"Database not found: {db}")
         return 1
 
     target = Path(args.output)
     if target.exists() and not args.force:
-        print(f"Target already exists: {target}", file=sys.stderr)
-        print("Use --force to overwrite.", file=sys.stderr)
+        status.error(f"Target already exists: {target}", hint="Use --force to overwrite.")
         return 1
 
     if target.exists():
@@ -221,7 +219,7 @@ def cmd_db_backup(args) -> int:
     backup_database(db, target)
 
     size = target.stat().st_size
-    print(f"Backed up to: {target} ({size / 1024:.1f} KB)")
+    status.confirm(f"Backed up to: {target} ({size / 1024:.1f} KB)")
     return 0
 
 
@@ -230,14 +228,14 @@ def cmd_db_restore(args) -> int:
     source = Path(args.input)
 
     if not source.exists():
-        print(f"Backup file not found: {source}", file=sys.stderr)
+        status.error(f"Backup file not found: {source}")
         return 1
 
     # Validate SQLite magic bytes
     with open(source, "rb") as f:
         header = f.read(16)
     if not header.startswith(b"SQLite format 3\x00"):
-        print(f"Not a valid SQLite database: {source}", file=sys.stderr)
+        status.error(f"Not a valid SQLite database: {source}")
         return 1
 
     db = resolve_db(args)
@@ -279,8 +277,7 @@ def cmd_db_restore(args) -> int:
         return 0
 
     if db.exists() and not args.force:
-        print(f"Database already exists: {db}", file=sys.stderr)
-        print("Use --force to overwrite.", file=sys.stderr)
+        status.error(f"Database already exists: {db}", hint="Use --force to overwrite.")
         return 1
 
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -289,7 +286,7 @@ def cmd_db_restore(args) -> int:
             artifact.unlink()
     shutil.copy2(source, db)
     size = db.stat().st_size
-    print(f"Restored to: {db} ({size / 1024:.1f} KB)")
+    status.confirm(f"Restored to: {db} ({size / 1024:.1f} KB)")
     return 0
 
 
@@ -300,14 +297,12 @@ def cmd_db_slice(args) -> int:
 
     db = resolve_db(args)
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     target = Path(args.output)
     if target.exists() and not args.force:
-        print(f"Target already exists: {target}", file=sys.stderr)
-        print("Use --force to overwrite.", file=sys.stderr)
+        status.error(f"Target already exists: {target}", hint="Use --force to overwrite.")
         return 1
 
     if target.exists():
@@ -335,12 +330,12 @@ def cmd_db_slice(args) -> int:
             rebuild_fts=rebuild_fts,
         )
     except FileNotFoundError as e:
-        print(str(e))
+        status.error(str(e))
         return 1
 
     count = result["conversations"]
     size = result["size_bytes"]
-    print(f"Sliced {count} conversation(s) to: {target} ({size / 1024:.1f} KB)")
+    status.confirm(f"Sliced {count} conversation(s) to: {target} ({size / 1024:.1f} KB)")
     return 0
 
 
@@ -349,21 +344,20 @@ def cmd_db_merge(args) -> int:
     source = Path(args.input)
 
     if not source.exists():
-        print(f"Source file not found: {source}", file=sys.stderr)
+        status.error(f"Source file not found: {source}")
         return 1
 
     # Validate SQLite magic bytes
     with open(source, "rb") as f:
         header = f.read(16)
     if not header.startswith(b"SQLite format 3\x00"):
-        print(f"Not a valid SQLite database: {source}", file=sys.stderr)
+        status.error(f"Not a valid SQLite database: {source}")
         return 1
 
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     from siftd.api.merge import merge_database
@@ -382,11 +376,11 @@ def cmd_db_merge(args) -> int:
             preflight=not args.no_preflight,
         )
     except RuntimeError as e:
-        print(f"Merge failed: {e}", file=sys.stderr)
+        status.error(f"Merge failed: {e}")
         return 1
 
     prefix = "[dry run] " if dry_run else ""
-    print(f"{prefix}Merged from: {source}")
+    status.confirm(f"{prefix}Merged from: {source}")
     conv_parts = [f"{result['conversations']} new"]
     if result["replaced_conversations"]:
         conv_parts.append(f"{result['replaced_conversations']} replaced")
@@ -656,8 +650,10 @@ def cmd_db_pull(args) -> int:
 
     remote_cfg = get_sync_remote(args.name)
     if remote_cfg is None:
-        print(f"Remote '{args.name}' not found.", file=sys.stderr)
-        print("Run 'siftd db remote list' to see configured remotes.", file=sys.stderr)
+        status.error(
+            f"Remote '{args.name}' not found.",
+            hint="Run 'siftd db remote list' to see configured remotes.",
+        )
         return 1
 
     remote = SyncRemote.from_config(remote_cfg)
@@ -686,19 +682,19 @@ def cmd_db_pull(args) -> int:
             dry_run=dry_run,
         )
     except SyncError as e:
-        print(f"Pull failed: {e}", file=sys.stderr)
+        status.error(f"Pull failed: {e}")
         return 1
 
     if result.conversations == 0:
-        print(f"Nothing new to pull from {args.name}.")
+        status.confirm(f"Nothing new to pull from {args.name}.")
         return 0
 
     size_kb = result.size_bytes / 1024
 
     if result.dry_run:
-        print(f"Would pull {result.conversations} conversations from {args.name} ({size_kb:.1f} KB)")
+        status.confirm(f"Would pull {result.conversations} conversations from {args.name} ({size_kb:.1f} KB)")
     else:
-        print(f"Pulled {result.conversations} conversations ({size_kb:.1f} KB)")
+        status.confirm(f"Pulled {result.conversations} conversations ({size_kb:.1f} KB)")
     return 0
 
 
@@ -723,9 +719,9 @@ def cmd_db_remote_add(args) -> int:
     set_sync_remote(name, host, path)
 
     if host:
-        print(f"Added remote '{name}': {host}:{path}")
+        status.confirm(f"Added remote '{name}': {host}:{path}")
     else:
-        print(f"Added remote '{name}': {path} (local)")
+        status.confirm(f"Added remote '{name}': {path} (local)")
     return 0
 
 
@@ -735,8 +731,10 @@ def cmd_db_remote_list(args) -> int:
 
     remotes = get_sync_remotes()
     if not remotes:
-        print("No remotes configured.")
-        print("Add one with: siftd db remote add <name> <host:path>")
+        status.info(
+            "No remotes configured.",
+            hint="Add one with: siftd db remote add <name> <host:path>",
+        )
         return 0
 
     for r in remotes:
@@ -754,10 +752,10 @@ def cmd_db_remote_remove(args) -> int:
     from siftd.config_sync import remove_sync_remote
 
     if remove_sync_remote(args.name):
-        print(f"Removed remote '{args.name}'.")
+        status.confirm(f"Removed remote '{args.name}'.")
         return 0
     else:
-        print(f"Remote '{args.name}' not found.", file=sys.stderr)
+        status.error(f"Remote '{args.name}' not found.")
         return 1
 
 
@@ -768,8 +766,10 @@ def cmd_db_push(args) -> int:
 
     remote_cfg = get_sync_remote(args.name)
     if remote_cfg is None:
-        print(f"Remote '{args.name}' not found.", file=sys.stderr)
-        print("Run 'siftd db remote list' to see configured remotes.", file=sys.stderr)
+        status.error(
+            f"Remote '{args.name}' not found.",
+            hint="Run 'siftd db remote list' to see configured remotes.",
+        )
         return 1
 
     remote = SyncRemote.from_config(remote_cfg)
@@ -779,8 +779,7 @@ def cmd_db_push(args) -> int:
 
     db = resolve_db(args)
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     dry_run = getattr(args, "dry_run", False)
@@ -802,14 +801,14 @@ def cmd_db_push(args) -> int:
             dry_run=dry_run,
         )
     except SyncError as e:
-        print(f"Push failed: {e}", file=sys.stderr)
+        status.error(f"Push failed: {e}")
         return 1
     except FileNotFoundError as e:
-        print(str(e))
+        status.error(str(e))
         return 1
 
     if result.conversations == 0:
-        print(f"Nothing new to push to {args.name}.")
+        status.confirm(f"Nothing new to push to {args.name}.")
         return 0
 
     size_kb = result.size_bytes / 1024
@@ -817,19 +816,18 @@ def cmd_db_push(args) -> int:
 
     if result.dry_run:
         window_hint = f" in {result.windows} windows" if result.windows > 1 else ""
-        print(f"Would push {result.conversations} conversations to {args.name} ({size_kb:.1f} KB){window_hint}")
+        status.confirm(f"Would push {result.conversations} conversations to {args.name} ({size_kb:.1f} KB){window_hint}")
     else:
         window_hint = f" ({result.windows} windows)" if result.windows > 1 else ""
         # Server-stamped ownership count: only authenticated HTTP pushes to a
         # server that reports it set this — None (older server, no auth,
         # local/SSH transport) omits the suffix rather than showing a fake 0.
         owned_hint = f", {result.owned} owned" if result.owned is not None else ""
-        print(f"Pushed {result.conversations} conversations ({size_kb:.1f} KB{owned_hint}){suffix}{window_hint}")
+        status.confirm(f"Pushed {result.conversations} conversations ({size_kb:.1f} KB{owned_hint}){suffix}{window_hint}")
         if result.windows > 1 and not result.last_push_updated:
-            print(
-                f"  Partial push — some windows may not have completed.\n"
-                f"  Re-run 'siftd db push {args.name}' to resume from the last successful window.",
-                file=sys.stderr,
+            status.warning(
+                "Partial push — some windows may not have completed.",
+                hint=f"Re-run 'siftd db push {args.name}' to resume from the last successful window.",
             )
     return 0
 

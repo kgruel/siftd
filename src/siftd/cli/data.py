@@ -554,7 +554,7 @@ def cmd_migrate(args) -> int:
         )
 
         if args.dry_run:
-            status.info(f"[Dry run] Would merge {merge_stats['workspaces_merged']} workspaces.")
+            status.confirm(f"[Dry run] Would merge {merge_stats['workspaces_merged']} workspaces.")
             status.info("Run without --dry-run to apply changes.")
         else:
             status.confirm(f"Merged {merge_stats['workspaces_merged']} workspaces.")
