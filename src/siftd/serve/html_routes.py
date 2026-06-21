@@ -368,7 +368,11 @@ def ui_folio(
 
 
 @get("/dashboard", sync_to_thread=True)
-def ui_dashboard(request: Request, db_path: Path) -> Response:
+def ui_dashboard(
+    request: Request,
+    db_path: Path,
+    model: str | None = Parameter(query="model", default=None),
+) -> Response:
     """Render the Swiss 'Stats' dashboard — aggregate token/cost over the corpus.
 
     Owner-scoped: every read takes the effective identity, so a tenant sees only
@@ -408,15 +412,27 @@ def ui_dashboard(request: Request, db_path: Path) -> Response:
         except OSError:
             pass
 
+    by_model = get_usage_by_model(db_path=db_path, owner=owner)
+    # Chart-brushing: a ?model= is honoured only when it names a real (canonical)
+    # model in this corpus — an unknown/garbage value falls back to the unscoped
+    # view rather than rendering an empty-but-scoped chart. The model account
+    # stays the GLOBAL ranking (the picker); only the activity charts scope.
+    scope_model = model if model and any(g.name == model for g in by_model) else None
+    distributions = get_usage_distributions(
+        db_path=db_path, owner=owner, model_name=scope_model
+    )
+
     return _html_response(
         render_dashboard(
             usage=get_usage_summary(db_path=db_path, owner=owner),
-            by_model=get_usage_by_model(db_path=db_path, owner=owner),
+            by_model=by_model,
             by_workspace=get_usage_by_workspace(db_path=db_path, owner=owner),
             coverage=get_cost_coverage(db_path=db_path, owner=owner),
             stats=stats,
-            distributions=get_usage_distributions(db_path=db_path, owner=owner),
+            distributions=distributions,
             owner=owner,
+            scope_model=scope_model,
+            brush_base="/dashboard",
         )
     )
 

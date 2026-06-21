@@ -894,6 +894,7 @@ def get_usage_distributions(
     db_path: Path | None = None,
     owner: str | None = None,
     workspace_id: str | None = None,
+    model_name: str | None = None,
 ) -> UsageDistributions:
     """Daily / hourly / weekday token+cost distributions over the rollup.
 
@@ -901,7 +902,10 @@ def get_usage_distributions(
     ``conversations.started_at`` (no schema, no new fact — the dashboard
     reckoning's activity charts and the per-workspace cadence strip are both
     projections of this). ``workspace_id`` scopes to one workspace (the cadence
-    strip); ``owner`` scopes to a tenant, matching every other read here.
+    strip); ``model_name`` scopes to one canonical model (the reckoning's
+    chart-brushing — same COALESCE(name, raw_name, 'unknown') grouping key
+    get_usage_by_model ranks by); ``owner`` scopes to a tenant, matching every
+    other read here.
     """
     from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
 
@@ -922,6 +926,13 @@ def get_usage_distributions(
         if workspace_id:
             clauses.append("c.workspace_id = ?")
             params.append(workspace_id)
+        # The model join is only needed when brushing by model; keep it out of the
+        # unscoped query so the common path stays a two-table join.
+        model_join = ""
+        if model_name is not None:
+            model_join = " LEFT JOIN models m ON m.id = u.model_id"
+            clauses.append("COALESCE(m.name, m.raw_name, 'unknown') = ?")
+            params.append(model_name)
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
 
         def run(grain: str) -> list:
@@ -934,7 +945,7 @@ def get_usage_distributions(
                 " SUM(u.cost) AS cost"
                 " FROM usage_by_conv_model u"
                 " JOIN conversations c ON c.id = u.conversation_id"
-                f"{where}"
+                f"{model_join}{where}"
                 " GROUP BY k",
                 params,
             ).fetchall()

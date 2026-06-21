@@ -473,6 +473,24 @@ async def flow(cdp, check, goto, code_conv):
     )
     check("reckoning measure toggle re-draws to cost", by_cost is True)
 
+    # chart-brushing: clicking a Model-mix name re-renders the reckoning scoped
+    # to that model (whole #main swap), marks the row is-current + shows a reset.
+    # Guards the htmx wiring + the route's model validation under CSP.
+    await cdp.click('#main .reck__books .ledger--account a.ledger__name')
+    await cdp.drain(1.5)
+    brushed = await cdp.eval(
+        "!!document.querySelector('#main .reck__clear') && "
+        "!!document.querySelector('#main .ledger--account .ledger__row.is-current')"
+    )
+    check("model brushing scopes the activity charts", brushed is True)
+    await cdp.click('#main .reck__clear')
+    await cdp.drain(1.2)
+    cleared = await cdp.eval(
+        "!document.querySelector('#main .reck__clear') && "
+        "!!document.querySelector('#main .reck')"
+    )
+    check("show-all reset clears the model scope", cleared is True)
+
     # folio with the rust fence -> Prism autoloader under CSP
     await goto(f"{BASE}/?id={code_conv}", 3.5)
     pre = await cdp.eval("document.querySelectorAll('#main pre, #main code').length")

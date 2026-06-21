@@ -1219,6 +1219,13 @@ details.hit-context[open] > summary::before { content:'\25BE'; color:var(--accen
 .reck__ctl { display:flex; align-items:center; gap:16px; }
 .trend__peak { font-family:var(--font-mono); font-size:var(--fs-micro);
   letter-spacing:.04em; color:var(--mid); white-space:nowrap; }
+/* chart-brushing: clickable model names + the active row + the "show all" reset */
+.reck__clear { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.04em; color:var(--accent); cursor:pointer; white-space:nowrap; }
+.ledger--account a.ledger__name { cursor:pointer; }
+.ledger--account a.ledger__name:hover { color:var(--accent); }
+.ledger--account .ledger__row.is-current { background:var(--sel-bg); box-shadow:var(--row-marker); }
+.ledger--account .ledger__row.is-current .ledger__name { color:var(--accent); }
 
 /* the measure toggle — recuts the trend, the rhythm + the book ranking
    (Tokens / Cost). folio-variants vocabulary, one page-wide control. */

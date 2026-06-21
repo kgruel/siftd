@@ -134,6 +134,13 @@ def test_usage_distributions_shape_totals_and_scoping(tmp_path):
     alice = get_usage_distributions(db_path=db, owner="alice")
     assert sum(b.tokens for b in alice.by_day) == 160
 
+    # Model-scoped (the chart-brushing source): the fixture uses one model, so
+    # scoping to it = the whole corpus; an unknown model = empty.
+    only_model = get_usage_distributions(db_path=db, model_name="claude-3-opus")
+    assert sum(b.tokens for b in only_model.by_day) == 1660
+    nope = get_usage_distributions(db_path=db, model_name="no-such-model")
+    assert sum(b.tokens for b in nope.by_day) == 0
+
 
 def test_usage_summary_carries_cache_totals(tmp_path):
     """get_usage_summary sums the rollup's broken-out cache components (the

@@ -1862,6 +1862,8 @@ def _reck_account(
     noun: str,
     label_fn=None,
     limit: int = 8,
+    brush_base: str | None = None,
+    active: str | None = None,
 ) -> str:
     """A footed, ranked account (model mix / workspace mix) for the reckoning.
 
@@ -1870,6 +1872,12 @@ def _reck_account(
     ``account__row--rest`` carrying the summed remainder (so the foot still
     reconciles to the whole), and the foot totals over ALL groups — never just
     the shown head. Cost honesty: a ``None``-cost group renders ``&mdash;``.
+
+    When ``brush_base`` is set, each row's name becomes a click target that
+    re-renders the reckoning scoped to that group (``brush_base?model=<name>``,
+    whole-fragment ``#main`` swap), so the activity charts focus on it; the
+    ``active`` row toggles back to the unscoped view (links to ``brush_base``)
+    and is marked ``is-current``.
     """
     from siftd.output.common import fmt_tokens
 
@@ -1881,6 +1889,21 @@ def _reck_account(
             return '<span class="account__cost account__cost--none">&mdash;</span>'
         return f'<span class="account__cost">${cost:,.2f}</span>'
 
+    def _name_cell(raw: str, shown: str) -> tuple[str, str]:
+        """Returns (li-class-suffix, name-cell). Brushing makes the name an
+        hx anchor; the active group links back to the unscoped view."""
+        if not brush_base:
+            return "", f'<span class="ledger__name">{escape(shown)}</span>'
+        from urllib.parse import quote
+
+        is_active = raw == active
+        href = brush_base if is_active else f"{brush_base}?model={quote(raw)}"
+        cell = (
+            f'<a class="ledger__name" hx-get="{escape(href)}" hx-target="#main"'
+            f' hx-swap="innerHTML" hx-push-url="true">{escape(shown)}</a>'
+        )
+        return (" is-current" if is_active else ""), cell
+
     head = groups[:limit]
     rest = groups[limit:]
     rows: list[str] = []
@@ -1888,10 +1911,11 @@ def _reck_account(
         name = label_fn(g.name) if label_fn else g.name
         tok = _tok(g)
         cost_attr = "" if g.cost is None else f"{g.cost:.2f}"
+        active_cls, name_cell = _name_cell(g.name, name)
         rows.append(
-            f'<li class="ledger__row" data-tokens="{tok}" data-cost="{cost_attr}">'
+            f'<li class="ledger__row{active_cls}" data-tokens="{tok}" data-cost="{cost_attr}">'
             f'<span class="account__rank"></span>'
-            f'<span class="ledger__name">{escape(name)}</span>'
+            f'{name_cell}'
             f'<span class="account__tok">{escape(fmt_tokens(tok))}</span>'
             f'{_cost_cell(g.cost)}</li>'
         )
@@ -1978,6 +2002,8 @@ def render_dashboard(
     stats: Any,
     distributions: Any = None,
     owner: str | None = None,
+    scope_model: str | None = None,
+    brush_base: str = "",
 ) -> str:
     """Render the Swiss 'Stats' dashboard fragment.
 
@@ -2113,9 +2139,22 @@ def render_dashboard(
             f'<span>{escape(first)}</span><span>{escape(mid)}</span><span>{escape(last)}</span>'
         )
 
+    # chart-brushing: when scoped to a model, label the activity charts with it
+    # and offer a "show all" toggle back to the unscoped view (whole #main swap).
+    brushing = bool(scope_model and brush_base)
+    activity_label = (
+        f'Activity &middot; {escape(scope_model or "")}' if brushing else "Activity over the period"
+    )
+    clear = (
+        f'<a class="reck__clear" hx-get="{escape(brush_base)}" hx-target="#main"'
+        ' hx-swap="innerHTML" hx-push-url="true">show all &times;</a>'
+        if brushing
+        else ""
+    )
     trend = (
-        '<div class="reck__sechead"><span class="micro">Activity over the period</span>'
+        f'<div class="reck__sechead"><span class="micro">{activity_label}</span>'
         '<span class="zone__rule"></span><span class="reck__ctl">'
+        f'{clear}'
         '<span class="trend__peak" id="trend-peak"></span>'
         '<div class="measure" role="radiogroup" aria-label="Measure">'
         '<input type="radio" name="measure" id="m-tok" checked><label for="m-tok">Tokens</label>'
@@ -2155,7 +2194,7 @@ def render_dashboard(
         '<span class="zone__rule"></span><span class="reck__ctl">'
         '<span class="trend__peak">ranked by the measure above</span></span></div>'
         '<div class="reck__books">'
-        f'{_reck_account(by_model, title="Model mix", noun="models")}'
+        f'{_reck_account(by_model, title="Model mix", noun="models", brush_base=brush_base or None, active=scope_model)}'
         f'{_reck_account(by_workspace, title="Workspace mix", noun="workspaces", label_fn=fmt_workspace)}'
         '</div>'
     )

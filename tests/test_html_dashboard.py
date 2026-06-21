@@ -162,6 +162,49 @@ def test_dashboard_rhythm_active_days_and_streak():
     assert "Longest streak" in html and "1 day" in html
 
 
+def test_dashboard_model_brushing_marks_active_and_links_rows():
+    """With a scope_model + brush_base, the Model-mix names become click targets
+    that re-render scoped to that model; the active row is marked is-current and
+    toggles back to the unscoped view, a 'show all' reset appears, and the
+    activity label names the scoped model."""
+    html = _render(
+        usage=UsageSummary(3, 3_000_000, 0, 36.0),
+        by_model=[
+            GroupUsage("claude-x", 2, 2_000_000, 0, 24.0),
+            GroupUsage("claude-y", 1, 1_000_000, 0, 12.0),
+        ],
+        by_workspace=[GroupUsage("/proj", 3, 3_000_000, 0, 36.0)],
+        distributions=_dist(),
+    )
+    # baseline (no brushing): plain name spans, no clear, no active row
+    assert 'class="reck__clear"' not in html
+    assert 'class="ledger__row is-current"' not in html
+
+    scoped = render_dashboard(
+        usage=UsageSummary(3, 3_000_000, 0, 36.0),
+        by_model=[
+            GroupUsage("claude-x", 2, 2_000_000, 0, 24.0),
+            GroupUsage("claude-y", 1, 1_000_000, 0, 12.0),
+        ],
+        by_workspace=[GroupUsage("/proj", 3, 3_000_000, 0, 36.0)],
+        coverage=CostCoverage(5, 4, 1, 80.0),
+        stats=_stats(),
+        distributions=_dist(),
+        scope_model="claude-x",
+        brush_base="/dashboard",
+    )
+    assert 'class="reck__clear"' in scoped
+    assert "Activity &middot; claude-x" in scoped
+    # the active model links back to the unscoped view (toggle off)
+    assert 'class="ledger__row is-current"' in scoped
+    assert '<a class="ledger__name" hx-get="/dashboard" hx-target="#main"' in scoped
+    # a non-active model links to its own scope
+    assert 'hx-get="/dashboard?model=claude-y"' in scoped
+    # only the two model names are click targets — the workspace account stays
+    # non-brushable (its names are plain spans, not anchors).
+    assert scoped.count('<a class="ledger__name"') == 2
+
+
 def test_dashboard_headline_and_row_cost_when_priced():
     html = _render(
         usage=UsageSummary(2, 1_000_000, 500_000, 12.5),

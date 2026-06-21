@@ -631,6 +631,30 @@ def test_dashboard_route_renders_swiss_dashboard(ctx):
     assert 'name="measure"' in body
 
 
+def test_dashboard_model_brushing_scopes_and_validates(tmp_path):
+    """?model= names a real model → the Model-mix row is marked is-current and a
+    'show all' reset appears (the activity charts scope to it). An unknown model
+    falls back to the unscoped view, never an empty-but-scoped chart."""
+    db, _cid = _make_db(tmp_path / "brush.db")
+    # the route reads by_model off the rollup; build it as a real ingest would.
+    from siftd.storage.sqlite import open_database
+
+    conn = open_database(db)
+    rebuild_rollups(conn)
+    conn.commit()
+    conn.close()
+
+    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+        scoped = client.get("/dashboard", params={"model": "claude-opus"}).text
+        assert "Activity &middot; claude-opus" in scoped
+        assert 'class="reck__clear"' in scoped
+        assert 'class="ledger__row is-current"' in scoped
+
+        unknown = client.get("/dashboard", params={"model": "ghost-model"}).text
+        assert 'class="reck__clear"' not in unknown
+        assert "Activity over the period" in unknown
+
+
 def test_stats_nav_links_live_dashboard_not_stub(ctx):
     """The Stats rail item points at the live /dashboard now, not /view/stats —
     clicking it must mount the dashboard, never the placeholder."""
