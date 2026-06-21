@@ -103,10 +103,14 @@ def test_label_style_can_opt_out_to_plain():
     assert accented != plain
 
 
-def test_heading_is_accent_and_single_line():
-    # A section title carries the accent role and collapses any newline.
+def test_heading_is_accent_title_over_an_underline():
+    # A section title: accent text on line 0, a ─ rule of matching width on
+    # line 1 (the table-header look). Newlines in the title collapse.
     with use_theme(siftd_theme):
         block = heading("row counts:\nleak")
         rendered = _ansi(block)
-    assert _text(block) == "row counts: leak"
+    lines = _text(block).splitlines()
+    assert lines[0] == "row counts: leak"
+    assert set(lines[1]) == {"─"}  # an underline rule, nothing else
+    assert len(lines[1]) == len(lines[0])  # spans the title width
     assert "\x1b[" in rendered  # accent escape present

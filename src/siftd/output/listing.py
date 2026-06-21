@@ -1,16 +1,17 @@
-"""Report-structure atoms — a section heading and an aligned key:value listing.
+"""Report-structure atoms — an underlined section heading and a key:value listing.
 
-These are the two shapes a status report is made of: titled sections, each
-section a key:value listing or a list of free-form lines. The deferred
+The shapes a status report is made of: titled sections, each a key:value listing
+(``definitions``) or a list of lines, introduced by a ``heading``. The deferred
 ``StatusReport`` will compose them; today they style the CLI's report surfaces
 (db dry-runs, ``install``, ``config tag-prefixes``) so they read as one designed
-system rather than plain text dropped above a styled table.
+system rather than flat text.
 
-The visual language is **accent-led**, echoing ``output.table``: the structural
-elements — section titles and the left/key column — take the NORD accent (the
-``label`` domain role, bold), and the data — values, listing right-hand sides —
-renders plain. ``output.table`` already paints its header accent and its rows
-plain; headings and listings now rhyme with it.
+The visual language is **accent-led and table-consistent**: a section heading is
+an accent title over a thin ``─`` underline — the same rule the gutter table
+draws under its header — so a section and a table read as one family. The left
+(key) column of a listing takes the accent ``label`` role; values render plain.
+Single-column and border-free, so output wraps cleanly and degrades at any width
+(no box frame to break on a narrow or non-Unicode terminal).
 
 Both atoms compose painted's already-public ``Line``/``Span``/``join_vertical``
 + ``display_width`` (the ``output.live`` precedent — no painted change), return a
@@ -41,21 +42,26 @@ def _oneline(s: object) -> str:
 
 
 def heading(text: str) -> Block:
-    """A section title — accent (bold), flush-left, matching the table header.
+    """A section title — an accent title over a thin ``─`` underline rule.
 
-    The structural top of a report section. Sits above a ``definitions`` listing
-    or a ``table`` and shares their accent so the section reads as one unit.
+    The accent title with a muted ``─`` rule beneath it (spanning the title's
+    display width), echoing the gutter table's header rule so a section header
+    and a table read as one family. Border-free and single-column, so it wraps
+    and degrades cleanly at any width.
     """
-    from painted import Line, Span
+    from painted import Line, Span, current_palette, join_vertical
 
     from siftd.output.theme import domain_styles
 
-    line = Line(spans=(Span(_oneline(text), domain_styles().label),))
-    return line.to_block(line.width)
+    title = _oneline(text)
+    title_line = Line(spans=(Span(title, domain_styles().label),))
+    width = title_line.width
+    rule_line = Line(spans=(Span("─" * width, current_palette().muted),))
+    return join_vertical(title_line.to_block(width), rule_line.to_block(width))
 
 
 def print_heading(text: str) -> None:
-    """Render and print an accent section title to stdout."""
+    """Render and print an underlined accent section title to stdout."""
     from painted import print_block
 
     print_block(heading(text))
@@ -74,10 +80,10 @@ def definitions(
     Labels are padded to the widest label's *display* width (wcwidth-correct, not
     ``len()``) and separated from values by ``gutter`` spaces, the whole block
     indented by ``indent``. The left column takes the accent ``label`` role by
-    default (the house style — it rhymes with the table header and section
-    headings); ``value_style`` defaults to plain. Pass ``label_style`` to opt out
-    (e.g. a machine-ish surface that wants plain keys). An empty input renders an
-    empty (zero-row) block — an empty section contributes nothing.
+    default (the house style — it rhymes with section headings); ``value_style``
+    defaults to plain. Pass ``label_style`` to opt out (e.g. a machine-ish surface
+    that wants plain keys). An empty input renders an empty (zero-row) block — an
+    empty section contributes nothing.
     """
     from collections.abc import Mapping
 
