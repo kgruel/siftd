@@ -1049,11 +1049,10 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False)
 
 
 def _doctor_run_painted(args, check_names, show_fixes, db, deep=False, fast=False) -> int:
-    from painted import InPlaceRenderer, use_theme
+    from painted import InPlaceRenderer
 
     from siftd.api import list_checks, run_checks
     from siftd.doctor.view import render_progress_block
-    from siftd.output.theme import siftd_theme
 
     all_checks = list_checks()
     if check_names:
@@ -1066,7 +1065,7 @@ def _doctor_run_painted(args, check_names, show_fixes, db, deep=False, fast=Fals
 
     completed: dict[str, list] = {}
 
-    with use_theme(siftd_theme), InPlaceRenderer() as renderer:
+    with InPlaceRenderer() as renderer:
 
         def on_done(name, check_findings):
             completed[name] = check_findings
