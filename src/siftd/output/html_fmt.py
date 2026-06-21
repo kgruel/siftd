@@ -1898,6 +1898,7 @@ def _reck_account(
     label_fn=None,
     limit: int = 8,
     brush_base: str | None = None,
+    brush_push_base: str | None = None,
     active: str | None = None,
 ) -> str:
     """A footed, ranked account (model mix / workspace mix) for the reckoning.
@@ -1933,13 +1934,18 @@ def _reck_account(
 
         is_active = raw == active
         href = brush_base if is_active else f"{brush_base}?model={quote(raw)}"
-        # No hx-push-url: the brush is a transient lens (like the workspace sort
-        # / pin swaps), not a deep-linkable entity. Pushing the fragment URL
-        # (/dashboard?model=) would, on refresh, load the bare #main fragment
-        # with no page shell or CSS — so the URL stays "/".
+        # Push the CANONICAL shell URL (/?view=stats[&model=]) so the brushed
+        # state is deep-linkable and refresh-safe: a reload of that URL re-mounts
+        # via the shell (the earlier no-push was because the fragment URL
+        # /dashboard?model= reloaded a bare, chrome-less #main — fixed now that
+        # the shell owns ?view=stats&model=).
+        push = ""
+        if brush_push_base:
+            purl = brush_push_base if is_active else f"{brush_push_base}&model={quote(raw)}"
+            push = f' hx-push-url="{escape(purl)}"'
         cell = (
             f'<a class="ledger__name" hx-get="{escape(href)}" hx-target="#main"'
-            f' hx-swap="innerHTML">{escape(shown)}</a>'
+            f' hx-swap="innerHTML"{push}>{escape(shown)}</a>'
         )
         return (" is-current" if is_active else ""), cell
 
@@ -2044,6 +2050,7 @@ def render_dashboard(
     owner: str | None = None,
     scope_model: str | None = None,
     brush_base: str = "",
+    brush_push_base: str = "",
 ) -> str:
     """Render the Swiss 'Stats' dashboard fragment.
 
@@ -2168,9 +2175,12 @@ def render_dashboard(
     activity_label = (
         f'Activity &middot; {escape(scope_model or "")}' if brushing else "Activity over the period"
     )
+    clear_push = (
+        f' hx-push-url="{escape(brush_push_base)}"' if brush_push_base else ""
+    )
     clear = (
         f'<a class="reck__clear" hx-get="{escape(brush_base)}" hx-target="#main"'
-        ' hx-swap="innerHTML">show all &times;</a>'
+        f' hx-swap="innerHTML"{clear_push}>show all &times;</a>'
         if brushing
         else ""
     )
@@ -2246,7 +2256,7 @@ def render_dashboard(
         '<div class="reck__sechead"><span class="micro">Breakdown</span>'
         '<span class="zone__rule"></span></div>'
         '<div class="reck__books">'
-        f'{_reck_account(by_model, title="Model mix", noun="models", brush_base=brush_base or None, active=scope_model)}'
+        f'{_reck_account(by_model, title="Model mix", noun="models", brush_base=brush_base or None, brush_push_base=brush_push_base or None, active=scope_model)}'
         f'{_reck_account(by_workspace, title="Workspace mix", noun="workspaces", label_fn=fmt_workspace)}'
         '</div>'
     )
@@ -2454,19 +2464,23 @@ _WS_SORT_OPTS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _ws_controls(*, sort: str, sort_base: str) -> str:
+def _ws_controls(*, sort: str, sort_base: str, sort_push_base: str = "") -> str:
     """The body controls: a client-side filter box + a server-side sort group.
 
     The sort options hx-get the view with ``?sort=`` and swap ``#main`` (the same
     whole-fragment pattern as pins); the active one is marked ``is-active``. The
     filter is wired in enhance.js (``wireWorkspaceFilter``) — CSP-safe, hides
-    non-matching rows client-side.
+    non-matching rows client-side. Each sort pushes the canonical shell URL
+    (``/?view=workspaces&sort=``) so the ordering is deep-linkable + refresh-safe.
     """
     links: list[str] = []
     for key, label in _WS_SORT_OPTS:
         active = " is-active" if key == sort else ""
+        push = (
+            f' hx-push-url="{escape(f"{sort_push_base}&sort={key}")}"' if sort_push_base else ""
+        )
         hx = (
-            f' hx-get="{escape(sort_base)}?sort={key}" hx-target="#main" hx-swap="innerHTML"'
+            f' hx-get="{escape(sort_base)}?sort={key}" hx-target="#main" hx-swap="innerHTML"{push}'
             if sort_base
             else ""
         )
@@ -2502,6 +2516,7 @@ def render_workspaces(rows: list, **context: Any) -> str:
     shell_base = context.get("shell_base", "")
     pin_action_url = context.get("pin_action_url", "")
     sort_base = context.get("sort_base", "")
+    sort_push_base = context.get("sort_push_base", "")
     sort = context.get("sort", "sessions")
     dup_groups, dup_extras = context.get("duplicates", (0, 0))
 
@@ -2555,7 +2570,7 @@ def render_workspaces(rows: list, **context: Any) -> str:
 
         # Body — the full canonical list under a filter + sort. ``is-ranked`` adds
         # the bar column for magnitude sorts; recency drops it.
-        controls = _ws_controls(sort=sort, sort_base=sort_base)
+        controls = _ws_controls(sort=sort, sort_base=sort_base, sort_push_base=sort_push_base)
         ranked = "" if sort == "recent" else " is-ranked"
         listing = "".join(_workspace_row(r, **row_kw) for r in rows)
         parts.append(

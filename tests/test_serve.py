@@ -646,6 +646,9 @@ class TestRateLimitAndLiveGate:
         create_database(team_db).close()
         app = create_app(db_path=team_db, auth_config=None, allow_live_endpoints=True)
         with TestClient(app, raise_server_exceptions=False) as client:
+            # /view/sessions is an htmx-only fragment (a direct GET 303s to the
+            # canonical shell); fetch it as htmx to assert the fragment itself.
+            client.headers.update({"HX-Request": "true"})
             sessions = client.get("/view/sessions")
             assert sessions.status_code == 200
             assert "zone--live" in sessions.text  # zone present (may be empty)

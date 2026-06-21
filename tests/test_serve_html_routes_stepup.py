@@ -61,19 +61,19 @@ def test_ui_sessions_and_follow_branches(monkeypatch, tmp_path):
     out = _run(hr.ui_sessions.fn(SimpleNamespace(), db, live_enabled=False)).content
     assert "zone--live" not in out and "/follow" not in out
 
-    assert "No session ID" in _run(hr.ui_follow.fn(sid="")).content
+    assert "No session ID" in _run(hr.ui_follow.fn(SimpleNamespace(), sid="")).content
 
     from siftd.api.peek import AmbiguousSessionError
 
     monkeypatch.setattr("siftd.api.peek.find_session_file", lambda _sid: (_ for _ in ()).throw(AmbiguousSessionError("x", [])))
-    assert "Ambiguous" in _run(hr.ui_follow.fn(sid="x")).content
+    assert "Ambiguous" in _run(hr.ui_follow.fn(SimpleNamespace(), sid="x")).content
 
     monkeypatch.setattr("siftd.api.peek.find_session_file", lambda _sid: None)
-    assert "Session not found" in _run(hr.ui_follow.fn(sid="x")).content
+    assert "Session not found" in _run(hr.ui_follow.fn(SimpleNamespace(), sid="x")).content
 
     monkeypatch.setattr("siftd.api.peek.find_session_file", lambda _sid: "/tmp/f")
     monkeypatch.setattr("siftd.api.peek.read_session_detail", lambda *a, **k: None)
-    assert "Cannot read session" in _run(hr.ui_follow.fn(sid="x")).content
+    assert "Cannot read session" in _run(hr.ui_follow.fn(SimpleNamespace(), sid="x")).content
 
 
 def test_ui_tags_suggest_and_export(monkeypatch, tmp_path):
@@ -130,7 +130,7 @@ def test_ui_follow_renders_live_folio(monkeypatch):
         ),
     )
 
-    out = _run(hr.ui_follow.fn(sid="sid123")).content
+    out = _run(hr.ui_follow.fn(SimpleNamespace(), sid="sid123")).content
     # Folio chrome under the Sessions view, self-refreshing as a whole fragment.
     assert "folio--live" in out and 'data-view="sessions"' in out
     assert 'hx-get="/follow?sid=sid123"' in out and "every 2s" in out

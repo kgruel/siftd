@@ -15,7 +15,7 @@ from typing import Any
 
 from litestar import Request, get, post
 from litestar.params import Parameter
-from litestar.response import Response
+from litestar.response import Redirect, Response
 
 from siftd.output._id_format import short_id
 from siftd.serve.routes import _effective_owner
@@ -136,8 +136,142 @@ def _asset_v(rel: str) -> str:
     return f"?v={mtime}"
 
 
+# ---------------------------------------------------------------------------
+# URL-as-state: the canonical /?view=<v>&<state> grammar
+# ---------------------------------------------------------------------------
+# The address bar is always a shell URL (``/?view=…``); fragment endpoints
+# (``/folio``, ``/dashboard``, …) are internal mount targets the shell loads
+# into ``#main`` via htmx. ``_resolve_view`` is the decoder (URL → mount);
+# ``_canonical_url`` is the encoder (view+state → URL). A direct/non-htmx GET
+# of a fragment redirects to its canonical URL (``_shell_redirect``), so a
+# refresh / shared link / typed fragment URL always lands on the shell.
+
+_VALID_VIEWS = frozenset(
+    {"sessions", "search", "transcript", "tags", "workspaces", "stats"}
+)
+
+
+def _canonical_url(view: str, **state: str | None) -> str:
+    """Encode a view + its state into the canonical shell URL ``/?view=…``.
+
+    Empty/None state values are dropped, so a stateless view encodes to a clean
+    ``/?view=<v>``. Ordering is stable (insertion order) for predictable,
+    shareable links.
+    """
+    from urllib.parse import urlencode
+
+    params: list[tuple[str, str]] = [("view", view)]
+    params.extend((k, v) for k, v in state.items() if v)
+    return "/?" + urlencode(params)
+
+
+def _is_htmx(request: Request) -> bool:
+    """True when this GET is an htmx fragment fetch (the shell mounting ``#main``
+    or an in-page swap), false for a direct browser navigation/refresh.
+
+    Defensive: a request without usable headers (a direct ``handler.fn(...)``
+    call in a unit test) can't be classified, so it is treated as htmx — i.e. it
+    serves the fragment, never redirects. A real browser always sends headers, so
+    the navigation/refresh case is never ambiguous in production.
+    """
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return True
+    return headers.get("HX-Request") == "true"
+
+
+def _shell_redirect(request: Request, view: str, **state: str | None) -> Redirect | None:
+    """A 303 to the canonical shell URL for a direct (non-htmx) GET of a fragment.
+
+    Returns ``None`` when the request is an htmx fetch — the caller then serves
+    the bare fragment as normal. This is the single point that dissolves the
+    bare-fragment footgun: a typed/refreshed/shared fragment URL canonicalizes to
+    ``/?view=…``, which the shell re-mounts (so the page is never an unstyled,
+    chrome-less fragment).
+    """
+    if _is_htmx(request):
+        return None
+    return Redirect(_canonical_url(view, **state), status_code=303)
+
+
+def _resolve_view(
+    *,
+    view: str | None,
+    conv_id: str | None,
+    folio_mode: str | None,
+    folio_event: str | None,
+    search_q: str | None,
+    tag: str | None,
+    workspace_id: str | None,
+    follow_sid: str | None,
+    model: str | None,
+    sort: str | None,
+    live_enabled: bool,
+) -> tuple[str, str]:
+    """Decode the shell's query params into ``(active_view, main_url)``.
+
+    An explicit ``?view=`` wins; otherwise the view is inferred from a legacy
+    presence-based deep link (``?id=`` → transcript, ``?q=``/``?tag=`` → search,
+    ``?ws=`` → workspaces, ``?follow=`` → sessions) so older links and the
+    ``_hx_detail`` drill-downs (which still push ``/?id=``/``/?tag=``/``/?ws=``)
+    keep round-tripping. ``main_url`` is the fragment the shell's ``#main`` mounts.
+    """
+    from urllib.parse import quote as urlquote
+
+    v = view if view in _VALID_VIEWS else None
+    if v is None:
+        if conv_id:
+            v = "transcript"
+        elif search_q or tag:
+            v = "search"
+        elif workspace_id:
+            v = "workspaces"
+        elif follow_sid:
+            v = "sessions"
+        else:
+            v = "transcript"
+
+    if v == "transcript":
+        if not conv_id:
+            return "transcript", "/folio"
+        main = f"/folio?id={urlquote(conv_id)}"
+        if folio_mode == "trace":
+            main += "&mode=trace"
+            # event is a trace-only target (nested under mode=trace), so a
+            # reading mount never carries an unrenderable anchor.
+            if folio_event:
+                main += f"&event={urlquote(folio_event)}"
+        return "transcript", main
+    if v == "search":
+        parts: list[str] = []
+        if search_q:
+            parts.append(f"q={urlquote(search_q)}")
+        if tag:
+            parts.append(f"tag={urlquote(tag)}")
+        qs = ("?" + "&".join(parts)) if parts else ""
+        return "search", f"/find{qs}"
+    if v == "tags":
+        return "tags", "/view/tags"
+    if v == "workspaces":
+        if workspace_id:
+            return "workspaces", f"/workspace?ws={urlquote(workspace_id)}"
+        if sort in _WS_SORTS:
+            return "workspaces", f"/view/workspaces?sort={urlquote(sort)}"
+        return "workspaces", "/view/workspaces"
+    if v == "sessions":
+        if follow_sid and live_enabled:
+            return "sessions", f"/follow?sid={urlquote(follow_sid)}"
+        return "sessions", "/view/sessions"
+    if v == "stats":
+        if model:
+            return "stats", f"/dashboard?model={urlquote(model)}"
+        return "stats", "/dashboard"
+    return "transcript", "/folio"
+
+
 def _page_shell(
     *,
+    view: str | None = None,
     conv_id: str | None = None,
     folio_mode: str | None = None,
     folio_event: str | None = None,
@@ -145,6 +279,8 @@ def _page_shell(
     tag: str | None = None,
     follow_sid: str | None = None,
     workspace_id: str | None = None,
+    model: str | None = None,
+    sort: str | None = None,
     footer: dict | None = None,
     live_enabled: bool = False,
 ) -> str:
@@ -159,38 +295,29 @@ def _page_shell(
     pointing at an unregistered route.
     """
     from html import escape as esc
-    from urllib.parse import quote as urlquote
 
-    if conv_id:
-        # A search → folio jump deep-links with mode=trace + the matched event;
-        # carry them onto the inner /folio mount so a hard reload lands on the
-        # match too (the htmx push-url already put them in the address bar).
-        active, main_url = "transcript", f"/folio?id={urlquote(conv_id)}"
-        if folio_mode == "trace":
-            main_url += "&mode=trace"
-            # event is a trace-only target (nested under mode=trace), so a reading
-            # mount never carries an unrenderable anchor.
-            if folio_event:
-                main_url += f"&event={urlquote(folio_event)}"
-    elif search_q:
-        active, main_url = "search", f"/find?q={urlquote(search_q)}"
-    elif tag:
-        active, main_url = "search", f"/find?tag={urlquote(tag)}"
-    elif workspace_id:
-        active, main_url = "workspaces", f"/workspace?ws={urlquote(workspace_id)}"
-    elif follow_sid and live_enabled:
-        active, main_url = "sessions", f"/follow?sid={urlquote(follow_sid)}"
-    elif follow_sid:
-        active, main_url = "sessions", "/view/sessions"
-    else:
-        active, main_url = "transcript", "/folio"
+    active, main_url = _resolve_view(
+        view=view,
+        conv_id=conv_id,
+        folio_mode=folio_mode,
+        folio_event=folio_event,
+        search_q=search_q,
+        tag=tag,
+        workspace_id=workspace_id,
+        follow_sid=follow_sid,
+        model=model,
+        sort=sort,
+        live_enabled=live_enabled,
+    )
 
     nav_parts: list[str] = []
     for vid, num, name, ds, url in _NAV_ITEMS:
         cur = ' aria-current="page"' if vid == active else ""
-        # Live views push a clean URL; stubs leave the address bar untouched
-        # (their deep-link contract returns with their slice).
-        push_attr = ' hx-push-url="/"' if vid in ("transcript", "sessions", "workspaces") else ""
+        # Every rail item pushes its canonical shell URL (/?view=<vid>), so the
+        # address bar stays canonical and back/forward + refresh land on the
+        # right view. State-bearing views (transcript id, search q, …) gain that
+        # state from their own drill-downs / controls, not the bare rail nav.
+        push_attr = f' hx-push-url="{esc(_canonical_url(vid))}"'
         nav_parts.append(
             f'<a data-view="{vid}"{cur} hx-get="{esc(url)}" hx-target="#main"'
             f' hx-swap="innerHTML"{push_attr}>'
@@ -225,6 +352,14 @@ def _page_shell(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- URL-as-state: htmx snapshots #main into its history cache on push and
+     restores it on back/forward (see hx-history-elt on #main below). The cache
+     lives in localStorage; for siftd's self-hosted, single-tenant deployment
+     that is the user's own data on their own device, so the default cache is
+     kept. A shared-device / multi-tenant deployment that wants nothing rendered
+     persisted to disk should set historyCacheSize=0 AND server-render #main in
+     the shell (so refetch-restore isn't blank) — deferred until such a
+     deployment is real (F7-style per-deployment policy). -->
 <title>siftd</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -250,7 +385,7 @@ def _page_shell(
       <span class="ct" id="sw-count"></span>
       <span class="kick" id="sw-kick"></span>
     </header>
-    <main class="content" id="main" hx-get="{esc(main_url)}" hx-trigger="load" hx-swap="innerHTML"></main>
+    <main class="content" id="main" hx-history-elt hx-get="{esc(main_url)}" hx-trigger="load" hx-swap="innerHTML"></main>
   </div>
 </div>
 <script src="/static/vendor/prism/prism-core.min.js"></script>
@@ -266,12 +401,15 @@ def ui_shell(
     db_path: Path,
     live_enabled: bool,
     auth_config: dict | None = None,
+    view: str | None = Parameter(query="view", default=None),
     id: str | None = Parameter(query="id", default=None),
     mode: str = Parameter(query="mode", default="reading"),
     event: str | None = Parameter(query="event", default=None),
     q: str | None = Parameter(query="q", default=None),
     tag: str | None = Parameter(query="tag", default=None),
     ws: str | None = Parameter(query="ws", default=None),
+    model: str | None = Parameter(query="model", default=None),
+    sort: str | None = Parameter(query="sort", default=None),
     follow: str | None = Parameter(query="follow", default=None),
 ) -> Response:
     """Serve the Swiss page shell — the single full-page HTML response.
@@ -289,8 +427,10 @@ def ui_shell(
     footer = _shell_footer(db_path, with_counts=auth_config is None)
     return Response(
         content=_page_shell(
+            view=view,
             conv_id=id, folio_mode=mode, folio_event=_safe_event_id(event),
-            search_q=q, tag=tag, workspace_id=ws, follow_sid=follow,
+            search_q=q, tag=tag, workspace_id=ws, model=model, sort=sort,
+            follow_sid=follow,
             footer=footer, live_enabled=live_enabled,
         ),
         media_type="text/html",
@@ -320,6 +460,16 @@ def ui_folio(
     it into view after the swap — the jump lands on the match, not the top.
     Validated to a safe anchor token; a bad value is simply ignored (no scroll).
     """
+    mode = mode if mode in ("reading", "trace") else "reading"
+    red = _shell_redirect(
+        request, "transcript",
+        id=id,
+        mode="trace" if mode == "trace" else None,
+        event=_safe_event_id(event) if mode == "trace" else None,
+    )
+    if red is not None:
+        return red
+
     from siftd.api.conversations import (
         AmbiguousPrefix,
         get_conversation,
@@ -329,7 +479,6 @@ def ui_folio(
 
     owner = _effective_owner(request, None)
     fmt = get_format("html")
-    mode = mode if mode in ("reading", "trace") else "reading"
     # depth=3 fetches the rollup's canonical cost (+ tags) for the ledger foot.
     # The body mode rides the fidelity's visibility axis: reading needs only
     # text; trace inlines tool I/O + thinking, which get_conversation populates
@@ -386,6 +535,10 @@ def ui_dashboard(
     cannot. The pre-rollup (v8) degrade path that lived here was scaffolding for
     the 0.9.0 migration and dissolved once that migration landed.
     """
+    red = _shell_redirect(request, "stats", model=model)
+    if red is not None:
+        return red
+
     from siftd.api.stats import (
         get_cost_coverage,
         get_input_economy,
@@ -438,6 +591,7 @@ def ui_dashboard(
             owner=owner,
             scope_model=scope_model,
             brush_base="/dashboard",
+            brush_push_base="/?view=stats",
         )
     )
 
@@ -456,6 +610,10 @@ def ui_sessions(
     remote users; ``/follow`` isn't registered then either). Ingested zone =
     ``list_conversations``, owner-scoped like every DB read.
     """
+    red = _shell_redirect(request, "sessions")
+    if red is not None:
+        return red
+
     from siftd.api.conversations import list_conversations
     from siftd.output.format_registry import get_format
 
@@ -497,6 +655,10 @@ def ui_tags(request: Request, db_path: Path) -> Response:
     measure-gated — not pre-optimized. ``sync_to_thread=True`` keeps the blocking
     read off the event loop meanwhile.
     """
+    red = _shell_redirect(request, "tags")
+    if red is not None:
+        return red
+
     from siftd.api.tags import list_tags
     from siftd.output.format_registry import get_format
 
@@ -532,6 +694,12 @@ def ui_workspaces(
     it is count-only, so it leaks no path or remote. ``sync_to_thread=True`` keeps
     the blocking read off the event loop.
     """
+    red = _shell_redirect(
+        request, "workspaces", sort=sort if sort in _WS_SORTS else None
+    )
+    if red is not None:
+        return red
+
     from siftd.api.migrations import workspace_duplicate_count
     from siftd.api.stats import list_workspaces
     from siftd.output.format_registry import get_format
@@ -549,6 +717,7 @@ def ui_workspaces(
         shell_base="/",
         pin_action_url="/workspace/pin",
         sort_base="/view/workspaces",
+        sort_push_base="/?view=workspaces",
         sort=sort,
         duplicates=duplicates,
     ))
@@ -567,6 +736,10 @@ def ui_workspace_detail(
     Owner-scoped: ``workspace_detail`` returns None for a workspace the owner
     doesn't participate in, which degrades to the not-found stub (no IDOR leak).
     """
+    red = _shell_redirect(request, "workspaces", ws=ws)
+    if red is not None:
+        return red
+
     from siftd.api.stats import list_workspaces, workspace_detail
     from siftd.output.format_registry import get_format
 
@@ -595,10 +768,14 @@ def ui_workspace_detail(
 
 @get("/view/{name:str}", sync_to_thread=False)
 def ui_view_stub(
+    request: Request,
     name: str,
     q: str | None = Parameter(query="q", default=None),
 ) -> Response:
     """Placeholder for a view not yet authored in this slice (Swiss Phase B)."""
+    red = _shell_redirect(request, name, q=q)
+    if red is not None:
+        return red
     title = _VIEW_TITLES.get(name, name.replace("-", " ").title())
     hint = "coming in a later slice"
     if name == "search" and q:
@@ -608,6 +785,7 @@ def ui_view_stub(
 
 @get("/find", sync_to_thread=False)
 def ui_find(
+    request: Request,
     q: str | None = Parameter(query="q", default=None),
     tag: str | None = Parameter(query="tag", default=None),
 ) -> Response:
@@ -630,6 +808,10 @@ def ui_find(
     fallback otherwise — the same ranking the CLI/REST surfaces serve, with the
     engine that ran named in the result header.
     """
+    red = _shell_redirect(request, "search", q=q, tag=tag)
+    if red is not None:
+        return red
+
     from urllib.parse import quote as urlquote
 
     parts: list[str] = []
@@ -714,6 +896,10 @@ def ui_meta(
     *facet* dropdowns (workspace / model / tag / owner / since / before) filter
     which conversations the query (or the bare browse) draws from.
     """
+    red = _shell_redirect(request, "search", q=search, tag=tag)
+    if red is not None:
+        return red
+
     from html import escape
 
     from siftd.api import embeddings_available
@@ -988,6 +1174,10 @@ def ui_query(
     Facets (workspace/model/tag/date/owner) compose into either shape. The old
     ``?id=`` detail mode is gone — the folio is the single detail surface.
     """
+    red = _shell_redirect(request, "search", q=search)
+    if red is not None:
+        return red
+
     from siftd.output.format_registry import get_format
 
     # Normalize empty strings to None (htmx sends "" for blank inputs)
@@ -1080,6 +1270,10 @@ def ui_find_context(
     conversation the requester doesn't own (an unowned/ambiguous id, or an
     out-of-range/failed anchor, degrades to the collapsed trigger, never a 500).
     """
+    red = _shell_redirect(request, "search")
+    if red is not None:
+        return red
+
     from siftd.output.format_registry import get_format
     from siftd.output.html_fmt import SEARCH_CONTEXT_RINGS
 
@@ -1136,6 +1330,7 @@ def ui_find_context(
 
 @get("/follow", sync_to_thread=True)
 def ui_follow(
+    request: Request,
     sid: str = Parameter(query="sid", default=""),
 ) -> Response:
     """Follow a live session — the folio rendered from a live source.
@@ -1147,6 +1342,10 @@ def ui_follow(
     token foot all advance together); enhance.js keeps the body pinned to
     the bottom across swaps — it is a tail.
     """
+    red = _shell_redirect(request, "sessions", follow=sid or None)
+    if red is not None:
+        return red
+
     from html import escape
     from urllib.parse import quote as urlquote
 
@@ -1314,6 +1513,7 @@ async def ui_workspace_pin(request: Request, db_path: Path) -> Response:
         shell_base="/",
         pin_action_url="/workspace/pin",
         sort_base="/view/workspaces",
+        sort_push_base="/?view=workspaces",
         sort=sort,
         duplicates=duplicates,
     ))

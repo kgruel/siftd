@@ -17,6 +17,23 @@ pytestmark = pytest.mark.serve
 
 from litestar.testing import TestClient
 
+# The fragment endpoints (/folio, /dashboard, /find, /view/*, …) are htmx-only:
+# a direct (non-htmx) GET now 303s to the canonical /?view=… shell URL (the
+# URL-as-state foundation). These tests exercise the fragment surface, so they
+# fire as htmx requests — the same header htmx sets on every fetch.
+_HX = {"HX-Request": "true"}
+
+
+def _hx_client(app):
+    """A TestClient that fires every request as htmx (the fragment surface).
+
+    litestar's TestClient takes no constructor ``headers``, so set the default on
+    the underlying httpx client; it applies to all .get/.post calls."""
+    c = TestClient(app=app)
+    c.headers.update(_HX)
+    return c
+
+
 from siftd.serve.app import create_app
 from siftd.storage.sqlite import (
     create_database,
@@ -75,7 +92,7 @@ def _make_db(path: Path) -> tuple[Path, str]:
 @pytest.fixture
 def ctx(tmp_path):
     db, cid = _make_db(tmp_path / "team.db")
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as c:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as c:
         yield c, cid
 
 
@@ -351,7 +368,7 @@ def test_query_search_routes_through_engine(tmp_path):
     finally:
         conn.close()
 
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
         body = client.get("/query", params={"search": "reply"}).text
 
     assert 'class="search-results chunks"' in body   # ranked-chunk shape
@@ -375,7 +392,7 @@ def test_query_search_no_match_shows_empty_not_500(tmp_path):
     finally:
         conn.close()
 
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
         resp = client.get("/query", params={"search": "zzzznomatch"})
     assert resp.status_code == 200
     body = resp.text
@@ -404,7 +421,7 @@ def test_query_search_thread_view(tmp_path):
     browser inherits the tier1/tier2 thread shape — not just chunks. The view
     toggle's value rides #filters into /query."""
     db = _searchable_db(tmp_path)
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
         body = client.get("/query", params={"search": "reply", "view": "thread"}).text
 
     assert 'class="search-results thread"' in body   # thread shape, not chunks
@@ -418,7 +435,7 @@ def test_query_search_conversations_view(tmp_path):
     Chunks) — distinct from the no-query recency browse, which is also a
     .conversation-list but carries no search-results section or engine tag."""
     db = _searchable_db(tmp_path)
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
         body = client.get(
             "/query", params={"search": "reply", "view": "conversations"}
         ).text
@@ -433,7 +450,7 @@ def test_query_view_defaults_to_chunks(tmp_path):
     """An engine query with no view param keeps the chunks shape (the default),
     so the toggle is purely additive — existing deep links are unaffected."""
     db = _searchable_db(tmp_path)
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
         body = client.get("/query", params={"search": "reply"}).text
     assert 'class="search-results chunks"' in body
 
@@ -445,7 +462,7 @@ def test_query_bad_view_falls_back_to_chunks_results(tmp_path):
     misleading empty '[fts] No matches' pane. Regression guard for the
     strip-vs-results clamp asymmetry the review caught."""
     db = _searchable_db(tmp_path)
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
         bogus = client.get("/query", params={"search": "reply", "view": "bogus"}).text
     assert 'class="search-results chunks"' in bogus   # clamped to the default shape
     assert 'class="search-hit"' in bogus              # real hits, not an empty pane
@@ -457,7 +474,7 @@ def test_query_empty_thread_and_conversations_show_no_matches(tmp_path):
     'No matches' affordance, not a headed-but-bodyless pane — parity with the
     chunks empty state, now that the toggle exposes these paths to the browser."""
     db = _searchable_db(tmp_path)
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
         thread = client.get(
             "/query", params={"search": "zzzznomatch", "view": "thread"}
         ).text
@@ -488,7 +505,7 @@ def test_chunks_hit_carries_unfold_trigger(tmp_path):
     .hit-context unfold control anchored on the matched turn — the in-place
     context view. The control fetches the first ring (w=2)."""
     db, _cid = _searchable_db_cid(tmp_path)
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
         body = client.get("/query", params={"search": "reply", "view": "chunks"}).text
     assert 'class="search-hit__main"' in body          # the navigable block
     assert 'hx-get="/folio?id=' in body                # folio jump on __main
@@ -500,7 +517,7 @@ def test_find_context_unfolds_window_with_anchor(tmp_path):
     """The context endpoint runs the anchored windowed read and renders the
     surrounding exchanges with the matched turn flagged + stepped controls."""
     db, cid = _searchable_db_cid(tmp_path)
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
         sl = client.get("/find/context", params={"id": cid, "at": 0, "w": 2}).text
     assert 'class="hit-context__slice"' in sl          # the inline context region
     assert 'class="turn' in sl                         # rendered exchanges
@@ -513,7 +530,7 @@ def test_find_context_last_ring_defers_to_folio(tmp_path):
     """At the final ring the progression terminates in the deliberate folio jump
     (its own #main swap), not another widen."""
     db, cid = _searchable_db_cid(tmp_path)
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
         sl = client.get("/find/context", params={"id": cid, "at": 0, "w": 10}).text
     assert "open in folio" in sl and 'hx-target="#main"' in sl
     assert "more context" not in sl
@@ -523,7 +540,7 @@ def test_find_context_collapse_and_clamp_return_trigger(tmp_path):
     """w=0 (collapse), an out-of-range w (clamped), and a missing id all return
     the harmless collapsed trigger — never a windowed slice, never a 500."""
     db, cid = _searchable_db_cid(tmp_path)
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
         collapse = client.get("/find/context", params={"id": cid, "at": 0, "w": 0})
         clamp = client.get("/find/context", params={"id": cid, "at": 0, "w": 999})
         noid = client.get("/find/context", params={"at": 0, "w": 2})
@@ -565,7 +582,7 @@ def test_find_context_is_owner_scoped(tmp_path):
     conn.close()
 
     auth = {"static_token": "s3cret", "identity": "alice"}
-    with TestClient(app=create_app(db_path=tmp_path / "owned.db", auth_config=auth)) as client:
+    with _hx_client(create_app(db_path=tmp_path / "owned.db", auth_config=auth)) as client:
         sl = client.get(
             "/find/context", params={"id": bob_cid, "at": 0, "w": 2},
             headers={"Authorization": "Bearer s3cret"},
@@ -599,7 +616,7 @@ def test_find_context_flags_correct_anchor_with_offset(tmp_path):
     conn.commit()
     conn.close()
 
-    with TestClient(app=create_app(db_path=tmp_path / "long.db", auth_config=None)) as client:
+    with _hx_client(create_app(db_path=tmp_path / "long.db", auth_config=None)) as client:
         # at=3, w=2 → window = exchanges 1..5; anchor at offset min(3,2)=2 (3rd shown).
         sl = client.get("/find/context", params={"id": cid, "at": 3, "w": 2}).text
 
@@ -644,7 +661,7 @@ def test_dashboard_model_brushing_scopes_and_validates(tmp_path):
     conn.commit()
     conn.close()
 
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
         scoped = client.get("/dashboard", params={"model": "claude-opus"}).text
         assert "Activity &middot; claude-opus" in scoped
         assert 'class="reck__clear"' in scoped
@@ -730,7 +747,7 @@ def test_dashboard_scopes_to_authenticated_owner(tmp_path):
     """
     db = _make_owned_db(tmp_path / "owned.db")
     auth = {"static_token": "s3cret", "identity": "alice"}
-    with TestClient(app=create_app(db_path=db, auth_config=auth)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=auth)) as client:
         body = client.get("/dashboard", headers={"Authorization": "Bearer s3cret"}).text
 
     # Alice sees her own workspace, never bob's (fmt_workspace strips the slash).
@@ -764,7 +781,7 @@ def test_dashboard_reads_through_stats_cache(tmp_path, monkeypatch):
 
     auth = {"static_token": "s3cret", "identity": "alice"}
     hdrs = {"Authorization": "Bearer s3cret"}
-    with TestClient(app=create_app(db_path=db, auth_config=auth)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=auth)) as client:
         first = client.get("/dashboard", headers=hdrs).text
         assert calls["n"] == 1
         second = client.get("/dashboard", headers=hdrs).text
@@ -780,7 +797,7 @@ def test_dashboard_reads_through_stats_cache(tmp_path, monkeypatch):
 
     # Same DB, different identity: bob never reads alice's cached totals.
     auth_bob = {"static_token": "s3cret", "identity": "bob"}
-    with TestClient(app=create_app(db_path=db, auth_config=auth_bob)) as client:
+    with _hx_client(create_app(db_path=db, auth_config=auth_bob)) as client:
         body = client.get("/dashboard", headers=hdrs).text
         assert calls["n"] == 3  # cache miss — bob computes his own
         assert "alice-proj" not in body and "bob-proj" in body
@@ -814,7 +831,7 @@ def _make_tagged_db(path: Path) -> Path:
 @pytest.fixture
 def tags_ctx(tmp_path):
     db = _make_tagged_db(tmp_path / "tags.db")
-    with TestClient(app=create_app(db_path=db, auth_config=None)) as c:
+    with _hx_client(create_app(db_path=db, auth_config=None)) as c:
         yield c
 
 
@@ -885,19 +902,19 @@ def test_tags_pin_is_owner_scoped(tmp_path):
     alice_auth = {"static_token": "s3cret", "identity": "alice"}
     bob_auth = {"static_token": "s3cret", "identity": "bob"}
 
-    with TestClient(app=create_app(db_path=db, auth_config=alice_auth)) as alice:
+    with _hx_client(create_app(db_path=db, auth_config=alice_auth)) as alice:
         assert "zone--pinned" not in alice.get("/view/tags", headers=hdrs).text
         r = alice.post("/tag/pin", headers=hdrs, data={"action": "pin", "tag": "shared"})
         assert r.status_code == 201  # Litestar POST default; htmx swaps any 2xx
         assert "zone--pinned" in r.text and "pin--on" in r.text  # re-rendered view
         assert "zone--pinned" in alice.get("/view/tags", headers=hdrs).text  # persists
 
-    with TestClient(app=create_app(db_path=db, auth_config=bob_auth)) as bob:
+    with _hx_client(create_app(db_path=db, auth_config=bob_auth)) as bob:
         body = bob.get("/view/tags", headers=hdrs).text
         assert "shared" in body              # bob sees the shared tag
         assert "zone--pinned" not in body    # but not alice's pin
 
-    with TestClient(app=create_app(db_path=db, auth_config=alice_auth)) as alice:
+    with _hx_client(create_app(db_path=db, auth_config=alice_auth)) as alice:
         r = alice.post("/tag/pin", headers=hdrs, data={"action": "unpin", "tag": "shared"})
         assert "zone--pinned" not in r.text
 
@@ -935,7 +952,7 @@ def test_workspace_pin_is_owner_scoped(tmp_path):
     alice_auth = {"static_token": "s3cret", "identity": "alice"}
     bob_auth = {"static_token": "s3cret", "identity": "bob"}
 
-    with TestClient(app=create_app(db_path=db, auth_config=alice_auth)) as alice:
+    with _hx_client(create_app(db_path=db, auth_config=alice_auth)) as alice:
         assert "zone--pinned" not in alice.get("/view/workspaces", headers=hdrs).text
         r = alice.post(
             "/workspace/pin", headers=hdrs,
@@ -945,12 +962,12 @@ def test_workspace_pin_is_owner_scoped(tmp_path):
         assert "zone--pinned" in r.text and "pin--on" in r.text  # re-rendered view
         assert "zone--pinned" in alice.get("/view/workspaces", headers=hdrs).text  # persists
 
-    with TestClient(app=create_app(db_path=db, auth_config=bob_auth)) as bob:
+    with _hx_client(create_app(db_path=db, auth_config=bob_auth)) as bob:
         body = bob.get("/view/workspaces", headers=hdrs).text
         assert "proj" in body              # bob sees the shared workspace
         assert "zone--pinned" not in body  # but not alice's pin
 
-    with TestClient(app=create_app(db_path=db, auth_config=alice_auth)) as alice:
+    with _hx_client(create_app(db_path=db, auth_config=alice_auth)) as alice:
         r = alice.post(
             "/workspace/pin", headers=hdrs,
             data={"action": "unpin", "ws": wid, "sort": "sessions"},
@@ -964,7 +981,7 @@ def test_workspace_sort_param(tmp_path):
     db, _ = _make_owned_ws_db(tmp_path / "ws-sort.db")
     hdrs = {"Authorization": "Bearer s3cret"}
     auth = {"static_token": "s3cret", "identity": "alice"}
-    with TestClient(app=create_app(db_path=db, auth_config=auth)) as c:
+    with _hx_client(create_app(db_path=db, auth_config=auth)) as c:
         ranked = c.get("/view/workspaces?sort=tokens", headers=hdrs).text
         assert "ledger--ws is-ranked" in ranked
         assert 'class="ws-sort__opt is-active"' in ranked
@@ -1064,3 +1081,98 @@ def test_shell_reading_deep_link_drops_event(ctx):
     ).text
     assert "/folio?id=" in body
     assert "event=" not in body
+
+
+# ---------------------------------------------------------------------------
+# URL-as-state foundation (Slice 1): canonical /?view= grammar, fragment
+# redirect, canonical nav push, and deep-linkable brush/sort.
+# ---------------------------------------------------------------------------
+
+
+def _browser(db):
+    """A TestClient that does NOT send HX-Request — i.e. a real browser
+    navigation/refresh, the case the fragment redirect guards target."""
+    return TestClient(app=create_app(db_path=db, auth_config=None))
+
+
+def test_fragment_direct_get_redirects_to_canonical(tmp_path):
+    # A direct (non-htmx) GET of a fragment 303s to its canonical shell URL, so a
+    # typed/refreshed/shared fragment URL never renders a chrome-less fragment.
+    db, cid = _make_db(tmp_path / "r.db")
+    with _browser(db) as b:
+        r = b.get("/folio", params={"id": cid}, follow_redirects=False)
+        assert r.status_code == 303
+        loc = r.headers["location"]
+        assert loc.startswith("/?view=transcript") and f"id={cid}" in loc
+
+        r2 = b.get("/dashboard", params={"model": "claude-opus"}, follow_redirects=False)
+        assert r2.status_code == 303
+        assert r2.headers["location"] == "/?view=stats&model=claude-opus"
+
+        r3 = b.get("/view/tags", follow_redirects=False)
+        assert r3.status_code == 303
+        assert r3.headers["location"] == "/?view=tags"
+
+
+def test_htmx_get_of_fragment_serves_fragment_not_redirect(tmp_path):
+    # The same endpoint, fetched as htmx (how the shell mounts it), returns the
+    # fragment — the redirect is browser-only.
+    db, cid = _make_db(tmp_path / "h.db")
+    with _hx_client(create_app(db_path=db, auth_config=None)) as c:
+        r = c.get("/view/tags", follow_redirects=False)
+        assert r.status_code == 200
+        assert 'data-view="tags"' in r.text
+
+
+def test_nav_pushes_canonical_view_urls(ctx):
+    # Every rail item pushes its canonical /?view=<vid> shell URL (was: only
+    # three pushed, and they pushed a bare "/").
+    client, _cid = ctx
+    body = client.get("/").text
+    for vid in ("sessions", "search", "transcript", "tags", "workspaces", "stats"):
+        assert f'hx-push-url="/?view={vid}"' in body
+
+
+def test_view_param_mounts_correct_fragment(ctx):
+    # The explicit ?view= grammar decodes to the right mount target.
+    client, _cid = ctx
+    assert 'hx-get="/dashboard"' in client.get("/", params={"view": "stats"}).text
+    assert 'hx-get="/view/tags"' in client.get("/", params={"view": "tags"}).text
+    assert 'hx-get="/view/sessions"' in client.get("/", params={"view": "sessions"}).text
+    assert 'hx-get="/find"' in client.get("/", params={"view": "search"}).text
+    # Facets ride the mount: stats model, workspaces sort.
+    assert 'hx-get="/dashboard?model=claude-opus"' in client.get(
+        "/", params={"view": "stats", "model": "claude-opus"}
+    ).text
+    assert 'hx-get="/view/workspaces?sort=cost"' in client.get(
+        "/", params={"view": "workspaces", "sort": "cost"}
+    ).text
+
+
+def test_legacy_presence_params_still_resolve(ctx):
+    # Back-compat: the old presence-based deep links keep working without ?view=.
+    client, cid = ctx
+    assert "/folio?id=" in client.get("/", params={"id": cid}).text
+    assert "/find?q=" in client.get("/", params={"q": "needle"}).text
+
+
+def test_ws_sort_links_push_canonical_shell_url(ctx):
+    # The workspace sort ordering is deep-linkable: each sort pushes /?view=workspaces&sort=.
+    client, _cid = ctx
+    body = client.get("/view/workspaces").text
+    assert 'hx-push-url="/?view=workspaces&amp;sort=cost"' in body
+    assert 'hx-push-url="/?view=workspaces&amp;sort=tokens"' in body
+
+
+def test_brush_pushes_canonical_shell_url(tmp_path):
+    # A model-mix brush is deep-linkable: clicking a model pushes /?view=stats&model=.
+    db, _cid = _make_db(tmp_path / "brush.db")
+    import sqlite3
+
+    conn = sqlite3.connect(db)
+    rebuild_rollups(conn)
+    conn.commit()
+    conn.close()
+    with _hx_client(create_app(db_path=db, auth_config=None)) as c:
+        body = c.get("/dashboard").text
+        assert 'hx-push-url="/?view=stats&amp;model=claude-opus"' in body

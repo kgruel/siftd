@@ -25,7 +25,12 @@ from test_workspaces_master import _build, _build_twin
 
 
 def _client(db):
-    return TestClient(app=create_app(db_path=db, auth_config=None))
+    # Fragment endpoints are htmx-only; a direct (non-htmx) GET 303s to the
+    # canonical /?view=… shell. These tests exercise the fragment, so they fire
+    # as htmx (the header htmx sets on every fetch).
+    c = TestClient(app=create_app(db_path=db, auth_config=None))
+    c.headers.update({"HX-Request": "true"})
+    return c
 
 
 def test_view_workspaces_is_live_with_drill_and_honest_cost(tmp_path):

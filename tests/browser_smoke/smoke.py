@@ -278,6 +278,27 @@ async def flow(cdp, check, goto, code_conv):
             f"children={children}",
         )
 
+    # URL-as-state: rail nav pushes canonical /?view= URLs, and browser
+    # back/forward restores the prior view (htmx history). Drive real popstate.
+    await cdp.click('a[data-view="tags"]')
+    await cdp.drain(1.2)
+    await cdp.click('a[data-view="stats"]')
+    await cdp.drain(1.2)
+    at_stats = await cdp.eval("location.search")
+    check("rail nav pushes canonical ?view= URL", at_stats == "?view=stats", f"search={at_stats}")
+    await cdp.eval("history.back()")
+    await cdp.drain(1.5)
+    back_url = await cdp.eval("location.search")
+    back_view = await cdp.eval(
+        "(function(){var v=document.querySelector('#main [data-view]');"
+        "return v ? v.getAttribute('data-view') : null;})()"
+    )
+    check(
+        "browser back restores the prior view (URL + #main)",
+        back_url == "?view=tags" and back_view == "tags",
+        f"url={back_url} view={back_view}",
+    )
+
     # find box: real keystrokes -> htmx keyup trigger (350ms delay)
     await cdp.click('a[data-view="search"]')
     await cdp.drain(1.5)
