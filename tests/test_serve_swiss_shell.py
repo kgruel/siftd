@@ -303,12 +303,13 @@ def test_find_view_is_live_unified_surface(ctx):
     assert 'id="list"' in body and 'hx-get="/query"' in body
 
 
-def test_search_nav_links_live_find_not_stub(ctx):
-    """The Search rail item points at the live /find now, not the /view/search
-    stub — clicking it must mount the find view, never the placeholder."""
+def test_search_nav_is_js_driven_not_stub(ctx):
+    """The Search rail item is JS-driven (data-nav-search) so re-clicking it
+    resumes the last query (last-selected); enhance.js mounts /find. It must not
+    point at the /view/search stub."""
     client, _cid = ctx
     body = client.get("/").text
-    assert 'data-view="search"' in body and 'hx-get="/find"' in body
+    assert 'data-view="search"' in body and "data-nav-search" in body
     assert 'hx-get="/view/search"' not in body
 
 
@@ -1200,8 +1201,11 @@ def test_nav_pushes_canonical_view_urls(ctx):
     # three pushed, and they pushed a bare "/").
     client, _cid = ctx
     body = client.get("/").text
-    for vid in ("sessions", "search", "transcript", "tags", "workspaces", "stats"):
+    # Search is JS-driven (resumes the last query) — it pushes its canonical URL
+    # in enhance.js, not via hx-push-url. The other five push declaratively.
+    for vid in ("sessions", "transcript", "tags", "workspaces", "stats"):
         assert f'hx-push-url="/?view={vid}"' in body
+    assert "data-nav-search" in body
 
 
 def test_view_param_mounts_correct_fragment(ctx):
@@ -1210,7 +1214,8 @@ def test_view_param_mounts_correct_fragment(ctx):
     assert 'hx-get="/dashboard"' in client.get("/", params={"view": "stats"}).text
     assert 'hx-get="/view/tags"' in client.get("/", params={"view": "tags"}).text
     assert 'hx-get="/view/sessions"' in client.get("/", params={"view": "sessions"}).text
-    assert 'hx-get="/find"' in client.get("/", params={"view": "search"}).text
+    # search is server-rendered inline (host), not a /find #main mount.
+    assert 'class="find"' in client.get("/", params={"view": "search"}).text
     # Facets ride the mount: stats model, workspaces sort.
     assert 'hx-get="/dashboard?model=claude-opus"' in client.get(
         "/", params={"view": "stats", "model": "claude-opus"}

@@ -361,17 +361,26 @@ def _page_shell(
     nav_parts: list[str] = []
     for vid, num, name, ds, url in _NAV_ITEMS:
         cur = ' aria-current="page"' if vid == active else ""
-        # Every rail item pushes its canonical shell URL (/?view=<vid>), so the
-        # address bar stays canonical and back/forward + refresh land on the
-        # right view. State-bearing views (transcript id, search q, …) gain that
-        # state from their own drill-downs / controls, not the bare rail nav.
+        inner = (
+            f'<span class="n">{num}</span>'
+            f'<span><span class="nm">{esc(name)}</span>'
+            f'<span class="ds">{esc(ds)}</span></span>'
+        )
+        if vid == "search":
+            # Search is JS-driven (data-nav-search): re-clicking it resumes the
+            # last query (last-selected) when one is remembered, else opens a
+            # fresh surface. It can't be htmx-declarative — the mount URL is
+            # dynamic, and htmx's delegated click handler can't be pre-empted to
+            # swap in the remembered surface. enhance.js owns this one click.
+            nav_parts.append(f'<a data-view="search"{cur} data-nav-search>{inner}</a>')
+            continue
+        # Every other rail item pushes its canonical shell URL (/?view=<vid>), so
+        # the address bar stays canonical and back/forward + refresh land on the
+        # right view. State-bearing views gain state from their drill-downs.
         push_attr = f' hx-push-url="{esc(_canonical_url(vid))}"'
         nav_parts.append(
             f'<a data-view="{vid}"{cur} hx-get="{esc(url)}" hx-target="#main"'
-            f' hx-swap="innerHTML"{push_attr}>'
-            f'<span class="n">{num}</span>'
-            f'<span><span class="nm">{esc(name)}</span>'
-            f'<span class="ds">{esc(ds)}</span></span></a>'
+            f' hx-swap="innerHTML"{push_attr}>{inner}</a>'
         )
     nav = "".join(nav_parts)
 

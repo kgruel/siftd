@@ -387,7 +387,31 @@
     var list = document.getElementById('list');
     if (list) list.setAttribute('hx-get', '/query' + cqs);
     filters.setAttribute('hx-get', '/meta' + cqs);
+    // Last-selected: remember the live query so RE-clicking the Search rail item
+    // resumes it (see the capturing handler below). Cleared box → no memory →
+    // the nav falls back to a fresh /find.
+    // The /find mount takes CANONICAL params (q/shape/engine/…), not the control
+    // names (search/view/mode/…) the /meta+/query children speak — so build it
+    // from `url` (drop the leading 'view=search'), NOT from cqs.
+    var facetParts = url.slice(1);
+    var fqs = facetParts.length ? '?' + facetParts.join('&') : '';
+    lastSearchMount = fqs ? '/find' + fqs : null;
+    lastSearchShell = fqs ? shellUrl : null;
   }
+
+  // Last-selected resume for the Search rail item. It's rendered JS-driven
+  // (data-nav-search, no htmx attrs) precisely so htmx's delegated click handler
+  // ignores it and there's no race: we own the mount. With a remembered query we
+  // resume it (results + canonical URL); otherwise a fresh /find. The mount swaps
+  // #main via htmx.ajax and we push the canonical shell URL ourselves.
+  var lastSearchMount = null, lastSearchShell = null;
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('[data-nav-search]');
+    if (!a || !window.htmx) return;
+    e.preventDefault();
+    window.htmx.ajax('GET', lastSearchMount || '/find', { target: '#main', swap: 'innerHTML' });
+    history.pushState(history.state, '', lastSearchShell || '/?view=search');
+  });
 
   function enhance() { wireTone(); drawLedgers(); drawHists(); drawHitMeters(); initReck(); syncChrome(); initSpy(); initToolSpy(); highlight(); scrollToEvent(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); syncFindUrl(); }
 

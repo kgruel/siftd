@@ -415,6 +415,15 @@ async def flow(cdp, check, goto, code_conv):
     # (htmx targetError: clicks silently did nothing).
     await cdp.click('a[data-view="search"]')
     await cdp.drain(1.5)
+    # Re-clicking Search now RESUMES the last query (last-selected), and earlier
+    # sections left a non-chunks / punctuation state behind — reset to a clean
+    # chunks search before driving this section.
+    await cdp.eval(
+        "(function(){var v=document.querySelector('select[name=\"view\"]');"
+        "if(v)v.value='chunks';"
+        "var b=document.querySelector('input[name=\"search\"]');"
+        "if(b)b.value='';})()"
+    )
     await cdp.click('input[name="search"]')
     await cdp.type_text("needle")
     await cdp.drain(1.5)
@@ -455,6 +464,36 @@ async def flow(cdp, check, goto, code_conv):
         "back from folio retains the prior search results",
         ("q=needle" in (back_url or "")) and (back_hits or 0) > 0,
         f"url={back_url} hits={back_hits} find={back_has_find}",
+    )
+
+    # Slice 3a — the rail-nav path: search → Transcript NAV → Back must also
+    # restore the results (htmx tracks the nav's pushed URL, not our replaceState,
+    # so this exercises a different snapshot key than the hit-click path above).
+    await cdp.click('a[data-view="transcript"]')
+    await cdp.drain(1.6)
+    nav_folio = await cdp.eval("!!document.querySelector('#main .folio')")
+    await cdp.eval("history.back()")
+    await cdp.drain(2.5)
+    nav_back_url = await cdp.eval("location.search")
+    nav_back_hits = await cdp.eval("document.querySelectorAll('#main .search-hit').length")
+    check(
+        "back after Transcript-nav retains the search results",
+        ("q=needle" in (nav_back_url or "")) and (nav_back_hits or 0) > 0,
+        f"folio={nav_folio} url={nav_back_url} hits={nav_back_hits}",
+    )
+
+    # Slice 3a last-selected: leave search, then RE-CLICK the Search rail item —
+    # it resumes the last query (results + URL), not a blank surface.
+    await cdp.click('a[data-view="transcript"]')
+    await cdp.drain(1.4)
+    await cdp.click('a[data-view="search"]')
+    await cdp.drain(1.8)
+    resume_hits = await cdp.eval("document.querySelectorAll('#main .search-hit').length")
+    resume_url = await cdp.eval("location.search")
+    check(
+        "re-clicking Search resumes the last query (last-selected)",
+        ("q=needle" in (resume_url or "")) and (resume_hits or 0) > 0,
+        f"url={resume_url} hits={resume_hits}",
     )
 
     # sessions view: live zone (loopback server -> live on, sandbox -> empty)
