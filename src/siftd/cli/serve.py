@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sys
 
+from siftd.output import status
+
 
 def cmd_serve(args) -> int:
     """Start the HTTP team sync server."""
@@ -14,7 +16,7 @@ def cmd_serve(args) -> int:
     except ImportError as e:
         from siftd.cli.install import install_hint
 
-        print(f"{e} Install with: {install_hint('serve')}", file=sys.stderr)
+        status.error(str(e), hint=f"Install with: {install_hint('serve')}")
         return 1
 
     from pathlib import Path
@@ -67,11 +69,10 @@ def cmd_serve(args) -> int:
     is_public = host not in ("127.0.0.1", "::1", "localhost")
     auth_off = args.no_auth or not auth_config
     if is_public and auth_off and not getattr(args, "unsafe_public_no_auth", False):
-        print(
-            f"refusing to bind public address {host!r} with authentication disabled: "
-            "configure [serve.auth] (or pass --unsafe-public-no-auth to override). "
-            "An unauthenticated public server exposes the entire corpus for read and write.",
-            file=sys.stderr,
+        status.error(
+            f"refusing to bind public address {host!r} with authentication disabled",
+            hint="configure [serve.auth] (or pass --unsafe-public-no-auth to override); "
+            "an unauthenticated public server exposes the entire corpus for read and write.",
         )
         return 2
 
@@ -103,7 +104,7 @@ def cmd_serve(args) -> int:
             allow_live_endpoints=allow_live_endpoints,
         )
     except ValueError as e:
-        print(f"siftd serve: invalid configuration — {e}", file=sys.stderr)
+        status.error(f"invalid configuration — {e}")
         return 1
 
     import uvicorn

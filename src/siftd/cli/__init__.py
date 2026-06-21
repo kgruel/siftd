@@ -95,6 +95,7 @@ def main(argv=None) -> int:
     # keep painted off the module-import path.
     from painted import use_theme
 
+    from siftd.output import status
     from siftd.output.theme import siftd_theme
 
     use_theme(siftd_theme)
@@ -159,7 +160,7 @@ def main(argv=None) -> int:
     except SchemaUpgradeRequiredError as e:
         # Auto-upgrade path can fire from any read-only subcommand. Catch here
         # so users see the friendly message rather than a Python traceback.
-        print(f"Error: {e}", file=sys.stderr)
+        status.error(str(e))
         return 1
 
     # Post-command: passive update check (non-blocking)

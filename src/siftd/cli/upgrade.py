@@ -11,6 +11,7 @@ from pathlib import Path
 
 from siftd.cli._common import _get_version
 from siftd.cli.install import METHOD_LABELS, detect_install_method
+from siftd.output import status
 from siftd.paths import state_dir
 
 _CHECK_INTERVAL_S = 86400  # 24 hours
@@ -184,7 +185,7 @@ def cmd_upgrade(args) -> int:
     print("Checking PyPI for updates...", file=sys.stderr)
     latest = _fetch_latest_version()
     if latest is None:
-        print("Error: Could not reach PyPI", file=sys.stderr)
+        status.error("Could not reach PyPI")
         return 1
 
     _write_cache(latest)
@@ -204,8 +205,10 @@ def cmd_upgrade(args) -> int:
 
     cmd = _upgrade_command(method)
     if cmd is None:
-        print(f"Don't know how to upgrade for install method '{method}'.", file=sys.stderr)
-        print("Try: pip install --upgrade siftd", file=sys.stderr)
+        status.error(
+            f"Don't know how to upgrade for install method '{method}'.",
+            hint="Try: pip install --upgrade siftd",
+        )
         return 1
 
     # Homebrew needs a tap update before upgrade to pull new formulae
@@ -217,7 +220,7 @@ def cmd_upgrade(args) -> int:
     try:
         result = subprocess.run(cmd)
     except FileNotFoundError:
-        print(f"Error: '{cmd[0]}' not found on PATH", file=sys.stderr)
+        status.error(f"'{cmd[0]}' not found on PATH")
         return 1
 
     # Write current version to cache so the post-command notice doesn't

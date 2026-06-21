@@ -16,14 +16,14 @@ def run_report(name: str | None, var: list[str] | None, db: Path | None) -> int:
     optional `$KEY` substitution from KEY=VALUE entries in `var`.
     """
     from siftd.api import QueryError, list_query_files, run_query_file
-    from siftd.output import print_table
+    from siftd.output import print_table, status
     from siftd.paths import queries_dir
 
     # List mode: no name provided.
     if not name:
         query_files = list_query_files()
         if not query_files:
-            print(f"No reports found in {queries_dir()}")
+            status.info(f"No reports found in {queries_dir()}")
             return 0
         for qf in query_files:
             suffix = f"  (vars: {', '.join(qf.variables)})" if qf.variables else "  (no vars)"
@@ -36,7 +36,7 @@ def run_report(name: str | None, var: list[str] | None, db: Path | None) -> int:
         variables = {}
         for v in var:
             if "=" not in v:
-                print(f"Invalid --var format (expected key=value): {v}")
+                status.error(f"Invalid --var format (expected key=value): {v}")
                 return 1
             key, value = v.split("=", 1)
             variables[key] = value
@@ -45,13 +45,12 @@ def run_report(name: str | None, var: list[str] | None, db: Path | None) -> int:
         result = run_query_file(name, variables, db_path=db)
     except FileNotFoundError as e:
         if "Query file not found" in str(e):
-            print(f"Report not found: {e}")
+            status.error(f"Report not found: {e}")
             print("Available reports:")
             for qf in list_query_files():
                 print(f"  {qf.name}")
             return 1
-        print(str(e))
-        print("Run 'siftd ingest' to create it.")
+        status.error(str(e), hint="Run 'siftd ingest' to create it.")
         return 1
     except QueryError as e:
         if "Missing variables" in str(e):
@@ -59,10 +58,12 @@ def run_report(name: str | None, var: list[str] | None, db: Path | None) -> int:
 
             match = re.search(r"Missing variables: (.+)", str(e))
             missing = match.group(1).split(", ") if match else []
-            print(f"Report '{name}' requires variables not provided: {', '.join(missing)}")
-            print(f"Usage: siftd report {name} " + " ".join(f"--var {v}=<value>" for v in missing))
+            status.error(
+                f"Report '{name}' requires variables not provided: {', '.join(missing)}",
+                hint=f"siftd report {name} " + " ".join(f"--var {v}=<value>" for v in missing),
+            )
         else:
-            print(str(e))
+            status.error(str(e))
         return 1
 
     # Format output.
@@ -70,7 +71,7 @@ def run_report(name: str | None, var: list[str] | None, db: Path | None) -> int:
         str_rows = [[str(v) if v is not None else "" for v in row] for row in result.rows]
         print_table(result.columns, str_rows)
     else:
-        print("OK (no results)")
+        status.info("OK (no results)")
 
     return 0
 

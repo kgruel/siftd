@@ -341,7 +341,7 @@ class TestQuerySqlCommand:
 
         assert rc == 1
         captured = capsys.readouterr()
-        assert "table" in captured.out.lower()  # Should mention missing var
+        assert "table" in captured.err.lower()  # Should mention missing var
 
     def test_query_sql_not_found(self, test_db, tmp_path, monkeypatch, capsys):
         """siftd query sql with unknown query returns error."""
@@ -353,7 +353,7 @@ class TestQuerySqlCommand:
 
         assert rc == 1
         captured = capsys.readouterr()
-        assert "not found" in captured.out.lower()
+        assert "not found" in captured.err.lower()
 
     def test_query_sql_empty_queries_dir(self, test_db, tmp_path, monkeypatch, capsys):
         """siftd query sql with an empty user dir still lists the builtins."""

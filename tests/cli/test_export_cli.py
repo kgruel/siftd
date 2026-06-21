@@ -145,7 +145,7 @@ class TestCmdExport:
 
         rc = cmd_export(_make_args(db=str(tmp_path / "db.db")))
         assert rc == 1
-        assert "missing db" in capsys.readouterr().out
+        assert "missing db" in capsys.readouterr().err
 
     def test_sqlite_fts_error_returns_1(self, monkeypatch, tmp_path, capsys):
         monkeypatch.setattr("siftd.cli.export.resolve_db", lambda _a: tmp_path / "db.db")
@@ -186,7 +186,7 @@ class TestCmdExport:
 
         rc = cmd_export(_make_args(db=str(tmp_path / "db.db")))
         assert rc == 1
-        assert "No conversations found" in capsys.readouterr().out
+        assert "No conversations found" in capsys.readouterr().err
 
     def test_output_to_file(self, monkeypatch, tmp_path, capsys):
         monkeypatch.setattr("siftd.cli.export.resolve_db", lambda _a: tmp_path / "db.db")

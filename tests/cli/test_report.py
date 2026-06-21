@@ -65,7 +65,7 @@ class TestReportCommand:
         rc = main(["--db", str(test_db), "report", "needs"])
 
         assert rc == 1
-        assert "table" in capsys.readouterr().out.lower()
+        assert "table" in capsys.readouterr().err.lower()
 
     def test_report_not_found(self, test_db, tmp_path, monkeypatch, capsys):
         """Unknown report name returns error."""
@@ -76,7 +76,7 @@ class TestReportCommand:
         rc = main(["--db", str(test_db), "report", "nonexistent"])
 
         assert rc == 1
-        assert "not found" in capsys.readouterr().out.lower()
+        assert "not found" in capsys.readouterr().err.lower()
 
     def test_report_empty_user_dir_lists_builtins(self, test_db, tmp_path, monkeypatch, capsys):
         """An empty user dir still lists the built-in reports (always available)."""

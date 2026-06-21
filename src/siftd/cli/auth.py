@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import sys
 
+from siftd.output import status
+
 
 def _require_issuer() -> str | None:
     from siftd.config import get_config
@@ -43,9 +45,9 @@ def cmd_login(args) -> int:
     try:
         cred = device_login(issuer)
     except AuthLoginError as e:
-        print(f"Login failed: {e}", file=sys.stderr)
+        status.error(f"Login failed: {e}")
         return 1
-    print(f"Logged in to {issuer} ({_fmt_expiry(cred.expires_at)}).", file=sys.stderr)
+    status.confirm(f"Logged in to {issuer} ({_fmt_expiry(cred.expires_at)}).")
     return 0
 
 
@@ -57,7 +59,7 @@ def cmd_status(args) -> int:
         return 1
     cred = load(issuer)
     if cred is None:
-        print(f"Not logged in to {issuer}. Run `siftd auth login`.", file=sys.stderr)
+        status.error(f"Not logged in to {issuer}.", hint="Run `siftd auth login`.")
         return 1
     state = "stale (will refresh on next use)" if cred.is_stale() else "valid"
     has_refresh = "yes" if cred.refresh_token else "no"
@@ -77,9 +79,9 @@ def cmd_logout(args) -> int:
     if not issuer:
         return 1
     if delete(issuer):
-        print(f"Logged out of {issuer}.", file=sys.stderr)
+        status.confirm(f"Logged out of {issuer}.")
     else:
-        print(f"No stored credential for {issuer}.", file=sys.stderr)
+        status.info(f"No stored credential for {issuer}.")
     return 0
 
 

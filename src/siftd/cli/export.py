@@ -2,12 +2,12 @@
 
 import argparse
 import sqlite3
-import sys
 from pathlib import Path
 
 from siftd.api.conversations import AmbiguousPrefix as _AmbiguousPrefix
 from siftd.cli._common import print_ambiguous_error as _print_ambiguous_error
 from siftd.cli._common import resolve_db
+from siftd.output import status
 
 
 def cmd_export(args) -> int:
@@ -78,26 +78,26 @@ def cmd_export(args) -> int:
             _print_ambiguous_error(exc)
             return 2
         except FileNotFoundError as e:
-            print(str(e))
+            status.error(str(e))
             return 1
         except sqlite3.OperationalError as e:
             err_msg = str(e).lower()
             if "no such table" in err_msg and "fts" in err_msg:
-                print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
+                status.error("FTS index not found.", hint="Run 'siftd ingest' first.")
             elif "fts5" in err_msg or "syntax" in err_msg:
-                print(f"Invalid search query: {e}", file=sys.stderr)
+                status.error(f"Invalid search query: {e}")
             else:
-                print(f"Database error: {e}", file=sys.stderr)
+                status.error(f"Database error: {e}")
             return 1
 
     if artifact.count == 0:
-        print("No conversations found matching criteria.")
+        status.info("No conversations found matching criteria.")
         return 1
 
     if args.output:
         output_path = Path(args.output)
         output_path.write_text(artifact.content)
-        print(f"Exported {artifact.count} session(s) to {output_path}")
+        status.confirm(f"Exported {artifact.count} session(s) to {output_path}")
     else:
         print(artifact.content)
 

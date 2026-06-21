@@ -7,7 +7,7 @@ import sys
 from siftd.api.conversations import AmbiguousPrefix as _AmbiguousPrefix
 from siftd.cli._common import print_ambiguous_error as _print_ambiguous_error
 from siftd.cli._common import resolve_db
-from siftd.output import fmt_timestamp, fmt_workspace
+from siftd.output import fmt_timestamp, fmt_workspace, status
 from siftd.output._id_format import short_id
 
 
@@ -17,13 +17,13 @@ def cmd_id(args) -> int:
 
     db = resolve_db(args)
     if not db or not db.exists():
-        print(f"Error: Database not found at {db}", file=sys.stderr)
+        status.error(f"Database not found at {db}")
         return 1
 
     try:
         conn = open_database(db, read_only=True)
     except Exception as e:
-        print(f"Error: Failed to open database: {e}", file=sys.stderr)
+        status.error(f"Failed to open database: {e}")
         return 1
 
     try:
@@ -37,13 +37,13 @@ def cmd_id(args) -> int:
         _print_ambiguous_error(exc)
         return 2
     except Exception:
-        print("Error: Failed to resolve ID", file=sys.stderr)
+        status.error("Failed to resolve ID")
         return 1
     finally:
         conn.close()
 
     if classified is None:
-        print(f"Error: ID not found: {args.ulid}", file=sys.stderr)
+        status.error(f"ID not found: {args.ulid}")
         return 1
     if classified["status"] == "ambiguous":
         # conversation vs event ambiguity (not prefix collision — that's caught above)
@@ -51,7 +51,7 @@ def cmd_id(args) -> int:
             out = {"kind": "ambiguous", "candidates": classified["candidates"]}
             print(_json.dumps(out, indent=2))
             return 2
-        print(f"Error: Ambiguous ID prefix: {args.ulid}", file=sys.stderr)
+        status.error(f"Ambiguous ID prefix: {args.ulid}")
         print("Candidates:", file=sys.stderr)
         for candidate in classified["candidates"]:
             print(f"  {candidate['kind']}: {candidate['id']}", file=sys.stderr)
