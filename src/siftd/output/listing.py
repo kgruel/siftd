@@ -1,28 +1,22 @@
-"""Aligned key:value listing — the report's key:value atom.
+"""Report-structure atoms — a section heading and an aligned key:value listing.
 
-A headerless, borderless list of ``label → value`` pairs, labels padded to a
-common display width. This is the smaller sibling of ``output.table`` (a
-*bordered, width-budgeted data table* with a header, a ``Fill`` column and
-overflow handling): a listing has no header, no width budget and no flex column
-— just wcwidth-correct label alignment.
+These are the two shapes a status report is made of: titled sections, each
+section a key:value listing or a list of free-form lines. The deferred
+``StatusReport`` will compose them; today they style the CLI's report surfaces
+(db dry-runs, ``install``, ``config tag-prefixes``) so they read as one designed
+system rather than plain text dropped above a styled table.
 
-It is *one* of the shapes the deferred ``StatusReport`` will compose: a status
-report is a sequence of titled sections, and a section is either a key:value
-listing (this) or a list of free-form lines (a sibling atom, not yet built). So
-this covers the key:value half — not a whole report on its own.
+The visual language is **accent-led**, echoing ``output.table``: the structural
+elements — section titles and the left/key column — take the NORD accent (the
+``label`` domain role, bold), and the data — values, listing right-hand sides —
+renders plain. ``output.table`` already paints its header accent and its rows
+plain; headings and listings now rhyme with it.
 
-Labels render **plain by default**, matching what every current report-ish
-surface already does — ``cmd_status`` prints its fields plain, ``output.table``
-left-aligns text columns plain — and matching the plain ``print()`` these call
-sites replaced. The left column is sometimes a field label and sometimes data
-(a tag name, a component/harness key, an argument the user types), so the atom
-takes no styling opinion; a caller that genuinely wants field emphasis passes
-``label_style`` explicitly. Output rides the ambient NORD theme regardless, and
-colour is auto-stripped by ``print_block`` for a non-TTY / ``NO_COLOR``.
-
-Composes painted's already-public ``Line``/``Span``/``join_vertical`` +
-``display_width`` (the ``output.live`` precedent — no painted change), so the
-listing returns a ``Block`` (not printed text) and stays CJK/ANSI-correct.
+Both atoms compose painted's already-public ``Line``/``Span``/``join_vertical``
++ ``display_width`` (the ``output.live`` precedent — no painted change), return a
+``Block`` (not printed text), and stay CJK/ANSI-correct. Colour is auto-stripped
+by ``print_block`` for a non-TTY / ``NO_COLOR``; a caller that wants a different
+treatment (e.g. plain labels for a machine-ish surface) passes ``label_style``.
 """
 
 from __future__ import annotations
@@ -46,6 +40,27 @@ def _oneline(s: object) -> str:
     return str(s).replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
 
 
+def heading(text: str) -> Block:
+    """A section title — accent (bold), flush-left, matching the table header.
+
+    The structural top of a report section. Sits above a ``definitions`` listing
+    or a ``table`` and shares their accent so the section reads as one unit.
+    """
+    from painted import Line, Span
+
+    from siftd.output.theme import domain_styles
+
+    line = Line(spans=(Span(_oneline(text), domain_styles().label),))
+    return line.to_block(line.width)
+
+
+def print_heading(text: str) -> None:
+    """Render and print an accent section title to stdout."""
+    from painted import print_block
+
+    print_block(heading(text))
+
+
 def definitions(
     pairs: Mapping[str, str] | Iterable[tuple[str, str]],
     *,
@@ -58,23 +73,25 @@ def definitions(
 
     Labels are padded to the widest label's *display* width (wcwidth-correct, not
     ``len()``) and separated from values by ``gutter`` spaces, the whole block
-    indented by ``indent``. ``label_style`` / ``value_style`` both default to
-    plain; pass ``label_style`` (e.g. the ``label`` domain role) only for a
-    surface whose left column is a genuine field label that wants emphasis. An
-    empty input renders an empty (zero-row) block — an empty section contributes
-    nothing.
+    indented by ``indent``. The left column takes the accent ``label`` role by
+    default (the house style — it rhymes with the table header and section
+    headings); ``value_style`` defaults to plain. Pass ``label_style`` to opt out
+    (e.g. a machine-ish surface that wants plain keys). An empty input renders an
+    empty (zero-row) block — an empty section contributes nothing.
     """
     from collections.abc import Mapping
 
     from painted import Block, Line, Span, Style, join_vertical
     from painted.core._text_width import display_width
 
+    from siftd.output.theme import domain_styles
+
     items = list(pairs.items()) if isinstance(pairs, Mapping) else list(pairs)
     if not items:
         return Block.empty(0, 0)
 
     plain = Style()
-    lbl_style = label_style if label_style is not None else plain
+    lbl_style = label_style if label_style is not None else domain_styles().label
     val_style = value_style if value_style is not None else plain
     pad = " " * indent
     sep = " " * gutter
@@ -109,8 +126,8 @@ def print_definitions(
 ) -> None:
     """Render and print an aligned key:value listing to stdout.
 
-    Forwards ``label_style`` / ``value_style`` so a caller can emphasise a
-    genuine field-label column without dropping to ``definitions`` + ``print_block``.
+    Forwards ``label_style`` / ``value_style`` so a caller can override the
+    accent-label default without dropping to ``definitions`` + ``print_block``.
     """
     from painted import print_block
 

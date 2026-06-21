@@ -10,7 +10,7 @@ import io
 
 from painted import print_block, use_theme
 
-from siftd.output.listing import definitions
+from siftd.output.listing import definitions, heading
 from siftd.output.theme import domain_styles, siftd_theme
 
 
@@ -78,23 +78,35 @@ def _ansi(block) -> str:
     return buf.getvalue()
 
 
-def test_labels_are_plain_by_default():
-    # The default takes no styling opinion — it renders identically to passing
-    # an explicit plain style (the old hand-rolled print() was plain too).
+def test_labels_take_the_accent_role_by_default():
+    # The house style: the left column takes the accent `label` role, rhyming
+    # with the table header. The default renders identically to passing that
+    # role explicitly, and differs from an explicit-plain override.
     from painted import Style
 
     with use_theme(siftd_theme):
         default = _ansi(definitions([("label", "value")]))
+        explicit_accent = _ansi(definitions([("label", "value")], label_style=domain_styles().label))
         explicit_plain = _ansi(definitions([("label", "value")], label_style=Style()))
-    assert default == explicit_plain
+    assert default == explicit_accent
+    assert default != explicit_plain
+    assert default.index("label") < default.index("value")
 
 
-def test_label_style_opt_in_emphasises_the_label():
-    # A caller with a genuine field label can opt into emphasis; the rendered
-    # bytes differ from the plain default, and the label still precedes the value.
+def test_label_style_can_opt_out_to_plain():
+    # A machine-ish surface can pass a plain style to drop the accent.
+    from painted import Style
+
     with use_theme(siftd_theme):
-        accent = domain_styles().label
-        emphasised = _ansi(definitions([("label", "value")], label_style=accent))
-        plain = _ansi(definitions([("label", "value")]))
-    assert emphasised != plain
-    assert emphasised.index("label") < emphasised.index("value")
+        accented = _ansi(definitions([("label", "value")]))
+        plain = _ansi(definitions([("label", "value")], label_style=Style()))
+    assert accented != plain
+
+
+def test_heading_is_accent_and_single_line():
+    # A section title carries the accent role and collapses any newline.
+    with use_theme(siftd_theme):
+        block = heading("row counts:\nleak")
+        rendered = _ansi(block)
+    assert _text(block) == "row counts: leak"
+    assert "\x1b[" in rendered  # accent escape present

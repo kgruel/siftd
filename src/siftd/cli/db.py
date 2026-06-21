@@ -258,7 +258,7 @@ def cmd_db_restore(args) -> int:
             src_counts = _table_row_counts(conn)
         finally:
             conn.close()
-        from siftd.output.listing import print_definitions
+        from siftd.output.listing import print_definitions, print_heading
         from siftd.output.table import print_table
 
         if tgt_schema_ver is None:
@@ -270,13 +270,13 @@ def cmd_db_restore(args) -> int:
         else:
             schema = f"v{tgt_schema_ver} → v{src_schema_ver} (DOWNGRADE)"
 
-        print("[dry run] restore preview:")
+        print_heading("[dry run] restore preview:")
         print_definitions([
             ("source", str(source)),
             ("target", str(db)),
             ("schema version", schema),
         ])
-        print("[dry run] row counts:")
+        print_heading("[dry run] row counts:")
         count_rows = [
             [tbl, str(src_counts.get(tbl, 0)), str(tgt_counts.get(tbl, 0))]
             for tbl in dict.fromkeys(list(src_counts) + list(tgt_counts))
@@ -486,12 +486,13 @@ def cmd_db_receive(args) -> int:
                 finally:
                     target_conn.close()
 
+            from siftd.output.listing import print_heading
             from siftd.output.table import print_table
 
             target_state = "would create new DB" if not db.exists() else "would merge into existing DB"
             print(f"[dry run] {target_state}")
             print("[dry run] preflight: ok")
-            print("[dry run] incoming rows:")
+            print_heading("[dry run] incoming rows:")
             count_rows = [
                 [tbl, str(src_counts.get(tbl, 0)), str(tgt_counts.get(tbl, 0))]
                 for tbl in dict.fromkeys(list(src_counts) + list(tgt_counts))
