@@ -2,11 +2,11 @@
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 from siftd.api import list_workspaces
 from siftd.cli._common import resolve_db
+from siftd.output import status
 from siftd.paths import cache_dir, config_dir, config_file, data_dir, db_path
 
 
@@ -56,8 +56,7 @@ def cmd_status(args) -> int:
         try:
             stats = execute(op)
         except FileNotFoundError as e:
-            print(str(e))
-            print("Run 'siftd ingest' to create it.")
+            status.error(str(e), hint="Run 'siftd ingest' to create it.")
             return 1
 
     # JSON output
@@ -256,8 +255,7 @@ def cmd_workspaces(args) -> int:
             if args.json:
                 print("[]")
                 return 0
-            print(str(e))
-            print("Run 'siftd ingest' to create it.")
+            status.error(str(e), hint="Run 'siftd ingest' to create it.")
             return 1
 
     if args.json:
@@ -275,7 +273,7 @@ def cmd_workspaces(args) -> int:
         return 0
 
     if not rows:
-        print("No workspaces found.")
+        status.info("No workspaces found.")
         return 0
 
     for row in rows:
@@ -320,7 +318,7 @@ def cmd_config(args) -> int:
             print(json.dumps(prefixes, indent=2, sort_keys=True))
             return 0
         if not prefixes:
-            print("No tag prefixes defined.")
+            status.info("No tag prefixes defined.")
             return 0
         # Sorted name → prefix mapping; one per line.
         width = max(len(name) for name in prefixes)
@@ -336,7 +334,7 @@ def cmd_config(args) -> int:
             return 1
         value = get_config(args.key)
         if value is None:
-            print(f"Key not set: {args.key}")
+            status.error(f"Key not set: {args.key}")
             return 1
         print(value)
         return 0
@@ -350,11 +348,11 @@ def cmd_config(args) -> int:
         try:
             set_config(args.key, args.value)
         except ValueError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
+            status.error(str(exc))
             return 1
         # Re-read to show stored value (confirms type coercion)
         stored = get_config(args.key)
-        print(f"Set {args.key} = {stored}")
+        status.confirm(f"Set {args.key} = {stored}")
         return 0
 
     # siftd config append <key> <value>
@@ -366,12 +364,12 @@ def cmd_config(args) -> int:
         try:
             changed = append_config_list(args.key, args.value)
         except ValueError as exc:
-            print(str(exc))
+            status.error(str(exc))
             return 1
         if changed:
-            print(f"Appended {args.value} to {args.key}")
+            status.confirm(f"Appended {args.value} to {args.key}")
         else:
-            print(f"Value already present for {args.key}")
+            status.info(f"Value already present for {args.key}")
         return 0
 
     # siftd config remove <key> <value>
@@ -383,19 +381,18 @@ def cmd_config(args) -> int:
         try:
             changed = remove_config_list(args.key, args.value)
         except ValueError as exc:
-            print(str(exc))
+            status.error(str(exc))
             return 1
         if not changed:
-            print(f"Value not found for {args.key}: {args.value}")
+            status.error(f"Value not found for {args.key}: {args.value}")
             return 1
-        print(f"Removed {args.value} from {args.key}")
+        status.confirm(f"Removed {args.value} from {args.key}")
         return 0
 
     # siftd config (show all)
     path = config_file()
     if not path.exists():
-        print("No config file found.")
-        print(f"Create one at: {path}")
+        status.info("No config file found.", hint=f"Create one at: {path}")
         return 0
 
     doc = load_config()
@@ -414,7 +411,7 @@ def cmd_adapters(args) -> int:
         if args.json:
             print("[]")
         else:
-            print("No adapters found.")
+            status.info("No adapters found.")
         return 0
 
     # JSON output

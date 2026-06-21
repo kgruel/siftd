@@ -165,7 +165,7 @@ def test_cmd_workspaces_and_status(monkeypatch, tmp_path, capsys):
 
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [])
     assert cmd_workspaces(_args(json=False, db=str(tmp_path / "db.sqlite"), limit=5)) == 0
-    assert "No workspaces" in capsys.readouterr().out
+    assert "No workspaces" in capsys.readouterr().err
 
 
 def test_status_and_workspaces_remaining_branches(monkeypatch, tmp_path, capsys):
@@ -233,4 +233,4 @@ def test_config_and_adapters_remaining_branches(monkeypatch, tmp_path, capsys):
     # adapters no rows (non-json)
     monkeypatch.setattr("siftd.api.list_adapters", lambda: [])
     assert cmd_adapters(_args(json=False)) == 0
-    assert "No adapters found" in capsys.readouterr().out
+    assert "No adapters found" in capsys.readouterr().err
